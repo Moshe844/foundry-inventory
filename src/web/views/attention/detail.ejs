@@ -1,0 +1,220 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/attention"><%- helpers.icon('chevron', { size: 14 }) %> Needs attention</a>
+    <h1><%= item.title %></h1>
+    <div class="page-sub"><%= item.conciseSummary %></div>
+  </div>
+  <div class="page-actions">
+    <% if (item.status === 'OPEN') { %>
+      <form method="post" action="/attention/<%= item.attentionId %>/acknowledge">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="returnTo" value="/attention/<%= item.attentionId %>">
+        <button class="btn btn--primary" type="submit">I'm on it</button>
+      </form>
+    <% } %>
+    <% if (item.status === 'OPEN' || item.status === 'ACKNOWLEDGED') { %>
+      <form class="dismiss-form" method="post" action="/attention/<%= item.attentionId %>/dismiss">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="returnTo" value="/attention/<%= item.attentionId %>">
+        <button class="btn" type="submit">Not a problem</button>
+        <select class="select" name="days" aria-label="Hide this for how long">
+          <option value="14" selected>for 2 weeks</option>
+          <option value="30">for a month</option>
+          <option value="90">for 3 months</option>
+          <option value="365">for a year</option>
+        </select>
+      </form>
+    <% } %>
+  </div>
+</div>
+
+<div class="badge-row">
+  <span class="badge badge--<%= item.severityTone %>"><%= item.severityLabel %></span>
+  <span class="badge badge--muted"><%= item.categoryLabel %></span>
+  <% item.relatedLabels.forEach(function (label) { %>
+    <span class="badge badge--muted">also <%= label.toLowerCase() %></span>
+  <% }) %>
+  <% if (item.status === 'RESOLVED') { %><span class="badge badge--ok">Resolved</span><% } %>
+  <% if (item.status === 'ACKNOWLEDGED') { %><span class="badge badge--ok">Being handled</span><% } %>
+  <% if (item.status === 'DISMISSED') { %><span class="badge badge--muted">Hidden until <%= helpers.shortDate(item.dismissedUntil) %></span><% } %>
+</div>
+
+<div class="grid grid--sidebar section">
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><h2>What Foundry found</h2></div>
+      <div class="card-body">
+        <p class="lede"><%= item.explanation %></p>
+
+        <div class="att-rec-box">
+          <span class="att-rec-icon"><%- helpers.icon('foundry', { size: 16 }) %></span>
+          <div>
+            <strong>What you might do</strong>
+            <p><%= item.recommendation %></p>
+            <% if (typeof actionable !== 'undefined' && actionable) { %>
+              <form method="post" action="/attention/<%= item.attentionId %>/action" style="margin-top:10px;">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button class="btn btn--primary btn--sm" type="submit">Review transfer</button>
+              </form>
+              <p class="muted" style="font-size:12px; margin-top:8px;">
+                Foundry will work out the exact movement and show it to you. Nothing moves until you approve it.
+              </p>
+            <% } else { %>
+              <p class="muted" style="font-size:12px; margin-top:6px;">
+                <%= typeof actionMessage !== 'undefined' && actionMessage
+                    ? actionMessage
+                    : 'Foundry does not move stock by itself. This is a suggestion for you to act on.' %>
+              </p>
+            <% } %>
+          </div>
+        </div>
+
+        <% if (item.status === 'RESOLVED' && item.resolutionReason) { %>
+          <p class="muted" style="margin-top:12px;">
+            Closed <%= helpers.timeAgo(item.resolvedAt) %>: <%= item.resolutionReason %>
+          </p>
+        <% } %>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>The evidence</h2>
+        <span class="spacer"></span>
+        <span class="muted" style="font-size:12px;">Straight from your movement history</span>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <tbody>
+            <% item.measuredEvidence.forEach(function (fact) { %>
+              <tr>
+                <td class="muted"><%= fact.label %></td>
+                <td class="right num"><%= fact.value %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <% if (item.estimatedEvidence.length) { %>
+        <div class="card-head" style="border-top:1px solid var(--line);">
+          <h3 style="font-size:13px;">Foundry's working</h3>
+          <span class="spacer"></span>
+          <span class="badge badge--muted">estimated</span>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <tbody>
+              <% item.estimatedEvidence.forEach(function (fact) { %>
+                <tr>
+                  <td class="muted"><%= fact.label %></td>
+                  <td class="right"><%= fact.value %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+        <div class="card-foot muted">
+          These are calculated from the measured figures above, not counted. <%= item.confidenceNote %>
+        </div>
+      <% } %>
+    </div>
+
+    <% if (item.movements.length) { %>
+      <div class="card">
+        <div class="card-head"><h2>The movements behind this</h2></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>When</th><th>What</th><th>Where</th><th class="right">Change</th><th>Who</th></tr>
+            </thead>
+            <tbody>
+              <% item.movements.forEach(function (movement) { %>
+                <tr>
+                  <td><%= helpers.dateTime(movement.occurredAt) %></td>
+                  <td>
+                    <a class="cell-title" href="/inventory/<%= movement.itemId %>"><%= movement.itemName %></a>
+                    <span class="cell-sub"><%= helpers.operationLabel(movement.operation) %><% if (movement.reason) { %> · <%= helpers.reasonText(movement.operation, movement.reason) %><% } %></span>
+                  </td>
+                  <td><%= movement.locationName %></td>
+                  <td class="right num"><%= movement.delta > 0 ? '+' : '' %><%= helpers.qty(movement.delta) %></td>
+                  <td><%= movement.actorName %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <% } %>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><h2>Was this useful?</h2></div>
+      <div class="card-body">
+        <p class="muted" style="font-size:13px; margin-bottom:10px;">
+          Foundry records your answer. It will not quietly change what it checks —
+          if a rule is wrong, that is something to fix openly.
+        </p>
+        <div class="btn-row">
+          <form method="post" action="/attention/<%= item.attentionId %>/rate">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="verdict" value="useful">
+            <button class="btn btn--sm" type="submit">Useful</button>
+          </form>
+          <form method="post" action="/attention/<%= item.attentionId %>/rate">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="verdict" value="not_useful">
+            <button class="btn btn--sm" type="submit">Not useful</button>
+          </form>
+        </div>
+      </div>
+      <% if (history.length) { %>
+        <div class="table-wrap">
+          <table class="table">
+            <tbody>
+              <% history.forEach(function (entry) { %>
+                <tr>
+                  <td>
+                    <span class="cell-title"><%= entry.verdict.replace('_', ' ') %></span>
+                    <span class="cell-sub"><%= entry.actorName %> · <%= helpers.timeAgo(entry.createdAt) %></span>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Details</h2></div>
+      <div class="table-wrap">
+        <table class="table">
+          <tbody>
+            <tr><td class="muted">First detected</td><td class="right"><%= helpers.dateTime(item.firstDetectedAt) %></td></tr>
+            <tr><td class="muted">Last checked</td><td class="right"><%= helpers.timeAgo(item.lastEvaluatedAt) %></td></tr>
+            <tr><td class="muted">Confidence</td><td class="right"><%= item.confidence %></td></tr>
+            <tr><td class="muted">Detection rules</td><td class="right mono"><%= item.detectionRuleVersion %></td></tr>
+            <tr><td class="muted">Wording</td><td class="right"><%= item.isReworded ? 'Foundry, from the figures above' : 'Foundry, deterministic' %></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <% if (item.subjects.length || item.locations.length) { %>
+      <div class="card">
+        <div class="card-head"><h2>What this is about</h2></div>
+        <div class="card-body">
+          <div class="btn-row">
+            <% item.subjects.forEach(function (subject) { %>
+              <a class="btn btn--sm" href="<%= subject.href %>"><%= subject.name %></a>
+            <% }) %>
+            <% item.locations.forEach(function (location) { %>
+              <a class="btn btn--sm btn--ghost" href="<%= location.href %>"><%= location.name %></a>
+            <% }) %>
+          </div>
+        </div>
+      </div>
+    <% } %>
+  </div>
+</div>

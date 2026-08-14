@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title><%= title %> · Foundry Inventory</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230f766e'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="app">
+  <aside class="sidebar">
+    <a class="brand" href="/">
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6l-8-3.8z"/><path d="m4 8.2 8 3.8 8-3.8M12 12v7.6"/></svg>
+      </span>
+      <span class="brand-text">
+        <strong>Foundry</strong>
+        <small>Inventory</small>
+      </span>
+    </a>
+
+    <%
+      // Which inventory this console is showing, and how to change it. Present
+      // even with one inventory, so "which am I in?" is never a guess.
+      var allWorkspaces = typeof workspaces !== 'undefined' && workspaces ? workspaces : [];
+      var others = allWorkspaces.filter(function (w) { return !workspace || w.workspaceId !== workspace.id; });
+    %>
+    <% if (workspace) { %>
+      <div class="wsp-switch" data-switcher>
+        <button class="wsp-switch-current" type="button" data-switcher-toggle
+                aria-expanded="false" aria-haspopup="true">
+          <span class="wsp-switch-text">
+            <small>Inventory</small>
+            <strong><%= workspace.name %></strong>
+          </span>
+          <%- helpers.icon('chevron', { size: 14, className: 'wsp-switch-caret' }) %>
+        </button>
+
+        <div class="wsp-switch-menu" data-switcher-menu hidden>
+          <% if (others.length) { %>
+            <div class="wsp-switch-label">Switch to</div>
+            <% others.forEach(function (other) { %>
+              <form method="post" action="/inventories/switch">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="workspaceId" value="<%= other.workspaceId %>">
+                <input type="hidden" name="next" value="/">
+                <button class="wsp-switch-item" type="submit">
+                  <span><%= other.name %></span>
+                  <% if (other.attentionCount > 0) { %>
+                    <span class="nav-count"><%= other.attentionCount %></span>
+                  <% } %>
+                </button>
+              </form>
+            <% }) %>
+          <% } %>
+          <a class="wsp-switch-item wsp-switch-item--quiet" href="/inventories">All inventories</a>
+          <a class="wsp-switch-item wsp-switch-item--quiet" href="/inventories/new">
+            <%- helpers.icon('plus', { size: 13 }) %> New inventory
+          </a>
+        </div>
+      </div>
+    <% } %>
+
+    <nav class="nav" aria-label="Main">
+      <a class="nav-item nav-item--foundry <%= nav === 'foundry' ? 'is-active' : '' %>" href="/foundry"><%- helpers.icon('foundry') %><span>Foundry</span></a>
+      <a class="nav-item <%= nav === 'overview' ? 'is-active' : '' %>" href="/"><%- helpers.icon('overview') %><span>Overview</span></a>
+      <a class="nav-item <%= nav === 'attention' ? 'is-active' : '' %>" href="/attention"><%- helpers.icon('attention') %><span>Needs attention</span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %></a>
+      <a class="nav-item <%= nav === 'actions' ? 'is-active' : '' %>" href="/actions"><%- helpers.icon('adjust') %><span>Do something</span></a>
+      <a class="nav-item <%= nav === 'purchasing' ? 'is-active' : '' %>" href="/purchasing"><%- helpers.icon('purchasing') %><span>What to order</span></a>
+      <a class="nav-item <%= nav === 'imports' ? 'is-active' : '' %>" href="/imports"><%- helpers.icon('import') %><span>Bring data in</span></a>
+      <a class="nav-item <%= nav === 'inventory' ? 'is-active' : '' %>" href="/inventory"><%- helpers.icon('inventory') %><span>Inventory</span></a>
+      <a class="nav-item <%= nav === 'locations' ? 'is-active' : '' %>" href="/locations"><%- helpers.icon('locations') %><span>Locations</span></a>
+      <a class="nav-item <%= nav === 'activity' ? 'is-active' : '' %>" href="/activity"><%- helpers.icon('activity') %><span>Activity</span></a>
+      <a class="nav-item <%= nav === 'settings' ? 'is-active' : '' %>" href="/settings"><%- helpers.icon('settings') %><span>Settings</span></a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <% if (currentUser) { %>
+        <div class="who">
+          <span class="avatar"><%= helpers.initials(currentUser.name) %></span>
+          <span class="who-text">
+            <strong><%= currentUser.name %></strong>
+            <small><%= helpers.roleLabel(currentUser.role) %></small>
+          </span>
+        </div>
+        <form method="post" action="/logout">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--ghost btn--sm btn--block" type="submit"><%- helpers.icon('logout', { size: 16 }) %> Sign out</button>
+        </form>
+      <% } else { %>
+        <a class="btn btn--ghost btn--sm btn--block" href="/login">Sign in</a>
+      <% } %>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <a class="topbar-brand" href="/" aria-label="Foundry Inventory">
+        <span class="brand-mark" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6l-8-3.8z"/></svg>
+        </span>
+      </a>
+      <form class="topbar-search" role="search" action="/search" method="get" autocomplete="off">
+        <label class="visually-hidden" for="global-search">Search inventory</label>
+        <%- helpers.icon('search', { size: 18, className: 'search-icon' }) %>
+        <input id="global-search" class="search-input" type="search" name="q" value="<%= typeof searchTerm !== 'undefined' ? searchTerm : '' %>"
+               placeholder="Search items, SKUs, serial numbers, lots" data-search>
+        <div class="search-results" data-search-results hidden></div>
+      </form>
+      <div class="topbar-actions">
+        <a class="btn btn--primary btn--sm" href="/inventory/new"><%- helpers.icon('plus', { size: 16 }) %><span class="btn-label">Add item</span></a>
+      </div>
+    </header>
+
+    <main class="content" id="main">
+      <% if (flash && flash.length) { %>
+        <div class="flash-stack">
+          <% flash.forEach(function (message) { %>
+            <div class="flash flash--<%= message.type %>" role="status">
+              <%- helpers.icon(message.type === 'error' ? 'alert' : 'check', { size: 18 }) %>
+              <span><%= message.message %></span>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+      <%- body %>
+    </main>
+  </div>
+
+  <nav class="mobilenav" aria-label="Main">
+    <a class="<%= nav === 'foundry' ? 'is-active' : '' %>" href="/foundry"><%- helpers.icon('foundry', { size: 22 }) %><span>Foundry</span></a>
+    <a class="<%= nav === 'overview' ? 'is-active' : '' %>" href="/"><%- helpers.icon('overview', { size: 22 }) %><span>Overview</span></a>
+    <a class="<%= nav === 'attention' ? 'is-active' : '' %>" href="/attention"><%- helpers.icon('attention', { size: 22 }) %><span>Attention</span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %></a>
+    <a class="<%= nav === 'inventory' ? 'is-active' : '' %>" href="/inventory"><%- helpers.icon('inventory', { size: 22 }) %><span>Inventory</span></a>
+    <a class="<%= nav === 'locations' ? 'is-active' : '' %>" href="/locations"><%- helpers.icon('locations', { size: 22 }) %><span>Locations</span></a>
+  </nav>
+</div>
+<script src="/app.js" defer></script>
+</body>
+</html>

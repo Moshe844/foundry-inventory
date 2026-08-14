@@ -1,0 +1,32 @@
+<div class="ledger">
+  <% groups.forEach(function (entry) { %>
+    <%
+      var pieces = entry.sentence.split(entry.displayName);
+      var before = pieces.shift();
+      var after = pieces.join(entry.displayName);
+    %>
+    <div class="ledger-item">
+      <span class="ledger-icon ledger-icon--<%= entry.operation %>"><%- helpers.icon(entry.operation, { size: 16 }) %></span>
+      <div class="ledger-body">
+        <div class="ledger-text"><%= before %><a href="/inventory/<%= entry.itemId %>"><%= entry.displayName %></a><%= after %></div>
+        <div class="ledger-meta">
+          <span><%= entry.actorName %></span>
+          <span class="sep">·</span>
+          <span><%= helpers.timeAgo(entry.occurredAt) %></span>
+          <% if (entry.reasonLabel) { %>
+            <span class="sep">·</span>
+            <span><%= entry.reasonLabel %></span>
+          <% } %>
+          <% if (entry.reference) { %>
+            <span class="sep">·</span>
+            <span class="mono">Ref <%= entry.reference %></span>
+          <% } %>
+        </div>
+        <% if (entry.notes) { %>
+          <div class="ledger-note"><%= entry.notes %></div>
+        <% } %>
+      </div>
+      <span class="ledger-when"><%= helpers.dateTime(entry.occurredAt) %></span>
+    </div>
+  <% }) %>
+</div>

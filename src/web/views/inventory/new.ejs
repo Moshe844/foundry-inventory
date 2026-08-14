@@ -1,0 +1,110 @@
+<div class="breadcrumb">
+  <a href="/inventory">Inventory</a> <%- helpers.icon('chevron', { size: 13 }) %> <span>New item</span>
+</div>
+
+<div class="page-head">
+  <div class="titles">
+    <h1>Add an item</h1>
+    <div class="page-sub">Tell Foundry what you keep track of, and how you count it.</div>
+  </div>
+</div>
+
+<% if (typeof error !== 'undefined' && error) { %>
+  <div class="flash flash--error" role="alert" style="margin-bottom:14px;"><%- helpers.icon('alert', { size: 18 }) %><span><%= error %></span></div>
+<% } %>
+
+<form method="post" action="/inventory" autocomplete="off">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+  <div class="card" style="max-width: 720px;">
+    <div class="card-head"><h2>What are you tracking?</h2></div>
+    <div class="card-body">
+      <div class="field">
+        <label class="label" for="name">Name</label>
+        <input class="input" id="name" name="name" value="<%= form.name || '' %>" required autofocus placeholder="Copper Elbow 1/2 in.">
+        <div class="hint">What your team calls it.</div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label class="label" for="baseCode">Item code <span class="optional">optional</span></label>
+          <input class="input mono" id="baseCode" name="baseCode" value="<%= form.baseCode || '' %>" placeholder="CE-100">
+          <div class="hint">Your SKU or part number. We will generate one if you leave this blank.</div>
+        </div>
+        <div class="field">
+          <label class="label" for="unitLabel">Counted in <span class="optional">optional</span></label>
+          <input class="input" id="unitLabel" name="unitLabel" value="<%= form.unitLabel || '' %>" placeholder="unit, box, metre">
+          <div class="hint">How you say the quantity out loud.</div>
+        </div>
+      </div>
+      <div class="field">
+        <label class="label" for="description">Description <span class="optional">optional</span></label>
+        <textarea class="textarea" id="description" name="description" placeholder="Anything that helps staff recognise it."><%= form.description || '' %></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="card section reveal-host" style="max-width: 720px;">
+    <div class="card-head"><h2>How should Foundry track it?</h2></div>
+    <div class="card-body">
+      <div class="choice-grid">
+        <label class="choice">
+          <input type="radio" name="trackingMode" value="quantity" <%= (form.trackingMode || 'quantity') === 'quantity' ? 'checked' : '' %> required>
+          <span class="choice-body">
+            <strong>Quantity</strong>
+            <span>&ldquo;I mainly need to know how many I have.&rdquo;</span>
+          </span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="trackingMode" value="serial" <%= form.trackingMode === 'serial' ? 'checked' : '' %>>
+          <span class="choice-body">
+            <strong>Individual units</strong>
+            <span>&ldquo;Every physical unit has its own serial number or identity.&rdquo;</span>
+          </span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="trackingMode" value="lot" <%= form.trackingMode === 'lot' ? 'checked' : '' %>>
+          <span class="choice-body">
+            <strong>Lots / batches</strong>
+            <span>&ldquo;Groups of this item need their own lot, batch, or expiration information.&rdquo;</span>
+          </span>
+        </label>
+      </div>
+
+      <div class="field" style="margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft);">
+        <label class="checkbox">
+          <input type="checkbox" name="hasVariants" value="1" data-reveal-toggle <%= form.hasVariants ? 'checked' : '' %>>
+          <span class="checkbox-text">
+            <strong>This item comes in options such as size or colour</strong>
+            <small>Each option combination is counted separately. It still works with any of the choices above.</small>
+          </span>
+        </label>
+      </div>
+
+      <div data-reveal style="margin-top: 14px;">
+        <div class="notice" style="margin-bottom: 12px;">
+          <%- helpers.icon('tag', { size: 16 }) %>
+          <span>List the choices for each option, separated by commas. Foundry creates one tracked variant per combination.</span>
+        </div>
+        <div class="option-row">
+          <input class="input" name="options[0][name]" placeholder="Colour" value="<%= (form.options && form.options[0] && form.options[0].name) || '' %>">
+          <input class="input" name="options[0][values]" placeholder="Navy, Cream" value="<%= (form.options && form.options[0] && form.options[0].values) || '' %>">
+        </div>
+        <div class="option-row">
+          <input class="input" name="options[1][name]" placeholder="Size" value="<%= (form.options && form.options[1] && form.options[1].name) || '' %>">
+          <input class="input" name="options[1][values]" placeholder="4, 5, 6" value="<%= (form.options && form.options[1] && form.options[1].values) || '' %>">
+        </div>
+        <div class="option-row">
+          <input class="input" name="options[2][name]" placeholder="Another option (optional)" value="<%= (form.options && form.options[2] && form.options[2].name) || '' %>">
+          <input class="input" name="options[2][values]" placeholder="Values, separated, by commas" value="<%= (form.options && form.options[2] && form.options[2].values) || '' %>">
+        </div>
+      </div>
+    </div>
+    <div class="card-foot" style="display:flex; gap:10px; align-items:center;">
+      <span class="muted">You can add stock straight after saving.</span>
+      <span style="margin-left:auto; display:flex; gap:8px;">
+        <a class="btn" href="/inventory">Cancel</a>
+        <button class="btn btn--primary" type="submit">Create item</button>
+      </span>
+    </div>
+  </div>
+</form>

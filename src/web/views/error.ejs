@@ -1,0 +1,14 @@
+<div class="card">
+  <div class="empty">
+    <div class="icon-wrap"><%- helpers.icon(status === 404 ? 'empty' : 'alert', { size: 22 }) %></div>
+    <h3><%= status === 404 ? 'We could not find that' : 'Something went wrong' %></h3>
+    <p><%= message %></p>
+    <div class="btn-row" style="justify-content: center;">
+      <a class="btn btn--primary" href="/">Back to overview</a>
+      <a class="btn" href="/inventory">Go to inventory</a>
+    </div>
+    <% if (typeof detail !== 'undefined' && detail) { %>
+      <pre class="mono" style="text-align:left; margin-top:20px; padding:12px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; overflow:auto; font-size:12px;"><%= detail %></pre>
+    <% } %>
+  </div>
+</div>

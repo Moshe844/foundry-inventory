@@ -1,0 +1,698 @@
+<%
+  var mode = item.tracking_mode;
+  var modeInfo = helpers.TRACKING_MODES[mode];
+  var canAct = locations.length > 0 && item.is_active;
+  var itemData = {
+    trackingMode: mode,
+    skus: skus.map(function (s) {
+      return { id: s.id, code: s.code, label: s.variant_label, perLocation: s.perLocation };
+    }),
+    lots: (lots || []).map(function (l) {
+      return {
+        id: l.id, code: l.code, skuId: l.sku_id, total: l.total, expiresAt: l.expires_at,
+        perLocation: (l.perLocation || []).map(function (p) {
+          return { locationId: p.location_id, quantity: p.quantity };
+        })
+      };
+    })
+  };
+%>
+
+<div class="breadcrumb">
+  <a href="/inventory">Inventory</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= item.name %></span>
+</div>
+
+<div class="page-head">
+  <div class="titles">
+    <h1>
+      <%= item.name %>
+      <span class="<%= helpers.trackingBadgeClass(mode) %>"><%= modeInfo.label %></span>
+      <% if (item.has_variants) { %><span class="badge badge--variant">Variants</span><% } %>
+      <% if (!item.is_active) { %><span class="badge badge--muted">Archived</span><% } %>
+    </h1>
+    <div class="page-sub">
+      <span class="mono"><%= item.base_code || skus[0].code %></span>
+      <% if (item.description) { %> · <%= item.description %><% } %>
+    </div>
+  </div>
+  <div class="page-actions">
+    <button class="btn btn--ghost btn--sm" type="button" data-modal-open="modal-edit"><%- helpers.icon('settings', { size: 15 }) %> Edit details</button>
+  </div>
+</div>
+
+<% if (!canAct) { %>
+  <div class="notice notice--warn" style="margin-bottom:14px;">
+    <%- helpers.icon('alert', { size: 16 }) %>
+    <span>
+      <% if (locations.length === 0) { %>
+        Add a location before you can move stock. <a href="/locations">Go to locations</a>.
+      <% } else { %>
+        This item is archived. Restore it to record movements.
+      <% } %>
+    </span>
+  </div>
+<% } %>
+
+<%
+  // What Foundry has noticed about this record. Stated where the person is
+  // already looking, rather than only on a page they have to remember to open.
+  var findings = typeof attention !== 'undefined' ? attention : [];
+%>
+<% if (findings.length) { %>
+  <div class="item-attention">
+    <% findings.forEach(function (finding) { %>
+      <a class="item-attention-row item-attention-row--<%= finding.severityTone %>" href="/attention/<%= finding.attentionId %>">
+        <span class="badge badge--<%= finding.severityTone %>"><%= finding.categoryLabel %></span>
+        <span class="item-attention-text">
+          <strong><%= finding.title %></strong>
+          <span><%= finding.conciseSummary %></span>
+        </span>
+        <span class="item-attention-go">Why this? <%- helpers.icon('chevron', { size: 13 }) %></span>
+      </a>
+    <% }) %>
+  </div>
+<% } %>
+
+<div class="item-hero" style="margin-bottom:18px;">
+  <div class="item-total">
+    <span class="value num"><%= helpers.qty(total) %></span>
+    <span class="label"><%= helpers.plural(total, item.unit_label) %> on hand</span>
+  </div>
+  <% if (canAct) { %>
+    <div class="action-bar" style="flex:1;">
+      <button class="btn btn--primary" type="button" data-modal-open="modal-receive"><%- helpers.icon('receive', { size: 16 }) %> Receive</button>
+      <button class="btn" type="button" data-modal-open="modal-issue"><%- helpers.icon('issue', { size: 16 }) %> Issue</button>
+      <button class="btn" type="button" data-modal-open="modal-transfer" <%= locations.length < 2 ? 'disabled title="Add a second location to transfer stock"' : '' %>><%- helpers.icon('transfer', { size: 16 }) %> Transfer</button>
+      <button class="btn" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 16 }) %> Adjust</button>
+    </div>
+  <% } %>
+</div>
+
+<div class="grid grid--sidebar">
+  <div class="grid">
+    <% if (item.has_variants) { %>
+      <div class="card">
+        <div class="card-head">
+          <h2>Variants</h2>
+          <span class="spacer"></span>
+          <span class="muted" style="font-size:12.5px;"><%= skus.length %> tracked separately</span>
+          <button class="btn btn--ghost btn--sm" type="button" data-modal-open="modal-variant"><%- helpers.icon('plus', { size: 14 }) %> Add</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table table--stack">
+            <thead>
+              <tr><th>Variant</th><th>Code</th><th>Where</th><th class="right">On hand</th></tr>
+            </thead>
+            <tbody>
+              <% skus.forEach(function (sku) { %>
+                <tr id="sku-<%= sku.id %>">
+                  <td class="cell-main">
+                    <span class="cell-title"><%= sku.variant_label %></span>
+                  </td>
+                  <td class="mono" data-label="Code"><%= sku.code %></td>
+                  <td data-label="Where" class="cell-full">
+                    <% if (sku.perLocation.filter(function (p) { return p.onHand !== 0; }).length === 0) { %>
+                      <span class="muted">—</span>
+                    <% } else { %>
+                      <% sku.perLocation.filter(function (p) { return p.onHand !== 0; }).forEach(function (row) { %>
+                        <span class="pill"><%= row.locationName %> <strong class="num"><%= helpers.qty(row.onHand) %></strong></span>
+                      <% }) %>
+                    <% } %>
+                  </td>
+                  <td class="right cell-end" data-label="On hand">
+                    <strong class="num"><%= helpers.qty(sku.total) %></strong>
+                    <% if (canAct) { %>
+                      <button class="btn btn--ghost btn--sm" type="button" data-modal-open="modal-receive" data-preset-sku="<%= sku.id %>" title="Receive this variant"><%- helpers.icon('plus', { size: 14 }) %></button>
+                    <% } %>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <% } %>
+
+    <% if (mode === 'serial') { %>
+      <div class="card">
+        <div class="card-head">
+          <h2>Units</h2>
+          <span class="spacer"></span>
+          <span class="muted" style="font-size:12.5px;"><%= units.filter(function (u) { return u.status === 'in_stock'; }).length %> in stock</span>
+        </div>
+        <% if (units.length === 0) { %>
+          <div class="empty">
+            <div class="icon-wrap"><%- helpers.icon('serial', { size: 22 }) %></div>
+            <h3>No units yet</h3>
+            <p>Receive units by entering their serial numbers. Each one is then tracked on its own.</p>
+          </div>
+        <% } else { %>
+          <div class="table-wrap">
+            <table class="table table--stack">
+              <thead>
+                <tr><th>Serial number</th><% if (item.has_variants) { %><th>Variant</th><% } %><th>Location</th><th>Condition</th><th class="right">Status</th></tr>
+              </thead>
+              <tbody>
+                <% units.forEach(function (unit) { %>
+                  <tr id="unit-<%= unit.id %>">
+                    <td class="cell-main"><span class="cell-title mono"><%= unit.serial %></span></td>
+                    <% if (item.has_variants) { %><td data-label="Variant"><%= unit.variant_label || '—' %></td><% } %>
+                    <td data-label="Location"><%= unit.location_name || '—' %></td>
+                    <td data-label="Condition"><%= helpers.conditionLabel(unit.condition) %></td>
+                    <td class="right cell-end" data-label="Status">
+                      <% if (unit.status === 'in_stock') { %>
+                        <span class="badge badge--ok">In stock</span>
+                      <% } else { %>
+                        <span class="badge badge--muted">Issued</span>
+                      <% } %>
+                    </td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
+      </div>
+    <% } %>
+
+    <% if (mode === 'lot') { %>
+      <div class="card">
+        <div class="card-head">
+          <h2>Lots</h2>
+          <span class="spacer"></span>
+          <span class="muted" style="font-size:12.5px;"><%= lots.filter(function (l) { return l.total > 0; }).length %> with stock</span>
+        </div>
+        <% if (lots.length === 0) { %>
+          <div class="empty">
+            <div class="icon-wrap"><%- helpers.icon('lot', { size: 22 }) %></div>
+            <h3>No lots yet</h3>
+            <p>Receive stock with a lot or batch number and it will appear here with its expiration date.</p>
+          </div>
+        <% } else { %>
+          <div class="table-wrap">
+            <table class="table table--stack">
+              <thead>
+                <tr><th>Lot</th><% if (item.has_variants) { %><th>Variant</th><% } %><th>Expires</th><th>Where</th><th class="right">On hand</th></tr>
+              </thead>
+              <tbody>
+                <% lots.forEach(function (lot) { %>
+                  <% var state = helpers.expiryState(lot.expires_at); %>
+                  <tr id="lot-<%= lot.id %>">
+                    <td class="cell-main"><span class="cell-title mono"><%= lot.code %></span>
+                      <% if (lot.received_at) { %><span class="cell-sub">Received <%= helpers.shortDate(lot.received_at) %></span><% } %>
+                    </td>
+                    <% if (item.has_variants) { %><td data-label="Variant"><%= lot.variant_label || '—' %></td><% } %>
+                    <td data-label="Expires">
+                      <% if (state) { %>
+                        <span class="badge badge--<%= state.tone === 'danger' ? 'danger' : (state.tone === 'warn' ? 'warn' : 'muted') %>"><%= helpers.shortDate(lot.expires_at) %></span>
+                      <% } else { %><span class="muted">—</span><% } %>
+                    </td>
+                    <td data-label="Where" class="cell-full">
+                      <% if (lot.perLocation.length === 0) { %><span class="muted">—</span><% } %>
+                      <% lot.perLocation.forEach(function (row) { %>
+                        <span class="pill"><%= row.location_name %> <strong class="num"><%= helpers.qty(row.quantity) %></strong></span>
+                      <% }) %>
+                    </td>
+                    <td class="right cell-end" data-label="On hand"><strong class="num"><%= helpers.qty(lot.total) %></strong></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
+      </div>
+    <% } %>
+
+    <% if (!item.has_variants && mode === 'quantity') { %>
+      <div class="card">
+        <div class="card-head"><h2>Stock by location</h2></div>
+        <% if (locationTotals.length === 0) { %>
+          <div class="empty">
+            <div class="icon-wrap"><%- helpers.icon('box', { size: 22 }) %></div>
+            <h3>Nothing on hand</h3>
+            <p>Receive stock into a location to start tracking this item.</p>
+            <% if (canAct) { %><button class="btn btn--primary" type="button" data-modal-open="modal-receive">Receive stock</button><% } %>
+          </div>
+        <% } else { %>
+          <div class="table-wrap">
+            <table class="table table--stack">
+              <thead><tr><th>Location</th><th class="right">On hand</th></tr></thead>
+              <tbody>
+                <% locationTotals.forEach(function (row) { %>
+                  <tr>
+                    <td class="cell-main"><span class="cell-title"><%= row.name %></span></td>
+                    <td class="right cell-end" data-label="On hand"><strong class="num"><%= helpers.qty(row.total) %></strong></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        <% } %>
+      </div>
+    <% } %>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Recent activity</h2>
+        <span class="spacer"></span>
+        <a class="btn btn--ghost btn--sm" href="/activity?item=<%= item.id %>">Full history <%- helpers.icon('chevron', { size: 14 }) %></a>
+      </div>
+      <% if (recent.length === 0) { %>
+        <div class="empty">
+          <div class="icon-wrap"><%- helpers.icon('activity', { size: 22 }) %></div>
+          <h3>Nothing has happened yet</h3>
+          <p>Every receipt, issue, transfer and adjustment for this item will be listed here.</p>
+        </div>
+      <% } else { %>
+        <%- include('../partials/ledger', { groups: recent, helpers: helpers }) %>
+      <% } %>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><h2>Details</h2></div>
+      <div class="card-body">
+        <dl class="kv">
+          <dt>Item code</dt><dd class="mono"><%= item.base_code || '—' %></dd>
+          <dt>Tracking</dt><dd><%= modeInfo.staffLabel %><%= item.has_variants ? ', by variant' : '' %></dd>
+          <dt>Counted in</dt><dd><%= helpers.plural(2, item.unit_label) %></dd>
+          <% if (item.has_variants) { %>
+            <dt>Options</dt><dd><%= options.map(function (o) { return o.name; }).join(', ') %></dd>
+          <% } %>
+          <dt>Added</dt><dd><%= helpers.shortDate(item.created_at) %></dd>
+          <% if (item.allow_negative) { %>
+            <dt>Negative stock</dt><dd><span class="badge badge--warn">Allowed</span></dd>
+          <% } %>
+        </dl>
+      </div>
+    </div>
+
+    <% if (locationTotals.length > 0) { %>
+      <div class="card">
+        <div class="card-head"><h2>Where it is</h2></div>
+        <div class="card-body">
+          <% var maxTotal = locationTotals.reduce(function (m, l) { return Math.max(m, l.total); }, 0) || 1; %>
+          <div class="location-bars">
+            <% locationTotals.forEach(function (row) { %>
+              <div class="location-bar">
+                <span class="name"><%= row.name %></span>
+                <span class="value num"><%= helpers.qty(row.total) %></span>
+                <span class="track"><span class="fill" style="width: <%= Math.round((row.total / maxTotal) * 100) %>%"></span></span>
+              </div>
+            <% }) %>
+          </div>
+        </div>
+      </div>
+    <% } %>
+
+    <% if (item.is_active) { %>
+      <form class="card" method="post" action="/inventory/<%= item.id %>/archive" data-confirm="Archive <%= item.name %>? It will be hidden from the inventory list.">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="card-body" style="display:flex; align-items:center; gap:12px;">
+          <div style="flex:1;">
+            <strong style="font-size:13px;">Archive item</strong>
+            <div class="muted" style="font-size:12.5px;">Only possible when nothing is on hand.</div>
+          </div>
+          <button class="btn btn--danger btn--sm" type="submit">Archive</button>
+        </div>
+      </form>
+    <% } else { %>
+      <form class="card" method="post" action="/inventory/<%= item.id %>/archive">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="restore" value="1">
+        <div class="card-body" style="display:flex; align-items:center; gap:12px;">
+          <div style="flex:1;"><strong style="font-size:13px;">Restore item</strong></div>
+          <button class="btn btn--sm" type="submit">Restore</button>
+        </div>
+      </form>
+    <% } %>
+  </div>
+</div>
+
+<script type="application/json" id="item-data"><%- JSON.stringify(itemData) %></script>
+
+<!-- ------------------------------------------------------------- modals -- -->
+
+<dialog class="modal" id="modal-edit">
+  <form method="post" action="/inventory/<%= item.id %>/details">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="modal-head">
+      <h2>Edit item details</h2>
+      <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label class="label" for="edit-name">Name</label>
+        <input class="input" id="edit-name" name="name" value="<%= item.name %>" required>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label class="label" for="edit-code">Item code</label>
+          <input class="input mono" id="edit-code" name="baseCode" value="<%= item.base_code || '' %>">
+        </div>
+        <div class="field">
+          <label class="label" for="edit-unit">Counted in</label>
+          <input class="input" id="edit-unit" name="unitLabel" value="<%= item.unit_label %>">
+        </div>
+      </div>
+      <div class="field">
+        <label class="label" for="edit-description">Description</label>
+        <textarea class="textarea" id="edit-description" name="description"><%= item.description || '' %></textarea>
+      </div>
+      <% if (mode === 'quantity') { %>
+        <div class="field">
+          <label class="checkbox">
+            <input type="checkbox" name="allowNegative" value="1" <%= item.allow_negative ? 'checked' : '' %>>
+            <span class="checkbox-text">
+              <strong>Allow stock to go negative</strong>
+              <small>Off by default. Only turn this on if your process records issues before receipts.</small>
+            </span>
+          </label>
+        </div>
+      <% } %>
+      <div class="notice">
+        <%- helpers.icon('shield', { size: 16 }) %>
+        <span>How this item is tracked (<%= modeInfo.label.toLowerCase() %>) cannot change once it exists, because past movements are recorded against it.</span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" type="button" data-modal-close>Cancel</button>
+      <button class="btn btn--primary" type="submit">Save details</button>
+    </div>
+  </form>
+</dialog>
+
+<% if (item.has_variants) { %>
+  <dialog class="modal" id="modal-variant">
+    <form method="post" action="/inventory/<%= item.id %>/variants">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="modal-head">
+        <h2>Add a variant</h2>
+        <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
+      </div>
+      <div class="modal-body">
+        <% options.forEach(function (option) { %>
+          <div class="field">
+            <label class="label" for="variant-<%= option.id %>"><%= option.name %></label>
+            <input class="input" id="variant-<%= option.id %>" name="optionValues[<%= option.id %>]" required>
+          </div>
+        <% }) %>
+        <div class="hint">A new tracked variant is created with its own stock, starting at zero.</div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" type="button" data-modal-close>Cancel</button>
+        <button class="btn btn--primary" type="submit">Add variant</button>
+      </div>
+    </form>
+  </dialog>
+<% } %>
+
+<% if (canAct) { %>
+  <!-- Receive -->
+  <dialog class="modal" id="modal-receive">
+    <form method="post" action="/inventory/<%= item.id %>/receive" data-stock-form>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="modal-head">
+        <span class="ledger-icon ledger-icon--receive"><%- helpers.icon('receive', { size: 16 }) %></span>
+        <h2>Receive stock</h2>
+        <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
+      </div>
+      <div class="modal-body">
+        <%- include('../partials/form-sku', { item: item, skus: skus, idPrefix: 'receive' }) %>
+        <div class="field">
+          <label class="label" for="receive-location">Into location</label>
+          <select class="select" id="receive-location" name="locationId" required>
+            <% locations.forEach(function (location) { %>
+              <option value="<%= location.id %>"><%= location.name %></option>
+            <% }) %>
+          </select>
+          <div class="hint" data-onhand></div>
+        </div>
+
+        <% if (mode === 'serial') { %>
+          <div class="field">
+            <label class="label" for="receive-serials">Serial numbers</label>
+            <textarea class="textarea mono" id="receive-serials" name="serials" required placeholder="DL-829193&#10;DL-829194" rows="5"></textarea>
+            <div class="hint">One per line. Each becomes its own tracked unit.</div>
+          </div>
+          <div class="field">
+            <label class="label" for="receive-condition">Condition</label>
+            <select class="select" id="receive-condition" name="condition">
+              <% helpers.CONDITIONS.forEach(function (condition) { %>
+                <option value="<%= condition.id %>"><%= condition.label %></option>
+              <% }) %>
+            </select>
+          </div>
+        <% } else { %>
+          <div class="field">
+            <label class="label" for="receive-quantity">Quantity</label>
+            <input class="input num" id="receive-quantity" name="quantity" type="number" min="1" step="1" required inputmode="numeric" placeholder="0">
+          </div>
+        <% } %>
+
+        <% if (mode === 'lot') { %>
+          <div class="field">
+            <label class="label" for="receive-lot">Lot or batch number</label>
+            <input class="input mono" id="receive-lot" name="lotCode" required placeholder="L240812">
+            <div class="hint">Receiving into an existing lot adds to it.</div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label class="label" for="receive-lot-received">Received on <span class="optional">optional</span></label>
+              <input class="input" id="receive-lot-received" name="lotReceivedAt" type="date">
+            </div>
+            <div class="field">
+              <label class="label" for="receive-expires">Expires <span class="optional">optional</span></label>
+              <input class="input" id="receive-expires" name="expiresAt" type="date">
+            </div>
+          </div>
+        <% } %>
+
+        <div class="field-row">
+          <div class="field">
+            <label class="label" for="receive-reference">Reference <span class="optional">optional</span></label>
+            <input class="input" id="receive-reference" name="reference" placeholder="Delivery note">
+          </div>
+          <div class="field">
+            <label class="label" for="receive-notes">Notes <span class="optional">optional</span></label>
+            <input class="input" id="receive-notes" name="notes">
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" type="button" data-modal-close>Cancel</button>
+        <button class="btn btn--primary" type="submit">Receive</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Issue -->
+  <dialog class="modal" id="modal-issue">
+    <form method="post" action="/inventory/<%= item.id %>/issue" data-stock-form>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="modal-head">
+        <span class="ledger-icon ledger-icon--issue"><%- helpers.icon('issue', { size: 16 }) %></span>
+        <h2>Issue stock</h2>
+        <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
+      </div>
+      <div class="modal-body">
+        <%- include('../partials/form-sku', { item: item, skus: skus, idPrefix: 'issue' }) %>
+        <div class="field">
+          <label class="label" for="issue-location">From location</label>
+          <select class="select" id="issue-location" name="locationId" required>
+            <% locations.forEach(function (location) { %>
+              <option value="<%= location.id %>"><%= location.name %></option>
+            <% }) %>
+          </select>
+          <div class="hint" data-onhand></div>
+        </div>
+
+        <% if (mode === 'serial') { %>
+          <%- include('../partials/units-picker', { units: units, helpers: helpers, label: 'Units to issue' }) %>
+        <% } else { %>
+          <% if (mode === 'lot') { %>
+            <div class="field">
+              <label class="label" for="issue-lot">From lot</label>
+              <select class="select" id="issue-lot" name="lotId" required>
+                <option value="">Choose a lot</option>
+                <% lots.forEach(function (lot) { %>
+                  <option value="<%= lot.id %>"><%= lot.code %></option>
+                <% }) %>
+              </select>
+            </div>
+          <% } %>
+          <div class="field">
+            <label class="label" for="issue-quantity">Quantity</label>
+            <input class="input num" id="issue-quantity" name="quantity" type="number" min="1" step="1" required inputmode="numeric">
+          </div>
+        <% } %>
+
+        <div class="field">
+          <label class="label" for="issue-reason">Reason <span class="optional">optional</span></label>
+          <select class="select" id="issue-reason" name="reasonCode">
+            <option value="">Not specified</option>
+            <% helpers.ISSUE_REASONS.forEach(function (reason) { %>
+              <option value="<%= reason.id %>"><%= reason.label %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label class="label" for="issue-reference">Reference <span class="optional">optional</span></label>
+            <input class="input" id="issue-reference" name="reference" placeholder="Job or order number">
+          </div>
+          <div class="field">
+            <label class="label" for="issue-notes">Notes <span class="optional">optional</span></label>
+            <input class="input" id="issue-notes" name="notes">
+          </div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" type="button" data-modal-close>Cancel</button>
+        <button class="btn btn--primary" type="submit">Issue</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Transfer -->
+  <dialog class="modal" id="modal-transfer">
+    <form method="post" action="/inventory/<%= item.id %>/transfer" data-stock-form>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="modal-head">
+        <span class="ledger-icon ledger-icon--transfer"><%- helpers.icon('transfer', { size: 16 }) %></span>
+        <h2>Transfer stock</h2>
+        <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
+      </div>
+      <div class="modal-body">
+        <%- include('../partials/form-sku', { item: item, skus: skus, idPrefix: 'transfer' }) %>
+        <div class="field-row">
+          <div class="field">
+            <label class="label" for="transfer-from">From</label>
+            <select class="select" id="transfer-from" name="fromLocationId" required>
+              <% locations.forEach(function (location) { %>
+                <option value="<%= location.id %>"><%= location.name %></option>
+              <% }) %>
+            </select>
+            <div class="hint" data-onhand></div>
+          </div>
+          <div class="field">
+            <label class="label" for="transfer-to">To</label>
+            <select class="select" id="transfer-to" name="toLocationId" required>
+              <% locations.forEach(function (location, index) { %>
+                <option value="<%= location.id %>" <%= index === 1 ? 'selected' : '' %>><%= location.name %></option>
+              <% }) %>
+            </select>
+          </div>
+        </div>
+
+        <% if (mode === 'serial') { %>
+          <%- include('../partials/units-picker', { units: units, helpers: helpers, label: 'Units to move' }) %>
+        <% } else { %>
+          <% if (mode === 'lot') { %>
+            <div class="field">
+              <label class="label" for="transfer-lot">From lot</label>
+              <select class="select" id="transfer-lot" name="lotId" required>
+                <option value="">Choose a lot</option>
+                <% lots.forEach(function (lot) { %>
+                  <option value="<%= lot.id %>"><%= lot.code %></option>
+                <% }) %>
+              </select>
+            </div>
+          <% } %>
+          <div class="field">
+            <label class="label" for="transfer-quantity">Quantity</label>
+            <input class="input num" id="transfer-quantity" name="quantity" type="number" min="1" step="1" required inputmode="numeric">
+          </div>
+        <% } %>
+
+        <div class="field-row">
+          <div class="field">
+            <label class="label" for="transfer-reference">Reference <span class="optional">optional</span></label>
+            <input class="input" id="transfer-reference" name="reference">
+          </div>
+          <div class="field">
+            <label class="label" for="transfer-notes">Notes <span class="optional">optional</span></label>
+            <input class="input" id="transfer-notes" name="notes">
+          </div>
+        </div>
+        <div class="notice">
+          <%- helpers.icon('shield', { size: 16 }) %>
+          <span>Transfers move stock in one step. Nothing is created or lost along the way.</span>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" type="button" data-modal-close>Cancel</button>
+        <button class="btn btn--primary" type="submit">Transfer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Adjust -->
+  <dialog class="modal" id="modal-adjust">
+    <form method="post" action="/inventory/<%= item.id %>/adjust" data-stock-form>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="modal-head">
+        <span class="ledger-icon ledger-icon--adjust"><%- helpers.icon('adjust', { size: 16 }) %></span>
+        <h2><%= mode === 'serial' ? 'Write off units' : 'Adjust stock' %></h2>
+        <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
+      </div>
+      <div class="modal-body">
+        <%- include('../partials/form-sku', { item: item, skus: skus, idPrefix: 'adjust' }) %>
+        <div class="field">
+          <label class="label" for="adjust-location">Location</label>
+          <select class="select" id="adjust-location" name="locationId" required>
+            <% locations.forEach(function (location) { %>
+              <option value="<%= location.id %>"><%= location.name %></option>
+            <% }) %>
+          </select>
+        </div>
+
+        <% if (mode === 'serial') { %>
+          <%- include('../partials/units-picker', { units: units, helpers: helpers, label: 'Units that are missing or written off' }) %>
+        <% } else { %>
+          <% if (mode === 'lot') { %>
+            <div class="field">
+              <label class="label" for="adjust-lot">Lot</label>
+              <select class="select" id="adjust-lot" name="lotId" required>
+                <option value="">Choose a lot</option>
+                <% lots.forEach(function (lot) { %>
+                  <option value="<%= lot.id %>"><%= lot.code %></option>
+                <% }) %>
+              </select>
+            </div>
+          <% } %>
+          <div class="field-row">
+            <div class="field">
+              <label class="label">Foundry expects</label>
+              <input class="input num" value="0" data-expected readonly tabindex="-1" aria-readonly="true">
+            </div>
+            <div class="field">
+              <label class="label" for="adjust-counted">Physical count</label>
+              <input class="input num" id="adjust-counted" name="countedQty" type="number" min="0" step="1" required inputmode="numeric">
+            </div>
+          </div>
+        <% } %>
+
+        <div class="field">
+          <label class="label" for="adjust-reason">Reason</label>
+          <select class="select" id="adjust-reason" name="reasonCode" required>
+            <option value="">Choose a reason</option>
+            <% helpers.ADJUSTMENT_REASONS.forEach(function (reason) { %>
+              <option value="<%= reason.id %>"><%= reason.label %></option>
+            <% }) %>
+          </select>
+          <div class="hint">Adjustments always need a reason. It is stored with the movement.</div>
+        </div>
+        <div class="field">
+          <label class="label" for="adjust-notes">Notes <span class="optional">optional</span></label>
+          <input class="input" id="adjust-notes" name="notes" placeholder="Anything the next person should know">
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" type="button" data-modal-close>Cancel</button>
+        <button class="btn btn--primary" type="submit"><%= mode === 'serial' ? 'Write off' : 'Save adjustment' %></button>
+      </div>
+    </form>
+  </dialog>
+<% } %>

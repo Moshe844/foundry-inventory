@@ -1,0 +1,56 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Search</h1>
+    <div class="page-sub">
+      <% if (searchTerm) { %>
+        <%= results.length %> <%= helpers.plural(results.length, 'result') %> for &ldquo;<%= searchTerm %>&rdquo;
+      <% } else { %>
+        Find items, variants, serial numbers and lots.
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<form class="filters" method="get" action="/search">
+  <input class="input filter-search" type="search" name="q" value="<%= searchTerm %>" placeholder="Item name, SKU, serial number or lot" autofocus aria-label="Search">
+  <button class="btn btn--primary btn--sm" type="submit">Search</button>
+</form>
+
+<div class="card">
+  <% if (!searchTerm) { %>
+    <div class="empty">
+      <div class="icon-wrap"><%- helpers.icon('search', { size: 22 }) %></div>
+      <h3>What are you looking for?</h3>
+      <p>Search by item name, SKU, variant, serial number or lot number. Press <kbd>/</kbd> anywhere to jump to the search box.</p>
+    </div>
+  <% } else if (results.length === 0) { %>
+    <div class="empty">
+      <div class="icon-wrap"><%- helpers.icon('empty', { size: 22 }) %></div>
+      <h3>Nothing matched &ldquo;<%= searchTerm %>&rdquo;</h3>
+      <p>Check the spelling, or try part of the code instead of the whole thing.</p>
+      <a class="btn" href="/inventory">Browse inventory</a>
+    </div>
+  <% } else { %>
+    <div class="table-wrap">
+      <table class="table table--stack">
+        <thead><tr><th>Result</th><th>Type</th><th class="right">Status</th></tr></thead>
+        <tbody>
+          <% results.forEach(function (result) { %>
+            <tr>
+              <td class="cell-main">
+                <a class="cell-title" href="<%= result.href %>"><%= result.title %></a>
+                <span class="cell-sub"><%= result.subtitle %></span>
+              </td>
+              <td data-label="Type">
+                <span class="badge badge--<%= result.type === 'serial' ? 'serial' : (result.type === 'lot' ? 'lot' : (result.type === 'variant' ? 'variant' : 'quantity')) %>">
+                  <%= result.type === 'sku' ? 'Item' : result.type.charAt(0).toUpperCase() + result.type.slice(1) %>
+                </span>
+              </td>
+              <td class="right cell-end" data-label="Status"><span class="muted"><%= result.meta %></span></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>

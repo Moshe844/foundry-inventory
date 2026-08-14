@@ -1,0 +1,45 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/inventories"><%- helpers.icon('chevron', { size: 14 }) %> Your inventories</a>
+    <h1>New inventory</h1>
+    <div class="page-sub">
+      A separate inventory with its own items, locations, history and Foundry setup.
+      Nothing is shared with the ones you already have.
+    </div>
+  </div>
+</div>
+
+<div class="card section" style="max-width: 560px;">
+  <div class="card-body">
+    <% if (error) { %>
+      <p class="is-warn" style="margin-bottom:12px;"><%= error %></p>
+    <% } %>
+
+    <form method="post" action="/inventories">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="field">
+        <label class="label" for="name">What do you want to call it?</label>
+        <input class="input" id="name" name="name" type="text" maxlength="120" required autofocus
+               value="<%= form.name || '' %>" placeholder="Clothing Business">
+        <p class="hint">
+          The name of the business, site or programme this inventory is for —
+          not a location inside it. You can add locations once it exists.
+        </p>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn" href="/inventories">Cancel</a>
+        <span class="spacer"></span>
+        <button class="btn btn--primary" type="submit" <%= allowance.exceeded ? 'disabled' : '' %>>
+          Create and set up with Foundry
+        </button>
+      </div>
+    </form>
+
+    <% if (allowance.exceeded) { %>
+      <p class="muted" style="font-size:12.5px; margin-top:10px;">
+        You are using all <%= allowance.limit %> inventories included in the <%= allowance.planId %> plan.
+      </p>
+    <% } %>
+  </div>
+</div>

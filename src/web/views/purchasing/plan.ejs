@@ -1,0 +1,178 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>What to order</h1>
+    <div class="page-sub">
+      Foundry worked this out from what you have, what is already coming, and what you have been using.
+      Nothing is ordered until you approve it.
+    </div>
+  </div>
+</div>
+
+<% if (late.length || arriving.length) { %>
+  <div class="grid grid--2 section">
+    <% if (late.length) { %>
+      <div class="card card--warn">
+        <div class="card-head"><h2>Past their expected date</h2></div>
+        <div class="card-body">
+          <ul class="plain-list">
+            <% late.forEach(function (po) { %>
+              <li>
+                <a href="/purchasing/orders/<%= po.id %>"><%= po.po_number %></a> ·
+                <%= po.supplier_name %> · <%= po.daysLate %> day<%= po.daysLate === 1 ? '' : 's' %> late ·
+                <%= po.outstanding_units %> outstanding
+              </li>
+            <% }) %>
+          </ul>
+        </div>
+      </div>
+    <% } %>
+    <% if (arriving.length) { %>
+      <div class="card">
+        <div class="card-head"><h2>Arriving this week</h2></div>
+        <div class="card-body">
+          <ul class="plain-list">
+            <% arriving.forEach(function (po) { %>
+              <li>
+                <a href="/purchasing/orders/<%= po.id %>"><%= po.po_number %></a> ·
+                <%= po.supplier_name %> · expected <%= po.expected_date %> ·
+                <%= po.outstanding_units %> unit<%= po.outstanding_units === 1 ? '' : 's' %>
+              </li>
+            <% }) %>
+          </ul>
+        </div>
+      </div>
+    <% } %>
+  </div>
+<% } %>
+
+<% if (plan.recommendations.length === 0) { %>
+  <div class="card section">
+    <div class="card-head">
+      <h2>Nothing needs ordering</h2>
+      <span class="spacer"></span>
+      <span class="badge badge--ok">All covered</span>
+    </div>
+    <div class="card-body">
+      <p class="lede">
+        Foundry checked every line against its usage and what is already on order, and none of them
+        are below their reorder point.
+      </p>
+      <% if (plan.covered.length) { %>
+        <table class="table table--tight">
+          <thead><tr><th>Product</th><th class="num">On hand</th><th class="num">On order</th><th>Why not</th></tr></thead>
+          <tbody>
+            <% plan.covered.slice(0, 10).forEach(function (line) { %>
+              <tr>
+                <td><a href="/purchasing/why/<%= line.skuId %>"><%= line.displayName %></a></td>
+                <td class="num"><%= line.onHand %></td>
+                <td class="num"><%= line.onOrder %></td>
+                <td class="muted"><%= line.explanation %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      <% } %>
+      <% if (plan.blocked.length) { %>
+        <h3 class="sub-head">Foundry cannot assess these yet</h3>
+        <ul class="plain-list">
+          <% plan.blocked.slice(0, 8).forEach(function (line) { %>
+            <li><strong><%= line.displayName %></strong> — <%= line.headline %></li>
+          <% }) %>
+        </ul>
+      <% } %>
+    </div>
+  </div>
+<% } else { %>
+
+  <div class="card section">
+    <div class="card-head">
+      <h2>Foundry prepared today's replenishment</h2>
+      <span class="spacer"></span>
+      <span class="badge badge--muted"><%= plan.recommendations.length %> line<%= plan.recommendations.length === 1 ? '' : 's' %></span>
+    </div>
+    <div class="card-body">
+      <p class="lede">
+        <%= plan.recommendations.length %> line<%= plan.recommendations.length === 1 ? '' : 's' %>
+        <%= plan.recommendations.length === 1 ? 'is' : 'are' %> at or below the reorder point,
+        across <%= plan.bySupplier.length %> supplier<%= plan.bySupplier.length === 1 ? '' : 's' %>.
+      </p>
+
+      <% plan.bySupplier.forEach(function (group) { %>
+        <div class="act-ledger">
+          <div class="act-row act-row--total">
+            <span class="act-place"><strong><%= group.supplierName %></strong></span>
+            <span class="act-move">
+              <%= group.lines.length %> item<%= group.lines.length === 1 ? '' : 's' %>
+              <% if (group.estimatedTotal) { %>
+                · <span class="num"><%= group.estimatedTotal.toFixed(2) %></span><% if (group.hasUnpricedLines) { %>+<% } %>
+              <% } %>
+            </span>
+          </div>
+          <% group.lines.forEach(function (line) { %>
+            <div class="act-row">
+              <span class="act-place">
+                <a href="/purchasing/why/<%= line.skuId %>"><%= line.displayName %></a>
+                <div class="muted">
+                  on hand <%= line.onHand %> · on order <%= line.onOrder %> ·
+                  reorder point <%= line.reorderPoint %>
+                  <% if (line.urgency === 'may_run_out_first') { %>
+                    · <span class="is-warn">may run out before a delivery arrives</span>
+                  <% } %>
+                </div>
+              </span>
+              <span class="act-move">
+                <span class="num"><%= line.quantityUnits %></span>
+                <% if (line.quantityPurchaseUnits !== line.quantityUnits) { %>
+                  <span class="muted">(<%= line.quantityPurchaseUnits %> <%= line.purchaseUnit %>)</span>
+                <% } %>
+              </span>
+            </div>
+          <% }) %>
+        </div>
+        <% if (permissions.create) { %>
+          <form method="post" action="/purchasing/prepare/<%= group.supplierId %>" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn btn--primary" type="submit">Review <%= group.supplierName %> order</button>
+          </form>
+        <% } %>
+      <% }) %>
+    </div>
+  </div>
+<% } %>
+
+<div class="card section">
+  <div class="card-head">
+    <h2>Open orders</h2>
+    <span class="spacer"></span>
+    <div class="btn-row">
+      <a class="btn btn--sm" href="/purchasing/orders">All orders</a>
+      <a class="btn btn--sm" href="/suppliers">Suppliers</a>
+      <% if (permissions.create) { %>
+        <a class="btn btn--sm" href="/purchasing/orders/new">New order</a>
+      <% } %>
+      <% if (permissions.receive) { %>
+        <a class="btn btn--sm" href="/purchasing/receive">Book in a delivery</a>
+      <% } %>
+    </div>
+  </div>
+  <% if (open.length === 0) { %>
+    <div class="card-body"><p class="muted">Nothing is on order at the moment.</p></div>
+  <% } else { %>
+    <table class="table table--tight">
+      <thead>
+        <tr><th>Order</th><th>Supplier</th><th>Status</th><th>Expected</th><th class="num">Outstanding</th></tr>
+      </thead>
+      <tbody>
+        <% open.forEach(function (po) { %>
+          <tr>
+            <td><a href="/purchasing/orders/<%= po.id %>"><%= po.po_number %></a></td>
+            <td><%= po.supplier_name %></td>
+            <td><span class="badge badge--muted"><%= helpers.columnLabel(po.status.toLowerCase().replace('_', ' ')) %></span></td>
+            <td class="muted"><%= po.expected_date || '—' %></td>
+            <td class="num"><%= po.outstanding_units %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>

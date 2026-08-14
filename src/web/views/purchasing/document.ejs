@@ -1,0 +1,104 @@
+<%
+  // A plain document, styled for paper. Deliberately not "sent" anywhere:
+  // Foundry does not contact suppliers, so this is something a person prints,
+  // saves as a PDF from their browser, or attaches to their own email.
+%>
+<meta charset="utf-8">
+<title><%= order.poNumber %> · <%= businessName %></title>
+<style>
+  :root { color-scheme: light; }
+  body { font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #14181f; margin: 0; padding: 32px; background: #fff; }
+  .sheet { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  .muted { color: #5c6672; }
+  .row { display: flex; gap: 32px; justify-content: space-between; align-items: flex-start; }
+  .block { margin: 22px 0; }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #5c6672; margin-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e3e7ec; }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #5c6672; }
+  td.num, th.num { text-align: right; }
+  tfoot td { font-weight: 600; border-bottom: none; border-top: 2px solid #14181f; }
+  .note { margin-top: 24px; font-size: 12px; color: #5c6672; }
+  .actions { margin-bottom: 20px; }
+  @media print { .actions { display: none; } body { padding: 0; } }
+</style>
+
+<div class="sheet">
+  <div class="actions">
+    <button type="button" onclick="window.print()">Print or save as PDF</button>
+    <a href="/purchasing/orders/<%= order.id %>">Back to the order</a>
+  </div>
+
+  <div class="row">
+    <div>
+      <h1>Purchase order</h1>
+      <div class="muted"><%= order.poNumber %></div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-weight:600;"><%= businessName %></div>
+      <div class="muted">Ordered <%= order.orderDate || '—' %></div>
+      <% if (order.expectedDate) { %><div class="muted">Expected <%= order.expectedDate %></div><% } %>
+    </div>
+  </div>
+
+  <div class="row block">
+    <div>
+      <div class="label">Supplier</div>
+      <div><strong><%= supplier.name %></strong></div>
+      <% if (supplier.contactName) { %><div><%= supplier.contactName %></div><% } %>
+      <% if (supplier.email) { %><div class="muted"><%= supplier.email %></div><% } %>
+      <% if (supplier.phone) { %><div class="muted"><%= supplier.phone %></div><% } %>
+    </div>
+    <div>
+      <div class="label">Deliver to</div>
+      <div><%= order.destinationLocationName || '—' %></div>
+      <% if (supplier.paymentTerms) { %>
+        <div class="label" style="margin-top:12px;">Terms</div>
+        <div class="muted"><%= supplier.paymentTerms %></div>
+      <% } %>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Product</th><th>Supplier SKU</th><th class="num">Quantity</th>
+        <th>Unit</th><th class="num">Unit cost</th><th class="num">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% order.lines.forEach(function (line) { %>
+        <tr>
+          <td><%= line.displayName %></td>
+          <td class="muted"><%= line.supplierSku || '' %></td>
+          <td class="num"><%= line.quantityPurchaseUnits %></td>
+          <td><%= line.purchaseUnit %><%= line.unitsPerPurchaseUnit > 1 ? ' of ' + line.unitsPerPurchaseUnit : '' %></td>
+          <td class="num"><%= line.unitCost === null ? '' : line.unitCost %></td>
+          <td class="num"><%= line.lineTotal === null ? '' : line.lineTotal.toFixed(2) %></td>
+        </tr>
+      <% }) %>
+    </tbody>
+    <% if (order.hasCosts) { %>
+      <tfoot>
+        <tr>
+          <td colspan="5">Total (<%= order.currency %>)</td>
+          <td class="num"><%= order.subtotal.toFixed(2) %></td>
+        </tr>
+      </tfoot>
+    <% } %>
+  </table>
+
+  <% if (order.notes) { %>
+    <div class="block">
+      <div class="label">Notes</div>
+      <div><%= order.notes %></div>
+    </div>
+  <% } %>
+
+  <div class="note">
+    Quantities are stated in supplier units; the inventory equivalent is
+    <%= order.orderedUnits %> unit<%= order.orderedUnits === 1 ? '' : 's' %>.
+    This document was produced by Foundry Inventory and has not been sent to the supplier.
+  </div>
+</div>

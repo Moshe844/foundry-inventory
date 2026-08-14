@@ -1,0 +1,232 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/actions"><%- helpers.icon('chevron', { size: 14 }) %> Foundry actions</a>
+    <h1><%= action.title %></h1>
+    <div class="page-sub"><%= action.subjectName %></div>
+  </div>
+</div>
+
+<% if (outcome) { %>
+  <%# ---------------------------------------------------- already executed %>
+  <div class="card section <%= outcome.verified ? '' : 'card--warn' %>">
+    <div class="card-head">
+      <h2><%= outcome.verified ? 'Done' : 'Ran, but not verified' %></h2>
+      <span class="spacer"></span>
+      <span class="badge badge--<%= outcome.verified ? 'ok' : 'danger' %>">
+        <%= outcome.verified ? 'Verified against your records' : 'Needs checking' %>
+      </span>
+    </div>
+    <div class="card-body">
+      <% if (!outcome.verified) { %>
+        <p class="lede">
+          Foundry submitted this, but could not confirm the resulting inventory is what it expected.
+          Please check these records before relying on them.
+        </p>
+        <ul class="plain-list">
+          <% outcome.problems.forEach(function (problem) { %><li class="is-warn"><%= problem %></li><% }) %>
+        </ul>
+      <% } else { %>
+        <p class="lede">Foundry <%= action.verb %>ed <strong><%= outcome.name %></strong> and checked the result.</p>
+      <% } %>
+
+      <div class="act-ledger">
+        <% outcome.lines.forEach(function (line) { %>
+          <div class="act-row">
+            <span class="act-place"><%= line.label %></span>
+            <span class="act-move"><span class="num"><%= line.from %></span> <%- helpers.icon('chevron', { size: 13 }) %> <span class="num act-after"><%= line.to %></span></span>
+          </div>
+        <% }) %>
+        <div class="act-row act-row--total">
+          <span class="act-place">Total on hand</span>
+          <span class="act-move"><span class="num"><%= outcome.total.from %></span> <%- helpers.icon('chevron', { size: 13 }) %> <span class="num act-after"><%= outcome.total.to %></span></span>
+        </div>
+      </div>
+    </div>
+    <div class="card-foot">
+      <div class="btn-row">
+        <a class="btn btn--sm" href="/activity">See it in the activity ledger</a>
+        <% if (action.actionType === 'transfer') { %>
+          <form method="post" action="/actions/<%= action.proposalId %>/reverse">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn btn--sm btn--ghost" type="submit">Move it back</button>
+          </form>
+        <% } %>
+      </div>
+    </div>
+  </div>
+<% } else { %>
+  <%# ------------------------------------------------------- waiting to run %>
+  <% if (stale) { %>
+    <div class="notice notice--warn section">
+      <%- helpers.icon('alert', { size: 16 }) %>
+      <span>
+        <strong>The stock changed since Foundry worked this out.</strong>
+        <% check.problems.forEach(function (problem) { %><br><%= problem %><% }) %>
+        <% if (check.changed && check.problems.length === 0) { %>
+          <br>The figures below have been re-read from your records. Check them before approving.
+        <% } %>
+      </span>
+    </div>
+  <% } %>
+
+  <div class="grid grid--sidebar section">
+    <div class="grid">
+      <div class="card act-preview">
+        <div class="card-body">
+          <div class="act-subject">
+            <span class="act-quantity"><%= helpers.qty(action.quantity) %></span>
+            <span class="act-subject-text">
+              <strong><%= action.subject.name %></strong>
+              <% if (action.subject.detail) { %><span><%= action.subject.detail %></span><% } %>
+            </span>
+          </div>
+
+          <div class="act-ledger">
+            <% action.rows.forEach(function (row) { %>
+              <div class="act-row">
+                <span class="act-place">
+                  <%= row.label %>
+                  <small><%= row.direction === 'out' ? 'stock leaves here' : 'stock arrives here' %></small>
+                </span>
+                <span class="act-move">
+                  <span class="num"><%= row.before %></span>
+                  <%- helpers.icon('chevron', { size: 13 }) %>
+                  <span class="num act-after"><%= row.after %></span>
+                </span>
+              </div>
+            <% }) %>
+            <div class="act-row act-row--total">
+              <span class="act-place">
+                Total on hand
+                <small><%= action.totalChanges ? 'this changes how much you have' : 'unchanged — stock only moves' %></small>
+              </span>
+              <span class="act-move">
+                <span class="num"><%= action.total.before %></span>
+                <%- helpers.icon('chevron', { size: 13 }) %>
+                <span class="num act-after"><%= action.total.after %></span>
+              </span>
+            </div>
+          </div>
+
+          <% if (action.reasonLabel) { %>
+            <div class="act-reason">
+              <span class="muted">Reason on record</span>
+              <strong><%= action.reasonLabel %></strong>
+            </div>
+          <% } %>
+
+          <% if (action.originalInstruction) { %>
+            <p class="muted act-instruction">You asked: “<%= action.originalInstruction %>”</p>
+          <% } %>
+        </div>
+
+        <% if (action.warnings.length) { %>
+          <div class="act-warnings">
+            <%- helpers.icon('alert', { size: 16 }) %>
+            <div>
+              <% action.warnings.forEach(function (warning) { %><p><%= warning %></p><% }) %>
+            </div>
+          </div>
+        <% } %>
+
+        <div class="card-foot act-actions">
+          <% if (!mayApprove) { %>
+            <p class="muted">
+              You do not have permission to do this in this inventory.
+              It needs “<%= permissionLabel %>”. Ask an owner.
+            </p>
+          <% } else if (action.status === 'AWAITING_APPROVAL' || action.status === 'INVALIDATED') { %>
+            <form method="post" action="/actions/<%= action.proposalId %>/approve" data-confirm-action>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <% if (action.needsWarningConfirm) { %>
+                <label class="act-confirm">
+                  <input type="checkbox" name="acknowledged" required>
+                  <span>I have read the warning and want Foundry to do this.</span>
+                </label>
+              <% } %>
+              <div class="btn-row">
+                <button class="btn btn--primary" type="submit">
+                  <%= action.actionType === 'adjust' ? 'Approve the correction' : 'Approve ' + action.verb %>
+                </button>
+                <a class="btn" href="/actions">Not now</a>
+              </div>
+            </form>
+
+            <form method="post" action="/actions/<%= action.proposalId %>/cancel">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn--ghost btn--sm" type="submit">Discard this action</button>
+            </form>
+
+            <% if (action.canReviseQuantity) { %>
+              <form class="act-revise" method="post" action="/actions/<%= action.proposalId %>/quantity">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <label class="label" for="quantity">Change the quantity</label>
+                <div class="input-suffix">
+                  <input class="input num" id="quantity" name="quantity" type="number" min="1" step="1"
+                         value="<%= action.quantity %>" required>
+                  <button class="btn btn--sm" type="submit">Recalculate</button>
+                </div>
+              </form>
+            <% } %>
+          <% } else if (action.status === 'APPROVED') { %>
+            <a class="btn btn--primary" href="/actions/<%= action.proposalId %>/run">Carry it out</a>
+          <% } else { %>
+            <p class="muted">This action is <%= action.status.toLowerCase().replace('_', ' ') %>.</p>
+          <% } %>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-head"><h2>Before Foundry does this</h2></div>
+        <div class="table-wrap">
+          <table class="table">
+            <tbody>
+              <tr><td class="muted">Operation</td><td class="right"><%= helpers.operationLabel(action.actionType) || action.actionType %></td></tr>
+              <tr><td class="muted">Needs permission</td><td class="right"><%= permissionLabel %></td></tr>
+              <tr><td class="muted">Risk</td><td class="right"><%= action.safetyLevel === 'HIGH' ? 'Higher — read the warning' : 'Changes stock' %></td></tr>
+              <tr><td class="muted">Approval</td><td class="right"><%= action.approvalRequirement === 'CONFIRM_WITH_WARNING' ? 'Explicit, with warning' : 'Explicit' %></td></tr>
+              <tr><td class="muted">Proposed</td><td class="right"><%= helpers.timeAgo(action.createdAt) %></td></tr>
+              <tr><td class="muted">Valid until</td><td class="right"><%= helpers.dateTime(action.expiresAt) %></td></tr>
+              <tr><td class="muted">Asked for by</td><td class="right"><%= action.sourceType === 'ATTENTION_ITEM' ? 'A Foundry finding' : action.sourceType === 'COMPENSATION' ? 'Reversing an earlier action' : 'You' %></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card-foot muted" style="font-size:12px;">
+          Foundry carries this out through the same inventory engine your team uses.
+          It cannot change stock any other way.
+        </div>
+      </div>
+
+      <% if (action.assumptions.length) { %>
+        <div class="card">
+          <div class="card-head"><h2>What Foundry assumed</h2></div>
+          <div class="card-body">
+            <ul class="plain-list">
+              <% action.assumptions.forEach(function (assumption) { %><li><%= assumption %></li><% }) %>
+            </ul>
+          </div>
+        </div>
+      <% } %>
+    </div>
+  </div>
+<% } %>
+
+<div class="card section">
+  <div class="card-head"><h2>What has happened to this action</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <tbody>
+        <% history.forEach(function (event) { %>
+          <tr>
+            <td>
+              <span class="cell-title"><%= event.event.toLowerCase().replace(/_/g, ' ') %></span>
+              <span class="cell-sub"><%= event.actorName || 'Foundry' %> · <%= helpers.dateTime(event.createdAt) %></span>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</div>

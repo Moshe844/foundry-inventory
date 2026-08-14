@@ -1,0 +1,98 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Inventory</h1>
+    <div class="page-sub">Everything you track, and how much of it you have.</div>
+  </div>
+  <div class="page-actions">
+    <a class="btn btn--primary" href="/inventory/new"><%- helpers.icon('plus', { size: 16 }) %> Add item</a>
+  </div>
+</div>
+
+<form class="filters" method="get" action="/inventory">
+  <input class="input filter-search" type="search" name="q" value="<%= filters.q %>" placeholder="Search items, SKUs, serials, lots" aria-label="Search inventory">
+  <select class="select" name="tracking" aria-label="Tracking type" data-auto-submit>
+    <option value="">All tracking types</option>
+    <% Object.values(helpers.TRACKING_MODES).forEach(function (mode) { %>
+      <option value="<%= mode.id %>" <%= filters.trackingMode === mode.id ? 'selected' : '' %>><%= mode.label %></option>
+    <% }) %>
+  </select>
+  <select class="select" name="location" aria-label="Location" data-auto-submit>
+    <option value="">All locations</option>
+    <% locations.forEach(function (location) { %>
+      <option value="<%= location.id %>" <%= filters.locationId === location.id ? 'selected' : '' %>><%= location.name %></option>
+    <% }) %>
+  </select>
+  <select class="select" name="sort" aria-label="Sort" data-auto-submit>
+    <option value="name" <%= filters.sort === 'name' ? 'selected' : '' %>>Name A–Z</option>
+    <option value="stock_desc" <%= filters.sort === 'stock_desc' ? 'selected' : '' %>>Most stock</option>
+    <option value="stock_asc" <%= filters.sort === 'stock_asc' ? 'selected' : '' %>>Least stock</option>
+    <option value="newest" <%= filters.sort === 'newest' ? 'selected' : '' %>>Newest</option>
+  </select>
+  <% if (filters.includeArchived) { %><input type="hidden" name="archived" value="1"><% } %>
+  <button class="btn btn--sm" type="submit">Apply</button>
+  <% if (filters.q || filters.trackingMode || filters.locationId) { %>
+    <a class="btn btn--ghost btn--sm" href="/inventory">Clear</a>
+  <% } %>
+</form>
+
+<div class="card">
+  <% if (items.length === 0) { %>
+    <div class="empty">
+      <div class="icon-wrap"><%- helpers.icon('empty', { size: 22 }) %></div>
+      <% if (filters.q || filters.trackingMode || filters.locationId) { %>
+        <h3>Nothing matches those filters</h3>
+        <p>Try a different search term, or clear the filters to see everything you track.</p>
+        <a class="btn" href="/inventory">Clear filters</a>
+      <% } else { %>
+        <h3>No items yet</h3>
+        <p>Add the first thing you keep track of. Foundry will ask how it should be counted.</p>
+        <a class="btn btn--primary" href="/inventory/new">Add an item</a>
+      <% } %>
+    </div>
+  <% } else { %>
+    <div class="table-wrap">
+      <table class="table table--stack">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Tracking</th>
+            <th class="right">Locations</th>
+            <th class="right"><%= filters.locationId ? 'At location' : 'On hand' %></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% items.forEach(function (item) { %>
+            <tr>
+              <td class="cell-main">
+                <a class="cell-title" href="/inventory/<%= item.id %>"><%= item.name %></a>
+                <span class="cell-sub mono"><%= item.base_code || item.first_sku_code %><% if (item.has_variants) { %> · <%= item.sku_count %> variants<% } %></span>
+              </td>
+              <td data-label="Tracking">
+                <span class="<%= helpers.trackingBadgeClass(item.tracking_mode) %>"><%= helpers.TRACKING_MODES[item.tracking_mode].label %></span>
+                <% if (item.has_variants) { %><span class="badge badge--variant">Variants</span><% } %>
+                <% if (!item.is_active) { %><span class="badge badge--muted">Archived</span><% } %>
+              </td>
+              <td class="right" data-label="Locations"><span class="num"><%= item.location_count %></span></td>
+              <td class="right cell-end" data-label="On hand">
+                <strong class="num"><%= helpers.qty(item.on_hand) %></strong>
+                <% if (item.on_hand === 0) { %><span class="badge badge--muted">empty</span><% } %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <% if (page > 1 || hasMore) { %>
+      <div class="card-foot" style="display:flex; gap:8px; align-items:center;">
+        <span class="muted">Page <%= page %></span>
+        <span class="spacer" style="margin-left:auto;"></span>
+        <% if (page > 1) { %>
+          <a class="btn btn--sm" href="/inventory<%= helpers.queryString(query, { page: page - 1 }) %>">Previous</a>
+        <% } %>
+        <% if (hasMore) { %>
+          <a class="btn btn--sm" href="/inventory<%= helpers.queryString(query, { page: page + 1 }) %>">Next</a>
+        <% } %>
+      </div>
+    <% } %>
+  <% } %>
+</div>

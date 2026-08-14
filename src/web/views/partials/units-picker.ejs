@@ -1,0 +1,15 @@
+<div class="field">
+  <label class="label"><%= label %></label>
+  <div class="unit-picker">
+    <% units.filter(function (u) { return u.status === 'in_stock'; }).forEach(function (unit) { %>
+      <label class="unit-option" data-unit data-sku="<%= unit.sku_id %>" data-location="<%= unit.location_id %>">
+        <input type="checkbox" name="serialUnitIds" value="<%= unit.id %>">
+        <span class="serial"><%= unit.serial %></span>
+        <% if (unit.variant_label) { %><span class="muted" style="font-size:12px;"><%= unit.variant_label %></span><% } %>
+        <% if (unit.condition !== 'good') { %><span class="badge badge--warn"><%= helpers.conditionLabel(unit.condition) %></span><% } %>
+        <span class="where"><%= unit.location_name %></span>
+      </label>
+    <% }) %>
+  </div>
+  <div class="hint" data-unit-empty hidden>No units are in stock at that location.</div>
+</div>

@@ -1,0 +1,93 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/actions"><%- helpers.icon('chevron', { size: 14 }) %> Foundry actions</a>
+    <h1>Foundry is ready to make <%= lines.length %> changes</h1>
+    <div class="page-sub">
+      <% if (plan.originalInstruction) { %>You asked: “<%= plan.originalInstruction %>”<% } %>
+    </div>
+  </div>
+</div>
+
+<% if (done) { %>
+  <div class="card section">
+    <div class="card-head">
+      <h2><%= done.verified ? 'All done' : 'Ran, but not fully verified' %></h2>
+      <span class="spacer"></span>
+      <span class="badge badge--<%= done.verified ? 'ok' : 'danger' %>">
+        <%= done.verified ? 'Verified' : 'Needs checking' %>
+      </span>
+    </div>
+    <div class="card-body">
+      <p class="lede">
+        <%= lines.length %> changes were carried out together.
+        <%= done.verified ? 'Foundry re-read every balance afterwards and they match.' : 'Please check these records.' %>
+      </p>
+    </div>
+  </div>
+<% } else { %>
+  <div class="notice section">
+    <%- helpers.icon('shield', { size: 16 }) %>
+    <span>
+      These run together. If any one of them cannot be carried out, none of them are —
+      your inventory is never left half-changed.
+    </span>
+  </div>
+<% } %>
+
+<div class="act-plan section">
+  <% lines.forEach(function (line, index) { %>
+    <div class="card act-preview">
+      <div class="card-head">
+        <h2><%= index + 1 %>. <%= line.oneLine %></h2>
+      </div>
+      <div class="card-body">
+        <div class="act-ledger">
+          <% line.rows.forEach(function (row) { %>
+            <div class="act-row">
+              <span class="act-place"><%= row.label %></span>
+              <span class="act-move">
+                <span class="num"><%= row.before %></span>
+                <%- helpers.icon('chevron', { size: 13 }) %>
+                <span class="num act-after"><%= row.after %></span>
+              </span>
+            </div>
+          <% }) %>
+        </div>
+        <% if (line.warnings.length) { %>
+          <div class="act-warnings">
+            <%- helpers.icon('alert', { size: 15 }) %>
+            <div><% line.warnings.forEach(function (w) { %><p><%= w %></p><% }) %></div>
+          </div>
+        <% } %>
+      </div>
+    </div>
+  <% }) %>
+</div>
+
+<% if (!done) { %>
+  <div class="card section">
+    <div class="card-body act-actions">
+      <% if (!mayApprove) { %>
+        <p class="muted">You do not have permission to carry all of these out in this inventory.</p>
+      <% } else if (plan.status === 'AWAITING_APPROVAL') { %>
+        <form method="post" action="/actions/plan/<%= plan.planId %>/approve">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <% if (plan.warnings.length) { %>
+            <label class="act-confirm">
+              <input type="checkbox" name="acknowledged" required>
+              <span>I have read the warnings and want Foundry to make all <%= lines.length %> changes.</span>
+            </label>
+          <% } %>
+          <div class="btn-row">
+            <button class="btn btn--primary" type="submit">Approve all <%= lines.length %></button>
+            <a class="btn" href="/actions">Not now</a>
+          </div>
+        </form>
+      <% } else if (plan.status === 'APPROVED') { %>
+        <a class="btn btn--primary" href="/actions/plan/<%= plan.planId %>/run">Carry them out</a>
+      <% } else { %>
+        <p class="muted">This plan is <%= plan.status.toLowerCase().replace(/_/g, ' ') %>.</p>
+      <% } %>
+    </div>
+  </div>
+<% } %>

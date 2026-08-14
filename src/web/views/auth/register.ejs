@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create your account · Foundry Inventory</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230f766e'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <style>
+    .auth { min-height: 100vh; display: grid; place-items: center; padding: 28px 16px; }
+    .auth-card { width: 100%; max-width: 430px; }
+    .auth-brand { display: flex; align-items: center; gap: 10px; justify-content: center; margin-bottom: 20px; }
+    .auth-brand .brand-mark { width: 34px; height: 34px; }
+    .auth-brand strong { font-size: 17px; letter-spacing: -0.01em; }
+    .auth-title { text-align: center; margin-bottom: 18px; }
+    .auth-title h1 { font-size: 19px; }
+    .auth-title p { color: var(--muted); margin-top: 4px; font-size: 13.5px; }
+    .auth-foot { text-align: center; color: var(--muted); font-size: 13px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+<div class="auth">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <span class="brand-mark">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6l-8-3.8z"/><path d="m4 8.2 8 3.8 8-3.8M12 12v7.6"/></svg>
+      </span>
+      <strong>Foundry Inventory</strong>
+    </div>
+
+    <div class="auth-title">
+      <h1>Create your account</h1>
+      <p>One account, and your first inventory. You can add more inventories later.</p>
+    </div>
+
+    <% if (flash && flash.length) { %>
+      <div class="flash-stack">
+        <% flash.forEach(function (message) { %>
+          <div class="flash flash--<%= message.type %>" role="alert"><span><%= message.message %></span></div>
+        <% }) %>
+      </div>
+    <% } %>
+
+    <div class="card">
+      <div class="card-body">
+        <form method="post" action="/register">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="field">
+            <label class="label" for="workspaceName">Name your first inventory</label>
+            <input class="input" id="workspaceName" name="workspaceName" value="<%= form.workspaceName || '' %>" required autofocus placeholder="Clothing Business">
+            <div class="hint">The business, site or programme this inventory is for.</div>
+          </div>
+          <div class="field">
+            <label class="label" for="name">Your name</label>
+            <input class="input" id="name" name="name" value="<%= form.name || '' %>" required autocomplete="name">
+          </div>
+          <div class="field">
+            <label class="label" for="email">Work email</label>
+            <input class="input" id="email" name="email" type="email" value="<%= form.email || '' %>" required autocomplete="username">
+          </div>
+          <div class="field">
+            <label class="label" for="password">Password</label>
+            <input class="input" id="password" name="password" type="password" required minlength="8" autocomplete="new-password">
+            <div class="hint">At least 8 characters.</div>
+          </div>
+          <button class="btn btn--primary btn--block" type="submit">Create account</button>
+        </form>
+      </div>
+    </div>
+
+    <p class="auth-foot">Already have an account? <a href="/login">Sign in</a></p>
+  </div>
+</div>
+</body>
+</html>

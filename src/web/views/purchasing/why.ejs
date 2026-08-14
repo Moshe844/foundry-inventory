@@ -1,0 +1,144 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/purchasing"><%- helpers.icon('chevron', { size: 14 }) %> What to order</a>
+    <h1><%= line.displayName %></h1>
+    <div class="page-sub"><%= line.headline %></div>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head">
+    <h2><%= line.recommend ? 'Why this quantity' : 'Why nothing' %></h2>
+    <span class="spacer"></span>
+    <% if (line.recommend) { %>
+      <span class="badge badge--muted">
+        <%= line.quantityUnits %> <%= line.unitLabel %><%= line.quantityUnits === 1 ? '' : 's' %>
+      </span>
+    <% } else { %>
+      <span class="badge badge--ok">No order</span>
+    <% } %>
+  </div>
+  <div class="card-body">
+    <p class="lede"><%= line.explanation %></p>
+
+    <h3 class="sub-head">The figures</h3>
+    <table class="table table--tight">
+      <tbody>
+        <% line.evidence.forEach(function (row) { %>
+          <tr>
+            <td><%= row.label %></td>
+            <td class="num"><%= row.value %></td>
+            <td class="muted"><%= row.note || '' %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+
+    <% if (line.calculation && line.calculation.length) { %>
+      <h3 class="sub-head">The calculation, step by step</h3>
+      <ol class="plain-list">
+        <% line.calculation.forEach(function (step) { %>
+          <li><%= step.detail %></li>
+        <% }) %>
+      </ol>
+    <% } %>
+
+    <% if (line.supplierChoice && line.alternatives && line.alternatives.length) { %>
+      <h3 class="sub-head">Supplier</h3>
+      <p><%= line.supplierChoice.because %>.</p>
+      <table class="table table--tight">
+        <thead><tr><th>Supplier</th><th class="num">Unit cost</th><th class="num">Lead time</th><th>Pack</th></tr></thead>
+        <tbody>
+          <% if (line.supplier) { %>
+            <tr>
+              <td><strong><%= line.supplier.supplierName %></strong> <span class="badge badge--ok">chosen</span></td>
+              <td class="num"><%= line.supplier.unitCost === null ? '—' : line.supplier.unitCost %></td>
+              <td class="num"><%= line.supplier.leadTimeDays === null ? '—' : line.supplier.leadTimeDays + ' days' %></td>
+              <td class="muted"><%= line.supplier.unitsPerPurchaseUnit > 1 ? line.supplier.purchaseUnit + ' of ' + line.supplier.unitsPerPurchaseUnit : line.supplier.purchaseUnit %></td>
+            </tr>
+          <% } %>
+          <% line.alternatives.forEach(function (option) { %>
+            <tr>
+              <td><%= option.supplierName %></td>
+              <td class="num"><%= option.lastUnitCost === null ? '—' : option.lastUnitCost %></td>
+              <td class="num"><%= option.effectiveLeadTimeDays === null ? '—' : option.effectiveLeadTimeDays + ' days' %></td>
+              <td class="muted"><%= option.unitsPerPurchaseUnit > 1 ? option.purchaseUnit + ' of ' + option.unitsPerPurchaseUnit : option.purchaseUnit %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+  </div>
+</div>
+
+<% if (history.length) { %>
+  <div class="card section">
+    <div class="card-head"><h2>What it has cost</h2></div>
+    <table class="table table--tight">
+      <thead><tr><th>Order</th><th>Supplier</th><th class="num">Unit cost</th><th>When</th></tr></thead>
+      <tbody>
+        <% history.forEach(function (row) { %>
+          <tr>
+            <td><a href="/purchasing/orders/<%= row.poId %>"><%= row.poNumber %></a></td>
+            <td><%= row.supplierName %></td>
+            <td class="num"><%= row.unitCost %></td>
+            <td class="muted"><%= (row.orderDate || '').slice(0, 10) %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+<% } %>
+
+<div class="card section">
+  <div class="card-head">
+    <h2>Reorder settings</h2>
+    <span class="spacer"></span>
+    <span class="badge badge--<%= policy.isSet ? 'muted' : 'ok' %>">
+      <%= policy.isSet ? 'Set by ' + (policy.source === 'foundry' ? 'Foundry' : 'you') : 'Worked out from usage' %>
+    </span>
+  </div>
+  <div class="card-body">
+    <% if (!policy.isSet && proposal && proposal.canPropose) { %>
+      <p class="muted">
+        Foundry has no settings for this line and works the figures out from usage each time.
+        From what it has seen it would suggest a reorder point of <strong><%= proposal.proposal.reorderPoint %></strong>
+        and a target of <strong><%= proposal.proposal.targetStock %></strong>.
+      </p>
+    <% } else if (!policy.isSet && proposal && !proposal.canPropose) { %>
+      <p class="muted"><%= proposal.because %></p>
+    <% } %>
+
+    <% if (permissions.replenishment) { %>
+      <form method="post" action="/purchasing/policies/<%= line.skuId %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="grid grid--3">
+          <label class="field">
+            <span class="field-label">Reorder point</span>
+            <input class="input" type="number" min="0" name="reorderPoint"
+                   value="<%= policy.reorderPoint === null ? '' : policy.reorderPoint %>"
+                   placeholder="<%= line.reorderPoint === undefined ? '' : line.reorderPoint %>">
+          </label>
+          <label class="field">
+            <span class="field-label">Order up to</span>
+            <input class="input" type="number" min="0" name="targetStock"
+                   value="<%= policy.targetStock === null ? '' : policy.targetStock %>"
+                   placeholder="<%= line.target === undefined ? '' : line.target %>">
+          </label>
+          <label class="field">
+            <span class="field-label">Safety stock</span>
+            <input class="input" type="number" min="0" name="safetyStock"
+                   value="<%= policy.safetyStock === null ? '' : policy.safetyStock %>"
+                   placeholder="<%= line.safetyStock === undefined ? '' : line.safetyStock %>">
+          </label>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn--primary" type="submit">Save settings</button>
+          <% if (policy.isSet) { %>
+            <button class="btn btn--ghost" type="submit" name="clear" value="1">Go back to working it out</button>
+          <% } %>
+        </div>
+      </form>
+    <% } %>
+  </div>
+</div>

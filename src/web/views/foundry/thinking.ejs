@@ -1,0 +1,41 @@
+<%
+  var order = ['reading', 'advising'];
+  var currentIndex = order.indexOf(job.stage);
+  if (currentIndex < 0) currentIndex = 0;
+%>
+
+<!-- Without JavaScript the page reloads itself; the route redirects when done. -->
+<noscript><meta http-equiv="refresh" content="4"></noscript>
+
+<div class="thinking" data-job="<%= job.id %>">
+  <span class="thinking-mark">
+    <span class="thinking-pulse"></span>
+    <%- helpers.icon('foundry', { size: 24 }) %>
+  </span>
+
+  <h1>Foundry is reading your inventory</h1>
+  <p class="thinking-sub">
+    This takes a minute or so — it is thinking properly about your operation, not
+    matching keywords. You can leave this page open.
+  </p>
+
+  <ol class="thinking-steps">
+    <% order.forEach(function (key, index) { %>
+      <li class="thinking-step <%= index < currentIndex ? 'is-done' : (index === currentIndex ? 'is-current' : '') %>"
+          data-step="<%= key %>">
+        <span class="thinking-dot">
+          <% if (index < currentIndex) { %><%- helpers.icon('check', { size: 13 }) %><% } %>
+        </span>
+        <span class="thinking-step-text">
+          <strong><%= stages[key].label %></strong>
+          <span><%= stages[key].detail %></span>
+        </span>
+      </li>
+    <% }) %>
+  </ol>
+
+  <div class="thinking-foot">
+    <span class="muted" data-elapsed><%= Math.round(job.elapsedMs / 1000) %>s elapsed</span>
+    <a class="btn btn--ghost btn--sm" href="/foundry">Cancel and start over</a>
+  </div>
+</div>

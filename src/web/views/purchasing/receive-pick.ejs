@@ -1,0 +1,36 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/purchasing"><%- helpers.icon('chevron', { size: 14 }) %> What to order</a>
+    <h1>Book in a delivery</h1>
+    <div class="page-sub">
+      <% if (supplierName && !noMatch) { %>
+        Open orders matching “<%= supplierName %>”.
+      <% } else if (noMatch) { %>
+        Nothing open matches “<%= supplierName %>”, so here is everything outstanding.
+      <% } else { %>
+        Which order has arrived?
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<div class="card section">
+  <% if (orders.length === 0) { %>
+    <div class="card-body"><p class="muted">There are no open purchase orders to receive against.</p></div>
+  <% } else { %>
+    <table class="table table--tight">
+      <thead><tr><th>Order</th><th>Supplier</th><th>Expected</th><th class="num">Outstanding</th><th></th></tr></thead>
+      <tbody>
+        <% orders.forEach(function (po) { %>
+          <tr>
+            <td><a href="/purchasing/orders/<%= po.id %>"><%= po.po_number %></a></td>
+            <td><%= po.supplier_name %></td>
+            <td class="muted"><%= po.expected_date || '—' %></td>
+            <td class="num"><%= po.outstanding_units %></td>
+            <td><a class="btn btn--sm btn--primary" href="/purchasing/orders/<%= po.id %>/receive">Receive</a></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>

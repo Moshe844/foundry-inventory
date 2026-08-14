@@ -1,0 +1,68 @@
+<article class="att-card att-card--<%= item.severityTone %>">
+  <div class="att-card-main">
+    <div class="att-card-head">
+      <span class="badge badge--<%= item.severityTone %>"><%= item.categoryLabel %></span>
+      <% item.relatedLabels.forEach(function (label) { %>
+        <span class="badge badge--muted"><%= label %></span>
+      <% }) %>
+      <% if (item.status === 'ACKNOWLEDGED') { %>
+        <span class="badge badge--ok"><%- helpers.icon('check', { size: 12 }) %> Being handled</span>
+      <% } %>
+      <% if (item.status === 'DISMISSED') { %>
+        <span class="badge badge--muted">Hidden until <%= helpers.shortDate(item.dismissedUntil) %></span>
+      <% } %>
+      <% if (item.status === 'RESOLVED') { %>
+        <span class="badge badge--ok">Resolved <%= helpers.timeAgo(item.resolvedAt) %></span>
+      <% } %>
+    </div>
+
+    <h3 class="att-card-title">
+      <a href="/attention/<%= item.attentionId %>"><%= item.title %></a>
+    </h3>
+    <p class="att-card-sum"><%= item.conciseSummary %></p>
+    <p class="att-card-why"><%= item.explanation %></p>
+
+    <div class="att-card-rec">
+      <span class="att-rec-icon"><%- helpers.icon('foundry', { size: 14 }) %></span>
+      <span><%= item.recommendation %></span>
+    </div>
+
+    <div class="att-card-meta">
+      <span title="When Foundry first measured this">First seen <%= helpers.timeAgo(item.firstDetectedAt) %></span>
+      <% if (item.subjects.length) { %>
+        <span>·</span>
+        <% item.subjects.slice(0, 3).forEach(function (subject) { %>
+          <a href="<%= subject.href %>"><%= subject.name %></a>
+        <% }) %>
+      <% } %>
+      <% if (item.locations.length) { %>
+        <span>·</span>
+        <span><%= item.locations.map(function (l) { return l.name; }).join(', ') %></span>
+      <% } %>
+    </div>
+  </div>
+
+  <div class="att-card-side">
+    <a class="btn btn--sm" href="/attention/<%= item.attentionId %>">Why this?</a>
+    <% if (item.status === 'OPEN') { %>
+      <form method="post" action="/attention/<%= item.attentionId %>/acknowledge">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="returnTo" value="<%= returnTo %>">
+        <button class="btn btn--sm" type="submit">I'm on it</button>
+      </form>
+    <% } %>
+    <% if (item.status === 'OPEN' || item.status === 'ACKNOWLEDGED') { %>
+      <form method="post" action="/attention/<%= item.attentionId %>/dismiss">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="returnTo" value="<%= returnTo %>">
+        <button class="btn btn--sm" type="submit">Not a problem</button>
+      </form>
+    <% } else if (item.status === 'DISMISSED') { %>
+      <form method="post" action="/attention/<%= item.attentionId %>/reopen">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="returnTo" value="<%= returnTo %>">
+        <button class="btn btn--sm" type="submit">Show again</button>
+      </form>
+    <% } %>
+  </div>
+</article>

@@ -1,0 +1,192 @@
+<%
+  var u = understanding;
+  var mode = helpers.TRACKING_MODES[u.recommendedConfiguration.trackingMode];
+  var configRecs = recommendations.filter(function (r) { return r.scope === 'configuration'; });
+  var futureRecs = recommendations.filter(function (r) { return r.scope === 'future'; });
+  var terms = Object.keys(u.terminology || {}).filter(function (k) { return u.terminology[k]; });
+%>
+
+<div class="foundry-hero foundry-hero--tight">
+  <span class="foundry-mark"><%- helpers.icon('foundry', { size: 22 }) %></span>
+  <h1>Here's how I'd organize your inventory</h1>
+  <p class="foundry-quote">“<%= u.businessDescription %>”</p>
+</div>
+
+<form method="post" action="/foundry/proposal/<%= understandingId %>/configure">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+  <div class="proposal">
+    <section class="proposal-block">
+      <div class="proposal-label"><%= helpers.plural(2, term('item')) %></div>
+      <div class="proposal-body">
+        <h2>
+          <% if (u.recommendedConfiguration.usesVariants && u.variantDimensions.length) { %>
+            <%= u.variantDimensions.map(function (d) { return d.name; }).join(' → ') %>
+          <% } else { %>
+            <%= mode.label %>
+          <% } %>
+        </h2>
+        <p><%= u.recommendedConfiguration.summary || mode.blurb %></p>
+        <div class="badge-row">
+          <span class="<%= helpers.trackingBadgeClass(u.recommendedConfiguration.trackingMode) %>"><%= mode.label %></span>
+          <% if (u.recommendedConfiguration.usesVariants) { %><span class="badge badge--variant">Variants</span><% } %>
+          <% if (u.expirationTracking.applies) { %><span class="badge badge--warn">Expiration dates</span><% } %>
+        </div>
+        <% if (u.variantDimensions.length) { %>
+          <ul class="proposal-list">
+            <% u.variantDimensions.forEach(function (dim) { %>
+              <li><strong><%= dim.name %></strong> — <%= dim.exampleValues.join(', ') %></li>
+            <% }) %>
+          </ul>
+        <% } %>
+      </div>
+    </section>
+
+    <section class="proposal-block">
+      <div class="proposal-label"><%= helpers.plural(2, term('location')) %></div>
+      <div class="proposal-body">
+        <% if (u.likelyLocations.length) { %>
+          <ul class="proposal-list">
+            <% u.likelyLocations.forEach(function (loc) { %>
+              <li><strong><%= loc.name %></strong> <span class="muted">· <%= helpers.locationKindLabel(loc.kind) %></span></li>
+            <% }) %>
+          </ul>
+          <p><%= u.locationModel.summary || 'Stock will be tracked separately at each location.' %></p>
+        <% } else { %>
+          <p>No locations mentioned yet — you can add them any time.</p>
+        <% } %>
+      </div>
+    </section>
+
+    <section class="proposal-block">
+      <div class="proposal-label">Receiving</div>
+      <div class="proposal-body"><p><%= u.receivingWorkflow || 'Stock is received into a location and counted from there.' %></p></div>
+    </section>
+
+    <% if (u.locationModel.transfersExpected) { %>
+      <section class="proposal-block">
+        <div class="proposal-label">Transfers</div>
+        <div class="proposal-body"><p><%= u.transferWorkflow || 'Inventory can move between locations while preserving the full movement history.' %></p></div>
+      </section>
+    <% } %>
+
+    <section class="proposal-block">
+      <div class="proposal-label">Adjustments</div>
+      <div class="proposal-body"><p><%= u.adjustmentWorkflow || 'Physical-count corrections require a reason and remain auditable.' %></p></div>
+    </section>
+
+    <% if (terms.length) { %>
+      <section class="proposal-block">
+        <div class="proposal-label">Wording</div>
+        <div class="proposal-body">
+          <p>Foundry will use your words:</p>
+          <div class="badge-row">
+            <% terms.forEach(function (key) { %>
+              <span class="pill"><%= key %> → <strong><%= u.terminology[key] %></strong></span>
+            <% }) %>
+          </div>
+        </div>
+      </section>
+    <% } %>
+  </div>
+
+  <% if (u.unresolvedDecisions.length) { %>
+    <div class="card section">
+      <div class="card-head">
+        <%- helpers.icon('question', { size: 17 }) %>
+        <h2><%= u.unresolvedDecisions.length === 1 ? 'One thing worth deciding' : 'A few things worth deciding' %></h2>
+      </div>
+      <div class="card-body">
+        <% u.unresolvedDecisions.forEach(function (decision) { %>
+          <fieldset class="decision">
+            <legend><%= decision.question %></legend>
+            <p class="hint"><%= decision.whyItMatters %></p>
+            <div class="choice-grid">
+              <% decision.options.forEach(function (option) { %>
+                <label class="choice">
+                  <input type="radio" name="answer_<%= decision.id %>" value="<%= option.id %>"
+                         <%= option.id === decision.recommendedOptionId ? 'checked' : '' %>>
+                  <span class="choice-body">
+                    <strong>
+                      <%= option.label %>
+                      <% if (option.id === decision.recommendedOptionId) { %><span class="badge badge--ok">Foundry recommends</span><% } %>
+                    </strong>
+                    <span><%= option.consequence %></span>
+                  </span>
+                </label>
+              <% }) %>
+              <label class="choice choice--muted">
+                <input type="radio" name="answer_<%= decision.id %>" value="__foundry__">
+                <span class="choice-body">
+                  <strong>Let Foundry decide</strong>
+                  <span>Foundry picks the option it recommends and records that it decided.</span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+        <% }) %>
+      </div>
+    </div>
+  <% } %>
+
+  <% if (configRecs.length || futureRecs.length) { %>
+    <div class="card section">
+      <div class="card-head"><h2>A few things I'd recommend</h2></div>
+      <div class="card-body">
+        <% configRecs.forEach(function (rec) { %>
+          <label class="rec">
+            <input type="checkbox" name="acceptRecommendation" value="<%= rec.id %>">
+            <span class="rec-body">
+              <strong><%= rec.title %></strong>
+              <span class="rec-noticed">I noticed: <%= rec.noticed %></span>
+              <span><%= rec.recommendation %></span>
+              <span class="rec-why">Why it matters: <%= rec.why_it_matters %></span>
+            </span>
+          </label>
+        <% }) %>
+
+        <% if (futureRecs.length) { %>
+          <div class="rec-future">
+            <h3>Not available yet</h3>
+            <% futureRecs.forEach(function (rec) { %>
+              <div class="rec rec--future">
+                <span class="rec-body">
+                  <strong><%= rec.title %> <span class="badge badge--muted">Future</span></strong>
+                  <span class="rec-noticed">I noticed: <%= rec.noticed %></span>
+                  <span><%= rec.recommendation %></span>
+                  <span class="rec-why">Why it matters: <%= rec.why_it_matters %></span>
+                </span>
+              </div>
+            <% }) %>
+          </div>
+        <% } %>
+      </div>
+    </div>
+  <% } %>
+
+  <% if (u.assumptions.length) { %>
+    <div class="card section">
+      <div class="card-head"><h2>What I assumed</h2></div>
+      <div class="card-body">
+        <ul class="proposal-list">
+          <% u.assumptions.forEach(function (assumption) { %><li><%= assumption %></li><% }) %>
+        </ul>
+      </div>
+    </div>
+  <% } %>
+
+  <div class="foundry-confirm">
+    <div>
+      <strong>Ready when you are.</strong>
+      <span class="muted">Foundry sets up structure only — no products, stock or serial numbers are invented.</span>
+    </div>
+    <div class="btn-row">
+      <a class="btn" href="/foundry">Start over</a>
+      <% if (currentUser.role === 'owner') { %>
+        <button class="btn btn--primary btn--lg" type="submit">Configure my inventory</button>
+      <% } else { %>
+        <span class="muted">Only an owner can apply this.</span>
+      <% } %>
+    </div>
+  </div>
+</form>

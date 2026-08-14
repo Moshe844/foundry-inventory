@@ -1,0 +1,165 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Ask Foundry to do something</h1>
+    <div class="page-sub">
+      Tell Foundry what you want done. It works out exactly what that means, shows you,
+      and waits for you to approve before anything moves.
+    </div>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-body">
+    <form class="ask-form" method="post" action="/actions/ask" enctype="multipart/form-data" data-busy data-ask-form>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input
+        class="input ask-input"
+        id="action-instruction"
+        type="text"
+        name="instruction"
+        value="<%= instruction %>"
+        placeholder="Move 15 Navy Size 8 from New Jersey to Brooklyn"
+        maxlength="500"
+        autocomplete="off"
+        <%= instruction ? '' : 'autofocus' %>
+        <%= canOperate && aiConfigured ? '' : 'disabled' %>
+      >
+      <label class="btn btn--ghost ask-attach" title="Attach a spreadsheet">
+        <%- helpers.icon('import', { size: 15 }) %>
+        <span>Attach a file</span>
+        <input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx" hidden <%= canOperate ? '' : 'disabled' %>>
+      </label>
+      <button class="btn btn--primary" type="submit" data-ask-submit <%= canOperate && aiConfigured ? '' : 'disabled' %>>
+        <%- helpers.icon('send', { size: 15 }) %> Work it out
+      </button>
+    </form>
+    <div class="ask-pending" data-ask-pending hidden>Foundry is working out what that means…</div>
+
+    <% if (!aiConfigured) { %>
+      <p class="muted" style="font-size:13px; margin-top:10px;">
+        Reading instructions needs an AI provider configured. Every operation is still
+        available from the <a href="/inventory">inventory pages</a>.
+      </p>
+    <% } else if (!canOperate) { %>
+      <p class="muted" style="font-size:13px; margin-top:10px;">
+        You have read-only access to this inventory, so Foundry cannot make changes for you here.
+      </p>
+    <% } else if (!instruction) { %>
+      <div class="ask-examples">
+        <span class="chip">“Receive 100 Copper Elbows into Main Warehouse”</span>
+        <span class="chip">“Move 15 Navy Size 8 from New Jersey to Brooklyn”</span>
+        <span class="chip">“Remove 3 damaged units from Downtown”</span>
+        <span class="chip">“Set Brooklyn Navy Size 8 to 37, physical count”</span>
+      </div>
+    <% } %>
+
+    <% if (question) { %>
+      <div class="act-question">
+        <span class="att-rec-icon"><%- helpers.icon('foundry', { size: 15 }) %></span>
+        <div class="act-question-body">
+          <p><%= question %></p>
+          <% if (choices && choices.length) { %>
+            <div class="btn-row" style="margin-top:8px;">
+              <% choices.forEach(function (choice) { %>
+                <a class="btn btn--sm" href="/actions/<%= choice.proposalId %>"><%= choice.summary %></a>
+              <% }) %>
+            </div>
+          <% } else { %>
+            <%# A question with nowhere to answer is a dead end. Reply here and
+                Foundry re-reads the original instruction with the answer added. %>
+            <form class="act-reply" method="post" action="/actions/ask" data-busy>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="original" value="<%= instruction %>">
+              <label class="visually-hidden" for="action-answer">Your answer</label>
+              <input class="input" id="action-answer" name="answer" type="text" maxlength="200"
+                     placeholder="Type your answer" autocomplete="off" autofocus required>
+              <button class="btn btn--primary btn--sm" type="submit">Answer</button>
+            </form>
+            <p class="muted" style="font-size:12px; margin-top:7px;">
+              Or edit what you asked above and work it out again.
+            </p>
+          <% } %>
+        </div>
+      </div>
+    <% } %>
+
+    <% if (unsupported) { %>
+      <div class="act-question act-question--muted">
+        <span class="att-rec-icon"><%- helpers.icon('alert', { size: 15 }) %></span>
+        <div class="act-question-body">
+          <p><%= unsupported %></p>
+          <p class="muted" style="font-size:12.5px; margin-top:6px;">
+            If you were asking about your stock rather than changing it,
+            <a href="/ask?q=<%= encodeURIComponent(instruction) %>">Foundry can look that up</a>.
+          </p>
+        </div>
+      </div>
+    <% } %>
+  </div>
+</div>
+
+<% if (pending.length) { %>
+  <section class="section">
+    <div class="att-group-head">
+      <h2>Waiting for you</h2>
+      <span class="badge badge--warn"><%= pending.length %></span>
+    </div>
+    <div class="att-list">
+      <% pending.forEach(function (item) { %>
+        <article class="att-card att-card--<%= item.safetyLevel === 'HIGH' ? 'danger' : 'warn' %>">
+          <div class="att-card-main">
+            <div class="att-card-head">
+              <span class="badge badge--<%= item.safetyLevel === 'HIGH' ? 'danger' : 'muted' %>">
+                <%= item.safetyLevel === 'HIGH' ? 'Needs care' : 'Changes stock' %>
+              </span>
+              <% if (item.sourceType === 'ATTENTION_ITEM') { %>
+                <span class="badge badge--muted">From a Foundry finding</span>
+              <% } %>
+              <% if (item.status === 'APPROVED') { %><span class="badge badge--ok">Approved</span><% } %>
+            </div>
+            <h3 class="att-card-title"><a href="/actions/<%= item.proposalId %>"><%= item.oneLine %></a></h3>
+            <p class="att-card-sum">
+              <% item.rows.forEach(function (row, i) { %><%= i ? ' · ' : '' %><%= row.label %>: <%= row.before %> → <%= row.after %><% }) %>
+            </p>
+            <% if (item.warnings.length) { %>
+              <p class="att-card-why is-warn"><%= item.warnings[0] %></p>
+            <% } %>
+            <div class="att-card-meta">Proposed <%= helpers.timeAgo(item.createdAt) %></div>
+          </div>
+          <div class="att-card-side">
+            <a class="btn btn--sm btn--primary" href="/actions/<%= item.proposalId %>">Review</a>
+            <form method="post" action="/actions/<%= item.proposalId %>/cancel">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn--sm" type="submit">Discard</button>
+            </form>
+          </div>
+        </article>
+      <% }) %>
+    </div>
+  </section>
+<% } %>
+
+<% if (recent.length) { %>
+  <div class="card section">
+    <div class="card-head"><h2>Recently carried out</h2></div>
+    <div class="table-wrap">
+      <table class="table">
+        <tbody>
+          <% recent.forEach(function (item) { %>
+            <tr>
+              <td>
+                <a class="cell-title" href="/actions/<%= item.proposalId %>"><%= item.oneLine %></a>
+                <span class="cell-sub"><%= helpers.timeAgo(item.completedAt || item.createdAt) %></span>
+              </td>
+              <td class="right">
+                <span class="badge badge--<%= item.status === 'SUCCEEDED' ? 'ok' : 'muted' %>">
+                  <%= item.status.toLowerCase().replace(/_/g, ' ') %>
+                </span>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% } %>

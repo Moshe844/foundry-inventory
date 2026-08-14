@@ -1,0 +1,127 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Ask Foundry</h1>
+    <div class="page-sub">Questions about your stock, answered from your own records.</div>
+  </div>
+  <div class="page-actions">
+    <a class="btn" href="/attention">Needs attention</a>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-body">
+    <form method="get" action="/ask" class="ask-form" data-ask-form>
+      <input
+        class="input ask-input"
+        id="ask-question"
+        type="text"
+        name="q"
+        value="<%= question %>"
+        placeholder="How many navy oxfords are at the warehouse?"
+        maxlength="400"
+        autocomplete="off"
+        <%= question ? '' : 'autofocus' %>
+      >
+      <button class="btn btn--primary" type="submit" data-ask-submit>
+        <%- helpers.icon('send', { size: 15 }) %> Ask
+      </button>
+    </form>
+    <div class="ask-pending" data-ask-pending hidden>Foundry is looking through your records…</div>
+
+    <% if (!aiConfigured) { %>
+      <p class="muted" style="font-size:13px; margin-top:10px;">
+        Ask Foundry needs an AI provider configured. Everything on the
+        <a href="/attention">Needs attention</a> page works without one.
+      </p>
+    <% } else if (!question) { %>
+      <div class="ask-examples">
+        <% examples.forEach(function (example) { %>
+          <a class="chip" href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
+        <% }) %>
+      </div>
+    <% } %>
+  </div>
+</div>
+
+<% if (error) { %>
+  <div class="card section"><div class="card-body"><p class="is-warn"><%= error %></p></div></div>
+<% } %>
+
+<% if (result) { %>
+  <div class="card section">
+    <div class="card-head">
+      <h2><%= result.question %></h2>
+      <span class="spacer"></span>
+      <% if (result.isAction) { %>
+        <span class="badge badge--muted">This is a change, not a question</span>
+      <% } else if (!result.supported) { %>
+        <span class="badge badge--muted">Outside what Foundry does</span>
+      <% } %>
+    </div>
+    <div class="card-body">
+      <p class="lede"><%= result.answer %></p>
+      <% if (result.isAction) { %>
+        <%# Saying "Foundry cannot move stock" would be false — it can, from the
+            actions page. So it hands the request straight over. %>
+        <form method="post" action="/actions/ask" style="margin-top:12px;" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="instruction" value="<%= result.question %>">
+          <button class="btn btn--primary" type="submit">
+            <%- helpers.icon('adjust', { size: 15 }) %> Work out this change
+          </button>
+        </form>
+        <p class="muted" style="font-size:12px; margin-top:8px;">
+          Foundry will show you exactly what it would do, and wait for you to approve it.
+        </p>
+      <% } %>
+    </div>
+
+    <% if (result.rows.length) { %>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <% result.columns.forEach(function (column) { %>
+                <th class="<%= ['onHand','delta','quantity','issued','movements','expected','counted'].indexOf(column) >= 0 ? 'right' : '' %>">
+                  <%= helpers.columnLabel(column) %>
+                </th>
+              <% }) %>
+            </tr>
+          </thead>
+          <tbody>
+            <% result.rows.forEach(function (row) { %>
+              <tr>
+                <% result.columns.forEach(function (column) { %>
+                  <%
+                    var value = row[column];
+                    var numeric = ['onHand','delta','quantity','issued','movements','expected','counted'].indexOf(column) >= 0;
+                    if (column === 'occurredAt') value = helpers.dateTime(value);
+                    if (column === 'operation') value = helpers.operationLabel(value);
+                    if (column === 'expiresAt') value = helpers.shortDate(value);
+                    if (numeric && column === 'delta' && Number(value) > 0) value = '+' + value;
+                  %>
+                  <td class="<%= numeric ? 'right num' : '' %>"><%= value === null || value === undefined ? '—' : value %></td>
+                <% }) %>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+
+    <div class="card-foot muted" style="font-size:12px;">
+      Foundry read this as “<%= result.plan.intent.replace(/_/g, ' ') %>”<%
+        %><% if (result.plan.entityQuery) { %> for “<%= result.plan.entityQuery %>”<% } %><%
+        %><% if (result.plan.locationQuery) { %> at “<%= result.plan.locationQuery %>”<% } %><%
+        %><% if (['movement_history','recent_adjustments','expiring_soon','idle_stock','top_moving'].indexOf(result.plan.intent) >= 0) { %>
+          over <%= result.plan.windowDays %> days<% } %>.
+      <% if (result.isAction) { %>
+        Nothing has changed. This page only reads; the change is prepared on the actions page,
+        where you approve it first.
+      <% } else { %>
+        <%= result.rowCount %> <%= helpers.plural(result.rowCount, 'row') %> from your records.
+        Foundry looks things up; changes are approved on the actions page.
+      <% } %>
+    </div>
+  </div>
+<% } %>

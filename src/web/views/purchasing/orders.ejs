@@ -1,0 +1,47 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/purchasing"><%- helpers.icon('chevron', { size: 14 }) %> What to order</a>
+    <h1>Purchase orders</h1>
+    <div class="page-sub">Everything ordered, arriving, received or cancelled.</div>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head">
+    <h2><%= orders.length %> order<%= orders.length === 1 ? '' : 's' %></h2>
+    <span class="spacer"></span>
+    <div class="btn-row">
+      <a class="btn btn--sm <%= status ? '' : 'btn--primary' %>" href="/purchasing/orders">All</a>
+      <% ['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'].forEach(function (value) { %>
+        <a class="btn btn--sm <%= status === value ? 'btn--primary' : '' %>" href="/purchasing/orders?status=<%= value %>">
+          <%= helpers.columnLabel(value.toLowerCase().replace('_', ' ')) %>
+        </a>
+      <% }) %>
+      <% if (permissions.create) { %><a class="btn btn--sm" href="/purchasing/orders/new">New order</a><% } %>
+    </div>
+  </div>
+  <% if (orders.length === 0) { %>
+    <div class="card-body"><p class="muted">Nothing here yet.</p></div>
+  <% } else { %>
+    <table class="table table--tight">
+      <thead>
+        <tr><th>Order</th><th>Supplier</th><th>Status</th><th>Expected</th><th class="num">Units</th><th class="num">Total</th></tr>
+      </thead>
+      <tbody>
+        <% orders.forEach(function (po) { %>
+          <tr>
+            <td><a href="/purchasing/orders/<%= po.id %>"><%= po.poNumber %></a>
+              <% if (po.source === 'foundry_recommendation') { %><span class="badge badge--muted">prepared by Foundry</span><% } %>
+            </td>
+            <td><%= po.supplierName %></td>
+            <td><span class="badge badge--<%= po.status === 'RECEIVED' ? 'ok' : po.status === 'CANCELLED' ? 'danger' : 'muted' %>">
+              <%= helpers.columnLabel(po.status.toLowerCase().replace('_', ' ')) %></span></td>
+            <td class="muted"><%= po.expectedDate || '—' %></td>
+            <td class="num"><%= po.receivedUnits %>/<%= po.orderedUnits %></td>
+            <td class="num"><%= po.hasCosts ? po.subtotal.toFixed(2) : '—' %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>

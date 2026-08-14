@@ -1,0 +1,157 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/purchasing/orders"><%- helpers.icon('chevron', { size: 14 }) %> Purchase orders</a>
+    <h1><%= order.poNumber %> · <%= order.supplierName %></h1>
+    <div class="page-sub">
+      <%= helpers.columnLabel(order.status.toLowerCase().replace('_', ' ')) %>
+      <% if (order.expectedDate) { %> · expected <%= order.expectedDate %><% } %>
+      <% if (order.source === 'foundry_recommendation') { %> · prepared by Foundry<% } %>
+      <% if (order.source === 'instruction') { %> · from something you asked for<% } %>
+    </div>
+  </div>
+</div>
+
+<% if (order.status === 'CANCELLED') { %>
+  <div class="notice notice--warn section">
+    This order was cancelled<%= order.cancelReason ? ': ' + order.cancelReason : '.' %>
+    <% if (order.receivedUnits) { %>
+      The <%= order.receivedUnits %> unit<%= order.receivedUnits === 1 ? '' : 's' %> that had already arrived
+      stayed in your inventory — cancelling an order never removes stock that physically exists.
+    <% } %>
+  </div>
+<% } %>
+
+<div class="card section">
+  <div class="card-head">
+    <h2><%= order.status === 'DRAFT' || order.status === 'AWAITING_APPROVAL' ? 'Foundry is ready to order' : 'The order' %></h2>
+    <span class="spacer"></span>
+    <span class="badge badge--<%= order.status === 'RECEIVED' ? 'ok' : order.status === 'CANCELLED' ? 'danger' : 'muted' %>">
+      <%= helpers.columnLabel(order.status.toLowerCase().replace('_', ' ')) %>
+    </span>
+  </div>
+  <div class="table-scroll">
+    <table class="table table--tight">
+      <thead>
+        <tr>
+          <th>Product</th><th>Supplier SKU</th><th class="num">Ordered</th>
+          <th class="num">Received</th><th class="num">Unit cost</th><th class="num">Line total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% order.lines.forEach(function (line) { %>
+          <tr>
+            <td>
+              <%= line.displayName %>
+              <div class="muted">
+                <%= line.quantityPurchaseUnits %> <%= line.purchaseUnit %><%= line.quantityPurchaseUnits === 1 ? '' : 's' %>
+                <% if (line.unitsPerPurchaseUnit > 1) { %> of <%= line.unitsPerPurchaseUnit %><% } %>
+                <% if (line.destinationLocationName) { %> → <%= line.destinationLocationName %><% } %>
+              </div>
+            </td>
+            <td class="muted"><%= line.supplierSku || '—' %></td>
+            <td class="num"><%= line.quantityUnits %></td>
+            <td class="num <%= line.isComplete ? '' : 'is-warn' %>"><%= line.quantityReceivedUnits %></td>
+            <td class="num"><%= line.unitCost === null ? '—' : line.unitCost %></td>
+            <td class="num"><%= line.lineTotal === null ? '—' : line.lineTotal.toFixed(2) %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="2"><strong>Total</strong></td>
+          <td class="num"><strong><%= order.orderedUnits %></strong></td>
+          <td class="num"><strong><%= order.receivedUnits %></strong></td>
+          <td></td>
+          <td class="num"><strong><%= order.hasCosts ? order.subtotal.toFixed(2) : '—' %></strong></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  <div class="card-foot">
+    <div class="btn-row">
+      <% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status) && permissions.approve) { %>
+        <form method="post" action="/purchasing/orders/<%= order.id %>/approve" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="integrityHash" value="<%= order.integrityHash %>">
+          <button class="btn btn--primary" type="submit">Approve and mark as ordered</button>
+        </form>
+      <% } %>
+      <% if (order.isOpen && permissions.receive) { %>
+        <a class="btn btn--primary" href="/purchasing/orders/<%= order.id %>/receive">Receive shipment</a>
+      <% } %>
+      <a class="btn btn--sm" href="/purchasing/orders/<%= order.id %>/document" target="_blank" rel="noopener">
+        Printable order
+      </a>
+      <% if (order.canCancel && permissions.approve) { %>
+        <form method="post" action="/purchasing/orders/<%= order.id %>/cancel">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input class="input input--sm" type="text" name="reason" placeholder="Why cancel?" maxlength="200">
+          <button class="btn btn--ghost btn--sm" type="submit">Cancel order</button>
+        </form>
+      <% } %>
+    </div>
+    <% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)) { %>
+      <p class="muted" style="margin-top:8px;">
+        Nothing has been sent to <%= order.supplierName %>. Foundry does not contact suppliers —
+        approving records that you have placed this order.
+      </p>
+    <% } %>
+  </div>
+</div>
+
+<% if (order.sourceDetail && order.sourceDetail.assumptions && order.sourceDetail.assumptions.length) { %>
+  <div class="card section">
+    <div class="card-head"><h2>What Foundry assumed</h2></div>
+    <div class="card-body">
+      <ul class="plain-list">
+        <% order.sourceDetail.assumptions.forEach(function (line) { %><li><%= line %></li><% }) %>
+      </ul>
+    </div>
+  </div>
+<% } %>
+
+<% if (receipts.length) { %>
+  <div class="card section">
+    <div class="card-head"><h2>Deliveries</h2></div>
+    <div class="card-body">
+      <% receipts.forEach(function (receipt) { %>
+        <div class="act-ledger">
+          <div class="act-row act-row--total">
+            <span class="act-place">
+              <%= helpers.dateTime(receipt.receivedAt) %>
+              <% if (receipt.reference) { %> · <%= receipt.reference %><% } %>
+              <% if (receipt.overReceiptApproved) { %> · <span class="is-warn">over-receipt accepted</span><% } %>
+            </span>
+            <span class="act-move"><span class="num">+<%= receipt.totalUnits %></span></span>
+          </div>
+          <% receipt.lines.forEach(function (line) { %>
+            <div class="act-row">
+              <span class="act-place">
+                <%= line.displayName %> → <%= line.locationName %>
+                <% if (line.lotCode) { %><span class="muted"> · lot <%= line.lotCode %></span><% } %>
+                <% if (line.serials.length) { %><span class="muted"> · <%= line.serials.join(', ') %></span><% } %>
+                <% if (line.overByUnits) { %><span class="is-warn"> · <%= line.overByUnits %> over</span><% } %>
+              </span>
+              <span class="act-move"><span class="num">+<%= line.quantityUnits %></span></span>
+            </div>
+          <% }) %>
+        </div>
+      <% }) %>
+      <a class="btn btn--sm" href="/activity">See these in the activity ledger</a>
+    </div>
+  </div>
+<% } %>
+
+<div class="card section">
+  <div class="card-head"><h2>What has happened to this order</h2></div>
+  <div class="card-body">
+    <ul class="plain-list">
+      <% events.forEach(function (event) { %>
+        <li>
+          <strong><%= event.event %></strong>
+          <span class="muted"><%= event.actorName ? event.actorName + ' · ' : '' %><%= helpers.dateTime(event.createdAt) %></span>
+        </li>
+      <% }) %>
+    </ul>
+  </div>
+</div>

@@ -1,0 +1,95 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Bring your data in</h1>
+    <div class="page-sub">
+      Upload the spreadsheet you already keep your stock in, or paste it straight out of one.
+      Foundry works out what the columns mean, shows you, and creates nothing until you say so.
+    </div>
+  </div>
+</div>
+
+<% if (!canOperate) { %>
+  <div class="notice notice--warn section">
+    You have read-only access to this inventory, so you cannot import data into it.
+  </div>
+<% } else { %>
+
+<div class="grid grid--2 section">
+  <div class="card">
+    <div class="card-head"><h2>From a file</h2></div>
+    <form method="post" action="/imports" enctype="multipart/form-data" data-busy>
+      <div class="card-body">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field">
+          <span class="field-label">Spreadsheet or CSV</span>
+          <input class="input" type="file" name="file" accept=".csv,.tsv,.txt,.xlsx" required>
+          <span class="field-help">.xlsx, .csv or .tsv, up to 32MB. Extra title rows, blank lines and stray columns are fine.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">If the file has no location column, put the stock in</span>
+          <select class="input" name="defaultLocationId">
+            <option value="">— nowhere; just create the products —</option>
+            <% locations.forEach(function (location) { %>
+              <option value="<%= location.id %>"><%= location.name %></option>
+            <% }) %>
+          </select>
+        </label>
+      </div>
+      <div class="card-foot">
+        <button class="btn btn--primary" type="submit"><%- helpers.icon('import', { size: 15 }) %> Read the file</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h2>Pasted</h2></div>
+    <form method="post" action="/imports" data-busy>
+      <div class="card-body">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field">
+          <span class="field-label">Paste rows here</span>
+          <textarea class="input" name="pasted" rows="8" placeholder="Copper Elbow 1/2in	CE-050	Main Warehouse	140
+Copper Elbow 3/4in	CE-075	Main Warehouse	86"></textarea>
+          <span class="field-help">Copy straight out of a spreadsheet. A header row helps but is not needed.</span>
+        </label>
+      </div>
+      <div class="card-foot">
+        <button class="btn" type="submit">Read what I pasted</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<% if (!aiConfigured) { %>
+  <p class="muted" style="font-size:13px;">
+    No AI provider is configured, so Foundry names the columns it recognises by their headers
+    and leaves the rest for you to set on the next screen.
+  </p>
+<% } %>
+
+<% } %>
+
+<% if (recent.length) { %>
+  <div class="card section">
+    <div class="card-head"><h2>Earlier imports</h2></div>
+    <table class="table">
+      <thead>
+        <tr><th>File</th><th>Rows</th><th>Status</th><th>When</th></tr>
+      </thead>
+      <tbody>
+        <% recent.forEach(function (plan) { %>
+          <tr>
+            <td><a href="/imports/<%= plan.id %>"><%= plan.sourceName %></a></td>
+            <td class="num"><%= plan.recordsDetected %></td>
+            <td>
+              <span class="badge badge--<%= plan.status === 'SUCCEEDED' ? 'ok' : plan.status === 'PARTIAL' || plan.status === 'FAILED' ? 'danger' : 'muted' %>">
+                <%= plan.status === 'READY' ? (plan.approvalStatus === 'APPROVED' ? 'Approved, not run' : 'Waiting for you') : helpers.columnLabel(plan.status.toLowerCase()) %>
+              </span>
+            </td>
+            <td class="muted"><%= helpers.timeAgo(plan.createdAt) %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+<% } %>

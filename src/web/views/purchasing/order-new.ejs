@@ -1,0 +1,78 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/purchasing/orders"><%- helpers.icon('chevron', { size: 14 }) %> Purchase orders</a>
+    <h1>New purchase order</h1>
+    <div class="page-sub">Manual, for when you already know what you want. Foundry can also prepare one for you.</div>
+  </div>
+</div>
+
+<% if (!supplierId) { %>
+  <div class="card section">
+    <div class="card-head"><h2>Which supplier?</h2></div>
+    <div class="card-body">
+      <% if (suppliers.length === 0) { %>
+        <p class="muted">No suppliers yet. <a href="/suppliers">Add one first.</a></p>
+      <% } else { %>
+        <ul class="plain-list">
+          <% suppliers.forEach(function (supplier) { %>
+            <li><a href="/purchasing/orders/new?supplier=<%= supplier.id %>"><%= supplier.name %></a></li>
+          <% }) %>
+        </ul>
+      <% } %>
+    </div>
+  </div>
+<% } else { %>
+  <form method="post" action="/purchasing/orders" class="card section" data-busy>
+    <div class="card-head"><h2>Lines</h2></div>
+    <div class="card-body">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="supplierId" value="<%= supplierId %>">
+
+      <% if (supplierItems.length === 0) { %>
+        <p class="muted">
+          Nothing is linked to this supplier yet. <a href="/suppliers/<%= supplierId %>">Link some products</a>
+          so Foundry knows the pack size and price.
+        </p>
+      <% } else { %>
+        <table class="table table--tight">
+          <thead><tr><th>Product</th><th>Pack</th><th class="num">Unit cost</th><th class="num">How many packs</th></tr></thead>
+          <tbody>
+            <% supplierItems.forEach(function (item) { %>
+              <tr>
+                <td><%= item.displayName %><% if (item.supplierSku) { %> <span class="muted"><%= item.supplierSku %></span><% } %></td>
+                <td><%= item.unitsPerPurchaseUnit > 1 ? item.purchaseUnit + ' of ' + item.unitsPerPurchaseUnit : item.purchaseUnit %></td>
+                <td class="num"><%= item.lastUnitCost === null ? '—' : item.lastUnitCost %></td>
+                <td class="num">
+                  <input class="input input--sm" type="number" min="0" name="quantity[<%= item.skuId %>]" style="max-width:110px;">
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+
+        <div class="grid grid--2">
+          <label class="field">
+            <span class="field-label">Deliver to</span>
+            <select class="input" name="destinationLocationId">
+              <% locations.forEach(function (location) { %>
+                <option value="<%= location.id %>"><%= location.name %></option>
+              <% }) %>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Expected date</span>
+            <input class="input" type="date" name="expectedDate">
+            <span class="field-help">Leave blank and Foundry works it out from the lead time.</span>
+          </label>
+        </div>
+        <label class="field">
+          <span class="field-label">Notes for this order</span>
+          <input class="input" type="text" name="notes" maxlength="300">
+        </label>
+      <% } %>
+    </div>
+    <% if (supplierItems.length) { %>
+      <div class="card-foot"><button class="btn btn--primary" type="submit">Create draft order</button></div>
+    <% } %>
+  </form>
+<% } %>

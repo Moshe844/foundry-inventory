@@ -1,0 +1,119 @@
+<% var returnTo = '/attention'; %>
+<div class="page-head">
+  <div class="titles">
+    <h1>Needs attention</h1>
+    <div class="page-sub">
+      <% if (showResolved) { %>
+        Things Foundry has closed, and things you asked it to hide.
+      <% } else if (summary.healthy) { %>
+        Foundry checked your inventory against its movement history.
+      <% } else { %>
+        <%= summary.total %> <%= helpers.plural(summary.total, 'thing') %> Foundry thinks you should look at, most urgent first.
+      <% } %>
+    </div>
+  </div>
+  <div class="page-actions">
+    <a class="btn" href="/ask"><%- helpers.icon('question', { size: 16 }) %> Ask Foundry</a>
+    <form method="post" action="/attention/refresh">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn btn--primary" type="submit">Check again</button>
+    </form>
+  </div>
+</div>
+
+<div class="att-filters">
+  <a class="chip <%= showResolved ? '' : 'is-active' %>" href="/attention">Open<% if (summary.total && !showResolved) { %> · <%= summary.total %><% } %></a>
+  <a class="chip <%= showResolved ? 'is-active' : '' %>" href="/attention?show=resolved">Resolved &amp; hidden</a>
+  <% if (category) { %>
+    <a class="chip is-active" href="/attention"><%= categoryLabels[category] || category %> <%- helpers.icon('close', { size: 12 }) %></a>
+  <% } %>
+  <span class="spacer"></span>
+  <% if (lastRun) { %>
+    <span class="muted" style="font-size:12px;">Last checked <%= helpers.timeAgo(lastRun.created_at) %></span>
+  <% } %>
+</div>
+
+<% if (usefulness.length) { %>
+  <div class="card section">
+    <div class="card-head">
+      <h2>How Foundry is doing</h2>
+      <span class="spacer"></span>
+      <span class="muted" style="font-size:12px;">What your team has said about these checks</span>
+    </div>
+    <div class="card-body">
+      <div class="usefulness">
+        <% usefulness.forEach(function (row) { %>
+          <div class="usefulness-row">
+            <span class="name"><%= categoryLabels[row.category] || row.category %></span>
+            <span class="tally">
+              <% if (row.useful) { %><%= row.useful %> useful<% } %>
+              <% if (row.useful && (row.notUseful || row.dismissed)) { %> · <% } %>
+              <% if (row.notUseful) { %><%= row.notUseful %> not useful<% } %>
+              <% if (row.notUseful && row.dismissed) { %> · <% } %>
+              <% if (row.dismissed) { %><%= row.dismissed %> hidden<% } %>
+            </span>
+          </div>
+        <% }) %>
+      </div>
+      <p class="muted" style="font-size:12px; margin-top:12px;">
+        Foundry records this and shows it to you. It does not quietly re-tune what it checks —
+        a check that keeps coming back unhelpful is worth changing openly, not silently.
+      </p>
+    </div>
+  </div>
+<% } %>
+
+<% if (items.length === 0) { %>
+  <div class="card section">
+    <div class="empty">
+      <div class="icon-wrap"><%- helpers.icon(showResolved ? 'clock' : 'check', { size: 22 }) %></div>
+      <% if (showResolved) { %>
+        <h3>Nothing closed yet</h3>
+        <p>When something resolves itself — stock arrives, a lot is used up — it moves here with the reason it closed.</p>
+      <% } else if (isEmpty) { %>
+        <h3>There is nothing in this inventory yet</h3>
+        <p>
+          Foundry watches your stock as it moves, so there is nothing to watch until
+          something is here. Tell Foundry what you keep, and it will set this inventory up.
+        </p>
+        <a class="btn btn--primary" href="/foundry">Set this inventory up</a>
+        <a class="btn" href="/inventory/new">Add an item myself</a>
+      <% } else { %>
+        <h3>Nothing needs your attention</h3>
+        <p>
+          Foundry looked at every line against its movement history and found no shortages,
+          imbalances, unusual corrections or idle stock. It will keep checking as stock moves.
+        </p>
+        <a class="btn" href="/inventory">Open inventory</a>
+      <% } %>
+    </div>
+  </div>
+<% } else { %>
+  <% groups.forEach(function (group) { %>
+    <section class="section">
+      <div class="att-group-head">
+        <h2><%= group.label %></h2>
+        <span class="badge badge--<%= group.tone %>"><%= group.items.length %></span>
+      </div>
+      <div class="att-list">
+        <% group.items.forEach(function (item) { %>
+          <%- include('../partials/attention-card', { item: item, helpers: helpers, csrfToken: csrfToken, returnTo: returnTo }) %>
+        <% }) %>
+      </div>
+    </section>
+  <% }) %>
+
+  <% if (page.pages > 1) { %>
+    <nav class="pager" aria-label="More findings">
+      <% if (page.current > 1) { %>
+        <a class="btn btn--sm" href="<%= page.href(page.current - 1) %>">Previous</a>
+      <% } %>
+      <span class="muted">
+        <%= page.from %>–<%= page.to %> of <%= page.total %>
+      </span>
+      <% if (page.current < page.pages) { %>
+        <a class="btn btn--sm" href="<%= page.href(page.current + 1) %>">Next</a>
+      <% } %>
+    </nav>
+  <% } %>
+<% } %>

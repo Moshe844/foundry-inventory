@@ -1,0 +1,140 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Locations</h1>
+    <div class="page-sub">Everywhere your stock can sit.</div>
+  </div>
+  <% if (currentUser.role === 'owner') { %>
+    <div class="page-actions">
+      <button class="btn btn--primary" type="button" data-modal-open="modal-location"><%- helpers.icon('plus', { size: 16 }) %> Add location</button>
+    </div>
+  <% } %>
+</div>
+
+<div class="card">
+  <% if (locations.length === 0) { %>
+    <div class="empty">
+      <div class="icon-wrap"><%- helpers.icon('locations', { size: 22 }) %></div>
+      <h3>No locations yet</h3>
+      <p>A location is anywhere stock lives: a warehouse, a store, a stockroom, a truck or an office.</p>
+      <% if (currentUser.role === 'owner') { %>
+        <button class="btn btn--primary" type="button" data-modal-open="modal-location">Add your first location</button>
+      <% } %>
+    </div>
+  <% } else { %>
+    <div class="table-wrap">
+      <table class="table table--stack">
+        <thead>
+          <tr><th>Location</th><th>Type</th><th class="right">Distinct items</th><th class="right">Units on hand</th><th></th></tr>
+        </thead>
+        <tbody>
+          <% locations.forEach(function (location) { %>
+            <tr>
+              <td class="cell-main">
+                <a class="cell-title" href="/inventory?location=<%= location.id %>"><%= location.name %></a>
+                <% if (location.note) { %><span class="cell-sub"><%= location.note %></span><% } %>
+                <% if (!location.is_active) { %><span class="badge badge--muted">Archived</span><% } %>
+              </td>
+              <td data-label="Type"><span class="badge"><%= helpers.locationKindLabel(location.kind) %></span></td>
+              <td class="right" data-label="Items"><span class="num"><%= helpers.qty(location.sku_count) %></span></td>
+              <td class="right cell-end" data-label="On hand"><strong class="num"><%= helpers.qty(location.on_hand) %></strong></td>
+              <td class="right cell-full">
+                <% if (currentUser.role === 'owner') { %>
+                  <div class="btn-row" style="justify-content:flex-end;">
+                    <button class="btn btn--ghost btn--sm" type="button" data-modal-open="modal-location-<%= location.id %>">Edit</button>
+                    <% if (location.is_active) { %>
+                      <form method="post" action="/locations/<%= location.id %>/archive" data-confirm="Archive <%= location.name %>?">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <button class="btn btn--ghost btn--sm" type="submit">Archive</button>
+                      </form>
+                    <% } else { %>
+                      <form method="post" action="/locations/<%= location.id %>/archive">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <input type="hidden" name="restore" value="1">
+                        <button class="btn btn--ghost btn--sm" type="submit">Restore</button>
+                      </form>
+                    <% } %>
+                  </div>
+                <% } %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<% if (currentUser.role !== 'owner') { %>
+  <div class="notice" style="margin-top:14px;">
+    <%- helpers.icon('shield', { size: 16 }) %>
+    <span>Only an owner can add or change locations. You can still move stock between them.</span>
+  </div>
+<% } %>
+
+<% if (currentUser.role === 'owner') { %>
+  <dialog class="modal" id="modal-location">
+    <form method="post" action="/locations">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="modal-head">
+        <h2>Add a location</h2>
+        <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label class="label" for="location-name">Name</label>
+          <input class="input" id="location-name" name="name" required placeholder="Main Warehouse">
+        </div>
+        <div class="field">
+          <label class="label" for="location-kind">Type</label>
+          <select class="select" id="location-kind" name="kind" required>
+            <% helpers.LOCATION_KINDS.forEach(function (kind) { %>
+              <option value="<%= kind.id %>"><%= kind.label %></option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="field">
+          <label class="label" for="location-note">Note <span class="optional">optional</span></label>
+          <input class="input" id="location-note" name="note" placeholder="Address, floor, or who runs it">
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" type="button" data-modal-close>Cancel</button>
+        <button class="btn btn--primary" type="submit">Add location</button>
+      </div>
+    </form>
+  </dialog>
+
+  <% locations.forEach(function (location) { %>
+    <dialog class="modal" id="modal-location-<%= location.id %>">
+      <form method="post" action="/locations/<%= location.id %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="modal-head">
+          <h2>Edit <%= location.name %></h2>
+          <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
+        </div>
+        <div class="modal-body">
+          <div class="field">
+            <label class="label" for="edit-name-<%= location.id %>">Name</label>
+            <input class="input" id="edit-name-<%= location.id %>" name="name" value="<%= location.name %>" required>
+          </div>
+          <div class="field">
+            <label class="label" for="edit-kind-<%= location.id %>">Type</label>
+            <select class="select" id="edit-kind-<%= location.id %>" name="kind" required>
+              <% helpers.LOCATION_KINDS.forEach(function (kind) { %>
+                <option value="<%= kind.id %>" <%= location.kind === kind.id ? 'selected' : '' %>><%= kind.label %></option>
+              <% }) %>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" for="edit-note-<%= location.id %>">Note</label>
+            <input class="input" id="edit-note-<%= location.id %>" name="note" value="<%= location.note || '' %>">
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn" type="button" data-modal-close>Cancel</button>
+          <button class="btn btn--primary" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+  <% }) %>
+<% } %>

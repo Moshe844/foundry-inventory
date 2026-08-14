@@ -1,0 +1,70 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Activity</h1>
+    <div class="page-sub">Every inventory change, who made it, and why.</div>
+  </div>
+</div>
+
+<form class="filters" method="get" action="/activity">
+  <select class="select" name="operation" aria-label="Operation" data-auto-submit>
+    <option value="">All operations</option>
+    <% helpers.OPERATIONS.forEach(function (operation) { %>
+      <option value="<%= operation.id %>" <%= filters.operation === operation.id ? 'selected' : '' %>><%= operation.label %></option>
+    <% }) %>
+  </select>
+  <select class="select" name="item" aria-label="Item" data-auto-submit>
+    <option value="">All items</option>
+    <% items.forEach(function (row) { %>
+      <option value="<%= row.id %>" <%= filters.itemId === row.id ? 'selected' : '' %>><%= row.name %></option>
+    <% }) %>
+  </select>
+  <select class="select" name="location" aria-label="Location" data-auto-submit>
+    <option value="">All locations</option>
+    <% locations.forEach(function (location) { %>
+      <option value="<%= location.id %>" <%= filters.locationId === location.id ? 'selected' : '' %>><%= location.name %></option>
+    <% }) %>
+  </select>
+  <select class="select" name="user" aria-label="Person" data-auto-submit>
+    <option value="">Anyone</option>
+    <% users.forEach(function (user) { %>
+      <option value="<%= user.id %>" <%= filters.actorId === user.id ? 'selected' : '' %>><%= user.name %></option>
+    <% }) %>
+  </select>
+  <input class="input" type="date" name="from" value="<%= filters.dateFrom %>" aria-label="From date">
+  <input class="input" type="date" name="to" value="<%= filters.dateTo %>" aria-label="To date">
+  <button class="btn btn--sm" type="submit">Apply</button>
+  <% if (filters.operation || filters.itemId || filters.locationId || filters.actorId || filters.dateFrom || filters.dateTo) { %>
+    <a class="btn btn--ghost btn--sm" href="/activity">Clear</a>
+  <% } %>
+</form>
+
+<div class="card">
+  <div class="card-head">
+    <h2><%= helpers.qty(total) %> <%= helpers.plural(total, 'movement') %></h2>
+    <span class="spacer"></span>
+    <span class="muted" style="font-size:12.5px;">Newest first</span>
+  </div>
+  <% if (groups.length === 0) { %>
+    <div class="empty">
+      <div class="icon-wrap"><%- helpers.icon('activity', { size: 22 }) %></div>
+      <h3>No movements match</h3>
+      <p>Inventory changes appear here as soon as somebody receives, issues, transfers or adjusts stock.</p>
+      <a class="btn" href="/activity">Clear filters</a>
+    </div>
+  <% } else { %>
+    <%- include('../partials/ledger', { groups: groups, helpers: helpers }) %>
+    <% if (page > 1 || hasMore) { %>
+      <div class="card-foot" style="display:flex; gap:8px; align-items:center;">
+        <span class="muted">Page <%= page %></span>
+        <span style="margin-left:auto; display:flex; gap:8px;">
+          <% if (page > 1) { %>
+            <a class="btn btn--sm" href="/activity<%= helpers.queryString(query, { page: page - 1 }) %>">Previous</a>
+          <% } %>
+          <% if (hasMore) { %>
+            <a class="btn btn--sm" href="/activity<%= helpers.queryString(query, { page: page + 1 }) %>">Next</a>
+          <% } %>
+        </span>
+      </div>
+    <% } %>
+  <% } %>
+</div>

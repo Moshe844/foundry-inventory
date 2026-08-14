@@ -1,0 +1,72 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/purchasing"><%- helpers.icon('chevron', { size: 14 }) %> What to order</a>
+    <h1>Suppliers</h1>
+    <div class="page-sub">Who you buy from, what they sell you, and how they pack it.</div>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head"><h2><%= suppliers.length %> supplier<%= suppliers.length === 1 ? '' : 's' %></h2></div>
+  <% if (suppliers.length === 0) { %>
+    <div class="card-body"><p class="muted">No suppliers yet. Add one below and Foundry can start working out what to order.</p></div>
+  <% } else { %>
+    <table class="table table--tight">
+      <thead><tr><th>Supplier</th><th>Contact</th><th class="num">Lead time</th><th class="num">Products</th><th class="num">Open orders</th></tr></thead>
+      <tbody>
+        <% suppliers.forEach(function (supplier) { %>
+          <tr>
+            <td>
+              <a href="/suppliers/<%= supplier.id %>"><%= supplier.name %></a>
+              <% if (!supplier.isActive) { %><span class="badge badge--muted">inactive</span><% } %>
+            </td>
+            <td class="muted"><%= supplier.contactName || supplier.email || '—' %></td>
+            <td class="num"><%= supplier.defaultLeadTimeDays === null ? '—' : supplier.defaultLeadTimeDays + ' days' %></td>
+            <td class="num"><%= supplier.itemCount %></td>
+            <td class="num"><%= supplier.openOrders %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<% if (permissions.suppliers) { %>
+  <form method="post" action="/suppliers" class="card section">
+    <div class="card-head"><h2>Add a supplier</h2></div>
+    <div class="card-body">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="grid grid--2">
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input class="input" type="text" name="name" required maxlength="160" placeholder="ABC Footwear">
+        </label>
+        <label class="field">
+          <span class="field-label">Contact</span>
+          <input class="input" type="text" name="contactName" maxlength="120">
+        </label>
+        <label class="field">
+          <span class="field-label">Email</span>
+          <input class="input" type="email" name="email" maxlength="160">
+        </label>
+        <label class="field">
+          <span class="field-label">Phone</span>
+          <input class="input" type="text" name="phone" maxlength="60">
+        </label>
+        <label class="field">
+          <span class="field-label">Usual lead time (days)</span>
+          <input class="input" type="number" min="0" max="365" name="defaultLeadTimeDays" placeholder="21">
+          <span class="field-help">How long a delivery normally takes. Foundry uses this to work out when to order.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Payment terms</span>
+          <input class="input" type="text" name="paymentTerms" maxlength="80" placeholder="Net 30">
+          <span class="field-help">Recorded for reference. Foundry does not track invoices or payments.</span>
+        </label>
+      </div>
+    </div>
+    <div class="card-foot">
+      <button class="btn btn--primary" type="submit">Add supplier</button>
+    </div>
+  </form>
+<% } %>

@@ -1,0 +1,132 @@
+<%
+  var model = (configuration && configuration.inventoryModel) || {};
+  var defaults = (configuration && configuration.operationalDefaults) || {};
+  var vocab = foundry.vocabulary;
+%>
+
+<div class="page-head">
+  <div class="titles">
+    <h1><%- helpers.icon('foundry', { size: 20 }) %> Foundry</h1>
+    <div class="page-sub">Ask about how your inventory is set up, or ask for a change.</div>
+  </div>
+</div>
+
+<div class="grid grid--sidebar">
+  <div class="grid">
+    <div class="card" id="conversation">
+      <div class="card-head"><h2>Ask Foundry about your inventory</h2></div>
+
+      <% if (messages.length === 0) { %>
+        <div class="card-body">
+          <p class="muted">Foundry answers from your real configuration — not from what a typical setup looks like.</p>
+          <div class="ask-suggestions">
+            <button class="example example--sm" type="button" data-fill-ask="How is my inventory configured?">How is my inventory configured?</button>
+            <button class="example example--sm" type="button" data-fill-ask="Why are my items tracked this way?">Why are my items tracked this way?</button>
+            <button class="example example--sm" type="button" data-fill-ask="What's the difference between lot tracking and serial tracking?">Lot tracking vs serial tracking?</button>
+          </div>
+        </div>
+      <% } else { %>
+        <div class="conversation">
+          <% messages.forEach(function (message) { %>
+            <div class="turn turn--<%= message.role %>">
+              <span class="turn-who"><%= message.role === 'user' ? 'You' : 'Foundry' %></span>
+              <div class="turn-body"><%= message.body %></div>
+              <% if (message.grounding && message.grounding.length) { %>
+                <div class="turn-grounding">
+                  <% message.grounding.forEach(function (fact) { %><span class="pill"><%= fact %></span><% }) %>
+                </div>
+              <% } %>
+              <% if (message.action_kind === 'change_proposed' && message.plan_id) { %>
+                <a class="btn btn--sm" href="/foundry/change/<%= message.plan_id %>">Review the proposed change</a>
+              <% } %>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+
+      <div class="card-body" style="border-top:1px solid var(--line-soft);">
+        <form method="post" action="/foundry/ask" class="ask-form" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <label class="visually-hidden" for="ask">Ask Foundry</label>
+          <input class="input" id="ask" name="question" data-ask-input required
+                 placeholder="How is my inventory configured?" <%= aiConfigured ? '' : 'disabled' %>>
+          <button class="btn btn--primary" type="submit" <%= aiConfigured ? '' : 'disabled' %>>
+            <%- helpers.icon('send', { size: 16 }) %><span class="btn-label">Ask</span>
+          </button>
+        </form>
+        <% if (!aiConfigured) { %>
+          <div class="hint">Foundry needs a model provider. Add <code class="mono">ANTHROPIC_API_KEY</code> and restart.</div>
+        <% } %>
+      </div>
+    </div>
+
+    <% if (currentUser.role === 'owner') { %>
+      <div class="card">
+        <div class="card-head"><h2>Ask for a change</h2></div>
+        <div class="card-body">
+          <p class="muted">
+            Foundry will show you what would change and what it would affect. Nothing happens until you confirm.
+          </p>
+          <form method="post" action="/foundry/change" class="ask-form" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <label class="visually-hidden" for="change">Ask for a change</label>
+            <input class="input" id="change" name="request" required
+                   placeholder="We opened another warehouse in Queens" <%= aiConfigured ? '' : 'disabled' %>>
+            <button class="btn" type="submit" <%= aiConfigured ? '' : 'disabled' %>>Propose a change</button>
+          </form>
+        </div>
+      </div>
+    <% } %>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><h2>How you're set up</h2></div>
+      <div class="card-body">
+        <dl class="kv">
+          <dt>Tracking</dt>
+          <dd>
+            <%= model.primaryArchetype ? helpers.TRACKING_MODES[model.primaryArchetype].label : 'Not configured' %><%= model.usesVariants ? ', by variant' : '' %>
+          </dd>
+          <% if (model.variantDimensions && model.variantDimensions.length) { %>
+            <dt>Variants</dt><dd><%= model.variantDimensions.map(function (d) { return d.name; }).join(' → ') %></dd>
+          <% } %>
+          <% if (model.expirationRules && model.expirationRules.enabled) { %>
+            <dt>Expiration</dt><dd>Captured on receipt</dd>
+          <% } %>
+          <dt><%= helpers.plural(2, term('location')) %></dt><dd><%= stats.locationCount %></dd>
+          <dt>Negative stock</dt><dd><%= defaults.allowNegativeStock ? 'Allowed' : 'Not allowed' %></dd>
+          <dt>Adjustments</dt><dd>Always require a reason</dd>
+          <dt>Version</dt><dd><%= configuration.configurationVersion %></dd>
+        </dl>
+      </div>
+      <div class="card-foot muted">
+        Configured <%= helpers.shortDate(configuration.configuredAt) %>
+      </div>
+    </div>
+
+    <% if (vocab.isCustomised) { %>
+      <div class="card">
+        <div class="card-head"><h2>Your wording</h2></div>
+        <div class="card-body">
+          <div class="badge-row">
+            <% vocab.customised.forEach(function (entry) { %>
+              <span class="pill"><%= entry.from %> → <strong><%= entry.to %></strong></span>
+            <% }) %>
+          </div>
+          <p class="hint">Presentation only. The inventory engine underneath is unchanged.</p>
+        </div>
+      </div>
+    <% } %>
+
+    <div class="card">
+      <div class="card-head"><h2>Not yet</h2></div>
+      <div class="card-body">
+        <p class="muted" style="font-size:12.5px;">
+          Foundry configures and explains inventory today. It does not forecast demand, suggest
+          reorders, raise purchase orders, or move stock on its own.
+        </p>
+      </div>
+    </div>
+  </div>
+</div>

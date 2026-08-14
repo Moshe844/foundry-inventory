@@ -1,0 +1,93 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Your inventories</h1>
+    <div class="page-sub">
+      Each one is completely separate — its own items, locations, history and Foundry setup.
+    </div>
+  </div>
+  <div class="page-actions">
+    <% if (!allowance.exceeded) { %>
+      <a class="btn btn--primary" href="/inventories/new"><%- helpers.icon('plus', { size: 16 }) %> New inventory</a>
+    <% } %>
+  </div>
+</div>
+
+<% if (workspaces.length === 0) { %>
+  <div class="card section">
+    <div class="empty">
+      <div class="icon-wrap"><%- helpers.icon('box', { size: 22 }) %></div>
+      <h3>You do not have an inventory yet</h3>
+      <p>An inventory holds your items, your locations and their whole history. Create one to begin.</p>
+      <a class="btn btn--primary" href="/inventories/new">Create an inventory</a>
+    </div>
+  </div>
+<% } else { %>
+  <div class="wsp-grid">
+    <% workspaces.forEach(function (workspace) { %>
+      <article class="wsp-card <%= workspace.workspaceId === currentWorkspaceId ? 'is-current' : '' %>">
+        <div class="wsp-card-head">
+          <h2><%= workspace.name %></h2>
+          <% if (workspace.workspaceId === currentWorkspaceId) { %>
+            <span class="badge badge--ok">Open now</span>
+          <% } %>
+        </div>
+
+        <div class="wsp-facts">
+          <span><strong><%= helpers.qty(workspace.itemCount) %></strong> <%= helpers.plural(workspace.itemCount, 'item') %></span>
+          <span><strong><%= helpers.qty(workspace.locationCount) %></strong> <%= helpers.plural(workspace.locationCount, 'location') %></span>
+          <span><strong><%= helpers.qty(workspace.unitsOnHand) %></strong> on hand</span>
+        </div>
+
+        <div class="wsp-meta">
+          <span class="badge badge--muted"><%= helpers.roleLabel(workspace.role) %></span>
+          <% if (workspace.configuredByFoundry) { %>
+            <span class="badge badge--muted"><%- helpers.icon('foundry', { size: 11 }) %> Set up by Foundry</span>
+          <% } else if (!workspace.configured) { %>
+            <span class="badge badge--warn">Not set up yet</span>
+          <% } %>
+          <% if (workspace.attentionCount > 0) { %>
+            <span class="badge badge--danger"><%= workspace.attentionCount %> needing attention</span>
+          <% } %>
+          <% if (workspace.memberCount > 1) { %>
+            <span class="badge badge--muted"><%= workspace.memberCount %> people</span>
+          <% } %>
+        </div>
+
+        <div class="wsp-card-foot">
+          <% if (workspace.workspaceId === currentWorkspaceId) { %>
+            <a class="btn btn--primary btn--sm" href="/">Go to it</a>
+          <% } else { %>
+            <form method="post" action="/inventories/switch">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="workspaceId" value="<%= workspace.workspaceId %>">
+              <input type="hidden" name="next" value="/">
+              <button class="btn btn--primary btn--sm" type="submit">Open</button>
+            </form>
+          <% } %>
+          <% if (workspaces.length > 1) { %>
+            <form method="post" action="/inventories/<%= workspace.workspaceId %>/leave"
+                  data-confirm="Leave <%= workspace.name %>? Its records stay exactly as they are; you just lose access.">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn--ghost btn--sm" type="submit">Leave</button>
+            </form>
+          <% } %>
+          <%# Deleting is a link, not a button: it opens a page that shows what
+              would be destroyed and asks for the name. There is no one-click
+              path to it anywhere. %>
+          <% if (workspace.role === 'owner') { %>
+            <a class="btn btn--ghost btn--sm" href="/inventories/<%= workspace.workspaceId %>/delete">Delete</a>
+          <% } %>
+        </div>
+      </article>
+    <% }) %>
+  </div>
+
+  <p class="muted" style="font-size:12.5px; margin-top:16px;">
+    <% if (allowance.unlimited) { %>
+      <%= workspaces.length %> <%= helpers.plural(workspaces.length, 'inventory', 'inventories') %>.
+    <% } else { %>
+      Using <%= allowance.used %> of <%= allowance.limit %> inventories on the <%= allowance.planId %> plan.
+      <% if (allowance.exceeded) { %>You will need a larger plan to add another.<% } %>
+    <% } %>
+  </p>
+<% } %>

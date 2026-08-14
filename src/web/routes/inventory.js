@@ -1,0 +1,254 @@
+'use strict';
+
+const express = require('express');
+const engine = require('../../domain/inventory-engine');
+const itemService = require('../../domain/item-service');
+const inventoryQuery = require('../../domain/inventory-query');
+const repo = require('../../domain/repository');
+const { ValidationError } = require('../../domain/errors');
+const reevaluate = require('../../attention/reevaluate');
+const attention = require('../../attention/attention-engine');
+const presenter = require('../../attention/presenter');
+const { requireAuth, asyncRoute } = require('../middleware');
+const { toArray, trimOrNull } = require('../../lib/util');
+
+const router = express.Router();
+router.use('/inventory', requireAuth);
+
+/** Serial numbers are entered one per line; blank lines are ignored. */
+function parseSerialLines(raw, condition) {
+  const lines = String(raw || '')
+    .split(/[\r\n,]+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    throw new ValidationError('Enter at least one serial number, one per line.', { field: 'serials' });
+  }
+  return lines.map((serial) => ({ serial, condition: condition || 'good' }));
+}
+
+function normaliseOptionInput(raw) {
+  if (!raw) return [];
+  const list = Array.isArray(raw) ? raw : Object.keys(raw).sort().map((key) => raw[key]);
+  return list.filter(Boolean).map((entry) => ({ name: entry.name, values: entry.values }));
+}
+
+router.get(
+  '/inventory',
+  asyncRoute(async (req, res) => {
+    const limit = 25;
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const filters = {
+      q: trimOrNull(req.query.q) || '',
+      trackingMode: trimOrNull(req.query.tracking) || '',
+      locationId: trimOrNull(req.query.location) || '',
+      sort: trimOrNull(req.query.sort) || 'name',
+      includeArchived: req.query.archived === '1',
+      limit,
+      offset: (page - 1) * limit,
+    };
+    const result = inventoryQuery.listItems(req.db, req.ctx.workspaceId, filters);
+    const locations = repo.listLocations(req.db, req.ctx.workspaceId);
+    res.page('inventory/list', {
+      title: 'Inventory',
+      nav: 'inventory',
+      items: result.items,
+      hasMore: result.hasMore,
+      page,
+      filters,
+      locations,
+    });
+  })
+);
+
+router.get(
+  '/inventory/new',
+  asyncRoute(async (req, res) => {
+    res.page('inventory/new', {
+      title: 'Add an item',
+      nav: 'inventory',
+      form: {},
+    });
+  })
+);
+
+router.post(
+  '/inventory',
+  asyncRoute(async (req, res) => {
+    const hasVariants = req.body.hasVariants === '1' || req.body.hasVariants === 'on';
+    let created;
+    try {
+      created = itemService.createItem(req.db, req.ctx, {
+        name: req.body.name,
+        baseCode: req.body.baseCode,
+        description: req.body.description,
+        unitLabel: req.body.unitLabel,
+        trackingMode: req.body.trackingMode,
+        hasVariants,
+        options: hasVariants ? normaliseOptionInput(req.body.options) : [],
+      });
+    } catch (err) {
+      if (err instanceof ValidationError) {
+        return res.status(400).page('inventory/new', {
+          title: 'Add an item',
+          nav: 'inventory',
+          form: req.body,
+          error: err.message,
+        });
+      }
+      throw err;
+    }
+    req.flash('success', 'Item created. Receive some stock to get started.');
+    return res.redirect(303, `/inventory/${created.itemId}`);
+  })
+);
+
+router.get(
+  '/inventory/:id',
+  asyncRoute(async (req, res) => {
+    const detail = itemService.getItemDetail(req.db, req.ctx.workspaceId, req.params.id);
+    // What Foundry has noticed about this record, on the record itself.
+    const findings = attention.listAttentionForItem(req.db, req.ctx.workspaceId, req.params.id);
+    res.page('inventory/item', {
+      title: detail.item.name,
+      nav: 'inventory',
+      ...detail,
+      attention: presenter.presentAll(req.db, req.ctx.workspaceId, findings),
+    });
+  })
+);
+
+router.post(
+  '/inventory/:id/details',
+  asyncRoute(async (req, res) => {
+    itemService.updateItem(req.db, req.ctx, req.params.id, {
+      name: req.body.name,
+      baseCode: req.body.baseCode,
+      description: req.body.description,
+      unitLabel: req.body.unitLabel,
+      allowNegative: req.body.allowNegative,
+    });
+    req.flash('success', 'Item details saved.');
+    res.redirect(303, `/inventory/${req.params.id}`);
+  })
+);
+
+router.post(
+  '/inventory/:id/variants',
+  asyncRoute(async (req, res) => {
+    const values = req.body.optionValues || {};
+    const result = itemService.addVariant(req.db, req.ctx, req.params.id, values);
+    req.flash('success', `Added variant ${result.label}.`);
+    res.redirect(303, `/inventory/${req.params.id}`);
+  })
+);
+
+router.post(
+  '/inventory/:id/archive',
+  asyncRoute(async (req, res) => {
+    const archived = req.body.restore !== '1';
+    itemService.setItemActive(req.db, req.ctx, req.params.id, !archived);
+    req.flash('success', archived ? 'Item archived.' : 'Item restored.');
+    res.redirect(303, `/inventory/${req.params.id}`);
+  })
+);
+
+router.post(
+  '/inventory/:id/receive',
+  asyncRoute(async (req, res) => {
+    const item = repo.requireItem(req.db, req.ctx.workspaceId, req.params.id);
+    const input = {
+      skuId: req.body.skuId,
+      locationId: req.body.locationId,
+      quantity: req.body.quantity,
+      notes: req.body.notes,
+      reference: req.body.reference,
+    };
+    if (item.tracking_mode === 'serial') {
+      input.serials = parseSerialLines(req.body.serials, req.body.condition);
+    }
+    if (item.tracking_mode === 'lot') {
+      input.lotCode = req.body.lotCode;
+      input.expiresAt = req.body.expiresAt;
+      input.lotReceivedAt = req.body.lotReceivedAt;
+    }
+    const result = engine.receive(req.db, req.ctx, input);
+    // After the movement has committed, never inside it. See attention/reevaluate.
+    reevaluate.afterMovement(req.db, req.ctx.workspaceId, [input.skuId], 'receive');
+    const into = repo.requireLocation(req.db, req.ctx.workspaceId, input.locationId);
+    req.flash('success', `Received ${result.quantity} into ${into.name}.`);
+    res.redirect(303, `/inventory/${req.params.id}`);
+  })
+);
+
+router.post(
+  '/inventory/:id/issue',
+  asyncRoute(async (req, res) => {
+    const item = repo.requireItem(req.db, req.ctx.workspaceId, req.params.id);
+    const input = {
+      skuId: req.body.skuId,
+      locationId: req.body.locationId,
+      quantity: req.body.quantity,
+      reasonCode: req.body.reasonCode,
+      notes: req.body.notes,
+      reference: req.body.reference,
+    };
+    if (item.tracking_mode === 'serial') input.serialUnitIds = toArray(req.body.serialUnitIds);
+    if (item.tracking_mode === 'lot') input.lotId = req.body.lotId;
+    const result = engine.issue(req.db, req.ctx, input);
+    reevaluate.afterMovement(req.db, req.ctx.workspaceId, [input.skuId], 'issue');
+    const from = repo.requireLocation(req.db, req.ctx.workspaceId, input.locationId);
+    req.flash('success', `Issued ${result.quantity} from ${from.name}.`);
+    res.redirect(303, `/inventory/${req.params.id}`);
+  })
+);
+
+router.post(
+  '/inventory/:id/transfer',
+  asyncRoute(async (req, res) => {
+    const item = repo.requireItem(req.db, req.ctx.workspaceId, req.params.id);
+    const input = {
+      skuId: req.body.skuId,
+      fromLocationId: req.body.fromLocationId,
+      toLocationId: req.body.toLocationId,
+      quantity: req.body.quantity,
+      notes: req.body.notes,
+      reference: req.body.reference,
+    };
+    if (item.tracking_mode === 'serial') input.serialUnitIds = toArray(req.body.serialUnitIds);
+    if (item.tracking_mode === 'lot') input.lotId = req.body.lotId;
+    const result = engine.transfer(req.db, req.ctx, input);
+    reevaluate.afterMovement(req.db, req.ctx.workspaceId, [input.skuId], 'transfer');
+    const from = repo.requireLocation(req.db, req.ctx.workspaceId, input.fromLocationId);
+    const to = repo.requireLocation(req.db, req.ctx.workspaceId, input.toLocationId);
+    req.flash('success', `Transferred ${result.quantity} from ${from.name} to ${to.name}.`);
+    res.redirect(303, `/inventory/${req.params.id}`);
+  })
+);
+
+router.post(
+  '/inventory/:id/adjust',
+  asyncRoute(async (req, res) => {
+    const item = repo.requireItem(req.db, req.ctx.workspaceId, req.params.id);
+    const input = {
+      skuId: req.body.skuId,
+      locationId: req.body.locationId,
+      countedQty: req.body.countedQty,
+      reasonCode: req.body.reasonCode,
+      notes: req.body.notes,
+      reference: req.body.reference,
+    };
+    if (item.tracking_mode === 'serial') input.serialUnitIds = toArray(req.body.serialUnitIds);
+    if (item.tracking_mode === 'lot') input.lotId = req.body.lotId;
+    const result = engine.adjust(req.db, req.ctx, input);
+    reevaluate.afterMovement(req.db, req.ctx.workspaceId, [input.skuId], 'adjust');
+    const message =
+      item.tracking_mode === 'serial'
+        ? `Wrote off ${Math.abs(result.quantity)} ${Math.abs(result.quantity) === 1 ? 'unit' : 'units'}.`
+        : `Adjusted from ${result.expected} to ${result.counted}.`;
+    req.flash('success', message);
+    res.redirect(303, `/inventory/${req.params.id}`);
+  })
+);
+
+module.exports = router;

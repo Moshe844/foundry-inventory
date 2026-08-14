@@ -1,0 +1,258 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/imports"><%- helpers.icon('chevron', { size: 14 }) %> Bring data in</a>
+    <h1><%= plan.sourceName %></h1>
+    <div class="page-sub"><%= summary %></div>
+  </div>
+</div>
+
+<% if (report) { %>
+  <%# ------------------------------------------------------------- it has run %>
+  <div class="card section <%= report.verified ? '' : 'card--warn' %>">
+    <div class="card-head">
+      <h2><%= report.cancelled ? 'Stopped' : report.partial ? 'Partly imported' : 'Imported' %></h2>
+      <span class="spacer"></span>
+      <span class="badge badge--<%= report.verified ? 'ok' : 'danger' %>">
+        <%= report.verified ? 'Verified against your inventory' : 'Needs checking' %>
+      </span>
+    </div>
+    <div class="card-body">
+      <p class="lede"><%= report.headline %></p>
+
+      <% if (report.problems.length) { %>
+        <ul class="plain-list">
+          <% report.problems.forEach(function (problem) { %><li class="is-warn"><%= problem %></li><% }) %>
+        </ul>
+      <% } %>
+
+      <table class="table table--tight">
+        <thead><tr><th>Check</th><th class="num">Expected</th><th class="num">Found</th></tr></thead>
+        <tbody>
+          <% report.checks.forEach(function (check) { %>
+            <tr>
+              <td><%= check.name %></td>
+              <td class="num"><%= check.expected %></td>
+              <td class="num <%= check.ok ? '' : 'is-warn' %>"><%= check.observed %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <div class="card-foot">
+      <div class="btn-row">
+        <a class="btn btn--sm" href="/inventory">See the inventory</a>
+        <a class="btn btn--sm btn--ghost" href="/activity">See the movements</a>
+        <% if ((report.partial || report.cancelled) && canOperate) { %>
+          <form method="post" action="/imports/<%= plan.id %>/resume">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn btn--sm btn--primary" type="submit">Import the rest</button>
+          </form>
+        <% } %>
+      </div>
+    </div>
+  </div>
+<% } else { %>
+
+  <%# ----------------------------------------------------------- the preview %>
+  <div class="card section">
+    <div class="card-head">
+      <h2>What this will do</h2>
+      <span class="spacer"></span>
+      <span class="badge badge--muted"><%= plan.recordsDetected %> rows read</span>
+    </div>
+    <div class="card-body">
+      <p class="lede"><%= preview.sentence %></p>
+
+      <% if (preview.locations.length) { %>
+        <div class="act-ledger">
+          <% preview.locations.forEach(function (location) { %>
+            <div class="act-row">
+              <span class="act-place"><%= location.name %></span>
+              <span class="act-move"><span class="num">+<%= location.quantity %></span></span>
+            </div>
+          <% }) %>
+        </div>
+      <% } %>
+
+      <% if (plan.assumptions.length) { %>
+        <h3 class="sub-head">What Foundry assumed</h3>
+        <ul class="plain-list">
+          <% plan.assumptions.forEach(function (assumption) { %><li><%= assumption %></li><% }) %>
+        </ul>
+      <% } %>
+
+      <% if (plan.warnings.length) { %>
+        <h3 class="sub-head">Worth knowing</h3>
+        <ul class="plain-list">
+          <% plan.warnings.forEach(function (warning) { %><li class="is-warn"><%= warning %></li><% }) %>
+        </ul>
+      <% } %>
+    </div>
+
+    <% if (canOperate) { %>
+      <div class="card-foot">
+        <div class="btn-row">
+          <% if (plan.approvalStatus === 'APPROVED') { %>
+            <form method="post" action="/imports/<%= plan.id %>/run" data-busy>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn--primary" type="submit">Import it</button>
+            </form>
+            <span class="muted">Approved. Nothing has been created yet.</span>
+          <% } else { %>
+            <form method="post" action="/imports/<%= plan.id %>/approve" data-busy>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
+              <button class="btn btn--primary" type="submit" <%= preview.willImport ? '' : 'disabled' %>>
+                Approve <%= preview.willImport %> rows
+              </button>
+            </form>
+          <% } %>
+          <form method="post" action="/imports/<%= plan.id %>/cancel">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn btn--ghost" type="submit">Cancel this import</button>
+          </form>
+        </div>
+      </div>
+    <% } %>
+  </div>
+
+  <%# ------------------------------------------------------------- the mapping %>
+  <form method="post" action="/imports/<%= plan.id %>/mapping" class="card section">
+    <div class="card-head">
+      <h2>How Foundry read the columns</h2>
+      <span class="spacer"></span>
+      <% if (plan.transformations.aiUsed) { %><span class="badge badge--muted">AI helped name some</span><% } %>
+    </div>
+    <div class="card-body">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <table class="table table--tight">
+        <thead><tr><th>Column in your file</th><th>Foundry read it as</th></tr></thead>
+        <tbody>
+          <% mappingRows.forEach(function (row) { %>
+            <tr>
+              <td>
+                <strong><%= row.column %></strong>
+                <% if (row.byAi) { %><span class="badge badge--muted">named by AI</span><% } %>
+                <% if (row.ignoredBecause) { %><div class="muted">left out — Foundry does not track <%= row.ignoredBecause %></div><% } %>
+              </td>
+              <td>
+                <select class="input input--sm" name="col_<%= row.index %>" data-column="<%= row.index %>">
+                  <option value="">— not imported —</option>
+                  <% fieldOptions.forEach(function (field) { %>
+                    <option value="<%= field.id %>" <%= row.field === field.id ? 'selected' : '' %>><%= field.label %></option>
+                  <% }) %>
+                </select>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+
+      <label class="field">
+        <span class="field-label">Rows with no location go to</span>
+        <select class="input" name="defaultLocationId">
+          <option value="">— nowhere; just create the products —</option>
+          <% locations.forEach(function (location) { %>
+            <option value="<%= location.id %>" <%= plan.defaultLocationId === location.id ? 'selected' : '' %>><%= location.name %></option>
+          <% }) %>
+        </select>
+      </label>
+
+      <% if (plan.conflicts.length) { %>
+        <h3 class="sub-head">Locations Foundry does not recognise</h3>
+        <% plan.conflicts.forEach(function (conflict) { %>
+          <label class="field">
+            <span class="field-label">“<%= conflict.text %>” (<%= conflict.count %> rows) is</span>
+            <select class="input" name="location_<%= conflict.text %>">
+              <option value="">— leave those rows out —</option>
+              <% locations.forEach(function (location) { %>
+                <option value="<%= location.id %>" <%= plan.locationMappings[conflict.text] === location.id ? 'selected' : '' %>><%= location.name %></option>
+              <% }) %>
+            </select>
+          </label>
+        <% }) %>
+      <% } %>
+    </div>
+    <% if (canOperate) { %>
+      <div class="card-foot">
+        <button class="btn" type="submit">Re-read the file with these</button>
+      </div>
+    <% } %>
+  </form>
+<% } %>
+
+<%# ---------------------------------------------------------------- the rows %>
+<% if (problems.length) { %>
+  <div class="card section">
+    <div class="card-head"><h2>What Foundry could not do</h2></div>
+    <div class="card-body">
+      <ul class="plain-list">
+        <% problems.forEach(function (problem) { %>
+          <li>
+            <strong><%= problem.count %></strong> <%= problem.count === 1 ? 'row' : 'rows' %> —
+            <%= problem.example %>
+            <span class="muted">(row <%= problem.rows.join(', row ') %><%= problem.count > problem.rows.length ? ', …' : '' %>)</span>
+          </li>
+        <% }) %>
+      </ul>
+    </div>
+  </div>
+<% } %>
+
+<div class="card section">
+  <div class="card-head">
+    <h2>Every row</h2>
+    <span class="spacer"></span>
+    <div class="btn-row">
+      <a class="btn btn--sm <%= filter ? '' : 'btn--primary' %>" href="/imports/<%= plan.id %>">All <%= plan.recordsDetected %></a>
+      <% ['VALID', 'NEEDS_REVIEW', 'INVALID', 'IMPORTED', 'FAILED'].forEach(function (status) { %>
+        <% if (counts[status]) { %>
+          <a class="btn btn--sm <%= filter === status ? 'btn--primary' : '' %>" href="/imports/<%= plan.id %>?rows=<%= status %>">
+            <%= helpers.columnLabel(status.toLowerCase().replace('_', ' ')) %> <%= counts[status] %>
+          </a>
+        <% } %>
+      <% }) %>
+    </div>
+  </div>
+  <div class="table-scroll">
+    <table class="table table--tight">
+      <thead>
+        <tr>
+          <th>Row</th><th>Product</th><th>Version</th><th class="num">Qty</th><th>Location</th><th>Foundry's reading</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% rows.forEach(function (row) { %>
+          <tr class="<%= row.status === 'INVALID' || row.status === 'FAILED' ? 'is-warn-row' : '' %>">
+            <td class="muted"><%= row.rowNumber %></td>
+            <td><%= row.parsed.name || row.parsed.code || '—' %></td>
+            <td class="muted"><%= (row.parsed.variants || []).map(function (v) { return v.value; }).join(' / ') || '—' %></td>
+            <td class="num"><%= row.parsed.quantity === null || row.parsed.quantity === undefined ? '—' : row.parsed.quantity %></td>
+            <td class="muted"><%= row.parsed.locationName || row.parsed.locationText || '—' %></td>
+            <td>
+              <span class="badge badge--<%= row.status === 'IMPORTED' ? 'ok' : row.status === 'INVALID' || row.status === 'FAILED' ? 'danger' : 'muted' %>">
+                <%= helpers.columnLabel(row.status.toLowerCase().replace('_', ' ')) %>
+              </span>
+              <% (row.problems || []).forEach(function (problem) { %>
+                <div class="muted"><%= problem.message %></div>
+              <% }) %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+  <% if (plan.recordsDetected > pageSize) { %>
+    <div class="card-foot">
+      <div class="btn-row">
+        <% if (page > 1) { %>
+          <a class="btn btn--sm" href="/imports/<%= plan.id %>?page=<%= page - 1 %><%= filter ? '&rows=' + filter : '' %>">Previous</a>
+        <% } %>
+        <span class="muted">Rows <%= (page - 1) * pageSize + 1 %>–<%= (page - 1) * pageSize + rows.length %></span>
+        <% if (rows.length === pageSize) { %>
+          <a class="btn btn--sm" href="/imports/<%= plan.id %>?page=<%= page + 1 %><%= filter ? '&rows=' + filter : '' %>">Next</a>
+        <% } %>
+      </div>
+    </div>
+  <% } %>
+</div>

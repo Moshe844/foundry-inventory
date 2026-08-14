@@ -1,0 +1,231 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Overview</h1>
+    <div class="page-sub">What needs your attention, and where your stock stands.</div>
+  </div>
+  <div class="page-actions">
+    <a class="btn" href="/ask"><%- helpers.icon('question', { size: 16 }) %> Ask Foundry</a>
+    <a class="btn btn--primary" href="/inventory/new"><%- helpers.icon('plus', { size: 16 }) %> Add item</a>
+  </div>
+</div>
+
+<% var isEmpty_ = typeof isEmpty !== 'undefined' && isEmpty; %>
+<% if (isEmpty_) { %>
+  <section class="brief">
+    <div class="brief-head">
+      <span class="foundry-panel-icon" style="width:30px; height:30px;"><%- helpers.icon('foundry', { size: 16 }) %></span>
+      <h2>This inventory is empty</h2>
+      <span class="spacer"></span>
+      <span class="badge badge--muted">Not set up yet</span>
+    </div>
+    <div class="brief-body">Tell Foundry what you keep here and it will work out how to track it — what counts as an item, which locations you need, and whether anything needs serial numbers or batch dates. You can also set it up by hand.</div>
+    <div class="brief-foot">
+      <a class="btn btn--primary btn--sm" href="/foundry">Set it up with Foundry</a>
+      <a class="btn btn--sm" href="/locations">Add a location</a>
+      <a class="btn btn--sm" href="/inventory/new">Add an item</a>
+    </div>
+  </section>
+<% } %>
+
+<% var brief_ = typeof brief !== 'undefined' ? brief : null; %>
+<% if (brief_ && !isEmpty_) { %>
+  <section class="brief">
+    <div class="brief-head">
+      <span class="foundry-panel-icon" style="width:30px; height:30px;"><%- helpers.icon('foundry', { size: 16 }) %></span>
+      <h2>Today's briefing</h2>
+      <span class="spacer"></span>
+      <% if (attentionSummary.critical > 0) { %>
+        <span class="badge badge--danger"><%= attentionSummary.critical %> urgent</span>
+      <% } else if (attentionSummary.total === 0) { %>
+        <span class="badge badge--ok">All clear</span>
+      <% } %>
+    </div>
+    <div class="brief-body"><%= brief_.body %></div>
+    <div class="brief-foot">
+      <% if (attentionTotal > 0) { %>
+        <a class="btn btn--primary btn--sm" href="/attention">See what needs attention</a>
+      <% } %>
+      <form method="post" action="/attention/refresh">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="returnTo" value="overview">
+        <button class="btn btn--sm" type="submit">Check again</button>
+      </form>
+      <span class="muted" style="font-size:12px;">
+        Measured from your movement history<% if (brief_.createdAt) { %> · <%= helpers.timeAgo(brief_.createdAt) %><% } %>
+      </span>
+    </div>
+  </section>
+<% } %>
+
+<% if (typeof attention !== 'undefined' && attention.length > 0) { %>
+  <div class="att-list section">
+    <% attention.forEach(function (item) { %>
+      <%- include('partials/attention-card', { item: item, helpers: helpers, csrfToken: csrfToken, returnTo: '/' }) %>
+    <% }) %>
+  </div>
+  <% if (attentionTotal > attention.length) { %>
+    <p class="muted" style="font-size:13px; margin:-4px 0 18px;">
+      <a href="/attention"><%= attentionTotal - attention.length %> more on the full briefing</a>
+    </p>
+  <% } %>
+<% } %>
+
+<% var foundryConfig = typeof configuration !== 'undefined' ? configuration : null; %>
+<% if (foundryConfig && foundryConfig.configuredAt && foundryConfig.configurationVersion > 0) { %>
+  <div class="foundry-panel" style="margin-bottom:18px;">
+    <span class="foundry-panel-icon"><%- helpers.icon('foundry', { size: 18 }) %></span>
+    <span class="foundry-panel-text">
+      <strong>Ask Foundry about your inventory</strong>
+      <div>
+        <%
+          var m = foundryConfig.inventoryModel || {};
+          var modeLabel = m.primaryArchetype ? helpers.TRACKING_MODES[m.primaryArchetype].label.toLowerCase() : 'quantity';
+        %>
+        Set up for <%= modeLabel %> tracking<%= m.usesVariants ? ' with variants' : '' %>
+        across <%= stats.locationCount %> <%= helpers.plural(stats.locationCount, term('location').toLowerCase()) %>.
+      </div>
+    </span>
+    <a class="btn" href="/foundry">Open Foundry</a>
+  </div>
+<% } %>
+
+<% if (stats.locationCount === 0) { %>
+  <div class="card" style="margin-bottom:18px;">
+    <div class="card-body" style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
+      <span class="ledger-icon ledger-icon--transfer" style="width:38px; height:38px;"><%- helpers.icon('locations', { size: 19 }) %></span>
+      <div style="flex:1; min-width:220px;">
+        <strong style="font-size:14px;">Start with a location</strong>
+        <div class="muted" style="font-size:13px;">Stock has to live somewhere. Add a warehouse, store or van, then add what you track.</div>
+      </div>
+      <a class="btn btn--primary" href="/locations">Add a location</a>
+    </div>
+  </div>
+<% } %>
+
+<div class="stat-grid">
+  <div class="stat">
+    <div class="stat-label"><%- helpers.icon('box', { size: 15 }) %> Tracked items</div>
+    <div class="stat-value"><%= helpers.qty(stats.itemCount) %></div>
+    <div class="stat-hint"><%= helpers.qty(stats.locationCount) %> <%= helpers.plural(stats.locationCount, 'location') %></div>
+  </div>
+  <div class="stat">
+    <div class="stat-label"><%- helpers.icon('inventory', { size: 15 }) %> Units on hand</div>
+    <div class="stat-value"><%= helpers.qty(stats.unitsOnHand) %></div>
+    <div class="stat-hint">Across every location</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label"><%- helpers.icon('alert', { size: 15 }) %> Items at zero</div>
+    <div class="stat-value"><%= helpers.qty(stats.zeroCount) %></div>
+    <div class="stat-hint <%= stats.zeroCount > 0 ? 'is-warn' : '' %>">
+      <%= stats.zeroCount > 0 ? 'Nothing on hand anywhere' : 'Everything has stock' %>
+    </div>
+  </div>
+  <div class="stat">
+    <div class="stat-label"><%- helpers.icon('activity', { size: 15 }) %> Movements today</div>
+    <div class="stat-value"><%= helpers.qty(stats.movementsToday) %></div>
+    <div class="stat-hint">In the last 24 hours</div>
+  </div>
+</div>
+
+<div class="grid grid--sidebar section">
+  <div class="card">
+    <div class="card-head">
+      <h2>Recent activity</h2>
+      <span class="spacer"></span>
+      <a class="btn btn--ghost btn--sm" href="/activity">See all <%- helpers.icon('chevron', { size: 14 }) %></a>
+    </div>
+    <% if (activity.length === 0) { %>
+      <div class="empty">
+        <div class="icon-wrap"><%- helpers.icon('activity', { size: 22 }) %></div>
+        <h3>No inventory activity yet</h3>
+        <p>Once you receive stock, every movement shows up here with who did it and why.</p>
+        <a class="btn btn--primary" href="/inventory/new">Add your first item</a>
+      </div>
+    <% } else { %>
+      <%- include('partials/ledger', { groups: activity, helpers: helpers }) %>
+    <% } %>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><h2>Stock by location</h2></div>
+      <div class="card-body">
+        <% if (stats.byLocation.length === 0) { %>
+          <p class="muted">No locations yet.</p>
+        <% } else { %>
+          <%
+            var max = stats.byLocation.reduce(function (m, l) { return Math.max(m, l.on_hand); }, 0) || 1;
+          %>
+          <div class="location-bars">
+            <% stats.byLocation.forEach(function (location) { %>
+              <div class="location-bar">
+                <span class="name"><a href="/inventory?location=<%= location.id %>"><%= location.name %></a></span>
+                <span class="value num"><%= helpers.qty(location.on_hand) %></span>
+                <span class="track"><span class="fill" style="width: <%= Math.round((location.on_hand / max) * 100) %>%"></span></span>
+              </div>
+            <% }) %>
+          </div>
+        <% } %>
+      </div>
+    </div>
+
+    <% if (stats.trackedUnits > 0) { %>
+      <div class="card">
+        <div class="card-head"><h2>Individually tracked units</h2></div>
+        <div class="card-body">
+          <div class="stat-value" style="font-size: 22px;"><%= helpers.qty(stats.trackedUnits) %></div>
+          <div class="stat-hint">Serial-numbered units currently in stock</div>
+        </div>
+      </div>
+    <% } %>
+
+    <% if (stats.expiringLots.length > 0) { %>
+      <div class="card">
+        <div class="card-head"><h2>Lots by expiration</h2></div>
+        <div class="table-wrap">
+          <table class="table">
+            <tbody>
+              <% stats.expiringLots.forEach(function (lot) { %>
+                <% var state = helpers.expiryState(lot.expires_at); %>
+                <tr>
+                  <td>
+                    <a class="cell-title" href="/inventory/<%= lot.item_id %>"><%= lot.item_name %></a>
+                    <span class="cell-sub mono">Lot <%= lot.code %></span>
+                  </td>
+                  <td class="right">
+                    <span class="badge badge--<%= state.tone === 'danger' ? 'danger' : (state.tone === 'warn' ? 'warn' : 'muted') %>"><%= state.text %></span>
+                    <div class="cell-sub num"><%= helpers.qty(lot.quantity) %> on hand</div>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <% } %>
+
+    <% if (stats.zeroStock.length > 0) { %>
+      <div class="card">
+        <div class="card-head"><h2>At zero</h2></div>
+        <div class="table-wrap">
+          <table class="table">
+            <tbody>
+              <% stats.zeroStock.forEach(function (item) { %>
+                <tr>
+                  <td>
+                    <a class="cell-title" href="/inventory/<%= item.id %>"><%= item.name %></a>
+                    <% if (item.base_code) { %><span class="cell-sub mono"><%= item.base_code %></span><% } %>
+                  </td>
+                  <td class="right"><span class="badge badge--muted">0 on hand</span></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+        <% if (stats.zeroCount > stats.zeroStock.length) { %>
+          <div class="card-foot muted">and <%= stats.zeroCount - stats.zeroStock.length %> more</div>
+        <% } %>
+      </div>
+    <% } %>
+  </div>
+</div>

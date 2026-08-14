@@ -1,0 +1,37 @@
+{
+  "name": "foundry-inventory",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Foundry Inventory - one configurable inventory engine for quantity, variant, serialized and lot-tracked inventory.",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "seed:demo": "node scripts/seed-demo.js",
+    "seed:foundry": "node scripts/seed-foundry-demo.js",
+    "db:reset": "node scripts/reset-db.js",
+    "test": "node --test tests/unit/*.test.js tests/integration/*.test.js",
+    "test:live": "node --test tests/live/*.test.js",
+    "test:e2e": "node --test tests/e2e/inventory.e2e.js tests/e2e/foundry.e2e.js tests/e2e/attention.e2e.js tests/e2e/workspaces.e2e.js tests/e2e/actions.e2e.js tests/e2e/imports.e2e.js tests/e2e/purchasing.e2e.js",
+    "test:all": "npm test && npm run test:live && npm run test:e2e",
+    "seed:samples": "node scripts/make-sample-import.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.116.0",
+    "@paralleldrive/cuid2": "^2.3.1",
+    "ajv": "^8.20.0",
+    "better-sqlite3": "^12.11.1",
+    "ejs": "^3.1.10",
+    "express": "^4.22.2",
+    "express-session": "^1.19.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.50.0",
+    "supertest": "^7.2.2",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  }
+}

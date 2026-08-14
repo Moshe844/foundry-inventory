@@ -1,0 +1,94 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/purchasing/orders/<%= order.id %>"><%- helpers.icon('chevron', { size: 14 }) %> <%= order.poNumber %></a>
+    <h1>Book in the delivery</h1>
+    <div class="page-sub">
+      <%= order.supplierName %> · <%= order.outstandingUnits %> unit<%= order.outstandingUnits === 1 ? '' : 's' %> outstanding
+    </div>
+  </div>
+</div>
+
+<% if (warnings && warnings.length) { %>
+  <div class="notice notice--warn section">
+    <% warnings.forEach(function (warning) { %><div><%= warning %></div><% }) %>
+  </div>
+<% } %>
+
+<form method="post" action="/purchasing/orders/<%= order.id %>/receive" class="card section" data-busy>
+  <div class="card-head"><h2>What arrived</h2></div>
+  <div class="card-body">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <% lines.forEach(function (line) { %>
+      <div class="card section">
+        <div class="card-body">
+          <h3 class="sub-head"><%= line.displayName %></h3>
+          <p class="muted">
+            Ordered <%= line.quantityUnits %> · already received <%= line.quantityReceivedUnits %> ·
+            outstanding <strong><%= line.outstandingUnits %></strong>
+            <% if (line.unitsPerPurchaseUnit > 1) { %>
+              (<%= line.purchaseUnit %> of <%= line.unitsPerPurchaseUnit %>)
+            <% } %>
+          </p>
+          <div class="grid grid--3">
+            <label class="field">
+              <span class="field-label">Arrived (<%= line.unitLabel %>s)</span>
+              <input class="input" type="number" min="0" name="qty_<%= line.id %>"
+                     value="<%= submitted && submitted['qty_' + line.id] !== undefined ? submitted['qty_' + line.id] : line.outstandingUnits %>">
+            </label>
+            <label class="field">
+              <span class="field-label">Into</span>
+              <select class="input" name="location_<%= line.id %>">
+                <% locations.forEach(function (location) { %>
+                  <option value="<%= location.id %>" <%= line.destinationLocationId === location.id ? 'selected' : '' %>><%= location.name %></option>
+                <% }) %>
+              </select>
+            </label>
+            <% if (line.trackingMode === 'lot') { %>
+              <label class="field">
+                <span class="field-label">Lot or batch</span>
+                <input class="input" type="text" name="lot_<%= line.id %>" maxlength="80"
+                       value="<%= submitted ? (submitted['lot_' + line.id] || '') : '' %>">
+              </label>
+              <label class="field">
+                <span class="field-label">Expires</span>
+                <input class="input" type="date" name="expires_<%= line.id %>"
+                       value="<%= submitted ? (submitted['expires_' + line.id] || '') : '' %>">
+              </label>
+            <% } %>
+            <% if (line.trackingMode === 'serial') { %>
+              <label class="field" style="grid-column: 1 / -1;">
+                <span class="field-label">Serial numbers, one per line</span>
+                <textarea class="input" name="serials_<%= line.id %>" rows="4"><%= submitted ? (submitted['serials_' + line.id] || '') : '' %></textarea>
+                <span class="field-help">Foundry counts the serials you list, not the number in the box.</span>
+              </label>
+            <% } %>
+          </div>
+        </div>
+      </div>
+    <% }) %>
+
+    <div class="grid grid--2">
+      <label class="field">
+        <span class="field-label">Delivery note or reference</span>
+        <input class="input" type="text" name="reference" maxlength="120"
+               value="<%= submitted ? (submitted.reference || '') : '' %>">
+      </label>
+      <label class="field">
+        <span class="field-label">Note</span>
+        <input class="input" type="text" name="note" maxlength="200"
+               value="<%= submitted ? (submitted.note || '') : '' %>">
+      </label>
+    </div>
+
+    <% if (overReceipt) { %>
+      <label class="field">
+        <input type="checkbox" name="approveOverReceipt" value="1">
+        Yes — accept more than was ordered, and record the difference
+      </label>
+    <% } %>
+  </div>
+  <div class="card-foot">
+    <button class="btn btn--primary" type="submit">Book it in</button>
+    <span class="muted">Stock arrives through the same inventory engine as everything else.</span>
+  </div>
+</form>

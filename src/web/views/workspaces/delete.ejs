@@ -1,0 +1,89 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/inventories"><%- helpers.icon('chevron', { size: 14 }) %> Your inventories</a>
+    <h1>Delete <%= workspace.name %></h1>
+    <div class="page-sub">This cannot be undone. Everything below goes with it.</div>
+  </div>
+</div>
+
+<% if (error) { %>
+  <div class="notice notice--warn section"><%= error %></div>
+<% } %>
+
+<div class="card section card--warn">
+  <div class="card-head">
+    <h2>What will be destroyed</h2>
+    <span class="spacer"></span>
+    <span class="badge badge--danger">Permanent</span>
+  </div>
+  <div class="card-body">
+    <table class="table table--tight">
+      <tbody>
+        <tr><td>Products</td><td class="num"><%= summary.items %></td></tr>
+        <tr><td>Locations</td><td class="num"><%= summary.locations %></td></tr>
+        <tr><td>Units on hand</td><td class="num"><%= summary.unitsOnHand %></td></tr>
+        <tr>
+          <td>Movements in the ledger</td>
+          <td class="num"><%= summary.movements %></td>
+        </tr>
+        <tr><td>People with access</td><td class="num"><%= summary.members %></td></tr>
+        <% if (summary.suppliers) { %>
+          <tr><td>Suppliers</td><td class="num"><%= summary.suppliers %></td></tr>
+        <% } %>
+        <% if (summary.purchaseOrders) { %>
+          <tr><td>Purchase orders</td><td class="num"><%= summary.purchaseOrders %></td></tr>
+        <% } %>
+        <% if (summary.imports) { %>
+          <tr><td>Imports</td><td class="num"><%= summary.imports %></td></tr>
+        <% } %>
+      </tbody>
+    </table>
+
+    <p class="lede">
+      The movement history is the part you cannot rebuild. Everywhere else in Foundry the ledger is
+      permanent — corrections are new movements, never edits — and this is the one action that removes it.
+    </p>
+
+    <% if (summary.openPurchaseOrders) { %>
+      <p class="is-warn">
+        <strong><%= summary.openPurchaseOrders %></strong> purchase
+        order<%= summary.openPurchaseOrders === 1 ? ' is' : 's are' %> still open with stock expected.
+        Deleting this inventory does not cancel anything with your suppliers — that is between you and them.
+      </p>
+    <% } %>
+
+    <% if (summary.members > 1) { %>
+      <p class="is-warn">
+        <%= summary.members - 1 %> other <%= summary.members === 2 ? 'person' : 'people' %> can see this
+        inventory. It will disappear for them too, without warning.
+      </p>
+    <% } %>
+
+    <% if (isLast) { %>
+      <p class="muted">
+        This is your only inventory. Deleting it leaves you with none — you can create another
+        straight away, but nothing from this one comes back.
+      </p>
+    <% } %>
+  </div>
+</div>
+
+<form method="post" action="/inventories/<%= workspace.id %>/delete" class="card section">
+  <div class="card-head"><h2>Confirm</h2></div>
+  <div class="card-body">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="field">
+      <span class="field-label">Type <strong><%= workspace.name %></strong> to confirm</span>
+      <input class="input" type="text" name="confirmName" autocomplete="off" autofocus
+             placeholder="<%= workspace.name %>" required>
+      <span class="field-help">Foundry asks for the name so this cannot happen by a mis-aimed click.</span>
+    </label>
+  </div>
+  <div class="card-foot">
+    <div class="btn-row">
+      <a class="btn" href="/inventories">Keep it</a>
+      <span class="spacer"></span>
+      <button class="btn btn--danger" type="submit">Delete this inventory permanently</button>
+    </div>
+  </div>
+</form>

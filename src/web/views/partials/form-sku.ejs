@@ -1,0 +1,12 @@
+<% if (item.has_variants) { %>
+  <div class="field">
+    <label class="label" for="<%= idPrefix %>-sku">Variant</label>
+    <select class="select" id="<%= idPrefix %>-sku" name="skuId" required>
+      <% skus.forEach(function (sku, index) { %>
+        <option value="<%= sku.id %>" <%= index === 0 ? 'selected' : '' %>><%= sku.variant_label %> — <%= sku.code %></option>
+      <% }) %>
+    </select>
+  </div>
+<% } else { %>
+  <input type="hidden" name="skuId" value="<%= skus[0].id %>">
+<% } %>

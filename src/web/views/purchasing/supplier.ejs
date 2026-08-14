@@ -1,0 +1,180 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/suppliers"><%- helpers.icon('chevron', { size: 14 }) %> Suppliers</a>
+    <h1><%= supplier.name %></h1>
+    <div class="page-sub">
+      <%= supplier.contactName || 'No contact on file' %>
+      <% if (supplier.email) { %> · <%= supplier.email %><% } %>
+      <% if (supplier.defaultLeadTimeDays !== null) { %> · usually <%= supplier.defaultLeadTimeDays %> days<% } %>
+    </div>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head">
+    <h2>Products they supply</h2>
+    <span class="spacer"></span>
+    <span class="badge badge--muted"><%= items.filter(function (i) { return i.isActive; }).length %> linked</span>
+  </div>
+  <% if (items.length === 0) { %>
+    <div class="card-body">
+      <p class="muted">
+        Nothing linked yet. Foundry needs to know what this supplier calls a product, how they pack it and
+        what it costs before it can work out an order.
+      </p>
+    </div>
+  <% } else { %>
+    <div class="table-scroll">
+      <table class="table table--tight">
+        <thead>
+          <tr><th>Product</th><th>Their SKU</th><th>Pack</th><th class="num">Unit cost</th><th class="num">Lead time</th><th>Minimum</th><th></th></tr>
+        </thead>
+        <tbody>
+          <% items.forEach(function (item) { %>
+            <tr class="<%= item.isActive ? '' : 'muted' %>">
+              <td>
+                <%= item.displayName %>
+                <% if (item.isPreferred) { %><span class="badge badge--ok">preferred</span><% } %>
+                <% if (!item.isActive) { %><span class="badge badge--muted">removed</span><% } %>
+              </td>
+              <td class="muted"><%= item.supplierSku || '—' %></td>
+              <td><%= item.unitsPerPurchaseUnit > 1 ? item.purchaseUnit + ' of ' + item.unitsPerPurchaseUnit : item.purchaseUnit %></td>
+              <td class="num"><%= item.lastUnitCost === null ? '—' : item.lastUnitCost %></td>
+              <td class="num"><%= item.effectiveLeadTimeDays === null ? '—' : item.effectiveLeadTimeDays + ' days' %></td>
+              <td class="muted">
+                <%= item.minimumOrderQuantity ? item.minimumOrderQuantity + ' ' + item.purchaseUnit + '(s)' : '—' %>
+                <% if (item.orderMultiple && item.orderMultiple > 1) { %> · in <%= item.orderMultiple %>s<% } %>
+              </td>
+              <td>
+                <% if (permissions.suppliers && item.isActive) { %>
+                  <form method="post" action="/suppliers/<%= supplier.id %>/items/<%= item.id %>/remove">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button class="btn btn--sm btn--ghost" type="submit">Remove</button>
+                  </form>
+                <% } %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<% if (permissions.suppliers) { %>
+  <form method="post" action="/suppliers/<%= supplier.id %>/items" class="card section">
+    <div class="card-head"><h2>Link a product</h2></div>
+    <div class="card-body">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="grid grid--2">
+        <label class="field">
+          <span class="field-label">Product</span>
+          <select class="input" name="skuId" required>
+            <% catalogue.forEach(function (sku) { %>
+              <option value="<%= sku.id %>"><%= sku.variant_label ? sku.item_name + ' / ' + sku.variant_label : sku.item_name %></option>
+            <% }) %>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Their code for it</span>
+          <input class="input" type="text" name="supplierSku" maxlength="80" placeholder="OX-NV-08">
+        </label>
+        <label class="field">
+          <span class="field-label">Sold in</span>
+          <input class="input" type="text" name="purchaseUnit" maxlength="40" placeholder="case">
+          <span class="field-help">The unit they sell in. Leave as "unit" if they sell them singly.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">How many per pack</span>
+          <input class="input" type="number" min="1" name="unitsPerPurchaseUnit" value="1">
+        </label>
+        <label class="field">
+          <span class="field-label">Cost per <%= 'unit' %></span>
+          <input class="input" type="text" name="lastUnitCost" placeholder="8.20">
+          <span class="field-help">Per item, not per pack, so suppliers who pack differently can be compared.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Lead time (days)</span>
+          <input class="input" type="number" min="0" max="365" name="leadTimeDays"
+                 placeholder="<%= supplier.defaultLeadTimeDays === null ? '' : supplier.defaultLeadTimeDays %>">
+        </label>
+        <label class="field">
+          <span class="field-label">Minimum order (packs)</span>
+          <input class="input" type="number" min="0" name="minimumOrderQuantity" placeholder="2">
+        </label>
+        <label class="field">
+          <span class="field-label">Order multiple (packs)</span>
+          <input class="input" type="number" min="1" name="orderMultiple" placeholder="1">
+        </label>
+      </div>
+      <label class="field">
+        <input type="checkbox" name="isPreferred" value="1"> Preferred supplier for this product
+      </label>
+    </div>
+    <div class="card-foot">
+      <button class="btn btn--primary" type="submit">Link product</button>
+    </div>
+  </form>
+<% } %>
+
+<div class="card section">
+  <div class="card-head"><h2>Recent orders</h2></div>
+  <% if (orders.length === 0) { %>
+    <div class="card-body"><p class="muted">No orders with this supplier yet.</p></div>
+  <% } else { %>
+    <table class="table table--tight">
+      <thead><tr><th>Order</th><th>Status</th><th>Expected</th><th class="num">Units</th><th class="num">Total</th></tr></thead>
+      <tbody>
+        <% orders.forEach(function (po) { %>
+          <tr>
+            <td><a href="/purchasing/orders/<%= po.id %>"><%= po.poNumber %></a></td>
+            <td><span class="badge badge--muted"><%= helpers.columnLabel(po.status.toLowerCase().replace('_', ' ')) %></span></td>
+            <td class="muted"><%= po.expectedDate || '—' %></td>
+            <td class="num"><%= po.receivedUnits %>/<%= po.orderedUnits %></td>
+            <td class="num"><%= po.hasCosts ? po.subtotal.toFixed(2) : '—' %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<% if (permissions.suppliers) { %>
+  <form method="post" action="/suppliers/<%= supplier.id %>" class="card section">
+    <div class="card-head"><h2>Details</h2></div>
+    <div class="card-body">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="grid grid--2">
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input class="input" type="text" name="name" value="<%= supplier.name %>" maxlength="160">
+        </label>
+        <label class="field">
+          <span class="field-label">Contact</span>
+          <input class="input" type="text" name="contactName" value="<%= supplier.contactName || '' %>" maxlength="120">
+        </label>
+        <label class="field">
+          <span class="field-label">Email</span>
+          <input class="input" type="email" name="email" value="<%= supplier.email || '' %>" maxlength="160">
+        </label>
+        <label class="field">
+          <span class="field-label">Phone</span>
+          <input class="input" type="text" name="phone" value="<%= supplier.phone || '' %>" maxlength="60">
+        </label>
+        <label class="field">
+          <span class="field-label">Usual lead time (days)</span>
+          <input class="input" type="number" min="0" max="365" name="defaultLeadTimeDays"
+                 value="<%= supplier.defaultLeadTimeDays === null ? '' : supplier.defaultLeadTimeDays %>">
+        </label>
+        <label class="field">
+          <span class="field-label">Status</span>
+          <select class="input" name="status">
+            <option value="active" <%= supplier.status === 'active' ? 'selected' : '' %>>Active</option>
+            <option value="inactive" <%= supplier.status === 'inactive' ? 'selected' : '' %>>Inactive</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div class="card-foot"><button class="btn" type="submit">Save</button></div>
+  </form>
+<% } %>

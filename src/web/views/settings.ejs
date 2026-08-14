@@ -1,0 +1,165 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Settings</h1>
+    <div class="page-sub">This inventory, the people on it, and what your plan allows.</div>
+  </div>
+</div>
+
+<div class="grid grid--sidebar">
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><h2>This inventory</h2></div>
+      <div class="card-body">
+        <form method="post" action="/settings/workspace">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="field">
+            <label class="label" for="workspace-name">Inventory name</label>
+            <input class="input" id="workspace-name" name="name" value="<%= workspace.name %>" required <%= currentUser.role === 'owner' ? '' : 'disabled' %>>
+            <div class="hint">
+              Shown in the switcher and on every screen your team uses. This names the whole
+              inventory, not a location inside it — <a href="/locations">locations</a> live within it.
+            </div>
+          </div>
+          <% if (currentUser.role === 'owner') { %>
+            <div class="form-actions"><button class="btn btn--primary" type="submit">Save</button></div>
+          <% } %>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Your plan</h2>
+        <span class="spacer"></span>
+        <span class="badge badge--muted"><%= entitlements.plan.label %></span>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <tbody>
+            <% entitlements.limits.forEach(function (limit) { %>
+              <tr>
+                <td class="muted">
+                  <%= { workspaces: 'Inventories', members: 'People on this inventory',
+                        locations: 'Locations here', skus: 'Items here' }[limit.key] || limit.key %>
+                </td>
+                <td class="right num">
+                  <%= limit.used %><% if (!limit.unlimited) { %> of <%= limit.limit %><% } %>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <div class="card-foot muted" style="font-size:12px;">
+        Inventories are counted across your whole account; everything else is counted
+        within this one.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>People</h2>
+        <span class="spacer"></span>
+        <% if (currentUser.role === 'owner') { %>
+          <button class="btn btn--sm" type="button" data-modal-open="modal-person"><%- helpers.icon('plus', { size: 14 }) %> Add person</button>
+        <% } %>
+      </div>
+      <div class="table-wrap">
+        <table class="table table--stack">
+          <thead><tr><th>Name</th><th>Email</th><th class="right">Role</th></tr></thead>
+          <tbody>
+            <% users.forEach(function (user) { %>
+              <tr>
+                <td class="cell-main">
+                  <span class="cell-title"><%= user.name %><%= user.id === currentUser.id ? ' (you)' : '' %></span>
+                </td>
+                <td data-label="Email"><span class="muted"><%= user.email %></span></td>
+                <td class="right cell-end" data-label="Role"><span class="badge"><%= helpers.roleLabel(user.role) %></span></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <div class="card-foot muted">
+        Owners manage locations, people and settings. Staff do the day-to-day inventory work.
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><h2>Inventory integrity</h2></div>
+      <div class="card-body">
+        <% if (integrity.ok) { %>
+          <div class="notice" style="background: var(--ok-bg); border-color:#bbf7d0; color:#14532d;">
+            <%- helpers.icon('shield', { size: 16 }) %>
+            <span>Every balance matches its movement history, lot quantities and tracked units.</span>
+          </div>
+        <% } else { %>
+          <div class="notice notice--warn">
+            <%- helpers.icon('alert', { size: 16 }) %>
+            <span><%= integrity.problems.length %> <%= helpers.plural(integrity.problems.length, 'discrepancy', 'discrepancies') %> found.</span>
+          </div>
+          <ul class="mono" style="margin:10px 0 0; padding-left:18px; font-size:12px; color:var(--muted);">
+            <% integrity.problems.slice(0, 10).forEach(function (problem) { %>
+              <li><%= problem.kind %>: <%= problem.detail %></li>
+            <% }) %>
+          </ul>
+        <% } %>
+        <p class="hint" style="margin-top:10px;">
+          Foundry recomputes this from the ledger every time you open this page.
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Your account</h2></div>
+      <div class="card-body">
+        <dl class="kv">
+          <dt>Name</dt><dd><%= currentUser.name %></dd>
+          <dt>Email</dt><dd><%= currentUser.email %></dd>
+          <dt>Role</dt><dd><%= helpers.roleLabel(currentUser.role) %></dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+<% if (currentUser.role === 'owner') { %>
+  <dialog class="modal" id="modal-person">
+    <form method="post" action="/settings/people">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="modal-head">
+        <h2>Add a person</h2>
+        <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label class="label" for="person-name">Name</label>
+          <input class="input" id="person-name" name="name" required>
+        </div>
+        <div class="field">
+          <label class="label" for="person-email">Email</label>
+          <input class="input" id="person-email" name="email" type="email" required>
+        </div>
+        <div class="field">
+          <label class="label" for="person-password">Temporary password</label>
+          <input class="input" id="person-password" name="password" type="text" minlength="8" required>
+          <div class="hint">At least 8 characters. Share it with them directly.</div>
+        </div>
+        <div class="field">
+          <label class="label" for="person-role">Role</label>
+          <select class="select" id="person-role" name="role" required>
+            <% helpers.ROLES.forEach(function (role) { %>
+              <option value="<%= role.id %>" <%= role.id === 'staff' ? 'selected' : '' %>><%= role.label %> — <%= role.blurb %></option>
+            <% }) %>
+          </select>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" type="button" data-modal-close>Cancel</button>
+        <button class="btn btn--primary" type="submit">Add person</button>
+      </div>
+    </form>
+  </dialog>
+<% } %>

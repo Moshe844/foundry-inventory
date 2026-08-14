@@ -1,0 +1,76 @@
+<%
+  var currentLocations = ((current && current.inventoryModel) || {});
+  var newLocations = plan.locations || [];
+%>
+
+<div class="breadcrumb">
+  <a href="/foundry">Foundry</a> <%- helpers.icon('chevron', { size: 13 }) %> <span>Proposed change</span>
+</div>
+
+<div class="page-head">
+  <div class="titles">
+    <h1>Here's what would change</h1>
+    <div class="page-sub">Nothing has been applied yet.</div>
+  </div>
+</div>
+
+<div class="grid grid--sidebar">
+  <div class="card">
+    <div class="card-head"><h2>The change</h2></div>
+    <div class="card-body">
+      <ul class="ready-list">
+        <li><%- helpers.icon('transfer', { size: 16 }) %>
+          <span><%= helpers.plural(2, term('location')) %>: <strong><%= newLocations.map(function (l) { return l.name; }).join(', ') %></strong></span>
+        </li>
+        <li><%- helpers.icon('adjust', { size: 16 }) %>
+          <span>Negative stock: <strong><%= plan.operationalDefaults.allowNegativeStock ? 'allowed' : 'not allowed' %></strong></span>
+        </li>
+        <li><%- helpers.icon('tag', { size: 16 }) %>
+          <span>
+            Wording:
+            <% var custom = Object.keys(plan.terminology).filter(function (k) { return plan.terminology[k]; }); %>
+            <% if (custom.length) { %>
+              <% custom.forEach(function (k) { %><span class="pill"><%= k %> → <strong><%= plan.terminology[k] %></strong></span><% }) %>
+            <% } else { %><strong>Foundry's defaults</strong><% } %>
+          </span>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><h2>What this affects</h2></div>
+      <div class="card-body">
+        <dl class="kv">
+          <dt>Existing stock</dt><dd>Untouched — <%= helpers.qty(totals.unitsOnHand) %> units stay where they are</dd>
+          <dt><%= helpers.plural(2, term('item')) %></dt><dd><%= totals.itemCount %> unchanged</dd>
+          <dt>Migration</dt><dd>Not required</dd>
+          <dt>Reversible</dt><dd>Yes — configuration can be changed again</dd>
+          <dt>New version</dt><dd><%= plan.configurationVersion %></dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="notice">
+      <%- helpers.icon('shield', { size: 16 }) %>
+      <span>Foundry only proposes configuration. It cannot move, create or remove inventory.</span>
+    </div>
+  </div>
+</div>
+
+<div class="foundry-confirm">
+  <div>
+    <strong><%= applied ? 'This change has been applied.' : 'Apply this change?' %></strong>
+    <span class="muted">Configuration version <%= plan.configurationVersion %>.</span>
+  </div>
+  <div class="btn-row">
+    <a class="btn" href="/foundry">Not now</a>
+    <% if (!applied && currentUser.role === 'owner') { %>
+      <form method="post" action="/foundry/change/<%= planId %>/apply">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--primary" type="submit">Apply the change</button>
+      </form>
+    <% } %>
+  </div>
+</div>

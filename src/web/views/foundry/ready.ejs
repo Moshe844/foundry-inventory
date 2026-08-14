@@ -1,0 +1,106 @@
+<%
+  var s = summary || {};
+  var mode = helpers.TRACKING_MODES[plan.inventoryModel.primaryArchetype];
+  var created = s.locationsCreated || [];
+  var existing = s.locationsAlreadyPresent || [];
+  var locationCount = created.length + existing.length;
+%>
+
+<div class="foundry-hero foundry-hero--tight">
+  <span class="foundry-mark foundry-mark--done"><%- helpers.icon('check', { size: 24 }) %></span>
+  <h1>Your inventory is ready</h1>
+  <p>Foundry configured the inventory engine. Everything below is live now.</p>
+</div>
+
+<div class="card ready-card">
+  <div class="card-body">
+    <ul class="ready-list">
+      <% if (locationCount) { %>
+        <li><%- helpers.icon('check', { size: 16 }) %>
+          <span><strong><%= locationCount %></strong> <%= helpers.plural(locationCount, term('location').toLowerCase()) %> configured
+            <span class="muted">— <%= created.concat(existing.map(function (n) { return { name: n }; })).map(function (l) { return l.name; }).join(', ') %></span>
+          </span>
+        </li>
+      <% } %>
+
+      <li><%- helpers.icon('check', { size: 16 }) %>
+        <span>
+          <% if (plan.inventoryModel.usesVariants && plan.variantDimensions.length) { %>
+            <%= helpers.plural(2, term('item')) %> use <strong><%= plan.variantDimensions.map(function (d) { return d.name; }).join(' → ') %></strong> variants
+          <% } else { %>
+            <%= helpers.plural(2, term('item')) %> are tracked by <strong><%= mode.label.toLowerCase() %></strong>
+          <% } %>
+        </span>
+      </li>
+
+      <li><%- helpers.icon('check', { size: 16 }) %>
+        <span>
+          <% if (plan.inventoryModel.usesVariants) { %>
+            Quantity tracked separately by variant and <%= term('location').toLowerCase() %>
+          <% } else if (plan.serialRules.enabled) { %>
+            Every unit tracked individually, and never in two places at once
+          <% } else if (plan.lotRules.enabled) { %>
+            Quantity tracked by lot and <%= term('location').toLowerCase() %>
+          <% } else { %>
+            Quantity tracked separately at each <%= term('location').toLowerCase() %>
+          <% } %>
+        </span>
+      </li>
+
+      <% if (plan.expirationRules.enabled) { %>
+        <li><%- helpers.icon('check', { size: 16 }) %><span>Expiration dates captured when stock is received</span></li>
+      <% } %>
+
+      <% if (plan.operationalDefaults.transfersEnabled && locationCount > 1) { %>
+        <li><%- helpers.icon('check', { size: 16 }) %><span>Transfers enabled between <%= helpers.plural(2, term('location').toLowerCase()) %></span></li>
+      <% } %>
+
+      <li><%- helpers.icon('check', { size: 16 }) %><span>Physical adjustments require a reason</span></li>
+
+      <% if (!plan.operationalDefaults.allowNegativeStock) { %>
+        <li><%- helpers.icon('check', { size: 16 }) %><span>Stock cannot go negative</span></li>
+      <% } %>
+    </ul>
+  </div>
+
+  <div class="card-foot ready-next">
+    <span class="muted">Configuration version <%= plan.configurationVersion %></span>
+    <span class="btn-row" style="margin-left:auto;">
+      <a class="btn" href="/foundry">Ask Foundry something</a>
+      <a class="btn btn--primary" href="/inventory/new">Add my first <%= term('item').toLowerCase() %></a>
+    </span>
+  </div>
+</div>
+
+<% if (decisions && decisions.length) { %>
+  <div class="card section">
+    <div class="card-head"><h2>Decisions on record</h2></div>
+    <div class="table-wrap">
+      <table class="table table--stack">
+        <thead><tr><th>Question</th><th>Answer</th><th class="right">Decided by</th></tr></thead>
+        <tbody>
+          <% decisions.forEach(function (d) { %>
+            <tr>
+              <td class="cell-main"><span class="cell-title"><%= d.question %></span></td>
+              <td data-label="Answer"><%= d.answer_label %></td>
+              <td class="right cell-end" data-label="Decided by">
+                <span class="badge <%= d.decided_by === 'foundry' ? 'badge--variant' : '' %>"><%= d.decided_by === 'foundry' ? 'Foundry' : 'You' %></span>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% } %>
+
+<% if (plan.assumptions && plan.assumptions.length) { %>
+  <div class="card section">
+    <div class="card-head"><h2>What Foundry assumed</h2></div>
+    <div class="card-body">
+      <ul class="proposal-list">
+        <% plan.assumptions.forEach(function (a) { %><li><%= a %></li><% }) %>
+      </ul>
+    </div>
+  </div>
+<% } %>
