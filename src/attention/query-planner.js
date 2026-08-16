@@ -60,9 +60,17 @@ Intents:
 - late_orders: purchase orders past their expected arrival date.
 - last_cost: what they last paid for something.
 - suppliers_for_item: who sells something, or which supplier to use for it.
+- foundry_activity: what Foundry itself has been doing — "what did you do",
+  "what have you handled today", "what did you get done".
+- foundry_why: why Foundry did something — "why did you move those tights",
+  "why did you order that". Put what they named in entityQuery.
+- stop_automation: they want Foundry to stop doing something by itself —
+  "stop moving stock", "don't do that automatically any more".
 - action: they are telling Foundry to DO something to their stock — move,
   transfer, receive, issue, remove, adjust, correct a count, add a location.
-  Not a question about records; a request to change them.
+  Not a question about records; a request to change them. Only things that
+  change stock: Foundry cannot contact anyone, so "email the supplier" or
+  "chase that order" is unsupported, not an action.
 - unsupported: anything else.
 
 Rules:
@@ -77,8 +85,9 @@ Rules:
   about buying, incoming stock, lead times, what something cost and who sells
   it all have real answers. Use the purchasing intents for those.
 - Choose 'unsupported' only for things Foundry genuinely cannot do at all:
-  selling prices, profit, invoices, payments, accounting, customer orders, or
-  forecasting beyond current usage. Put one plain sentence in
+  selling prices, profit, invoices, payments, accounting, customer orders,
+  forecasting beyond current usage, or contacting a supplier or customer by any
+  means — Foundry drafts purchase orders but never sends or chases them. Put one plain sentence in
   unsupportedReason saying what it cannot do.
 - unsupportedReason must be '' for every other intent.`;
 

@@ -1,0 +1,245 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>What Foundry does</h1>
+    <div class="page-sub">Managing its authority, the way you would an employee's.</div>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head">
+    <h2><%= state.modeLabel %></h2>
+    <span class="spacer"></span>
+    <% if (state.paused) { %><span class="badge badge--danger">Paused</span><% } %>
+    <% if (state.suspended) { %><span class="badge badge--danger">Stopped itself</span><% } %>
+  </div>
+  <div class="card-body">
+    <p class="lede"><%= state.modeBlurb %></p>
+    <% if (state.suspended) { %><p class="is-warn"><%= state.suspendedReason %></p><% } %>
+
+    <form method="post" action="/autopilot/mode">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="btn-row">
+        <% ['OBSERVE', 'SUPERVISED', 'POLICY_AUTOMATED'].forEach(function (mode) { %>
+          <button class="btn btn--sm <%= state.mode === mode ? 'btn--primary' : '' %>"
+                  type="submit" name="mode" value="<%= mode %>" <%= canOperate ? '' : 'disabled' %>>
+            <%= mode === 'OBSERVE' ? 'Just watch' : mode === 'SUPERVISED' ? 'Prepare my work' : 'Run it' %>
+          </button>
+        <% }) %>
+      </div>
+    </form>
+    <p class="muted">
+      Autopilot needs both: a policy you approved, and this set to “Run it”. Approving a policy on its own
+      never starts anything.
+    </p>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head">
+    <h2>What Foundry may do on its own</h2>
+    <span class="spacer"></span>
+    <span class="badge badge--muted"><%= policies.filter(function (p) { return p.isActive; }).length %> active</span>
+  </div>
+  <div class="card-body">
+    <% if (!policies.length) { %>
+      <p class="lede">Nothing. Foundry prepares work and waits for you on all of it.</p>
+    <% } %>
+    <% policies.forEach(function (policy) { %>
+      <div class="act-row">
+        <span class="act-place">
+          <a href="/autopilot/policies/<%= policy.id %>"><strong><%= policy.name %></strong></a>
+          <span class="badge badge--<%= policy.isActive ? 'ok' : 'muted' %>">
+            <%= policy.isActive ? 'active' : policy.isApproved ? 'off' : 'not approved' %>
+          </span>
+          <div class="muted"><%= describe(policy).join(' ') %></div>
+        </span>
+        <span class="act-move">
+          <% if (policy.isActive) { %>
+            <form method="post" action="/autopilot/policies/<%= policy.id %>/disable"
+                  data-confirm="Disable <%= policy.name %>? Nothing new will happen under it.">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn--sm btn--ghost" type="submit">Stop this</button>
+            </form>
+          <% } %>
+        </span>
+      </div>
+    <% }) %>
+  </div>
+</div>
+
+<%# Item 6: say it in your own words and read back what it would mean. %>
+<form method="post" action="/autopilot/policies/read" class="card section" data-busy>
+  <div class="card-head"><h2>Tell Foundry what it may handle</h2></div>
+  <div class="card-body">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="field">
+      <span class="field-label">In your own words</span>
+      <input class="input" type="text" name="instruction" maxlength="600"
+             placeholder="You can move stock between Brooklyn and New Jersey when one is running out, but never more than 20 at a time">
+      <span class="field-help">Foundry writes the policy. You read it and decide.</span>
+    </label>
+  </div>
+  <div class="card-foot">
+    <button class="btn" type="submit" <%= canAdmin ? '' : 'disabled' %>>Read this back to me</button>
+  </div>
+</form>
+
+<% if (drafted && drafted.understood) { %>
+  <form method="post" action="/autopilot/policies" class="card section">
+    <div class="card-head"><h2>Here is the policy I would write</h2></div>
+    <div class="card-body">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="name" value="<%= drafted.draft.name %>">
+      <% (drafted.draft.locationScope || []).forEach(function (id) { %>
+        <input type="hidden" name="locationScope" value="<%= id %>">
+      <% }) %>
+      <p class="lede"><strong><%= drafted.draft.name %></strong></p>
+      <% if (drafted.preview.length) { %>
+        <ul class="plain-list">
+          <% drafted.preview.forEach(function (line) { %><li><%= line %></li><% }) %>
+        </ul>
+      <% } %>
+      <% if (drafted.questions.length) { %>
+        <h3 class="sub-head">Before this can be written</h3>
+        <ul class="plain-list">
+          <% drafted.questions.forEach(function (question) { %><li class="is-warn"><%= question %></li><% }) %>
+        </ul>
+      <% } %>
+      <label class="field">
+        <span class="field-label">Never move more than</span>
+        <input class="input" type="number" name="maximumQuantity"
+               value="<%= drafted.draft.maximumQuantity || '' %>" min="1" required>
+        <span class="field-help">units in one go.</span>
+      </label>
+      <p class="muted">
+        Foundry chose none of the safety conditions itself — every policy written this way carries all of
+        them. Nothing happens until you approve it.
+      </p>
+    </div>
+    <div class="card-foot">
+      <button class="btn btn--primary" type="submit" <%= canAdmin ? '' : 'disabled' %>>Write this policy</button>
+    </div>
+  </form>
+<% } %>
+
+<form method="post" action="/autopilot/policies" class="card section">
+  <div class="card-head"><h2>Let Foundry balance your warehouses</h2></div>
+  <div class="card-body">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <p class="lede">
+      Foundry can move stock between your own locations when one is running out and another has plenty.
+      Nothing leaves the business, the total never changes, and a wrong one is undone by moving it back.
+    </p>
+    <label class="field">
+      <span class="field-label">Call it</span>
+      <input class="input" type="text" name="name" value="Automatic warehouse balancing" maxlength="120">
+    </label>
+    <label class="field">
+      <span class="field-label">Never move more than</span>
+      <input class="input" type="number" name="maximumQuantity" value="12" min="1" required>
+      <span class="field-help">units in one go. Anything bigger comes to you.</span>
+    </label>
+    <label class="field">
+      <span class="field-label">At most</span>
+      <input class="input" type="number" name="dailyLimit" min="1" placeholder="5">
+      <span class="field-help">of these a day (optional).</span>
+    </label>
+    <fieldset class="field">
+      <span class="field-label">Between these locations</span>
+      <% locations.forEach(function (location) { %>
+        <label class="check">
+          <input type="checkbox" name="locationScope" value="<%= location.id %>" checked>
+          <%= location.name %>
+        </label>
+      <% }) %>
+    </fieldset>
+    <p class="muted">
+      Foundry will only do it when the destination is measurably about to run out and the source keeps
+      enough for its own demand. You will see every move and can stop this at any time.
+    </p>
+  </div>
+  <div class="card-foot">
+    <button class="btn btn--primary" type="submit" <%= canAdmin ? '' : 'disabled' %>>Write this policy</button>
+  </div>
+</form>
+
+<form method="post" action="/autopilot/limits" class="card section">
+  <div class="card-head"><h2>Hard limits</h2></div>
+  <div class="card-body">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <p class="muted">These apply whatever any policy says.</p>
+    <div class="grid grid--2">
+      <label class="field">
+        <span class="field-label">Automatic actions a day</span>
+        <input class="input" type="number" name="maxActionsPerDay" value="<%= limits.maxActionsPerDay %>" min="0">
+      </label>
+      <label class="field">
+        <span class="field-label">Units in one action</span>
+        <input class="input" type="number" name="maxUnitsPerAction" value="<%= limits.maxUnitsPerAction %>" min="1">
+      </label>
+      <label class="field">
+        <span class="field-label">Hours before touching the same product again</span>
+        <input class="input" type="number" name="cooldownHours" value="<%= limits.cooldownHours %>" min="0">
+      </label>
+      <label class="field">
+        <span class="field-label">Times one product may be moved per week</span>
+        <input class="input" type="number" name="maxActionsPerItemPerWeek" value="<%= limits.maxActionsPerItemPerWeek %>" min="0">
+      </label>
+    </div>
+  </div>
+  <div class="card-foot">
+    <button class="btn" type="submit" <%= canAdmin ? '' : 'disabled' %>>Save limits</button>
+  </div>
+</form>
+
+<%# Item 26: preferences, only ever because somebody said so. %>
+<form method="post" action="/autopilot/preferences" class="card section">
+  <div class="card-head"><h2>How you want this inventory run</h2></div>
+  <div class="card-body">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <p class="muted">
+      Foundry never works these out from watching you. It uses what you set here and nothing else —
+      leave one blank and it uses its own judgement.
+    </p>
+    <%
+      var current = {};
+      preferences.forEach(function (pref) { current[pref.key] = pref.value; });
+    %>
+    <div class="grid grid--2">
+      <% preferenceKeys.forEach(function (definition) { %>
+        <label class="field">
+          <span class="field-label"><%= definition.label %></span>
+          <% if (definition.kind === 'boolean') { %>
+            <select class="input" name="<%= definition.key %>">
+              <option value="">Foundry decides</option>
+              <option value="true" <%= current[definition.key] === true ? 'selected' : '' %>>Yes</option>
+              <option value="false" <%= current[definition.key] === false ? 'selected' : '' %>>No</option>
+            </select>
+          <% } else { %>
+            <input class="input" type="number" name="<%= definition.key %>"
+                   min="<%= definition.min %>" max="<%= definition.max %>"
+                   value="<%= current[definition.key] === undefined ? '' : current[definition.key] %>">
+          <% } %>
+        </label>
+      <% }) %>
+    </div>
+    <% if (preferences.length) { %>
+      <h3 class="sub-head">What is set, and who set it</h3>
+      <ul class="plain-list">
+        <% preferences.forEach(function (pref) { %>
+          <li>
+            <%= pref.description %>
+            <span class="muted">
+              — <%= pref.source === 'instruction' ? 'you asked for this' : pref.source === 'policy' ? 'from an approved policy' : 'set in settings' %><%
+                if (pref.setByName) { %> by <%= pref.setByName %><% } %>
+            </span>
+            <% if (pref.statedAs) { %><div class="muted">“<%= pref.statedAs %>”</div><% } %>
+          </li>
+        <% }) %>
+      </ul>
+    <% } %>
+  </div>
+  <div class="card-foot">
+    <button class="btn" type="submit" <%= canOperate ? '' : 'disabled' %>>Save</button>
+  </div>
+</form>

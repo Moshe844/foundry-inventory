@@ -1,0 +1,70 @@
+<div class="page-head">
+  <div class="titles">
+    <h1><%= run.verified ? 'Foundry is ready' : 'Migration needs checking' %></h1>
+    <div class="page-sub">
+      <% if (run.verified) { %>
+        Your inventory is in Foundry and the totals match your files.
+      <% } else { %>
+        The migration ran, but Foundry could not confirm the totals match. Please check these before
+        relying on them.
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<div class="card section <%= run.verified ? '' : 'card--warn' %>">
+  <div class="card-head">
+    <h2>What happened</h2>
+    <span class="spacer"></span>
+    <span class="badge badge--<%= run.verified ? 'ok' : 'danger' %>">
+      <%= run.verified ? 'Inventory totals match the source' : 'Totals do not match' %>
+    </span>
+  </div>
+  <div class="card-body">
+    <ul class="plain-list">
+      <% (run.result.imports || []).forEach(function (entry) { %>
+        <li>
+          <strong><%= entry.source %></strong> —
+          <%= entry.itemsCreated %> product<%= entry.itemsCreated === 1 ? '' : 's' %> created<% if (entry.skusCreated > entry.itemsCreated) { %> (<%= entry.skusCreated %> versions)<% } %>,
+          <%= entry.unitsEstablished %> units established<% if (entry.rowsSkipped) { %>, <%= entry.rowsSkipped %> row(s) skipped<% } %>
+        </li>
+      <% }) %>
+      <li><%= run.result.locationsCreated %> location<%= run.result.locationsCreated === 1 ? '' : 's' %> configured</li>
+      <% if (run.result.conflictsReviewed) { %>
+        <li><%= run.result.conflictsReviewed %> conflict<%= run.result.conflictsReviewed === 1 ? '' : 's' %> reviewed</li>
+      <% } %>
+    </ul>
+
+    <h3 class="sub-head">Reconciliation</h3>
+    <table class="table table--tight">
+      <thead><tr><th>Check</th><th class="num">Your files</th><th class="num">Foundry</th></tr></thead>
+      <tbody>
+        <% (run.reconciliation ? run.reconciliation.checks : []).forEach(function (check) { %>
+          <tr>
+            <td><%= check.name %></td>
+            <td class="num"><%= check.measured ? check.expected : '—' %></td>
+            <td class="num <%= check.measured && !check.ok ? 'is-warn' : '' %>"><%= check.observed %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+
+    <% if (run.reconciliation && run.reconciliation.discrepancies.length) { %>
+      <ul class="plain-list">
+        <% run.reconciliation.discrepancies.forEach(function (line) { %><li class="is-warn"><%= line %></li><% }) %>
+      </ul>
+    <% } %>
+
+    <p class="muted">
+      Foundry has no trading history for this inventory yet, so it will not guess at demand. It starts
+      learning from activity from today.
+    </p>
+  </div>
+  <div class="card-foot">
+    <div class="btn-row">
+      <a class="btn btn--primary" href="/">Open Foundry</a>
+      <a class="btn" href="/inventory">See the inventory</a>
+      <a class="btn btn--ghost" href="/activity">See the movements</a>
+    </div>
+  </div>
+</div>

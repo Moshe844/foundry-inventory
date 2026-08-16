@@ -43,7 +43,7 @@ test('the overview leads with the briefing, not the counters', async () => {
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
 
-  const page = plain((await agent.get('/')).text);
+  const page = plain((await agent.get('/overview')).text);
   assert.match(page, /Today's briefing/);
   assert.match(page, /needs your attention/);
   assert.match(page, /Navy Oxford/);
@@ -56,7 +56,7 @@ test('a healthy workspace is told plainly that nothing is wrong', async () => {
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
 
-  const overview = plain((await agent.get('/')).text);
+  const overview = plain((await agent.get('/overview')).text);
   assert.match(overview, /Nothing in your stock needs attention right now/);
   assert.match(overview, /All clear/);
 
@@ -95,7 +95,7 @@ test('the detail page shows the evidence and separates estimates from measuremen
   assert.match(page, /calculated from the measured figures above, not counted/);
   // A stockout has no operation Foundry can take, and it says so rather than
   // inventing a purchase action.
-  assert.match(page, /Replenishment ordering is not supported yet/);
+  assert.match(page, /draft the purchase order/);
   assert.match(page, /Detection rules/);
 });
 
@@ -164,7 +164,7 @@ test('receiving stock resolves the warning without anyone asking', async () => {
     });
 
   assert.equal(attention.listAttention(db, workspace.workspaceId).length, 0, 're-evaluated after the movement');
-  const overview = plain((await agent.get('/')).text);
+  const overview = plain((await agent.get('/overview')).text);
   assert.match(overview, /Nothing in your stock needs attention right now/);
 });
 

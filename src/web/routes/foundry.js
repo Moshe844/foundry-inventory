@@ -5,6 +5,7 @@ const config = require('../../config');
 const understandingService = require('../../foundry/understanding-service');
 const planBuilder = require('../../foundry/plan-builder');
 const planApplier = require('../../foundry/plan-applier');
+const onboardingPaths = require('../../onboarding/paths');
 const assistant = require('../../foundry/assistant-service');
 const jobRunner = require('../../foundry/job-runner');
 const inventoryQuery = require('../../domain/inventory-query');
@@ -18,7 +19,9 @@ router.use('/api/foundry', requireAuth);
 
 /** First run shows setup; a configured workspace gets Foundry's home. */
 router.get(
-  '/foundry',
+  // /foundry/describe is the Starting Fresh path: the same Mission 2 screen,
+  // reached deliberately rather than shown to everybody by default.
+  ['/foundry', '/foundry/describe'],
   asyncRoute(async (req, res) => {
     const configuration = planApplier.getConfiguration(req.db, req.ctx.workspaceId);
     if (configuration && configuration.configuredAt) {
@@ -32,6 +35,14 @@ router.get(
         plan: planBuilder.latestPlan(req.db, req.ctx.workspaceId),
         aiConfigured: config.ai.configured,
       });
+    }
+
+    // Before Mission 7 everyone landed on "describe your business". That is the
+    // right question only for someone starting from nothing, so it now sits
+    // behind the choice of how they manage inventory today.
+    const onboarding = onboardingPaths.ensure(req.db, req.ctx.workspaceId);
+    if (onboarding.path === 'undecided' && req.path !== '/foundry/describe') {
+      return res.redirect(303, '/onboarding');
     }
 
     return res.page('foundry/setup', {

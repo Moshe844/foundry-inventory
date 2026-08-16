@@ -211,7 +211,14 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
 
     // Mission 2 puts Foundry first. This run is about the Mission 1 console, so
     // take the documented manual path — which exercises that route too.
-    await page.waitForURL(`${BASE}/foundry`);
+    await page.waitForURL(`${BASE}/onboarding`);
+    // A new inventory is asked how it is managed today. These customers are
+    // starting from nothing, so they take the Starting Fresh path — which is
+    // the Mission 2 experience, unchanged.
+    await Promise.all([
+      page.waitForURL(`${BASE}/foundry/describe`),
+      page.click('button:has-text("Starting fresh")'),
+    ]);
     await assertVisibleText(page, 'Tell Foundry about');
     await Promise.all([
       page.waitForURL(`${BASE}/locations`),
@@ -452,7 +459,7 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
   });
 
   await t.test('the overview reports the same numbers', async () => {
-    await page.goto(`${BASE}/`);
+    await page.goto(`${BASE}/overview`);
     const text = await page.locator('.stat-grid').innerText();
     assert.match(text, /Tracked items/);
     // 92 elbows + 28 sweaters + 2 laptops + 204 rations

@@ -18,6 +18,7 @@ const express = require('express');
 const config = require('../../config');
 const supplierService = require('../../purchasing/supplier-service');
 const policyService = require('../../purchasing/policy-service');
+const setupService = require('../../purchasing/setup-service');
 const replenishment = require('../../purchasing/replenishment');
 const position = require('../../purchasing/position');
 const poService = require('../../purchasing/po-service');
@@ -68,6 +69,10 @@ router.get(
       late: position.lateOrders(req.db, req.ctx.workspaceId),
       arriving: position.arrivingSoon(req.db, req.ctx.workspaceId, { days: 7 }),
       suppliers: supplierService.listWithCounts(req.db, req.ctx.workspaceId),
+      // Whether this inventory has purchasing set up at all. Without it the
+      // replenishment engine has nothing to go on, and a silent screen reads
+      // as broken rather than unconfigured.
+      setup: setupService.assess(req.db, req.ctx.workspaceId).summary,
       permissions: can(req),
       aiConfigured: config.ai.configured,
     });
@@ -459,6 +464,86 @@ router.post(
     supplierService.unlinkItem(req.db, req.ctx, req.user, req.params.supplierItemId);
     req.flash('success', 'Removed from this supplier.');
     return res.redirect(`/suppliers/${req.params.id}`);
+  })
+);
+
+/**
+ * Turning purchasing on for an inventory that already exists.
+ *
+ * Everything on this screen is derived from real outbound history and shown
+ * with the arithmetic, so switching it on is a decision with a visible
+ * consequence rather than an act of faith.
+ */
+router.get(
+  '/purchasing/setup',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.VIEW_PURCHASING, 'see purchasing');
+    const assessment = setupService.preview(req.db, req.ctx.workspaceId);
+
+    return res.page('purchasing/setup', {
+      title: 'Set up purchasing',
+      nav: 'purchasing',
+      assessment,
+      suppliers: supplierService.listSuppliers(req.db, req.ctx.workspaceId),
+      canManage: permissions.can(req.user, permissions.MANAGE_REPLENISHMENT),
+      canManageSuppliers: permissions.can(req.user, permissions.MANAGE_SUPPLIERS),
+    });
+  })
+);
+
+router.post(
+  '/purchasing/setup/policies',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.MANAGE_REPLENISHMENT, 'set reorder policies');
+    const raw = req.body.skuIds;
+    const skuIds = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    try {
+      const result = setupService.applyPolicies(req.db, req.ctx, req.user, skuIds);
+      req.flash('success', `Reorder points set for ${result.count} line(s), derived from what actually sold.`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+    }
+    return res.redirect(303, '/purchasing/setup');
+  })
+);
+
+router.post(
+  '/purchasing/setup/supplier',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.MANAGE_SUPPLIERS, 'manage suppliers');
+    const raw = req.body.skuIds;
+    const skuIds = Array.isArray(raw) ? raw : raw ? [raw] : [];
+
+    try {
+      // A supplier named here is created if it is new, so setting a vendor up
+      // and attaching a whole range to it is one step rather than two screens.
+      let supplierId = trimOrNull(req.body.supplierId);
+      if (!supplierId) {
+        const created = supplierService.createSupplier(req.db, req.ctx, req.user, {
+          name: req.body.newSupplierName,
+          defaultLeadTimeDays: req.body.leadTimeDays,
+        });
+        supplierId = created.id;
+      }
+
+      const result = setupService.linkSupplierToMany(req.db, req.ctx, req.user, {
+        supplierId,
+        skuIds,
+        purchaseUnit: req.body.purchaseUnit,
+        unitsPerPurchaseUnit: req.body.unitsPerPurchaseUnit,
+        minimumOrderQuantity: req.body.minimumOrderQuantity,
+        orderMultiple: req.body.orderMultiple,
+        leadTimeDays: req.body.leadTimeDays,
+        lastUnitCost: req.body.lastUnitCost,
+        isPreferred: true,
+      });
+      req.flash('success', `${result.supplier.name} now supplies ${result.linked} product(s).`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+    }
+    return res.redirect(303, '/purchasing/setup');
   })
 );
 

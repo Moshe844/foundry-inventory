@@ -1,0 +1,42 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/autopilot"><%- helpers.icon('chevron', { size: 14 }) %> What Foundry does</a>
+    <h1><%= policy.name %></h1>
+    <div class="page-sub">
+      Version <%= policy.version %> ·
+      <%= policy.isActive ? 'active' : policy.isApproved ? 'approved but switched off' : 'waiting for your approval' %>
+    </div>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head"><h2>What this lets Foundry do</h2></div>
+  <div class="card-body">
+    <ul class="plain-list">
+      <% lines.forEach(function (line) { %><li><%= line %></li><% }) %>
+    </ul>
+    <% if (policy.description) { %><p class="muted"><%= policy.description %></p><% } %>
+    <% if (!policy.isApproved) { %>
+      <p class="muted">Nothing happens under this policy until you approve it — and even then, only when
+        Foundry is set to run your inventory rather than prepare it.</p>
+    <% } %>
+  </div>
+  <div class="card-foot">
+    <div class="btn-row">
+      <% if (!policy.isApproved) { %>
+        <form method="post" action="/autopilot/policies/<%= policy.id %>/approve">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="integrityHash" value="<%= policy.integrityHash %>">
+          <button class="btn btn--primary" type="submit" <%= canAdmin ? '' : 'disabled' %>>Approve this policy</button>
+        </form>
+      <% } %>
+      <% if (policy.isActive) { %>
+        <form method="post" action="/autopilot/policies/<%= policy.id %>/disable"
+              data-confirm="Disable <%= policy.name %>?">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--ghost" type="submit" <%= canOperate ? '' : 'disabled' %>>Stop this</button>
+        </form>
+      <% } %>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,88 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> Foundry</a>
+    <h1><%= item.categoryLabel %></h1>
+    <div class="page-sub">
+      <%= item.executionStatus === 'COMPLETED' ? 'Done' : helpers.columnLabel(item.executionStatus.toLowerCase().replace(/_/g, ' ')) %>
+      <% if (item.verificationStatus === 'VERIFIED') { %> · verified against your records<% } %>
+      <% if (item.isAutomatic) { %> · carried out automatically<% } %>
+    </div>
+  </div>
+</div>
+
+<div class="card section <%= item.verificationStatus === 'FAILED' ? 'card--warn' : '' %>">
+  <div class="card-head">
+    <h2>Why</h2>
+    <% if (policy) { %><span class="spacer"></span><a class="btn btn--sm btn--ghost" href="/autopilot/policies/<%= policy.id %>"><%= policy.name %></a><% } %>
+  </div>
+  <div class="card-body">
+    <% paragraphs.forEach(function (line) { %><p class="lede"><%= line %></p><% }) %>
+
+    <% if (evidence.length) { %>
+      <h3 class="sub-head">What I measured</h3>
+      <table class="table table--tight">
+        <tbody>
+          <% evidence.forEach(function (fact) { %>
+            <tr><td><%= fact.label %></td><td class="num"><%= fact.value %></td></tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+
+    <% if (checks.length) { %>
+      <h3 class="sub-head">What I checked before doing it</h3>
+      <ul class="plain-list">
+        <% checks.forEach(function (check) { %>
+          <li class="<%= check.passed ? '' : 'is-warn' %>">
+            <%- helpers.icon(check.passed ? 'check' : 'alert', { size: 14 }) %>
+            <%= check.name %><% if (check.detail) { %> <span class="muted">— <%= check.detail %></span><% } %>
+          </li>
+        <% }) %>
+      </ul>
+    <% } %>
+
+    <% if (verification.length) { %>
+      <h3 class="sub-head">What I checked afterwards</h3>
+      <ul class="plain-list">
+        <% verification.forEach(function (check) { %>
+          <li class="<%= check.ok ? '' : 'is-warn' %>">
+            <%- helpers.icon(check.ok ? 'check' : 'alert', { size: 14 }) %> <%= check.name %>
+          </li>
+        <% }) %>
+      </ul>
+    <% } %>
+  </div>
+
+  <% if (item.needsPerson && canOperate) { %>
+    <div class="card-foot">
+      <div class="btn-row">
+        <form method="post" action="/autopilot/work/<%= item.id %>/approve" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--primary" type="submit">Do it</button>
+        </form>
+        <form method="post" action="/autopilot/work/<%= item.id %>/cancel">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--ghost" type="submit">Leave it</button>
+        </form>
+      </div>
+    </div>
+  <% } %>
+</div>
+
+<div class="card section">
+  <div class="card-head"><h2>What happened, in order</h2></div>
+  <table class="table table--tight">
+    <tbody>
+      <% events.forEach(function (event) { %>
+        <tr>
+          <td><%= helpers.columnLabel(event.event.replace(/_/g, ' ')) %></td>
+          <td class="muted"><%= event.actorName || 'Foundry' %></td>
+          <td class="muted"><%= helpers.dateTime(event.createdAt) %></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+  <% if (item.errorMessage) { %>
+    <div class="card-body"><p class="is-warn"><%= item.errorMessage %></p></div>
+  <% } %>
+</div>

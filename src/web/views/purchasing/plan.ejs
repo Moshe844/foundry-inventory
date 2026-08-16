@@ -5,6 +5,21 @@
       Foundry worked this out from what you have, what is already coming, and what you have been using.
       Nothing is ordered until you approve it.
     </div>
+
+<% if (setup && setup.lines && !setup.alreadySet) { %>
+  <div class="card section card--warn">
+    <div class="card-body">
+      <p class="lede">Purchasing is not set up for this inventory yet.</p>
+      <p class="muted">
+        Foundry can work the reorder points out from what has actually sold — <%= setup.canPropose %>
+        of <%= setup.lines %> lines have enough history today — and attach a supplier to a whole range
+        at once. Until then this screen has nothing to go on.
+      </p>
+      <div class="btn-row"><a class="btn btn--primary" href="/purchasing/setup">Set up purchasing</a></div>
+    </div>
+  </div>
+<% } %>
+
   </div>
 </div>
 

@@ -168,7 +168,14 @@ test(
       await page.fill('#password', ACCOUNT.password);
       // The register page has no sidebar, so this is unambiguous.
       await page.click('form[action="/register"] button[type=submit]');
-      await page.waitForURL(`${BASE}/foundry`);
+      await page.waitForURL(`${BASE}/onboarding`);
+      // A new inventory is asked how it is managed today. These customers are
+      // starting from nothing, so they take the Starting Fresh path — which is
+      // the Mission 2 experience, unchanged.
+      await Promise.all([
+        page.waitForURL(`${BASE}/foundry/describe`),
+        page.click('button:has-text("Starting fresh")'),
+      ]);
 
       await page.fill(
         '#description',
@@ -268,7 +275,9 @@ test(
     });
 
     await t.test('4. the overview leads with the briefing', async () => {
-      await page.goto(`${BASE}/`);
+      // The landing page is now Operator Home. The classic overview, which is
+      // what this step is about, stayed at /overview.
+      await page.goto(`${BASE}/overview`);
       await page.locator("text=Today's briefing").first().waitFor();
       const body = await page.locator('body').innerText();
       assert.match(body, /need your attention/);
@@ -289,7 +298,7 @@ test(
       assert.match(body, /not counted/);
       // A stockout has no operation Foundry can carry out — purchasing does not
       // exist — so it says so rather than offering an invented action.
-      assert.match(body, /Replenishment ordering is not supported yet/);
+      assert.match(body, /draft the purchase order/);
       assert.ok(!body.includes('Review transfer'));
 
       state.attentionUrl = page.url();

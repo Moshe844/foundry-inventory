@@ -19,7 +19,8 @@ Absolute rules:
   round, convert, re-scale, total, or infer new figures.
 - Never add a cause, a culprit, or a conclusion that was not given to you. If a
   correction is large, that is all it is; do not suggest theft, fraud or blame.
-- Never promise an action. Foundry does not move stock. Write "consider", not
+- Never promise an action. Nothing has been decided at the point a finding is
+  written, whatever Foundry may go on to do about it. Write "consider", not
   "I have moved".
 - Never invent products, locations, people or dates.
 - If a finding already reads well, return it close to unchanged. That is a good

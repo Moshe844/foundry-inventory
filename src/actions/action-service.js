@@ -266,8 +266,14 @@ function proposeFromAttention(db, ctx, membership, attentionId) {
 
 function actionabilityMessage(item) {
   const messages = {
-    stockout_risk: 'Replenishment ordering is not supported yet, so Foundry cannot act on this. Review the stock and order it yourself.',
-    low_stock: 'Replenishment ordering is not supported yet, so Foundry cannot act on this.',
+    // Mission 6 gave Foundry replenishment and purchase orders, so telling
+    // someone to go and order it themselves is now false. It drafts the order;
+    // sending it to the supplier stays a person's decision.
+    stockout_risk:
+      'Foundry can work out what to order and draft the purchase order for you on the purchasing page. ' +
+      'It will not send anything to the supplier.',
+    low_stock:
+      'Foundry can work out what to order and draft the purchase order for you on the purchasing page.',
     expiring_inventory: 'Foundry can move this lot somewhere it will be used, but deciding what to do with it is yours. Ask Foundry to transfer it if that helps.',
     unusual_adjustment: 'This is something to check with the person who recorded it. There is no inventory action to take.',
     stale_inventory: 'Foundry can move this stock if you tell it where. There is no action it should take on its own.',

@@ -414,7 +414,7 @@ test('a stockout finding offers no action at all', async () => {
   const detail = plain((await agent.get(`/attention/${finding.attentionId}`)).text);
 
   assert.ok(!detail.includes('Review transfer'));
-  assert.match(detail, /Replenishment ordering is not supported yet/);
+  assert.match(detail, /draft the purchase order/);
 });
 
 // --- access ------------------------------------------------------------------

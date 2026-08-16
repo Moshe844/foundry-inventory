@@ -194,7 +194,14 @@ test(
       await page.fill('#email', ACCOUNT.email);
       await page.fill('#password', ACCOUNT.password);
       await page.click('form[action="/register"] button[type=submit]');
-      await page.waitForURL(`${BASE}/foundry`);
+      await page.waitForURL(`${BASE}/onboarding`);
+      // A new inventory is asked how it is managed today. These customers are
+      // starting from nothing, so they take the Starting Fresh path — which is
+      // the Mission 2 experience, unchanged.
+      await Promise.all([
+        page.waitForURL(`${BASE}/foundry/describe`),
+        page.click('button:has-text("Starting fresh")'),
+      ]);
 
       assert.equal(await currentInventory(page), CLOTHING.name);
       await shot(page, 'first-inventory-setup');
@@ -230,7 +237,14 @@ test(
 
       await page.fill('#name', EQUIPMENT.name);
       await page.click('button:has-text("Create and set up with Foundry")');
-      await page.waitForURL(`${BASE}/foundry`);
+      await page.waitForURL(`${BASE}/onboarding`);
+      // A new inventory is asked how it is managed today. These customers are
+      // starting from nothing, so they take the Starting Fresh path — which is
+      // the Mission 2 experience, unchanged.
+      await Promise.all([
+        page.waitForURL(`${BASE}/foundry/describe`),
+        page.click('button:has-text("Starting fresh")'),
+      ]);
 
       assert.equal(await currentInventory(page), EQUIPMENT.name, 'the new inventory is now open');
       const body = await page.locator('body').innerText();

@@ -55,6 +55,29 @@ const config = {
   ensureDataDir,
 
   /**
+   * When Foundry looks at the inventory by itself.
+   *
+   * Off under test, always: a suite that starts a real server and then asserts
+   * "nothing happened yet" cannot be trusted if a timer might act in between.
+   * The loop it runs is the same one the Check now button runs, so turning this
+   * off costs timing and nothing else.
+   */
+  autopilot: {
+    get enabled() {
+      if (process.env.FOUNDRY_AUTOPILOT_SCHEDULER !== undefined) {
+        return process.env.FOUNDRY_AUTOPILOT_SCHEDULER === 'true';
+      }
+      return (process.env.NODE_ENV || 'development') !== 'test';
+    },
+    get intervalMs() {
+      const configured = Number(process.env.FOUNDRY_AUTOPILOT_INTERVAL_MS);
+      // A minute is the floor. Below that the per-minute plan key would collapse
+      // consecutive ticks into one and the extra runs would be silently wasted.
+      return Number.isFinite(configured) && configured >= 60000 ? configured : 15 * 60 * 1000;
+    },
+  },
+
+  /**
    * The intelligence layer. Provider and model are environment driven so the
    * engine is never tied to one vendor, and no secret ever reaches the browser.
    */

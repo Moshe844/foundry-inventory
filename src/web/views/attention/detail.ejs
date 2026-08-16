@@ -60,10 +60,13 @@
                 Foundry will work out the exact movement and show it to you. Nothing moves until you approve it.
               </p>
             <% } else { %>
+              <%# True as written: the one thing Foundry does unattended is balancing
+                  its own locations under an approved policy, and that is never this
+                  branch. Everything else waits for a person. %>
               <p class="muted" style="font-size:12px; margin-top:6px;">
                 <%= typeof actionMessage !== 'undefined' && actionMessage
                     ? actionMessage
-                    : 'Foundry does not move stock by itself. This is a suggestion for you to act on.' %>
+                    : 'There is nothing here Foundry acts on by itself. This is a suggestion for you to act on.' %>
               </p>
             <% } %>
           </div>

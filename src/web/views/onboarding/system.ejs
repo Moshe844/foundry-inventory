@@ -1,0 +1,66 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/onboarding"><%- helpers.icon('chevron', { size: 14 }) %> Start over</a>
+    <h1>What system are you using?</h1>
+    <div class="page-sub">Foundry can take the inventory over, or read from a system you keep running.</div>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head"><h2>Connected systems</h2></div>
+  <div class="card-body">
+    <% if (connectors.length) { %>
+      <ul class="plain-list">
+        <% connectors.forEach(function (connector) { %>
+          <li>
+            <strong><%= connector.displayName %></strong>
+            <span class="muted"><%= connector.readOnly ? 'read-only' : 'read and write' %></span>
+          </li>
+        <% }) %>
+      </ul>
+    <% } else { %>
+      <p class="lede">Foundry does not connect directly to any inventory system yet.</p>
+      <p class="muted">
+        There is no list of logos here on purpose. A connector appears when Foundry can genuinely read your
+        system — showing one that did nothing would tell you your inventory was connected when nothing was
+        reading it.
+      </p>
+    <% } %>
+  </div>
+</div>
+
+<form method="post" action="/onboarding/system" class="card section">
+  <div class="card-head"><h2>Export what you have</h2></div>
+  <div class="card-body">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <p class="lede">
+      Export your inventory to CSV or Excel and give it to Foundry. It reads the export, sets itself up from
+      what it finds, and reconciles the totals against your file.
+    </p>
+    <label class="field">
+      <span class="field-label">Which system is it? (optional)</span>
+      <input class="input" type="text" name="system" placeholder="NetSuite, Shopify, Fishbowl…"
+             maxlength="120" autocomplete="off">
+      <span class="field-help">Recorded so Foundry knows where this inventory came from.</span>
+    </label>
+  </div>
+  <div class="card-foot">
+    <button class="btn btn--primary" type="submit" <%= canOperate ? '' : 'disabled' %>>
+      Continue with an export
+    </button>
+  </div>
+</form>
+
+<div class="card section">
+  <div class="card-head"><h2>Which system owns your inventory?</h2></div>
+  <div class="card-body">
+    <p>
+      This inventory is currently
+      <strong><%= sourceOfTruth === 'FOUNDRY_NATIVE' ? 'owned by Foundry' : 'owned by an external system' %></strong>.
+    </p>
+    <p class="muted">
+      Foundry never keeps a second set of balances competing with the system you actually run on. Either its
+      ledger is the record, or an external system is and Foundry reads from it — never both.
+    </p>
+  </div>
+</div>

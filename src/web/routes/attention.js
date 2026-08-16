@@ -12,6 +12,7 @@ const queryPlanner = require('../../attention/query-planner');
 const planApplier = require('../../foundry/plan-applier');
 const repo = require('../../domain/repository');
 const actionService = require('../../actions/action-service');
+const workItems = require('../../autopilot/work-items');
 const actionPermissions = require('../../actions/permissions');
 const proposalService = require('../../actions/proposal-service');
 const { requireAuth, asyncRoute } = require('../middleware');
@@ -246,6 +247,12 @@ router.get(
         'Which lots expire soon?',
         'What has not sold in three months?',
         'What needs my attention?',
+        // Only offered once Foundry has work of its own to talk about. Suggesting
+        // it to a workspace where the answer is "nothing" advertises a hollow
+        // trick rather than a capability.
+        ...(workItems.list(req.db, req.ctx.workspaceId, { limit: 1 }).length
+          ? ['What did you do today?']
+          : []),
       ],
     });
   })

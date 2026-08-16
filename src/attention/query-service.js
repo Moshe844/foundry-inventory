@@ -37,6 +37,12 @@ const INTENTS = [
   'late_orders',
   'last_cost',
   'suppliers_for_item',
+  // Mission 7. Foundry now does work of its own, so "what have you been doing"
+  // is a real question with a real answer — read from the work records, never
+  // from a model's recollection.
+  'foundry_activity',
+  'foundry_why',
+  'stop_automation',
   'unsupported',
 ];
 
@@ -325,6 +331,9 @@ const PURCHASING_EXECUTORS = {
 };
 
 const EXECUTORS = {
+  foundry_activity: foundryActivity,
+  foundry_why: foundryWhy,
+  stop_automation: stopAutomation,
   stock_level(db, workspaceId, plan) {
     const skus = resolveSkus(db, workspaceId, plan.entityQuery, plan.limit);
     if (skus.length === 0) return { rows: [], answer: notFound(plan) };
@@ -542,6 +551,94 @@ const EXECUTORS = {
   },
 };
 
+/**
+ * "What did you do today?"
+ *
+ * Straight from the work records. A day with nothing on it says so — inventing
+ * activity to look busy would poison every other answer on this page.
+ */
+function foundryActivity(db, workspaceId, plan) {
+  const autopilotPresenter = require('../autopilot/presenter');
+  const summary = autopilotPresenter.summariseDay(db, workspaceId);
+
+  return {
+    answer: summary.lines.join('\n'),
+    rows: summary.did.actions.map((action) => ({
+      what: action.headline,
+      detail: action.detail || '',
+      verified: action.verified ? 'yes' : 'not verified',
+    })),
+    columns: ['what', 'detail', 'verified'],
+  };
+}
+
+/**
+ * "Why did you move those tights?"
+ *
+ * Answered from the most recent matching piece of work: the measurements that
+ * triggered it, the policy that allowed it, and the verified result.
+ */
+function foundryWhy(db, workspaceId, plan) {
+  const autopilotPresenter = require('../autopilot/presenter');
+  const workItems = require('../autopilot/work-items');
+
+  const recent = workItems.list(db, workspaceId, { limit: 50 });
+  const wanted = String(plan.entityQuery || '').trim().toLowerCase();
+  const match = wanted
+    ? recent.find((item) => {
+        const name = ((item.affectedEntities || {}).displayName || '').toLowerCase();
+        const supplier = ((item.affectedEntities || {}).supplierName || '').toLowerCase();
+        return searchTerms(wanted).every((term) => name.includes(term) || supplier.includes(term));
+      })
+    : recent.find((item) => item.executionStatus === 'COMPLETED');
+
+  if (!match) {
+    return {
+      answer: wanted
+        ? `Foundry has not done anything to ${plan.entityQuery} that it has a record of.`
+        : 'Foundry has not done anything yet.',
+      rows: [],
+    };
+  }
+
+  const explanation = autopilotPresenter.explain(db, workspaceId, match.id);
+  return {
+    answer: explanation.paragraphs.join(' '),
+    rows: explanation.evidence.map((fact) => ({ measure: fact.label, value: String(fact.value) })),
+    columns: ['measure', 'value'],
+  };
+}
+
+/**
+ * "Stop automatically moving inventory."
+ *
+ * Names the policies that would be switched off and hands over — turning
+ * something off is a decision, so it is made on a screen with a button rather
+ * than inferred from a sentence.
+ */
+function stopAutomation(db, workspaceId, plan) {
+  const policyService = require('../autopilot/policy-service');
+  const active = policyService.list(db, workspaceId, { activeOnly: true });
+
+  if (!active.length) {
+    return {
+      answer: 'Foundry is not doing anything automatically — every action already waits for you.',
+      rows: [],
+    };
+  }
+  return {
+    // Not `isAction` — that hands over to the actions page, which changes stock.
+    // Switching a policy off is a different decision, made in a different place.
+    handoff: { href: '/autopilot', label: 'Manage what Foundry does on its own' },
+    answer:
+      `Foundry has ${active.length} active polic${active.length === 1 ? 'y' : 'ies'}: ` +
+      `${active.map((policy) => policy.name).join(', ')}. Turn it off on the policy page — ` +
+      'anything already done stays in the history.',
+    rows: active.map((policy) => ({ policy: policy.name, allows: policyService.describe(policy)[0] })),
+    columns: ['policy', 'allows'],
+  };
+}
+
 function notFound(plan) {
   return `Foundry could not find anything matching "${plan.entityQuery}".`;
 }
@@ -560,6 +657,7 @@ function execute(db, workspaceId, rawPlan) {
   return {
     plan,
     isAction: result.isAction === true,
+    handoff: result.handoff || null,
     supported: result.supported !== false,
     answer: result.answer,
     rows: result.rows,

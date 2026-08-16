@@ -1,0 +1,162 @@
+<div class="page-head">
+  <div class="titles">
+    <h1><%= home.status.headline %></h1>
+    <div class="page-sub">
+      Last checked <%= home.status.lastEvaluatedText %><% if (home.status.activePolicies) { %> ·
+      <%= home.status.activePolicies %> active
+      polic<%= home.status.activePolicies === 1 ? 'y' : 'ies' %><% } %> ·
+      <a href="/autopilot"><%= home.status.modeLabel %></a>
+    </div>
+  </div>
+  <div class="btn-row">
+    <% if (home.status.paused || home.status.suspended) { %>
+      <form method="post" action="/autopilot/resume">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--primary btn--sm" type="submit" <%= canOperate ? '' : 'disabled' %>>Resume Foundry</button>
+      </form>
+    <% } else { %>
+      <form method="post" action="/autopilot/pause" data-confirm="Pause Foundry? Nothing will happen automatically until you resume it.">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--ghost btn--sm" type="submit" <%= canOperate ? '' : 'disabled' %>>Pause Foundry</button>
+      </form>
+    <% } %>
+  </div>
+</div>
+
+<% if (home.status.paused || home.status.suspended) { %>
+  <div class="card section card--warn">
+    <div class="card-body">
+      <p class="lede">
+        <%= home.status.suspended ? 'Foundry stopped itself.' : 'Foundry is paused.' %>
+      </p>
+      <p class="muted"><%= home.status.suspendedReason || home.status.pausedReason || 'Nothing will happen automatically until you resume it.' %></p>
+    </div>
+  </div>
+<% } %>
+
+<%# ---------------------------------------------------------- what needs you %>
+<div class="card section <%= home.needsYou.length ? 'card--warn' : '' %>">
+  <div class="card-head">
+    <h2><%= home.needsYou.length
+        ? home.needsYou.length === 1 ? '1 thing needs you' : home.needsYou.length + ' things need you'
+        : 'Nothing needs you' %></h2>
+  </div>
+  <div class="card-body">
+    <% if (!home.needsYou.length) { %>
+      <p class="lede">Foundry has everything in hand. It will tell you the moment that changes.</p>
+    <% } %>
+    <% home.needsYou.forEach(function (entry) { %>
+      <div class="act-row">
+        <span class="act-place">
+          <strong><%= entry.title %></strong>
+          <% if (entry.because) { %><div class="muted"><%= entry.because %></div><% } %>
+          <% if (entry.evidence && entry.evidence.length) { %>
+            <div class="muted">
+              <% entry.evidence.slice(0, 3).forEach(function (fact, i) { %><%= i ? ' · ' : '' %><%= fact.label %>: <%= fact.value %><% }) %>
+            </div>
+          <% } %>
+        </span>
+        <span class="act-move"><a class="btn btn--sm btn--primary" href="<%= entry.link %>"><%= entry.action %></a></span>
+      </div>
+    <% }) %>
+  </div>
+</div>
+
+<%# ------------------------------------------------------------ what it said %>
+<% if (home.notifications && home.notifications.length) { %>
+  <div class="card section">
+    <div class="card-head">
+      <h2>What Foundry told you</h2>
+      <span class="spacer"></span>
+      <% if (home.unreadNotifications) { %>
+        <form method="post" action="/autopilot/notifications/read">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="back" value="/">
+          <button class="btn btn--sm btn--ghost" type="submit">Mark all read</button>
+        </form>
+      <% } %>
+    </div>
+    <div class="card-body">
+      <ul class="plain-list">
+        <% home.notifications.forEach(function (note) { %>
+          <li class="<%= note.severity === 'important' ? 'is-warn' : '' %>">
+            <% if (!note.read) { %><span class="badge badge--muted">new</span> <% } %>
+            <% if (note.link) { %><a href="<%= note.link %>"><%= note.title %></a><% } else { %><%= note.title %><% } %>
+            <% if (note.body) { %><div class="muted"><%= note.body %></div><% } %>
+            <div class="muted"><%= note.when %></div>
+          </li>
+        <% }) %>
+      </ul>
+    </div>
+  </div>
+<% } %>
+
+<%# --------------------------------------------------------- what Foundry did %>
+<div class="card section">
+  <div class="card-head">
+    <h2>What Foundry did</h2>
+    <span class="spacer"></span>
+    <a class="btn btn--sm btn--ghost" href="/autopilot/history">All of it</a>
+  </div>
+  <div class="card-body">
+    <p class="lede"><%= home.did.headline %></p>
+    <% if (home.did.actions.length) { %>
+      <ul class="plain-list">
+        <% home.did.actions.forEach(function (action) { %>
+          <li>
+            <a href="<%= action.link %>"><%= action.headline %></a>
+            <% if (action.detail) { %><span class="muted"> — <%= action.detail %></span><% } %>
+            <% if (!action.verified) { %><span class="badge badge--danger">not verified</span><% } %>
+          </li>
+        <% }) %>
+      </ul>
+    <% } %>
+    <p class="muted">
+      Watching <%= home.did.counts.positionsWatched %> stock position<%= home.did.counts.positionsWatched === 1 ? '' : 's' %><%
+        if (home.did.counts.evaluations) { %> · <%= home.did.counts.evaluations %> evaluation<%= home.did.counts.evaluations === 1 ? '' : 's' %> today<% } %><%
+        if (home.did.counts.findingsResolved) { %> · <%= home.did.counts.findingsResolved %> finding<%= home.did.counts.findingsResolved === 1 ? '' : 's' %> resolved<% } %>
+    </p>
+    <% if (canOperate) { %>
+      <form method="post" action="/autopilot/run" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--sm" type="submit">Check now</button>
+      </form>
+    <% } %>
+  </div>
+</div>
+
+<%# -------------------------------------------------------- what happens next %>
+<div class="card section">
+  <div class="card-head"><h2>What's happening next</h2></div>
+  <div class="card-body">
+    <% if (!home.next.length) { %>
+      <p class="muted">Nothing scheduled. No deliveries expected and no dates approaching.</p>
+    <% } else { %>
+      <ul class="plain-list">
+        <% home.next.forEach(function (event) { %>
+          <li class="<%= event.overdue ? 'is-warn' : '' %>">
+            <strong><%= event.when %></strong> —
+            <% if (event.link) { %><a href="<%= event.link %>"><%= event.title %></a><% } else { %><%= event.title %><% } %>
+            <% if (event.detail) { %><span class="muted"> <%= event.detail %></span><% } %>
+          </li>
+        <% }) %>
+      </ul>
+    <% } %>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head"><h2>Ask Foundry</h2></div>
+  <div class="card-body">
+    <form class="ask-form" method="get" action="/ask" data-ask-form>
+      <input class="input" id="ask-question" type="text" name="q"
+             placeholder="What did you do today?" maxlength="300" autocomplete="off">
+      <button class="btn btn--primary" type="submit" data-ask-submit>Ask</button>
+    </form>
+    <div class="ask-examples">
+      <% ['What did you do today?', 'What needs to be reordered?', 'What needs my attention?'].forEach(function (example) { %>
+        <a class="chip" href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
+      <% }) %>
+    </div>
+  </div>
+</div>

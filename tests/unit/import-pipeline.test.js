@@ -48,11 +48,26 @@ function sheetFrom(text) {
   return parsed.sheets[parsed.primarySheet];
 }
 
-/** Analyses without a provider: the deterministic path, end to end. */
+
+/**
+ * Analyses a file the way the deterministic path does.
+ *
+ * The column mappings are computed here and handed over, which keeps this suite
+ * offline and repeatable. It is not a shortcut around the thing being tested:
+ * every file below has headings the rules recognise on their own, and the AI
+ * mapping layer has its own live tests. A unit test that quietly depended on a
+ * model call was flaky exactly when the model chose differently.
+ */
 async function analyse(env, text, options = {}) {
+  const parsed = parser.parse({ text });
+  const sheet = parsed.sheets[parsed.primarySheet];
+  const guess = fields.guessMappings(sheet.columns, sheet.rows);
+
   return planService.analyse(env.db, env.ctx, env.membership, {
     text,
     filename: options.filename || 'stock.csv',
+    mappings: guess.mappings,
+    detectedType: fields.detectType(guess.mappings),
     ...options,
   });
 }

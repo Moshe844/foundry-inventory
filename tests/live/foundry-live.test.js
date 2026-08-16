@@ -238,10 +238,21 @@ test('recommendations are specific, not generic filler', { skip: !LIVE, timeout:
 test('nothing Foundry cannot do is promised as configured', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const all = await results();
   for (const [key, r] of Object.entries(all)) {
-    // Anything about forecasting, reordering or purchasing must be future-scoped.
+    // Anything the engine genuinely does not have must be future-scoped.
+    //
+    // Reorder points and purchase orders were on this list until Mission 6 built
+    // them. Leaving them here would now fail the model for telling the truth,
+    // which is the same defect in the opposite direction: a customer told
+    // Foundry cannot do something it does goes and buys a second system.
     for (const rec of r.understanding.recommendations) {
-      const text = `${rec.title} ${rec.recommendation}`.toLowerCase();
-      const mentionsMissing = /forecast|reorder point|purchase order|barcode scan|valuation/.test(text);
+      // Disclaiming a missing feature is the model being careful, not promising
+      // it: "reorder points are a floor, not a seasonal buy plan" names
+      // forecasting precisely in order to rule it out. Only an unqualified
+      // mention counts as a promise.
+      const text = `${rec.title} ${rec.recommendation}`
+        .toLowerCase()
+        .replace(/\b(not|never|no|without|rather than|instead of|cannot|can't|does not|doesn't)\b[^.;]*/g, '');
+      const mentionsMissing = /forecast|barcode scan|valuation|bill of materials|sales order/.test(text);
       if (mentionsMissing && rec.scope === 'configuration') {
         assert.fail(`${key}: "${rec.title}" promises an unavailable feature as configuration`);
       }

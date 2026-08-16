@@ -176,7 +176,7 @@ async function analyse(db, ctx, membership, input) {
   const sourceName = input.filename || (buffer ? 'uploaded file' : 'pasted data');
   const proposal = await mappingService.proposeMappings(
     { ...sheet, sourceName },
-    { provider: input.provider }
+    { provider: input.provider, mappings: input.mappings, detectedType: input.detectedType }
   );
 
   const model = require('./catalog-service').workspaceDefaults(db, ctx.workspaceId);

@@ -1,0 +1,116 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/onboarding/files"><%- helpers.icon('chevron', { size: 14 }) %> The files</a>
+    <h1>I understand your inventory</h1>
+    <div class="page-sub">
+      Read from <%= sources.length %> file<%= sources.length === 1 ? '' : 's' %>. Nothing has been created yet.
+    </div>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head"><h2>What Foundry found</h2></div>
+  <div class="card-body">
+    <div class="act-ledger">
+      <div class="act-row"><span class="act-place">Products</span><span class="act-move"><span class="num"><%= plan.expectedTotals.products || 0 %></span></span></div>
+      <div class="act-row"><span class="act-place">Units on hand</span><span class="act-move"><span class="num"><%= plan.expectedTotals.units || 0 %></span></span></div>
+      <div class="act-row"><span class="act-place">Locations</span><span class="act-move"><span class="num"><%= plan.proposedLocations.length %></span></span></div>
+    </div>
+
+    <h3 class="sub-head">Locations Foundry would create</h3>
+    <ul class="plain-list">
+      <% plan.proposedLocations.forEach(function (name) { %><li><%= name %></li><% }) %>
+    </ul>
+
+    <% var normalised = conflicts.filter(function (c) { return c.severity === 'resolved_automatically'; }); %>
+    <% if (normalised.length) { %>
+      <h3 class="sub-head">Sorted out without asking you</h3>
+      <ul class="plain-list">
+        <% normalised.forEach(function (conflict) { %>
+          <li><%= conflict.subject %> — <span class="muted"><%= conflict.recommendationReason %></span></li>
+        <% }) %>
+      </ul>
+    <% } %>
+  </div>
+</div>
+
+<% if (open.length) { %>
+  <div class="card section <%= blocking.length ? 'card--warn' : '' %>">
+    <div class="card-head">
+      <h2>I found <%= open.length %> thing<%= open.length === 1 ? '' : 's' %> worth checking</h2>
+      <span class="spacer"></span>
+      <% if (blocking.length) { %><span class="badge badge--danger"><%= blocking.length %> must be settled</span><% } %>
+    </div>
+    <div class="card-body">
+      <% open.forEach(function (conflict) { %>
+        <div class="card section">
+          <div class="card-head">
+            <h3><%= helpers.columnLabel(conflict.kind.replace(/_/g, ' ')) %></h3>
+            <span class="spacer"></span>
+            <% if (conflict.severity === 'blocking') { %><span class="badge badge--danger">Needs your decision</span><% } %>
+          </div>
+          <div class="card-body">
+            <p class="lede"><%= conflict.subject %></p>
+            <table class="table table--tight">
+              <tbody>
+                <% conflict.evidence.forEach(function (row) { %>
+                  <tr><td><%= row.source %></td><td><%= row.says %></td><td class="muted"><%= row.when || '' %></td></tr>
+                <% }) %>
+              </tbody>
+            </table>
+            <% if (conflict.recommendationReason) { %>
+              <p class="muted">Foundry recommends: <%= conflict.recommendationReason %></p>
+            <% } else { %>
+              <p class="is-warn">Foundry cannot safely choose from the numbers alone — this one is yours.</p>
+            <% } %>
+
+            <form method="post" action="/onboarding/conflicts/<%= conflict.id %>">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <div class="btn-row">
+                <% conflict.options.forEach(function (option) { %>
+                  <button class="btn btn--sm <%= conflict.recommendedOption === option.id ? 'btn--primary' : '' %>"
+                          type="submit" name="decision" value="<%= option.id %>">
+                    <%= option.label %><%= conflict.recommendedOption === option.id ? ' (recommended)' : '' %>
+                  </button>
+                <% }) %>
+              </div>
+            </form>
+          </div>
+        </div>
+      <% }) %>
+    </div>
+    <div class="card-foot">
+      <form method="post" action="/onboarding/review/<%= plan.id %>/accept-recommendations">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn" type="submit">Accept everything Foundry recommended</button>
+      </form>
+    </div>
+  </div>
+<% } %>
+
+<div class="card section">
+  <div class="card-head"><h2>Foundry is ready to take over</h2></div>
+  <div class="card-body">
+    <p class="lede">
+      Foundry will create the locations, the products and their versions, then establish the opening stock
+      as real inventory movements — so every figure has a record explaining where it came from.
+    </p>
+    <p class="muted">
+      Afterwards it counts what it holds and compares it with your files. If the totals disagree it says so
+      rather than reporting success.
+    </p>
+  </div>
+  <div class="card-foot">
+    <div class="btn-row">
+      <form method="post" action="/onboarding/review/<%= plan.id %>/migrate" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--primary" type="submit" <%= blocking.length || !canOperate ? 'disabled' : '' %>>
+          Complete migration
+        </button>
+      </form>
+      <% if (blocking.length) { %>
+        <span class="muted">Settle the <%= blocking.length %> above first.</span>
+      <% } %>
+    </div>
+  </div>
+</div>

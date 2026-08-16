@@ -1,0 +1,51 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> Foundry</a>
+    <h1>What Foundry has done</h1>
+    <div class="page-sub">In words. The raw movements are in <a href="/activity">Activity</a>.</div>
+  </div>
+</div>
+
+<%
+  var sections = [
+    { key: 'automatic', label: 'Completed automatically' },
+    { key: 'prepared', label: 'Prepared, then approved by you' },
+    { key: 'needsYou', label: 'Waiting for you' },
+    { key: 'blocked', label: 'Stopped or failed' }
+  ];
+  var anything = sections.some(function (section) { return groups[section.key].length; });
+%>
+
+<% if (!anything) { %>
+  <div class="card section">
+    <div class="card-body">
+      <p class="lede">Foundry has not had anything to do yet.</p>
+      <p class="muted">Work appears here as it is planned, prepared and carried out.</p>
+    </div>
+  </div>
+<% } %>
+
+<% sections.forEach(function (section) { %>
+  <% if (groups[section.key].length) { %>
+    <div class="card section">
+      <div class="card-head">
+        <h2><%= section.label %></h2>
+        <span class="spacer"></span>
+        <span class="badge badge--muted"><%= groups[section.key].length %></span>
+      </div>
+      <div class="card-body">
+        <ul class="plain-list">
+          <% groups[section.key].forEach(function (item) { %>
+            <% var described = describe(item); %>
+            <li>
+              <a href="/autopilot/work/<%= item.id %>"><%= described.headline %></a>
+              <% if (described.detail) { %><span class="muted"> — <%= described.detail %></span><% } %>
+              <% if (item.errorMessage) { %><div class="is-warn"><%= item.errorMessage %></div><% } %>
+              <div class="muted"><%= helpers.timeAgo(item.completedAt || item.createdAt) %></div>
+            </li>
+          <% }) %>
+        </ul>
+      </div>
+    </div>
+  <% } %>
+<% }) %>

@@ -10,6 +10,8 @@ const ATTENTION_SCHEMA_PATH = path.join(__dirname, 'schema-attention.sql');
 const ACTIONS_SCHEMA_PATH = path.join(__dirname, 'schema-actions.sql');
 const IMPORTS_SCHEMA_PATH = path.join(__dirname, 'schema-imports.sql');
 const PURCHASING_SCHEMA_PATH = path.join(__dirname, 'schema-purchasing.sql');
+const ONBOARDING_SCHEMA_PATH = path.join(__dirname, 'schema-onboarding.sql');
+const AUTOPILOT_SCHEMA_PATH = path.join(__dirname, 'schema-autopilot.sql');
 
 /**
  * Opens (and initialises) a SQLite database.
@@ -38,6 +40,11 @@ function openDatabase(databasePath, options = {}) {
  * migration chain, because every entry is additive and independently safe.
  */
 const ADDED_COLUMNS = [
+  {
+    table: 'workspaces',
+    column: 'source_of_truth_mode',
+    definition: "TEXT NOT NULL DEFAULT 'FOUNDRY_NATIVE'",
+  },
   { table: 'attention_items', column: 'item_id', definition: 'TEXT' },
   { table: 'attention_items', column: 'sku_id', definition: 'TEXT' },
   { table: 'accounts', column: 'last_workspace_id', definition: 'TEXT' },
@@ -260,9 +267,11 @@ function migrate(db) {
   db.exec(fs.readFileSync(ACTIONS_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(IMPORTS_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(PURCHASING_SCHEMA_PATH, 'utf8'));
+  db.exec(fs.readFileSync(ONBOARDING_SCHEMA_PATH, 'utf8'));
+  db.exec(fs.readFileSync(AUTOPILOT_SCHEMA_PATH, 'utf8'));
   dropLegacyUserLogin(db);
   db.prepare(
-    `INSERT INTO schema_meta (key, value) VALUES ('version', '8')
+    `INSERT INTO schema_meta (key, value) VALUES ('version', '10')
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   ).run();
 }

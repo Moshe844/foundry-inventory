@@ -965,3 +965,85 @@ test('a workspace that buys nothing gets no purchasing findings at all', () => {
   assert.equal(findings(env, 'late_purchase_order').length, 0);
   assert.equal(findings(env, 'supplier_price_change').length, 0);
 });
+
+// --- turning purchasing on for an existing inventory --------------------------
+
+const setupService = require('../../src/purchasing/setup-service');
+
+test('Foundry proposes reorder points only where the history supports one', () => {
+  const env = setup();
+  const selling = makeQuantityItem(env.db, env.ctx, { name: 'Fast Mover', baseCode: 'FM-1' });
+  const quiet = makeQuantityItem(env.db, env.ctx, { name: 'Never Sold', baseCode: 'NS-1' });
+
+  engine.receive(env.db, env.ctx, { skuId: selling.skuId, locationId: env.workspace.main.id, quantity: 40 });
+  engine.receive(env.db, env.ctx, { skuId: quiet.skuId, locationId: env.workspace.main.id, quantity: 40 });
+  tradeHistory(env.db, env.ctx, selling.skuId, env.workspace.main.id, { count: 6, each: 5 });
+
+  const assessment = setupService.assess(env.db, env.workspace.workspaceId);
+
+  assert.equal(assessment.summary.canPropose, 1);
+  assert.equal(assessment.proposals[0].displayName, 'Fast Mover');
+  assert.ok(assessment.proposals[0].proposal.reorderPoint > 0);
+  assert.ok(assessment.proposals[0].derivedFrom.length, 'a proposal has to show what it came from');
+
+  // The one that never sold gets nothing invented for it, and says why.
+  assert.equal(assessment.summary.needHistory, 1);
+  assert.equal(assessment.blocked[0].displayName, 'Never Sold');
+  assert.match(assessment.blocked[0].because, /not enough/i);
+});
+
+test('accepting the proposals writes them, marked as derived', () => {
+  const env = setup();
+  const item = makeQuantityItem(env.db, env.ctx);
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 40 });
+  tradeHistory(env.db, env.ctx, item.skuId, env.workspace.main.id, { count: 6, each: 5 });
+
+  const result = setupService.applyPolicies(env.db, env.ctx, env.membership, [item.skuId]);
+  assert.equal(result.count, 1);
+
+  const policy = policies.effectivePolicy(env.db, env.workspace.workspaceId, item.skuId);
+  assert.equal(policy.isSet, true);
+  assert.equal(policy.source, 'foundry', 'a derived policy must be visibly derived');
+  assert.ok(policy.reorderPoint > 0);
+
+  // Re-assessing no longer proposes it — it is configured.
+  const after = setupService.assess(env.db, env.workspace.workspaceId);
+  assert.equal(after.summary.canPropose, 0);
+  assert.equal(after.summary.alreadySet, 1);
+});
+
+test('one supplier can be attached to a whole range at once', () => {
+  const env = setup();
+  const first = makeQuantityItem(env.db, env.ctx, { name: 'Style A', baseCode: 'SA-1' });
+  const second = makeQuantityItem(env.db, env.ctx, { name: 'Style B', baseCode: 'SB-1' });
+  const supplier = abcFootwear(env);
+
+  const result = setupService.linkSupplierToMany(env.db, env.ctx, env.membership, {
+    supplierId: supplier.id,
+    skuIds: [first.skuId, second.skuId],
+    purchaseUnit: 'case',
+    unitsPerPurchaseUnit: 12,
+    minimumOrderQuantity: 2,
+    leadTimeDays: 21,
+  });
+
+  assert.equal(result.linked, 2);
+  for (const skuId of [first.skuId, second.skuId]) {
+    const [link] = suppliers.suppliersForSku(env.db, env.workspace.workspaceId, skuId);
+    assert.equal(link.supplierName, 'ABC Footwear');
+    assert.equal(link.unitsPerPurchaseUnit, 12);
+    assert.equal(link.effectiveLeadTimeDays, 21);
+  }
+  assert.equal(setupService.assess(env.db, env.workspace.workspaceId).summary.withoutSupplier, 0);
+});
+
+test('setting purchasing up cannot be done by someone without the permission', () => {
+  const env = setup();
+  const item = makeQuantityItem(env.db, env.ctx);
+  const staff = { role: 'staff' };
+  assert.throws(() => setupService.applyPolicies(env.db, env.ctx, staff, [item.skuId]), /permission/);
+  assert.throws(
+    () => setupService.linkSupplierToMany(env.db, env.ctx, staff, { supplierId: 'x', skuIds: [item.skuId] }),
+    /permission/
+  );
+});

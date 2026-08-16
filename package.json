@@ -15,8 +15,8 @@
     "seed:foundry": "node scripts/seed-foundry-demo.js",
     "db:reset": "node scripts/reset-db.js",
     "test": "node --test tests/unit/*.test.js tests/integration/*.test.js",
-    "test:live": "node --test tests/live/*.test.js",
-    "test:e2e": "node --test tests/e2e/inventory.e2e.js tests/e2e/foundry.e2e.js tests/e2e/attention.e2e.js tests/e2e/workspaces.e2e.js tests/e2e/actions.e2e.js tests/e2e/imports.e2e.js tests/e2e/purchasing.e2e.js",
+    "test:live": "node -r ./tests/helpers/test-models.js --test tests/live/*.test.js",
+    "test:e2e": "node -r ./tests/helpers/test-models.js --test --test-concurrency=1 tests/e2e/inventory.e2e.js tests/e2e/foundry.e2e.js tests/e2e/attention.e2e.js tests/e2e/workspaces.e2e.js tests/e2e/actions.e2e.js tests/e2e/imports.e2e.js tests/e2e/purchasing.e2e.js tests/e2e/onboarding.e2e.js tests/e2e/autopilot.e2e.js",
     "test:all": "npm test && npm run test:live && npm run test:e2e",
     "seed:samples": "node scripts/make-sample-import.js"
   },

@@ -80,7 +80,7 @@ async function post(agent, path, body, formPath) {
  * browser does: post, land on the progress page, poll until it redirects.
  */
 async function understand(agent, description = 'We wholesale shoes in two warehouses.') {
-  const started = await post(agent, '/foundry/understand', { description }, '/foundry');
+  const started = await post(agent, '/foundry/understand', { description }, '/foundry/describe');
   if (started.status !== 303) return started;
   assert.match(started.headers.location, /^\/foundry\/thinking\//, 'the POST must not block');
 
@@ -108,10 +108,26 @@ test('a new account is handed to Foundry, not an empty dashboard', async () => {
   assert.match(plain(home.text), /This inventory is empty/);
   assert.match(plain(home.text), /Set it up with Foundry/);
 
-  const foundry = plain((await agent.get('/foundry')).text);
-  assert.match(foundry, /Tell Foundry about/);
-  assert.match(foundry, /Understand my inventory/);
-  assert.match(foundry, /Set it up manually/);
+  // The first decision is now how they manage inventory today. Sending someone
+  // with a spreadsheet straight to "describe your business" was asking them to
+  // retype what their file already says.
+  const front = await agent.get('/foundry');
+  assert.equal(front.status, 303);
+  assert.equal(front.headers.location, '/onboarding');
+
+  const chooser = plain((await agent.get('/onboarding')).text);
+  assert.match(chooser, /How are you managing it today/);
+  assert.match(chooser, /Starting fresh/);
+  assert.match(chooser, /Excel \/ spreadsheets/);
+  assert.match(chooser, /Inventory software/);
+  assert.match(chooser, /It's a mess/);
+
+  // Starting Fresh is the Mission 2 experience, reached deliberately and
+  // otherwise unchanged.
+  const describe = plain((await agent.get('/foundry/describe')).text);
+  assert.match(describe, /Tell Foundry about/);
+  assert.match(describe, /Understand my inventory/);
+  assert.match(describe, /Set it up manually/);
 });
 
 test('the whole approval flow works end to end over HTTP', async () => {
@@ -235,7 +251,7 @@ test('one workspace cannot see or use another workspace Foundry work', async () 
 
   // The POST is bounced back with an error flash rather than doing anything —
   // what matters is that nothing in B's workspace changed.
-  await post(agentB, `/foundry/proposal/${understandingId}/configure`, {}, '/foundry');
+  await post(agentB, `/foundry/proposal/${understandingId}/configure`, {}, '/foundry/describe');
   assert.equal(planApplier.isConfigured(store.db, b.workspaceId), false);
   assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM foundry_plans WHERE workspace_id = ?').get(b.workspaceId).n, 0);
   assert.equal(
@@ -249,7 +265,7 @@ test('a bad description is refused with a message, not a crash', async () => {
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
 
-  const res = await post(agent, '/foundry/understand', { description: 'stuff' }, '/foundry');
+  const res = await post(agent, '/foundry/understand', { description: 'stuff' }, '/foundry/describe');
   assert.equal(res.status, 400);
   assert.match(plain(res.text), /Tell Foundry a little more/);
 });
@@ -277,7 +293,7 @@ test('choosing manual setup keeps the console and stops the redirect', async () 
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
 
-  const res = await post(agent, '/foundry/manual', {}, '/foundry');
+  const res = await post(agent, '/foundry/manual', {}, '/foundry/describe');
   assert.equal(res.status, 303);
   assert.equal(res.headers.location, '/locations');
 
@@ -434,7 +450,7 @@ test('reading a business does not block the request', async () => {
   await signIn(agent, workspace.account.email, workspace.account.password);
 
   const started = Date.now();
-  const res = await post(agent, '/foundry/understand', { description: 'We wholesale shoes in two warehouses.' }, '/foundry');
+  const res = await post(agent, '/foundry/understand', { description: 'We wholesale shoes in two warehouses.' }, '/foundry/describe');
   const elapsed = Date.now() - started;
 
   assert.equal(res.status, 303);
@@ -455,7 +471,7 @@ test('the progress page reports the real stage and works without JavaScript', as
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
 
-  const started = await post(agent, '/foundry/understand', { description: 'We wholesale shoes in two warehouses.' }, '/foundry');
+  const started = await post(agent, '/foundry/understand', { description: 'We wholesale shoes in two warehouses.' }, '/foundry/describe');
   const jobId = started.headers.location.split('/').pop();
 
   const page = await agent.get(started.headers.location);
@@ -486,7 +502,7 @@ test('a job belongs to one workspace only', async () => {
 
   const agentA = request.agent(app);
   await signIn(agentA, a.account.email, a.account.password);
-  const started = await post(agentA, '/foundry/understand', { description: 'We wholesale shoes in two warehouses.' }, '/foundry');
+  const started = await post(agentA, '/foundry/understand', { description: 'We wholesale shoes in two warehouses.' }, '/foundry/describe');
   const jobId = started.headers.location.split('/').pop();
 
   const agentB = request.agent(app);

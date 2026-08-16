@@ -154,6 +154,11 @@ test(
       { question: 'Show me the stock corrections from the last few weeks', expect: ['recent_adjustments'] },
       { question: 'What needs my attention?', expect: ['attention_summary'] },
       { question: 'What has not sold in three months?', expect: ['idle_stock'] },
+      // Mission 7: questions about Foundry's own work, not about the stock.
+      { question: 'What did you do today?', expect: ['foundry_activity'] },
+      { question: 'What have you handled this morning?', expect: ['foundry_activity'] },
+      { question: 'Why did you move the navy oxfords?', expect: ['foundry_why'] },
+      { question: 'Stop moving stock around by yourself', expect: ['stop_automation'] },
     ];
 
     for (const testCase of cases) {

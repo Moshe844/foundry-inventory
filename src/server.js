@@ -4,6 +4,7 @@ const config = require('./config');
 const { openDatabase } = require('./db');
 const { createApp } = require('./app');
 const reevaluate = require('./attention/reevaluate');
+const autopilotScheduler = require('./autopilot/scheduler');
 
 config.ensureDataDir();
 
@@ -15,14 +16,27 @@ const app = createApp({ db });
 // the hooks in the route layer; this is the other half.
 const stopSweeper = reevaluate.startScheduler(db);
 
+// And the loop itself: what should happen now, decided on a clock rather than
+// when somebody remembers to ask. It calls exactly what the Check now button
+// calls, so this adds timing and no new authority.
+const stopAutopilot = config.autopilot.enabled
+  ? autopilotScheduler.start(db, { intervalMs: config.autopilot.intervalMs })
+  : () => {};
+
 const server = app.listen(config.port, () => {
   console.log(`Foundry Inventory listening on http://localhost:${config.port}  (${config.env})`);
   console.log(`Database: ${config.databasePath}`);
+  console.log(
+    config.autopilot.enabled
+      ? `Autopilot: checking every ${Math.round(config.autopilot.intervalMs / 60000)} minutes`
+      : 'Autopilot: not scheduled — it acts only when asked'
+  );
 });
 
 function shutdown(signal) {
   console.log(`\n${signal} received, closing down.`);
   stopSweeper();
+  stopAutopilot();
   server.close(() => {
     try {
       db.close();

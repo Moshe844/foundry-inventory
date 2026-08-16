@@ -1,0 +1,159 @@
+<div class="page-head">
+  <div class="titles">
+    <h1>Set up purchasing</h1>
+    <div class="page-sub">
+      Foundry works the reorder points out from what has actually sold. Nothing is set until you say so.
+    </div>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head"><h2>Where this inventory stands</h2></div>
+  <div class="card-body">
+    <div class="act-ledger">
+      <div class="act-row"><span class="act-place">Lines Foundry can work out a reorder point for</span><span class="act-move"><span class="num"><%= assessment.summary.canPropose %></span></span></div>
+      <div class="act-row"><span class="act-place">Lines with too little history yet</span><span class="act-move"><span class="num"><%= assessment.summary.needHistory %></span></span></div>
+      <div class="act-row"><span class="act-place">Already configured</span><span class="act-move"><span class="num"><%= assessment.summary.alreadySet %></span></span></div>
+      <div class="act-row"><span class="act-place">Lines with no supplier</span><span class="act-move"><span class="num"><%= assessment.summary.withoutSupplier %></span></span></div>
+    </div>
+    <% if (!assessment.summary.lines) { %>
+      <p class="lede">There are no products here yet. Add them, or bring your data in, and Foundry can set purchasing up from what sells.</p>
+      <div class="btn-row"><a class="btn" href="/onboarding/files">Bring data in</a><a class="btn" href="/inventory/new">Add a product</a></div>
+    <% } %>
+  </div>
+</div>
+
+<% if (assessment.proposals.length) { %>
+  <form method="post" action="/purchasing/setup/policies" class="card section">
+    <div class="card-head">
+      <h2>Reorder points Foundry would set</h2>
+      <span class="spacer"></span>
+      <span class="badge badge--muted">derived from real usage</span>
+    </div>
+    <div class="table-scroll">
+      <table class="table table--tight">
+        <thead>
+          <tr>
+            <th></th><th>Product</th><th class="num">On hand</th><th class="num">Sold recently</th>
+            <th class="num">Reorder at</th><th class="num">Order up to</th><th>Supplier</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% assessment.proposals.forEach(function (line) { %>
+            <tr>
+              <td><input type="checkbox" name="skuIds" value="<%= line.skuId %>" checked></td>
+              <td>
+                <strong><%= line.displayName %></strong>
+                <div class="muted">
+                  <% line.derivedFrom.forEach(function (fact, i) { %><%= i ? ' · ' : '' %><%= fact.label %>: <%= fact.value %><% }) %>
+                </div>
+              </td>
+              <td class="num"><%= line.onHand %></td>
+              <td class="num"><%= line.issuedInWindow %> <span class="muted">/ <%= line.windowDays %>d</span></td>
+              <td class="num"><%= line.proposal.reorderPoint %></td>
+              <td class="num"><%= line.proposal.targetStock %></td>
+              <td class="<%= line.hasSupplier ? '' : 'is-warn' %>">
+                <%= line.hasSupplier ? line.suppliers[0].supplierName : 'none yet' %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <div class="card-foot">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn btn--primary" type="submit" <%= canManage ? '' : 'disabled' %>>
+        Set these reorder points
+      </button>
+      <span class="muted">You can change any of them afterwards.</span>
+    </div>
+  </form>
+<% } %>
+
+<% if (assessment.summary.lines && (assessment.summary.withoutSupplier || suppliers.length === 0)) { %>
+  <form method="post" action="/purchasing/setup/supplier" class="card section">
+    <div class="card-head"><h2>Attach a supplier to a range</h2></div>
+    <div class="card-body">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <p class="lede">
+        A vendor usually sells a whole range on the same terms, so set them once and apply them to everything
+        they supply. Without a supplier Foundry knows a line is short but not who to buy it from.
+      </p>
+
+      <div class="grid grid--2">
+        <label class="field">
+          <span class="field-label">Supplier</span>
+          <select class="input" name="supplierId">
+            <option value="">— a new one —</option>
+            <% suppliers.forEach(function (supplier) { %>
+              <option value="<%= supplier.id %>"><%= supplier.name %></option>
+            <% }) %>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">…or the new supplier's name</span>
+          <input class="input" type="text" name="newSupplierName" placeholder="ABC Footwear" maxlength="160">
+        </label>
+        <label class="field">
+          <span class="field-label">They sell it by the</span>
+          <input class="input" type="text" name="purchaseUnit" value="case" maxlength="40">
+        </label>
+        <label class="field">
+          <span class="field-label">Units in one of those</span>
+          <input class="input" type="number" name="unitsPerPurchaseUnit" value="12" min="1">
+        </label>
+        <label class="field">
+          <span class="field-label">Minimum order</span>
+          <input class="input" type="number" name="minimumOrderQuantity" min="0" placeholder="2">
+        </label>
+        <label class="field">
+          <span class="field-label">Lead time (days)</span>
+          <input class="input" type="number" name="leadTimeDays" min="0" placeholder="21">
+        </label>
+      </div>
+
+      <h3 class="sub-head">Which products do they supply?</h3>
+      <div class="table-scroll">
+        <table class="table table--tight">
+          <thead><tr><th></th><th>Product</th><th>Supplier today</th></tr></thead>
+          <tbody>
+            <% assessment.proposals.concat(assessment.blocked).forEach(function (line) { %>
+              <tr>
+                <td><input type="checkbox" name="skuIds" value="<%= line.skuId %>" <%= line.hasSupplier ? '' : 'checked' %>></td>
+                <td><%= line.displayName %></td>
+                <td class="muted"><%= line.hasSupplier ? line.suppliers[0].supplierName : '—' %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card-foot">
+      <button class="btn" type="submit" <%= canManageSuppliers ? '' : 'disabled' %>>Attach supplier</button>
+    </div>
+  </form>
+<% } %>
+
+<% if (assessment.blocked.length) { %>
+  <div class="card section">
+    <div class="card-head"><h2>Not enough history yet</h2></div>
+    <div class="card-body">
+      <p class="lede">
+        Foundry will not invent a reorder point from an opening balance — that becomes a purchase order for
+        stock nobody needs. These lines start working as soon as they have sold a few times.
+      </p>
+      <table class="table table--tight">
+        <thead><tr><th>Product</th><th class="num">On hand</th><th>Why not yet</th></tr></thead>
+        <tbody>
+          <% assessment.blocked.forEach(function (line) { %>
+            <tr>
+              <td><%= line.displayName %></td>
+              <td class="num"><%= line.onHand %></td>
+              <td class="muted"><%= line.because %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% } %>

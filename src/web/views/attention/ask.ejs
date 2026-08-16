@@ -59,7 +59,12 @@
       <% } %>
     </div>
     <div class="card-body">
-      <p class="lede"><%= result.answer %></p>
+      <p class="lede" style="white-space:pre-line"><%= result.answer %></p>
+      <% if (result.handoff) { %>
+        <p style="margin-top:12px;">
+          <a class="btn btn--primary" href="<%= result.handoff.href %>"><%= result.handoff.label %></a>
+        </p>
+      <% } %>
       <% if (result.isAction) { %>
         <%# Saying "Foundry cannot move stock" would be false — it can, from the
             actions page. So it hands the request straight over. %>
@@ -118,6 +123,11 @@
       <% if (result.isAction) { %>
         Nothing has changed. This page only reads; the change is prepared on the actions page,
         where you approve it first.
+      <% } else if (result.handoff) { %>
+        <%# This page only reads. Where the change is made depends on what was
+            asked, so it says nothing about the actions page here. %>
+        <%= result.rowCount %> <%= helpers.plural(result.rowCount, 'row') %> from your records.
+        Nothing has changed — asking is not doing.
       <% } else { %>
         <%= result.rowCount %> <%= helpers.plural(result.rowCount, 'row') %> from your records.
         Foundry looks things up; changes are approved on the actions page.

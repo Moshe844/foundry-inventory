@@ -130,7 +130,14 @@ test(
       await page.fill('#email', ACCOUNT.email);
       await page.fill('#password', ACCOUNT.password);
       await page.click('button[type=submit]');
-      await page.waitForURL(`${BASE}/foundry`);
+      await page.waitForURL(`${BASE}/onboarding`);
+      // A new inventory is asked how it is managed today. These customers are
+      // starting from nothing, so they take the Starting Fresh path — which is
+      // the Mission 2 experience, unchanged.
+      await Promise.all([
+        page.waitForURL(`${BASE}/foundry/describe`),
+        page.click('button:has-text("Starting fresh")'),
+      ]);
 
       await page.locator('text=Tell Foundry about').first().waitFor();
       await page.locator('text=Understand my inventory').first().waitFor();

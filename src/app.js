@@ -23,6 +23,8 @@ const attentionRoutes = require('./web/routes/attention');
 const workspaceRoutes = require('./web/routes/workspaces');
 const actionRoutes = require('./web/routes/actions');
 const importRoutes = require('./web/routes/imports');
+const onboardingRoutes = require('./web/routes/onboarding');
+const autopilotRoutes = require('./web/routes/autopilot');
 const purchasingRoutes = require('./web/routes/purchasing');
 
 /**
@@ -94,6 +96,8 @@ function createApp(options = {}) {
   app.use(workspaceRoutes);
   app.use(actionRoutes);
   app.use(importRoutes);
+  app.use(onboardingRoutes);
+  app.use(autopilotRoutes);
   app.use(purchasingRoutes);
   app.use(attentionRoutes);
   app.use(overviewRoutes);

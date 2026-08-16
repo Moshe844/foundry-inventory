@@ -490,9 +490,177 @@ Foundry does not contact suppliers. The printable purchase order is a document
 someone prints, saves as a PDF or attaches to their own email, and it says so on
 its face.
 
+## Taking an inventory over
+
+Almost nobody arrives with nothing. They arrive with a spreadsheet, or another
+system, or four files that disagree — and the job is to take the inventory over,
+not to hand them an import template.
+
+So the first question is no longer "describe your business". It is how they
+manage inventory today, with four answers:
+
+| Path | For | What happens |
+| --- | --- | --- |
+| Starting fresh | No system yet | The Mission 2 experience, unchanged |
+| Excel / spreadsheets | It is already in a file | Upload it; Foundry configures itself from what it finds |
+| Inventory software | Another system today | A connector if one genuinely exists, otherwise an export |
+| It's a mess | Several files that disagree | Consolidation, with the real conflicts surfaced |
+
+There is also a "not sure" box: describe the situation and Foundry recommends a
+path with the reason it picked it, which the customer can override.
+
+**The spreadsheet path does not ask for configuration first.** That ordering was
+the whole problem: a customer with 1,842 variants in a file was being asked to
+type out what the file already said. Foundry reads the workbook, works out the
+structure — products, variants, locations, quantities, how the file dates itself
+— and proposes the configuration *from the file*.
+
+**Reading a file is deterministic and reuses Mission 5.** There is one import
+engine. Onboarding profiles a file before anyone approves anything, hands the
+mappings it worked out to that engine, and lets it do the reading, validating,
+previewing and creating. Opening stock arrives as real Mission 1 receives.
+
+**Obvious things are normalised; real disagreements are not.** "Brooklyn Whse",
+"Brooklyn Warehouse" and "brooklyn warehouse " are one place and nobody is
+consulted — abbreviations are matched as subsequences, so "Wrhs" folds into
+"Warehouse" too. Eighteen units in one file and fourteen in another is a
+disagreement about what the business physically owns; Foundry recommends only
+when the files themselves establish which is newer (a dated export, a physical
+count), and otherwise blocks the migration until a person decides. It will not
+pick a stock figure by coin toss.
+
+**A migration is not finished when the import completes — it is finished when
+the totals agree.** Source totals are captured before anything is created,
+Foundry's are counted afterwards from Mission 1 truth, and the two are compared.
+Disagreement is reported as MISMATCHED with the discrepancies listed. Nothing is
+called verified on the strength of commands having run.
+
+**No history is fabricated.** Only current balances arrive in a spreadsheet, so
+only opening balances are created. Foundry does not manufacture past movements
+from them, and the attention layer says it has nothing to measure yet rather
+than inventing a demand trend.
+
+### Source of truth
+
+Every inventory states which system owns it — `FOUNDRY_NATIVE` or
+`EXTERNAL_CONNECTED` — and there is no third, ambiguous state. Foundry never
+keeps a shadow balance competing with the system a business actually runs on. A
+workspace cannot claim an external owner unless a connector is genuinely
+connected to it.
+
+### Connectors
+
+The connector boundary exists; no vendor connector ships. That is deliberate. A
+logo on a settings page that does nothing tells a customer their inventory is
+connected when nothing is reading it, which is worse than an empty list. A
+connector is registered when there are real credentials and real test access.
+
+Capabilities are discovered from the connector, never assumed, and Mission 4
+asks before it proposes. A read-only system gets a recommendation and a plain
+statement — "this connected system is read-only; complete the transfer in your
+existing system" — never a success message for something that did not happen.
+
+## Running the operation
+
+Foundry's home page is not a table of counts. It is four questions a person
+actually has: what needs you, what Foundry did, what is happening next, and
+what would you like to ask. The classic overview is still there, at
+`/overview`.
+
+Behind it is a loop — signals, planning, policy, approval, execution,
+verification — and the whole of Mission 7 is about the third step.
+
+**Three modes, and the customer picks.** *Just watch* raises findings and does
+nothing. *Prepare my work* — the default — works out what should happen and
+waits on every item. *Run it* lets Foundry carry out work that an approved
+policy authorises. Nothing is automatic without **both** an approved policy and
+this mode: approving a policy on its own starts nothing, which is the point.
+
+**Exactly one thing is done unattended: moving stock between the customer's own
+locations.** It was chosen because it is the only inventory action that is
+reversible by doing the opposite, changes no total, involves nobody outside the
+business, and can be verified immediately from the ledger. Counts are never
+adjusted automatically — an adjustment is a claim that the records are wrong,
+and no automaton settles that. Purchase orders are drafted and never sent.
+
+**The policy engine is deterministic and separate from the model.** It answers
+`authorized` / `needs_approval` / `refused` with the checks that produced the
+verdict, and nothing in it consults an AI provider — an unattended action has to
+reach the same verdict every time or it is a gamble. A policy without a quantity
+limit is rejected at authoring: *"Say the most Foundry may move in one go. A
+policy without a limit is not a limit."* On top of any policy sit workspace
+limits that always win: actions per day, units per action, a cooldown per
+product, and a weekly cap per item. A move that would reverse a recent one is
+refused rather than allowed to oscillate, and when two policies disagree about
+one SKU nothing is planned at all — the conflict becomes work for a person.
+
+**Policy is re-checked immediately before execution, not only at planning.** The
+world moves in between. If somebody else already moved the stock, the work is
+cancelled with the reason. If the result cannot be verified afterwards — source,
+destination and total all checked against the ledger — Foundry suspends itself
+rather than retrying. The dangerous failure of an automaton is not one wrong
+action; it is the same wrong action repeated while nobody is watching.
+
+**Nothing here moves stock.** Autonomous transfers go through the same Mission 4
+proposal and execution services as a typed instruction, which go through the
+Mission 1 engine. The ledger cannot tell them apart except by who approved it.
+
+Every piece of work is durable and keyed by the situation that produced it, so a
+scheduler firing twice, two requests racing, or a process dying mid-transfer
+produce one action rather than two. A person pressing *Check now* is deliberately
+exempt from that minute-level bucketing — a button that silently does nothing is
+worse than a slow one — while the work item's own key still makes duplicate work
+impossible.
+
+**The loop runs on a clock**, every fifteen minutes, so Foundry is an employee
+rather than a button. The scheduler decides nothing: it calls the same runner
+*Check now* calls, so a scheduled action and a clicked one pass the identical
+policy gate. It acts under the authority of whoever approved the policy — that
+approval is the permission, and attributing an automatic transfer to whoever
+logged in last would put a movement in somebody's name who had nothing to do
+with it. If that person later leaves, their approval stops being authority and
+Foundry goes back to preparing. One process holds a lease at a time, one
+workspace's failure never stops the sweep, and a paused, suspended or watching
+inventory still gets its findings refreshed while nothing is planned or carried
+out. Set `FOUNDRY_AUTOPILOT_SCHEDULER=false` to turn the clock off; the tests
+run with it off, because a suite that asserts "nothing happened yet" cannot be
+trusted if a timer might act in between.
+
+**A migrated inventory is prepared for, not acted on, until it has been
+operated.** A migration fills a workspace in minutes with figures that came from
+a spreadsheet. Automatic action waits for a fortnight of real trading recorded
+by Foundry itself, so the first thing it does rests on movements it watched
+rather than on somebody else's opening balance.
+
+**Preferences are told to Foundry, never learned.** How many days of cover to
+aim for, what counts as running out, whether serialised items may be moved at
+all — each is stored with the source that set it and the customer's own words,
+and a preference can only tune work Foundry was already allowed to do. Nothing
+is inferred from watching approvals, because a system that quietly stops asking
+has changed what it may do without anyone agreeing to it.
+
+**Deliveries are raised as work and never booked in.** A purchase order at its
+date, or past it, becomes a piece of work that links straight to receiving.
+Foundry cannot say what is physically in the box and does not pretend to: there
+is no packing-list feed, so there is no packing-list matching.
+
+Work prepared while supervised is re-examined when authority is granted: an item
+that was only ever waiting on permission is taken on, and an item waiting for any
+other reason stays waiting. A plan made before a policy existed is re-sized to fit
+it rather than sitting in the way for the rest of the day.
+
+Afterwards Foundry can answer for itself. "What did you do today", "why did you
+move those", and "stop doing that" are read from the work records — the same
+records the history page shows — never from a model's recollection. Asking it to
+stop names the policies and hands over to the page with the switch; a question
+never changes what Foundry is allowed to do.
+
+The kill switch is on the home page. Pausing stops everything immediately;
+what already happened stays in the history, because hiding it would be worse.
+
 ## Testing
 
-`npm test` runs 437 unit and integration tests: the four archetypes and their
+`npm test` runs 559 unit and integration tests: the four archetypes and their
 combinations, negative-stock rejection, transfer atomicity, duplicate serials,
 lot shortfalls, the ledger, search, tenancy, authorization, cross-process
 concurrency, persistence across a restart, the configuration layer, and the
@@ -500,10 +668,25 @@ whole attention layer — including the test that a healthy inventory produces
 exactly zero findings, and the tests that a model cannot introduce a number,
 an action or a finding of its own — and the import pipeline end to end, which
 runs entirely without an AI provider, and the whole replenishment engine —
-including the cases that must produce *no* purchase.
+including the cases that must produce *no* purchase — and the autopilot gate,
+where almost every test is about Foundry *declining*: when it is paused, when
+nothing authorises it, when the quantity is over the limit, when it touched the
+same stock yesterday, when the move would undo one it just made, and when two
+policies are arguing. None of those involve an AI provider, and none may ever:
+the verdict has to be identical every time or unattended execution is a gamble.
 
 `npm run test:live` is the part that can fail because the intelligence is
 wrong rather than because the plumbing is. It is skipped without an API key.
+
+It runs the `deep` tier on Sonnet rather than Opus, because re-deriving four
+inventory configurations is by a wide margin the most expensive thing in this
+repository and a test suite should not cost more than the product. That is not a
+lowered bar: these tests assert the *quality* of the result — that a rental
+business gets serialised assets, a food distributor gets lots and expiry, and an
+ambiguous description gets an honest question rather than an invented structure
+— so a model that could not do the job would fail them rather than quietly pass.
+Set `FOUNDRY_AI_MODEL_DEEP=claude-opus-5` to check against the production model.
+Production is unchanged: real onboarding still runs on Opus, once per customer.
 
 `npm run test:e2e` starts its own server against an empty database and drives
 Chromium through each mission's acceptance script. Screenshots are written to
@@ -513,9 +696,10 @@ Chromium through each mission's acceptance script. Screenshots are written to
 
 Foundry does not sell, price, forecast beyond current usage, or value
 inventory, and it has no placeholder buttons for any of it. It plans purchases
-and records them; it does not do accounting. It carries out only
-inventory work a person has approved: there are no autonomous actions, no
-scheduled transfers, and nothing in the background that changes stock. Accounts payable, the general ledger, invoices, payments, customer
+and records them; it does not do accounting. The only work it carries out
+unattended is moving stock between the customer's own locations, under a policy
+they wrote and approved, with a limit they set — everything else waits for a
+person, and physical counts are never adjusted automatically. Accounts payable, the general ledger, invoices, payments, customer
 orders, CRM, payroll, manufacturing, supplier portals, EDI, barcodes, kits,
 warehouse bins, integrations and workflow builders belong on top of a proven
 engine, not beside an unproven one. Nothing orders from a supplier by itself:

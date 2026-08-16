@@ -72,10 +72,16 @@ test('registration creates an isolated, empty workspace', async () => {
   // clicks Overview.
   assert.equal(res.headers.location, '/foundry');
 
+  // …and the first thing Foundry asks is how they manage inventory today,
+  // rather than assuming they have nothing and want to describe a business.
   const foundry = await agent.get('/foundry');
-  assert.equal(foundry.status, 200);
-  assert.match(foundry.text, /Tell Foundry about/);
-  assert.match(foundry.text, /Fresh Co/);
+  assert.equal(foundry.status, 303);
+  assert.equal(foundry.headers.location, '/onboarding');
+
+  const chooser = await agent.get('/onboarding');
+  assert.equal(chooser.status, 200);
+  assert.match(chooser.text, /How are you managing it today/);
+  assert.match(chooser.text, /Starting fresh/);
 
   // The Mission 1 console is still there underneath, and still empty.
   const locations = await agent.get('/locations');

@@ -51,9 +51,15 @@ test('a person can create a second inventory and is handed to Foundry', async ()
   const mine = workspaceService.listForAccount(store.db, first.accountId);
   assert.deepEqual(mine.map((w) => w.name).sort(), ['Clothing Business', 'Equipment Company']);
 
-  // And the session is already looking at the new one.
-  const setup = plain((await agent.get('/foundry')).text);
-  assert.match(setup, /Tell Foundry about Equipment Company/);
+  // And the session is already looking at the new one, which chooses its own
+  // way in — each inventory is onboarded independently of the others.
+  const front = await agent.get('/foundry');
+  assert.equal(front.headers.location, '/onboarding');
+  const chooser = plain((await agent.get('/onboarding')).text);
+  assert.match(chooser, /How are you managing it today/);
+
+  const describe = plain((await agent.get('/foundry/describe')).text);
+  assert.match(describe, /Tell Foundry about Equipment Company/);
 });
 
 test('switching changes what every page shows', async () => {

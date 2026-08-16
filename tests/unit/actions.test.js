@@ -571,7 +571,7 @@ test('a stockout offers no action, and says why', () => {
 
   const result = actionService.proposeFromAttention(db, workspace.ctx, membership, finding.attentionId);
   assert.equal(result.kind, 'unsupported');
-  assert.match(result.message, /Replenishment ordering is not supported yet/);
+  assert.match(result.message, /draft the purchase order/);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM action_proposals').get().n, 0, 'nothing was fabricated');
 });
 

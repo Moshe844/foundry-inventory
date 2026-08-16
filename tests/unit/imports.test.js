@@ -135,6 +135,19 @@ test('a file that is not a spreadsheet is refused, not misread', () => {
   assert.throws(() => parser.parse({ text: '   ' }), /nothing in that/i);
 });
 
+test('a CSV somebody renamed .xlsx is read rather than refused', () => {
+  // The bytes decide what a file is, not its name. Refusing a perfectly
+  // readable CSV over its extension would be Foundry making its own filing
+  // rules the customer's problem.
+  const parsed = parser.parse({
+    buffer: Buffer.from('Item,Qty\nCopper Elbow,12'),
+    filename: 'stock.xlsx',
+  });
+  assert.equal(parsed.format, 'delimited');
+  assert.equal(parsed.sheets[0].rows.length, 1);
+  assert.deepEqual(parsed.sheets[0].columns.map((c) => c.name), ['Item', 'Qty']);
+});
+
 test('the reader refuses a file claiming to be enormous', () => {
   assert.ok(xlsxReader.LIMITS.maxTotalBytes > 0);
   assert.throws(

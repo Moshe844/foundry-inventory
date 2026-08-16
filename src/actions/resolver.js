@@ -217,8 +217,20 @@ function resolveSku(db, workspaceId, itemText, variantText) {
     return candidates.filter((row) => {
       const label = `${row.variant_label || ''} ${row.code || ''} ${optionText(db, row.id)}`.toLowerCase();
       const labelTokens = label.split(/[^a-z0-9]+/).filter(Boolean);
+      const nameTokens = String(row.item_name || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+      // A word that is part of the product's own name is not a variant value.
+      // "Navy Oxford size 8" can be split as item "Oxford" + variant "Navy 8"
+      // — the split is a matter of taste and the product really is called Navy
+      // Oxford, so requiring "navy" to appear in the size label would refuse a
+      // perfectly clear instruction.
+      const meaningful = terms.filter((term) => !nameTokens.includes(term));
+      if (!meaningful.length) return true;
+
       // A short token must match a whole token; a longer one may match inside.
-      return terms.every((term) => (term.length <= 2 ? labelTokens.includes(term) : label.includes(term)));
+      return meaningful.every((term) =>
+        term.length <= 2 ? labelTokens.includes(term) : label.includes(term)
+      );
     });
   };
 

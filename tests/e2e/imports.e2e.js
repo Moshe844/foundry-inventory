@@ -322,7 +322,7 @@ test(
       await page.goto(`${BASE}/inventories/new`);
       await page.fill('#name', 'Meridian Coffee');
       await Promise.all([
-        page.waitForURL(`${BASE}/foundry`),
+        page.waitForURL(`${BASE}/onboarding`),
         page.click('button[type=submit]:has-text("Create")'),
       ]);
 

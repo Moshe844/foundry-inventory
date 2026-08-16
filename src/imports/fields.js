@@ -68,7 +68,7 @@ const PATTERNS = {
   description: [/\b(?:description|descr?\.?|details?|long\s*desc)\b/],
   quantity: [
     /\b(?:qty|quantity)\b/,
-    /\b(?:on\s*hand|onhand|in\s*stock|stock\s*(?:level|count)|available|balance|count)\b/,
+    /\b(?:on\s*hand|onhand|in\s*stock|stock\s*(?:level|count)|available|balance|count(?:ed)?)\b/,
     /\b(?:units?|pieces?|pcs)\b/,
   ],
   location: [

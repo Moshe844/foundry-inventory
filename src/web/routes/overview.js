@@ -8,6 +8,8 @@ const attention = require('../../attention/attention-engine');
 const presenter = require('../../attention/presenter');
 const briefService = require('../../attention/brief-service');
 const { purchasingBrief } = require('../../purchasing/brief-lines');
+const autopilotPresenter = require('../../autopilot/presenter');
+const permissions = require('../../actions/permissions');
 const { requireAuth, asyncRoute } = require('../middleware');
 
 const router = express.Router();
@@ -18,7 +20,7 @@ const router = express.Router();
  * for that answer rather than the answer itself.
  */
 router.get(
-  '/',
+  ['/', '/overview'],
   requireAuth,
   asyncRoute(async (req, res) => {
     const stats = inventoryQuery.overview(req.db, req.ctx.workspaceId);
@@ -37,6 +39,25 @@ router.get(
     const brief =
       briefService.currentBrief(req.db, req.ctx.workspaceId, items, briefService.purchasingSignature(purchasing)) ||
       { body: briefService.deterministicBrief(items, context), source: 'deterministic', createdAt: null };
+
+    // A working inventory lands on Operator Home: what Foundry did, what needs
+    // a person, what is coming. The classic overview stays one click away at
+    // /overview, and an inventory with nothing in it still gets it by default —
+    // an autopilot summary of an empty warehouse would be theatre.
+    const wantsClassic = req.path === '/overview';
+    const hasSomethingToRun = stats.itemCount > 0 && configuration && configuration.configuredAt;
+    if (!wantsClassic && hasSomethingToRun) {
+      const home = autopilotPresenter.operatorHome(req.db, req.ctx.workspaceId);
+      return res.page('operator-home', {
+        title: 'Foundry',
+        nav: 'overview',
+        home,
+        brief,
+        stats,
+        terminology,
+        canOperate: permissions.can(req.user, permissions.OPERATE),
+      });
+    }
 
     res.page('overview', {
       title: 'Overview',

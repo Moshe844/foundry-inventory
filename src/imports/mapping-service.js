@@ -231,6 +231,20 @@ async function proposeMappings(sheet, options = {}) {
     columnProfiles: guess.profiles,
   };
 
+  // A caller that has already worked the columns out — onboarding profiles a
+  // file before anyone approves anything — hands them over rather than paying
+  // for the same answer twice. It also keeps the migration deterministic: the
+  // columns the customer approved are the columns that get imported.
+  if (options.mappings && Object.keys(options.mappings).length) {
+    return {
+      ...base,
+      mappings: options.mappings,
+      detectedType: options.detectedType || fields.detectType(options.mappings),
+      aiUsed: false,
+      aiSkipped: 'the columns were already settled when the file was read',
+    };
+  }
+
   const provider = options.provider || (config.ai.configured ? createProviderForTier('fast') : null);
   // Without a provider the deterministic mapping stands on its own. An import
   // is still perfectly possible; the person just does more of the naming.

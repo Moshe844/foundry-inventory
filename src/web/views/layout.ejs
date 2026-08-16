@@ -66,7 +66,8 @@
 
     <nav class="nav" aria-label="Main">
       <a class="nav-item nav-item--foundry <%= nav === 'foundry' ? 'is-active' : '' %>" href="/foundry"><%- helpers.icon('foundry') %><span>Foundry</span></a>
-      <a class="nav-item <%= nav === 'overview' ? 'is-active' : '' %>" href="/"><%- helpers.icon('overview') %><span>Overview</span></a>
+      <a class="nav-item <%= nav === 'overview' ? 'is-active' : '' %>" href="/"><%- helpers.icon('overview') %><span>Foundry home</span></a>
+      <a class="nav-item <%= nav === 'autopilot' ? 'is-active' : '' %>" href="/autopilot"><%- helpers.icon('shield') %><span>What Foundry does</span></a>
       <a class="nav-item <%= nav === 'attention' ? 'is-active' : '' %>" href="/attention"><%- helpers.icon('attention') %><span>Needs attention</span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %></a>
       <a class="nav-item <%= nav === 'actions' ? 'is-active' : '' %>" href="/actions"><%- helpers.icon('adjust') %><span>Do something</span></a>
       <a class="nav-item <%= nav === 'purchasing' ? 'is-active' : '' %>" href="/purchasing"><%- helpers.icon('purchasing') %><span>What to order</span></a>
