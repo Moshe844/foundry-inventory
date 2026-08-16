@@ -67,10 +67,67 @@
     <span class="muted">Configuration version <%= plan.configurationVersion %></span>
     <span class="btn-row" style="margin-left:auto;">
       <a class="btn" href="/foundry">Ask Foundry something</a>
-      <a class="btn btn--primary" href="/inventory/new">Add my first <%= term('item').toLowerCase() %></a>
+      <% if (!firstItem) { %>
+        <a class="btn btn--primary" href="/inventory/new">Add my first <%= term('item').toLowerCase() %></a>
+      <% } %>
     </span>
   </div>
 </div>
+
+<%# Finish the sentence: they named the product and its options, so offer to
+    make it rather than handing back an empty inventory. %>
+<% if (firstItem) { %>
+  <form method="post" action="/foundry/first-item" class="card section" data-busy>
+    <div class="card-head"><h2>Shall I create it?</h2></div>
+    <div class="card-body">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <%# Deliberately the tidied name rather than the raw example Foundry worked
+          from: "you described Baby headband - White, 0-6 months" is not what
+          they said, and reads as though it misheard them. %>
+      <p class="lede">
+        <% if (firstItem.combinations > 1) { %>
+          I can create <strong><%= firstItem.name %></strong> with all
+          <%= firstItem.combinations %> combinations, ready to receive stock into.
+        <% } else { %>
+          I can create <strong><%= firstItem.name %></strong> now, ready to receive stock into.
+        <% } %>
+      </p>
+
+      <label class="field">
+        <span class="field-label">Call it</span>
+        <input class="input" type="text" name="name" value="<%= firstItem.name %>" maxlength="80" required>
+      </label>
+
+      <% if (firstItem.options.length) { %>
+        <table class="table table--tight">
+          <tbody>
+            <% firstItem.options.forEach(function (option) { %>
+              <tr>
+                <td><%= option.name %></td>
+                <td><%= option.values.join(', ') %></td>
+                <td class="num"><%= option.values.length %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      <% } %>
+
+      <p class="muted">
+        This creates the <%= term('item').toLowerCase() %> and its combinations, and nothing else.
+        Foundry does not know what is on your shelves yet, so every one starts at zero — you receive
+        stock next, or bring it in from a spreadsheet.
+      </p>
+    </div>
+    <div class="card-foot">
+      <div class="btn-row">
+        <button class="btn btn--primary" type="submit">
+          Create <%= firstItem.name %><% if (firstItem.combinations > 1) { %> and its <%= firstItem.combinations %> combinations<% } %>
+        </button>
+        <a class="btn btn--ghost" href="/inventory/new">I'll set it up myself</a>
+      </div>
+    </div>
+  </form>
+<% } %>
 
 <% if (decisions && decisions.length) { %>
   <div class="card section">

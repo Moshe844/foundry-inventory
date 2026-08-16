@@ -1,0 +1,13 @@
+We wholesale children's shoes. Each shoe style has a style number and comes in multiple colors and sizes. Each color/size combination is a separate inventory variant/SKU. We purchase shoes from different vendors, usually by case or size run, and sell them to retail stores.
+
+We have warehouses in Brooklyn and New Jersey. Inventory must be tracked separately at each location, and we need to transfer inventory between warehouses while maintaining a transfer history.
+
+For every style, track the brand, vendor, season, category, cost, wholesale price, available colors, sizes, and UPC/SKU. I need to see on-hand, allocated, available, incoming, and transferred quantities by style, color, size, and warehouse.
+
+Purchase orders should increase incoming inventory and receiving should increase stock at the warehouse where the merchandise arrives. Sales orders should reserve inventory and reduce it when shipped. Returns should put inventory back into the appropriate location.
+
+I also want low-stock alerts, inventory adjustments, damaged inventory, stock counts, and a complete history showing why inventory changed.
+
+I should be able to quickly answer questions like: "How many Style 425 in Black, size 27 do we have?", "Show all sizes of this style across both warehouses," "What needs to be reordered?", and "Which styles/colors/sizes are selling fastest?"
+
+Set up the inventory structure you think is best based on this business. Don't configure anything until you show me what you understood and I approve it.

@@ -116,10 +116,22 @@ const config = {
      */
     tiers: {
       // One paragraph in, an entire inventory configuration out.
+      //
+      // Measured on the same description: Opus at high effort took 87 seconds,
+      // Sonnet at medium took 35, and both returned the identical configuration
+      // — quantity tracking, two variant axes, the same values. The whole live
+      // suite asserts the *quality* of this output (a rental business gets
+      // serialised assets, a food distributor gets lots and expiry, an
+      // ambiguous description gets an honest question rather than an invented
+      // structure) and passes on Sonnet, so the cheaper model is not a
+      // concession — it is the same answer, sooner.
+      //
+      // Somebody is watching a progress screen while this runs. A minute of
+      // extra thinking that changes nothing is not free, whatever it costs.
       get deep() {
         return {
-          model: process.env.FOUNDRY_AI_MODEL_DEEP || process.env.FOUNDRY_AI_MODEL || 'claude-opus-5',
-          effort: process.env.FOUNDRY_AI_EFFORT_DEEP || 'high',
+          model: process.env.FOUNDRY_AI_MODEL_DEEP || process.env.FOUNDRY_AI_MODEL || 'claude-sonnet-5',
+          effort: process.env.FOUNDRY_AI_EFFORT_DEEP || 'medium',
         };
       },
       // Conversation and judgement where a wrong answer is visible but cheap.

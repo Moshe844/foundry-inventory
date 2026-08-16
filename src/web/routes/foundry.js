@@ -4,6 +4,7 @@ const express = require('express');
 const config = require('../../config');
 const understandingService = require('../../foundry/understanding-service');
 const planBuilder = require('../../foundry/plan-builder');
+const firstItemService = require('../../foundry/first-item-service');
 const planApplier = require('../../foundry/plan-applier');
 const onboardingPaths = require('../../onboarding/paths');
 const assistant = require('../../foundry/assistant-service');
@@ -225,7 +226,45 @@ router.get(
       plan: stored.plan,
       summary: stored.applied_summary ? JSON.parse(stored.applied_summary) : null,
       decisions: planBuilder.listDecisions(req.db, req.ctx.workspaceId, stored.id),
+      // What Foundry would create from what they already described. Null once
+      // the inventory has anything in it.
+      firstItem: firstItemService.suggest(req.db, req.ctx.workspaceId),
     });
+  })
+);
+
+/**
+ * Creates the product the customer described, with the combinations they listed.
+ *
+ * The shape comes from their own words; the quantity comes from nobody, because
+ * nobody has said what is on the shelf yet.
+ */
+router.post(
+  '/foundry/first-item',
+  asyncRoute(async (req, res) => {
+    const suggestion = firstItemService.suggest(req.db, req.ctx.workspaceId);
+    if (!suggestion) {
+      req.flash('info', 'There is already something in this inventory.');
+      return res.redirect(303, '/inventory');
+    }
+    try {
+      const created = firstItemService.create(req.db, req.ctx, {
+        ...suggestion,
+        // Whatever they edited on the page wins over the suggestion.
+        name: trimOrNull(req.body.name) || suggestion.name,
+      });
+      req.flash(
+        'success',
+        created.skuCount > 1
+          ? `Created ${created.name} with ${created.skuCount} combinations. Nothing is in stock yet — receive some to get started.`
+          : `Created ${created.name}. Nothing is in stock yet — receive some to get started.`
+      );
+      return res.redirect(303, `/inventory/${created.itemId}`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+      return res.redirect(303, '/foundry/ready');
+    }
   })
 );
 
