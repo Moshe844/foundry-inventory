@@ -7,6 +7,7 @@ const inventoryQuery = require('../../domain/inventory-query');
 const repo = require('../../domain/repository');
 const { ValidationError } = require('../../domain/errors');
 const reevaluate = require('../../attention/reevaluate');
+const planApplier = require('../../foundry/plan-applier');
 const attention = require('../../attention/attention-engine');
 const presenter = require('../../attention/presenter');
 const { requireAuth, asyncRoute } = require('../middleware');
@@ -64,10 +65,33 @@ router.get(
 router.get(
   '/inventory/new',
   asyncRoute(async (req, res) => {
+    // Somebody who described "size: 0-6 months, 6-12 months / colour: white,
+    // red, blue" during setup has already told Foundry their option axes, and
+    // Foundry wrote them down. Presenting an empty form here asks them to type
+    // it all again and makes the configuration look like it did nothing.
+    //
+    // This is a starting point, not a decision: every field is editable and
+    // clearing them is one keystroke. Nothing is created until they submit.
+    const configuration = planApplier.getConfiguration(req.db, req.ctx.workspaceId);
+    const model = (configuration && configuration.inventoryModel) || {};
+    const dimensions = Array.isArray(model.variantDimensions) ? model.variantDimensions : [];
+
+    const form = {};
+    if (model.usesVariants && dimensions.length) {
+      form.hasVariants = true;
+      form.options = dimensions.slice(0, 3).map((dimension) => ({
+        name: dimension.name || '',
+        values: (dimension.exampleValues || []).join(', '),
+      }));
+    }
+
     res.page('inventory/new', {
       title: 'Add an item',
       nav: 'inventory',
-      form: {},
+      form,
+      // So the page can say where the suggestion came from rather than having
+      // values appear from nowhere.
+      fromConfiguration: Boolean(form.options),
     });
   })
 );

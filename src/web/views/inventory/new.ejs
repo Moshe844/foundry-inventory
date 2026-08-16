@@ -76,6 +76,9 @@
           <span class="checkbox-text">
             <strong>This item comes in options such as size or colour</strong>
             <small>Each option combination is counted separately. It still works with any of the choices above.</small>
+            <% if (typeof fromConfiguration !== 'undefined' && fromConfiguration) { %>
+              <small class="muted">Filled in from what you told Foundry about this business. Change or clear anything.</small>
+            <% } %>
           </span>
         </label>
       </div>

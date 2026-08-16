@@ -534,3 +534,88 @@ test('the polling endpoint refuses anonymous callers', async () => {
   const res = await request(app).get('/api/foundry/jobs/job_anything').set('Accept', 'application/json');
   assert.equal(res.status, 401);
 });
+
+test('the axes you described during setup are waiting on the new-item form', async () => {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Headbands Co' });
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'prefill' });
+
+  // The configuration a business like "size: 0-6 months / colour: white, red"
+  // produces. Typing all of that again on the next screen is what makes a
+  // working setup feel like it did nothing.
+  store.db.prepare(
+    `INSERT INTO workspace_configuration (workspace_id, configured_at, configuration_version, terminology,
+       operational_defaults, inventory_model, updated_at)
+     VALUES (?, datetime('now'), 1, '{}', '{}', ?, datetime('now'))`
+  ).run(
+    workspace.workspaceId,
+    JSON.stringify({
+      primaryArchetype: 'quantity',
+      usesVariants: true,
+      variantDimensions: [
+        { name: 'Size', exampleValues: ['0-6 months', '6-12 months', '12-24 months'] },
+        { name: 'Colour', exampleValues: ['White', 'Red', 'Blue', 'Purple', 'Green'] },
+      ],
+    })
+  );
+
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  const html = (await agent.get('/inventory/new')).text;
+
+  assert.match(html, /name="options\[0\]\[name\]"[^>]*value="Size"/);
+  assert.match(html, /value="0-6 months, 6-12 months, 12-24 months"/);
+  assert.match(html, /name="options\[1\]\[name\]"[^>]*value="Colour"/);
+  assert.match(html, /value="White, Red, Blue, Purple, Green"/);
+  assert.match(html, /name="hasVariants"[^>]*checked/);
+  assert.match(plain(html), /Filled in from what you told Foundry/);
+});
+
+test('any business gets its own axes back, whatever they are', async () => {
+  // Nothing in the prefill knows about clothing, headbands or sizes. It reads
+  // whatever axes that workspace's own configuration recorded, so a coffee
+  // roaster gets roast and grind exactly as a headband wholesaler gets size and
+  // colour. This test exists to keep it that way.
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Roastery' });
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'prefill-other' });
+
+  store.db.prepare(
+    `INSERT INTO workspace_configuration (workspace_id, configured_at, configuration_version, terminology,
+       operational_defaults, inventory_model, updated_at)
+     VALUES (?, datetime('now'), 1, '{}', '{}', ?, datetime('now'))`
+  ).run(
+    workspace.workspaceId,
+    JSON.stringify({
+      primaryArchetype: 'quantity',
+      usesVariants: true,
+      variantDimensions: [
+        { name: 'Roast', exampleValues: ['Light', 'Medium', 'Dark'] },
+        { name: 'Grind', exampleValues: ['Whole bean', 'Filter', 'Espresso'] },
+      ],
+    })
+  );
+
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  const html = (await agent.get('/inventory/new')).text;
+
+  assert.match(html, /name="options\[0\]\[name\]"[^>]*value="Roast"/);
+  assert.match(html, /value="Light, Medium, Dark"/);
+  assert.match(html, /name="options\[1\]\[name\]"[^>]*value="Grind"/);
+  assert.match(html, /value="Whole bean, Filter, Espresso"/);
+  assert.doesNotMatch(html, /months/i, 'no other business’s wording leaks in');
+});
+
+test('a workspace that described no options still gets a blank form', async () => {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Plain Co' });
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'prefill-none' });
+
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  const html = (await agent.get('/inventory/new')).text;
+
+  assert.doesNotMatch(html, /name="hasVariants"[^>]*checked/, 'nothing was described, so nothing is suggested');
+  assert.doesNotMatch(plain(html), /Filled in from what you told Foundry/);
+});
