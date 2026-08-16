@@ -213,6 +213,12 @@ function pageRenderer(req, res, next) {
         body: html,
         title: data.title || 'Foundry Inventory',
         nav: data.nav || null,
+        // Absolute base for anything that cannot be a relative path — social
+        // preview images are fetched by other people's servers, which have no
+        // idea what "/og.png" means. Taken from the request rather than
+        // configured, so it is right behind a proxy, on localhost, and on
+        // whatever hostname this is actually being served from.
+        origin: data.origin || `${req.protocol}://${req.get('host')}`,
       });
     });
   };
