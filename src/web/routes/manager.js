@@ -80,7 +80,14 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   const intent = await intentRouter.classify(req.db, req.ctx, message, {
     provider: req.app.locals.aiProvider || undefined,
   });
-  if (intent.clarifyingQuestion) {
+  // A question from the classifier is a last resort, not a first one.
+  //
+  // It is written by a model that has seen only the sentence, while the
+  // handlers below can look at the actual records — so it asked "should this go
+  // to your regular supplier?" where the grounded answer was "no supplier is on
+  // file for Trail Ration Pack". Whenever there is a handler that can resolve
+  // or ask from real data, it gets the chance first.
+  if (intent.clarifyingQuestion && intent.intentClass === 'UNKNOWN') {
     req.flash('info', intent.clarifyingQuestion);
     return res.redirect(303, '/#tell-foundry');
   }
@@ -94,13 +101,52 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     return res.redirect(303, '/#tell-foundry');
   }
   if (intent.intentClass === 'PURCHASING_REQUEST') {
+    // Naming a product wins over a remembered order.
+    //
+    // The classifier is given durable context so short follow-ups like "approve
+    // it" resolve, and it duly attached the last purchase order to "order 50
+    // more Trail Ration Pack" — which opened a draft for a different product
+    // entirely. A message that names something in the catalogue is about that
+    // thing, not about whatever was on screen last.
+    const namesAProduct = mentionsKnownProduct(req.db, req.ctx.workspaceId, message);
     const reference = intent.resolvedReference;
-    if (reference && /^po_/.test(reference)) {
+    if (reference && /^po_/.test(reference) && !namesAProduct) {
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'purchase_order', reference);
       managerContext.remember(req.db, req.ctx, { purchaseOrderId: reference });
       return res.redirect(303, /receive|arriv|rest/i.test(message)
         ? `/purchasing/orders/${reference}/receive` : `/purchasing/orders/${reference}`);
     }
+    // A request naming a product is answered about that product; "order what we
+    // need" has named nothing and stays a request for the general plan.
+    //
+    // Every purchasing request used to run the general replenishment planner
+    // and report how many lines it prepared, so "order 50 more Trail Ration
+    // Pack" came back as a summary that never mentioned Trail Ration Pack —
+    // and the real answer, that nobody is on file to buy it from, was never
+    // given. The specific path already exists and answers or asks properly; it
+    // just had no caller.
+    const specific = namesAProduct
+      ? await actionService.interpret(req.db, req.ctx, req.user, message, {
+          provider: req.app.locals.aiProvider || undefined,
+        })
+      : { kind: 'none' };
+    if (specific.kind === 'purchase_order' && specific.order) {
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'purchase_order', specific.order.id);
+      managerContext.remember(req.db, req.ctx, { purchaseOrderId: specific.order.id });
+      req.flash('success', `Foundry drafted ${specific.order.poNumber}. Nothing is ordered until you approve it.`);
+      return res.redirect(303, `/purchasing/orders/${specific.order.id}`);
+    }
+    if (specific.kind === 'question' && specific.question) {
+      req.session.pendingActionQuestion = { question: specific.question, instruction: message, choices: null };
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
+      return res.redirect(303, '/actions');
+    }
+    if (specific.kind === 'unsupported' && specific.message) {
+      req.session.pendingActionQuestion = { unsupported: specific.message, instruction: message };
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
+      return res.redirect(303, '/actions');
+    }
+
     const result = managerRunner.run(req.db, req.ctx, req.user, { trigger: 'tell-foundry-purchasing' });
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'manager_purchasing');
     req.flash('success', result.nothingToDo
@@ -166,6 +212,49 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     const event = await physicalEvents.recordNatural(req.db, req.ctx, message, {
       provider: req.app.locals.aiProvider || undefined,
     });
+
+    // A delivery with no purchase order behind it is still a delivery.
+    //
+    // Matching an arrival to an open order is the happy path, but plenty of
+    // stock arrives without one — during setup there are no orders at all. That
+    // case used to stop dead: Foundry had read the product, location and
+    // quantity correctly and then parked the whole thing in Needs you as an
+    // event it could not place, so "we received 12 bags into the Warehouse"
+    // recorded nothing and offered nothing to do about it.
+    //
+    // It goes to the ordinary controlled path instead — the same interpret,
+    // preview and approve that typing it as an instruction would have used. No
+    // stock moves here; a proposal is created and somebody still says yes.
+    if (
+      event.eventType === 'shipment_arrived' &&
+      event.status === 'NEEDS_HUMAN' &&
+      !event.matchedEntities.purchaseOrderId
+    ) {
+      const asAction = await actionService.interpret(req.db, req.ctx, req.user, message, {
+        provider: req.app.locals.aiProvider || undefined,
+      });
+      const actionTarget = actionRedirect(asAction);
+      if (actionTarget) {
+        const related = asAction.proposal ? asAction.proposal.proposalId : asAction.plan.planId;
+        physicalEvents.complete(req.db, req.ctx.workspaceId, event.id);
+        intentRouter.markRouted(req.db, req.ctx, intent.id, 'action', related);
+        managerContext.remember(req.db, req.ctx, { entities: { actionId: related } });
+        req.flash('info', 'No open order matches that delivery, so Foundry prepared it as a receipt. Nothing changes until you approve it.');
+        return res.redirect(303, actionTarget);
+      }
+      // A question about the delivery is still better asked than filed away.
+      if (asAction.kind === 'question' && asAction.question) {
+        physicalEvents.complete(req.db, req.ctx.workspaceId, event.id);
+        req.session.pendingActionQuestion = {
+          question: asAction.question,
+          instruction: message,
+          choices: asAction.choices || null,
+        };
+        intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
+        return res.redirect(303, '/actions');
+      }
+    }
+
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'physical_event', event.id);
     req.flash('info', event.status === 'ROUTED'
       ? 'Foundry matched that event. Check the receiving details before stock changes.'
@@ -184,6 +273,20 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'investigation', investigated.investigationId);
     managerContext.remember(req.db, req.ctx, { investigationId: investigated.investigationId });
     return res.redirect(303, `/investigations/${investigated.investigationId}`);
+  }
+  // Somebody asking Foundry to stop gets Foundry stopped, now, not a form.
+  // Pausing takes no inventory action, is reversible in one click, and is the
+  // only reading of "stop" that is safe to be wrong about.
+  if (intent.intentClass === 'STOP') {
+    const state = autopilotModes.get(req.db, req.ctx.workspaceId);
+    if (state.paused) {
+      req.flash('info', 'Foundry is already paused. Nothing runs automatically until you resume it.');
+    } else {
+      autopilotModes.pause(req.db, req.ctx, req.user, message);
+      req.flash('success', 'Stopped. Foundry will not do anything automatically until you resume it. Work already waiting for you is still there.');
+    }
+    intentRouter.markRouted(req.db, req.ctx, intent.id, 'autopilot_pause');
+    return res.redirect(303, '/autopilot');
   }
   if (intent.intentClass === 'POLICY_CHANGE') {
     const reviewEverything = /handle\s+everything|everything\s+you\s+(?:safely\s+)?can/i.test(message);
@@ -204,24 +307,66 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   return res.redirect(303, '/#tell-foundry');
 }));
 
+/**
+ * Does this message name a product this inventory actually has?
+ *
+ * Whole words only, so a size called "S" or a product called "Pack" inside
+ * another word cannot make a general request look like a specific one.
+ */
+function mentionsKnownProduct(db, workspaceId, message) {
+  const text = ` ${String(message || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
+  const rows = db
+    .prepare(
+      `SELECT i.name, s.variant_label, s.code
+         FROM skus s JOIN items i ON i.id = s.item_id
+        WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
+        LIMIT 500`
+    )
+    .all(workspaceId);
+  return rows.some((row) =>
+    [row.name, row.code].some((value) => {
+      const needle = String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      return needle.length > 1 && text.includes(` ${needle} `);
+    })
+  );
+}
+
+const autopilotPresenter = require('../../autopilot/presenter');
+const autopilotModes = require('../../autopilot/modes');
+
 router.get('/needs-you', asyncRoute(async (req, res) => {
+  // An opening-balance investigation is answered by recording the stock, and
+  // the person who just recorded it should not be asked for it again.
+  investigations.settleOpeningBalances(req.db, req.ctx.workspaceId);
   const operating = managerReadiness.decisions(req.db, req.ctx.workspaceId);
   const openInvestigations = investigations.list(req.db, req.ctx.workspaceId, {
     statuses: ['NEEDS_HUMAN', 'INCONCLUSIVE'], limit: 100,
   });
   const waiting = workItems.awaitingApproval(req.db, req.ctx.workspaceId);
   const physical = req.db.prepare(
-    `SELECT id, event_type, stated_as, created_at FROM physical_events
+    `SELECT id, event_type, stated_as, details, created_at FROM physical_events
       WHERE workspace_id = ? AND status = 'NEEDS_HUMAN' AND investigation_id IS NULL
       ORDER BY created_at DESC`
-  ).all(req.ctx.workspaceId);
+  ).all(req.ctx.workspaceId).map((row) => {
+    // Why it is waiting matters more than what it is called. Echoing somebody's
+    // own sentence back at them under the words "reported event" tells them
+    // nothing about what Foundry needs before it can act on it.
+    let reason = null;
+    try { reason = JSON.parse(row.details || '{}').interpretationReason || null; } catch { reason = null; }
+    return { ...row, reason };
+  });
   res.page('manager/needs-you', {
     title: 'Needs you', nav: 'attention', operating,
     investigations: openInvestigations, waiting, physical,
+    // The same findings the home page counts under "what needs me". They were
+    // missing here, so home said one decision was waiting and the page it sent
+    // you to said nothing was.
+    findings: autopilotPresenter.whatNeedsYou(req.db, req.ctx.workspaceId),
   });
 }));
 
 router.get('/investigations/:id', asyncRoute(async (req, res) => {
+  investigations.settleOpeningBalances(req.db, req.ctx.workspaceId);
   const investigation = investigations.get(req.db, req.ctx.workspaceId, req.params.id);
   res.page('manager/investigation', { title: 'Investigation', nav: 'attention', investigation,
     events: investigations.events(req.db, req.ctx.workspaceId, req.params.id) });

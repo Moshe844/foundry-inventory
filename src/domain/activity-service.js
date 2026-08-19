@@ -84,11 +84,21 @@ function listActivity(db, workspaceId, filters = {}) {
 
   const groupRows = db
     .prepare(
-      `SELECT m.group_id AS group_id, MAX(m.seq) AS max_seq
+      // Ordered by when it happened, not by when it was typed in.
+      //
+      // The ledger's seq is the immutable order of recording, and sorting on it
+      // is right for an audit trail — but this page is labelled "newest first"
+      // and prints the date each movement occurred. Stock entered late, with
+      // last week's date on it, therefore appeared above movements that really
+      // did happen later, and the visible dates ran 17th, 13th, 16th. seq stays
+      // as the tie-break so anything recorded on the same instant keeps its
+      // recorded order.
+      `SELECT m.group_id AS group_id, MAX(m.seq) AS max_seq,
+              MAX(m.occurred_at) AS occurred_at
          FROM movements m
         WHERE ${where}
         GROUP BY m.group_id
-        ORDER BY max_seq DESC
+        ORDER BY occurred_at DESC, max_seq DESC
         LIMIT @limit OFFSET @offset`
     )
     .all({ ...params, limit: limit + 1, offset });

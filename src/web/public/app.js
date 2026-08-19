@@ -145,11 +145,28 @@
     });
 
     // Open a modal named in the query string (?action=receive).
+    //
+    // Any remaining parameter fills the field of the same name inside that
+    // modal, so a link that says "receive these 40" can arrive with the
+    // product, location and quantity already in it. Somebody sent here from an
+    // investigation has already told Foundry all three; asking again is how a
+    // one-click fix turns back into a form. Only fields the form already has
+    // are touched, and nothing is submitted — the person still presses the
+    // button.
     const params = new URLSearchParams(window.location.search);
     const action = params.get('action');
     if (action) {
       const dialog = document.getElementById(`modal-${action}`);
-      if (dialog && typeof dialog.showModal === 'function') dialog.showModal();
+      if (dialog) {
+        params.forEach((value, key) => {
+          if (key === 'action' || key === '_csrf') return;
+          const field = dialog.querySelector(`[name="${CSS.escape(key)}"]`);
+          if (!field || field.type === 'hidden') return;
+          field.value = value;
+          field.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        if (typeof dialog.showModal === 'function') dialog.showModal();
+      }
     }
   }
 

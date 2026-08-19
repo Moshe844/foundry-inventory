@@ -82,11 +82,23 @@
             is for short, over or damaged deliveries. Foundry does not decide by
             itself that the boxes arrived — nobody has told it that — but once
             you say so it fills in everything it already knows. %>
-        <form method="post" action="/purchasing/orders/<%= order.id %>/receive-all" style="display:inline;" data-busy>
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn btn--primary" type="submit">It all arrived — book it in</button>
-        </form>
-        <a class="btn" href="/purchasing/orders/<%= order.id %>/receive">Something is different</a>
+        <%# One click only where one click can actually finish. A batch number or
+            a list of serials is something only the person unpacking the boxes
+            knows, so on those orders the button led straight to an error it
+            could never not produce; they go to the form that asks instead. %>
+        <% var needsArrivalDetail = (order.lines || []).some(function (line) {
+             return line.outstandingUnits > 0 && (line.trackingMode === 'lot' || line.trackingMode === 'serial');
+           }); %>
+        <% if (needsArrivalDetail) { %>
+          <a class="btn btn--primary" href="/purchasing/orders/<%= order.id %>/receive">Book in the delivery</a>
+          <span class="muted" style="font-size:12px;">Foundry needs the batch or serial numbers that arrived — it cannot know those.</span>
+        <% } else { %>
+          <form method="post" action="/purchasing/orders/<%= order.id %>/receive-all" style="display:inline;" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn btn--primary" type="submit">It all arrived — book it in</button>
+          </form>
+          <a class="btn" href="/purchasing/orders/<%= order.id %>/receive">Something is different</a>
+        <% } %>
       <% } %>
       <a class="btn btn--sm" href="/purchasing/orders/<%= order.id %>/document" target="_blank" rel="noopener">
         Printable order

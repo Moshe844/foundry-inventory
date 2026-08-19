@@ -299,9 +299,13 @@ function createOrder(db, ctx, membership, input) {
     throw new ValidationError('A purchase order needs at least one line.');
   }
 
+  // An explicit destination applies to the whole order. Without one, each line
+  // goes where that product is actually kept and used rather than to a single
+  // order-wide default, which sent replenishment for a product that only ever
+  // sells from the roastery to the warehouse instead.
   const destination = input.destinationLocationId
     ? repo.requireLocation(db, ctx.workspaceId, input.destinationLocationId, 'destination location')
-    : defaultDestination(db, ctx.workspaceId);
+    : null;
 
   // Resolve every line before writing anything, so a bad line fails the whole
   // order rather than leaving half of one behind.
@@ -344,7 +348,7 @@ function createOrder(db, ctx, membership, input) {
 
     const lineDestination = line.destinationLocationId
       ? repo.requireLocation(db, ctx.workspaceId, line.destinationLocationId, 'destination location')
-      : destination;
+      : destination || destinationForSku(db, ctx.workspaceId, sku.id);
 
     return {
       skuId: sku.id,
@@ -383,7 +387,9 @@ function createOrder(db, ctx, membership, input) {
     ).run(
       id, ctx.workspaceId, poNumber, supplier.id, status,
       trimOrNull(input.orderDate) || nowText.slice(0, 10), expectedDate, expectedSource,
-      destination ? destination.id : null, supplier.currency, trimOrNull(input.notes),
+      // The header keeps a destination when every line agrees on one, so an
+      // order that all lands in one place still reads that way.
+      (destination && destination.id) || headerDestinationId(resolved), supplier.currency, trimOrNull(input.notes),
       ['manual', 'foundry_recommendation', 'instruction'].includes(input.source) ? input.source : 'manual',
       JSON.stringify(input.sourceDetail || {}),
       ctx.actorId, '', nowText, nowText
@@ -414,6 +420,48 @@ function createOrder(db, ctx, membership, input) {
 
     return get(db, ctx.workspaceId, id);
   });
+}
+
+/** One destination for the order only when every line shares it. */
+function headerDestinationId(lines) {
+  const ids = new Set(lines.map((line) => line.destinationLocationId).filter(Boolean));
+  return ids.size === 1 ? [...ids][0] : null;
+}
+
+/**
+ * Where replenishment for one product should actually land.
+ *
+ * Falling back to "whichever location is a warehouse" is fine when nobody has
+ * said anything at all, but it is the wrong answer for a line Foundry raised
+ * itself: the shortage was measured at a particular location, and sending the
+ * stock somewhere else leaves that location short, the order looking filled,
+ * and somebody transferring it by hand afterwards. A roastery that sells every
+ * bag from the roastery should not have its coffee delivered to the warehouse
+ * because the warehouse is called a warehouse.
+ *
+ * Demand comes first — the place stock has most recently left from is the place
+ * that needs more — then the place holding the most of it, then the old default.
+ */
+function destinationForSku(db, workspaceId, skuId) {
+  const wentFrom = db
+    .prepare(
+      `SELECT location_id FROM movements
+        WHERE workspace_id = ? AND sku_id = ? AND operation = 'issue'
+        ORDER BY occurred_at DESC, seq DESC LIMIT 1`
+    )
+    .get(workspaceId, skuId);
+  if (wentFrom) return repo.requireLocation(db, workspaceId, wentFrom.location_id);
+
+  const holdsMost = db
+    .prepare(
+      `SELECT location_id FROM balances
+        WHERE workspace_id = ? AND sku_id = ? AND on_hand > 0
+        ORDER BY on_hand DESC LIMIT 1`
+    )
+    .get(workspaceId, skuId);
+  if (holdsMost) return repo.requireLocation(db, workspaceId, holdsMost.location_id);
+
+  return defaultDestination(db, workspaceId);
 }
 
 /** Somewhere sensible for stock to land when nobody said. */
@@ -574,6 +622,7 @@ module.exports = {
   eventsFor,
   createOrder,
   defaultDestination,
+  destinationForSku,
   submitForApproval,
   approve,
   cancel,

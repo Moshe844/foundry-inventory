@@ -37,9 +37,15 @@
           </div>
         <% }) %>
         <div class="act-row act-row--total">
-          <span class="act-place">Total on hand</span>
+          <span class="act-place"><%= outcome.lotScoped && outcome.lotName ? outcome.lotName + ' in total' : 'Total on hand' %></span>
           <span class="act-move"><span class="num"><%= outcome.total.from %></span> <%- helpers.icon('chevron', { size: 13 }) %> <span class="num act-after"><%= outcome.total.to %></span></span>
         </div>
+        <% if (outcome.productTotal) { %>
+          <div class="act-row act-row--total">
+            <span class="act-place">All of <%= outcome.productTotal.label %> · every batch, every location</span>
+            <span class="act-move"><span class="num"><%= outcome.productTotal.from %></span> <%- helpers.icon('chevron', { size: 13 }) %> <span class="num act-after"><%= outcome.productTotal.to %></span></span>
+          </div>
+        <% } %>
       </div>
     </div>
     <div class="card-foot">
@@ -97,7 +103,7 @@
             <% }) %>
             <div class="act-row act-row--total">
               <span class="act-place">
-                Total on hand
+                <%= action.lotScoped && action.lotName ? action.lotName + ' in total' : 'Total on hand' %>
                 <small><%= action.totalChanges ? 'this changes how much you have' : 'unchanged — stock only moves' %></small>
               </span>
               <span class="act-move">
@@ -106,6 +112,19 @@
                 <span class="num act-after"><%= action.total.after %></span>
               </span>
             </div>
+            <% if (action.productTotal) { %>
+              <div class="act-row act-row--total">
+                <span class="act-place">
+                  All of <%= action.productTotal.label %>
+                  <small>every batch, every location</small>
+                </span>
+                <span class="act-move">
+                  <span class="num"><%= action.productTotal.before %></span>
+                  <%- helpers.icon('chevron', { size: 13 }) %>
+                  <span class="num act-after"><%= action.productTotal.after %></span>
+                </span>
+              </div>
+            <% } %>
           </div>
 
           <% if (action.reasonLabel) { %>

@@ -211,6 +211,28 @@ function resolveLotAtSource(db, workspaceId, draft, location, verb) {
   };
 }
 
+/**
+ * A batch number that does not exist yet.
+ *
+ * Receiving is how a lot comes into being — the receiving form has always taken
+ * a new code and created it — so refusing an unknown code on a receive made it
+ * impossible to book in a new batch by describing it, which for a business that
+ * roasts, bakes or mixes in batches is every single delivery. The code is
+ * carried on the proposal and created by the engine at execution, so the person
+ * still sees "creates batch R-2602" before anything is written.
+ *
+ * Anything other than a receive keeps the old refusal: issuing or moving stock
+ * out of a batch nobody has ever received is a real error.
+ */
+function openNewLot(draft, lotCode, failure) {
+  if (draft.actionType !== 'receive') return { ok: false, question: failure.message };
+  const code = String(lotCode || '').trim();
+  if (!code) return { ok: false, question: failure.message };
+  draft.settings = { ...(draft.settings || {}), newLotCode: code };
+  draft.assumptions = [...(draft.assumptions || []), `${code} is a new batch and will be created by this receipt.`];
+  return { ok: true };
+}
+
 function resolveSubject(db, workspaceId, intent, draft) {
   // An internal caller — a Mission 3 finding, or recalculating an existing
   // proposal — already knows the exact SKU. It is still re-checked against this
@@ -229,9 +251,13 @@ function resolveSubject(db, workspaceId, intent, draft) {
     draft.subject = { kind: 'sku', sku };
     if (intent.lotCode) {
       const lot = resolver.resolveLot(db, workspaceId, intent.lotCode, sku.id);
-      if (!lot.ok) return { ok: false, question: lot.message };
-      draft.lotId = lot.value.id;
-      draft.subject = { kind: 'lot', lot: lot.value, sku };
+      if (!lot.ok) {
+        const opened = openNewLot(draft, intent.lotCode, lot);
+        if (!opened.ok) return opened;
+      } else {
+        draft.lotId = lot.value.id;
+        draft.subject = { kind: 'lot', lot: lot.value, sku };
+      }
     }
     if (Array.isArray(intent.serials) && intent.serials.length) {
       const units = resolver.resolveSerialUnits(db, workspaceId, intent.serials);
@@ -256,7 +282,21 @@ function resolveSubject(db, workspaceId, intent, draft) {
     // A named lot is never satisfied by generic stock of the same product.
     const skuHint = intent.item ? resolver.resolveSku(db, workspaceId, intent.item, intent.variant) : null;
     const lot = resolver.resolveLot(db, workspaceId, intent.lotCode, skuHint && skuHint.ok ? skuHint.value.id : null);
-    if (!lot.ok) return { ok: false, question: lot.message };
+    if (!lot.ok) {
+      // A receive names the batch it is creating, so an unknown code is the
+      // normal case rather than a failure — but only once the product is known,
+      // because a lot code alone cannot say what it is a batch of.
+      if (draft.actionType === 'receive' && skuHint && skuHint.ok) {
+        const sku = skuHint.value;
+        draft.skuId = sku.id;
+        draft.itemId = sku.item_id;
+        draft.subject = { kind: 'sku', sku };
+        const opened = openNewLot(draft, intent.lotCode, lot);
+        if (!opened.ok) return opened;
+        return { ok: true };
+      }
+      return { ok: false, question: lot.message };
+    }
     draft.lotId = lot.value.id;
     draft.skuId = lot.value.sku_id;
     const sku = repo.requireSku(db, workspaceId, lot.value.sku_id);

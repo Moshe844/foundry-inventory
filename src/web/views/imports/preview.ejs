@@ -61,6 +61,19 @@
       <span class="badge badge--muted"><%= plan.recordsDetected %> rows read</span>
     </div>
     <div class="card-body">
+      <% if (typeof earlierImports !== 'undefined' && earlierImports.length) { %>
+        <div class="notice notice--warn" style="margin-bottom:14px;">
+          <%- helpers.icon('alert', { size: 16 }) %>
+          <span>
+            <strong>This same file has already been imported here.</strong>
+            <%= earlierImports.length === 1 ? 'It was imported' : 'It was imported ' + earlierImports.length + ' times, most recently' %>
+            on <%= new Date(earlierImports[0].approved_at || earlierImports[0].created_at).toLocaleString() %>.
+            Importing it again adds the quantities <em>again</em> — it does not replace what is already
+            there. Carry on only if the same stock genuinely arrived twice.
+            <a href="/imports/<%= earlierImports[0].id %>">See what that import did</a>.
+          </span>
+        </div>
+      <% } %>
       <p class="lede"><%= preview.sentence %></p>
 
       <% if (preview.locations.length) { %>
@@ -184,7 +197,9 @@
 <%# ---------------------------------------------------------------- the rows %>
 <% if (problems.length) { %>
   <div class="card section">
-    <div class="card-head"><h2>What Foundry could not do</h2></div>
+    <%# Once the import has run these are notes about what it did — "read as
+        Warehouse" is not something Foundry could not do. %>
+    <div class="card-head"><h2><%= report ? 'What Foundry had to interpret' : 'What Foundry could not do' %></h2></div>
     <div class="card-body">
       <ul class="plain-list">
         <% problems.forEach(function (problem) { %>

@@ -248,6 +248,23 @@ function listRecommendations(db, workspaceId, understandingId) {
     .all(workspaceId, understandingId);
 }
 
+/**
+ * The recommendations somebody ticked when they approved a configuration.
+ *
+ * Accepting one used to be a status column nothing ever read again, so the
+ * customer ticked "yes, I want this" and never saw it mentioned anywhere. They
+ * are listed back on the ready page instead, with what to actually do about it.
+ */
+function listAcceptedRecommendations(db, workspaceId, planId) {
+  return db
+    .prepare(
+      `SELECT * FROM foundry_recommendations
+        WHERE workspace_id = ? AND plan_id = ? AND status = 'accepted'
+        ORDER BY position`
+    )
+    .all(workspaceId, planId);
+}
+
 module.exports = {
   describeBusiness,
   save,
@@ -255,5 +272,6 @@ module.exports = {
   getUnderstanding,
   latestUnderstanding,
   listRecommendations,
+  listAcceptedRecommendations,
   MIN_DESCRIPTION,
 };

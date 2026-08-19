@@ -10,6 +10,7 @@
  */
 
 const policy = require('./policy');
+const resolver = require('./resolver');
 
 const ACTION_LABEL = {
   receive: 'receive',
@@ -111,6 +112,10 @@ function subjectOf(db, workspaceId, proposal) {
 
   return {
     name: sku.item_name,
+    // The product as it is counted: one variant is its own stock position, and
+    // "all of House Blend" must not be printed above a number that is only the
+    // 1kg bags of it.
+    countedName: [sku.item_name, sku.variant_label].filter(Boolean).join(' / '),
     detail: [sku.variant_label, lot ? `Lot ${lot.code}` : null].filter(Boolean).join(' · ') || null,
     unitLabel: sku.unit_label,
     code: sku.code,
@@ -178,6 +183,13 @@ function present(db, workspaceId, proposal, options = {}) {
     });
   }
 
+  // When the action is about one batch, every number above is that batch's, not
+  // the product's. Saying "Total on hand 90 → 5" of a product with 115 on the
+  // shelf is the one thing this panel exists not to do, so the batch is named
+  // as the batch and the product's own total is shown beside it.
+  const lotScoped = Boolean(proposal.lotId);
+  const lotName = lotScoped && subject.detail ? subject.detail : null;
+
   const total = {
     before: before.total ?? 0,
     after:
@@ -190,8 +202,25 @@ function present(db, workspaceId, proposal, options = {}) {
             : (before.total ?? 0) + (proposal.adjustmentTarget - (before.sourceOnHand ?? 0)),
   };
 
+  if (lotScoped && lotName) {
+    for (const row of rows) row.label = `${row.label} · ${lotName}`;
+  }
+
+  // What the product stands at across every batch and location, so "how much
+  // you have" means what it says.
+  const productTotal = lotScoped && proposal.skuId
+    ? (() => {
+        const held = resolver.skuTotal(db, workspaceId, proposal.skuId);
+        const delta = total.after - total.before;
+        return { before: held, after: held + delta, label: subject.countedName || subject.name };
+      })()
+    : null;
+
   return {
     ...proposal,
+    lotScoped,
+    lotName,
+    productTotal,
     title: ACTION_TITLE[proposal.actionType] || 'Foundry is ready',
     verb: ACTION_LABEL[proposal.actionType] || proposal.actionType,
     pastVerb: ACTION_PAST_LABEL[proposal.actionType] || `${proposal.actionType}d`,
@@ -232,9 +261,26 @@ function outcome(db, workspaceId, proposal, execution) {
     });
   }
 
+  // Same rule as the preview: a batch-scoped action reports batch numbers, and
+  // they have to be labelled as such rather than as the product's total.
+  const lotScoped = Boolean(proposal.lotId);
+  const lotName = lotScoped && subject.detail ? subject.detail : null;
+  if (lotScoped && lotName) {
+    for (const line of lines) line.label = `${line.label} · ${lotName}`;
+  }
+  const productTotal = lotScoped && proposal.skuId
+    ? (() => {
+        const held = resolver.skuTotal(db, workspaceId, proposal.skuId);
+        return { label: subject.countedName || subject.name, to: held, from: held - ((after.total ?? 0) - (before.total ?? 0)) };
+      })()
+    : null;
+
   return {
     name,
     lines,
+    lotScoped,
+    lotName,
+    productTotal,
     total: { from: before.total ?? 0, to: after.total ?? 0 },
     verified: execution.verified,
     problems: (execution.verification && execution.verification.problems) || [],

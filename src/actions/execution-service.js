@@ -218,6 +218,10 @@ function perform(db, ctx, proposal) {
       locationId: proposal.destinationLocationId,
       quantity: proposal.quantity,
       lotId: proposal.lotId || undefined,
+      // A batch named on the proposal that does not exist yet. The engine finds
+      // or creates it exactly as the receiving form does; nothing new is
+      // reachable from here that a person could not already do by hand.
+      lotCode: proposal.lotId ? undefined : (proposal.settings && proposal.settings.newLotCode) || undefined,
       reference,
       notes: proposal.notes || undefined,
     });

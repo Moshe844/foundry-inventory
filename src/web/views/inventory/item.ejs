@@ -316,7 +316,9 @@
           </a>
         <% }) %>
       </div>
-      <div class="card-foot">Each size is counted on its own. Foundry will not pick a reorder level for you until it has seen one sell — or you set it yourself.</div>
+      <%# An item with no option axes has nothing to count "on its own", so the
+          variant sentence is only shown where variants exist. %>
+      <div class="card-foot"><% if (purchasingLines.length > 1) { %>Each version is counted on its own. <% } %>Foundry will not pick a reorder level for you until it has seen one sell — or you set it yourself.</div>
     </div>
 
     <div class="card">
@@ -585,6 +587,11 @@
               <option value="<%= reason.id %>"><%= reason.label %></option>
             <% }) %>
           </select>
+        </div>
+        <div class="field">
+          <label class="label" for="issue-occurred">When did it go out? <span class="optional">optional</span></label>
+          <input class="input" id="issue-occurred" name="occurredAt" type="date" max="<%= new Date().toISOString().slice(0, 10) %>">
+          <span class="field-help">Leave blank for today. Foundry works out what to reorder from when stock actually left, so entering last week's sales with last week's dates keeps that right.</span>
         </div>
         <div class="field-row">
           <div class="field">

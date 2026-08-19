@@ -73,7 +73,13 @@ function describeCompleted(item) {
       headline:
         `${done ? 'Prepared' : 'Wants to prepare'} ${outcome.poNumber || 'a purchase order'} ` +
         `for ${(item.affectedEntities || {}).supplierName || 'a supplier'}`,
-      detail: outcome.subtotal !== undefined ? `${plural(outcome.lines || 0, 'line')}, ${outcome.subtotal}. Waiting for you to approve it.` : null,
+      // No unit costs on file means no total, and a bare "0" reads as a
+      // zero-value order rather than as a price nobody has told Foundry.
+      detail: outcome.lines === undefined
+        ? null
+        : Number(outcome.subtotal) > 0
+          ? `${plural(outcome.lines || 0, 'line')}, ${outcome.subtotal}. Waiting for you to approve it.`
+          : `${plural(outcome.lines || 0, 'line')}, no prices on file yet. Waiting for you to approve it.`,
       verified: true,
       link: item.purchaseOrderId ? `/purchasing/orders/${item.purchaseOrderId}` : `/autopilot/work/${item.id}`,
     };
@@ -289,12 +295,14 @@ function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
     .filter((item) => !['low_stock', 'stockout_risk'].includes(item.category) || !workCoveredSkus.has(item.skuId))
     .map((item) => ({
       kind: 'finding',
-      id: item.id,
+      // The hydrated finding calls its own key attentionId. Reading `id` here
+      // produced a Review button pointing at /attention/undefined.
+      id: item.attentionId,
       title: item.narrativeTitle || item.title,
       because: item.conciseSummary,
       evidence: item.evidence || [],
       priority: item.priorityScore || 50,
-      link: `/attention/${item.id}`,
+      link: `/attention/${item.attentionId}`,
       action: 'Review',
     }))
     .sort((a, b) => b.priority - a.priority)

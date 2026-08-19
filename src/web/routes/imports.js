@@ -99,6 +99,8 @@ router.get(
       preview: presenter.preview(req.db, req.ctx.workspaceId, plan, allRows),
       problems: presenter.problemSummary(allRows),
       fieldOptions: fields.FIELDS,
+      // The same bytes, already imported here before. Shown, never blocked.
+      earlierImports: planService.earlierImportsOfSameFile(req.db, req.ctx.workspaceId, plan),
       locations: locationsFor(req.db, req.ctx.workspaceId),
       progress: run ? executor.progress(req.db, req.ctx.workspaceId, run.id) : null,
       report:

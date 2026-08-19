@@ -11,7 +11,7 @@ const managerContext = require('./context');
 const INTENT_CLASSES = [
   'QUESTION', 'INVENTORY_ACTION', 'CATALOG_CHANGE', 'IMPORT', 'PHYSICAL_EVENT',
   'PURCHASING_REQUEST', 'POLICY_CHANGE', 'INVESTIGATION_REQUEST',
-  'CONFIGURATION_CHANGE', 'EXPLANATION', 'UNKNOWN',
+  'CONFIGURATION_CHANGE', 'EXPLANATION', 'STOP', 'UNKNOWN',
 ];
 
 const SCHEMA = {
@@ -38,6 +38,10 @@ POLICY_CHANGE changes what Foundry may do automatically or its limits.
 INVESTIGATION_REQUEST asks why records differ or asks Foundry to investigate.
 CONFIGURATION_CHANGE changes terminology or inventory configuration, including mapping a vendor's product code to the customer's own internal code.
 EXPLANATION asks why Foundry did, did not do, or recommends something.
+STOP is only for a message whose whole point is that Foundry should stop, pause or hold off acting
+on its own: "stop", "stop doing that", "pause", "hold off", "don't do anything for now". A message
+that asks for work to be done — ordering, moving, counting, receiving — is never STOP, however
+urgent it sounds.
 UNKNOWN only when none fits.
 
 Use the supplied durable context to understand short follow-ups such as "approve it" or "what about that one".
@@ -51,6 +55,12 @@ function fallbackClassify(message) {
   const clean = message.trim();
   const result = (intentClass, reason) => ({ intentClass, confidence: 'high', reason,
     resolvedReference: '', clarifyingQuestion: '' });
+  // "Stop." is the one instruction that must never be misread, deferred or
+  // quietly dropped. It is checked before anything else, and matched on the
+  // plain words people actually use rather than on the word "policy".
+  if (/^\s*(?:stop|halt|pause|freeze)\b|\b(?:stop|pause|halt)\s+(?:doing|what|that|it|everything|for now)\b|\bdon'?t do (?:that|anything)\b|\bhold off\b/i.test(clean)) {
+    return result('STOP', 'This asks Foundry to stop acting on its own.');
+  }
   if (/\b(handle everything|automatically|autopilot|may (?:approve|move|order)|never (?:approve|move|order)|policy|authority|limit)\b/i.test(clean)) {
     return result('POLICY_CHANGE', 'This explicitly changes what Foundry may do or its limits.');
   }

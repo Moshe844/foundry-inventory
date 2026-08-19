@@ -190,6 +190,13 @@
     <div class="card section">
       <div class="card-head"><h2>A few things I'd recommend</h2></div>
       <div class="card-body">
+        <% if (configRecs.length) { %>
+          <p class="muted" style="margin:0 0 12px;">
+            Tick anything you want to act on. Ticking it does not change the setup
+            below — it records that you agreed, and Foundry lists it on the next
+            screen with what to do about it. Leaving one unticked simply means no.
+          </p>
+        <% } %>
         <% configRecs.forEach(function (rec) { %>
           <label class="rec">
             <input type="checkbox" name="acceptRecommendation" value="<%= rec.id %>">

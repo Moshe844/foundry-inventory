@@ -575,8 +575,35 @@ function cancel(db, ctx, membership, importId) {
   return get(db, ctx.workspaceId, importId);
 }
 
+/**
+ * Has this exact file already been imported here?
+ *
+ * The bytes are hashed and indexed when a plan is created, with a comment
+ * saying a re-upload should be recognisable — but nothing ever asked. Uploading
+ * the same delivery note twice therefore read as an ordinary import and
+ * doubled the stock, silently, which is the single easiest way for a customer
+ * to destroy their own numbers.
+ *
+ * This does not block anything. A supplier really can send the same quantities
+ * twice, so the person is told what already happened and decides.
+ */
+function earlierImportsOfSameFile(db, workspaceId, plan) {
+  if (!plan || !plan.sourceHash) return [];
+  return db
+    .prepare(
+      `SELECT id, source_name, status, created_at, approved_at
+         FROM import_plans
+        WHERE workspace_id = ? AND source_hash = ? AND id != ?
+          AND status IN ('SUCCEEDED', 'PARTIAL')
+        ORDER BY created_at DESC
+        LIMIT 5`
+    )
+    .all(workspaceId, plan.sourceHash, plan.id || '');
+}
+
 module.exports = {
   PLAN_TTL_MS,
+  earlierImportsOfSameFile,
   firstSentence,
   stableStringify,
   computeIntegrityHash,

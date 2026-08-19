@@ -1,5 +1,5 @@
 <%
-  var totalWaiting = operating.length + investigations.length + physical.length + waiting.length;
+  var totalWaiting = operating.length + investigations.length + physical.length + waiting.length + findings.length;
   var totalLabel = totalWaiting === 1 ? '1 thing needs you' : totalWaiting + ' things need you';
 %>
 
@@ -42,6 +42,12 @@
   </section>
 
   <section class="needs-section">
+    <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('alert', { size: 18 }) %></span><div><span class="needs-section__label">Foundry noticed something</span><h2>Worth a look</h2></div><span class="needs-count <%= findings.length ? 'has-work' : 'is-clear' %>"><%= findings.length ? findings.length + ' waiting' : 'Clear' %></span></div>
+    <% if (!findings.length) { %><div class="needs-empty"><span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span><div><strong>Nothing stands out</strong><p>Foundry has not found anything in your records worth raising.</p></div></div><% } %>
+    <% findings.forEach(function (entry) { %><a class="needs-row" href="<%= entry.link %>"><span class="needs-row__icon is-warn"><%- helpers.icon('alert', { size: 18 }) %></span><div><strong><%= entry.title %></strong><% if (entry.because) { %><p><%= entry.because %></p><% } %></div><%- helpers.icon('chevron', { size: 17 }) %></a><% }) %>
+  </section>
+
+  <section class="needs-section">
     <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('search', { size: 18 }) %></span><div><span class="needs-section__label">The count does not match</span><h2>Differences to look into</h2></div><span class="needs-count <%= investigations.length ? 'has-work' : 'is-clear' %>"><%= investigations.length ? investigations.length + ' waiting' : 'Clear' %></span></div>
     <% if (!investigations.length) { %><div class="needs-empty"><span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span><div><strong>No investigations need you</strong><p>There are no unexplained inventory discrepancies waiting.</p></div></div><% } %>
     <% investigations.forEach(function (entry) { %><a class="needs-row" href="/investigations/<%= entry.investigationId %>"><span class="needs-row__icon is-warn"><%- helpers.icon('alert', { size: 18 }) %></span><div><strong><%= entry.affectedEntities.displayName || 'Inventory discrepancy' %></strong><p><%= entry.recommendedNextStep %></p></div><span class="needs-count has-work"><%= entry.unexplainedAmount === null ? 'Review' : entry.unexplainedAmount + ' unexplained' %></span><%- helpers.icon('chevron', { size: 17 }) %></a><% }) %>
@@ -50,7 +56,7 @@
   <section class="needs-section">
     <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('box', { size: 18 }) %></span><div><span class="needs-section__label">Something happened, Foundry needs the detail</span><h2>Deliveries and counts to confirm</h2></div><span class="needs-count <%= physical.length ? 'has-work' : 'is-clear' %>"><%= physical.length ? physical.length + ' waiting' : 'Clear' %></span></div>
     <% if (!physical.length) { %><div class="needs-empty"><span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span><div><strong>Every physical event is matched</strong><p>No reported count, receipt, or movement is missing context.</p></div></div><% } %>
-    <% physical.forEach(function (entry) { %><div class="needs-row"><span class="needs-row__icon is-warn"><%- helpers.icon('question', { size: 18 }) %></span><div><strong><%= entry.event_type.replaceAll('_', ' ') %></strong><p><%= entry.stated_as %></p></div><a class="btn btn--sm" href="/#tell-foundry">Add missing detail</a></div><% }) %>
+    <% physical.forEach(function (entry) { %><div class="needs-row"><span class="needs-row__icon is-warn"><%- helpers.icon('question', { size: 18 }) %></span><div><strong>Foundry needs one more detail before it can record this</strong><p>You said: “<%= entry.stated_as %>”</p><% if (entry.reason) { %><p class="muted"><%= entry.reason %></p><% } %></div><a class="btn btn--sm" href="/#tell-foundry">Add missing detail</a></div><% }) %>
   </section>
 
   <section class="needs-section">

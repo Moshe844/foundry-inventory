@@ -60,7 +60,24 @@ function tidyName(raw, optionValues = []) {
     kept.push(part.trim());
   }
 
-  const text = (kept.join(', ') || parts[0] || cleaned).replace(/\s+/g, ' ').trim();
+  let text = (kept.join(', ') || parts[0] || cleaned).replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+
+  // The same cut again, one word at a time.
+  //
+  // Separators are a convention the model does not always follow: asked about
+  // coffee in 250g and 1kg bags it answers "House Blend 1kg bag", with nothing
+  // but spaces in it. Cutting only on ", " and " - " left the variant value
+  // inside the product name, so the workspace ended up with a coffee called
+  // "House Blend 1kg bag" that then had 250g and 1kg variants of its own.
+  //
+  // Cutting at a whole word is safe where subtracting one is not — "S" as a
+  // size never matches the word "T-shirt" — and the first word is never cut,
+  // so a product genuinely named after one of its own option values ("Red
+  // Label Tea", colour Red) keeps its name.
+  const words = text.split(' ');
+  const cut = words.findIndex((word, index) => index > 0 && values.has(word.toLowerCase()));
+  if (cut > 0) text = words.slice(0, cut).join(' ').trim();
   if (!text) return null;
 
   // Left in the customer's own words. Singularising looks tidy until it meets

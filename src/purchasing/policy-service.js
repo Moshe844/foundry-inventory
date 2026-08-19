@@ -205,12 +205,26 @@ function proposePolicy(db, workspaceId, skuId, options = {}) {
       preferredSupplierId: suppliers.length ? suppliers[0].supplierId : null,
       source: 'foundry',
     },
+    // Every number the reorder point is built from, so somebody can add it up
+    // themselves and get the same answer. The review period used to be missing,
+    // which made the arithmetic fail to reconcile: the listed lead time and
+    // safety margin came to 34, and the reorder point on the same row said 46.
     derivedFrom: [
       { label: `Issued in last ${sku.measured.windowDays} days`, value: sku.measured.issuedInWindow },
       { label: 'Average usage', value: `${usage} a day` },
       { label: 'Lead time', value: `${leadTime} days` },
+      {
+        label: 'Time until the next look',
+        value: `${replenishment.DEFAULTS.reviewPeriodDays} days`,
+      },
       { label: 'Safety margin', value: `${replenishment.DEFAULTS.safetyDays} days of usage` },
       { label: 'Cover beyond reorder point', value: `${replenishment.DEFAULTS.coverDays} days` },
+      {
+        label: 'So the reorder point is',
+        value:
+          `${usage}/day × (${leadTime} + ${replenishment.DEFAULTS.reviewPeriodDays}) days ` +
+          `+ ${safetyStock} safety = ${reorderPoint}`,
+      },
     ],
   };
 }

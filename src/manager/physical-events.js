@@ -109,6 +109,35 @@ function deterministicNatural(statedAs, skus, locations) {
   };
 }
 
+/**
+ * Whole-word containment.
+ *
+ * Plain substring matching cannot be used to decide that a report names two
+ * products: a size called "S" is inside almost every sentence ever written, and
+ * a false match here would refuse a perfectly clear single count.
+ */
+function mentions(text, phrase) {
+  const needle = words(phrase);
+  if (!needle) return false;
+  const haystack = ` ${text} `;
+  return haystack.includes(` ${needle} `);
+}
+
+/** How many distinct products and locations this report actually names. */
+function countMentions(statedAs, skus, locations) {
+  const text = words(statedAs);
+  const namedSkus = new Set();
+  for (const row of skus) {
+    if (!mentions(text, row.name)) continue;
+    if (row.variant_label && !mentions(text, row.variant_label)) continue;
+    namedSkus.add(row.id);
+  }
+  const namedLocations = new Set(
+    locations.filter((row) => mentions(text, row.name)).map((row) => row.id)
+  );
+  return { skus: namedSkus.size, locations: namedLocations.size };
+}
+
 async function recordNatural(db, ctx, statedAs, options = {}) {
   const skus = db.prepare(`SELECT s.id, s.variant_label, i.name, i.unit_label FROM skus s
     JOIN items i ON i.id = s.item_id WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
@@ -149,6 +178,31 @@ async function recordNatural(db, ctx, statedAs, options = {}) {
   }
   const sku = parsed.skuId ? skus.find((row) => row.id === parsed.skuId) : null;
   const location = parsed.locationId ? locations.find((row) => row.id === parsed.locationId) : null;
+
+  // One report, one event — so a report that is plainly about more than one
+  // position must not be recorded as though it were about the first of them.
+  //
+  // "40 of the 250g at the Roastery and 12 of the 1kg at the Warehouse" used to
+  // become a single count of the 250g, with the second half of the sentence
+  // dropped and nothing said about it. Recording half of what somebody told you
+  // and reporting success is worse than recording none of it: they have no
+  // reason to look again.
+  const mentioned = countMentions(statedAs, skus, locations);
+  if (parsed.eventType === 'physical_count' && (mentioned.skus > 1 || mentioned.locations > 1)) {
+    return record(db, ctx, {
+      eventType: 'reported_event',
+      statedAs,
+      details: {
+        interpreted: parsed,
+        interpretationReason:
+          `This report names ${mentioned.skus} products across ${mentioned.locations} locations. ` +
+          'Foundry records one count at a time and will not record part of a report as if it were all of it. ' +
+          'Tell it one product and location at a time, or use a count sheet.',
+        unresolvedMultiplePositions: true,
+      },
+    });
+  }
+
   return record(db, ctx, {
     eventType: parsed.eventType,
     statedAs,

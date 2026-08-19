@@ -83,7 +83,7 @@ router.post(
       });
     }
 
-    const jobId = jobRunner.createJob(req.ctx.workspaceId, 'understanding');
+    const jobId = jobRunner.createJob(req.ctx.workspaceId, 'understanding', description || '');
     const ctx = req.ctx;
     const db = req.db;
     const membership = req.user;
@@ -127,7 +127,7 @@ router.get(
         nav: 'foundry',
       otherWorkspaces: Math.max(0, (res.locals.workspaces || []).length - 1),
         aiConfigured: config.ai.configured,
-        description: '',
+        description: job.description || '',
         error: job.error.message,
       });
     }
@@ -255,6 +255,11 @@ router.get(
       summary: stored.applied_summary ? JSON.parse(stored.applied_summary) : null,
       setupDocument: documentIntake.getByPlan(req.db, req.ctx.workspaceId, stored.id),
       decisions: planBuilder.listDecisions(req.db, req.ctx.workspaceId, stored.id),
+      acceptedRecommendations: understandingService.listAcceptedRecommendations(
+        req.db,
+        req.ctx.workspaceId,
+        stored.id
+      ),
       // What Foundry would create from what they already described. Null once
       // the inventory has anything in it.
       firstItem: firstItemService.suggest(req.db, req.ctx.workspaceId),

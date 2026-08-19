@@ -34,12 +34,18 @@ const STAGES = {
   failed: { label: 'Something went wrong', detail: 'Foundry could not finish reading that.' },
 };
 
-function createJob(workspaceId, kind = 'understanding') {
+/**
+ * `description` is remembered only so a failed job can hand the customer their
+ * own words back. Retyping a paragraph about your business because a request
+ * timed out is the kind of small cruelty nobody ever reports as a bug.
+ */
+function createJob(workspaceId, kind = 'understanding', description = '') {
   const id = newId('job');
   JOBS.set(id, {
     id,
     workspaceId,
     kind,
+    description,
     status: 'queued',
     stage: 'queued',
     result: null,
@@ -73,9 +79,16 @@ function failJob(jobId, error) {
   job.status = 'failed';
   job.stage = 'failed';
   // Only ever surface a message that is safe and useful to a customer.
+  //
+  // A retryable provider failure is not the same thing as an unreadable file,
+  // and telling somebody their description could not be understood when the
+  // real problem is the network sends them off rewriting a paragraph that was
+  // fine. Those messages are already written for a customer, so they are used
+  // as they are.
+  const retryable = Boolean(error && error.retryable);
   job.error = {
     message:
-      error && error.status && error.status < 500
+      error && error.message && ((error.status && error.status < 500) || retryable)
         ? error.message
         : 'Foundry could not finish reading that. Please try again.',
     code: (error && error.code) || 'unknown',
@@ -90,6 +103,7 @@ function getJob(jobId, workspaceId) {
   return {
     id: job.id,
     status: job.status,
+    description: job.description || '',
     stage: job.stage,
     stageLabel: (STAGES[job.stage] || STAGES.queued).label,
     stageDetail: (STAGES[job.stage] || STAGES.queued).detail,

@@ -127,6 +127,35 @@ function openPhysicalCount(db, ctx, input) {
     });
   }
 
+  // Nothing has ever been recorded here, so there is nothing to reconcile.
+  //
+  // A count is a discrepancy only when it disagrees with a ledger. On a sku and
+  // location with no movements at all, a zero balance is not a measurement that
+  // says "empty" — it is the absence of any measurement, and the count is the
+  // customer telling Foundry its opening stock for the first time. Treating it
+  // as an unexplained surplus was a dead end: the investigation reported units
+  // it refused to explain, resolving it deliberately does not write a balance,
+  // and somebody entering their opening quantities on the setup path ended up
+  // with no stock and a discrepancy they had no way to clear.
+  const everRecorded = db
+    .prepare('SELECT 1 FROM movements WHERE workspace_id = ? AND sku_id = ? AND location_id = ? LIMIT 1')
+    .get(ctx.workspaceId, sku.id, location.id);
+
+  if (!everRecorded && expected === 0 && observed > 0) {
+    return create(db, ctx.workspaceId, {
+      trigger: 'opening_balance_declared',
+      affectedEntities: entities,
+      observedDifference: { expected, observed, difference },
+      confidence: 'high',
+      recommendedNextStep:
+        `Foundry has never recorded a movement of ${entities.displayName || 'this item'} at ${location.name}, ` +
+        `so there is nothing for this count to disagree with. If these ${observed} are your opening stock, ` +
+        `receive them — that writes the balance with you on record as the source.`,
+      actorUserId: ctx.actorId,
+      idempotencyKey: input.idempotencyKey || keyFor('opening_balance_declared', entities, { expected, observed }),
+    });
+  }
+
   return create(db, ctx.workspaceId, {
     trigger: 'physical_count_discrepancy',
     affectedEntities: entities,
@@ -201,6 +230,24 @@ function investigate(db, workspaceId, id) {
         WHERE id = ? AND workspace_id = ?`
     ).run(JSON.stringify(evidenceReviewed), next, nowIso(), id, workspaceId);
     recordEvent(db, workspaceId, id, 'inconclusive', { reason: 'A measured product, location and count were not all available.' });
+    return get(db, workspaceId, id);
+  }
+
+  // An opening balance has already been diagnosed: the ledger is empty because
+  // nothing has happened yet, not because units went missing. Counting evidence
+  // against it would only produce the same "nothing explains this" it started
+  // with, so it goes straight to the person with the one step that resolves it.
+  if (investigation.trigger === 'opening_balance_declared') {
+    db.prepare(
+      `UPDATE inventory_investigations
+          SET evidence_reviewed = ?, hypotheses = '[]', evidence_for = '[]', evidence_against = '[]',
+              explained_amount = NULL, unexplained_amount = NULL, confidence = 'high',
+              recommended_next_step = ?, status = 'NEEDS_HUMAN', updated_at = ?
+        WHERE id = ? AND workspace_id = ?`
+    ).run(JSON.stringify(evidenceReviewed), investigation.recommendedNextStep, nowIso(), id, workspaceId);
+    recordEvent(db, workspaceId, id, 'opening_balance_declared', {
+      observed: investigation.observedDifference.observed,
+    });
     return get(db, workspaceId, id);
   }
 
@@ -338,10 +385,83 @@ function resolve(db, ctx, id, note) {
   };
 }
 
+/**
+ * Closes opening-balance investigations that have answered themselves.
+ *
+ * The only thing an opening-balance investigation asks for is that the stock be
+ * recorded. Once a movement exists for that product and location, the premise
+ * it was raised on — that nothing had ever been recorded there — is no longer
+ * true, and leaving it open asks somebody to do a job they have just done.
+ *
+ * It settles on the ledger rather than on the number: a receipt of a different
+ * quantity is still the person answering, and a count that then genuinely
+ * disagrees is a new investigation with real evidence behind it.
+ */
+function settleOpeningBalances(db, workspaceId) {
+  const open = db
+    .prepare(
+      `SELECT * FROM inventory_investigations
+        WHERE workspace_id = ? AND trigger IN ('opening_balance_declared', 'physical_count_discrepancy')
+          AND status NOT IN ('RESOLVED')`
+    )
+    .all(workspaceId)
+    .map(hydrate);
+
+  let settled = 0;
+  for (const investigation of open) {
+    const entities = investigation.affectedEntities || {};
+    if (!entities.skuId || !entities.locationId) continue;
+    const balance = repo.getBalance(db, workspaceId, entities.skuId, entities.locationId);
+    let reason = null;
+
+    if (investigation.trigger === 'opening_balance_declared') {
+      const movement = db
+        .prepare(
+          'SELECT id FROM movements WHERE workspace_id = ? AND sku_id = ? AND location_id = ? LIMIT 1'
+        )
+        .get(workspaceId, entities.skuId, entities.locationId);
+      if (!movement) continue;
+      reason = 'Opening stock was recorded on the ledger.';
+    } else {
+      // The ledger now says what the count said, so there is no difference left
+      // to explain. Somebody corrected it — with a reason, through the engine —
+      // and being told afterwards not to adjust the ledger until the difference
+      // is explained is the investigation arguing with the record it watches.
+      const observed = Number(investigation.observedDifference && investigation.observedDifference.observed);
+      if (!Number.isFinite(observed) || balance !== observed) continue;
+      reason = 'The recorded count now matches what was physically counted.';
+    }
+
+    const resolvedAt = nowIso();
+    db.prepare(
+      `UPDATE inventory_investigations
+          SET status = 'RESOLVED', resolved_at = ?, updated_at = ?,
+              unexplained_amount = 0, recommended_next_step = ?
+        WHERE id = ? AND workspace_id = ?`
+    ).run(
+      resolvedAt,
+      resolvedAt,
+      `${reason} ${entities.displayName || 'This product'} now stands at ${balance}.`,
+      investigation.investigationId,
+      workspaceId
+    );
+    db.prepare(
+      `UPDATE physical_events SET status = 'COMPLETED', updated_at = ?
+        WHERE workspace_id = ? AND investigation_id = ? AND status = 'NEEDS_HUMAN'`
+    ).run(resolvedAt, workspaceId, investigation.investigationId);
+    recordEvent(db, workspaceId, investigation.investigationId, 'resolved_by_reconciliation', {
+      reason,
+      balance,
+    });
+    settled += 1;
+  }
+  return settled;
+}
+
 function recover(db, workspaceId) {
   return db.prepare(
     "UPDATE inventory_investigations SET status = 'OPEN', updated_at = ? WHERE workspace_id = ? AND status = 'INVESTIGATING'"
   ).run(nowIso(), workspaceId).changes;
 }
 
-module.exports = { STATUS, hydrate, keyFor, create, get, list, events, openPhysicalCount, investigate, resolve, recover };
+module.exports = { STATUS, hydrate, keyFor, create, get, list, events, openPhysicalCount, investigate, resolve, settleOpeningBalances, recover };

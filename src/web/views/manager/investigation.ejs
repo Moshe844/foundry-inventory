@@ -9,8 +9,12 @@
     : difference > 0 ? differenceSize + ' more than recorded' : 'Count matches';
   var open = ['OPEN', 'INVESTIGATING', 'NEEDS_HUMAN', 'INCONCLUSIVE'].includes(investigation.status);
   var statusLabel = investigation.status === 'RESOLVED' ? 'Resolved' : 'Needs confirmation';
+  // A count on a sku and location with no ledger at all is an opening balance,
+  // not a discrepancy, and the only thing that resolves it is receiving stock.
+  var openingBalance = investigation.trigger === 'opening_balance_declared';
   var eventLabels = {
     opened: 'Report received',
+    opening_balance_declared: 'Recognised as opening stock',
     investigating: 'Compared with inventory records',
     evidence_reviewed: 'Evidence checked',
     inconclusive: 'More detail needed',
@@ -28,7 +32,7 @@
   <div class="investigation-hero__copy">
     <div class="investigation-hero__meta">
       <span class="badge <%= investigation.status === 'RESOLVED' ? 'badge--ok' : 'badge--warn' %>"><%= statusLabel %></span>
-      <span>Physical count discrepancy</span>
+      <span><%= openingBalance ? 'Opening stock not recorded yet' : 'Physical count discrepancy' %></span>
     </div>
     <h1><%= investigation.affectedEntities.displayName || 'Inventory discrepancy' %></h1>
   </div>
@@ -40,10 +44,27 @@
       <div class="card-head">
         <div>
           <span class="investigation-kicker">What Foundry found</span>
-          <h2>The physical count does not match the inventory record</h2>
+          <h2><%= openingBalance
+            ? 'This is the first time anything has been counted here'
+            : 'The physical count does not match the inventory record' %></h2>
         </div>
       </div>
       <div class="card-body">
+        <% if (openingBalance) { %>
+          <div class="count-equation" aria-label="You reported <%= observed %> on hand; nothing was recorded before">
+            <div class="count-equation__value">
+              <span>You reported</span>
+              <strong><%= observed ?? '—' %></strong>
+              <small>on hand</small>
+            </div>
+            <div class="count-equation__operator" aria-hidden="true">→</div>
+            <div class="count-equation__result">
+              <span>On the ledger</span>
+              <strong>0</strong>
+              <small>nothing recorded yet</small>
+            </div>
+          </div>
+        <% } else { %>
         <div class="count-equation" aria-label="Recorded <%= expected ?? 'unknown' %>, physically counted <%= observed ?? 'unknown' %>, <%= differenceLabel %>">
           <div class="count-equation__value">
             <span>Recorded</span>
@@ -63,11 +84,15 @@
             <small><%= differenceLabel %></small>
           </div>
         </div>
+        <% } %>
 
         <div class="investigation-explanation">
           <span class="investigation-explanation__icon"><%- helpers.icon('activity', { size: 17 }) %></span>
           <div>
-            <% if (!investigation.hypotheses.length) { %>
+            <% if (openingBalance) { %>
+              <strong>There is no difference to explain.</strong>
+              <p>Foundry has never recorded a sale, transfer, receipt or adjustment for this product at this location, so the recorded 0 is not a measurement — it is the absence of one. Your count is the opening quantity, and receiving it is what puts it on the ledger.</p>
+            <% } else if (!investigation.hypotheses.length) { %>
               <strong>No recorded event explains the difference yet.</strong>
               <p>Foundry checked the ledger and found no sale, transfer, receipt or adjustment that accounts for these <%= differenceSize ?? 'missing' %> units. It will not invent a cause.</p>
             <% } else { %>
@@ -103,7 +128,38 @@
   </main>
 
   <aside class="card investigation-decision">
-    <% if (open) { %>
+    <% if (open && openingBalance) { %>
+      <div class="card-head">
+        <div>
+          <span class="investigation-kicker">One decision</span>
+          <h2>Record this as opening stock</h2>
+        </div>
+      </div>
+      <div class="card-body">
+        <p class="investigation-decision__lead">
+          Nothing has ever moved through <%= investigation.affectedEntities.displayName || 'this product' %>
+          at this location, so there is no record for your count to disagree with.
+          Receiving these <%= observed %> puts them on the ledger with you as the source.
+        </p>
+        <div class="investigation-safety">
+          <%- helpers.icon('alert', { size: 16 }) %>
+          <span>Foundry will not write this balance by itself. Receiving is the step that makes it real, and it stays in Activity with your name on it.</span>
+        </div>
+        <% if (investigation.affectedEntities.itemId) { %>
+          <a class="btn btn--primary btn--block" href="/inventory/<%= investigation.affectedEntities.itemId %>?action=receive&skuId=<%= encodeURIComponent(investigation.affectedEntities.skuId || '') %>&locationId=<%= encodeURIComponent(investigation.affectedEntities.locationId || '') %>&quantity=<%= observed %>">
+            <%- helpers.icon('check', { size: 16 }) %> Receive <%= observed %> into stock
+          </a>
+        <% } %>
+        <form method="post" action="/investigations/<%= investigation.investigationId %>/resolve" style="margin-top:12px;">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <label class="field">
+            <span class="label">Or close this without recording stock — why?</span>
+            <textarea class="textarea" name="note" rows="3" required placeholder="Example: reported in error, these bags belong to another site."></textarea>
+          </label>
+          <button class="btn btn--block" type="submit">Close without recording stock</button>
+        </form>
+      </div>
+    <% } else if (open) { %>
       <div class="card-head">
         <div>
           <span class="investigation-kicker">One decision</span>

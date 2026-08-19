@@ -139,7 +139,7 @@
       <% } %>
 
       <p class="muted">
-        This creates the <%= term('item').toLowerCase() %> and its combinations, and nothing else.
+        This creates the <%= term('item').toLowerCase() %><% if (firstItem.options && firstItem.options.length) { %> and its combinations<% } %>, and nothing else.
         Foundry does not know what is on your shelves yet, so every one starts at zero — you receive
         stock next, or bring it in from a spreadsheet.
       </p>
@@ -153,6 +153,29 @@
       </div>
     </div>
   </form>
+<% } %>
+
+<% if (acceptedRecommendations && acceptedRecommendations.length) { %>
+  <div class="card section">
+    <div class="card-head"><h2>What you asked Foundry to keep an eye on</h2></div>
+    <div class="card-body">
+      <p class="muted" style="margin-top:0;">
+        These are not part of the configuration above — they are things you agreed
+        with that need something from you before Foundry can act on them.
+      </p>
+      <ul class="ready-list">
+        <% acceptedRecommendations.forEach(function (rec) { %>
+          <li>
+            <%- helpers.icon('alert', { size: 16 }) %>
+            <span>
+              <strong><%= rec.title %></strong><br>
+              <span class="muted"><%= rec.recommendation %></span>
+            </span>
+          </li>
+        <% }) %>
+      </ul>
+    </div>
+  </div>
 <% } %>
 
 <% if (decisions && decisions.length) { %>

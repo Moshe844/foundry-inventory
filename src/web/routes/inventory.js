@@ -226,6 +226,10 @@ router.post(
       reasonCode: req.body.reasonCode,
       notes: req.body.notes,
       reference: req.body.reference,
+      // Stock rarely leaves on the day somebody gets around to typing it in.
+      // Foundry works out what to reorder from when things actually went, so a
+      // week of sales entered on Friday must not read as a Friday spike.
+      occurredAt: trimOrNull(req.body.occurredAt),
     };
     if (item.tracking_mode === 'serial') input.serialUnitIds = toArray(req.body.serialUnitIds);
     if (item.tracking_mode === 'lot') input.lotId = req.body.lotId;

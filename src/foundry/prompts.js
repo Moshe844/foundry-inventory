@@ -29,6 +29,12 @@ ${Object.values(TRACKING_MODES)
   combinations (up to 3 option axes), and each combination is counted
   separately. Variants combine with any tracking mode, so "variants that are
   also lot tracked" and "variants that are serialized" are both supported.
+- Serial units: a serially tracked item's units are individual records. Each one
+  carries its own serial number, its current location, and a condition — one of
+  good, damaged, repair or unknown — which is set when it is received and can be
+  changed afterwards. Condition is a real field on the unit, not a note: never
+  tell somebody Foundry cannot track the condition of a serialised unit, and
+  never propose adjustment-reason text as a substitute for it.
 - Location: anywhere stock lives. Kinds: ${LOCATION_KINDS.map((k) => k.id).join(', ')}.
 - Operations: receive, issue, transfer (atomic, between two locations), and
   adjust (an authorised correction that always requires a reason).
