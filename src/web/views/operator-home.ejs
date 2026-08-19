@@ -6,8 +6,6 @@
   var handlingCount = home.handling.length;
   var isSettingUp = !!home.setup;
   var hasProducts = stats.itemCount > 0;
-  var hasLocations = stats.locationCount > 0;
-  var hasUsageEvidence = home.readiness.usageReady > 0;
 %>
 
 <% if (isSettingUp) { %>
@@ -128,21 +126,21 @@
     <span class="operator-command__promise">Tell Foundry anything about your inventory operation — a question, a delivery, a count, a movement, a purchasing task, a policy change, or a file.</span>
     <form class="operator-command__form" method="post" action="/foundry/tell" enctype="multipart/form-data" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <input class="operator-command__input" id="ask-question" type="text" name="message" placeholder="For example: We received 40 units in Brooklyn…" maxlength="400" autocomplete="off">
+      <input class="operator-command__input" id="ask-question" data-ask-input type="text" name="message" placeholder="For example: We received 40 units in Brooklyn…" maxlength="400" autocomplete="off">
       <label class="operator-command__attach" title="Attach a file"><span class="visually-hidden">Attach a file</span><input type="file" name="file" accept=".csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*"><%- helpers.icon('import', { size: 17 }) %></label>
       <button class="operator-command__send" type="submit" aria-label="Tell Foundry"><%- helpers.icon('send', { size: 17 }) %></button>
     </form>
     <div class="operator-command__examples">
       <% if (isSettingUp) { %>
-        <a href="/#tell-foundry">Add my products</a>
-        <a href="/#tell-foundry">Upload my inventory</a>
-        <a href="/#tell-foundry">We received stock</a>
+        <a href="#tell-foundry" data-fill-ask="Add my products">Add my products</a>
+        <a href="#tell-foundry" data-fill-ask="Help me import my inventory from a file">Upload my inventory</a>
+        <a href="#tell-foundry" data-fill-ask="We received stock">We received stock</a>
         <a href="<%= home.setup.link %>">Help me finish setup</a>
       <% } else { %>
         <a href="/ask?q=<%= encodeURIComponent('What needs my attention?') %>">What needs my attention?</a>
-        <a href="/#tell-foundry">Record a delivery</a>
-        <a href="/#tell-foundry">Move stock</a>
-        <a href="/#tell-foundry">I counted an item</a>
+        <a href="#tell-foundry" data-fill-ask="Record a delivery">Record a delivery</a>
+        <a href="#tell-foundry" data-fill-ask="Move stock between locations">Move stock</a>
+        <a href="#tell-foundry" data-fill-ask="I counted an item">I counted an item</a>
         <a href="/ask?q=<%= encodeURIComponent('What should I order?') %>">What should I order?</a>
         <a href="/ask?q=<%= encodeURIComponent('What did you do today?') %>">What did you do today?</a>
       <% } %>
