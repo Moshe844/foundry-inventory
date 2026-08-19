@@ -75,7 +75,12 @@
               <td class="right" data-label="Locations"><span class="num"><%= item.location_count %></span></td>
               <td class="right cell-end" data-label="On hand">
                 <strong class="num"><%= helpers.qty(item.on_hand) %></strong>
-                <% if (item.on_hand === 0) { %><span class="badge badge--muted">empty</span><% } %>
+                <%# A product with nothing in it is the commonest state right after
+                    setup, and "empty" on its own is a dead end. Say what would
+                    change it and link straight there. %>
+                <% if (item.on_hand === 0) { %>
+                  <a class="badge badge--muted" href="/inventory/<%= item.id %>#modal-receive">Receive stock</a>
+                <% } %>
               </td>
             </tr>
           <% }) %>

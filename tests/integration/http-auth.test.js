@@ -273,3 +273,17 @@ test('every main nav destination renders where it says, even when empty', async 
   assert.match(overview, /Set it up with Foundry/);
   assert.ok(!overview.includes("Today's briefing"), 'no briefing about nothing');
 });
+
+test('the entry screens say what Foundry is to somebody who has never seen it', async () => {
+  // Both pages spoke only to people already using it — "your inventory, exactly
+  // as your team left it" — leaving a stranger no way to tell what kind of
+  // product this is before handing over an email address.
+  const { app } = makeApp();
+
+  for (const path of ['/login', '/register']) {
+    const page = plain((await request(app).get(path)).text);
+    assert.match(page, /Foundry runs your inventory/, `${path} says what it does`);
+    assert.match(page, /handle the exceptions/, `${path} says what is left to you`);
+    assert.match(page, /reorder|receiving|transfers/i, `${path} names real work`);
+  }
+});

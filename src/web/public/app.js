@@ -91,7 +91,23 @@
   /* ------------------------------------------------------------ modals -- */
 
   function initModals() {
-    document.addEventListener('click', (event) => {
+    /**
+   * Open a dialog straight from the address bar: /inventory/abc#modal-receive.
+   *
+   * Lets a page elsewhere link to the thing that would actually change what it
+   * is describing — "this product has no stock" pointing at the receive form —
+   * rather than dropping somebody on a screen to find it themselves.
+   */
+  function openModalFromHash() {
+    const id = (window.location.hash || '').replace(/^#/, '');
+    if (!id) return;
+    const dialog = document.getElementById(id);
+    if (dialog && typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal();
+  }
+  window.addEventListener('hashchange', openModalFromHash);
+  openModalFromHash();
+
+  document.addEventListener('click', (event) => {
       const opener = event.target.closest('[data-modal-open]');
       if (opener) {
         const dialog = document.getElementById(opener.getAttribute('data-modal-open'));
