@@ -73,6 +73,11 @@ const PATTERNS = {
   ],
   location: [
     /\b(?:location|warehouse|whse|wh|site|store|branch|bin|shelf|room|zone|area|facility)\b/,
+    // Plain English for the same column. Consolidation matches headings
+    // deterministically rather than asking a model, so a file headed "Where"
+    // had no location at all, and the same product counted in two files looked
+    // like two different positions and was added together instead of compared.
+    /\b(?:where|held\s*(?:at|in)?|stored\s*(?:at|in)?|kept\s*(?:at|in)?|depot|premises|place)\b/,
   ],
   serial: [/\b(?:serial|imei|s\/n|sn)\b/],
   lotCode: [/\b(?:lot|batch)\b/],

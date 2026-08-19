@@ -38,18 +38,35 @@
   <div class="card-head">
     <h2>What Foundry may do on its own</h2>
     <span class="spacer"></span>
-    <span class="badge badge--muted"><%= policies.filter(function (p) { return p.isActive; }).length %> active</span>
+    <%# "Active" describes the policy, not what is happening. A policy only ever
+        fires when Foundry is also set to run the inventory, so saying "active"
+        beside "It changes nothing" was two true statements that read as a
+        contradiction. %>
+    <span class="badge badge--muted"><%= policies.filter(function (p) { return p.isActive; }).length %> approved</span>
   </div>
   <div class="card-body">
     <% if (!policies.length) { %>
       <p class="lede">Nothing. Foundry prepares work and waits for you on all of it.</p>
+    <% } else if (!state.canAutomate) { %>
+      <p class="lede muted">
+        <% if (state.paused) { %>
+          These are approved, but Foundry is paused, so none of them are doing anything.
+        <% } else { %>
+          These are approved, but Foundry is set to <strong><%= state.modeLabel.toLowerCase() %></strong> —
+          it still brings this work to you. Set it to “Run it” above for them to take effect.
+        <% } %>
+      </p>
     <% } %>
     <% policies.forEach(function (policy) { %>
       <div class="act-row">
         <span class="act-place">
           <a href="/autopilot/policies/<%= policy.id %>"><strong><%= policy.name %></strong></a>
-          <span class="badge badge--<%= policy.isActive ? 'ok' : 'muted' %>">
-            <%= policy.isActive ? 'active' : policy.isApproved ? 'off' : 'not approved' %>
+          <span class="badge badge--<%= policy.isActive && state.canAutomate ? 'ok' : 'muted' %>">
+            <%= !policy.isApproved ? 'not approved'
+                 : !policy.isActive ? 'off'
+                 : state.canAutomate ? 'in force'
+                 : state.paused ? 'approved · paused'
+                 : 'approved · not running yet' %>
           </span>
           <div class="muted"><%= describe(policy).join(' ') %></div>
         </span>

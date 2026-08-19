@@ -225,11 +225,15 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     // It goes to the ordinary controlled path instead — the same interpret,
     // preview and approve that typing it as an instruction would have used. No
     // stock moves here; a proposal is created and somebody still says yes.
-    if (
-      event.eventType === 'shipment_arrived' &&
-      event.status === 'NEEDS_HUMAN' &&
-      !event.matchedEntities.purchaseOrderId
-    ) {
+    // Any report Foundry could not place, not just a delivery.
+    //
+    // An event left needing a person with no investigation behind it is one
+    // Foundry failed to resolve — "sold 5 House Blend" when House Blend comes
+    // in two sizes. Parking it repeats the sentence back as though that were
+    // the explanation. The ordinary controlled path knows how to ask "which
+    // one?", so it gets asked. A count that genuinely produced an
+    // investigation is excluded: that already has somewhere to go.
+    if (event.status === 'NEEDS_HUMAN' && !event.investigationId && !event.matchedEntities.purchaseOrderId) {
       const asAction = await actionService.interpret(req.db, req.ctx, req.user, message, {
         provider: req.app.locals.aiProvider || undefined,
       });
