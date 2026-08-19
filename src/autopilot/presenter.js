@@ -183,8 +183,13 @@ function whatFoundryPrepared(db, workspaceId, { limit = 8 } = {}) {
     because: (item.policyEvaluation || {}).reason || null,
     evidence: item.sourceEvidence || [],
     priority: item.priority,
-    link: `/autopilot/work/${item.id}`,
-    action: 'Review',
+    // A delivery reminder should land on the order, where one button books the
+    // whole thing in — not on an explanation of why Foundry raised it.
+    link:
+      item.category === 'receiving_followup' && item.recommendedAction.purchaseOrderId
+        ? `/purchasing/orders/${item.recommendedAction.purchaseOrderId}`
+        : `/autopilot/work/${item.id}`,
+    action: item.category === 'receiving_followup' ? 'Book it in' : 'Review',
   }));
 
   const drafts = db

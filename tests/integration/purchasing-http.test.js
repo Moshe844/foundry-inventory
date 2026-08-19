@@ -368,3 +368,47 @@ test('the overview brief mentions purchasing when there is purchasing to mention
   const after = plain((await agent.get('/')).text);
   assert.match(after, new RegExp(`${order.poNumber} is 3 days past its expected arrival`));
 });
+
+test('a delivery that matches the order is booked in with one click', async () => {
+  // "Receiving against a PO should be automatic." The labour is: Foundry knows
+  // the products, the quantities and where they go, so retyping them is work it
+  // should do. The assertion is not: nobody has told it the boxes arrived.
+  const env = setup();
+  const { agent } = await owner(env);
+
+  const order = poService.createOrder(env.db, env.workspace.ctx, env.membership, {
+    supplierId: env.supplier.id,
+    destinationLocationId: env.workspace.main.id,
+    lines: [{ skuId: env.item.skuId, quantityPurchaseUnits: 5 }],
+  });
+  poService.approve(env.db, env.workspace.ctx, env.membership, order.id);
+  const ordered = poService.get(env.db, env.workspace.workspaceId, order.id).outstandingUnits;
+
+  const before = repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.main.id);
+  const page = await agent.get(`/purchasing/orders/${order.id}`);
+  assert.match(plain(page.text), /It all arrived/, 'the common case is the obvious button');
+
+  const res = await agent
+    .post(`/purchasing/orders/${order.id}/receive-all`)
+    .type('form')
+    .send({ _csrf: csrfFrom(page.text) });
+  assert.equal(res.status, 303);
+
+  assert.equal(poService.get(env.db, env.workspace.workspaceId, order.id).status, 'RECEIVED');
+  assert.equal(
+    repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.main.id),
+    before + ordered,
+    'the stock is really in, through the ordinary engine'
+  );
+
+  // And an impatient second click is the same delivery, not another one.
+  await agent
+    .post(`/purchasing/orders/${order.id}/receive-all`)
+    .type('form')
+    .send({ _csrf: csrfFrom(page.text) });
+  assert.equal(
+    repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.main.id),
+    before + ordered,
+    'booked in once'
+  );
+});

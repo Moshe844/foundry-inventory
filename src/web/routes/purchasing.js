@@ -29,6 +29,7 @@ const permissions = require('../../actions/permissions');
 const repo = require('../../domain/repository');
 const reevaluate = require('../../attention/reevaluate');
 const { requireAuth, asyncRoute } = require('../middleware');
+const { unitCount } = require('../../lib/units');
 const { trimOrNull } = require('../../lib/util');
 const { ValidationError } = require('../../domain/errors');
 
@@ -300,6 +301,55 @@ router.get(
       noMatch: Boolean(supplierName) && matched.length === 0,
       permissions: can(req),
     });
+  })
+);
+
+/**
+ * "It arrived, all of it, as ordered."
+ *
+ * The overwhelmingly common delivery: the boxes match the order. Foundry
+ * already knows the products, the quantities outstanding and where they go, so
+ * making somebody navigate to the order, open a form and retype numbers it
+ * holds is work it should be doing for them.
+ *
+ * What it will not do is decide by itself that the delivery came. Nobody has
+ * told Foundry the boxes are on the floor, and booking in ninety pairs of shoes
+ * that are still on a lorry — or arrived short, or damaged — puts stock in the
+ * ledger that does not exist. That is the one mistake an inventory system must
+ * never make on its own.
+ *
+ * So the labour is automatic and the assertion stays with the person: one
+ * button, one click, everything filled in from the order.
+ */
+router.post(
+  '/purchasing/orders/:id/receive-all',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.RECEIVE_PO, 'book in deliveries');
+    const { order, lines } = receiving.outstandingLines(req.db, req.ctx.workspaceId, req.params.id);
+    if (!lines.length) {
+      req.flash('info', `${order.poNumber} is already fully received.`);
+      return res.redirect(303, `/purchasing/orders/${order.id}`);
+    }
+    try {
+      const result = receiving.receive(req.db, req.ctx, req.user, order.id, {
+        lines: lines.map((line) => ({ lineId: line.id, quantityUnits: line.outstandingUnits })),
+        reference: trimOrNull(req.body.reference) || null,
+        notes: 'Booked in as ordered',
+        // A double-clicked button is one delivery, not two.
+        idempotencyKey: `po-receipt-all:${order.id}:${lines.reduce((n, l) => n + l.outstandingUnits, 0)}`,
+      });
+      const units = (result.result || {}).unitsReceived || 0;
+      req.flash(
+        'success',
+        result.replayed
+          ? `${order.poNumber} was already booked in.`
+          : `Booked in ${unitCount(units, 'unit')} against ${order.poNumber}. Stock is live.`
+      );
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+    }
+    return res.redirect(303, `/purchasing/orders/${order.id}`);
   })
 );
 

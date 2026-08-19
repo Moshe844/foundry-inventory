@@ -77,7 +77,16 @@
         </form>
       <% } %>
       <% if (order.isOpen && permissions.receive) { %>
-        <a class="btn btn--primary" href="/purchasing/orders/<%= order.id %>/receive">Receive shipment</a>
+        <%# The common case first: the delivery matches the order, so one button
+            books the whole thing in. The form behind "Something is different"
+            is for short, over or damaged deliveries. Foundry does not decide by
+            itself that the boxes arrived — nobody has told it that — but once
+            you say so it fills in everything it already knows. %>
+        <form method="post" action="/purchasing/orders/<%= order.id %>/receive-all" style="display:inline;" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--primary" type="submit">It all arrived — book it in</button>
+        </form>
+        <a class="btn" href="/purchasing/orders/<%= order.id %>/receive">Something is different</a>
       <% } %>
       <a class="btn btn--sm" href="/purchasing/orders/<%= order.id %>/document" target="_blank" rel="noopener">
         Printable order
