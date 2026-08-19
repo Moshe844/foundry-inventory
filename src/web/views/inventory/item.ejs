@@ -80,12 +80,25 @@
     <span class="label"><%= helpers.plural(total, item.unit_label) %> on hand</span>
   </div>
   <% if (canAct) { %>
+    <%# Receive, Issue, Transfer and Adjust are warehouse words. A shop owner
+        thinks "some came in", "I sold one", "the count is wrong". The verbs
+        stayed in the engine, where they are precise; the buttons say what the
+        person is actually doing.
+
+        None of them is styled as the main action either. Green on Receive read
+        as an unfinished job even after stock had been received twice — these
+        are four things you *can* do, not something owed. %>
     <div class="action-bar" style="flex:1;">
-      <button class="btn btn--primary" type="button" data-modal-open="modal-receive"><%- helpers.icon('receive', { size: 16 }) %> Receive</button>
-      <button class="btn" type="button" data-modal-open="modal-issue"><%- helpers.icon('issue', { size: 16 }) %> Issue</button>
-      <button class="btn" type="button" data-modal-open="modal-transfer" <%= locations.length < 2 ? 'disabled title="Add a second location to transfer stock"' : '' %>><%- helpers.icon('transfer', { size: 16 }) %> Transfer</button>
-      <button class="btn" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 16 }) %> Adjust</button>
+      <button class="btn" type="button" data-modal-open="modal-receive"><%- helpers.icon('receive', { size: 16 }) %> Some came in</button>
+      <button class="btn" type="button" data-modal-open="modal-issue"><%- helpers.icon('issue', { size: 16 }) %> Sold or used</button>
+      <button class="btn" type="button" data-modal-open="modal-transfer" <%= locations.length < 2 ? 'disabled' : '' %>><%- helpers.icon('transfer', { size: 16 }) %> Move it</button>
+      <button class="btn" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 16 }) %> Fix the count</button>
     </div>
+    <p class="muted" style="flex-basis:100%;font-size:12.5px;margin-top:8px;">
+      You do not have to choose. Say what happened in
+      <a href="/#tell-foundry">Tell Foundry</a> — “sold 3 in a 28”, “20 more arrived” — and it works out
+      which of these it is and shows you before anything changes.
+    </p>
     <%# A greyed-out button explains itself in a tooltip, which nobody hovers and
         no phone has. Say it on the page. %>
     <% if (locations.length < 2) { %>
@@ -451,7 +464,7 @@
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="modal-head">
         <span class="ledger-icon ledger-icon--receive"><%- helpers.icon('receive', { size: 16 }) %></span>
-        <h2>Receive stock</h2>
+        <h2>Some came in</h2>
         <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
       </div>
       <div class="modal-body">
@@ -529,7 +542,7 @@
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="modal-head">
         <span class="ledger-icon ledger-icon--issue"><%- helpers.icon('issue', { size: 16 }) %></span>
-        <h2>Issue stock</h2>
+        <h2>Sold or used</h2>
         <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
       </div>
       <div class="modal-body">
@@ -597,7 +610,7 @@
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="modal-head">
         <span class="ledger-icon ledger-icon--transfer"><%- helpers.icon('transfer', { size: 16 }) %></span>
-        <h2>Transfer stock</h2>
+        <h2>Move it somewhere else</h2>
         <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
       </div>
       <div class="modal-body">
@@ -670,7 +683,7 @@
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="modal-head">
         <span class="ledger-icon ledger-icon--adjust"><%- helpers.icon('adjust', { size: 16 }) %></span>
-        <h2><%= mode === 'serial' ? 'Write off units' : 'Adjust stock' %></h2>
+        <h2><%= mode === 'serial' ? 'Write off units' : 'Fix the count' %></h2>
         <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
       </div>
       <div class="modal-body">
