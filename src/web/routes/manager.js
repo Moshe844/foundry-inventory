@@ -147,7 +147,19 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'missing_location', null, 'NEEDS_CLARIFICATION');
       return res.redirect(303, '/actions/location-required');
     }
-    req.flash(result.kind === 'question' ? 'info' : 'error', result.question || result.message || 'Foundry needs more detail.');
+    // A question goes where it can be answered. Only a flat refusal — something
+    // Foundry cannot do at all — belongs in a message you dismiss.
+    if (result.kind === 'question' && result.question) {
+      req.session.pendingActionQuestion = { question: result.question, instruction: message, choices: result.choices || null };
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
+      return res.redirect(303, '/actions');
+    }
+    if (result.kind === 'unsupported' && (result.message || result.unsupported)) {
+      req.session.pendingActionQuestion = { unsupported: result.message || result.unsupported, instruction: message };
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
+      return res.redirect(303, '/actions');
+    }
+    req.flash('error', result.message || 'Foundry needs more detail.');
     return res.redirect(303, '/#tell-foundry');
   }
   if (intent.intentClass === 'PHYSICAL_EVENT') {

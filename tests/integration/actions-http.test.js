@@ -598,3 +598,38 @@ test('a question typed into the action box points back at Ask Foundry', async ()
   assert.match(page, /Foundry can look that up/);
   assert.match(res.text, /href="\/ask\?q=how%20many%20navy%204%20do%20we%20have"/);
 });
+
+test('a question is rendered where it can be answered, not as a message you dismiss', async () => {
+  // Reported from the console: asking Foundry to move stock produced a toast
+  // carrying the question "which location should this be moved to?" — which
+  // disappears on the next click and cannot be typed into.
+  //
+  // This checks the contract the page keeps: given a question, it renders the
+  // question *and* a reply box aimed at the endpoint that re-reads the original
+  // instruction with the answer added.
+  const ejs = require('ejs');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const view = path.join(__dirname, '..', '..', 'src', 'web', 'views', 'actions', 'list.ejs');
+
+  const html = ejs.render(fs.readFileSync(view, 'utf8'), {
+    filename: view,
+    helpers: require('../../src/web/view-helpers'),
+    csrfToken: 'test-token',
+    pending: [],
+    recent: [],
+    canOperate: true,
+    aiConfigured: true,
+    instruction: 'move 3 oxfords',
+    question: 'Which location should the Boys Dress Oxford be moved to?',
+    unsupported: null,
+    choices: null,
+    flash: [],
+    term: (word) => word,
+  });
+
+  assert.match(html, /Which location should the Boys Dress Oxford be moved to\?/);
+  assert.match(html, /action="\/actions\/ask"/, 'the question has an endpoint to answer to');
+  assert.match(html, /name="answer"/, 'and a box to type the answer into');
+  assert.match(html, /name="original" value="move 3 oxfords"/, 'carrying what was originally asked');
+});

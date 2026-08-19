@@ -108,7 +108,14 @@
 
     <main class="content" id="main">
       <% if (flash && flash.length) { %>
-        <div class="flash-stack"><% flash.forEach(function (message) { %><div class="flash flash--<%= message.type %>" role="status"><%- helpers.icon(message.type === 'error' ? 'alert' : 'check', { size: 18 }) %><span><%= message.message %></span></div><% }) %></div>
+        <%# The icon has to agree with the message. A question mark rendered as a
+            green tick tells someone their request succeeded at the exact moment
+            Foundry is telling them it needs more from them. %>
+        <div class="flash-stack"><% flash.forEach(function (message) {
+          var icons = { error: 'alert', warn: 'alert', info: 'question', success: 'check' };
+          var glyph = icons[message.type] || 'check';
+          var live = message.type === 'error' || message.type === 'warn' ? 'alert' : 'status';
+        %><div class="flash flash--<%= message.type %>" role="<%= live %>"><%- helpers.icon(glyph, { size: 18 }) %><span><%= message.message %></span></div><% }) %></div>
       <% } %>
       <%- body %>
     </main>

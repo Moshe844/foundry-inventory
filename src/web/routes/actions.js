@@ -32,6 +32,11 @@ function membershipOf(req) {
 router.get(
   '/actions',
   asyncRoute(async (req, res) => {
+    // Read once and cleared: a question already answered should not reappear on
+    // the next visit to this page.
+    const handed = req.session.pendingActionQuestion || null;
+    if (handed) delete req.session.pendingActionQuestion;
+
     const open = proposals.listOpen(req.db, req.ctx.workspaceId, { limit: 25 });
     const recent = req.db
       .prepare(
@@ -49,10 +54,14 @@ router.get(
       recent: recent.map((p) => ({ ...p, oneLine: presenter.oneLine(req.db, req.ctx.workspaceId, p) })),
       canOperate: permissions.can(membershipOf(req), permissions.OPERATE),
       aiConfigured: config.ai.configured,
-      instruction: '',
-      question: null,
-      unsupported: null,
-      choices: null,
+      // A question raised somewhere else — the Tell Foundry box on the home
+      // page — is handed over rather than flashed. A toast disappears and
+      // cannot be replied to, which leaves the person holding a question and
+      // no way to answer it.
+      instruction: (handed && handed.instruction) || '',
+      question: (handed && handed.question) || null,
+      unsupported: (handed && handed.unsupported) || null,
+      choices: (handed && handed.choices) || null,
     });
   })
 );

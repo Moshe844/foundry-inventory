@@ -471,6 +471,22 @@ function shapeOperation(db, workspaceId, intent, draft) {
   }
 
   if (actionType === 'transfer') {
+    // A transfer needs somewhere to go. With a single location there is no
+    // answer to "which location?", and asking anyway sends someone hunting the
+    // screen for an option that does not exist. Foundry knows how many
+    // locations it has, so it should say this rather than ask.
+    const places = repo.listLocations(db, workspaceId);
+    if (places.length < 2) {
+      return {
+        ok: false,
+        question: null,
+        unsupported: places.length === 1
+          ? `${places[0].name} is the only location in this inventory, so there is nowhere to move stock to. ` +
+            'Add a second location and Foundry can move stock between them.'
+          : 'This inventory has no locations yet, so there is nowhere to move stock to.',
+      };
+    }
+
     const from = resolveSource(intent.sourceLocation, 'source location');
     if (!from.ok) {
       return from.empty

@@ -1235,3 +1235,30 @@ test('a lot-tracked transfer Foundry proposed actually executes', () => {
   assert.equal(repo.getBalance(db, w.workspaceId, lot.skuId, w.store.id), 10);
   assert.equal(repo.getBalance(db, w.workspaceId, lot.skuId, w.main.id), 30);
 });
+
+// --- questions with no answer (reported from the console) --------------------
+
+test('with one location, a move is explained as impossible rather than asked about', () => {
+  const env = clothing();
+  // A single-location business, which is what most of them are to begin with.
+  env.db
+    .prepare("UPDATE locations SET is_active = 0 WHERE workspace_id = ? AND id != ?")
+    .run(env.workspace.workspaceId, env.workspace.main.id);
+
+  const built = proposals.build(env.db, env.ctx, intent({ destinationLocation: '' }));
+
+  assert.equal(built.ok, false);
+  assert.equal(built.question, null, 'asking which location has no possible answer here');
+  assert.match(built.unsupported, /only location in this inventory/);
+  assert.match(built.unsupported, /Add a second location/);
+});
+
+test('with somewhere to move it to, it still asks which one', () => {
+  const env = clothing();
+
+  const built = proposals.build(env.db, env.ctx, intent({ destinationLocation: '' }));
+
+  assert.equal(built.ok, false);
+  assert.ok(built.question, 'a destination genuinely needs choosing, so asking is right');
+  assert.doesNotMatch(String(built.unsupported || ''), /only location/);
+});
