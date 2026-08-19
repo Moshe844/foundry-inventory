@@ -20,6 +20,7 @@ const { ValidationError, NotFoundError } = require('../domain/errors');
 const permissions = require('../actions/permissions');
 const parser = require('./parser');
 const mappingService = require('./mapping-service');
+const repo = require('../domain/repository');
 const rowValidator = require('./row-validator');
 const fields = require('./fields');
 
@@ -180,11 +181,21 @@ async function analyse(db, ctx, membership, input) {
   );
 
   const model = require('./catalog-service').workspaceDefaults(db, ctx.workspaceId);
+
+  // Where the stock goes when the file does not say. An inventory with exactly
+  // one location has already answered this — asking anyway, and defaulting to
+  // "nowhere", turns a perfectly good spreadsheet into a preview where every
+  // row is rejected for having no location, in a business with only one.
+  // Named locations in the file still win; this only fills the silence.
+  const onlyPlace = repo.listLocations(db, ctx.workspaceId);
+  const defaultLocationId =
+    input.defaultLocationId || (onlyPlace.length === 1 ? onlyPlace[0].id : null);
+
   const validated = rowValidator.validateRows(db, ctx.workspaceId, sheet, {
     mappings: proposal.mappings,
     axisNames: proposal.axisNames,
     detectedType: proposal.detectedType,
-    defaultLocationId: input.defaultLocationId || null,
+    defaultLocationId,
     locationMappings: {},
   });
 
@@ -244,7 +255,7 @@ async function analyse(db, ctx, membership, input) {
     },
     trackingModel: model,
     locationMappings: {},
-    defaultLocationId: input.defaultLocationId || null,
+    defaultLocationId,
     recordsDetected: validated.summary.total,
     recordsValid: validated.summary.valid + validated.summary.needsReview,
     recordsInvalid: validated.summary.invalid,

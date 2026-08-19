@@ -603,3 +603,39 @@ test('an uploaded file arrives as a buffer and its fields as fields', () => {
   assert.equal(files[0].filename, 'stock.xlsx');
   assert.deepEqual([...files[0].buffer], [0x50, 0x4b, 0x03, 0x04, 0x00, 0xff]);
 });
+
+test('a one-location inventory does not reject every row for having no location', () => {
+  // Found pasting a spreadsheet into a new account: three good rows with
+  // quantities were all marked INVALID with "no location for this stock, and no
+  // default chosen" — in a business that has exactly one location. Foundry knew
+  // the answer and asked anyway, then failed the import over it.
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  db.prepare('UPDATE locations SET is_active = 0 WHERE workspace_id = ? AND id != ?')
+    .run(workspace.workspaceId, workspace.main.id);
+
+  const sheet = {
+    columns: [
+      { index: 0, name: 'Style Code' },
+      { index: 1, name: 'Description' },
+      { index: 2, name: 'Qty on hand' },
+    ],
+    rows: [
+      { rowNumber: 2, cells: ['CT-100-S-WHT', 'Kids tee small white', '12'] },
+      { rowNumber: 3, cells: ['CT-100-M-WHT', 'Kids tee medium white', '8'] },
+    ],
+  };
+
+  const validated = rowValidator.validateRows(db, workspace.workspaceId, sheet, {
+    mappings: { code: 0, name: 1, quantity: 2 },
+    axisNames: [],
+    detectedType: 'quantity',
+    // What the plan now supplies when a workspace has only one place to put it.
+    defaultLocationId: workspace.main.id,
+    locationMappings: {},
+  });
+
+  const rejected = validated.rows.filter((row) => (row.problems || []).some((p) => p.code === 'no_location'));
+  assert.equal(rejected.length, 0, 'there is only one location; it is not a question');
+  assert.ok(validated.rows.every((row) => row.parsed.quantity > 0), 'and the quantities survived');
+});
