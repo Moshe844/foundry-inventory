@@ -12,7 +12,7 @@ const request = require('supertest');
 const { createApp } = require('../../src/app');
 const attention = require('../../src/attention/attention-engine');
 const engine = require('../../src/domain/inventory-engine');
-const { makeDatabase, cleanupAll, seedWorkspace, csrfFrom, plain, signIn } = require('../helpers');
+const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, csrfFrom, plain, signIn } = require('../helpers');
 const { fakeProvider } = require('../helpers/fake-provider');
 const scenarios = require('../helpers/scenarios');
 
@@ -435,4 +435,35 @@ test('a configured but quiet inventory still says all clear', async () => {
   const page = plain(res.text);
   assert.match(page, /Nothing needs your attention/);
   assert.ok(!page.includes('There is nothing in this inventory yet'));
+});
+
+test('the overview does not claim all clear while Needs you holds something', async () => {
+  // Found crawling a new account: /overview said "All clear" and /needs-you said
+  // "1 thing needs you" about the same inventory on the same afternoon. Nothing
+  // wrong with the stock is not the same as nothing needing a person, and a new
+  // customer has no way to tell which screen is lying.
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db);
+  store.db.prepare(
+    `INSERT INTO workspace_configuration
+       (workspace_id, configured_at, configuration_version, terminology, operational_defaults, inventory_model, updated_at)
+     VALUES (?, datetime('now'), 1, '{}', '{}', '{"primaryArchetype":"quantity"}', datetime('now'))`
+  ).run(workspace.workspaceId);
+
+  // Stock on hand, no outbound history: nothing is wrong, and Foundry is still
+  // missing the operating signal it needs.
+  const item = makeQuantityItem(store.db, workspace.ctx);
+  engine.receive(store.db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 20 });
+
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'agree' });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const needsYou = plain((await agent.get('/needs-you')).text);
+  const overview = plain((await agent.get('/overview')).text);
+
+  assert.match(needsYou, /1 thing needs you/);
+  assert.doesNotMatch(overview, /All clear/, 'the other screen says something is waiting');
+  assert.match(overview, /waiting for you/);
+  assert.match(overview, /Needs you/);
 });

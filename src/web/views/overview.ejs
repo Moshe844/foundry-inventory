@@ -1,3 +1,6 @@
+<%
+  var waiting = (typeof operatingDecisions !== 'undefined' && operatingDecisions) ? operatingDecisions.length : 0;
+%>
 <div class="page-head">
   <div class="titles">
     <h1>Overview</h1>
@@ -36,11 +39,22 @@
       <span class="spacer"></span>
       <% if (attentionSummary.critical > 0) { %>
         <span class="badge badge--danger"><%= attentionSummary.critical %> urgent</span>
-      <% } else if (attentionSummary.total === 0) { %>
+      <% } else if (attentionSummary.total === 0 && !waiting) { %>
         <span class="badge badge--ok">All clear</span>
+      <% } else if (attentionSummary.total === 0 && waiting) { %>
+        <span class="badge badge--muted"><%= waiting %> waiting for you</span>
       <% } %>
     </div>
     <div class="brief-body"><%= brief_.body %></div>
+    <%# Nothing wrong with the stock is not the same as nothing needing a
+        person. Saying only the first, on the page a new customer checks first,
+        contradicts Needs You about the very same inventory. %>
+    <% if (waiting) { %>
+      <p class="muted" style="margin-top:10px;">
+        Separately, <%= waiting === 1 ? 'one thing is' : waiting + ' things are' %> waiting for you in
+        <a href="/needs-you">Needs you</a> — <%= operatingDecisions[0].title || 'Foundry is missing something it needs' %>.
+      </p>
+    <% } %>
     <div class="brief-foot">
       <% if (attentionTotal > 0) { %>
         <a class="btn btn--primary btn--sm" href="/attention">See what needs attention</a>
