@@ -34,24 +34,20 @@ router.get(
 
     const items = attention.listAttention(req.db, req.ctx.workspaceId, { limit: 20 });
     const terminology = (configuration && configuration.terminology) || {};
-    // What purchasing would say today, counted from real orders and usage.
     const purchasing = purchasingBrief(req.db, req.ctx.workspaceId);
     const context = { stockNoun: terminology.item || null, purchasingLines: purchasing.lines };
 
-    // A stored brief is reused only while it still describes these exact
-    // findings; otherwise the deterministic text is composed here and now, so
-    // the page never waits on a model to render.
     const brief =
       briefService.currentBrief(req.db, req.ctx.workspaceId, items, briefService.purchasingSignature(purchasing)) ||
       { body: briefService.deterministicBrief(items, context), source: 'deterministic', createdAt: null };
 
-    // A working inventory lands on Operator Home: what Foundry did, what needs
-    // a person, what is coming. The classic overview stays one click away at
-    // /overview, and an inventory with nothing in it still gets it by default —
-    // an autopilot summary of an empty warehouse would be theatre.
+    // Once Foundry has an approved configuration, its home owns the first-run
+    // journey too. An empty configured workspace is exactly where the customer
+    // most needs a clear next step; sending it to the traditional overview made
+    // the guided setup invisible until after products already existed.
     const wantsClassic = req.path === '/overview';
-    const hasSomethingToRun = stats.itemCount > 0 && configuration && configuration.configuredAt;
-    if (!wantsClassic && hasSomethingToRun) {
+    const foundryConfigured = Boolean(configuration && configuration.configuredAt);
+    if (!wantsClassic && foundryConfigured) {
       const home = autopilotPresenter.operatorHome(req.db, req.ctx.workspaceId);
       return res.page('operator-home', {
         title: 'Foundry',
@@ -75,8 +71,6 @@ router.get(
       attention: presenter.presentAll(req.db, req.ctx.workspaceId, items.slice(0, 4)),
       attentionSummary: attention.summarise(items),
       attentionTotal: items.length,
-      // Nothing here yet is a different thing from nothing wrong, and the
-      // Overview should say which rather than send you somewhere else.
       isEmpty: stats.itemCount === 0 && stats.locationCount === 0,
     });
   })
