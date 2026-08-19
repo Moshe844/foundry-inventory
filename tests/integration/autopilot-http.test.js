@@ -67,7 +67,10 @@ test('the primary home is Foundry managing work, not an inventory dashboard', as
   assert.match(page, /Foundry is managing Autopilot Co/);
   assert.match(page, /Tell Foundry anything/);
   assert.match(page, /I need you for/);
-  assert.match(page, /What is Foundry handling\?/);
+  // The handling lane appears when there is something in it. An empty one
+  // saying "Nothing in progress. There is no routine work in progress." is
+  // three sentences reporting that nothing happened.
+  assert.doesNotMatch(page, /There is no routine work in progress/);
   assert.match(page, /What did Foundry do\?/);
   assert.match(page, /Open the traditional overview/);
   assert.match(page, /Foundry cannot see stock leaving the business/);

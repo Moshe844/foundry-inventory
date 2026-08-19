@@ -91,14 +91,43 @@
 </section>
 <% } %>
 
+<%
+  // This block used to open with "0 of 6 stock positions have enough usage
+  // history for demand-based monitoring", followed by four more sentences of
+  // the same. Every word of it was true. None of it told somebody new to
+  // inventory what to do, and a page of caveats in a vocabulary they have not
+  // met yet reads as a wall, not as help.
+  //
+  // So: one plain sentence about where Foundry stands, one thing to do about
+  // it, and the detail folded away for anyone who wants it.
+  var noHistory = home.readiness.usageReady === 0 && home.readiness.skuCount > 0;
+%>
 <% if (home.readiness.notes.length) { %>
 <section class="operator-readiness" aria-labelledby="readiness-title">
   <div>
-    <span class="operator-lane__eyebrow">What Foundry can verify right now</span>
-    <h2 id="readiness-title"><%= home.readiness.usageReady %> of <%= home.readiness.skuCount %> stock positions have enough usage history for demand-based monitoring</h2>
-    <p class="readiness-explainer"><strong>What this means:</strong> Foundry can always report recorded stock and movements. Demand-based advice needs real outbound history first; until then it will say what evidence is missing instead of inventing demand.</p>
+    <span class="operator-lane__eyebrow">Where Foundry stands</span>
+    <% if (noHistory) { %>
+      <h2 id="readiness-title">Foundry knows what you have. It does not yet know what you sell.</h2>
+      <p class="readiness-explainer">
+        It can tell you your counts and every change to them today. To go further — telling you what is
+        running low, or what to reorder — it has to watch stock actually leaving. Record a sale or a
+        delivery going out and it starts learning straight away.
+      </p>
+      <p><a class="btn btn--primary" href="/#tell-foundry">Record a sale or movement</a></p>
+    <% } else { %>
+      <h2 id="readiness-title">
+        Foundry can judge <%= home.readiness.usageReady %> of <%= home.readiness.skuCount %>
+        <%= home.readiness.skuCount === 1 ? 'product' : 'products' %> from what they have actually been selling.
+      </h2>
+      <p class="readiness-explainer">
+        For the rest it will say what is missing rather than guess.
+      </p>
+    <% } %>
   </div>
-  <ul class="plain-list"><% home.readiness.notes.forEach(function (note) { %><li><%= note %></li><% }) %></ul>
+  <details class="readiness-detail">
+    <summary>What Foundry cannot do yet, and why</summary>
+    <ul class="plain-list"><% home.readiness.notes.forEach(function (note) { %><li><%= note %></li><% }) %></ul>
+  </details>
 </section>
 <% } %>
 
@@ -110,12 +139,21 @@
 <% } %>
 
 <section class="product-intro" aria-label="How to use Foundry">
+  <%# Was: "It uses the same verified inventory engine underneath, watches the
+      resulting evidence, handles only what you authorized, and puts anything
+      unsafe or uncertain in Needs you." Every clause of that is about Foundry's
+      internals, addressed to somebody who has not yet worked out where their
+      stock list is. %>
   <div>
-    <h2>One place to run the inventory operation.</h2>
-    <p>Tell Foundry what happened or what you need. It uses the same verified inventory engine underneath, watches the resulting evidence, handles only what you authorized, and puts anything unsafe or uncertain in Needs you.</p>
+    <h2>Just tell Foundry what happened.</h2>
+    <p>
+      A delivery arrived, you sold something, you counted a shelf — say it in your own words in the box
+      below. Foundry works out which records change, shows you exactly what it will do, and waits for
+      your yes. Anything it is unsure about it brings to you instead of guessing.
+    </p>
   </div>
-  <div class="product-intro__steps" aria-label="Foundry workflow">
-    <span>Tell it</span><span>Foundry verifies</span><span>It acts within authority</span><span>Exceptions come to you</span>
+  <div class="product-intro__steps" aria-label="How it works">
+    <span>You say what happened</span><span>Foundry shows the exact change</span><span>You approve it</span>
   </div>
 </section>
 
@@ -159,14 +197,19 @@
     <% if (needsCount) { %><footer><a href="/needs-you">See all exceptions</a></footer><% } %>
   </article>
 
-  <article class="operator-lane operator-lane--prepared <%= handlingCount ? 'has-work' : '' %>">
+  <%# An empty lane announcing "Nothing in progress. There is no routine work in
+      progress." is three sentences saying nothing happened. Kept when there is
+      something to show, dropped when there is not. %>
+  <% if (handlingCount) { %>
+  <article class="operator-lane operator-lane--prepared has-work">
     <header class="operator-lane__head"><span class="operator-lane__icon"><%- helpers.icon('activity', { size: 18 }) %></span><div><span class="operator-lane__eyebrow">What is Foundry handling?</span><h2><%= handlingCount ? handlingCount + ' in progress' : 'Nothing in progress' %></h2></div></header>
     <div class="operator-lane__body">
       <% if (!handlingCount) { %><p class="operator-empty">There is no routine work in progress.<% if (home.did.evaluations.length) { %> The latest evaluation finished <%= helpers.timeAgo(home.did.evaluations[0].finishedAt) %>. <a href="/autopilot/history#evaluations">See what it checked and why it stopped.</a><% } %></p><% } %>
       <% home.handling.forEach(function (entry) { %><div class="operator-work-item act-row"><div><strong><%= entry.title %></strong><% if (entry.because) { %><p><%= entry.because %></p><% } %></div><a href="<%= entry.link %>"><%= entry.action %></a></div><% }) %>
     </div>
-    <% if (handlingCount) { %><footer><a href="/autopilot/history">See handling queue</a></footer><% } %>
+    <footer><a href="/autopilot/history">See handling queue</a></footer>
   </article>
+  <% } %>
 
   <article class="operator-lane operator-lane--handled">
     <header class="operator-lane__head"><span class="operator-lane__icon"><%- helpers.icon('check', { size: 18 }) %></span><div><span class="operator-lane__eyebrow">What did Foundry do?</span><h2><%= home.did.counts.handled ? home.did.counts.handled + ' completed' : home.did.counts.evaluations ? home.did.counts.evaluations + ' real check' + (home.did.counts.evaluations === 1 ? '' : 's') : 'Nothing checked yet' %></h2></div></header>
