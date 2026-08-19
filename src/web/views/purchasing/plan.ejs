@@ -65,16 +65,23 @@
   // something below its reorder point. Heading the page "Nothing needs
   // ordering / All covered" over the top of it is false, and it buries the one
   // line the customer came here to find.
-  var stuck = plan.blocked.length > 0;
+  // Two very different kinds of blocked. A line whose shortfall Foundry worked
+  // out and cannot act on because no supplier is attached genuinely needs
+  // ordering. A line with no usage history is one Foundry cannot judge at all —
+  // announcing that it "needs ordering" would be inventing the very demand
+  // figure it is refusing to guess.
+  var short = plan.blocked.filter(function (line) { return line.reason === 'no_supplier'; });
+  var unknown = plan.blocked.filter(function (line) { return line.reason !== 'no_supplier'; });
+  var stuck = short.length > 0;
 %>
 <% if (plan.recommendations.length === 0) { %>
   <div class="card section <%= stuck ? 'card--warn' : '' %>">
     <div class="card-head">
       <h2><%= stuck
-        ? (plan.blocked.length === 1 ? 'One line needs ordering, and Foundry cannot do it' : plan.blocked.length + ' lines need ordering, and Foundry cannot do them')
-        : 'Nothing needs ordering' %></h2>
+        ? (short.length === 1 ? 'One line needs ordering, and Foundry cannot do it' : short.length + ' lines need ordering, and Foundry cannot do them')
+        : (unknown.length ? 'Foundry cannot tell yet' : 'Nothing needs ordering') %></h2>
       <span class="spacer"></span>
-      <span class="badge badge--<%= stuck ? 'danger' : 'ok' %>"><%= stuck ? 'Needs you' : 'All covered' %></span>
+      <span class="badge badge--<%= stuck ? 'danger' : unknown.length ? 'muted' : 'ok' %>"><%= stuck ? 'Needs you' : unknown.length ? 'Not enough history' : 'All covered' %></span>
     </div>
     <div class="card-body">
       <% if (stuck) { %>
@@ -83,7 +90,7 @@
           Nothing has been ordered.
         </p>
         <ul class="plain-list">
-          <% plan.blocked.forEach(function (line) { %>
+          <% short.forEach(function (line) { %>
             <li>
               <a href="/purchasing/why/<%= line.skuId %>"><strong><%= line.displayName %></strong></a>
               — <%= line.headline %>
@@ -94,10 +101,19 @@
           <% }) %>
         </ul>
       <% } else { %>
-        <p class="lede">
-          Foundry checked every line against its usage and what is already on order, and none of them
-          are below their reorder point.
-        </p>
+        <% if (unknown.length) { %>
+          <p class="lede">
+            Foundry has no outbound history for
+            <%= unknown.length === 1 ? 'this line' : 'these ' + unknown.length + ' lines' %> yet, so it
+            cannot say whether they need ordering. It will not guess a demand figure. Record sales or
+            usage — or set a reorder point yourself — and it can start.
+          </p>
+        <% } else { %>
+          <p class="lede">
+            Foundry checked every line against its usage and what is already on order, and none of them
+            are below their reorder point.
+          </p>
+        <% } %>
       <% } %>
       <% if (plan.covered.length) { %>
         <table class="table table--tight">
@@ -114,10 +130,10 @@
           </tbody>
         </table>
       <% } %>
-      <% if (plan.blocked.length && !stuck) { %>
+      <% if (unknown.length && stuck) { %>
         <h3 class="sub-head">Foundry cannot assess these yet</h3>
         <ul class="plain-list">
-          <% plan.blocked.slice(0, 8).forEach(function (line) { %>
+          <% unknown.slice(0, 8).forEach(function (line) { %>
             <li><strong><%= line.displayName %></strong> — <%= line.headline %></li>
           <% }) %>
         </ul>

@@ -163,7 +163,11 @@ const PURCHASING_EXECUTORS = {
 
     if (rows.length === 0) {
       const covered = result.covered.length;
-      const stuck = result.blocked;
+      // Short and stuck is a fact; no history at all is an absence of facts.
+      // Reporting the second as "needs ordering" would invent the demand figure
+      // Foundry is deliberately refusing to guess.
+      const stuck = result.blocked.filter((line) => line.reason === 'no_supplier');
+      const unknown = result.blocked.filter((line) => line.reason !== 'no_supplier');
 
       // A line below its reorder point that Foundry cannot act on still needs
       // ordering. Answering "nothing needs ordering" and appending a bare count
@@ -185,6 +189,22 @@ const PURCHASING_EXECUTORS = {
             (stuck.some((line) => line.reason === 'no_supplier')
               ? ' Add a supplier for the product and Foundry can prepare the order.'
               : ''),
+        };
+      }
+
+      if (unknown.length) {
+        return {
+          rows: unknown.slice(0, plan.limit).map((line) => ({
+            label: line.displayName,
+            onHand: line.onHand,
+            onOrder: line.onOrder,
+            why: line.headline,
+          })),
+          columns: ['label', 'onHand', 'onOrder', 'why'],
+          answer:
+            `Foundry cannot tell yet. ${unknown.length} line(s) have no outbound history, so it has no ` +
+            'basis for saying whether they need ordering, and it will not guess one. Record sales or ' +
+            'usage, or set a reorder point yourself.',
         };
       }
 

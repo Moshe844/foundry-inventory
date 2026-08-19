@@ -18,7 +18,7 @@
         type="text"
         name="instruction"
         value="<%= instruction %>"
-        placeholder="Move 15 Navy Size 8 from New Jersey to Brooklyn"
+        placeholder="<%= (typeof examples !== 'undefined' && examples.length) ? examples[0] : 'Tell Foundry what happened' %>"
         maxlength="500"
         autocomplete="off"
         <%= instruction ? '' : 'autofocus' %>
@@ -45,12 +45,14 @@
         You have read-only access to this inventory, so Foundry cannot make changes for you here.
       </p>
     <% } else if (!instruction) { %>
-      <div class="ask-examples">
-        <span class="chip">“Receive 100 Copper Elbows into Main Warehouse”</span>
-        <span class="chip">“Move 15 Navy Size 8 from New Jersey to Brooklyn”</span>
-        <span class="chip">“Remove 3 damaged units from Downtown”</span>
-        <span class="chip">“Set Brooklyn Navy Size 8 to 37, physical count”</span>
-      </div>
+      <% if (typeof examples !== 'undefined' && examples.length) { %>
+        <p class="muted" style="font-size:13px; margin-top:12px;">Things you could say here:</p>
+        <div class="ask-examples">
+          <% examples.forEach(function (example) { %>
+            <a class="chip" href="/actions?q=<%= encodeURIComponent(example) %>">“<%= example %>”</a>
+          <% }) %>
+        </div>
+      <% } %>
     <% } %>
 
     <% if (question) { %>

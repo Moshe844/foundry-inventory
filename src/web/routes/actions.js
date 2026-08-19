@@ -19,6 +19,7 @@ const permissions = require('../../actions/permissions');
 const attention = require('../../attention/attention-engine');
 const importPlans = require('../../imports/plan-service');
 const { requireAuth, asyncRoute } = require('../middleware');
+const repo = require('../../domain/repository');
 const { trimOrNull } = require('../../lib/util');
 
 const router = express.Router();
@@ -29,6 +30,32 @@ function membershipOf(req) {
 }
 
 /** The pending work: what Foundry has proposed and is waiting on. */
+
+/**
+ * Example instructions, written with this inventory's own products and places.
+ *
+ * A new customer reading "Receive 100 Copper Elbows into Main Warehouse" in a
+ * business that sells t-shirts learns nothing except that the screen was
+ * written for somebody else. Examples are only worth showing when they are
+ * things the reader could actually send.
+ */
+function exampleInstructions(db, workspaceId) {
+  const item = db
+    .prepare('SELECT name FROM items WHERE workspace_id = ? AND is_active = 1 ORDER BY created_at LIMIT 1')
+    .get(workspaceId);
+  const places = repo.listLocations(db, workspaceId).map((l) => l.name);
+  if (!item || !places.length) return [];
+
+  const here = places[0];
+  const examples = [
+    `Receive 20 ${item.name} into ${here}`,
+    `We sold 3 ${item.name}`,
+  ];
+  if (places.length > 1) examples.push(`Move 5 ${item.name} from ${here} to ${places[1]}`);
+  examples.push(`I counted ${item.name} at ${here}`);
+  return examples;
+}
+
 router.get(
   '/actions',
   asyncRoute(async (req, res) => {
@@ -58,7 +85,10 @@ router.get(
       // page — is handed over rather than flashed. A toast disappears and
       // cannot be replied to, which leaves the person holding a question and
       // no way to answer it.
-      instruction: (handed && handed.instruction) || '',
+      // A chip fills the box rather than firing an instruction: the customer
+      // still reads it and presses Continue themselves.
+      instruction: (handed && handed.instruction) || trimOrNull(req.query.q) || '',
+      examples: exampleInstructions(req.db, req.ctx.workspaceId),
       question: (handed && handed.question) || null,
       unsupported: (handed && handed.unsupported) || null,
       choices: (handed && handed.choices) || null,
@@ -124,6 +154,7 @@ router.post(
       canOperate: permissions.can(membershipOf(req), permissions.OPERATE),
       aiConfigured: config.ai.configured,
       instruction,
+      examples: exampleInstructions(req.db, req.ctx.workspaceId),
       question: result.kind === 'question' ? result.question : null,
       unsupported: result.kind === 'unsupported' ? result.message : null,
       choices: result.choices || null,

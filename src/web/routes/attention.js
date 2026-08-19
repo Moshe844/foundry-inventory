@@ -215,6 +215,25 @@ router.post(
  * Ask Foundry. A GET because it only reads: the answer is shareable, the back
  * button behaves, and nothing is resubmitted by refreshing.
  */
+
+/** Question suggestions a customer could actually send, from their own records. */
+function askExamples(db, workspaceId) {
+  const item = db
+    .prepare('SELECT name FROM items WHERE workspace_id = ? AND is_active = 1 ORDER BY created_at LIMIT 1')
+    .get(workspaceId);
+  const place = repo.listLocations(db, workspaceId)[0];
+  const model = (planApplier.getConfiguration(db, workspaceId) || {}).inventoryModel || {};
+
+  const examples = [];
+  if (item) examples.push(`How many ${item.name} do we have?`);
+  if (place) examples.push(`What moved at ${place.name} this week?`);
+  examples.push('What needs my attention?');
+  if ((model.lotRules || {}).enabled) examples.push('Which lots expire soon?');
+  examples.push('What has not sold in three months?');
+  if (workItems.list(db, workspaceId, { limit: 1 }).length) examples.push('What did you do today?');
+  return examples;
+}
+
 router.get(
   '/ask',
   asyncRoute(async (req, res) => {
@@ -241,20 +260,12 @@ router.get(
       result,
       error,
       aiConfigured: config.ai.configured,
-      examples: [
-        'How many navy oxfords do we have?',
-        'What moved at the warehouse this week?',
-        'Which lots expire soon?',
-        'What has not sold in three months?',
-        'What needs my attention?',
-        'Receive 100 of every black size into Brooklyn.',
-        // Only offered once Foundry has work of its own to talk about. Suggesting
-        // it to a workspace where the answer is "nothing" advertises a hollow
-        // trick rather than a capability.
-        ...(workItems.list(req.db, req.ctx.workspaceId, { limit: 1 }).length
-          ? ['What did you do today?']
-          : []),
-      ],
+      // Written with this inventory's own product and place where there is one.
+      // "How many navy oxfords do we have?" in a business that sells t-shirts
+      // teaches nothing except that the screen was written for somebody else,
+      // and a new customer cannot tell whether the answer would be empty
+      // because Foundry is broken or because the product does not exist.
+      examples: askExamples(req.db, req.ctx.workspaceId),
     });
   })
 );

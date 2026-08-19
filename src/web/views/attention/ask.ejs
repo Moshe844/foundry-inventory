@@ -17,7 +17,7 @@
         type="text"
         name="q"
         value="<%= question %>"
-        placeholder="How many navy oxfords are at the warehouse?"
+        placeholder="<%= examples.length ? examples[0] : 'Ask about your stock' %>"
         maxlength="400"
         autocomplete="off"
         <%= question ? '' : 'autofocus' %>

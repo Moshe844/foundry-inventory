@@ -1116,3 +1116,39 @@ test('with nothing short at all, it still says so plainly', () => {
   const answer = queryService.execute(db, workspace.workspaceId, { intent: 'replenishment' });
   assert.match(answer.answer, /Nothing needs ordering/);
 });
+
+test('no history is reported as not knowing, never as needing ordering', () => {
+  // Found crawling a new account: a fresh product with no sales was announced
+  // as "6 lines need ordering", which is the demand guess Foundry refuses to
+  // make, wearing the opposite disguise.
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const item = makeQuantityItem(db, workspace.ctx, { name: 'Brand New Thing' });
+  engine.receive(db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 5 });
+
+  const plan = replenishment.evaluateWorkspace(db, workspace.workspaceId, {});
+  assert.equal(plan.blocked.length, 1);
+  assert.equal(plan.blocked[0].reason, 'no_usage_evidence');
+
+  const answer = queryService.execute(db, workspace.workspaceId, { intent: 'replenishment' });
+  assert.match(answer.answer, /cannot tell yet/i);
+  // It may say it cannot tell *whether* they need ordering; it may not assert that they do.
+  assert.doesNotMatch(answer.answer, /line\(s\) need ordering/i, 'it has no basis for claiming that');
+  assert.match(answer.answer, /will not guess/i);
+});
+
+test('a known shortfall with no supplier is still reported as needing ordering', () => {
+  // The other half of the same distinction, kept honest in both directions.
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  const item = makeQuantityItem(db, workspace.ctx, { name: 'Known Short' });
+
+  engine.receive(db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 50 });
+  policyService.setPolicy(db, workspace.ctx, membership, item.skuId, { reorderPoint: 20, targetStock: 100 });
+  engine.issue(db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 35, reasonCode: 'sold' });
+
+  const answer = queryService.execute(db, workspace.workspaceId, { intent: 'replenishment' });
+  assert.match(answer.answer, /need ordering/i);
+  assert.match(answer.answer, /Known Short/);
+});
