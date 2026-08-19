@@ -89,6 +89,7 @@ test('a transfer proposal shows real before and after figures', () => {
   );
   assert.deepEqual(view.total, { before: 52, after: 52 });
   assert.equal(view.totalChanges, false, 'a transfer never changes how much you have');
+  assert.equal(view.pastVerb, 'transferred');
   assert.equal(proposal.approvalRequirement, 'CONFIRM');
   assert.ok(proposals.verifyIntegrity(proposal));
 });
@@ -102,6 +103,7 @@ test('a receive proposal adds to the destination and to the total', () => {
     quantity: 100,
   });
   const view = presenter.present(env.db, env.workspace.workspaceId, proposal);
+  assert.equal(view.pastVerb, 'received');
   assert.deepEqual(view.rows.map((r) => [r.label, r.before, r.after]), [['Downtown Store', 4, 104]]);
   assert.deepEqual(view.total, { before: 52, after: 152 });
 });
@@ -1076,7 +1078,7 @@ test('a near-miss between two real names is asked about, never guessed', () => {
 
 test('a word that is simply wrong is still refused, and the options listed', () => {
   const env = setup();
-  makeQuantityItem(env.db, env.ctx, { name: 'Copper Elbow', baseCode: 'CE-1' });
+  const copper = makeQuantityItem(env.db, env.ctx, { name: 'Copper Elbow', baseCode: 'CE-1' });
 
   const built = proposals.build(env.db, env.ctx, intent({
     item: 'jetpack', variant: '', quantity: 2,
@@ -1090,6 +1092,18 @@ test('a word that is simply wrong is still refused, and the options listed', () 
   assert.equal(badLocation.ok, false);
   assert.match(badLocation.message, /no location called “Antarctica”/);
   assert.match(badLocation.message, /You have Downtown Store, Main Warehouse/);
+
+  engine.receive(env.db, env.ctx, {
+    skuId: copper.skuId, locationId: env.workspace.main.id, quantity: 10,
+  });
+  const missingDestination = proposals.build(env.db, env.ctx, intent({
+    item: 'Copper Elbow', variant: '', quantity: 2,
+    sourceLocation: 'Main Warehouse', destinationLocation: 'Overflow Warehouse',
+  }));
+  assert.equal(missingDestination.ok, false);
+  assert.deepEqual(missingDestination.missingLocation, {
+    role: 'destination', name: 'Overflow Warehouse',
+  });
 });
 
 test('very short words are never fuzzy-matched', () => {

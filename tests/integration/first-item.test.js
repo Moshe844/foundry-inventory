@@ -150,6 +150,18 @@ test('accepting the offer creates the combinations and no stock whatsoever', asy
     .type('form')
     .send({ _csrf: csrfFrom(page.text), name: 'Baby headband' });
   assert.equal(res.status, 303);
+  assert.match(res.headers.location, /^\/foundry\/quantities\//);
+
+  const quantities = await agent.get(res.headers.location);
+  assert.equal(quantities.status, 200);
+  assert.match(plain(quantities.text), /How should we get your current quantities into Foundry\?/);
+  assert.match(plain(quantities.text), /Tell Foundry/);
+  assert.match(plain(quantities.text), /Upload Excel/);
+  assert.match(plain(quantities.text), /Enter manually/);
+
+  const resumed = await agent.get('/foundry/quantities');
+  assert.equal(resumed.status, 303);
+  assert.equal(resumed.headers.location, res.headers.location);
 
   const [item] = env.db.prepare('SELECT * FROM items WHERE workspace_id = ?').all(env.workspace.workspaceId);
   assert.equal(item.name, 'Baby headband');
@@ -165,6 +177,39 @@ test('accepting the offer creates the combinations and no stock whatsoever', asy
     .prepare('SELECT COALESCE(SUM(on_hand), 0) AS total FROM balances WHERE workspace_id = ?')
     .get(env.workspace.workspaceId).total;
   assert.equal(balances, 0);
+});
+
+test('current quantities remain an explicit setup step until the customer finishes it', async () => {
+  const env = setup();
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const ready = await agent.get('/foundry/ready/plan_test');
+  const created = await agent
+    .post('/foundry/first-item')
+    .type('form')
+    .send({ _csrf: csrfFrom(ready.text), name: 'Baby headband' });
+  const quantities = await agent.get(created.headers.location);
+
+  const onboarding = env.db
+    .prepare('SELECT status FROM workspace_onboarding WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId);
+  assert.equal(onboarding.status, 'collecting');
+
+  const homeBefore = plain((await agent.get('/')).text);
+  assert.match(homeBefore, /Finish the takeover/);
+  assert.match(homeBefore, /Continue setup/);
+
+  const completed = await agent
+    .post('/foundry/quantities/complete')
+    .type('form')
+    .send({ _csrf: csrfFrom(quantities.text) });
+  assert.equal(completed.status, 303);
+  assert.equal(completed.headers.location, '/');
+  assert.equal(
+    env.db.prepare('SELECT status FROM workspace_onboarding WHERE workspace_id = ?').get(env.workspace.workspaceId).status,
+    'ready'
+  );
 });
 
 test('the name can be changed before accepting', async () => {

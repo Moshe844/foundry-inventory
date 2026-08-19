@@ -36,6 +36,12 @@ CREATE TABLE IF NOT EXISTS suppliers (
   -- Informational only. Foundry does not calculate due dates or balances.
   payment_terms          TEXT,
 
+  -- Vendor-specific vocabulary. One supplier may call this "Style #", another
+  -- "Item No." and another "Vendor SKU". The preferred label is presentation;
+  -- aliases are evidence supplied to future document interpretation.
+  item_code_label        TEXT NOT NULL DEFAULT 'Supplier code',
+  item_code_aliases      TEXT NOT NULL DEFAULT '[]',
+
   created_at            TEXT NOT NULL,
   updated_at            TEXT NOT NULL
 );
@@ -77,6 +83,46 @@ CREATE TABLE IF NOT EXISTS supplier_items (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_items ON supplier_items(workspace_id, supplier_id, sku_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_items_sku ON supplier_items(workspace_id, sku_id, is_active);
+
+-- A customer's own code for a product is not the supplier's code. The vendor
+-- code remains immutable matching evidence for future documents; this mapping
+-- records the internal base code the customer approved for that vendor code.
+CREATE TABLE IF NOT EXISTS supplier_code_mappings (
+  id                  TEXT PRIMARY KEY,
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  supplier_id         TEXT NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+  vendor_code         TEXT NOT NULL COLLATE NOCASE,
+  internal_base_code  TEXT NOT NULL COLLATE NOCASE,
+  created_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  source              TEXT NOT NULL DEFAULT 'customer' CHECK (source IN ('customer','foundry')),
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL,
+  last_applied_at     TEXT,
+  UNIQUE (workspace_id, supplier_id, vendor_code)
+);
+CREATE INDEX IF NOT EXISTS idx_supplier_code_mappings_supplier
+  ON supplier_code_mappings(workspace_id, supplier_id, vendor_code);
+
+-- Renaming catalogue codes is consequential even though it moves no stock.
+-- Foundry therefore stores the exact before/after set and waits for one clear
+-- approval. Replays return the applied result instead of renaming twice.
+CREATE TABLE IF NOT EXISTS supplier_code_mapping_proposals (
+  id                  TEXT PRIMARY KEY,
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  supplier_id         TEXT NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+  vendor_code         TEXT NOT NULL,
+  internal_base_code  TEXT NOT NULL,
+  affected_item_id    TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  affected_skus       TEXT NOT NULL DEFAULT '[]',
+  integrity_hash      TEXT NOT NULL,
+  status              TEXT NOT NULL DEFAULT 'PROPOSED'
+                        CHECK (status IN ('PROPOSED','APPLIED','INVALIDATED','CANCELLED')),
+  requested_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at          TEXT NOT NULL,
+  applied_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_supplier_code_mapping_proposals_workspace
+  ON supplier_code_mapping_proposals(workspace_id, status, created_at DESC);
 
 -- Optional per-SKU replenishment settings. Deliberately optional: requiring a
 -- policy on every line before Foundry will help would mean it helps nobody on

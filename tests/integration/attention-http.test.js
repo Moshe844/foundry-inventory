@@ -277,6 +277,8 @@ test('the item page says what Foundry has noticed about that item', async () => 
   assert.match(page, /Running low/);
   assert.match(page, /may run out/);
   assert.match(page, /Why this\?/);
+  assert.match(page, /Reorder settings/);
+  assert.match(page, /Configure/);
 
   // A different item says nothing, rather than everything.
   const other = scenarios.staleScenario(db, workspace);

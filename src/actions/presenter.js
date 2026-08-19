@@ -21,6 +21,16 @@ const ACTION_LABEL = {
   rename_terminology: 'change some wording',
 };
 
+const ACTION_PAST_LABEL = {
+  receive: 'received',
+  issue: 'issued',
+  transfer: 'transferred',
+  adjust: 'corrected the count for',
+  create_item: 'added',
+  add_location: 'added the location',
+  rename_terminology: 'changed the wording for',
+};
+
 const ACTION_TITLE = {
   receive: 'Foundry is ready to receive',
   issue: 'Foundry is ready to issue',
@@ -184,6 +194,7 @@ function present(db, workspaceId, proposal, options = {}) {
     ...proposal,
     title: ACTION_TITLE[proposal.actionType] || 'Foundry is ready',
     verb: ACTION_LABEL[proposal.actionType] || proposal.actionType,
+    pastVerb: ACTION_PAST_LABEL[proposal.actionType] || `${proposal.actionType}d`,
     subject,
     subjectName: [subject.name, subject.detail].filter(Boolean).join(' / '),
     rows,

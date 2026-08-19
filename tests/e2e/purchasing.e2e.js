@@ -89,7 +89,7 @@ async function stopServer(child) {
     child.once('exit', resolve);
     child.kill('SIGTERM');
     setTimeout(() => {
-      if (!child.killed) child.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
       resolve();
     }, 3000);
   });

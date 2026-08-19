@@ -97,6 +97,14 @@ router.post(
     if (result.kind === 'proposal') return res.redirect(303, `/actions/${result.proposal.proposalId}`);
     if (result.kind === 'existing') return res.redirect(303, `/actions/${result.proposal.proposalId}`);
     if (result.kind === 'plan') return res.redirect(303, `/actions/plan/${result.plan.planId}`);
+    if (result.kind === 'missing_location') {
+      req.session.pendingLocationTransfer = {
+        locationName: result.locationName,
+        instruction: result.instruction,
+        line: result.line,
+      };
+      return res.redirect(303, '/actions/location-required');
+    }
 
     const open = proposals.listOpen(req.db, req.ctx.workspaceId, { limit: 25 });
     return res.page('actions/list', {
@@ -111,6 +119,102 @@ router.post(
       unsupported: result.kind === 'unsupported' ? result.message : null,
       choices: result.choices || null,
     });
+  })
+);
+
+/**
+ * A transfer can name a destination that does not exist yet. That is not a
+ * dead-end error and it is not permission to create one silently. This page
+ * previews the missing configuration first; approval creates only the
+ * location, then prepares the original transfer as a second preview.
+ */
+router.get(
+  '/actions/location-required',
+  asyncRoute(async (req, res) => {
+    const pending = req.session.pendingLocationTransfer;
+    if (!pending || !pending.locationName || !pending.line) {
+      req.flash('info', 'There is no transfer waiting for a new location.');
+      return res.redirect(303, '/#tell-foundry');
+    }
+
+    const locations = req.db
+      .prepare('SELECT name FROM locations WHERE workspace_id = ? AND is_active = 1 ORDER BY name')
+      .all(req.ctx.workspaceId)
+      .map((row) => row.name);
+    return res.page('actions/location-required', {
+      title: `Create ${pending.locationName}?`,
+      nav: 'actions',
+      pending,
+      locations,
+      mayCreate: permissions.can(membershipOf(req), permissions.ADMIN),
+      mayTransfer: permissions.can(membershipOf(req), permissions.OPERATE),
+    });
+  })
+);
+
+router.post(
+  '/actions/location-required',
+  asyncRoute(async (req, res) => {
+    const pending = req.session.pendingLocationTransfer;
+    if (!pending || !pending.locationName || !pending.line) {
+      req.flash('info', 'That transfer setup is no longer waiting.');
+      return res.redirect(303, '/#tell-foundry');
+    }
+    if (req.body.decision !== 'create') {
+      delete req.session.pendingLocationTransfer;
+      req.flash('info', 'Cancelled. No location was created and no stock moved.');
+      return res.redirect(303, '/#tell-foundry');
+    }
+
+    try {
+      permissions.assertCanPerform(membershipOf(req), 'add_location');
+      permissions.assertCanPerform(membershipOf(req), 'transfer');
+
+      const existing = req.db
+        .prepare('SELECT id FROM locations WHERE workspace_id = ? AND name = ? COLLATE NOCASE AND is_active = 1')
+        .get(req.ctx.workspaceId, pending.locationName);
+
+      if (!existing) {
+        const builtLocation = proposals.build(req.db, req.ctx, {
+          actionType: 'add_location',
+          destinationLocation: pending.locationName,
+          locationKind: /warehouse/i.test(pending.locationName)
+            ? 'warehouse'
+            : /store|shop/i.test(pending.locationName) ? 'store' : 'other',
+          assumptions: [],
+        });
+        if (!builtLocation.ok) {
+          req.flash('info', builtLocation.question || builtLocation.unsupported || 'Foundry could not prepare that location.');
+          return res.redirect(303, '/actions/location-required');
+        }
+        const locationProposal = proposals.persist(req.db, req.ctx, builtLocation.proposal, {
+          sourceType: 'USER_REQUEST',
+          instruction: `Create ${pending.locationName} so Foundry can continue: ${pending.instruction}`,
+        });
+        execution.approve(req.db, req.ctx, membershipOf(req), locationProposal.proposalId);
+        execution.execute(req.db, req.ctx, membershipOf(req), locationProposal.proposalId, {
+          idempotencyKey: `proposal:${locationProposal.proposalId}`,
+        });
+      }
+
+      const builtTransfer = proposals.build(req.db, req.ctx, pending.line);
+      if (!builtTransfer.ok) {
+        delete req.session.pendingLocationTransfer;
+        req.flash('info', `${pending.locationName} was created, but the transfer still needs attention: ${builtTransfer.question || builtTransfer.unsupported}`);
+        return res.redirect(303, '/#tell-foundry');
+      }
+      const transfer = proposals.persist(req.db, req.ctx, builtTransfer.proposal, {
+        sourceType: 'USER_REQUEST',
+        instruction: pending.instruction,
+      });
+      delete req.session.pendingLocationTransfer;
+      req.flash('success', `${pending.locationName} is ready. Now review the transfer; no stock has moved yet.`);
+      return res.redirect(303, `/actions/${transfer.proposalId}`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+      return res.redirect(303, '/actions/location-required');
+    }
   })
 );
 

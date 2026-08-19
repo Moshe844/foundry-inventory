@@ -9,8 +9,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node src/server.js",
+    "start": "node --use-system-ca src/server.js",
+    "dev": "node --use-system-ca src/server.js",
     "seed:demo": "node scripts/seed-demo.js",
     "seed:foundry": "node scripts/seed-foundry-demo.js",
     "db:reset": "node scripts/reset-db.js",
@@ -22,12 +22,17 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
+    "@napi-rs/canvas": "^1.0.6",
     "@paralleldrive/cuid2": "^2.3.1",
+    "@tesseract.js-data/eng": "^1.0.0",
     "ajv": "^8.20.0",
     "better-sqlite3": "^12.11.1",
     "ejs": "^3.1.10",
     "express": "^4.22.2",
-    "express-session": "^1.19.0"
+    "express-session": "^1.19.0",
+    "mammoth": "^1.12.1",
+    "pdfjs-dist": "^6.2.108",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "playwright": "^1.50.0",

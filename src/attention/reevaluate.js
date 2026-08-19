@@ -16,6 +16,7 @@ const os = require('node:os');
 const { inTransaction } = require('../db');
 const attention = require('./attention-engine');
 const { nowIso } = require('../lib/util');
+const managerTriggers = require('../manager/triggers');
 
 const DEFAULT_SWEEP_MS = 60 * 60 * 1000; // hourly: expiry and idleness move by the day
 const LEASE_ID = 'sweep';
@@ -56,7 +57,11 @@ function acquireSweepLease(db, leaseMs) {
 function afterMovement(db, workspaceId, skuIds, trigger = 'movement') {
   const scope = Array.isArray(skuIds) && skuIds.length ? { skuIds: [...new Set(skuIds)] } : undefined;
   try {
-    return attention.evaluate(db, workspaceId, { trigger, scope });
+    const result = attention.evaluate(db, workspaceId, { trigger, scope });
+    managerTriggers.enqueue(db, workspaceId, trigger, scope || {}, {
+      idempotencyKey: managerTriggers.keyFor(trigger, scope || {}),
+    });
+    return result;
   } catch (error) {
     // The operation succeeded; the briefing is stale until the next sweep.
     console.error('[attention] re-evaluation failed after %s: %s', trigger, error.message);

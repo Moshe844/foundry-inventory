@@ -80,7 +80,7 @@ async function stopServer(child) {
     child.once('exit', resolve);
     child.kill('SIGTERM');
     setTimeout(() => {
-      if (!child.killed) child.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
       resolve();
     }, 3000);
   });
@@ -113,11 +113,13 @@ function csvFile(file, lines) {
 /** Signs up and lands on the onboarding chooser. */
 async function register(page, account) {
   await page.goto(`${BASE}/register`);
-  await page.fill('#workspaceName', account.workspaceName);
   await page.fill('#name', account.name);
   await page.fill('#email', account.email);
   await page.fill('#password', account.password);
-  await Promise.all([page.waitForURL(`${BASE}/onboarding`), page.click('form[action="/register"] button[type=submit]')]);
+  await Promise.all([page.waitForURL(`${BASE}/inventories`), page.click('form[action="/register"] button[type=submit]')]);
+  await Promise.all([page.waitForURL(`${BASE}/inventories/new`), page.click('a[href="/inventories/new"]')]);
+  await page.fill('#name', account.workspaceName);
+  await Promise.all([page.waitForURL(`${BASE}/onboarding`), page.click('form[action="/inventories"] button[type=submit]')]);
 }
 
 const workspaceIdFor = (databasePath, name) =>
@@ -178,8 +180,8 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
     await register(page, ACCOUNT);
     const text = await page.locator('body').innerText();
 
-    assert.match(text, /How are you managing it today/);
-    for (const label of ['Starting fresh', 'Excel / spreadsheets', 'Inventory software', "It's a mess"]) {
+    assert.match(text, /How are you managing inventory today/);
+    for (const label of ['Starting fresh', 'Excel / spreadsheets', 'Existing inventory system', "It's a mess"]) {
       assert.ok(text.includes(label), `the chooser is missing "${label}"`);
     }
     assert.match(text, /Not sure/);

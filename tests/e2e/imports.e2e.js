@@ -82,7 +82,7 @@ async function stopServer(child) {
     child.once('exit', resolve);
     child.kill('SIGTERM');
     setTimeout(() => {
-      if (!child.killed) child.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
       resolve();
     }, 3000);
   });
@@ -389,7 +389,7 @@ test(
       await page.fill('#action-instruction', instruction);
       await Promise.all([
         page.waitForResponse((r) => r.url().endsWith('/actions/ask') && r.request().method() === 'POST'),
-        page.click('button:has-text("Work it out")'),
+        page.click('button:has-text("Continue")'),
       ]);
       await page.waitForLoadState('networkidle');
     };

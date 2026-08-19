@@ -395,6 +395,73 @@ test('Foundry prepares purchase orders but never sends them', () => {
   assert.match(note.body, /Nothing has been sent/);
 });
 
+test('an approved routine-purchasing policy lets Foundry approve a supported replenishment', () => {
+  const env = tights();
+  const suppliers = require('../../src/purchasing/supplier-service');
+  const policies = require('../../src/purchasing/policy-service');
+  const poService = require('../../src/purchasing/po-service');
+  const supplier = suppliers.createSupplier(env.db, env.ctx, env.membership, { name: 'Tights Supply Co', defaultLeadTimeDays: 14 });
+  suppliers.linkItem(env.db, env.ctx, env.membership, { supplierId: supplier.id, skuId: env.black5.id,
+    purchaseUnit: 'unit', unitsPerPurchaseUnit: 1, lastUnitCost: 3.5, isPreferred: true });
+  policies.setPolicy(env.db, env.ctx, env.membership, env.black5.id, { reorderPoint: 100, targetStock: 119 });
+  const policy = policyService.propose(env.db, env.ctx, env.membership, {
+    name: 'Routine replenishment', allowedActionTypes: ['approve_purchase_order'], supplierScope: [supplier.id],
+    maximumValue: 1000, thresholds: { maxUnitPriceChangePercent: 5 },
+    conditions: [policyService.CONDITIONS.REPLENISHMENT_EVIDENCE,
+      policyService.CONDITIONS.MOQ_ORDER_MULTIPLE_COMPLIANT,
+      policyService.CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND,
+      policyService.CONDITIONS.PRICE_WITHIN_POLICY],
+  });
+  policyService.approve(env.db, env.ctx, env.membership, policy.id);
+  modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+
+  runner.run(env.db, env.ctx, env.membership, { trigger: 'manager-purchasing' });
+  const [prepared] = workItems.list(env.db, env.workspace.workspaceId, { category: 'purchase_preparation' });
+  const order = poService.get(env.db, env.workspace.workspaceId, prepared.purchaseOrderId);
+  assert.equal(order.status, 'ORDERED', JSON.stringify({ outcome: prepared.outcome,
+    approvals: workItems.list(env.db, env.workspace.workspaceId, { category: 'purchase_approval' }) }));
+  assert.equal(prepared.outcome.autoApproved, true);
+  assert.equal(prepared.verificationStatus, 'VERIFIED');
+});
+
+test('a 17 percent supplier price increase stops routine purchasing in Needs you', () => {
+  const env = tights();
+  const suppliers = require('../../src/purchasing/supplier-service');
+  const policies = require('../../src/purchasing/policy-service');
+  const poService = require('../../src/purchasing/po-service');
+  const receiving = require('../../src/purchasing/receiving-service');
+  const supplier = suppliers.createSupplier(env.db, env.ctx, env.membership, { name: 'Tights Supply Co', defaultLeadTimeDays: 14 });
+  suppliers.linkItem(env.db, env.ctx, env.membership, { supplierId: supplier.id, skuId: env.black5.id,
+    supplierSku: 'KT-B5', purchaseUnit: 'unit', unitsPerPurchaseUnit: 1, lastUnitCost: 10, isPreferred: true });
+  let previous = poService.createOrder(env.db, env.ctx, env.membership, { supplierId: supplier.id,
+    lines: [{ skuId: env.black5.id, quantityUnits: 1, unitCost: 10, destinationLocationId: env.brooklyn.id }] });
+  previous = poService.approve(env.db, env.ctx, env.membership, previous.id, { expectedHash: previous.integrityHash, markOrdered: true });
+  receiving.receive(env.db, env.ctx, env.membership, previous.id, { idempotencyKey: 'prior-price',
+    lines: previous.lines.map((line) => ({ lineId: line.id, quantityUnits: 1, locationId: env.brooklyn.id })) });
+  suppliers.linkItem(env.db, env.ctx, env.membership, { supplierId: supplier.id, skuId: env.black5.id,
+    supplierSku: 'KT-B5', purchaseUnit: 'unit', unitsPerPurchaseUnit: 1, lastUnitCost: 11.7, isPreferred: true });
+  policies.setPolicy(env.db, env.ctx, env.membership, env.black5.id, { reorderPoint: 100, targetStock: 119 });
+  const policy = policyService.propose(env.db, env.ctx, env.membership, {
+    name: 'Routine replenishment', allowedActionTypes: ['approve_purchase_order'], supplierScope: [supplier.id],
+    maximumValue: 2000, thresholds: { maxUnitPriceChangePercent: 5 },
+    conditions: [policyService.CONDITIONS.REPLENISHMENT_EVIDENCE,
+      policyService.CONDITIONS.MOQ_ORDER_MULTIPLE_COMPLIANT,
+      policyService.CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND,
+      policyService.CONDITIONS.PRICE_WITHIN_POLICY],
+  });
+  policyService.approve(env.db, env.ctx, env.membership, policy.id);
+  modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+
+  runner.run(env.db, env.ctx, env.membership, { trigger: 'manager-price-exception' });
+  const [decision] = workItems.list(env.db, env.workspace.workspaceId, { category: 'purchase_approval' });
+  assert.ok(decision, 'the exceptional order is prepared as one human decision');
+  assert.equal(decision.executionStatus, 'WAITING_FOR_APPROVAL');
+  assert.match(decision.policyEvaluation.reason, /17%.*5%/);
+  const order = poService.get(env.db, env.workspace.workspaceId,
+    decision.purchaseOrderId || decision.recommendedAction.purchaseOrderId);
+  assert.equal(order.status, 'DRAFT', 'the price exception was not approved or sent');
+});
+
 // --- quiet inventories -------------------------------------------------------
 
 test('a healthy inventory produces no work at all', () => {

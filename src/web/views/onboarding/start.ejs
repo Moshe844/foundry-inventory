@@ -1,7 +1,8 @@
 <div class="page-head">
   <div class="titles">
-    <h1>Let's get your inventory into Foundry</h1>
-    <div class="page-sub">How are you managing it today?</div>
+    <span class="setup-eyebrow">New inventory</span>
+    <h1>How are you managing inventory today?</h1>
+    <div class="page-sub">Choose the closest answer. Foundry will do the setup work from there.</div>
   </div>
 </div>
 
@@ -24,7 +25,7 @@
 </div>
 
 <div class="card section">
-  <div class="card-head"><h2>Not sure?</h2></div>
+  <div class="card-head"><h2>Not sure? Tell Foundry what's going on.</h2></div>
   <form method="post" action="/onboarding/describe">
     <div class="card-body">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">

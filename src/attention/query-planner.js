@@ -61,7 +61,8 @@ Intents:
 - last_cost: what they last paid for something.
 - suppliers_for_item: who sells something, or which supplier to use for it.
 - foundry_activity: what Foundry itself has been doing — "what did you do",
-  "what have you handled today", "what did you get done".
+  "what have you handled today", "what did you get done", "what did you
+  create from that invoice", or "what did setup create".
 - foundry_why: why Foundry did something — "why did you move those tights",
   "why did you order that". Put what they named in entityQuery.
 - stop_automation: they want Foundry to stop doing something by itself —
@@ -129,7 +130,7 @@ async function plan(question, options = {}) {
 /** The whole path: question → plan → deterministic lookup → grounded answer. */
 async function ask(db, workspaceId, question, options = {}) {
   const queryPlan = await plan(question, options);
-  const result = queryService.execute(db, workspaceId, queryPlan);
+  const result = queryService.execute(db, workspaceId, queryPlan, { question: String(question).trim() });
   return { question: String(question).trim(), ...result };
 }
 

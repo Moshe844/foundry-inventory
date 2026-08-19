@@ -116,16 +116,16 @@ test('a new account is handed to Foundry, not an empty dashboard', async () => {
   assert.equal(front.headers.location, '/onboarding');
 
   const chooser = plain((await agent.get('/onboarding')).text);
-  assert.match(chooser, /How are you managing it today/);
+  assert.match(chooser, /How are you managing inventory today/);
   assert.match(chooser, /Starting fresh/);
   assert.match(chooser, /Excel \/ spreadsheets/);
-  assert.match(chooser, /Inventory software/);
+  assert.match(chooser, /Existing inventory system/);
   assert.match(chooser, /It's a mess/);
 
   // Starting Fresh is the Mission 2 experience, reached deliberately and
   // otherwise unchanged.
   const describe = plain((await agent.get('/foundry/describe')).text);
-  assert.match(describe, /Tell Foundry about/);
+  assert.match(describe, /Give Foundry what you already have/);
   assert.match(describe, /Understand my inventory/);
   assert.match(describe, /Set it up manually/);
 });
@@ -177,6 +177,87 @@ test('the whole approval flow works end to end over HTTP', async () => {
   );
   // The customer's answer took effect.
   assert.equal(configuration.operationalDefaults.allowNegativeStock, true);
+});
+
+test('a first invoice is read, previewed, and becomes configured inventory on one approval', async () => {
+  const interpretation = {
+    documentType: 'invoice',
+    businessDescription: 'The business buys children’s shoes as size variants from Step & Style Wholesale and receives them into Brooklyn Warehouse.',
+    unitLabel: 'pair',
+    supplierName: 'Step & Style Wholesale', supplierCodeLabel: 'Supplier Code', supplierEmail: 'sales@example.com',
+    documentNumber: 'INV-2026-0816', documentDate: '2026-08-16', paymentTerms: 'Net 15', currency: 'USD',
+    destinationName: 'Brooklyn Warehouse', destinationAddress: '78 Distribution Ave, Brooklyn, NY 11222',
+    lines: [
+      { styleName: 'Kids Classic Loafer', color: 'Black', variantDimension: 'Size', size: '23', supplierSku: 'SH-101-BLK', description: 'Kids Classic Loafer - Black', quantity: 12, unitCost: 11.5 },
+      { styleName: 'Kids Classic Loafer', color: 'Black', variantDimension: 'Size', size: '24', supplierSku: 'SH-101-BLK', description: 'Kids Classic Loafer - Black', quantity: 10, unitCost: 11.5 },
+      { styleName: 'Boys Dress Oxford', color: 'Brown', variantDimension: 'Size', size: '28', supplierSku: 'SH-204-BRN', description: 'Boys Dress Oxford - Brown', quantity: 8, unitCost: 14.75 },
+    ],
+    warnings: [],
+  };
+  const understanding = buildUnderstanding({
+    businessDescription: interpretation.businessDescription,
+    variantDimensions: [{ name: 'Size', exampleValues: ['23', '24', '28'] }],
+    likelyLocations: [{ name: 'Brooklyn Warehouse', kind: 'warehouse', certainty: 'inferred_confidently' }],
+    recommendedConfiguration: { trackingMode: 'quantity', usesVariants: true, allowNegativeStock: false, summary: 'Each shoe size is counted separately.' },
+  });
+  const { recommendations, unresolvedDecisions, ...core } = understanding;
+  const { app, db, workspace } = setup({ provider: fakeProvider([interpretation, core, { recommendations, unresolvedDecisions }]) });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const page = await agent.get('/foundry/describe');
+  const started = await agent.post('/foundry/understand')
+    .field('_csrf', csrfFrom(page.text))
+    .attach('source', Buffer.from('Code,Style,Color,Size,Qty,Cost\nSH-101-BLK,Kids Classic Loafer,Black,23,12,11.50\n'), {
+      filename: 'mock_shoe_inventory_invoice.csv', contentType: 'text/csv',
+    });
+  assert.equal(started.status, 303);
+
+  const jobId = started.headers.location.split('/').pop();
+  let proposalPath;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const status = await agent.get(`/api/foundry/jobs/${jobId}`).set('Accept', 'application/json');
+    if (status.body.redirectTo) { proposalPath = status.body.redirectTo; break; }
+    if (status.body.status === 'failed') assert.fail(status.body.error);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(proposalPath);
+
+  const proposalPage = await agent.get(proposalPath);
+  const proposal = plain(proposalPage.text);
+  assert.match(proposal, /What Foundry read from mock_shoe_inventory_invoice.csv/);
+  assert.match(proposal, /INV-2026-0816/);
+  assert.match(proposal, /30 pairs · 2 styles · 3 variants/);
+  assert.match(proposal, /SH-101-BLK/);
+  assert.match(proposalPage.text, /name="supplierCodeLabel"[^>]*value="Supplier Code"/);
+  assert.match(proposal, /This file calls the vendor's product identifier Supplier Code/);
+  assert.match(proposal, /You will not have to map them again|recognize them as the same field/);
+  assert.match(proposal, /Configure and add 30 pairs/);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(workspace.workspaceId).n, 0);
+
+  const understandingId = proposalPath.split('/').pop();
+  const configured = await agent.post(`/foundry/proposal/${understandingId}/configure`)
+    .type('form').send({ _csrf: csrfFrom(proposalPage.text), supplierCodeLabel: 'Style #' });
+  assert.equal(configured.status, 303);
+
+  const ready = plain((await agent.get(configured.headers.location)).text);
+  assert.match(ready, /mock_shoe_inventory_invoice.csv is now inventory truth/);
+  assert.match(ready, /30 pairs received into Brooklyn Warehouse/);
+  assert.match(ready, /This file called the vendor identifier Supplier Code/);
+  assert.match(ready, /Foundry will call it Style #/);
+  assert.match(ready, /recognize alternate headings on future documents/);
+  assert.match(ready, /Purchase order INV-2026-0816 recorded, approved, and fully received/);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(workspace.workspaceId).n, 2);
+  assert.equal(db.prepare('SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ?').get(workspace.workspaceId).n, 30);
+  const savedSupplier = db.prepare('SELECT item_code_label, item_code_aliases FROM suppliers WHERE workspace_id = ?').get(workspace.workspaceId);
+  assert.equal(savedSupplier.item_code_label, 'Style #');
+  assert.ok(JSON.parse(savedSupplier.item_code_aliases).includes('Supplier Code'));
+
+  const replayed = await agent.post(`/foundry/proposal/${understandingId}/configure`)
+    .type('form').send({ _csrf: csrfFrom(proposalPage.text) });
+  assert.equal(replayed.status, 303);
+  assert.equal(replayed.headers.location, configured.headers.location);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ?').get(workspace.workspaceId).n, 3);
 });
 
 test('after configuring, the console uses the customer terminology', async () => {
@@ -267,7 +348,7 @@ test('a bad description is refused with a message, not a crash', async () => {
 
   const res = await post(agent, '/foundry/understand', { description: 'stuff' }, '/foundry/describe');
   assert.equal(res.status, 400);
-  assert.match(plain(res.text), /Tell Foundry a little more/);
+  assert.match(plain(res.text), /Add an invoice, spreadsheet, Word document, or PDF/);
 });
 
 test('a provider failure is reported calmly and configures nothing', async () => {

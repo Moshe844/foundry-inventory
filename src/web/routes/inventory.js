@@ -10,6 +10,8 @@ const reevaluate = require('../../attention/reevaluate');
 const planApplier = require('../../foundry/plan-applier');
 const attention = require('../../attention/attention-engine');
 const presenter = require('../../attention/presenter');
+const purchasingPolicy = require('../../purchasing/policy-service');
+const supplierService = require('../../purchasing/supplier-service');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { toArray, trimOrNull } = require('../../lib/util');
 
@@ -133,11 +135,19 @@ router.get(
     const detail = itemService.getItemDetail(req.db, req.ctx.workspaceId, req.params.id);
     // What Foundry has noticed about this record, on the record itself.
     const findings = attention.listAttentionForItem(req.db, req.ctx.workspaceId, req.params.id);
+    const purchasingLines = detail.skus.map((sku) => ({
+      skuId: sku.id,
+      label: sku.variant_label || detail.item.name,
+      total: sku.total,
+      policy: purchasingPolicy.effectivePolicy(req.db, req.ctx.workspaceId, sku.id),
+      suppliers: supplierService.suppliersForSku(req.db, req.ctx.workspaceId, sku.id),
+    }));
     res.page('inventory/item', {
       title: detail.item.name,
       nav: 'inventory',
       ...detail,
       attention: presenter.presentAll(req.db, req.ctx.workspaceId, findings),
+      purchasingLines,
     });
   })
 );

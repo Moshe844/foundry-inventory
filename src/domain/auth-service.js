@@ -54,31 +54,43 @@ function checkPasswordStrength(password) {
 }
 
 
+function insertAccount(db, input) {
+  const name = requireText(input.name, 'Your name', { max: 120 });
+  const email = normaliseEmail(input.email);
+  const password = checkPasswordStrength(input.password);
+
+  if (db.prepare('SELECT 1 FROM accounts WHERE email = ? COLLATE NOCASE').get(email)) {
+    throw new ValidationError('An account already uses that email address.', { field: 'email' });
+  }
+
+  const accountId = newId('acc');
+  db.prepare(
+    `INSERT INTO accounts (id, email, name, password_hash, plan, created_at)
+     VALUES (?, ?, ?, ?, 'free', ?)`
+  ).run(accountId, email, name, hashPassword(password), nowIso());
+
+  return { accountId, email, name };
+}
+
+/** Creates the login first. Inventories are deliberately a separate choice. */
+function createAccount(db, input) {
+  return inTransaction(db, () => insertAccount(db, input));
+}
+
 /**
- * Signing up creates three things at once: the person's account, their first
- * inventory, and their membership of it as owner. They are separable from here
- * on — the same account can create or join any number of further workspaces.
+ * Compatibility boundary for seeds and programmatic provisioning that create
+ * an account and its first inventory together. Customer sign-up uses the
+ * separate createAccount flow above.
  */
 function registerAccount(db, input) {
   return inTransaction(db, () => {
     const workspaceName = requireText(input.workspaceName, 'Inventory name', { max: 120 });
-    const name = requireText(input.name, 'Your name', { max: 120 });
-    const email = normaliseEmail(input.email);
-    const password = checkPasswordStrength(input.password);
+    const account = insertAccount(db, input);
 
-    if (db.prepare('SELECT 1 FROM accounts WHERE email = ? COLLATE NOCASE').get(email)) {
-      throw new ValidationError('An account already uses that email address.', { field: 'email' });
-    }
-
-    const now = nowIso();
-    const accountId = newId('acc');
-    db.prepare(
-      `INSERT INTO accounts (id, email, name, password_hash, plan, created_at)
-       VALUES (?, ?, ?, ?, 'free', ?)`
-    ).run(accountId, email, name, hashPassword(password), now);
-
-    const { workspaceId, userId } = createWorkspaceFor(db, accountId, workspaceName, { name, now });
-    return { accountId, workspaceId, userId, email, name };
+    const { workspaceId, userId } = createWorkspaceFor(db, account.accountId, workspaceName, {
+      name: account.name,
+    });
+    return { ...account, workspaceId, userId };
   });
 }
 
@@ -224,6 +236,7 @@ function getWorkspace(db, workspaceId) {
 module.exports = {
   hashPassword,
   verifyPassword,
+  createAccount,
   registerAccount,
   createWorkspaceFor,
   authenticate,

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Mission 7 acceptance run, in a real browser, from a clean database.
+ * Mission 8 manager-loop acceptance run, in a real browser, from a clean database.
  *
  * The scenario from the brief: Kids Tights, Black / Size 5, eight left in
  * Brooklyn against sixty-one in New Jersey, with Brooklyn doing all the selling.
@@ -11,7 +11,8 @@
  * nothing done to it. Approving a policy on its own still gets nothing done.
  * Only with both does Foundry act, and then it has to be able to say what it
  * did, why, and stop when told to. The last run is the one that matters most:
- * pausing mid-flight.
+ * pausing mid-flight. Mission 8 adds the primary manager surface and the
+ * evidence-backed physical discrepancy that becomes exactly one human exception.
  */
 
 const test = require('node:test');
@@ -28,6 +29,7 @@ const authService = require('../../src/domain/auth-service');
 const itemService = require('../../src/domain/item-service');
 const locationService = require('../../src/domain/location-service');
 const repo = require('../../src/domain/repository');
+const investigations = require('../../src/manager/investigations');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const SHOTS = path.join(ROOT, 'artifacts', 'screenshots', 'autopilot');
@@ -85,7 +87,7 @@ async function stopServer(child) {
     child.once('exit', resolve);
     child.kill('SIGTERM');
     setTimeout(() => {
-      if (!child.killed) child.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
       resolve();
     }, 3000);
   });
@@ -151,7 +153,7 @@ function buildWorkspace(databasePath) {
        BEGIN SELECT RAISE(ABORT, 'movements are immutable'); END`
     );
 
-    return { workspaceId, skuId: black5.id, brooklyn: brooklyn.id, jersey: jersey.id };
+    return { workspaceId, userId, accountId, skuId: black5.id, brooklyn: brooklyn.id, jersey: jersey.id };
   } finally {
     db.close();
   }
@@ -170,7 +172,7 @@ const balance = (databasePath, state, locationId) =>
 
 // ---------------------------------------------------------------------------
 
-test('Mission 7 end to end: Foundry runs the operation, and stops when told', { timeout: 1200000 }, async (t) => {
+test('Mission 8 end to end: Foundry runs the operation, investigates, and stops when told', { timeout: 1200000 }, async (t) => {
   fs.rmSync(SHOTS, { recursive: true, force: true });
   fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -201,7 +203,7 @@ test('Mission 7 end to end: Foundry runs the operation, and stops when told', { 
   await t.test('0. the home page is what Foundry is doing, not a table of counts', async () => {
     await signIn(page);
     const text = await page.locator('body').innerText();
-    assert.match(text, /What Foundry did/);
+    assert.match(text, /Foundry handled this/i);
     assert.match(text, /What's happening next/);
     await shot(page, 'operator-home');
   });
@@ -310,7 +312,30 @@ test('Mission 7 end to end: Foundry runs the operation, and stops when told', { 
     await shot(page, 'history');
   });
 
-  await t.test('9. the kill switch stops everything, immediately', async () => {
+  await t.test('9. a physical discrepancy is investigated and becomes exactly one human exception', async () => {
+    inspect(databasePath, (db) => {
+      const ctx = { workspaceId: state.workspaceId, actorId: state.userId, accountId: state.accountId };
+      const expected = repo.getBalance(db, state.workspaceId, state.skuId, state.brooklyn);
+      const opened = investigations.openPhysicalCount(db, ctx, { skuId: state.skuId,
+        locationId: state.brooklyn, countedQuantity: expected - 3, displayName: 'Kids Tights / Black / 5' });
+      investigations.investigate(db, state.workspaceId, opened.investigation.investigationId);
+    });
+    await page.goto(`${BASE}/`);
+    const home = await page.locator('body').innerText();
+    assert.match(home, /I need you for 1 thing/i);
+    assert.match(home, /Count discrepancy: Kids Tights \/ Black \/ 5/i);
+    assert.equal(inspect(databasePath, (db) => db.prepare('SELECT COUNT(*) n FROM adjustments WHERE workspace_id = ?').get(state.workspaceId).n), 0,
+      'investigation never silently changes the ledger');
+    await page.click('a[href^="/investigations/"]');
+    const detail = await page.locator('body').innerText();
+    assert.match(detail, /Expected/);
+    assert.match(detail, /Observed/);
+    assert.match(detail, /Still unexplained/);
+    assert.match(detail, /will not invent/i);
+    await shot(page, 'physical-discrepancy-investigated');
+  });
+
+  await t.test('10. the kill switch stops everything, immediately', async () => {
     await page.goto(`${BASE}/`);
     page.once('dialog', (dialog) => dialog.accept());
     await page.click('form[action="/autopilot/pause"] button[type=submit]');
@@ -327,7 +352,7 @@ test('Mission 7 end to end: Foundry runs the operation, and stops when told', { 
     assert.equal(balance(databasePath, state, state.brooklyn), before, 'paused means paused');
   });
 
-  await t.test('10. what it already did survives the pause', async () => {
+  await t.test('11. what it already did survives the pause', async () => {
     await page.goto(`${BASE}/autopilot/history`);
     assert.match(await page.locator('body').innerText(), /Moved 12 Kids Tights/);
     assert.deepEqual(pageErrors, [], 'no client-side errors anywhere in the run');

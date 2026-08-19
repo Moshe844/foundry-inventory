@@ -22,7 +22,7 @@ const PATHS = [
     id: 'fresh',
     label: 'Starting fresh',
     blurb: 'I need Foundry to set everything up.',
-    detail: 'Describe the business and Foundry works out how to track it.',
+    detail: 'Upload your first invoice or inventory sheet, or describe the business. Foundry shows one exact setup preview.',
     icon: 'foundry',
   },
   {
@@ -34,9 +34,9 @@ const PATHS = [
   },
   {
     id: 'software',
-    label: 'Inventory software',
-    blurb: 'I already use another inventory system.',
-    detail: 'Move to Foundry, or export what you have and Foundry takes it from there.',
+    label: 'Existing inventory system',
+    blurb: 'My inventory currently lives in another inventory or ERP system.',
+    detail: 'Move to Foundry, or keep that system as the source of truth and let Foundry manage the operation.',
     icon: 'inventory',
   },
   {
@@ -146,6 +146,21 @@ function setStatus(db, workspaceId, status) {
   return get(db, workspaceId);
 }
 
+/**
+ * A starting-fresh inventory has crossed the setup boundary once Foundry has
+ * real ledger evidence. Continuing to ask how to add quantities after a
+ * successful receipt or opening adjustment is stale workflow state, not a
+ * meaningful customer decision.
+ */
+function reconcileWithInventoryTruth(db, workspaceId) {
+  const state = get(db, workspaceId);
+  if (!state || state.isComplete || state.path !== 'fresh') return state;
+  const hasTruth = db
+    .prepare('SELECT 1 FROM movements WHERE workspace_id = ? LIMIT 1')
+    .get(workspaceId);
+  return hasTruth ? setStatus(db, workspaceId, 'ready') : state;
+}
+
 function setExternalSystem(db, workspaceId, systemName) {
   db.prepare('UPDATE workspace_onboarding SET external_system = ?, updated_at = ? WHERE workspace_id = ?')
     .run(trimOrNull(systemName), nowIso(), workspaceId);
@@ -245,6 +260,7 @@ module.exports = {
   ensure,
   choose,
   setStatus,
+  reconcileWithInventoryTruth,
   setExternalSystem,
   sourceOfTruth,
   setSourceOfTruth,

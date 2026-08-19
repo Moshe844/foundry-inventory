@@ -1,0 +1,84 @@
+<%
+  var line = pending.line || {};
+  var product = [line.item, line.variant].filter(Boolean).join(' / ') || 'the requested product';
+  var kind = /warehouse/i.test(pending.locationName) ? 'Warehouse'
+    : /store|shop/i.test(pending.locationName) ? 'Store' : 'Location';
+%>
+
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/#tell-foundry">Tell Foundry</a><span>›</span><span>Location needed</span>
+</nav>
+
+<header class="location-required-hero">
+  <span class="location-required-hero__icon"><%- helpers.icon('locations', { size: 23 }) %></span>
+  <div>
+    <div class="location-required-hero__meta"><span class="badge badge--warn">Setup needed</span><span>Transfer paused safely</span></div>
+    <h1><%= pending.locationName %> does not exist yet</h1>
+    <p>Foundry understood the transfer, but it cannot send stock to a location that is not part of this inventory.</p>
+  </div>
+</header>
+
+<div class="location-required-layout section">
+  <main class="grid">
+    <section class="card location-create-preview">
+      <div class="card-head">
+        <div><span class="investigation-kicker">First change</span><h2>Create the missing location</h2></div>
+        <span class="badge badge--muted">Preview only</span>
+      </div>
+      <div class="card-body">
+        <div class="location-create-name">
+          <span><%- helpers.icon('locations', { size: 21 }) %></span>
+          <div><small>New <%= kind.toLowerCase() %></small><strong><%= pending.locationName %></strong></div>
+        </div>
+        <div class="location-create-facts">
+          <div><span>Type</span><strong><%= kind %></strong></div>
+          <div><span>Locations</span><strong><%= locations.length %> <%- helpers.icon('chevron', { size: 14 }) %> <%= locations.length + 1 %></strong></div>
+          <div><span>Stock changed</span><strong>None</strong></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><div><span class="investigation-kicker">Then Foundry will preview</span><h2>The transfer you requested</h2></div></div>
+      <div class="location-transfer-understood">
+        <div><span>Product</span><strong><%= product %></strong></div>
+        <div><span>Quantity</span><strong><%= line.quantity %></strong></div>
+        <div><span>From</span><strong><%= line.sourceLocation || 'Foundry will identify the source' %></strong></div>
+        <div><span>To</span><strong><%= pending.locationName %></strong></div>
+      </div>
+      <div class="card-foot">
+        <%- helpers.icon('shield', { size: 16 }) %>
+        The transfer remains a separate preview. Stock will not move until you approve that preview too.
+      </div>
+    </section>
+  </main>
+
+  <aside class="card location-required-decision">
+    <div class="card-head"><div><span class="investigation-kicker">Your decision</span><h2>Create this location?</h2></div></div>
+    <div class="card-body">
+      <ol class="location-required-steps">
+        <li><span>1</span><div><strong>Create <%= pending.locationName %></strong><p>No inventory quantities change.</p></div></li>
+        <li><span>2</span><div><strong>Review exact transfer numbers</strong><p>Foundry will show both locations before and after.</p></div></li>
+        <li><span>3</span><div><strong>Approve the transfer separately</strong><p>Only then can <%= line.quantity %> unit<%= Number(line.quantity) === 1 ? '' : 's' %> move.</p></div></li>
+      </ol>
+
+      <% if (!mayCreate || !mayTransfer) { %>
+        <div class="notice notice--warn">
+          <%- helpers.icon('alert', { size: 16 }) %>
+          <span>An owner with permission to add locations and transfer stock must approve this.</span>
+        </div>
+      <% } else { %>
+        <form method="post" action="/actions/location-required">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="decision" value="create">
+          <button class="btn btn--primary btn--block" type="submit">Create location and continue <%- helpers.icon('chevron', { size: 15 }) %></button>
+        </form>
+      <% } %>
+      <form method="post" action="/actions/location-required">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="decision" value="cancel">
+        <button class="btn btn--ghost btn--block" type="submit">Cancel — change nothing</button>
+      </form>
+    </div>
+  </aside>
+</div>

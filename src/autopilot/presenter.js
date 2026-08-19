@@ -22,10 +22,14 @@ const workItems = require('./work-items');
 const policyService = require('./policy-service');
 const position = require('../purchasing/position');
 const attention = require('../attention/attention-engine');
+const managerReadiness = require('../manager/readiness');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || `${one}s`}`;
+const json = (value, fallback = {}) => {
+  try { return JSON.parse(value) ?? fallback; } catch { return fallback; }
+};
 
 function timeAgo(iso, now = Date.now()) {
   if (!iso) return 'never';
@@ -105,6 +109,7 @@ function describeCompleted(item) {
 function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}) {
   const from = since || new Date(now - DAY_MS).toISOString();
   const completed = workItems.completedSince(db, workspaceId, from);
+  const evaluations = recentEvaluations(db, workspaceId, { since: from, limit: 20 });
 
   const sweeps = db
     .prepare('SELECT COUNT(*) AS n, MAX(created_at) AS last FROM attention_runs WHERE workspace_id = ? AND created_at >= ?')
@@ -136,27 +141,32 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
       unitsMoved: transfers.reduce((sum, item) => sum + ((item.recommendedAction || {}).quantity || 0), 0),
       purchasesPrepared: purchases.length,
       purchaseValue: purchases.reduce((sum, item) => sum + ((item.outcome || {}).subtotal || 0), 0),
-      evaluations: sweeps.n,
+      evaluations: evaluations.length,
       positionsWatched,
       findingsResolved: resolved,
     },
-    lastEvaluation: sweeps.last,
+    evaluations,
+    lastEvaluation: [sweeps.last, evaluations[0] && evaluations[0].finishedAt].filter(Boolean).sort().pop() || null,
     // The honest headline. Zero is a perfectly good number.
     headline:
       completed.length === 0
         ? prepared > 0
           ? `Checked ${plural(positionsWatched, 'stock position')} and prepared ` +
             `${plural(prepared, 'thing')} for you. Carried nothing out on its own.`
-          : sweeps.n > 0
+          : evaluations.length > 0 || sweeps.n > 0
             ? `Checked ${plural(positionsWatched, 'stock position')}. Nothing needed doing.`
             : 'Nothing yet today.'
         : `Handled ${plural(completed.length, 'task')}.`,
   };
 }
 
-/** "What needs you." Exceptions only, most consequential first. */
-function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
-  const waiting = workItems.awaitingApproval(db, workspaceId).map((item) => ({
+/** Work Foundry has worked out already and is holding for review. */
+function whatFoundryPrepared(db, workspaceId, { limit = 8 } = {}) {
+  const waitingItems = workItems.awaitingApproval(db, workspaceId);
+  const waitingOrderIds = new Set(waitingItems
+    .map((item) => item.purchaseOrderId || (item.recommendedAction || {}).purchaseOrderId)
+    .filter(Boolean));
+  const waiting = waitingItems.map((item) => ({
     kind: 'work',
     id: item.id,
     title:
@@ -165,30 +175,17 @@ function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
         : item.category === 'receiving_followup'
           ? `${item.recommendedAction.poNumber || 'A delivery'} from ${item.recommendedAction.supplierName} ` +
             `${item.recommendedAction.late ? 'is late' : 'is due'} — book it in`
-          : item.categoryLabel,
+          : item.category === 'purchase_approval' && item.source === 'price_exception'
+            ? `${item.recommendedAction.poNumber || 'A purchase order'} has a price exception`
+            : item.category === 'purchase_approval'
+              ? `${item.recommendedAction.poNumber || 'A purchase order'} for ${item.recommendedAction.supplierName || 'the supplier'} is ready to send`
+            : item.categoryLabel,
     because: (item.policyEvaluation || {}).reason || null,
     evidence: item.sourceEvidence || [],
     priority: item.priority,
     link: `/autopilot/work/${item.id}`,
     action: 'Review',
   }));
-
-  // Findings Foundry will not act on by itself — a count discrepancy is a
-  // claim that the records are wrong, and no automaton settles that.
-  const findings = attention
-    .listAttention(db, workspaceId)
-    .filter((item) => ['critical', 'important'].includes(item.severity))
-    .filter((item) => ['unusual_adjustment', 'data_integrity', 'supplier_price_change'].includes(item.category))
-    .map((item) => ({
-      kind: 'finding',
-      id: item.id,
-      title: item.narrativeTitle || item.title,
-      because: item.conciseSummary,
-      evidence: item.evidence || [],
-      priority: item.priorityScore || 50,
-      link: `/attention/${item.id}`,
-      action: 'Investigate',
-    }));
 
   const drafts = db
     .prepare(
@@ -197,6 +194,7 @@ function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
         WHERE po.workspace_id = ? AND po.status = 'DRAFT' ORDER BY po.created_at DESC LIMIT 5`
     )
     .all(workspaceId)
+    .filter((row) => !waitingOrderIds.has(row.id))
     .map((row) => ({
       kind: 'purchase',
       id: row.id,
@@ -208,7 +206,92 @@ function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
       action: 'Review & approve',
     }));
 
-  return [...waiting, ...findings, ...drafts]
+  return [...waiting, ...drafts]
+    .sort((a, b) => b.priority - a.priority)
+    .slice(0, limit);
+}
+
+/**
+ * Completed manager evaluations are real work evidence even when they correctly
+ * produce no inventory mutation. They are kept separate from handled actions so
+ * the page never inflates "checked" into "moved" or "ordered".
+ */
+function recentEvaluations(db, workspaceId, { since = null, limit = 20 } = {}) {
+  const clauses = ['workspace_id = ?', 'finished_at IS NOT NULL'];
+  const params = [workspaceId];
+  if (since) {
+    clauses.push('finished_at >= ?');
+    params.push(since);
+  }
+  const positions = db
+    .prepare('SELECT COUNT(*) AS n FROM skus WHERE workspace_id = ? AND is_active = 1')
+    .get(workspaceId).n;
+  const readiness = managerReadiness.assess(db, workspaceId);
+  const triggerLabels = {
+    scheduled: 'Scheduled inventory check',
+    startup: 'Restart recovery check',
+    manual: 'Inventory check you requested',
+    receive: 'Checked inventory after stock arrived',
+    issue: 'Checked inventory after stock left',
+    adjust: 'Checked inventory after a count changed',
+    transfer: 'Checked inventory after a transfer',
+  };
+
+  return db
+    .prepare(
+      `SELECT * FROM work_plans WHERE ${clauses.join(' AND ')}
+       ORDER BY finished_at DESC, rowid DESC LIMIT ?`
+    )
+    .all(...params, limit)
+    .map((row) => {
+      const summary = json(row.summary, {});
+      const declined = Array.isArray(summary.declined) ? summary.declined : [];
+      const missingHistory = declined.filter((entry) => entry.reason === 'not_enough_history').length;
+      const planned = Number(row.items_planned || 0);
+      const awaiting = Number(row.items_awaiting || 0);
+      const detail = planned
+        ? `${plural(planned, 'work item')} prepared; ${plural(awaiting, 'item')} waiting for a decision.`
+        : missingHistory
+          ? `${plural(positions, 'stock position')} checked. ${plural(missingHistory, 'position')} lacked enough outbound history for safe demand action.`
+          : !readiness.canAssessDemand && positions
+            ? `${plural(positions, 'stock position')} checked. No action was supported; demand history is not usable yet.`
+            : `${plural(positions, 'stock position')} checked. No transfer, purchase, delivery follow-up, or policy conflict was supported.`;
+      return {
+        id: row.id,
+        trigger: row.trigger,
+        title: triggerLabels[row.trigger] || `Inventory check: ${String(row.trigger || 'manager').replaceAll('-', ' ')}`,
+        detail,
+        planned,
+        awaiting,
+        summary,
+        finishedAt: row.finished_at,
+      };
+    });
+}
+
+/** "Foundry needs you." Genuine exceptions, most consequential first. */
+function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
+  const activeWork = workItems.list(db, workspaceId, { limit: 200 })
+    .filter((item) => !item.isTerminal || item.category === 'purchase_preparation');
+  const workCoveredSkus = new Set(activeWork.flatMap((item) => [
+    item.affectedEntities && item.affectedEntities.skuId,
+    ...((item.recommendedAction && item.recommendedAction.lines) || []).map((line) => line.skuId),
+  ]).filter(Boolean));
+  return attention
+    .listAttention(db, workspaceId)
+    .filter((item) => ['critical', 'important'].includes(item.severity))
+    .filter((item) => ['low_stock', 'stockout_risk', 'unusual_adjustment', 'data_integrity', 'supplier_price_change'].includes(item.category))
+    .filter((item) => !['low_stock', 'stockout_risk'].includes(item.category) || !workCoveredSkus.has(item.skuId))
+    .map((item) => ({
+      kind: 'finding',
+      id: item.id,
+      title: item.narrativeTitle || item.title,
+      because: item.conciseSummary,
+      evidence: item.evidence || [],
+      priority: item.priorityScore || 50,
+      link: `/attention/${item.id}`,
+      action: 'Review',
+    }))
     .sort((a, b) => b.priority - a.priority)
     .slice(0, limit);
 }
@@ -313,6 +396,50 @@ function operatorHome(db, workspaceId, { now = Date.now() } = {}) {
     .sort()
     .pop() || null;
 
+  const onboarding = db
+    .prepare('SELECT path, status FROM workspace_onboarding WHERE workspace_id = ?')
+    .get(workspaceId);
+  const setupItem = onboarding && onboarding.status !== 'ready'
+    ? db
+        .prepare(
+          `SELECT i.id, i.name, COUNT(s.id) AS sku_count
+             FROM items i LEFT JOIN skus s ON s.item_id = i.id
+            WHERE i.workspace_id = ? AND i.is_active = 1
+            GROUP BY i.id ORDER BY i.created_at LIMIT 1`
+        )
+        .get(workspaceId)
+    : null;
+
+  const investigations = require('../manager/investigations');
+  const managerBrief = require('../manager/brief').build(db, workspaceId, { now });
+  const readiness = managerReadiness.assess(db, workspaceId, { now });
+  if (!policies.length) readiness.notes.push('Foundry has no standing authority; it will prepare consequential work for approval.');
+  const operatingNeeds = managerReadiness.decisions(db, workspaceId, { now, readiness });
+  const investigationNeeds = investigations.list(db, workspaceId, {
+    statuses: ['NEEDS_HUMAN', 'INCONCLUSIVE'], limit: 25,
+  }).map((entry) => ({
+    id: entry.investigationId,
+    title: entry.affectedEntities.displayName
+      ? `Count discrepancy: ${entry.affectedEntities.displayName}`
+      : 'Inventory discrepancy',
+    because: entry.recommendedNextStep,
+    link: `/investigations/${entry.investigationId}`,
+    action: 'Review evidence',
+  }));
+  const physicalNeeds = db.prepare(
+    `SELECT id, event_type, stated_as FROM physical_events WHERE workspace_id = ?
+      AND status = 'NEEDS_HUMAN' ORDER BY created_at DESC LIMIT 25`
+  ).all(workspaceId).map((entry) => ({ id: entry.id,
+    title: entry.event_type.replaceAll('_', ' '), because: entry.stated_as,
+    link: '/needs-you', action: 'Add details' }));
+  const prepared = whatFoundryPrepared(db, workspaceId);
+  const handling = workItems.list(db, workspaceId, {
+    status: [workItems.STATUS.DETECTED, workItems.STATUS.PLANNED, workItems.STATUS.AUTHORIZED,
+      workItems.STATUS.EXECUTING, workItems.STATUS.VERIFYING], limit: 25,
+  }).map((item) => ({ id: item.id, title: item.categoryLabel,
+    because: item.policyEvaluation.reason || 'Foundry is working through this now.',
+    link: `/autopilot/work/${item.id}`, action: 'See work', status: item.executionStatus }));
+
   return {
     status: {
       ...state,
@@ -330,9 +457,21 @@ function operatorHome(db, workspaceId, { now = Date.now() } = {}) {
               : 'Foundry is running this inventory',
     },
     did,
-    needsYou: whatNeedsYou(db, workspaceId),
+    needsYou: [...operatingNeeds, ...investigationNeeds, ...physicalNeeds, ...prepared, ...whatNeedsYou(db, workspaceId)],
+    handling,
+    prepared,
+    managerBrief,
+    readiness,
     next: whatsNext(db, workspaceId, { now }),
     notifications: notifications(db, workspaceId, { limit: 6 }),
+    setup: onboarding && onboarding.status !== 'ready'
+      ? {
+          path: onboarding.path,
+          status: onboarding.status,
+          item: setupItem || null,
+          link: setupItem ? `/foundry/quantities/${setupItem.id}` : '/onboarding',
+        }
+      : null,
     unreadNotifications: db
       .prepare('SELECT COUNT(*) AS n FROM notifications WHERE workspace_id = ? AND read_at IS NULL')
       .get(workspaceId).n,
@@ -438,8 +577,10 @@ function summariseDay(db, workspaceId, { now = Date.now() } = {}) {
 
 module.exports = {
   timeAgo,
+  recentEvaluations,
   describeCompleted,
   whatFoundryDid,
+  whatFoundryPrepared,
   whatNeedsYou,
   whatsNext,
   operatorHome,

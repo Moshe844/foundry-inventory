@@ -30,6 +30,7 @@
 
 const modes = require('./modes');
 const runner = require('./runner');
+const managerLoop = require('../manager/loop');
 const policyService = require('./policy-service');
 const reevaluate = require('../attention/reevaluate');
 const { nowIso } = require('../lib/util');
@@ -164,17 +165,17 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
     if (!owner) return { workspaceId, skipped: true, because: 'no one to act for' };
 
     const ctx = { workspaceId, actorId: owner.id, accountId: owner.account_id };
-    const planned = runner.planWork(db, ctx, owner, { trigger, now });
+    const planned = managerLoop.run(db, ctx, owner, { trigger, now, planOnly: true });
     modes.recordEvaluation(db, workspaceId, { nextAt });
     return {
       workspaceId,
       plannedOnly: true,
       because: 'no approved policy',
-      planned: (planned.created || []).length,
+      planned: planned.planned || 0,
     };
   }
 
-  const result = runner.run(db, authority.ctx, authority.membership, { trigger, now });
+  const result = managerLoop.run(db, authority.ctx, authority.membership, { trigger, now });
   modes.recordEvaluation(db, workspaceId, { nextAt });
   return { workspaceId, ...result, under: authority.policy.name };
 }
@@ -236,7 +237,15 @@ function start(db, { intervalMs = DEFAULT_INTERVAL_MS, immediate = true } = {}) 
   if (immediate) turn('startup');
   const timer = setInterval(() => turn('scheduled'), intervalMs);
   if (typeof timer.unref === 'function') timer.unref();
-  return () => clearInterval(timer);
+  const eventTimer = setInterval(() => {
+    if (running) return;
+    running = true;
+    try { managerLoop.processPending(db, authorityFor); }
+    catch (error) { console.error('[manager] event turn failed: %s', error.message); }
+    finally { running = false; }
+  }, Math.min(intervalMs, 1000));
+  if (typeof eventTimer.unref === 'function') eventTimer.unref();
+  return () => { clearInterval(timer); clearInterval(eventTimer); };
 }
 
 module.exports = {

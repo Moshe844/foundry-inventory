@@ -21,9 +21,37 @@ const { newId, nowIso, trimOrNull, requireText } = require('../lib/util');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const permissions = require('../actions/permissions');
 const repo = require('../domain/repository');
+const supplierCodeMappings = require('./supplier-code-mappings');
 
 const STATUSES = ['active', 'inactive'];
 const MAX_LEAD_TIME_DAYS = 365;
+const COMMON_ITEM_CODE_ALIASES = [
+  'Supplier code', 'Supplier SKU', 'Vendor code', 'Vendor SKU', 'Item code', 'Item no.',
+  'Product code', 'Catalogue number', 'Catalog number', 'Style number', 'Style #', 'Reference',
+];
+
+function parseAliases(value) {
+  let values = value;
+  if (typeof value === 'string') {
+    try { values = JSON.parse(value); } catch { values = value.split(','); }
+  }
+  if (!Array.isArray(values)) return [];
+  const seen = new Set();
+  return values.map((entry) => String(entry || '').trim()).filter((entry) => {
+    const key = entry.toLowerCase();
+    if (!key || entry.length > 60 || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 30);
+}
+
+function preferredItemCodeLabel(value) {
+  return requireText(value || 'Supplier code', 'Vendor product-code name', { max: 60 });
+}
+
+function mergeAliases(...groups) {
+  return parseAliases(groups.flatMap((group) => parseAliases(group)));
+}
 
 function optionalInt(value, field, { min = 0, max = 1000000 } = {}) {
   if (value === undefined || value === null || String(value).trim() === '') return null;
@@ -61,6 +89,10 @@ function hydrate(row) {
     minimumOrderAmount: row.minimum_order_amount,
     currency: row.currency,
     paymentTerms: row.payment_terms,
+    itemCodeLabel: row.item_code_label || 'Supplier code',
+    internalCode: row.internal_code,
+    internalBaseCode: row.internal_base_code,
+    itemCodeAliases: parseAliases(row.item_code_aliases),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -81,11 +113,14 @@ function createSupplier(db, ctx, membership, input) {
   if (clash) throw new ValidationError(`There is already a supplier called ${name}.`, { field: 'name' });
 
   const id = newId('sup');
+  const itemCodeLabel = preferredItemCodeLabel(input.itemCodeLabel);
+  const itemCodeAliases = mergeAliases(input.itemCodeAliases || [], [itemCodeLabel]);
   db.prepare(
     `INSERT INTO suppliers (
        id, workspace_id, name, code, contact_name, email, phone, notes, status,
-       default_lead_time_days, minimum_order_amount, currency, payment_terms, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       default_lead_time_days, minimum_order_amount, currency, payment_terms,
+       item_code_label, item_code_aliases, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     ctx.workspaceId,
@@ -100,6 +135,8 @@ function createSupplier(db, ctx, membership, input) {
     optionalMoney(input.minimumOrderAmount, 'Minimum order amount'),
     trimOrNull(input.currency) || 'USD',
     trimOrNull(input.paymentTerms),
+    itemCodeLabel,
+    JSON.stringify(itemCodeAliases),
     now,
     now
   );
@@ -119,10 +156,16 @@ function updateSupplier(db, ctx, membership, supplierId, input) {
   }
 
   const pick = (key, current) => (input[key] === undefined ? current : trimOrNull(input[key]));
+  const itemCodeLabel = input.itemCodeLabel === undefined
+    ? existing.itemCodeLabel : preferredItemCodeLabel(input.itemCodeLabel);
+  const itemCodeAliases = input.itemCodeAliases === undefined
+    ? mergeAliases(existing.itemCodeAliases, [existing.itemCodeLabel], [itemCodeLabel])
+    : mergeAliases(existing.itemCodeAliases, input.itemCodeAliases, [existing.itemCodeLabel], [itemCodeLabel]);
   db.prepare(
     `UPDATE suppliers
         SET name = ?, code = ?, contact_name = ?, email = ?, phone = ?, notes = ?, status = ?,
-            default_lead_time_days = ?, minimum_order_amount = ?, currency = ?, payment_terms = ?, updated_at = ?
+            default_lead_time_days = ?, minimum_order_amount = ?, currency = ?, payment_terms = ?,
+            item_code_label = ?, item_code_aliases = ?, updated_at = ?
       WHERE id = ? AND workspace_id = ?`
   ).run(
     name,
@@ -140,6 +183,8 @@ function updateSupplier(db, ctx, membership, supplierId, input) {
       : optionalMoney(input.minimumOrderAmount, 'Minimum order amount'),
     pick('currency', existing.currency) || existing.currency,
     pick('paymentTerms', existing.paymentTerms),
+    itemCodeLabel,
+    JSON.stringify(itemCodeAliases),
     nowIso(),
     supplierId,
     ctx.workspaceId
@@ -186,6 +231,29 @@ function listWithCounts(db, workspaceId, { includeInactive = false } = {}) {
   }));
 }
 
+/**
+ * Records wording Foundry actually observed on a document without replacing
+ * the supplier's chosen display term. Future invoices can use either spelling.
+ */
+function rememberItemCodeAlias(db, workspaceId, supplierId, observedLabel) {
+  const label = trimOrNull(observedLabel);
+  if (!label || label.length > 60) return getSupplier(db, workspaceId, supplierId);
+  const supplier = getSupplier(db, workspaceId, supplierId);
+  const aliases = mergeAliases(supplier.itemCodeAliases, [supplier.itemCodeLabel], [label]);
+  db.prepare('UPDATE suppliers SET item_code_aliases = ?, updated_at = ? WHERE id = ? AND workspace_id = ?')
+    .run(JSON.stringify(aliases), nowIso(), supplierId, workspaceId);
+  return getSupplier(db, workspaceId, supplierId);
+}
+
+function documentVocabulary(db, workspaceId) {
+  return listSuppliers(db, workspaceId, { includeInactive: true }).map((supplier) => ({
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    preferredItemCodeLabel: supplier.itemCodeLabel,
+    recognizedItemCodeLabels: mergeAliases(COMMON_ITEM_CODE_ALIASES, supplier.itemCodeAliases, [supplier.itemCodeLabel]),
+  }));
+}
+
 // ---------------------------------------------------------------------------
 // Supplier items
 // ---------------------------------------------------------------------------
@@ -200,11 +268,14 @@ function hydrateSupplierItem(row) {
     supplierStatus: row.supplier_status,
     supplierLeadTimeDays: row.supplier_lead_time_days,
     currency: row.currency,
+    itemCodeLabel: row.item_code_label || 'Supplier code',
     skuId: row.sku_id,
     itemId: row.item_id,
     displayName: row.variant_label ? `${row.item_name} / ${row.variant_label}` : row.item_name,
     itemName: row.item_name,
     variantLabel: row.variant_label,
+    internalCode: row.internal_code,
+    internalBaseCode: row.internal_base_code,
     unitLabel: row.unit_label,
     supplierSku: row.supplier_sku,
     supplierDescription: row.supplier_description,
@@ -225,8 +296,9 @@ function hydrateSupplierItem(row) {
 
 const SUPPLIER_ITEM_SELECT = `
   SELECT si.*, s.name AS supplier_name, s.status AS supplier_status,
-         s.default_lead_time_days AS supplier_lead_time_days, s.currency,
-         sk.item_id, sk.variant_label, i.name AS item_name, i.unit_label
+         s.default_lead_time_days AS supplier_lead_time_days, s.currency, s.item_code_label,
+         sk.item_id, sk.code AS internal_code, sk.variant_label,
+         i.name AS item_name, i.base_code AS internal_base_code, i.unit_label
     FROM supplier_items si
     JOIN suppliers s ON s.id = si.supplier_id
     JOIN skus sk ON sk.id = si.sku_id
@@ -273,6 +345,7 @@ function linkItem(db, ctx, membership, input) {
       ).run(now, ctx.workspaceId, sku.id);
     }
 
+    let supplierItemId;
     if (existing) {
       db.prepare(
         `UPDATE supplier_items
@@ -288,23 +361,26 @@ function linkItem(db, ctx, membership, input) {
         values.leadTimeDays, values.minimumOrderQuantity, values.orderMultiple,
         values.isPreferred, values.isActive, values.notes, now, existing.id
       );
-      return getSupplierItem(db, ctx.workspaceId, existing.id);
+      supplierItemId = existing.id;
+    } else {
+      supplierItemId = newId('supi');
+      db.prepare(
+        `INSERT INTO supplier_items (
+           id, workspace_id, supplier_id, sku_id, supplier_sku, supplier_description,
+           purchase_unit, units_per_purchase_unit, last_unit_cost, last_cost_at, lead_time_days,
+           minimum_order_quantity, order_multiple, is_preferred, is_active, notes, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        supplierItemId, ctx.workspaceId, supplier.id, sku.id, values.supplierSku, values.supplierDescription,
+        values.purchaseUnit, values.unitsPer, values.lastUnitCost, values.lastUnitCost ? now : null,
+        values.leadTimeDays, values.minimumOrderQuantity, values.orderMultiple,
+        values.isPreferred, values.isActive, values.notes, now, now
+      );
     }
-
-    const id = newId('supi');
-    db.prepare(
-      `INSERT INTO supplier_items (
-         id, workspace_id, supplier_id, sku_id, supplier_sku, supplier_description,
-         purchase_unit, units_per_purchase_unit, last_unit_cost, last_cost_at, lead_time_days,
-         minimum_order_quantity, order_multiple, is_preferred, is_active, notes, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      id, ctx.workspaceId, supplier.id, sku.id, values.supplierSku, values.supplierDescription,
-      values.purchaseUnit, values.unitsPer, values.lastUnitCost, values.lastUnitCost ? now : null,
-      values.leadTimeDays, values.minimumOrderQuantity, values.orderMultiple,
-      values.isPreferred, values.isActive, values.notes, now, now
+    supplierCodeMappings.applySavedForSupplierItem(
+      db, ctx, supplier.id, sku.id, values.supplierSku
     );
-    return getSupplierItem(db, ctx.workspaceId, id);
+    return getSupplierItem(db, ctx.workspaceId, supplierItemId);
   });
 }
 
@@ -403,6 +479,7 @@ function toPurchaseUnits(neededUnits, supplierItem) {
 
 module.exports = {
   STATUSES,
+  COMMON_ITEM_CODE_ALIASES,
   hydrate,
   hydrateSupplierItem,
   createSupplier,
@@ -411,6 +488,8 @@ module.exports = {
   findSupplier,
   listSuppliers,
   listWithCounts,
+  rememberItemCodeAlias,
+  documentVocabulary,
   linkItem,
   unlinkItem,
   getSupplierItem,

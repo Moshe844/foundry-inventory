@@ -21,9 +21,10 @@ It is built in three layers, and each one only ever reads the layer below:
    above. The model proposes; the engine decides what is legal.
 3. **The operator.** Foundry watches the movement history and answers "what
    needs my attention right now, and why?" — with the evidence attached.
-4. **The hands.** Foundry can carry out inventory work, but only work a person
-   has seen and approved, and only through the engine in layer 1. It is never
-   autonomous: nothing moves stock without an explicit approval.
+4. **The hands.** Foundry carries out inventory work only through the engine in
+   layer 1. A person approves exceptional work directly; routine transfers may
+   run unattended only inside a separately approved policy with explicit limits,
+   and every result is verified.
 
 ## Running it
 
@@ -550,10 +551,20 @@ connected to it.
 
 ### Connectors
 
-The connector boundary exists; no vendor connector ships. That is deliberate. A
-logo on a settings page that does nothing tells a customer their inventory is
-connected when nothing is reading it, which is worse than an empty list. A
-connector is registered when there are real credentials and real test access.
+No pretend vendor connector ships. A logo on a settings page that does nothing
+tells a customer their inventory is connected when nothing is reading it, which
+is worse than an empty list. A named vendor connector is registered only when
+there are real credentials and real test access.
+
+Foundry does ship a real generic operating-event feed at
+`POST /api/v1/feed/events`. An owner creates a workspace-scoped bearer token
+once; an existing sales or warehouse system can then push sales, receipts,
+returns, damage, physical counts and transfers as they happen. The token is
+stored only as a hash, can be rotated or revoked, and every external event id is
+idempotent. Events resolve Foundry SKU codes or remembered supplier codes, go
+through the same inventory engine as every human operation, and wake the durable
+manager loop immediately. A first sync may send up to 500 timestamped events so
+Foundry can establish genuine demand history without fabricating it.
 
 Capabilities are discovered from the connector, never assumed, and Mission 4
 asks before it proposes. A read-only system gets a recommendation and a plain
@@ -567,8 +578,9 @@ actually has: what needs you, what Foundry did, what is happening next, and
 what would you like to ask. The classic overview is still there, at
 `/overview`.
 
-Behind it is a loop — signals, planning, policy, approval, execution,
-verification — and the whole of Mission 7 is about the third step.
+Behind it is a durable manager loop — signals, planning, policy, approval,
+execution, verification, investigation and reconciliation. Mission 8 makes
+that loop the product rather than a feature hidden behind inventory screens.
 
 **Three modes, and the customer picks.** *Just watch* raises findings and does
 nothing. *Prepare my work* — the default — works out what should happen and
@@ -576,12 +588,14 @@ waits on every item. *Run it* lets Foundry carry out work that an approved
 policy authorises. Nothing is automatic without **both** an approved policy and
 this mode: approving a policy on its own starts nothing, which is the point.
 
-**Exactly one thing is done unattended: moving stock between the customer's own
-locations.** It was chosen because it is the only inventory action that is
-reversible by doing the opposite, changes no total, involves nobody outside the
-business, and can be verified immediately from the ledger. Counts are never
-adjusted automatically — an adjustment is a claim that the records are wrong,
-and no automaton settles that. Purchase orders are drafted and never sent.
+**Automatic work is limited to bounded, verifiable operations.** Foundry may
+move stock between the customer's own locations under an approved transfer
+policy. It may also approve a routine replenishment order under a separately
+approved purchasing policy with supplier scope, a maximum order value, and a
+maximum unit-price change. A price exception, missing evidence, ambiguous item,
+physical count, or destructive correction always stops in *Needs you*. Counts
+are never adjusted automatically: an adjustment is a claim that the records
+are wrong, and no automaton settles that without a person's decision.
 
 **The policy engine is deterministic and separate from the model.** It answers
 `authorized` / `needs_approval` / `refused` with the checks that produced the
@@ -639,10 +653,31 @@ and a preference can only tune work Foundry was already allowed to do. Nothing
 is inferred from watching approvals, because a system that quietly stops asking
 has changed what it may do without anyone agreeing to it.
 
-**Deliveries are raised as work and never booked in.** A purchase order at its
-date, or past it, becomes a piece of work that links straight to receiving.
-Foundry cannot say what is physically in the box and does not pretend to: there
-is no packing-list feed, so there is no packing-list matching.
+**Deliveries become evidence-backed receiving work.** A purchase order at its
+date, or past it, becomes a durable piece of work. An uploaded PDF, Word file,
+spreadsheet, CSV, image or text document is read as an operational document,
+matched only when supplier, destination, reference and line evidence identify
+exactly one open order, and used to prefill a receipt for confirmation. Reading
+or matching a document never changes stock. If the match is ambiguous, Foundry
+asks rather than guessing; a person still confirms what physically arrived.
+Each supplier also keeps its own product-code vocabulary: one may use “Style #”,
+another “Item No.”, and another “Vendor SKU”. The preferred wording is editable,
+old and newly observed labels remain recognized aliases, and that vendor-specific
+vocabulary is supplied whenever Foundry reads the next document.
+
+**Tell Foundry is universal operational input.** The same box accepts questions,
+purchase requests, policy requests, natural-language counts, photographs and
+documents. Requests are routed to real inventory records and durable work, not
+answered as disposable chat. “Order what we need” runs the manager loop;
+“Handle everything” opens bounded authority review and never grants unlimited
+permission.
+
+**Foundry investigates instead of inventing corrections.** Natural counts and
+integrity checks open durable investigations with ledger, adjustment, receipt,
+import and execution evidence. A concrete duplicate-reference lead can explain
+part of a discrepancy, but unresolved differences stay explicit and no stock is
+silently rewritten. Restart recovery reconciles in-flight work before anything
+is retried.
 
 Work prepared while supervised is re-examined when authority is granted: an item
 that was only ever waiting on permission is taken on, and an item waiting for any
@@ -660,7 +695,7 @@ what already happened stays in the history, because hiding it would be worse.
 
 ## Testing
 
-`npm test` runs 559 unit and integration tests: the four archetypes and their
+`npm test` runs 615 unit and integration tests: the four archetypes and their
 combinations, negative-stock rejection, transfer atomicity, duplicate serials,
 lot shortfalls, the ledger, search, tenancy, authorization, cross-process
 concurrency, persistence across a restart, the configuration layer, and the

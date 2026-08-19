@@ -7,7 +7,7 @@
   </div>
   <div class="page-actions">
     <% if (!allowance.exceeded) { %>
-      <a class="btn btn--primary" href="/inventories/new"><%- helpers.icon('plus', { size: 16 }) %> New inventory</a>
+      <a class="btn btn--primary" href="/inventories/new"><%- helpers.icon('plus', { size: 16 }) %> New Inventory</a>
     <% } %>
   </div>
 </div>
@@ -16,9 +16,9 @@
   <div class="card section">
     <div class="empty">
       <div class="icon-wrap"><%- helpers.icon('box', { size: 22 }) %></div>
-      <h3>You do not have an inventory yet</h3>
-      <p>An inventory holds your items, your locations and their whole history. Create one to begin.</p>
-      <a class="btn btn--primary" href="/inventories/new">Create an inventory</a>
+      <h3>Give Foundry an inventory to manage</h3>
+      <p>Start fresh, upload spreadsheets, or bring an existing inventory system. Foundry will work out the setup with you.</p>
+      <a class="btn btn--primary" href="/inventories/new"><%- helpers.icon('plus', { size: 16 }) %> New Inventory</a>
     </div>
   </div>
 <% } else { %>

@@ -250,6 +250,7 @@ function listRecommendations(db, workspaceId, understandingId) {
 
 module.exports = {
   describeBusiness,
+  save,
   normalise,
   getUnderstanding,
   latestUnderstanding,

@@ -53,7 +53,7 @@ test('sign in fails for a wrong password and succeeds for the right one', async 
   assert.match(home.text, /Overview/);
 });
 
-test('registration creates an isolated, empty workspace', async () => {
+test('registration creates an account, then the customer creates an inventory', async () => {
   const store = makeApp();
   const agent = request.agent(store.app);
   const page = await agent.get('/register');
@@ -61,26 +61,26 @@ test('registration creates an isolated, empty workspace', async () => {
 
   const res = await agent.post('/register').type('form').send({
     _csrf: token,
-    workspaceName: 'Fresh Co',
     name: 'Robin Field',
     email: 'robin@fresh.test',
     password: 'password123',
   });
   assert.equal(res.status, 302);
-  // A brand-new workspace meets Foundry before it meets the console — said at
-  // the one moment it is true, rather than by redirecting anyone who later
-  // clicks Overview.
-  assert.equal(res.headers.location, '/foundry');
+  assert.equal(res.headers.location, '/inventories');
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM workspaces').get().n, 0);
 
-  // …and the first thing Foundry asks is how they manage inventory today,
-  // rather than assuming they have nothing and want to describe a business.
-  const foundry = await agent.get('/foundry');
-  assert.equal(foundry.status, 303);
-  assert.equal(foundry.headers.location, '/onboarding');
+  const inventories = await agent.get('/inventories');
+  assert.match(inventories.text, /New Inventory/);
+  const created = await agent.post('/inventories').type('form').send({
+    _csrf: csrfFrom(inventories.text),
+    name: 'Fresh Co',
+  });
+  assert.equal(created.status, 303);
+  assert.equal(created.headers.location, '/onboarding');
 
   const chooser = await agent.get('/onboarding');
   assert.equal(chooser.status, 200);
-  assert.match(chooser.text, /How are you managing it today/);
+  assert.match(chooser.text, /How are you managing inventory today/);
   assert.match(chooser.text, /Starting fresh/);
 
   // The Mission 1 console is still there underneath, and still empty.
@@ -93,7 +93,6 @@ test('registration creates an isolated, empty workspace', async () => {
   const page2 = await other.get('/register');
   const res2 = await other.post('/register').type('form').send({
     _csrf: csrfFrom(page2.text),
-    workspaceName: 'Impostor',
     name: 'Someone',
     email: 'robin@fresh.test',
     password: 'password123',

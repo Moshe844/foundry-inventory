@@ -1,0 +1,137 @@
+<%
+  var expected = investigation.observedDifference.expected;
+  var observed = investigation.observedDifference.observed;
+  var measured = Number.isFinite(Number(expected)) && Number.isFinite(Number(observed));
+  var difference = measured ? Number(observed) - Number(expected) : null;
+  var differenceSize = difference === null ? null : Math.abs(difference);
+  var differenceLabel = difference === null ? 'Unknown difference' : difference < 0
+    ? differenceSize + ' fewer than recorded'
+    : difference > 0 ? differenceSize + ' more than recorded' : 'Count matches';
+  var open = ['OPEN', 'INVESTIGATING', 'NEEDS_HUMAN', 'INCONCLUSIVE'].includes(investigation.status);
+  var statusLabel = investigation.status === 'RESOLVED' ? 'Resolved' : 'Needs confirmation';
+  var eventLabels = {
+    opened: 'Report received',
+    investigating: 'Compared with inventory records',
+    evidence_reviewed: 'Evidence checked',
+    inconclusive: 'More detail needed',
+    resolved: 'Resolved by you',
+    resolved_by_reconciliation: 'Count reconciled',
+  };
+%>
+
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/needs-you">Needs you</a><span>›</span><span>Investigation</span>
+</nav>
+
+<header class="investigation-hero">
+  <div class="investigation-hero__mark" aria-hidden="true"><%- helpers.icon('alert', { size: 21 }) %></div>
+  <div class="investigation-hero__copy">
+    <div class="investigation-hero__meta">
+      <span class="badge <%= investigation.status === 'RESOLVED' ? 'badge--ok' : 'badge--warn' %>"><%= statusLabel %></span>
+      <span>Physical count discrepancy</span>
+    </div>
+    <h1><%= investigation.affectedEntities.displayName || 'Inventory discrepancy' %></h1>
+  </div>
+</header>
+
+<div class="investigation-layout section">
+  <main class="investigation-main">
+    <section class="card investigation-summary">
+      <div class="card-head">
+        <div>
+          <span class="investigation-kicker">What Foundry found</span>
+          <h2>The physical count does not match the inventory record</h2>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="count-equation" aria-label="Recorded <%= expected ?? 'unknown' %>, physically counted <%= observed ?? 'unknown' %>, <%= differenceLabel %>">
+          <div class="count-equation__value">
+            <span>Recorded</span>
+            <strong><%= expected ?? '—' %></strong>
+            <small>in Foundry</small>
+          </div>
+          <div class="count-equation__operator" aria-hidden="true">→</div>
+          <div class="count-equation__value">
+            <span>Counted</span>
+            <strong><%= observed ?? '—' %></strong>
+            <small>reported physically</small>
+          </div>
+          <div class="count-equation__operator" aria-hidden="true">=</div>
+          <div class="count-equation__result <%= difference === 0 ? 'is-match' : '' %>">
+            <span>Difference</span>
+            <strong><%= differenceSize ?? '—' %></strong>
+            <small><%= differenceLabel %></small>
+          </div>
+        </div>
+
+        <div class="investigation-explanation">
+          <span class="investigation-explanation__icon"><%- helpers.icon('activity', { size: 17 }) %></span>
+          <div>
+            <% if (!investigation.hypotheses.length) { %>
+              <strong>No recorded event explains the difference yet.</strong>
+              <p>Foundry checked the ledger and found no sale, transfer, receipt or adjustment that accounts for these <%= differenceSize ?? 'missing' %> units. It will not invent a cause.</p>
+            <% } else { %>
+              <strong>Foundry found evidence worth reviewing.</strong>
+              <% investigation.hypotheses.forEach(function (hypothesis) { %>
+                <p><%= hypothesis.statement %> <span class="muted">Confidence: <%= hypothesis.confidence %>.</span></p>
+              <% }) %>
+            <% } %>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card investigation-trail section">
+      <div class="card-head">
+        <div>
+          <span class="investigation-kicker">Audit trail</span>
+          <h2>What happened</h2>
+        </div>
+      </div>
+      <div class="investigation-timeline">
+        <% events.forEach(function (event, index) { %>
+          <div class="investigation-event">
+            <span class="investigation-event__marker <%= index === events.length - 1 ? 'is-current' : '' %>" aria-hidden="true"></span>
+            <div>
+              <strong><%= eventLabels[event.event] || helpers.columnLabel(event.event.replaceAll('_', ' ')) %></strong>
+              <time datetime="<%= event.createdAt %>"><%= new Date(event.createdAt).toLocaleString() %></time>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    </section>
+  </main>
+
+  <aside class="card investigation-decision">
+    <% if (open) { %>
+      <div class="card-head">
+        <div>
+          <span class="investigation-kicker">One decision</span>
+          <h2>Confirm the physical count</h2>
+        </div>
+      </div>
+      <div class="card-body">
+        <p class="investigation-decision__lead">Only close this after someone has counted again or found reliable evidence.</p>
+        <div class="investigation-safety">
+          <%- helpers.icon('alert', { size: 16 }) %>
+          <span>Resolving closes this investigation. It does <strong>not</strong> change recorded stock from <%= expected ?? 'its current quantity' %> to <%= observed ?? 'the reported count' %>.</span>
+        </div>
+        <form method="post" action="/investigations/<%= investigation.investigationId %>/resolve">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <label class="field">
+            <span class="label">What confirmed the count?</span>
+            <textarea class="textarea" name="note" rows="4" required placeholder="Example: Jamie counted the shelf again and confirmed 7 pairs."></textarea>
+          </label>
+          <button class="btn btn--primary btn--block" type="submit"><%- helpers.icon('check', { size: 16 }) %> Mark investigation resolved</button>
+        </form>
+      </div>
+    <% } else { %>
+      <div class="card-body investigation-resolved">
+        <span class="investigation-resolved__icon"><%- helpers.icon('check', { size: 22 }) %></span>
+        <h2>Investigation resolved</h2>
+        <p>The evidence remains in the audit trail. Inventory was not silently adjusted.</p>
+        <a class="btn btn--block" href="/needs-you">Back to Needs you</a>
+      </div>
+    <% } %>
+  </aside>
+</div>

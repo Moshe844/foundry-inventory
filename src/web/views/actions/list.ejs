@@ -1,9 +1,9 @@
 <div class="page-head">
   <div class="titles">
-    <h1>Ask Foundry to do something</h1>
+    <h1>Tell Foundry what you need</h1>
     <div class="page-sub">
-      Tell Foundry what you want done. It works out exactly what that means, shows you,
-      and waits for you to approve before anything moves.
+      Use ordinary language. Foundry will work out the records involved, show the exact change,
+      and ask only for information or approval it genuinely needs.
     </div>
   </div>
 </div>
@@ -30,7 +30,7 @@
         <input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx" hidden <%= canOperate ? '' : 'disabled' %>>
       </label>
       <button class="btn btn--primary" type="submit" data-ask-submit <%= canOperate && aiConfigured ? '' : 'disabled' %>>
-        <%- helpers.icon('send', { size: 15 }) %> Work it out
+        <%- helpers.icon('send', { size: 15 }) %> Continue
       </button>
     </form>
     <div class="ask-pending" data-ask-pending hidden>Foundry is working out what that means…</div>
@@ -101,7 +101,7 @@
 <% if (pending.length) { %>
   <section class="section">
     <div class="att-group-head">
-      <h2>Waiting for you</h2>
+      <h2>Foundry prepared this</h2>
       <span class="badge badge--warn"><%= pending.length %></span>
     </div>
     <div class="att-list">

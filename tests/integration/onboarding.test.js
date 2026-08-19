@@ -24,6 +24,8 @@ const registry = require('../../src/onboarding/connectors/registry');
 const authService = require('../../src/domain/auth-service');
 const repo = require('../../src/domain/repository');
 const engine = require('../../src/domain/inventory-engine');
+const itemService = require('../../src/domain/item-service');
+const locationService = require('../../src/domain/location-service');
 const attention = require('../../src/attention/attention-engine');
 const { makeDatabase, cleanupAll, seedWorkspace, seedAnotherWorkspace } = require('../helpers');
 
@@ -77,6 +79,21 @@ test('choosing a path routes to the right place and is remembered', () => {
   // Starting fresh goes straight to the Mission 2 experience, unchanged.
   assert.equal(paths.choose(env.db, env.workspace.workspaceId, 'fresh').step, '/foundry/describe');
   assert.equal(paths.get(env.db, env.workspace.workspaceId).status, 'understanding');
+});
+
+test('starting-fresh setup completes automatically once real inventory exists', () => {
+  const env = setup();
+  paths.choose(env.db, env.workspace.workspaceId, 'fresh');
+  const location = locationService.createLocation(env.db, env.ctx, { name: 'Main', kind: 'warehouse' });
+  const item = itemService.createItem(env.db, env.ctx, { name: 'Widget', trackingMode: 'quantity' });
+  const sku = repo.listSkusForItem(env.db, env.workspace.workspaceId, item.itemId)[0];
+
+  assert.equal(paths.reconcileWithInventoryTruth(env.db, env.workspace.workspaceId).status, 'understanding');
+  engine.receive(env.db, env.ctx, { skuId: sku.id, locationId: location.id, quantity: 12 });
+
+  const state = paths.reconcileWithInventoryTruth(env.db, env.workspace.workspaceId);
+  assert.equal(state.status, 'ready');
+  assert.ok(state.completedAt);
 });
 
 test('a description picks a path, most specific wins', () => {

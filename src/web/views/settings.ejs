@@ -8,6 +8,92 @@
 <div class="grid grid--sidebar">
   <div class="grid">
     <div class="card">
+      <div class="card-head"><h2>Manage Foundry</h2></div>
+      <div class="card-body grid">
+        <a class="list-row" href="/autopilot"><div><strong>Authority & policies</strong><p>What Foundry may handle automatically, and the limits.</p></div><span>Open</span></a>
+        <a class="list-row" href="/locations"><div><strong>Locations</strong><p>Where inventory is stored and moved.</p></div><span>Open</span></a>
+        <a class="list-row" href="/imports"><div><strong>Imports</strong><p>Bring in spreadsheets and review exact changes.</p></div><span>Open</span></a>
+        <a class="list-row" href="/foundry"><div><strong>Inventory configuration</strong><p>Terminology and tracking setup.</p></div><span>Open</span></a>
+      </div>
+    </div>
+
+    <div class="card" id="live-event-feed">
+      <div class="card-head">
+        <div>
+          <h2>Live operating feed</h2>
+          <p class="muted">Sales and warehouse systems can push real movements to Foundry as they happen.</p>
+        </div>
+        <span class="spacer"></span>
+        <span class="badge <%= eventFeed.connected ? 'badge--ok' : eventFeed.configured ? 'badge--warn' : 'badge--muted' %>"><%= eventFeed.connected ? 'Connected' : eventFeed.configured ? 'Waiting for first event' : 'Not configured' %></span>
+      </div>
+      <div class="card-body grid">
+        <% if (newFeedToken) { %>
+          <div class="notice notice--warn">
+            <div>
+              <strong>Copy this token now. It will not be shown again.</strong>
+              <input class="input mono" value="<%= newFeedToken %>" readonly aria-label="New event feed token" onclick="this.select()">
+            </div>
+          </div>
+        <% } %>
+
+        <div>
+          <div class="label">Event endpoint</div>
+          <input class="input mono" value="<%= origin %>/api/v1/feed/events" readonly aria-label="Event feed endpoint" onclick="this.select()">
+          <p class="hint">Authenticate with <code class="mono">Authorization: Bearer YOUR_TOKEN</code>. Event IDs are idempotent: retrying one never moves stock twice.</p>
+        </div>
+
+        <details>
+          <summary>Event format</summary>
+          <pre class="mono" style="margin-top:10px; padding:12px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; overflow:auto; font-size:12px;">{
+  "eventId": "sale-10482-line-1",
+  "type": "sale",
+  "skuCode": "SH-101-BLK-23",
+  "locationName": "Main Warehouse",
+  "quantity": 2,
+  "occurredAt": "2026-08-17T14:30:00Z"
+}</pre>
+          <p class="hint">Also supported: receive, customer_return, damage, count, adjustment and transfer. Use <code class="mono">supplierCode</code> when an external system knows the vendor’s code rather than Foundry’s SKU.</p>
+        </details>
+
+        <% if (currentUser.role === 'owner') { %>
+          <% if (eventFeed.configured) { %>
+            <div class="form-actions">
+              <form method="post" action="/settings/event-feed/enable" data-confirm="Rotate the feed token? The existing token will stop working immediately.">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button class="btn" type="submit">Rotate token</button>
+              </form>
+              <form method="post" action="/settings/event-feed/disconnect" data-confirm="Disconnect the live feed and revoke its token?">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button class="btn btn--danger" type="submit">Disconnect</button>
+              </form>
+            </div>
+          <% } else { %>
+            <form method="post" action="/settings/event-feed/enable">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn--primary" type="submit">Connect live feed</button>
+            </form>
+          <% } %>
+        <% } %>
+
+        <% if (eventFeed.recentEvents.length) { %>
+          <div>
+            <div class="label">Recent events</div>
+            <ul class="plain-list">
+              <% eventFeed.recentEvents.slice(0, 6).forEach(function (event) { %>
+                <li>
+                  <strong><%= event.eventId %></strong>
+                  <span class="badge <%= event.status === 'COMPLETED' ? 'badge--ok' : 'badge--danger' %>"><%= event.status %></span>
+                  <span class="muted"> <%= event.type %> · <%= helpers.timeAgo(event.processedAt) %></span>
+                  <% if (event.error) { %><div class="is-warn"><%= event.error %></div><% } %>
+                </li>
+              <% }) %>
+            </ul>
+          </div>
+        <% } %>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="card-head"><h2>This inventory</h2></div>
       <div class="card-body">
         <form method="post" action="/settings/workspace">

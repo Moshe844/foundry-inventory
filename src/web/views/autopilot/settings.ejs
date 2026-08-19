@@ -68,6 +68,12 @@
 </div>
 
 <%# Item 6: say it in your own words and read back what it would mean. %>
+<% if (reviewAll) { %>
+  <div class="notice notice--info section">
+    <strong>“Handle everything” is a policy review, never unlimited permission.</strong>
+    Foundry can safely prepare work and investigate without authority. Automatic transfers and routine purchase-order approval each need their own limits below. Counts, ambiguous identities and destructive changes always remain human decisions.
+  </div>
+<% } %>
 <form method="post" action="/autopilot/policies/read" class="card section" data-busy>
   <div class="card-head"><h2>Tell Foundry what it may handle</h2></div>
   <div class="card-body">
@@ -90,8 +96,12 @@
     <div class="card-body">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input type="hidden" name="name" value="<%= drafted.draft.name %>">
+      <input type="hidden" name="actionType" value="<%= drafted.draft.allowedActionTypes[0] %>">
       <% (drafted.draft.locationScope || []).forEach(function (id) { %>
         <input type="hidden" name="locationScope" value="<%= id %>">
+      <% }) %>
+      <% (drafted.draft.supplierScope || []).forEach(function (id) { %>
+        <input type="hidden" name="supplierScope" value="<%= id %>">
       <% }) %>
       <p class="lede"><strong><%= drafted.draft.name %></strong></p>
       <% if (drafted.preview.length) { %>
@@ -105,12 +115,22 @@
           <% drafted.questions.forEach(function (question) { %><li class="is-warn"><%= question %></li><% }) %>
         </ul>
       <% } %>
-      <label class="field">
-        <span class="field-label">Never move more than</span>
-        <input class="input" type="number" name="maximumQuantity"
-               value="<%= drafted.draft.maximumQuantity || '' %>" min="1" required>
-        <span class="field-help">units in one go.</span>
-      </label>
+      <% if (drafted.draft.allowedActionTypes[0] === 'approve_purchase_order') { %>
+        <label class="field"><span class="field-label">Never commit more than</span>
+          <input class="input" type="number" name="maximumValue" value="<%= drafted.draft.maximumValue || '' %>" min="1" step="0.01" required>
+          <span class="field-help">on one purchase order.</span></label>
+        <label class="field"><span class="field-label">Maximum known unit-price increase</span>
+          <input class="input" type="number" name="maxUnitPriceChangePercent"
+                 value="<%= drafted.draft.thresholds.maxUnitPriceChangePercent === undefined ? '' : drafted.draft.thresholds.maxUnitPriceChangePercent %>" min="0" step="0.1" required>
+          <span class="field-help">percent; anything higher comes to you.</span></label>
+      <% } else { %>
+        <label class="field">
+          <span class="field-label">Never move more than</span>
+          <input class="input" type="number" name="maximumQuantity"
+                 value="<%= drafted.draft.maximumQuantity || '' %>" min="1" required>
+          <span class="field-help">units in one go.</span>
+        </label>
+      <% } %>
       <p class="muted">
         Foundry chose none of the safety conditions itself — every policy written this way carries all of
         them. Nothing happens until you approve it.
@@ -162,6 +182,30 @@
     <button class="btn btn--primary" type="submit" <%= canAdmin ? '' : 'disabled' %>>Write this policy</button>
   </div>
 </form>
+
+<% if (suppliers.length) { %>
+<form method="post" action="/autopilot/policies" class="card section">
+  <div class="card-head"><h2>Let Foundry approve routine replenishment</h2></div>
+  <div class="card-body">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="actionType" value="approve_purchase_order">
+    <p class="lede">Foundry may approve an order only when measured demand supports it, incoming stock does not already cover it, supplier pack rules pass, and price stays inside your limit.</p>
+    <label class="field"><span class="field-label">Call it</span>
+      <input class="input" type="text" name="name" value="Routine replenishment purchasing" maxlength="120" required></label>
+    <label class="field"><span class="field-label">Never commit more than</span>
+      <input class="input" type="number" name="maximumValue" value="500" min="1" step="0.01" required>
+      <span class="field-help">on one order. Anything larger comes to Needs you.</span></label>
+    <label class="field"><span class="field-label">Maximum known unit-price increase</span>
+      <input class="input" type="number" name="maxUnitPriceChangePercent" value="5" min="0" step="0.1" required>
+      <span class="field-help">percent. A larger change becomes a price exception.</span></label>
+    <fieldset class="field"><span class="field-label">Only these suppliers</span>
+      <% suppliers.forEach(function (supplier) { %><label class="check"><input type="checkbox" name="supplierScope" value="<%= supplier.id %>"> <%= supplier.name %></label><% }) %>
+    </fieldset>
+    <p class="muted">Foundry records the evidence and policy version on every automatic approval. Receiving remains a physical confirmation.</p>
+  </div>
+  <div class="card-foot"><button class="btn btn--primary" type="submit" <%= canAdmin ? '' : 'disabled' %>>Write this policy</button></div>
+</form>
+<% } %>
 
 <form method="post" action="/autopilot/limits" class="card section">
   <div class="card-head"><h2>Hard limits</h2></div>

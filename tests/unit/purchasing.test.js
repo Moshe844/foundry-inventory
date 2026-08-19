@@ -101,6 +101,25 @@ test('a supplier is created and belongs to one inventory', () => {
   assert.throws(() => suppliers.getSupplier(env.db, other.workspaceId, supplier.id), /not in this inventory/);
 });
 
+test('each supplier keeps its own product-code wording and remembers old invoice labels', () => {
+  const env = setup();
+  let supplier = abcFootwear(env, { itemCodeLabel: 'Style #' });
+  assert.equal(supplier.itemCodeLabel, 'Style #');
+
+  supplier = suppliers.updateSupplier(env.db, env.ctx, env.membership, supplier.id,
+    { itemCodeLabel: 'Vendor Item No.' });
+  assert.equal(supplier.itemCodeLabel, 'Vendor Item No.');
+  assert.ok(supplier.itemCodeAliases.includes('Style #'));
+
+  supplier = suppliers.rememberItemCodeAlias(env.db, env.workspace.workspaceId, supplier.id, 'Catalogue Ref');
+  assert.ok(supplier.itemCodeAliases.includes('Catalogue Ref'));
+  const vocabulary = suppliers.documentVocabulary(env.db, env.workspace.workspaceId)[0];
+  assert.equal(vocabulary.preferredItemCodeLabel, 'Vendor Item No.');
+  assert.ok(vocabulary.recognizedItemCodeLabels.includes('Supplier SKU'));
+  assert.ok(vocabulary.recognizedItemCodeLabels.includes('Catalogue Ref'));
+  env.db.close();
+});
+
 test('the same supplier name in two inventories stays two suppliers', () => {
   const env = setup();
   const other = seedAnotherWorkspace(env.db, env.workspace.accountId);

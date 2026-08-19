@@ -14,6 +14,7 @@
 const { inTransaction } = require('../db');
 const authService = require('./auth-service');
 const entitlements = require('../entitlements/service');
+const managerReadiness = require('../manager/readiness');
 const { NotFoundError, AuthorizationError } = require('./errors');
 const { nowIso } = require('../lib/util');
 
@@ -48,12 +49,13 @@ function listForAccount(db, accountId) {
     // whole application down. A missing badge is a cosmetic loss.
     let attentionCount = 0;
     try {
-      attentionCount = db
+      const findings = db
         .prepare(
           `SELECT COUNT(*) AS n FROM attention_items
             WHERE workspace_id = ? AND status IN ('OPEN', 'ACKNOWLEDGED')`
         )
         .get(row.id).n;
+      attentionCount = findings + managerReadiness.decisions(db, row.id).length;
     } catch {
       attentionCount = 0;
     }

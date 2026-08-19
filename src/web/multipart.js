@@ -75,7 +75,9 @@ function parseBody(body, boundary) {
 
     if (filename !== null && filename !== undefined) {
       if (files.length >= MAX_FILES || filename === '') continue;
-      files.push({ field: name, filename, size: content.length, buffer: content });
+      const contentType = /content-type:\s*([^\r\n]+)/i.exec(headerText);
+      files.push({ field: name, filename, mimeType: contentType ? contentType[1].trim().toLowerCase() : null,
+        size: content.length, buffer: content });
       continue;
     }
 

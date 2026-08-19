@@ -3,8 +3,7 @@
     <a class="back-link" href="/inventories"><%- helpers.icon('chevron', { size: 14 }) %> Your inventories</a>
     <h1>New inventory</h1>
     <div class="page-sub">
-      A separate inventory with its own items, locations, history and Foundry setup.
-      Nothing is shared with the ones you already have.
+      Give this operation a name. Next, Foundry will ask how you manage its inventory today.
     </div>
   </div>
 </div>
@@ -31,7 +30,7 @@
         <a class="btn" href="/inventories">Cancel</a>
         <span class="spacer"></span>
         <button class="btn btn--primary" type="submit" <%= allowance.exceeded ? 'disabled' : '' %>>
-          Create and set up with Foundry
+          Continue with Foundry
         </button>
       </div>
     </form>

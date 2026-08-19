@@ -89,7 +89,7 @@ async function stopServer(child) {
     child.once('exit', resolve);
     child.kill('SIGTERM');
     setTimeout(() => {
-      if (!child.killed) child.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
       resolve();
     }, 3000);
   });
@@ -189,11 +189,15 @@ test(
 
     await t.test('1-2. sign up, creating the Clothing Business inventory', async () => {
       await page.goto(`${BASE}/register`);
-      await page.fill('#workspaceName', CLOTHING.name);
       await page.fill('#name', ACCOUNT.name);
       await page.fill('#email', ACCOUNT.email);
       await page.fill('#password', ACCOUNT.password);
       await page.click('form[action="/register"] button[type=submit]');
+      await page.waitForURL(`${BASE}/inventories`);
+      await page.click('a[href="/inventories/new"]');
+      await page.waitForURL(`${BASE}/inventories/new`);
+      await page.fill('#name', CLOTHING.name);
+      await page.click('form[action="/inventories"] button[type=submit]');
       await page.waitForURL(`${BASE}/onboarding`);
       // A new inventory is asked how it is managed today. These customers are
       // starting from nothing, so they take the Starting Fresh path — which is
@@ -248,7 +252,8 @@ test(
 
       assert.equal(await currentInventory(page), EQUIPMENT.name, 'the new inventory is now open');
       const body = await page.locator('body').innerText();
-      assert.match(body, new RegExp(`Tell Foundry about ${EQUIPMENT.name}`));
+      assert.match(body, /Give Foundry what you already have/);
+      assert.match(body, new RegExp(EQUIPMENT.name));
       assert.match(body, /Nothing here is shared/);
       await shot(page, 'second-inventory-setup');
     });

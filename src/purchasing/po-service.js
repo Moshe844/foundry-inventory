@@ -134,6 +134,7 @@ function hydrate(db, row) {
     poNumber: row.po_number,
     supplierId: row.supplier_id,
     supplierName: row.supplier_name,
+    supplierItemCodeLabel: row.item_code_label || 'Supplier code',
     supplierEmail: row.supplier_email,
     supplierContact: row.supplier_contact,
     status: row.status,
@@ -171,6 +172,7 @@ function hydrate(db, row) {
 
 const ORDER_SELECT = `
   SELECT po.*, s.name AS supplier_name, s.email AS supplier_email, s.contact_name AS supplier_contact,
+         s.item_code_label,
          loc.name AS destination_location_name
     FROM purchase_orders po
     JOIN suppliers s ON s.id = po.supplier_id

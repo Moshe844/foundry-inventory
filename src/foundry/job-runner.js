@@ -21,7 +21,7 @@ const RETENTION_MS = 30 * 60 * 1000;
 
 /** The stages a customer is actually waiting through, in order. */
 const STAGES = {
-  queued: { label: 'Getting ready', detail: 'Foundry is about to read your description.' },
+  queued: { label: 'Getting ready', detail: 'Foundry is about to read what you provided.' },
   reading: {
     label: 'Reading your operation',
     detail: 'Working out what you track, how it is counted, and where it lives.',

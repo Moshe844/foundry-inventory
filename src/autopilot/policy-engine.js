@@ -278,6 +278,12 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
   }
   checks.push(check('Locations are in scope', true, null));
 
+  if (policy.supplierScope.length && (!plan.supplierId || !policy.supplierScope.includes(plan.supplierId))) {
+    checks.push(check('Supplier is in scope', false, 'this supplier is not on the policy'));
+    return refuse(`${policy.name} does not cover this supplier.`);
+  }
+  if (plan.supplierId) checks.push(check('Supplier is in scope', true, null));
+
   // --- limits ---------------------------------------------------------------
   const quantity = Number(plan.quantity) || 0;
   if (policy.maximumQuantity && quantity > policy.maximumQuantity) {
@@ -311,6 +317,16 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
       }
       checks.push(check('Within the daily value budget', true, `${spent} of ${limits.maxValuePerDay} used`));
     }
+  }
+
+  if (plan.actionType === 'approve_purchase_order') {
+    const allowedIncrease = Number(policy.thresholds.maxUnitPriceChangePercent);
+    const measuredIncrease = Number(plan.maxPriceIncreasePercent) || 0;
+    if (Number.isFinite(allowedIncrease) && measuredIncrease > allowedIncrease) {
+      checks.push(check('Price is within the approved change limit', false, `${measuredIncrease}% > ${allowedIncrease}%`));
+      return refuse(`A known unit price rose ${measuredIncrease}%, above ${policy.name}'s ${allowedIncrease}% limit.`);
+    }
+    checks.push(check('Price is within the approved change limit', true, `${measuredIncrease}% of ${allowedIncrease}%`));
   }
 
   const today = actionsToday(db, workspaceId, { now });

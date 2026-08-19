@@ -85,7 +85,7 @@ async function askFoundry(page, instruction) {
   await page.fill('#action-instruction', instruction);
   await Promise.all([
     page.waitForResponse((r) => r.url().endsWith('/actions/ask') && r.request().method() === 'POST'),
-    page.click('button:has-text("Work it out")'),
+    page.click('button:has-text("Continue")'),
   ]);
   await page.waitForLoadState('networkidle');
   if (!/\/actions\/(act_|plan)/.test(page.url())) {
@@ -100,7 +100,7 @@ async function stopServer(child) {
     child.once('exit', resolve);
     child.kill('SIGTERM');
     setTimeout(() => {
-      if (!child.killed) child.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
       resolve();
     }, 3000);
   });
@@ -412,7 +412,7 @@ test(
       await page.fill('#action-instruction', 'Order 500 more Navy Oxford size 8 from our supplier');
       await Promise.all([
         page.waitForResponse((r) => r.url().endsWith('/actions/ask') && r.request().method() === 'POST'),
-        page.click('button:has-text("Work it out")'),
+        page.click('button:has-text("Continue")'),
       ]);
       await page.waitForSelector('.act-question', { timeout: 30000 });
       await shot(page, 'unsupported');

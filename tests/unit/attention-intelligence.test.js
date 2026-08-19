@@ -236,6 +236,24 @@ test('a question about stock is answered from the ledger', async () => {
   assert.match(result.answer, /10/);
 });
 
+test('a whole-inventory stock question gives the total and the lowest position', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db, { workspaceName: 'Whole inventory answer' });
+  const itemService = require('../../src/domain/item-service');
+  const inventory = require('../../src/domain/inventory-engine');
+  const repo = require('../../src/domain/repository');
+  const first = itemService.createItem(db, workspace.ctx, { name: 'Filter', baseCode: 'F-1', trackingMode: 'quantity', unitLabel: 'unit' });
+  const second = itemService.createItem(db, workspace.ctx, { name: 'Valve', baseCode: 'V-1', trackingMode: 'quantity', unitLabel: 'unit' });
+  const firstSku = repo.listSkusForItem(db, workspace.workspaceId, first.itemId)[0];
+  const secondSku = repo.listSkusForItem(db, workspace.workspaceId, second.itemId)[0];
+  inventory.receive(db, workspace.ctx, { skuId: firstSku.id, locationId: workspace.main.id, quantity: 7 });
+  inventory.receive(db, workspace.ctx, { skuId: secondSku.id, locationId: workspace.main.id, quantity: 3 });
+
+  const result = queryService.execute(db, workspace.workspaceId, { intent: 'stock_level', entityQuery: '', limit: 10 });
+  assert.match(result.answer, /10 units on hand across 2 stock positions/);
+  assert.match(result.answer, /Lowest is Valve at 3 units/);
+});
+
 test('a question Foundry cannot answer is answered honestly', async () => {
   const { db, workspace } = withStockout();
   const provider = fakeProvider({

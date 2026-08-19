@@ -1,0 +1,61 @@
+<div class="foundry-hero foundry-hero--tight">
+  <span class="foundry-mark foundry-mark--done"><%- helpers.icon('check', { size: 24 }) %></span>
+  <h1>Foundry built the inventory</h1>
+  <p>
+    <strong><%= item.name %></strong> is live with
+    <strong><%= skuCount %></strong> trackable <%= skuCount === 1 ? 'item' : 'variants' %>
+    across <strong><%= locations.length %></strong> <%= locations.length === 1 ? 'location' : 'locations' %>.
+  </p>
+</div>
+
+<section class="card quantity-takeover">
+  <div class="card-head">
+    <div>
+      <span class="setup-eyebrow">One last setup step</span>
+      <h2>How should we get your current quantities into Foundry?</h2>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="quantity-status">
+      <span>Currently recorded</span>
+      <strong><%= total %> <%= total === 1 ? 'unit' : 'units' %></strong>
+      <span>Foundry will never invent what is on your shelves.</span>
+    </div>
+
+    <div class="quantity-options">
+      <div class="quantity-option quantity-option--primary">
+        <span class="quantity-option__icon"><%- helpers.icon('foundry', { size: 20 }) %></span>
+        <div>
+          <h3>Tell Foundry</h3>
+          <p>Describe what is on hand in ordinary language. Foundry will translate it, preview the exact changes, and ask for approval.</p>
+          <form class="ask-form" method="post" action="/actions/ask" data-busy data-ask-form>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input class="input ask-input" type="text" name="instruction"
+                   placeholder="Tell Foundry what is on hand and where it is…"
+                   maxlength="500" autocomplete="off" autofocus>
+            <button class="btn btn--primary" type="submit">Preview quantities</button>
+          </form>
+        </div>
+      </div>
+
+      <a class="quantity-option" href="/imports">
+        <span class="quantity-option__icon"><%- helpers.icon('import', { size: 20 }) %></span>
+        <div><h3>Upload Excel</h3><p>Give Foundry a spreadsheet or CSV and let it work out the quantities.</p></div>
+        <%- helpers.icon('chevron', { size: 16 }) %>
+      </a>
+
+      <a class="quantity-option" href="/inventory/<%= item.id %>?action=receive">
+        <span class="quantity-option__icon"><%- helpers.icon('receive', { size: 20 }) %></span>
+        <div><h3>Enter manually</h3><p>Open the traditional receiving form for this product.</p></div>
+        <%- helpers.icon('chevron', { size: 16 }) %>
+      </a>
+    </div>
+  </div>
+  <div class="card-foot quantity-complete">
+    <span class="muted">Already entered everything, or starting with no stock?</span>
+    <form method="post" action="/foundry/quantities/complete">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn" type="submit">Finish setup and let Foundry manage it</button>
+    </form>
+  </div>
+</section>

@@ -1,0 +1,51 @@
+<div class="page-head">
+  <div>
+    <a class="back-link" href="/suppliers/<%= proposal.supplierId %>">← <%= proposal.supplierName %></a>
+    <h1>Use your own product code</h1>
+    <p>The vendor's code remains attached to the supplier. Foundry changes only your internal catalogue code.</p>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head"><h2>Exact change</h2><span class="badge badge--warn"><%= helpers.columnLabel(proposal.status.toLowerCase()) %></span></div>
+  <div class="card-body">
+    <div class="document-facts">
+      <div><span>Supplier</span><strong><%= proposal.supplierName %></strong></div>
+      <div><span>Vendor code</span><strong class="mono"><%= proposal.vendorCode %></strong></div>
+      <div><span>Your code</span><strong class="mono"><%= proposal.internalBaseCode %></strong></div>
+      <div><span>Product</span><strong><%= proposal.itemName %></strong></div>
+    </div>
+
+    <div class="notice" style="margin-top:16px;">
+      <%- helpers.icon('check', { size: 16 }) %>
+      <span>Future documents will still match <strong><%= proposal.vendorCode %></strong>. Foundry will keep your internal codes below and will not ask you to map this vendor code again.</span>
+    </div>
+
+    <div class="table-wrap" style="margin-top:16px;">
+      <table class="table table--stack">
+        <thead><tr><th>Variant</th><th>Current internal code</th><th>Your new internal code</th></tr></thead>
+        <tbody>
+          <% proposal.affected.forEach(function (row) { %>
+            <tr>
+              <td data-label="Variant"><%= row.variantLabel || 'Default' %></td>
+              <td data-label="Current internal code" class="mono"><%= row.beforeCode %></td>
+              <td data-label="Your new internal code" class="mono"><strong><%= row.afterCode %></strong></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <p class="hint" style="margin-top:12px;">No quantities, receipts, supplier codes, costs, or movement history will change.</p>
+  </div>
+  <div class="card-foot">
+    <% if (proposal.status === 'PROPOSED' && canApply) { %>
+      <form method="post" action="/supplier-code-mappings/<%= proposal.id %>/apply">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--primary" type="submit">Approve and remember mapping</button>
+      </form>
+    <% } else if (proposal.status === 'APPLIED') { %>
+      <span class="badge badge--ok">Applied and remembered</span>
+    <% } %>
+    <a class="btn btn--ghost" href="/suppliers/<%= proposal.supplierId %>">Not now</a>
+  </div>
+</div>

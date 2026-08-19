@@ -35,12 +35,14 @@ const MAX_INSTRUCTION = 600;
 const POLICY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['understood', 'name', 'maximumQuantity', 'locationNames', 'dailyLimit', 'unsupportedReason'],
+  required: ['understood', 'actionType', 'name', 'maximumQuantity', 'maximumValue', 'maxUnitPriceChangePercent',
+    'locationNames', 'supplierNames', 'dailyLimit', 'unsupportedReason'],
   properties: {
     understood: {
       type: 'boolean',
-      description: 'True only if they are asking Foundry to move stock between their own locations by itself.',
+      description: 'True only for bounded warehouse transfers or bounded approval of routine replenishment purchase orders.',
     },
+    actionType: { type: 'string', enum: ['transfer', 'approve_purchase_order', 'unsupported'] },
     name: { type: 'string', description: 'A short name they would recognise on a list.' },
     maximumQuantity: {
       type: 'integer',
@@ -50,11 +52,14 @@ const POLICY_SCHEMA = {
       type: 'integer',
       description: 'How many such moves a day, if they said. 0 if they did not.',
     },
+    maximumValue: { type: 'number', description: 'Maximum value per purchase order. 0 if none was stated.' },
+    maxUnitPriceChangePercent: { type: 'number', description: 'Largest allowed known unit-price increase. -1 if none was stated.' },
     locationNames: {
       type: 'array',
       items: { type: 'string' },
       description: 'Locations they named, verbatim. Empty if they named none.',
     },
+    supplierNames: { type: 'array', items: { type: 'string' }, description: 'Suppliers named verbatim.' },
     unsupportedReason: {
       type: 'string',
       description: 'If understood is false, one plain sentence saying what Foundry cannot automate.',
@@ -67,10 +72,11 @@ You read one sentence from a business owner about what their inventory system
 may do without asking, and turn it into structured fields. You are not deciding
 whether anything is safe; other code does that and will overrule you.
 
-Foundry can automate exactly one thing: moving stock between the customer's own
-locations. It cannot automatically buy, sell, adjust counts, correct
-discrepancies, contact suppliers, or send orders. If they are asking for any of
-those, set understood to false and say plainly which part it cannot do.
+Foundry can automate bounded transfers between the customer's own locations and
+approve routine replenishment purchase orders inside an explicit supplier,
+value and price-change policy. It never contacts suppliers or sends orders. It
+cannot automatically sell, adjust counts, settle discrepancies, merge catalogues
+or accept ambiguous identities. Mark those unsupported.
 
 Never invent a quantity. If they did not give a limit, use 0 — asking them is
 better than choosing for them.
@@ -107,6 +113,10 @@ function resolveLocations(locations, names) {
  * Reads the instruction and returns a policy draft plus the questions that
  * still need answering. Never writes anything.
  */
+function resolveNamed(records, names) {
+  return resolveLocations(records, names);
+}
+
 async function draft(db, workspaceId, instruction, options = {}) {
   const clean = String(instruction || '').trim().slice(0, MAX_INSTRUCTION);
   if (!clean) throw new ValidationError('Say what you would like Foundry to handle by itself.');
@@ -115,6 +125,7 @@ async function draft(db, workspaceId, instruction, options = {}) {
   }
 
   const locations = repo.listLocations(db, workspaceId).filter((l) => !l.archived_at);
+  const suppliers = db.prepare("SELECT id, name FROM suppliers WHERE workspace_id = ? AND status = 'active' ORDER BY name").all(workspaceId);
   const provider = options.provider || createProviderForTier('standard');
 
   const response = await provider.complete({
@@ -138,6 +149,36 @@ async function draft(db, workspaceId, instruction, options = {}) {
         'Foundry only automates moving stock between your own locations. Everything else it prepares for you.',
       questions: [],
     };
+  }
+
+  if (read.actionType === 'approve_purchase_order') {
+    const scoped = resolveNamed(suppliers, read.supplierNames);
+    const questions = [];
+    let supplierScope = scoped.map((entry) => entry.id);
+    if (!scoped.length) {
+      supplierScope = suppliers.map((entry) => entry.id);
+      questions.push(suppliers.length
+        ? `This would cover all ${suppliers.length} configured suppliers. Narrow it if that is too wide.`
+        : 'Add an approved supplier before Foundry can prepare this policy.');
+    }
+    const maximumValue = Number(read.maximumValue) > 0 ? Number(read.maximumValue) : null;
+    const priceLimit = Number(read.maxUnitPriceChangePercent) >= 0 ? Number(read.maxUnitPriceChangePercent) : null;
+    if (!maximumValue) questions.push('What is the most Foundry may commit on one purchase order?');
+    if (priceLimit === null) questions.push('What unit-price increase should always come back to you?');
+    const policy = {
+      name: String(read.name || '').trim().slice(0, 120) || 'Routine replenishment purchasing',
+      description: `From what you said: “${clean}”`, allowedActionTypes: ['approve_purchase_order'],
+      supplierScope,
+      conditions: [policyService.CONDITIONS.REPLENISHMENT_EVIDENCE,
+        policyService.CONDITIONS.MOQ_ORDER_MULTIPLE_COMPLIANT,
+        policyService.CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND,
+        policyService.CONDITIONS.PRICE_WITHIN_POLICY],
+      maximumValue,
+      thresholds: priceLimit === null ? {} : { maxUnitPriceChangePercent: priceLimit },
+      dailyLimit: Number(read.dailyLimit) > 0 ? Math.trunc(read.dailyLimit) : null,
+    };
+    return { understood: true, instruction: clean, draft: policy, suppliers: scoped.length ? scoped : suppliers,
+      questions, preview: maximumValue && priceLimit !== null ? policyService.describe(policy) : [] };
   }
 
   // Everything from here is decided in code. The model's answer is raw material.
@@ -208,4 +249,4 @@ async function draft(db, workspaceId, instruction, options = {}) {
   };
 }
 
-module.exports = { POLICY_SCHEMA, draft, resolveLocations };
+module.exports = { POLICY_SCHEMA, draft, resolveLocations, resolveNamed };

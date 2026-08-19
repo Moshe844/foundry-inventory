@@ -26,6 +26,8 @@ const importRoutes = require('./web/routes/imports');
 const onboardingRoutes = require('./web/routes/onboarding');
 const autopilotRoutes = require('./web/routes/autopilot');
 const purchasingRoutes = require('./web/routes/purchasing');
+const managerRoutes = require('./web/routes/manager');
+const { createFeedApi } = require('./web/routes/feed-api');
 
 /**
  * Builds the Express application around an already-open database handle.
@@ -56,6 +58,11 @@ function createApp(options = {}) {
   app.use(express.urlencoded({ extended: true, limit: '256kb' }));
   app.use(express.json({ limit: '256kb' }));
 
+  // External systems authenticate with a scoped bearer token, never a browser
+  // session. Mount this before cookie sessions and CSRF so unattended feeds do
+  // not depend on a person being signed in.
+  app.use('/api/v1/feed', createFeedApi(db));
+
   const store = createSessionStore(db);
   app.locals.sessionStore = store;
   app.use(
@@ -79,6 +86,7 @@ function createApp(options = {}) {
     req.db = db;
     res.locals.helpers = helpers;
     res.locals.appName = 'Foundry Inventory';
+    res.locals.origin = `${req.protocol}://${req.get('host')}`;
     res.locals.currentPath = req.path;
     res.locals.query = req.query || {};
     next();
@@ -92,6 +100,7 @@ function createApp(options = {}) {
   app.get('/healthz', (req, res) => res.json({ ok: true }));
 
   app.use(authRoutes);
+  app.use(managerRoutes);
   app.use(foundryRoutes);
   app.use(workspaceRoutes);
   app.use(actionRoutes);

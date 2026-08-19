@@ -5,10 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light">
   <title><%= title %> · Foundry Inventory</title>
+  <meta name="description" content="Foundry manages your inventory operation and brings you the exceptions that need your judgement.">
+  <meta property="og:title" content="Foundry — Your inventory operation, managed.">
+  <meta property="og:description" content="Foundry handles routine inventory work and brings you the exceptions that need your judgement.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="<%= origin %>/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Foundry — Your inventory operation, managed.">
+  <meta name="twitter:description" content="Foundry handles routine inventory work and brings you the exceptions that need your judgement.">
+  <meta name="twitter:image" content="<%= origin %>/og.png">
   <link rel="stylesheet" href="/app.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230f766e'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
-<body>
+<body class="page-<%= nav || 'plain' %>">
 <a class="skip-link" href="#main">Skip to content</a>
 <div class="app">
   <aside class="sidebar">
@@ -18,7 +27,7 @@
       </span>
       <span class="brand-text">
         <strong>Foundry</strong>
-        <small>Inventory</small>
+        <small>Inventory manager</small>
       </span>
     </a>
 
@@ -65,26 +74,27 @@
     <% } %>
 
     <nav class="nav" aria-label="Main">
-      <a class="nav-item nav-item--foundry <%= nav === 'foundry' ? 'is-active' : '' %>" href="/foundry"><%- helpers.icon('foundry') %><span>Foundry</span></a>
-      <a class="nav-item <%= nav === 'overview' ? 'is-active' : '' %>" href="/"><%- helpers.icon('overview') %><span>Foundry home</span></a>
-      <a class="nav-item <%= nav === 'autopilot' ? 'is-active' : '' %>" href="/autopilot"><%- helpers.icon('shield') %><span>What Foundry does</span></a>
-      <a class="nav-item <%= nav === 'attention' ? 'is-active' : '' %>" href="/attention"><%- helpers.icon('attention') %><span>Needs attention</span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %></a>
-      <a class="nav-item <%= nav === 'actions' ? 'is-active' : '' %>" href="/actions"><%- helpers.icon('adjust') %><span>Do something</span></a>
-      <a class="nav-item <%= nav === 'purchasing' ? 'is-active' : '' %>" href="/purchasing"><%- helpers.icon('purchasing') %><span>What to order</span></a>
-      <a class="nav-item <%= nav === 'imports' ? 'is-active' : '' %>" href="/imports"><%- helpers.icon('import') %><span>Bring data in</span></a>
+      <% if (!workspace) { %>
+        <a class="nav-item nav-item--primary <%= nav === 'inventories' ? 'is-active' : '' %>" href="/inventories"><%- helpers.icon('inventory') %><span>Your inventories</span></a>
+        <a class="nav-item nav-item--primary" href="/inventories/new"><%- helpers.icon('plus') %><span>New Inventory</span></a>
+      <% } else { %>
+      <a class="nav-item nav-item--primary <%= nav === 'home' || nav === 'overview' ? 'is-active' : '' %>" href="/"><%- helpers.icon('foundry') %><span>Foundry</span></a>
+      <a class="nav-item nav-item--primary <%= nav === 'attention' ? 'is-active' : '' %>" href="/needs-you"><%- helpers.icon('attention') %><span>Needs you</span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %></a>
       <a class="nav-item <%= nav === 'inventory' ? 'is-active' : '' %>" href="/inventory"><%- helpers.icon('inventory') %><span>Inventory</span></a>
-      <a class="nav-item <%= nav === 'locations' ? 'is-active' : '' %>" href="/locations"><%- helpers.icon('locations') %><span>Locations</span></a>
-      <a class="nav-item <%= nav === 'activity' ? 'is-active' : '' %>" href="/activity"><%- helpers.icon('activity') %><span>Activity</span></a>
+      <a class="nav-item <%= nav === 'purchasing' ? 'is-active' : '' %>" href="/purchasing"><%- helpers.icon('purchasing') %><span>Purchasing</span></a>
+      <a class="nav-item <%= nav === 'activity' || nav === 'history' ? 'is-active' : '' %>" href="/autopilot/history"><%- helpers.icon('activity') %><span>Activity</span></a>
       <a class="nav-item <%= nav === 'settings' ? 'is-active' : '' %>" href="/settings"><%- helpers.icon('settings') %><span>Settings</span></a>
+      <% } %>
     </nav>
 
     <div class="sidebar-foot">
-      <% if (currentUser) { %>
+      <% if (currentUser || account) { %>
+        <% var signedInPerson = currentUser || account; %>
         <div class="who">
-          <span class="avatar"><%= helpers.initials(currentUser.name) %></span>
+          <span class="avatar"><%= helpers.initials(signedInPerson.name) %></span>
           <span class="who-text">
-            <strong><%= currentUser.name %></strong>
-            <small><%= helpers.roleLabel(currentUser.role) %></small>
+            <strong><%= signedInPerson.name %></strong>
+            <small><%= currentUser ? helpers.roleLabel(currentUser.role) : 'Account' %></small>
           </span>
         </div>
         <form method="post" action="/logout">
@@ -104,16 +114,22 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6l-8-3.8z"/></svg>
         </span>
       </a>
+      <% if (workspace) { %>
       <form class="topbar-search" role="search" action="/search" method="get" autocomplete="off">
         <label class="visually-hidden" for="global-search">Search inventory</label>
         <%- helpers.icon('search', { size: 18, className: 'search-icon' }) %>
         <input id="global-search" class="search-input" type="search" name="q" value="<%= typeof searchTerm !== 'undefined' ? searchTerm : '' %>"
-               placeholder="Search items, SKUs, serial numbers, lots" data-search>
+               placeholder="Search inventory records" data-search>
         <div class="search-results" data-search-results hidden></div>
       </form>
       <div class="topbar-actions">
-        <a class="btn btn--primary btn--sm" href="/inventory/new"><%- helpers.icon('plus', { size: 16 }) %><span class="btn-label">Add item</span></a>
+        <a class="btn btn--primary btn--sm" href="/#tell-foundry"><%- helpers.icon('foundry', { size: 16 }) %><span class="btn-label">Tell Foundry</span></a>
       </div>
+      <% } else { %>
+      <div class="topbar-actions">
+        <a class="btn btn--primary btn--sm" href="/inventories/new"><%- helpers.icon('plus', { size: 16 }) %><span class="btn-label">New Inventory</span></a>
+      </div>
+      <% } %>
     </header>
 
     <main class="content" id="main">
@@ -132,11 +148,16 @@
   </div>
 
   <nav class="mobilenav" aria-label="Main">
-    <a class="<%= nav === 'foundry' ? 'is-active' : '' %>" href="/foundry"><%- helpers.icon('foundry', { size: 22 }) %><span>Foundry</span></a>
-    <a class="<%= nav === 'overview' ? 'is-active' : '' %>" href="/"><%- helpers.icon('overview', { size: 22 }) %><span>Overview</span></a>
-    <a class="<%= nav === 'attention' ? 'is-active' : '' %>" href="/attention"><%- helpers.icon('attention', { size: 22 }) %><span>Attention</span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %></a>
+    <% if (!workspace) { %>
+    <a class="<%= nav === 'inventories' ? 'is-active' : '' %>" href="/inventories"><%- helpers.icon('inventory', { size: 22 }) %><span>Inventories</span></a>
+    <a href="/inventories/new"><%- helpers.icon('plus', { size: 22 }) %><span>New</span></a>
+    <% } else { %>
+    <a class="<%= nav === 'home' || nav === 'overview' ? 'is-active' : '' %>" href="/"><%- helpers.icon('foundry', { size: 22 }) %><span>Foundry</span></a>
+    <a class="<%= nav === 'attention' ? 'is-active' : '' %>" href="/needs-you"><%- helpers.icon('attention', { size: 22 }) %><span>Needs you</span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %></a>
+    <a href="/#tell-foundry"><%- helpers.icon('send', { size: 22 }) %><span>Tell Foundry</span></a>
     <a class="<%= nav === 'inventory' ? 'is-active' : '' %>" href="/inventory"><%- helpers.icon('inventory', { size: 22 }) %><span>Inventory</span></a>
-    <a class="<%= nav === 'locations' ? 'is-active' : '' %>" href="/locations"><%- helpers.icon('locations', { size: 22 }) %><span>Locations</span></a>
+    <a class="<%= nav === 'settings' ? 'is-active' : '' %>" href="/settings"><%- helpers.icon('settings', { size: 22 }) %><span>Settings</span></a>
+    <% } %>
   </nav>
 </div>
 <script src="/app.js" defer></script>

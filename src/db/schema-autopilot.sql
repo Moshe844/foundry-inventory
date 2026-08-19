@@ -174,9 +174,9 @@ CREATE TABLE IF NOT EXISTS work_items (
   workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   work_plan_id          TEXT REFERENCES work_plans(id) ON DELETE SET NULL,
 
-  category              TEXT NOT NULL CHECK (category IN
-                          ('balance_transfer', 'replenishment', 'purchase_preparation', 'receiving_followup',
-                           'expiration_review', 'attention_review', 'discrepancy_review', 'stale_recommendation')),
+  -- The supported category vocabulary lives in work-items.js. Keeping a second
+  -- enum here made every new manager capability a destructive table migration.
+  category              TEXT NOT NULL,
   source                TEXT NOT NULL,
   source_evidence       TEXT NOT NULL DEFAULT '[]',
   affected_entities     TEXT NOT NULL DEFAULT '{}',

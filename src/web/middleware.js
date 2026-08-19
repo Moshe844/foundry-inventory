@@ -127,12 +127,14 @@ function foundryContext(db) {
     // Deliberately defensive: this runs on every page, and a missing badge is a
     // cosmetic loss where a thrown error would be an outage of the whole app.
     try {
-      res.locals.attentionCount = db
+      const findings = db
         .prepare(
           `SELECT COUNT(*) AS n FROM attention_items
             WHERE workspace_id = ? AND status IN ('OPEN', 'ACKNOWLEDGED')`
         )
         .get(req.ctx.workspaceId).n;
+      const operating = require('../manager/readiness').decisions(db, req.ctx.workspaceId).length;
+      res.locals.attentionCount = findings + operating;
     } catch {
       res.locals.attentionCount = 0;
     }

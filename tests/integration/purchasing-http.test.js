@@ -95,6 +95,39 @@ test('the plan page shows what to order, with the reasoning a click away', async
   assert.match(evidence, /The calculation, step by step/);
 });
 
+test('the supplier page separates the vendor code from our code and applies only an approved mapping', async () => {
+  const env = setup();
+  const { agent } = await owner(env);
+  const page = await agent.get(`/suppliers/${env.supplier.id}`);
+  assert.equal(page.status, 200);
+  const text = plain(page.text);
+  assert.match(text, /Supplier code \(vendor\)/);
+  assert.match(text, /Your code/);
+  assert.match(text, /Vendor codes → your codes/);
+  assert.match(text, /OX-NV-08/);
+
+  const beforeCode = repo.requireSku(env.db, env.workspace.workspaceId, env.item.skuId).code;
+  const proposed = await agent.post(`/suppliers/${env.supplier.id}/code-mappings`).type('form').send({
+    _csrf: csrfFrom(page.text), vendorCode: 'OX-NV-08', internalBaseCode: 'OUR-OXFORD',
+  });
+  assert.equal(proposed.status, 303);
+  assert.match(proposed.headers.location, /^\/supplier-code-mappings\/scmp_/);
+  assert.equal(repo.requireSku(env.db, env.workspace.workspaceId, env.item.skuId).code, beforeCode);
+
+  const review = await agent.get(proposed.headers.location);
+  assert.match(plain(review.text), /Future documents will still match OX-NV-08/);
+  const approved = await agent.post(`${proposed.headers.location}/apply`).type('form').send({
+    _csrf: csrfFrom(review.text),
+  });
+  assert.equal(approved.status, 303);
+  assert.equal(repo.requireSku(env.db, env.workspace.workspaceId, env.item.skuId).code, 'OUR-OXFORD');
+  assert.equal(suppliers.itemsForSupplier(env.db, env.workspace.workspaceId, env.supplier.id)[0].supplierSku, 'OX-NV-08');
+
+  const after = plain((await agent.get(`/suppliers/${env.supplier.id}`)).text);
+  assert.match(after, /Remembered for future invoices/);
+  env.db.close();
+});
+
 test('preparing, approving and receiving an order, end to end', async () => {
   const env = setup();
   const { agent } = await owner(env);

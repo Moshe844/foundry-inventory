@@ -26,7 +26,7 @@
           <% outcome.problems.forEach(function (problem) { %><li class="is-warn"><%= problem %></li><% }) %>
         </ul>
       <% } else { %>
-        <p class="lede">Foundry <%= action.verb %>ed <strong><%= outcome.name %></strong> and checked the result.</p>
+        <p class="lede">Foundry <%= action.pastVerb %> <strong><%= outcome.name %></strong> and checked the result.</p>
       <% } %>
 
       <div class="act-ledger">

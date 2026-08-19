@@ -4,6 +4,7 @@ const express = require('express');
 const inventoryQuery = require('../../domain/inventory-query');
 const activityService = require('../../domain/activity-service');
 const planApplier = require('../../foundry/plan-applier');
+const onboardingPaths = require('../../onboarding/paths');
 const attention = require('../../attention/attention-engine');
 const presenter = require('../../attention/presenter');
 const briefService = require('../../attention/brief-service');
@@ -24,6 +25,10 @@ router.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     const stats = inventoryQuery.overview(req.db, req.ctx.workspaceId);
+    // Recover onboarding automatically once real ledger evidence exists. The
+    // customer has already supplied inventory truth; asking them to confirm
+    // that Foundry may start using it is ceremony, not safety.
+    onboardingPaths.reconcileWithInventoryTruth(req.db, req.ctx.workspaceId);
     const { groups } = activityService.listActivity(req.db, req.ctx.workspaceId, { limit: 6 });
     const configuration = planApplier.getConfiguration(req.db, req.ctx.workspaceId);
 
@@ -50,7 +55,7 @@ router.get(
       const home = autopilotPresenter.operatorHome(req.db, req.ctx.workspaceId);
       return res.page('operator-home', {
         title: 'Foundry',
-        nav: 'overview',
+        nav: 'home',
         home,
         brief,
         stats,

@@ -119,6 +119,66 @@ test('a written instruction becomes a preview, not a movement', async () => {
   assert.equal(balance(env, env.workspace.store.id), 4);
 });
 
+test('an unknown transfer destination offers to create it, then previews and verifies the transfer', async () => {
+  const env = setup({ provider: fakeProvider(intentResponse({ destinationLocation: 'Overflow Warehouse', quantity: 2 })) });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const asked = await post(agent, '/actions/ask', {
+    instruction: 'Move 2 Navy 4 from Main Warehouse to Overflow Warehouse',
+  });
+  assert.equal(asked.status, 303);
+  assert.equal(asked.headers.location, '/actions/location-required');
+
+  const setupPage = await agent.get('/actions/location-required');
+  const setupText = plain(setupPage.text);
+  assert.match(setupText, /Overflow Warehouse does not exist yet/);
+  assert.match(setupText, /New warehouse\s+Overflow Warehouse/);
+  assert.match(setupText, /Locations\s+2\s+3/);
+  assert.match(setupText, /Stock changed\s+None/);
+  assert.match(setupText, /Create location and continue/);
+  assert.equal(env.db.prepare(
+    'SELECT COUNT(*) AS n FROM locations WHERE workspace_id = ? AND name = ?'
+  ).get(env.workspace.workspaceId, 'Overflow Warehouse').n, 0, 'the preview creates nothing');
+  assert.equal(balance(env, env.workspace.main.id), 48);
+
+  const continued = await agent.post('/actions/location-required').type('form').send({
+    _csrf: csrfFrom(setupPage.text), decision: 'create',
+  });
+  assert.equal(continued.status, 303);
+  assert.match(continued.headers.location, /^\/actions\/act_/);
+
+  const overflow = env.db.prepare(
+    'SELECT * FROM locations WHERE workspace_id = ? AND name = ?'
+  ).get(env.workspace.workspaceId, 'Overflow Warehouse');
+  assert.ok(overflow);
+  assert.equal(overflow.kind, 'warehouse');
+  assert.equal(balance(env, env.workspace.main.id), 48, 'creating the location must not move stock');
+  assert.equal(balance(env, overflow.id), 0);
+
+  const transferPage = await agent.get(continued.headers.location);
+  const transferText = plain(transferPage.text);
+  assert.match(transferText, /Foundry is ready to transfer/);
+  assert.match(transferText, /Main Warehouse\s+stock leaves here\s+48\s+46/);
+  assert.match(transferText, /Overflow Warehouse\s+stock arrives here\s+0\s+2/);
+  assert.match(transferText, /Total on hand\s+unchanged.+stock only moves\s+52\s+52/);
+  assert.match(transferText, /no stock has moved yet/i);
+
+  const approved = await agent.post(continued.headers.location + '/approve').type('form').send({
+    _csrf: csrfFrom(transferPage.text),
+  });
+  assert.equal(approved.status, 303);
+  await agent.get(approved.headers.location);
+
+  const result = plain((await agent.get(continued.headers.location)).text);
+  assert.match(result, /Verified against your records/);
+  assert.match(result, /Main Warehouse\s+48\s+46/);
+  assert.match(result, /Overflow Warehouse\s+0\s+2/);
+  assert.match(result, /Total on hand\s+52\s+52/);
+  assert.equal(balance(env, env.workspace.main.id), 46);
+  assert.equal(balance(env, overflow.id), 2);
+});
+
 test('an instruction Foundry cannot carry out is refused honestly', async () => {
   const env = setup({
     provider: fakeProvider({

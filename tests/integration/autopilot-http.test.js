@@ -20,8 +20,11 @@ const authService = require('../../src/domain/auth-service');
 const policyService = require('../../src/autopilot/policy-service');
 const preferences = require('../../src/autopilot/preferences');
 const modes = require('../../src/autopilot/modes');
+const runner = require('../../src/autopilot/runner');
+const engine = require('../../src/domain/inventory-engine');
+const reevaluate = require('../../src/attention/reevaluate');
 const { createApp } = require('../../src/app');
-const { makeDatabase, cleanupAll, seedWorkspace, csrfFrom, plain, signIn } = require('../helpers');
+const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, csrfFrom, plain, signIn } = require('../helpers');
 
 test.after(cleanupAll);
 
@@ -44,6 +47,82 @@ async function post(agent, path, body, from = '/autopilot') {
   const page = await agent.get(from);
   return agent.post(path).type('form').send({ _csrf: csrfFrom(page.text), ...body });
 }
+
+test('the primary home is Foundry managing work, not an inventory dashboard', async () => {
+  const env = setup();
+  env.db.prepare(
+    `INSERT INTO workspace_configuration
+       (workspace_id, configured_at, configuration_version, terminology, operational_defaults, inventory_model, updated_at)
+     VALUES (?, datetime('now'), 1, '{}', '{}', '{"primaryArchetype":"quantity"}', datetime('now'))`
+  ).run(env.workspace.workspaceId);
+  const item = makeQuantityItem(env.db, env.ctx);
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 20 });
+  runner.planWork(env.db, env.ctx, env.membership, { trigger: 'receive' });
+
+  const agent = await ownerAgent(env);
+  const page = plain((await agent.get('/')).text);
+
+  assert.match(page, /Foundry is managing Autopilot Co/);
+  assert.match(page, /Ask Foundry anything/);
+  assert.match(page, /Foundry needs you/);
+  assert.match(page, /Foundry prepared this/);
+  assert.match(page, /Foundry handled this/);
+  assert.match(page, /Open the traditional overview/);
+  assert.match(page, /Foundry cannot see stock leaving the business/);
+  assert.match(page, /1 real check/);
+  assert.match(page, /Checked inventory after stock arrived/);
+});
+
+test('Needs you exposes the missing operating input instead of silently showing an empty queue', async () => {
+  const env = setup();
+  env.db.prepare(
+    `INSERT INTO workspace_configuration
+       (workspace_id, configured_at, configuration_version, terminology, operational_defaults, inventory_model, updated_at)
+     VALUES (?, datetime('now'), 1, '{}', '{}', '{"primaryArchetype":"quantity"}', datetime('now'))`
+  ).run(env.workspace.workspaceId);
+  const item = makeQuantityItem(env.db, env.ctx, { name: 'Filter' });
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 20 });
+
+  const agent = await ownerAgent(env);
+  const page = plain((await agent.get('/needs-you')).text);
+  assert.match(page, /Operating inputs/);
+  assert.match(page, /Foundry cannot see stock leaving the business/);
+  assert.match(page, /no live sales or warehouse feed/i);
+  assert.match(page, /cannot silently observe another system or invent demand/i);
+});
+
+test('completed manager checks appear in durable history even when no action was supported', async () => {
+  const env = setup();
+  const item = makeQuantityItem(env.db, env.ctx, { name: 'Filter' });
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 20 });
+  runner.planWork(env.db, env.ctx, env.membership, { trigger: 'receive' });
+
+  const agent = await ownerAgent(env);
+  const page = plain((await agent.get('/autopilot/history')).text);
+  assert.match(page, /Inventory checks/);
+  assert.match(page, /Checked inventory after stock arrived/);
+  assert.match(page, /1 position lacked enough outbound history for safe demand action/);
+  assert.doesNotMatch(page, /Foundry has not had anything to do yet/);
+});
+
+test('an active product reaching zero appears automatically in Foundry needs you', async () => {
+  const env = setup();
+  env.db.prepare(
+    `INSERT INTO workspace_configuration
+       (workspace_id, configured_at, configuration_version, terminology, operational_defaults, inventory_model, updated_at)
+     VALUES (?, datetime('now'), 1, '{}', '{}', '{"primaryArchetype":"quantity"}', datetime('now'))`
+  ).run(env.workspace.workspaceId);
+  const item = makeQuantityItem(env.db, env.ctx, { name: 'Essential Filter' });
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 2 });
+  engine.issue(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 2, reasonCode: 'sold' });
+  reevaluate.refresh(env.db, env.workspace.workspaceId, 'test-stockout');
+
+  const agent = await ownerAgent(env);
+  const page = plain((await agent.get('/')).text);
+  assert.match(page, /I need you for 2 things/i);
+  assert.match(page, /Essential Filter is out of stock/i);
+  assert.match(page, /0 on hand/i);
+});
 
 test('the settings page shows what Foundry may do and how you want it run', async () => {
   const env = setup();

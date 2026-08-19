@@ -368,6 +368,17 @@
     });
   }
 
+  function initSetupSource() {
+    const source = document.querySelector('.foundry-source input[type="file"]');
+    if (!source) return;
+    const picker = document.querySelector('[data-source-picker]');
+    if (picker) picker.addEventListener('click', () => source.click());
+    source.addEventListener('change', () => {
+      const name = document.querySelector('[data-source-name]');
+      if (name && source.files && source.files[0]) name.textContent = source.files[0].name;
+    });
+  }
+
   /**
    * Ask Foundry runs a real model call before the page can answer. Saying so is
    * the difference between "thinking" and "broken".
@@ -440,6 +451,18 @@
     });
   }
 
+  function initVendorVocabulary() {
+    const input = document.querySelector('[data-vendor-code-label-input]');
+    if (!input) return;
+    const sync = () => {
+      const label = input.value.trim() || 'Product code';
+      document.querySelectorAll('[data-vendor-code-label]').forEach((node) => { node.textContent = label; });
+      document.querySelectorAll('[data-vendor-code-cell]').forEach((node) => { node.dataset.label = label; });
+    };
+    input.addEventListener('input', sync);
+    sync();
+  }
+
   function escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, (ch) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -456,7 +479,9 @@
     initFoundry();
     initThinking();
     initBusyButtons();
+    initSetupSource();
     initAskPending();
     initSwitcher();
+    initVendorVocabulary();
   });
 })();

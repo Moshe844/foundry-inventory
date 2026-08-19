@@ -165,6 +165,19 @@ function commonMeta(input, { requireReason = false, reasonCodes = null } = {}) {
   return { reasonCode, notes, reference };
 }
 
+/**
+ * A connected system may deliver an event seconds later or replay historical
+ * movement history during its first sync. The ledger records that business
+ * timestamp while balances still carry the time Foundry actually applied it.
+ */
+function operationOccurredAt(input, recordedAt) {
+  const occurredAt = optionalDate(input && input.occurredAt, 'Occurred at') || recordedAt;
+  if (Date.parse(occurredAt) > Date.parse(recordedAt) + 5 * 60 * 1000) {
+    throw new ValidationError('Occurred at cannot be in the future.', { field: 'occurredAt' });
+  }
+  return occurredAt;
+}
+
 /** Serial units named in the request must be active stock at `location`. */
 function resolveSerialUnits(db, ctx, sku, location, rawIds) {
   const ids = (Array.isArray(rawIds) ? rawIds : [rawIds]).filter(Boolean);
@@ -241,6 +254,7 @@ function receive(db, ctx, input) {
   requireContext(ctx);
   return inTransaction(db, () => {
     const now = nowIso();
+    const occurredAt = operationOccurredAt(input, now);
     const groupId = newId('grp');
     const { sku, location } = resolveTarget(db, ctx, input);
     const meta = commonMeta(input);
@@ -252,7 +266,7 @@ function receive(db, ctx, input) {
       skuId: sku.id,
       locationId: location.id,
       actorUserId: ctx.actorId,
-      occurredAt: now,
+      occurredAt,
       reasonCode: meta.reasonCode,
       notes: meta.notes,
       reference: meta.reference,
@@ -392,6 +406,7 @@ function issue(db, ctx, input) {
   requireContext(ctx);
   return inTransaction(db, () => {
     const now = nowIso();
+    const occurredAt = operationOccurredAt(input, now);
     const groupId = newId('grp');
     const { sku, location } = resolveTarget(db, ctx, input);
     const meta = commonMeta(input, { reasonCodes: ISSUE_REASON_IDS });
@@ -403,7 +418,7 @@ function issue(db, ctx, input) {
       skuId: sku.id,
       locationId: location.id,
       actorUserId: ctx.actorId,
-      occurredAt: now,
+      occurredAt,
       reasonCode: meta.reasonCode,
       notes: meta.notes,
       reference: meta.reference,
@@ -485,6 +500,7 @@ function transfer(db, ctx, input) {
   requireContext(ctx);
   return inTransaction(db, () => {
     const now = nowIso();
+    const occurredAt = operationOccurredAt(input, now);
     const groupId = newId('grp');
     const sku = repo.requireSku(db, ctx.workspaceId, input.skuId);
     const from = repo.requireLocation(db, ctx.workspaceId, input.fromLocationId, 'source location');
@@ -503,7 +519,7 @@ function transfer(db, ctx, input) {
       itemId: sku.item_id,
       skuId: sku.id,
       actorUserId: ctx.actorId,
-      occurredAt: now,
+      occurredAt,
       reasonCode: meta.reasonCode,
       notes: meta.notes,
       reference: meta.reference,
@@ -639,6 +655,7 @@ function adjust(db, ctx, input) {
   requireContext(ctx);
   return inTransaction(db, () => {
     const now = nowIso();
+    const occurredAt = operationOccurredAt(input, now);
     const groupId = newId('grp');
     const { sku, location } = resolveTarget(db, ctx, input);
     const meta = commonMeta(input, { requireReason: true, reasonCodes: ADJUSTMENT_REASON_IDS });
@@ -650,7 +667,7 @@ function adjust(db, ctx, input) {
       skuId: sku.id,
       locationId: location.id,
       actorUserId: ctx.actorId,
-      occurredAt: now,
+      occurredAt,
       reasonCode: meta.reasonCode,
       notes: meta.notes,
       reference: meta.reference,

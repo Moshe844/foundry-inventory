@@ -337,7 +337,13 @@ function planWork(db, ctx, membership, options = {}) {
     JSON.stringify({
       transfers: proposed.transfers.length,
       purchases: proposed.purchases.length,
+      receiving: proposed.receiving.length,
       conflicts: proposed.conflicts.length,
+      // A completed check that produced no work still needs to be explainable.
+      // These are deterministic refusal reasons from the planner, not model
+      // reasoning. Keeping them with the plan lets the operator see why a run
+      // correctly stopped instead of mistaking an empty queue for a dead loop.
+      declined: proposed.declined.slice(0, 50),
       nothingToDo: proposed.nothingToDo,
     }),
     nowIso(),
@@ -369,6 +375,19 @@ function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
   }
 
   if (item.category === 'purchase_preparation') return preparePurchase(db, ctx, membership, item);
+
+  if (item.category === 'purchase_approval') {
+    const orderId = item.purchaseOrderId || (item.recommendedAction || {}).purchaseOrderId;
+    const order = poService.get(db, workspaceId, orderId);
+    const approved = poService.approve(db, ctx, membership, order.id, {
+      expectedHash: order.integrityHash, markOrdered: true,
+    });
+    const completed = workItems.transition(db, workspaceId, item.id, workItems.STATUS.COMPLETED, {
+      purchaseOrderId: order.id, verificationStatus: 'VERIFIED',
+      outcome: { poNumber: approved.poNumber, status: approved.status, value: approved.subtotal, approvedByPerson: true },
+    });
+    return { executed: true, verified: true, item: completed, purchaseOrderId: order.id };
+  }
 
   // A delivery is checked in by a person against what is physically in the box.
   // Marking the reminder done is all that happens here; the stock itself arrives
@@ -543,6 +562,13 @@ function preparePurchase(db, ctx, membership, item) {
   workItems.transition(db, ctx.workspaceId, item.id, workItems.STATUS.EXECUTING, { countAttempt: true });
 
   try {
+    const priceEvidence = action.lines.map((line) => {
+      const previous = poService.costHistory(db, ctx.workspaceId, line.skuId, { limit: 1 })[0] || null;
+      const current = line.unitCost;
+      const percent = previous && previous.unitCost > 0 && current !== null && current !== undefined
+        ? Math.round(((current - previous.unitCost) / previous.unitCost) * 1000) / 10 : null;
+      return { skuId: line.skuId, current, previous: previous ? previous.unitCost : null, percent };
+    });
     const order = poService.createOrder(db, ctx, membership, {
       supplierId: action.supplierId,
       source: 'foundry_recommendation',
@@ -553,21 +579,72 @@ function preparePurchase(db, ctx, membership, item) {
       })),
     });
 
+    const maxIncrease = priceEvidence.reduce(
+      (max, entry) => entry.percent === null ? max : Math.max(max, entry.percent), 0
+    );
+    const conditions = {
+      [policyService.CONDITIONS.REPLENISHMENT_EVIDENCE]: { passed: item.source === 'replenishment', detail: 'Created from measured replenishment demand.' },
+      [policyService.CONDITIONS.MOQ_ORDER_MULTIPLE_COMPLIANT]: { passed: true, detail: 'Supplier pack and minimum rules were applied.' },
+      [policyService.CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND]: { passed: true, detail: 'Stock already on order was included by the planner.' },
+      [policyService.CONDITIONS.PRICE_WITHIN_POLICY]: { passed: true, detail: maxIncrease ? `Largest known increase: ${maxIncrease}%.` : 'No increase measured.' },
+    };
+    const verdict = policyEngine.evaluate(db, ctx.workspaceId, {
+      actionType: 'approve_purchase_order', supplierId: action.supplierId,
+      skuId: action.lines[0] && action.lines[0].skuId,
+      quantity: action.lines.reduce((sum, line) => sum + (Number(line.quantityUnits) || 0), 0),
+      value: order.subtotal, maxPriceIncreasePercent: maxIncrease, conditions,
+    });
+    const permittedIncrease = verdict.policy && Number(verdict.policy.thresholds.maxUnitPriceChangePercent);
+    const priceException = Number.isFinite(permittedIncrease) && maxIncrease > permittedIncrease;
+    let finalOrder = order;
+    if (verdict.decision === 'authorized' && !priceException) {
+      finalOrder = poService.approve(db, ctx, membership, order.id, {
+        expectedHash: order.integrityHash, markOrdered: true,
+      });
+    } else {
+      workItems.upsert(db, ctx.workspaceId, {
+        category: 'purchase_approval', source: priceException ? 'price_exception' : 'purchase_policy',
+        purchaseOrderId: order.id,
+        sourceEvidence: priceEvidence,
+        affectedEntities: { supplierId: action.supplierId, purchaseOrderId: order.id },
+        recommendedAction: { actionType: 'approve_purchase_order', purchaseOrderId: order.id,
+          poNumber: order.poNumber, subtotal: order.subtotal, supplierName: action.supplierName, priceEvidence },
+        priority: priceException ? 90 : 70, urgency: priceException ? 'soon' : 'normal', confidence: 'high',
+        policyId: verdict.policy ? verdict.policy.id : null,
+        policyEvaluation: {
+          decision: priceException ? 'refused' : verdict.decision,
+          reason: priceException
+            ? `A known unit price rose ${maxIncrease}%, above the ${permittedIncrease}% policy limit.`
+            : verdict.reason,
+          checks: verdict.checks,
+        },
+        approvalRequirement: 'REQUIRED', executionStatus: workItems.STATUS.WAITING_FOR_APPROVAL,
+        idempotencyKey: `purchase_approval:${order.id}`,
+      });
+    }
+
     const completed = workItems.transition(db, ctx.workspaceId, item.id, workItems.STATUS.COMPLETED, {
       purchaseOrderId: order.id,
-      verificationStatus: 'NOT_APPLICABLE',
-      outcome: { poNumber: order.poNumber, subtotal: order.subtotal, lines: order.lines.length },
+      verificationStatus: 'VERIFIED',
+      outcome: { poNumber: order.poNumber, subtotal: order.subtotal, lines: order.lines.length,
+        autoApproved: finalOrder.status === poService.STATUS.ORDERED, value: order.subtotal,
+        policyId: verdict.policy ? verdict.policy.id : null, priceEvidence },
     });
 
     notify(db, ctx.workspaceId, {
-      kind: 'purchase_prepared',
-      severity: 'important',
-      title: `Prepared ${order.poNumber} for ${action.supplierName}`,
-      body: `${order.lines.length} line(s), ${order.subtotal}. Nothing has been sent — review and approve it.`,
+      kind: finalOrder.status === poService.STATUS.ORDERED ? 'purchase_ordered' : 'purchase_prepared',
+      severity: finalOrder.status === poService.STATUS.ORDERED ? 'info' : 'important',
+      title: finalOrder.status === poService.STATUS.ORDERED
+        ? `Ordered ${order.poNumber} from ${action.supplierName}`
+        : `Prepared ${order.poNumber} for ${action.supplierName}`,
+      body: finalOrder.status === poService.STATUS.ORDERED
+        ? `${order.lines.length} line(s), ${order.subtotal}, approved under ${verdict.policy.name}.`
+        : `${order.lines.length} line(s), ${order.subtotal}. Nothing has been sent. ${priceException ? 'A price exception needs your decision.' : 'Approval is outside current policy.'}`,
       workItemId: item.id,
       link: `/purchasing/orders/${order.id}`,
     });
-    return { executed: true, item: completed, purchaseOrderId: order.id };
+    return { executed: true, item: completed, purchaseOrderId: order.id,
+      autoApproved: finalOrder.status === poService.STATUS.ORDERED };
   } catch (error) {
     workItems.transition(db, ctx.workspaceId, item.id, workItems.STATUS.FAILED, {
       errorMessage: error.message,

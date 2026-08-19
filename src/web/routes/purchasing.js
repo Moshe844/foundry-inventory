@@ -17,12 +17,14 @@
 const express = require('express');
 const config = require('../../config');
 const supplierService = require('../../purchasing/supplier-service');
+const supplierCodeMappings = require('../../purchasing/supplier-code-mappings');
 const policyService = require('../../purchasing/policy-service');
 const setupService = require('../../purchasing/setup-service');
 const replenishment = require('../../purchasing/replenishment');
 const position = require('../../purchasing/position');
 const poService = require('../../purchasing/po-service');
 const receiving = require('../../purchasing/receiving-service');
+const physicalEvents = require('../../manager/physical-events');
 const permissions = require('../../actions/permissions');
 const repo = require('../../domain/repository');
 const reevaluate = require('../../attention/reevaluate');
@@ -33,6 +35,7 @@ const { ValidationError } = require('../../domain/errors');
 const router = express.Router();
 router.use('/purchasing', requireAuth);
 router.use('/suppliers', requireAuth);
+router.use('/supplier-code-mappings', requireAuth);
 
 function guard(req, permission, what) {
   permissions.assertCan(req.user, permission, what);
@@ -309,6 +312,19 @@ router.get(
       req.flash('error', 'There is nothing outstanding on that order.');
       return res.redirect(`/purchasing/orders/${order.id}`);
     }
+    const sourceEvent = trimOrNull(req.query.event)
+      ? physicalEvents.get(req.db, req.ctx.workspaceId, trimOrNull(req.query.event)) : null;
+    const eventMatchesOrder = sourceEvent && sourceEvent.status === 'ROUTED' &&
+      sourceEvent.matchedEntities.purchaseOrderId === order.id;
+    const submitted = eventMatchesOrder ? {
+      reference: sourceEvent.matchedEntities.documentNumber || sourceEvent.attachmentName || '',
+      note: `Prepared by Foundry from ${sourceEvent.attachmentName || 'the attached receiving document'}`,
+      physicalEventId: sourceEvent.id,
+      ...Object.fromEntries((sourceEvent.matchedEntities.receiptLines || []).flatMap((line) => [
+        [`qty_${line.lineId}`, line.quantityUnits],
+        [`location_${line.lineId}`, line.locationId || ''],
+      ])),
+    } : null;
     return res.page('purchasing/receive', {
       title: `Receive ${order.poNumber}`,
       nav: 'purchasing',
@@ -319,7 +335,8 @@ router.get(
       // Always supplied, so the template never has to guard for a local that
       // only exists on the over-receipt re-render.
       overReceipt: null,
-      submitted: null,
+      submitted,
+      sourceEvent: eventMatchesOrder ? sourceEvent : null,
       permissions: can(req),
     });
   })
@@ -357,6 +374,9 @@ router.post(
         lines,
       });
 
+      const physicalEventId = trimOrNull(req.body.physicalEventId);
+      if (physicalEventId) physicalEvents.complete(req.db, req.ctx.workspaceId, physicalEventId);
+
       req.flash(
         'success',
         done.replayed
@@ -379,6 +399,8 @@ router.post(
         warnings: [error.message],
         overReceipt: error.overReceipt,
         submitted: req.body,
+        sourceEvent: trimOrNull(req.body.physicalEventId)
+          ? physicalEvents.get(req.db, req.ctx.workspaceId, trimOrNull(req.body.physicalEventId)) : null,
         permissions: can(req),
       });
     }
@@ -423,6 +445,7 @@ router.get(
       supplier,
       items: supplierService.itemsForSupplier(req.db, req.ctx.workspaceId, supplier.id, { includeInactive: true }),
       orders: poService.list(req.db, req.ctx.workspaceId, { supplierId: supplier.id, limit: 10 }),
+      codeMappings: supplierCodeMappings.listForSupplier(req.db, req.ctx.workspaceId, supplier.id),
       catalogue: req.db
         .prepare(
           `SELECT s.id, s.code, s.variant_label, i.name AS item_name, i.unit_label
@@ -464,6 +487,55 @@ router.post(
     supplierService.unlinkItem(req.db, req.ctx, req.user, req.params.supplierItemId);
     req.flash('success', 'Removed from this supplier.');
     return res.redirect(`/suppliers/${req.params.id}`);
+  })
+);
+
+router.post(
+  '/suppliers/:id/code-mappings',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.MANAGE_SUPPLIERS, 'manage supplier code mappings');
+    try {
+      const proposal = supplierCodeMappings.preview(req.db, req.ctx, req.user, {
+        supplierId: req.params.id,
+        vendorCode: req.body.vendorCode,
+        internalBaseCode: req.body.internalBaseCode,
+      });
+      return res.redirect(303, `/supplier-code-mappings/${proposal.id}`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+      return res.redirect(303, `/suppliers/${req.params.id}#code-mappings`);
+    }
+  })
+);
+
+router.get(
+  '/supplier-code-mappings/:id',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.VIEW_PURCHASING, 'review supplier code mappings');
+    const proposal = supplierCodeMappings.getProposal(req.db, req.ctx.workspaceId, req.params.id);
+    res.page('purchasing/code-mapping', {
+      title: `Change ${proposal.vendorCode}`,
+      nav: 'purchasing',
+      proposal,
+      canApply: permissions.can(req.user, permissions.MANAGE_SUPPLIERS),
+    });
+  })
+);
+
+router.post(
+  '/supplier-code-mappings/:id/apply',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.MANAGE_SUPPLIERS, 'approve supplier code mappings');
+    try {
+      const applied = supplierCodeMappings.apply(req.db, req.ctx, req.user, req.params.id);
+      req.flash('success', `${applied.vendorCode} will stay the vendor code. Foundry now uses ${applied.internalBaseCode} as your code and will remember that mapping.`);
+      return res.redirect(303, `/suppliers/${applied.supplierId}#code-mappings`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+      return res.redirect(303, `/supplier-code-mappings/${req.params.id}`);
+    }
   })
 );
 

@@ -219,3 +219,42 @@ CREATE TABLE IF NOT EXISTS workspace_connectors (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_workspace_connectors
   ON workspace_connectors(workspace_id, connector_key);
+
+-- Bearer credentials for the generic operating-event feed. Only a SHA-256
+-- digest and a short non-secret prefix are stored; the usable token is shown
+-- once when an owner creates it. Revoking a token never removes its audit
+-- history or any inventory movements already accepted through it.
+CREATE TABLE IF NOT EXISTS connector_feed_tokens (
+  id                  TEXT PRIMARY KEY,
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  connector_id        TEXT NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
+  token_prefix        TEXT NOT NULL,
+  token_hash          TEXT NOT NULL UNIQUE,
+  created_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at          TEXT NOT NULL,
+  last_used_at        TEXT,
+  revoked_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_connector_feed_tokens_workspace
+  ON connector_feed_tokens(workspace_id, revoked_at);
+
+-- Every external event is claimed before it reaches the inventory engine and
+-- committed in the same transaction as its movement. The unique external id
+-- makes retries and concurrent deliveries harmless.
+CREATE TABLE IF NOT EXISTS connector_feed_events (
+  id                  TEXT PRIMARY KEY,
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  connector_id        TEXT NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
+  external_event_id   TEXT NOT NULL,
+  event_type          TEXT NOT NULL,
+  payload             TEXT NOT NULL DEFAULT '{}',
+  status              TEXT NOT NULL CHECK (status IN ('COMPLETED', 'REJECTED')),
+  movement_ids        TEXT NOT NULL DEFAULT '[]',
+  error_message       TEXT,
+  occurred_at         TEXT,
+  received_at         TEXT NOT NULL,
+  processed_at        TEXT NOT NULL,
+  UNIQUE (workspace_id, connector_id, external_event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_connector_feed_events_workspace
+  ON connector_feed_events(workspace_id, received_at DESC);

@@ -236,7 +236,7 @@ router.get(
 
     res.page('attention/ask', {
       title: 'Ask Foundry',
-      nav: 'attention',
+      nav: 'home',
       question: question || '',
       result,
       error,
@@ -247,6 +247,7 @@ router.get(
         'Which lots expire soon?',
         'What has not sold in three months?',
         'What needs my attention?',
+        'Receive 100 of every black size into Brooklyn.',
         // Only offered once Foundry has work of its own to talk about. Suggesting
         // it to a workspace where the answer is "nothing" advertises a hollow
         // trick rather than a capability.

@@ -348,7 +348,7 @@ test('deleting your only inventory leaves the app usable', async () => {
   // No workspace left: the app sends them to the list, which offers a new one.
   const list = await agent.get('/inventories');
   assert.equal(list.status, 200);
-  assert.match(plain(list.text), /New inventory/);
+  assert.match(plain(list.text), /New Inventory/);
   const console_ = await agent.get('/');
   assert.ok([200, 302, 303].includes(console_.status), `landing page returned ${console_.status}`);
 });

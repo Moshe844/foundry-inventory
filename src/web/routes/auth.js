@@ -14,7 +14,7 @@ function safeNext(value) {
 }
 
 router.get('/login', (req, res) => {
-  if (req.user) return res.redirect('/');
+  if (req.account) return res.redirect(req.user ? '/' : '/inventories');
   return res.render('auth/login', {
     title: 'Sign in',
     csrfToken: res.locals.csrfToken,
@@ -53,7 +53,7 @@ router.post(
 );
 
 router.get('/register', (req, res) => {
-  if (req.user) return res.redirect('/');
+  if (req.account) return res.redirect(req.user ? '/' : '/inventories');
   return res.render('auth/register', {
     title: 'Create your account',
     csrfToken: res.locals.csrfToken,
@@ -68,8 +68,7 @@ router.post(
   asyncRoute(async (req, res) => {
     let created;
     try {
-      created = authService.registerAccount(req.db, {
-        workspaceName: req.body.workspaceName,
+      created = authService.createAccount(req.db, {
         name: req.body.name,
         email: req.body.email,
         password: req.body.password,
@@ -87,17 +86,13 @@ router.post(
     req.session.regenerate((err) => {
       if (err) throw err;
       req.session.accountId = created.accountId;
-      req.session.workspaceId = created.workspaceId;
       req.session.flash = [
         {
           type: 'success',
-          message: `Welcome to Foundry, ${created.name.split(' ')[0]}.`,
+          message: `Welcome to Foundry, ${created.name.split(' ')[0]}. Create your first inventory to begin.`,
         },
       ];
-      // A brand-new inventory meets Foundry before it meets the console. Said
-      // here, at the one moment it is true, rather than by quietly redirecting
-      // anyone who later clicks Overview.
-      req.session.save(() => res.redirect('/foundry'));
+      req.session.save(() => res.redirect('/inventories'));
     });
     return undefined;
   })

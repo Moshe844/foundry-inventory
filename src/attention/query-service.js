@@ -335,26 +335,30 @@ const EXECUTORS = {
   foundry_why: foundryWhy,
   stop_automation: stopAutomation,
   stock_level(db, workspaceId, plan) {
-    const skus = resolveSkus(db, workspaceId, plan.entityQuery, plan.limit);
-    if (skus.length === 0) return { rows: [], answer: notFound(plan) };
+    const allSkus = resolveSkus(db, workspaceId, plan.entityQuery, 100000);
+    if (allSkus.length === 0) return { rows: [], answer: notFound(plan) };
+    const skus = allSkus.slice(0, plan.limit);
 
     const totals = db.prepare(
       'SELECT COALESCE(SUM(on_hand), 0) AS onHand FROM balances WHERE workspace_id = ? AND sku_id = ?'
     );
-    const rows = skus.map((sku) => ({
+    const answerRows = allSkus.map((sku) => ({
       label: label(sku),
       code: sku.code,
       onHand: totals.get(workspaceId, sku.id).onHand,
       unitLabel: sku.unit_label,
     }));
+    const rows = answerRows.slice(0, plan.limit);
 
-    const answer =
-      rows.length === 1
-        ? `${rows[0].label}: ${rows[0].onHand} ${rows[0].unitLabel}${rows[0].onHand === 1 ? '' : 's'} on hand.`
-        : `${rows.length} lines matched. ${rows
-            .slice(0, 5)
-            .map((r) => `${r.label}: ${r.onHand}`)
-            .join('; ')}.`;
+    const total = answerRows.reduce((sum, row) => sum + row.onHand, 0);
+    const unitLabels = [...new Set(answerRows.map((row) => row.unitLabel).filter(Boolean))];
+    const unit = unitLabels.length === 1 ? unitLabels[0] : 'unit';
+    const totalLabel = `${total} ${unit}${total === 1 ? '' : 's'}`;
+    const least = [...answerRows].sort((a, b) => a.onHand - b.onHand || a.label.localeCompare(b.label))[0];
+    const answer = answerRows.length === 1
+      ? `${answerRows[0].label}: ${totalLabel} on hand.`
+      : `${totalLabel} on hand across ${answerRows.length} stock positions. ` +
+        `Lowest is ${least.label} at ${least.onHand} ${least.unitLabel}${least.onHand === 1 ? '' : 's'}.`;
     return { rows, answer, columns: ['label', 'code', 'onHand'] };
   },
 
@@ -557,17 +561,51 @@ const EXECUTORS = {
  * Straight from the work records. A day with nothing on it says so — inventing
  * activity to look busy would poison every other answer on this page.
  */
-function foundryActivity(db, workspaceId, plan) {
+function foundryActivity(db, workspaceId, plan, options = {}) {
   const autopilotPresenter = require('../autopilot/presenter');
   const summary = autopilotPresenter.summariseDay(db, workspaceId);
+  const setupRows = db.prepare(
+    `SELECT source_name, result, applied_at
+       FROM setup_documents
+      WHERE workspace_id = ? AND status = 'APPLIED' AND date(applied_at) = date('now')
+      ORDER BY applied_at DESC`
+  ).all(workspaceId).map((row) => {
+    const result = JSON.parse(row.result || '{}');
+    const units = Number(result.units || 0);
+    const unit = result.unitLabel || 'unit';
+    return {
+      what: `Set up inventory from ${row.source_name}`,
+      detail:
+        `Created ${result.products || 0} products and ${result.variants || 0} variants; ` +
+        `received ${units} ${unit}${units === 1 ? '' : 's'} into ${result.location || 'the recorded location'}; ` +
+        `linked ${result.supplier || 'the supplier'} and recorded purchase order ${result.poNumber || 'from the document'}.`,
+      verified: 'yes',
+    };
+  });
+  const workRows = summary.did.actions.map((action) => ({
+    what: action.headline,
+    detail: action.detail || '',
+    verified: action.verified ? 'yes' : 'not verified',
+  }));
+  const rows = [...setupRows, ...workRows];
+  const activityLines = [
+    ...setupRows.map((row) => `${row.what}. ${row.detail}`),
+    ...(workRows.length ? summary.lines : []),
+  ];
+
+  const question = String(options.question || '').toLowerCase();
+  if (/what\s+(?:do\s+you\s+)?need|need\s+from\s+me|needs?\s+my\s+attention/.test(question)) {
+    const readiness = require('../manager/readiness').decisions(db, workspaceId);
+    if (readiness.length) {
+      activityLines.push(`What needs you: ${readiness.map((item) => `${item.title}. ${item.because}`).join(' ')}`);
+    } else {
+      activityLines.push('Nothing needs you right now.');
+    }
+  }
 
   return {
-    answer: summary.lines.join('\n'),
-    rows: summary.did.actions.map((action) => ({
-      what: action.headline,
-      detail: action.detail || '',
-      verified: action.verified ? 'yes' : 'not verified',
-    })),
+    answer: activityLines.length ? activityLines.join('\n') : summary.lines.join('\n'),
+    rows,
     columns: ['what', 'detail', 'verified'],
   };
 }
@@ -649,11 +687,11 @@ function notFound(plan) {
  */
 Object.assign(EXECUTORS, PURCHASING_EXECUTORS);
 
-function execute(db, workspaceId, rawPlan) {
+function execute(db, workspaceId, rawPlan, options = {}) {
   const plan = normalisePlan(rawPlan);
   const executor = EXECUTORS[plan.intent] || EXECUTORS.unsupported;
   const started = Date.now();
-  const result = executor(db, workspaceId, plan);
+  const result = executor(db, workspaceId, plan, options);
   return {
     plan,
     isAction: result.isAction === true,

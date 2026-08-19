@@ -478,7 +478,18 @@ function shapeOperation(db, workspaceId, intent, draft) {
         : { ok: false, question: from.message };
     }
     const to = noteFrom(draft, resolver.resolveLocation(db, workspaceId, intent.destinationLocation, { role: 'destination' }));
-    if (!to.ok) return { ok: false, question: to.message };
+    if (!to.ok) {
+      return {
+        ok: false,
+        question: to.message,
+        // A destination may legitimately be new. Preserve that fact so the
+        // interface can offer a safe location preview instead of reducing the
+        // result to a brief flash message that is easy to miss.
+        missingLocation: to.reason === 'not_found' && String(intent.destinationLocation || '').trim()
+          ? { role: 'destination', name: String(intent.destinationLocation).trim() }
+          : null,
+      };
+    }
     if (from.value.id === to.value.id) {
       return { ok: false, question: null, unsupported: 'That is the same location on both sides.' };
     }

@@ -78,8 +78,8 @@ router.post(
     }
 
     req.session.workspaceId = created.workspaceId;
-    req.flash('success', `${created.name} is ready. Tell Foundry what you keep in it.`);
-    return req.session.save(() => res.redirect(303, '/foundry'));
+    req.flash('success', `${created.name} is ready. Tell Foundry how you manage it today.`);
+    return req.session.save(() => res.redirect(303, '/onboarding'));
   })
 );
 

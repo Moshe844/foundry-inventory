@@ -122,6 +122,16 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     for (const line of usable) {
       const result = proposals.build(db, ctx, line);
       if (!result.ok) {
+        if (result.missingLocation && line.actionType === 'transfer') {
+          return {
+            kind: 'missing_location',
+            locationName: result.missingLocation.name,
+            role: result.missingLocation.role,
+            instruction: text,
+            line,
+            question: result.question,
+          };
+        }
         if (result.unsupported) return { kind: 'unsupported', message: result.unsupported };
         return { kind: 'question', question: result.question, needsReason: Boolean(result.needsReason) };
       }

@@ -32,7 +32,7 @@ const repo = require('../domain/repository');
  * back. Adjustments are deliberately absent — a count discrepancy is a claim
  * that the records are wrong, and no automaton should settle that.
  */
-const AUTOMATABLE_ACTIONS = ['transfer'];
+const AUTOMATABLE_ACTIONS = ['transfer', 'approve_purchase_order'];
 
 /** Named conditions a policy can require. Each maps to a real measurement. */
 const CONDITIONS = {
@@ -40,6 +40,10 @@ const CONDITIONS = {
   SOURCE_ABOVE_SAFETY: 'source_above_safety',
   NO_CONFLICTING_TRANSFER: 'no_conflicting_transfer',
   SUFFICIENT_HISTORY: 'sufficient_history',
+  REPLENISHMENT_EVIDENCE: 'replenishment_evidence',
+  MOQ_ORDER_MULTIPLE_COMPLIANT: 'moq_order_multiple_compliant',
+  NO_DUPLICATE_INCOMING_DEMAND: 'no_duplicate_incoming_demand',
+  PRICE_WITHIN_POLICY: 'price_within_policy',
 };
 
 const CONDITION_LABEL = {
@@ -47,6 +51,10 @@ const CONDITION_LABEL = {
   source_above_safety: 'the source keeps enough stock to cover its own demand',
   no_conflicting_transfer: 'no other transfer of the same product is already in flight',
   sufficient_history: 'there is enough movement history to trust the signal',
+  replenishment_evidence: 'real demand and stock evidence supports the replenishment',
+  moq_order_multiple_compliant: 'the order respects the supplier minimum and pack multiple',
+  no_duplicate_incoming_demand: 'no existing order already covers the demand',
+  price_within_policy: 'the supplier price has not exceeded the approved change limit',
 };
 
 const json = (value, fallback) => {
@@ -136,14 +144,15 @@ function validate(db, workspaceId, input) {
   const unsupported = actions.filter((a) => !AUTOMATABLE_ACTIONS.includes(a));
   if (unsupported.length) {
     throw new ValidationError(
-      `Foundry will not automate ${unsupported.join(', ')} yet. Today it can only be trusted with transfers between your own locations.`
+      `Foundry will not automate ${unsupported.join(', ')}. Today it can only be trusted with transfers and approved purchase orders.`
     );
   }
 
   const maximumQuantity = input.maximumQuantity === undefined || input.maximumQuantity === null || input.maximumQuantity === ''
     ? null
     : Math.trunc(Number(input.maximumQuantity));
-  if (maximumQuantity === null || !Number.isFinite(maximumQuantity) || maximumQuantity <= 0) {
+  const needsQuantityLimit = actions.includes('transfer');
+  if (needsQuantityLimit && (maximumQuantity === null || !Number.isFinite(maximumQuantity) || maximumQuantity <= 0)) {
     // Not optional. A policy with no ceiling is not a policy, it is permission.
     throw new ValidationError('Say the most Foundry may move in one go. A policy without a limit is not a limit.');
   }
@@ -158,6 +167,20 @@ function validate(db, workspaceId, input) {
     Object.values(CONDITIONS).includes(c)
   );
 
+  const supplierScope = (Array.isArray(input.supplierScope) ? input.supplierScope : []).filter(Boolean);
+  for (const supplierId of supplierScope) {
+    const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ? AND workspace_id = ?').get(supplierId, workspaceId);
+    if (!supplier) throw new ValidationError('One of the suppliers in this policy is not in this inventory.');
+  }
+  if (actions.includes('approve_purchase_order') && supplierScope.length === 0) {
+    throw new ValidationError('Choose which suppliers Foundry may approve orders from.');
+  }
+  const maximumValue = input.maximumValue === undefined || input.maximumValue === null || input.maximumValue === ''
+    ? null : Number(input.maximumValue);
+  if (actions.includes('approve_purchase_order') && (!Number.isFinite(maximumValue) || maximumValue <= 0)) {
+    throw new ValidationError('Say the most Foundry may commit on one purchase order.');
+  }
+
   return {
     name,
     description: trimOrNull(input.description),
@@ -165,15 +188,12 @@ function validate(db, workspaceId, input) {
     scope: input.scope && typeof input.scope === 'object' ? input.scope : {},
     itemScope,
     locationScope,
-    supplierScope: (Array.isArray(input.supplierScope) ? input.supplierScope : []).filter(Boolean),
+    supplierScope,
     exclusions: (Array.isArray(input.exclusions) ? input.exclusions : []).filter(Boolean),
     conditions,
     thresholds: input.thresholds && typeof input.thresholds === 'object' ? input.thresholds : {},
     maximumQuantity,
-    maximumValue:
-      input.maximumValue === undefined || input.maximumValue === null || input.maximumValue === ''
-        ? null
-        : Number(input.maximumValue),
+    maximumValue,
     dailyLimit:
       input.dailyLimit === undefined || input.dailyLimit === null || input.dailyLimit === ''
         ? null
@@ -322,6 +342,11 @@ function describe(policy) {
   const lines = [];
   lines.push(`Foundry may ${(policy.allowedActionTypes || []).join(' and ') || 'do nothing'} without asking.`);
   if (policy.maximumQuantity) lines.push(`Never more than ${policy.maximumQuantity} units in one go.`);
+  if (policy.maximumValue) lines.push(`Never commit more than ${policy.maximumValue} on one action.`);
+  if ((policy.supplierScope || []).length) lines.push(`Only for ${policy.supplierScope.length} approved supplier${policy.supplierScope.length === 1 ? '' : 's'}.`);
+  if (policy.thresholds && Number.isFinite(Number(policy.thresholds.maxUnitPriceChangePercent))) {
+    lines.push(`A known unit-price increase above ${Number(policy.thresholds.maxUnitPriceChangePercent)}% needs a person.`);
+  }
   if (policy.dailyLimit) lines.push(`At most ${policy.dailyLimit} of these a day.`);
   if ((policy.locationScope || []).length) lines.push(`Only between the locations you listed.`);
   if ((policy.itemScope || []).length) lines.push(`Only for the products you listed.`);

@@ -110,6 +110,31 @@ test('a quiet day says so rather than inventing activity', () => {
   assert.doesNotMatch(answer.answer, /Moved/);
 });
 
+test('Foundry explains inventory it created from an invoice and what still needs the owner', () => {
+  const env = tights();
+  const now = new Date().toISOString();
+  env.db.prepare(
+    `INSERT INTO setup_documents
+       (id, workspace_id, uploaded_by_user_id, source_name, source_content, content_hash,
+        extracted_text, interpretation, supplier_code_label, status, result, created_at, applied_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, '{}', 'Style #', 'APPLIED', ?, ?, ?)`
+  ).run('sdoc_activity_test', env.workspace.workspaceId, env.workspace.ownerId, 'first-invoice.pdf',
+    Buffer.from('invoice'), 'activity-test-hash', 'invoice text', JSON.stringify({
+      products: 4, variants: 8, units: 76, unitLabel: 'pair', location: 'Main Warehouse',
+      supplier: 'Step & Style', poNumber: 'INV-100',
+    }), now, now);
+
+  const answer = queryService.execute(env.db, env.workspace.workspaceId, { intent: 'foundry_activity' }, {
+    question: 'What did you create from the invoice, and what do you need from me now?',
+  });
+
+  assert.match(answer.answer, /Created 4 products and 8 variants/);
+  assert.match(answer.answer, /received 76 pairs into Main Warehouse/);
+  assert.match(answer.answer, /purchase order INV-100/);
+  assert.match(answer.answer, /Nothing needs you right now/);
+  assert.equal(answer.rows[0].verified, 'yes');
+});
+
 // --- why did you do it -------------------------------------------------------
 
 test('"why did you move the tights" gives the measurements, not a story', () => {

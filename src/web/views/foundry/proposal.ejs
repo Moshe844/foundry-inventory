@@ -4,6 +4,13 @@
   var configRecs = recommendations.filter(function (r) { return r.scope === 'configuration'; });
   var futureRecs = recommendations.filter(function (r) { return r.scope === 'future'; });
   var terms = Object.keys(u.terminology || {}).filter(function (k) { return u.terminology[k]; });
+  var doc = setupDocument && setupDocument.interpretation;
+  var docLines = doc ? doc.lines : [];
+  var docUnits = docLines.reduce(function (sum, line) { return sum + line.quantity; }, 0);
+  var docUnitText = doc ? helpers.plural(docUnits, doc.unitLabel || 'unit') : 'units';
+  var docValue = docLines.reduce(function (sum, line) { return sum + (line.unitCost == null ? 0 : line.quantity * line.unitCost); }, 0);
+  var docStyles = new Set(docLines.map(function (line) { return [line.styleName, line.color].filter(Boolean).join(' / ').toLowerCase(); })).size;
+  var docCodeLabel = setupDocument ? setupDocument.supplierCodeLabel : 'Supplier code';
 %>
 
 <div class="foundry-hero foundry-hero--tight">
@@ -14,6 +21,56 @@
 
 <form method="post" action="/foundry/proposal/<%= understandingId %>/configure">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+  <% if (doc) { %>
+    <section class="card section setup-document-preview">
+      <div class="card-head">
+        <%- helpers.icon('document', { size: 18 }) %>
+        <div>
+          <h2>What Foundry read from <%= setupDocument.sourceName %></h2>
+          <p class="hint"><%= doc.documentType.replace('_', ' ') %><% if (doc.documentNumber) { %> · <%= doc.documentNumber %><% } %><% if (doc.documentDate) { %> · <%= doc.documentDate %><% } %></p>
+        </div>
+        <span class="badge badge--ok" style="margin-left:auto;">Read from file</span>
+      </div>
+      <div class="card-body">
+        <div class="document-facts">
+          <div><span>Supplier</span><strong><%= doc.supplierName || 'Not shown' %></strong></div>
+          <div><span>Stock goes to</span><strong><%= doc.destinationName %></strong></div>
+          <div><span>Inventory</span><strong><%= docUnits %> <%= docUnitText %> · <%= docStyles %> styles · <%= docLines.length %> variants</strong></div>
+          <div><span>Merchandise</span><strong><%= doc.currency %> <%= docValue.toFixed(2) %></strong></div>
+        </div>
+        <div class="notice" style="margin-top:16px;max-width:700px;">
+          <%- helpers.icon('document', { size: 16 }) %>
+          <span>This file calls the vendor's product identifier <strong><%= setupDocument.detectedSupplierCodeLabel %></strong>. Foundry read every value in that column as the vendor's code.</span>
+        </div>
+        <label class="field document-vocabulary" style="margin-top:16px;max-width:620px;">
+          <span class="field-label">What do you want Foundry to call that field for <%= doc.supplierName || 'this vendor' %>?</span>
+          <input class="input" type="text" name="supplierCodeLabel" value="<%= docCodeLabel %>" maxlength="60" required data-vendor-code-label-input>
+          <span class="field-help">Examples: Style #, Item No., Vendor SKU, or Catalogue number. Set it once. Future documents from this vendor may use different headings; Foundry will recognize them as the same field and keep showing your chosen name.</span>
+        </label>
+        <div class="table-wrap" style="margin-top:16px;">
+          <table class="table table--stack table--tight">
+            <thead><tr><th>Style</th><th>Color</th><th>Size</th><th data-vendor-code-label><%= docCodeLabel %></th><th class="right">Qty</th><th class="right">Unit cost</th></tr></thead>
+            <tbody>
+              <% docLines.forEach(function (line) { %>
+                <tr>
+                  <td class="cell-main"><span class="cell-title"><%= line.styleName %></span></td>
+                  <td data-label="Color"><%= line.color || '—' %></td>
+                  <td data-label="Size"><%= line.size || '—' %></td>
+                  <td data-label="<%= docCodeLabel %>" data-vendor-code-cell class="mono"><%= line.supplierSku || '—' %></td>
+                  <td data-label="Qty" class="right"><strong><%= line.quantity %></strong></td>
+                  <td data-label="Unit cost" class="right"><%= line.unitCost == null ? '—' : doc.currency + ' ' + line.unitCost.toFixed(2) %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+        <% if (doc.warnings && doc.warnings.length) { %>
+          <div class="notice notice--warn" style="margin-top:14px;"><%- helpers.icon('alert', { size: 16 }) %><span><%= doc.warnings.join(' ') %></span></div>
+        <% } %>
+      </div>
+    </section>
+  <% } %>
 
   <div class="proposal">
     <section class="proposal-block">
@@ -178,12 +235,16 @@
   <div class="foundry-confirm">
     <div>
       <strong>Ready when you are.</strong>
+      <% if (doc) { %>
+        <span class="muted">This approval creates the shown structure and records <%= docUnits %> <%= docUnitText %> from <%= setupDocument.sourceName %> as received inventory.</span>
+      <% } else { %>
       <span class="muted">Foundry sets up structure only — no products, stock or serial numbers are invented.</span>
+      <% } %>
     </div>
     <div class="btn-row">
       <a class="btn" href="/foundry">Start over</a>
       <% if (currentUser.role === 'owner') { %>
-        <button class="btn btn--primary btn--lg" type="submit">Configure my inventory</button>
+        <button class="btn btn--primary btn--lg" type="submit"><%= doc ? 'Configure and add ' + docUnits + ' ' + docUnitText : 'Configure my inventory' %></button>
       <% } else { %>
         <span class="muted">Only an owner can apply this.</span>
       <% } %>

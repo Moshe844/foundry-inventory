@@ -37,16 +37,19 @@ router.get(
       policies: policyService.list(req.db, workspaceId),
       describe: policyService.describe,
       locations: repo.listLocations(req.db, workspaceId).filter((location) => location.is_active),
+      suppliers: req.db.prepare("SELECT id, name FROM suppliers WHERE workspace_id = ? AND status = 'active' ORDER BY name").all(workspaceId),
       recent: workItems.list(req.db, workspaceId, { limit: 20 }),
       preferences: preferences.list(req.db, workspaceId),
       preferenceKeys: Object.values(preferences.KEYS),
       // A draft read from a sentence, carried through the redirect so the
       // customer reads the policy rather than their own words echoed back.
       drafted: req.session.policyDraft || null,
+      reviewAll: Boolean(req.session.policyReviewAll),
       canAdmin: permissions.can(req.user, permissions.ADMIN),
       canOperate: permissions.can(req.user, permissions.OPERATE),
     });
     delete req.session.policyDraft;
+    delete req.session.policyReviewAll;
   })
 );
 
@@ -109,13 +112,14 @@ router.get(
     const items = workItems.list(req.db, req.ctx.workspaceId, { limit: 100 });
     res.page('autopilot/history', {
       title: 'What Foundry has done',
-      nav: 'autopilot',
+      nav: 'history',
       groups: {
         automatic: items.filter((item) => item.executionStatus === 'COMPLETED' && item.isAutomatic),
         prepared: items.filter((item) => item.executionStatus === 'COMPLETED' && !item.isAutomatic),
         needsYou: items.filter((item) => item.needsPerson),
         blocked: items.filter((item) => ['FAILED', 'BLOCKED'].includes(item.executionStatus)),
       },
+      evaluations: presenter.recentEvaluations(req.db, req.ctx.workspaceId, { limit: 50 }),
       describe: presenter.describeCompleted,
     });
   })
@@ -244,16 +248,28 @@ router.post(
       const locations = Array.isArray(req.body.locationScope)
         ? req.body.locationScope
         : req.body.locationScope ? [req.body.locationScope] : [];
+      const actionType = req.body.actionType === 'approve_purchase_order' ? 'approve_purchase_order' : 'transfer';
+      const suppliers = Array.isArray(req.body.supplierScope)
+        ? req.body.supplierScope : req.body.supplierScope ? [req.body.supplierScope] : [];
+      const purchaseConditions = [
+        policyService.CONDITIONS.REPLENISHMENT_EVIDENCE,
+        policyService.CONDITIONS.MOQ_ORDER_MULTIPLE_COMPLIANT,
+        policyService.CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND,
+        policyService.CONDITIONS.PRICE_WITHIN_POLICY,
+      ];
       const policy = policyService.propose(req.db, req.ctx, req.user, {
         name: req.body.name,
         description: req.body.description,
-        allowedActionTypes: ['transfer'],
+        allowedActionTypes: [actionType],
         locationScope: locations,
-        conditions: [
-          policyService.CONDITIONS.DESTINATION_STOCKOUT_RISK,
-          policyService.CONDITIONS.SOURCE_ABOVE_SAFETY,
+        supplierScope: suppliers,
+        conditions: actionType === 'approve_purchase_order' ? purchaseConditions : [
+          policyService.CONDITIONS.DESTINATION_STOCKOUT_RISK, policyService.CONDITIONS.SOURCE_ABOVE_SAFETY,
         ],
         maximumQuantity: req.body.maximumQuantity,
+        maximumValue: req.body.maximumValue,
+        thresholds: actionType === 'approve_purchase_order'
+          ? { maxUnitPriceChangePercent: Number(req.body.maxUnitPriceChangePercent) || 0 } : {},
         dailyLimit: req.body.dailyLimit,
       });
       req.flash('success', `“${policy.name}” is written down. Read it and approve it before it does anything.`);

@@ -79,7 +79,7 @@ async function stopServer(child) {
     child.once('exit', resolve);
     child.kill('SIGTERM');
     setTimeout(() => {
-      if (!child.killed) child.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
       resolve();
     }, 3000);
   });
@@ -125,11 +125,15 @@ test(
 
     await t.test('1-2. a new workspace lands on Foundry, not an empty dashboard', async () => {
       await page.goto(`${BASE}/register`);
-      await page.fill('#workspaceName', ACCOUNT.workspaceName);
       await page.fill('#name', ACCOUNT.name);
       await page.fill('#email', ACCOUNT.email);
       await page.fill('#password', ACCOUNT.password);
       await page.click('button[type=submit]');
+      await page.waitForURL(`${BASE}/inventories`);
+      await page.click('a[href="/inventories/new"]');
+      await page.waitForURL(`${BASE}/inventories/new`);
+      await page.fill('#name', ACCOUNT.workspaceName);
+      await page.click('form[action="/inventories"] button[type=submit]');
       await page.waitForURL(`${BASE}/onboarding`);
       // A new inventory is asked how it is managed today. These customers are
       // starting from nothing, so they take the Starting Fresh path — which is
@@ -139,7 +143,7 @@ test(
         page.click('button:has-text("Starting fresh")'),
       ]);
 
-      await page.locator('text=Tell Foundry about').first().waitFor();
+      await page.locator('text=Give Foundry what you already have').first().waitFor();
       await page.locator('text=Understand my inventory').first().waitFor();
       await page.locator('text=Set it up manually').first().waitFor();
       await shot(page, 'first-run');

@@ -1,7 +1,7 @@
 <div class="page-head">
   <div class="titles">
     <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> Foundry</a>
-    <h1>What Foundry has done</h1>
+    <h1>Foundry's work</h1>
     <div class="page-sub">In words. The raw movements are in <a href="/activity">Activity</a>.</div>
   </div>
 </div>
@@ -13,7 +13,7 @@
     { key: 'needsYou', label: 'Waiting for you' },
     { key: 'blocked', label: 'Stopped or failed' }
   ];
-  var anything = sections.some(function (section) { return groups[section.key].length; });
+  var anything = evaluations.length || sections.some(function (section) { return groups[section.key].length; });
 %>
 
 <% if (!anything) { %>
@@ -21,6 +21,27 @@
     <div class="card-body">
       <p class="lede">Foundry has not had anything to do yet.</p>
       <p class="muted">Work appears here as it is planned, prepared and carried out.</p>
+    </div>
+  </div>
+<% } %>
+
+<% if (evaluations.length) { %>
+  <div class="card section" id="evaluations">
+    <div class="card-head">
+      <div><h2>Inventory checks</h2><p class="muted">Completed evaluations, including checks that correctly produced no action.</p></div>
+      <span class="spacer"></span>
+      <span class="badge badge--muted"><%= evaluations.length %></span>
+    </div>
+    <div class="card-body">
+      <ul class="plain-list">
+        <% evaluations.forEach(function (evaluation) { %>
+          <li>
+            <strong><%= evaluation.title %></strong>
+            <span class="muted"> — <%= evaluation.detail %></span>
+            <div class="muted"><%= helpers.timeAgo(evaluation.finishedAt) %></div>
+          </li>
+        <% }) %>
+      </ul>
     </div>
   </div>
 <% } %>

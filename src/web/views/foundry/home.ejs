@@ -6,8 +6,8 @@
 
 <div class="page-head">
   <div class="titles">
-    <h1><%- helpers.icon('foundry', { size: 20 }) %> Foundry</h1>
-    <div class="page-sub">Ask about how your inventory is set up, or ask for a change.</div>
+    <h1><%- helpers.icon('foundry', { size: 20 }) %> Inventory setup</h1>
+    <div class="page-sub">The operating model Foundry uses to manage this inventory.</div>
   </div>
 </div>
 
@@ -120,12 +120,16 @@
     <% } %>
 
     <div class="card">
-      <div class="card-head"><h2>Not yet</h2></div>
+      <div class="card-head"><h2>How Foundry uses this</h2></div>
       <div class="card-body">
         <p class="muted" style="font-size:12.5px;">
-          Foundry configures and explains inventory today. It does not forecast demand, suggest
-          reorders, raise purchase orders, or move stock on its own.
+          Foundry watches this inventory, prepares routine work, and carries out only the actions
+          covered by authority you explicitly approve. Everything else comes back to you.
         </p>
+        <div class="btn-row" style="margin-top:12px;">
+          <a class="btn btn--sm" href="/">Back to Foundry</a>
+          <a class="btn btn--sm btn--ghost" href="/autopilot">Authority &amp; policies</a>
+        </div>
       </div>
     </div>
   </div>

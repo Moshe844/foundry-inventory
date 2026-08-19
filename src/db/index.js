@@ -12,6 +12,7 @@ const IMPORTS_SCHEMA_PATH = path.join(__dirname, 'schema-imports.sql');
 const PURCHASING_SCHEMA_PATH = path.join(__dirname, 'schema-purchasing.sql');
 const ONBOARDING_SCHEMA_PATH = path.join(__dirname, 'schema-onboarding.sql');
 const AUTOPILOT_SCHEMA_PATH = path.join(__dirname, 'schema-autopilot.sql');
+const MANAGER_SCHEMA_PATH = path.join(__dirname, 'schema-manager.sql');
 
 /**
  * Opens (and initialises) a SQLite database.
@@ -50,6 +51,11 @@ const ADDED_COLUMNS = [
   { table: 'accounts', column: 'last_workspace_id', definition: 'TEXT' },
   // Per-workspace action permissions, granted on top of the membership role.
   { table: 'users', column: 'permissions', definition: 'TEXT' },
+  { table: 'physical_events', column: 'attachment_mime', definition: 'TEXT' },
+  { table: 'physical_events', column: 'attachment_content', definition: 'BLOB' },
+  { table: 'suppliers', column: 'item_code_label', definition: "TEXT NOT NULL DEFAULT 'Supplier code'" },
+  { table: 'suppliers', column: 'item_code_aliases', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  { table: 'setup_documents', column: 'supplier_code_label', definition: "TEXT NOT NULL DEFAULT 'Supplier code'" },
 ];
 
 function addMissingColumns(db) {
@@ -262,6 +268,7 @@ function migrate(db) {
   // the CREATE INDEX statements in them restore the indexes a rebuild drops.
   relaxColumnCheck(db, 'attention_items', 'category');
   relaxColumnCheck(db, 'action_proposals', 'action_type');
+  relaxColumnCheck(db, 'work_items', 'category');
 
   db.exec(fs.readFileSync(ATTENTION_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(ACTIONS_SCHEMA_PATH, 'utf8'));
@@ -269,9 +276,10 @@ function migrate(db) {
   db.exec(fs.readFileSync(PURCHASING_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(ONBOARDING_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(AUTOPILOT_SCHEMA_PATH, 'utf8'));
+  db.exec(fs.readFileSync(MANAGER_SCHEMA_PATH, 'utf8'));
   dropLegacyUserLogin(db);
   db.prepare(
-    `INSERT INTO schema_meta (key, value) VALUES ('version', '10')
+    `INSERT INTO schema_meta (key, value) VALUES ('version', '11')
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   ).run();
 }

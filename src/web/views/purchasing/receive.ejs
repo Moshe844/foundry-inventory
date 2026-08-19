@@ -14,10 +14,20 @@
   </div>
 <% } %>
 
+<% if (sourceEvent) { %>
+  <div class="notice notice--info section">
+    <strong>Foundry prepared this from <%= sourceEvent.attachmentName %>.</strong>
+    It matched the supplier, purchase order and <%= (sourceEvent.matchedEntities.receiptLines || []).length %>
+    line<%= (sourceEvent.matchedEntities.receiptLines || []).length === 1 ? '' : 's' %>.
+    Check what physically arrived; nothing has changed yet.
+  </div>
+<% } %>
+
 <form method="post" action="/purchasing/orders/<%= order.id %>/receive" class="card section" data-busy>
   <div class="card-head"><h2>What arrived</h2></div>
   <div class="card-body">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <% if (sourceEvent) { %><input type="hidden" name="physicalEventId" value="<%= sourceEvent.id %>"><% } %>
     <% lines.forEach(function (line) { %>
       <div class="card section">
         <div class="card-body">

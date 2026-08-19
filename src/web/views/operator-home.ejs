@@ -1,121 +1,213 @@
-<div class="page-head">
-  <div class="titles">
-    <h1><%= home.status.headline %></h1>
-    <div class="page-sub">
-      Last checked <%= home.status.lastEvaluatedText %><% if (home.status.activePolicies) { %> ·
-      <%= home.status.activePolicies %> active
-      polic<%= home.status.activePolicies === 1 ? 'y' : 'ies' %><% } %> ·
-      <a href="/autopilot"><%= home.status.modeLabel %></a>
+<%
+  var hour = new Date().getHours();
+  var greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
+  var needsCount = home.needsYou.length;
+  var handlingCount = home.handling.length;
+%>
+
+<section class="operator-hero">
+  <div class="operator-hero__copy">
+    <span class="operator-status <%= home.status.paused || home.status.suspended ? 'operator-status--paused' : '' %>">
+      <span class="operator-status__dot" aria-hidden="true"></span>
+      <%= home.status.paused || home.status.suspended ? 'Foundry is paused' : 'Foundry is working' %>
+    </span>
+    <h1><%= greeting %><%= firstName ? ', ' + firstName : '' %>.</h1>
+    <p>Foundry is managing <strong><%= workspace.name %></strong>.</p>
+    <div class="operator-hero__summary">
+      <% if (needsCount) { %>
+        <strong>I need you for <%= needsCount %> thing<%= needsCount === 1 ? '' : 's' %>.</strong>
+        <span><%= handlingCount ? 'I am handling ' + handlingCount + ' thing' + (handlingCount === 1 ? '' : 's') + ' now.' : 'Everything else is in hand.' %></span>
+      <% } else { %>
+        <strong><%= home.readiness.canAssessDemand ? 'Everything looks healthy.' : 'Nothing is currently known to need action.' %></strong>
+        <span><%= handlingCount ? 'I am handling ' + handlingCount + ' thing' + (handlingCount === 1 ? '' : 's') + '.' : (home.readiness.canAssessDemand ? 'Nothing currently needs you.' : 'Foundry is still building the evidence needed to judge low stock confidently.') %></span>
+      <% } %>
     </div>
   </div>
-  <div class="btn-row">
+  <div class="operator-hero__control">
+    <span>Last checked <%= home.status.lastEvaluatedText %></span>
+    <a href="/autopilot"><%= home.status.modeLabel %></a>
     <% if (home.status.paused || home.status.suspended) { %>
       <form method="post" action="/autopilot/resume">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button class="btn btn--primary btn--sm" type="submit" <%= canOperate ? '' : 'disabled' %>>Resume Foundry</button>
+        <button class="btn btn--primary btn--sm" type="submit" <%= canOperate ? '' : 'disabled' %>>Resume</button>
       </form>
     <% } else { %>
       <form method="post" action="/autopilot/pause" data-confirm="Pause Foundry? Nothing will happen automatically until you resume it.">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button class="btn btn--ghost btn--sm" type="submit" <%= canOperate ? '' : 'disabled' %>>Pause Foundry</button>
+        <button class="operator-pause" type="submit" <%= canOperate ? '' : 'disabled' %>>Pause</button>
       </form>
     <% } %>
   </div>
-</div>
+</section>
+
+<% if (home.readiness.notes.length) { %>
+  <section class="operator-readiness" aria-labelledby="readiness-title">
+    <div>
+      <span class="operator-lane__eyebrow">What Foundry can verify right now</span>
+      <h2 id="readiness-title"><%= home.readiness.usageReady %> of <%= home.readiness.skuCount %> stock positions have enough usage history for demand-based monitoring</h2>
+    </div>
+    <ul class="plain-list">
+      <% home.readiness.notes.forEach(function (note) { %><li><%= note %></li><% }) %>
+    </ul>
+  </section>
+<% } %>
 
 <% if (home.status.paused || home.status.suspended) { %>
-  <div class="card section card--warn">
-    <div class="card-body">
-      <p class="lede">
-        <%= home.status.suspended ? 'Foundry stopped itself.' : 'Foundry is paused.' %>
-      </p>
-      <p class="muted"><%= home.status.suspendedReason || home.status.pausedReason || 'Nothing will happen automatically until you resume it.' %></p>
+  <div class="operator-alert" role="status">
+    <%- helpers.icon('alert', { size: 18 }) %>
+    <div>
+      <strong><%= home.status.suspended ? 'Foundry stopped itself.' : 'Foundry is paused.' %></strong>
+      <span><%= home.status.suspendedReason || home.status.pausedReason || 'Nothing will happen automatically until you resume it.' %></span>
     </div>
   </div>
 <% } %>
 
-<%# ---------------------------------------------------------- what needs you %>
-<div class="card section <%= home.needsYou.length ? 'card--warn' : '' %>">
-  <div class="card-head">
-    <h2><%= home.needsYou.length
-        ? home.needsYou.length === 1 ? '1 thing needs you' : home.needsYou.length + ' things need you'
-        : 'Nothing needs you' %></h2>
-  </div>
-  <div class="card-body">
-    <% if (!home.needsYou.length) { %>
-      <p class="lede">Foundry has everything in hand. It will tell you the moment that changes.</p>
-    <% } %>
-    <% home.needsYou.forEach(function (entry) { %>
-      <div class="act-row">
-        <span class="act-place">
-          <strong><%= entry.title %></strong>
-          <% if (entry.because) { %><div class="muted"><%= entry.because %></div><% } %>
-          <% if (entry.evidence && entry.evidence.length) { %>
-            <div class="muted">
-              <% entry.evidence.slice(0, 3).forEach(function (fact, i) { %><%= i ? ' · ' : '' %><%= fact.label %>: <%= fact.value %><% }) %>
-            </div>
-          <% } %>
-        </span>
-        <span class="act-move"><a class="btn btn--sm btn--primary" href="<%= entry.link %>"><%= entry.action %></a></span>
-      </div>
-    <% }) %>
-  </div>
-</div>
-
-<%# ------------------------------------------------------------ what it said %>
-<% if (home.notifications && home.notifications.length) { %>
-  <div class="card section">
-    <div class="card-head">
-      <h2>What Foundry told you</h2>
-      <span class="spacer"></span>
-      <% if (home.unreadNotifications) { %>
-        <form method="post" action="/autopilot/notifications/read">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="back" value="/">
-          <button class="btn btn--sm btn--ghost" type="submit">Mark all read</button>
-        </form>
+<% if (home.setup) { %>
+  <section class="operator-setup-callout">
+    <span class="operator-setup-callout__icon"><%- helpers.icon('foundry', { size: 20 }) %></span>
+    <div>
+      <span class="setup-eyebrow">Finish the takeover</span>
+      <% if (home.setup.item) { %>
+        <strong>Foundry created <%= home.setup.item.name %> with <%= home.setup.item.sku_count %> trackable <%= home.setup.item.sku_count === 1 ? 'item' : 'variants' %>.</strong>
+        <p>Now tell Foundry what is currently on hand so it can start managing real inventory.</p>
+      <% } else { %>
+        <strong>Foundry still needs your inventory information.</strong>
+        <p>Continue setup so Foundry has real inventory truth to manage.</p>
       <% } %>
     </div>
-    <div class="card-body">
-      <ul class="plain-list">
-        <% home.notifications.forEach(function (note) { %>
-          <li class="<%= note.severity === 'important' ? 'is-warn' : '' %>">
-            <% if (!note.read) { %><span class="badge badge--muted">new</span> <% } %>
-            <% if (note.link) { %><a href="<%= note.link %>"><%= note.title %></a><% } else { %><%= note.title %><% } %>
-            <% if (note.body) { %><div class="muted"><%= note.body %></div><% } %>
-            <div class="muted"><%= note.when %></div>
-          </li>
-        <% }) %>
-      </ul>
-    </div>
-  </div>
+    <a class="btn btn--primary" href="<%= home.setup.link %>">Continue setup</a>
+  </section>
 <% } %>
 
-<%# --------------------------------------------------------- what Foundry did %>
-<div class="card section">
-  <div class="card-head">
-    <h2>What Foundry did</h2>
-    <span class="spacer"></span>
-    <a class="btn btn--sm btn--ghost" href="/autopilot/history">All of it</a>
+<section class="operator-command" id="tell-foundry" aria-labelledby="operator-command-title">
+  <div class="operator-command__mark" aria-hidden="true"><%- helpers.icon('foundry', { size: 20 }) %></div>
+  <div class="operator-command__body">
+    <label id="operator-command-title" for="ask-question">Tell Foundry</label>
+    <span class="visually-hidden">Ask Foundry anything</span>
+    <form class="operator-command__form" method="post" action="/foundry/tell" enctype="multipart/form-data" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input class="operator-command__input" id="ask-question" type="text" name="message"
+             placeholder="Ask what is happening, why it happened, or tell Foundry what you need done…"
+             maxlength="400" autocomplete="off">
+      <label class="operator-command__attach" title="Attach a file"><span class="visually-hidden">Attach a file</span>
+        <input type="file" name="file" accept=".csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*"><%- helpers.icon('import', { size: 17 }) %>
+      </label>
+      <button class="operator-command__send" type="submit" aria-label="Tell Foundry">
+        <%- helpers.icon('send', { size: 17 }) %>
+      </button>
+    </form>
+    <div class="operator-command__shortcuts">
+      <a href="/ask?q=<%= encodeURIComponent('What needs my attention?') %>">What needs me?</a>
+      <a href="/ask?q=<%= encodeURIComponent('What did you do today?') %>">What did you do?</a>
+      <a href="/ask?q=<%= encodeURIComponent('What should I order?') %>">What should I order?</a>
+      <span>One place for questions, work, counts, deliveries, purchasing, policy, and files.</span>
+    </div>
   </div>
-  <div class="card-body">
-    <p class="lede"><%= home.did.headline %></p>
-    <% if (home.did.actions.length) { %>
-      <ul class="plain-list">
-        <% home.did.actions.forEach(function (action) { %>
-          <li>
-            <a href="<%= action.link %>"><%= action.headline %></a>
-            <% if (action.detail) { %><span class="muted"> — <%= action.detail %></span><% } %>
-            <% if (!action.verified) { %><span class="badge badge--danger">not verified</span><% } %>
-          </li>
+</section>
+
+<section class="operator-lanes" aria-label="Foundry work">
+  <article class="operator-lane operator-lane--needs <%= needsCount ? 'has-work' : '' %>">
+    <header class="operator-lane__head">
+      <span class="operator-lane__icon"><%- helpers.icon(needsCount ? 'alert' : 'check', { size: 18 }) %></span>
+      <div>
+        <span class="operator-lane__eyebrow">Foundry needs you</span>
+        <h2><%= needsCount ? needsCount + ' decision' + (needsCount === 1 ? '' : 's') : 'Nothing needs you' %></h2>
+      </div>
+    </header>
+    <div class="operator-lane__body">
+      <% if (!needsCount) { %>
+        <p class="operator-empty">There are no exceptions waiting for your judgement.</p>
+      <% } %>
+      <% home.needsYou.forEach(function (entry) { %>
+        <div class="operator-work-item act-row">
+          <div>
+            <strong><%= entry.title %></strong>
+            <% if (entry.because) { %><p><%= entry.because %></p><% } %>
+          </div>
+          <a href="<%= entry.link %>"><%= entry.action %></a>
+        </div>
+      <% }) %>
+    </div>
+    <% if (needsCount) { %><footer><a href="/needs-you">See all exceptions</a></footer><% } %>
+  </article>
+
+  <article class="operator-lane operator-lane--prepared <%= handlingCount ? 'has-work' : '' %>">
+    <header class="operator-lane__head">
+      <span class="operator-lane__icon"><%- helpers.icon('activity', { size: 18 }) %></span>
+      <div>
+        <span class="operator-lane__eyebrow">Foundry is handling</span><span class="visually-hidden">Foundry prepared this</span>
+        <h2><%= handlingCount ? handlingCount + ' in progress' : 'Nothing in progress' %></h2>
+      </div>
+    </header>
+    <div class="operator-lane__body">
+      <% if (!handlingCount) { %>
+        <p class="operator-empty">
+          There is no routine work in progress.
+          <% if (home.did.evaluations.length) { %>
+            The latest evaluation finished <%= helpers.timeAgo(home.did.evaluations[0].finishedAt) %>.
+            <a href="/autopilot/history#evaluations">See what it checked and why it stopped.</a>
+          <% } %>
+        </p>
+      <% } %>
+      <% home.handling.forEach(function (entry) { %>
+        <div class="operator-work-item act-row">
+          <div>
+            <strong><%= entry.title %></strong>
+            <% if (entry.because) { %><p><%= entry.because %></p><% } %>
+          </div>
+          <a href="<%= entry.link %>"><%= entry.action %></a>
+        </div>
+      <% }) %>
+    </div>
+    <% if (handlingCount) { %><footer><a href="/autopilot/history">See handling queue</a></footer><% } %>
+  </article>
+
+  <article class="operator-lane operator-lane--handled">
+    <header class="operator-lane__head">
+      <span class="operator-lane__icon"><%- helpers.icon('check', { size: 18 }) %></span>
+      <div>
+        <span class="operator-lane__eyebrow">Foundry handled this</span>
+        <h2><%= home.did.counts.handled
+          ? home.did.counts.handled + ' completed'
+          : home.did.counts.evaluations
+            ? home.did.counts.evaluations + ' real check' + (home.did.counts.evaluations === 1 ? '' : 's')
+            : 'Nothing checked yet' %></h2>
+      </div>
+    </header>
+    <div class="operator-lane__body">
+      <p class="operator-empty"><%= home.did.headline %></p>
+      <% home.did.actions.slice(0, 4).forEach(function (action) { %>
+        <div class="operator-work-item operator-work-item--done">
+          <span class="operator-done-check">✓</span>
+          <div>
+            <a href="<%= action.link %>"><strong><%= action.headline %></strong></a>
+            <% if (action.detail) { %><p><%= action.detail %></p><% } %>
+          </div>
+        </div>
+      <% }) %>
+      <% if (!home.did.actions.length) { %>
+        <% home.did.evaluations.slice(0, 2).forEach(function (evaluation) { %>
+          <div class="operator-work-item operator-work-item--done">
+            <span class="operator-done-check">✓</span>
+            <div>
+              <a href="/autopilot/history#evaluations"><strong><%= evaluation.title %></strong></a>
+              <p><%= evaluation.detail %></p>
+            </div>
+          </div>
         <% }) %>
-      </ul>
-    <% } %>
-    <p class="muted">
-      Watching <%= home.did.counts.positionsWatched %> stock position<%= home.did.counts.positionsWatched === 1 ? '' : 's' %><%
-        if (home.did.counts.evaluations) { %> · <%= home.did.counts.evaluations %> evaluation<%= home.did.counts.evaluations === 1 ? '' : 's' %> today<% } %><%
-        if (home.did.counts.findingsResolved) { %> · <%= home.did.counts.findingsResolved %> finding<%= home.did.counts.findingsResolved === 1 ? '' : 's' %> resolved<% } %>
-    </p>
+      <% } %>
+    </div>
+    <footer><a href="/autopilot/history">See everything Foundry has done</a></footer>
+  </article>
+</section>
+
+<section class="operator-next">
+  <div class="operator-section-head">
+    <div>
+      <span class="operator-lane__eyebrow">On the horizon</span>
+      <h2>What's happening next</h2>
+    </div>
     <% if (canOperate) { %>
       <form method="post" action="/autopilot/run" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -123,40 +215,27 @@
       </form>
     <% } %>
   </div>
-</div>
-
-<%# -------------------------------------------------------- what happens next %>
-<div class="card section">
-  <div class="card-head"><h2>What's happening next</h2></div>
-  <div class="card-body">
-    <% if (!home.next.length) { %>
-      <p class="muted">Nothing scheduled. No deliveries expected and no dates approaching.</p>
-    <% } else { %>
-      <ul class="plain-list">
-        <% home.next.forEach(function (event) { %>
-          <li class="<%= event.overdue ? 'is-warn' : '' %>">
-            <strong><%= event.when %></strong> —
-            <% if (event.link) { %><a href="<%= event.link %>"><%= event.title %></a><% } else { %><%= event.title %><% } %>
-            <% if (event.detail) { %><span class="muted"> <%= event.detail %></span><% } %>
-          </li>
-        <% }) %>
-      </ul>
-    <% } %>
-  </div>
-</div>
-
-<div class="card section">
-  <div class="card-head"><h2>Ask Foundry</h2></div>
-  <div class="card-body">
-    <form class="ask-form" method="get" action="/ask" data-ask-form>
-      <input class="input" id="ask-question" type="text" name="q"
-             placeholder="What did you do today?" maxlength="300" autocomplete="off">
-      <button class="btn btn--primary" type="submit" data-ask-submit>Ask</button>
-    </form>
-    <div class="ask-examples">
-      <% ['What did you do today?', 'What needs to be reordered?', 'What needs my attention?'].forEach(function (example) { %>
-        <a class="chip" href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
+  <% if (!home.next.length) { %>
+    <div class="operator-next__empty">Nothing scheduled. No deliveries are expected and no important dates are approaching.</div>
+  <% } else { %>
+    <div class="operator-timeline">
+      <% home.next.forEach(function (event) { %>
+        <div class="operator-event <%= event.overdue ? 'is-overdue' : '' %>">
+          <time><%= event.when %></time>
+          <span class="operator-event__dot" aria-hidden="true"></span>
+          <div>
+            <% if (event.link) { %><a href="<%= event.link %>"><strong><%= event.title %></strong></a><% } else { %><strong><%= event.title %></strong><% } %>
+            <% if (event.detail) { %><p><%= event.detail %></p><% } %>
+          </div>
+        </div>
       <% }) %>
     </div>
-  </div>
+  <% } %>
+</section>
+
+<div class="operator-proof">
+  <span>Foundry checked <strong><%= home.did.counts.positionsWatched %></strong> stock position<%= home.did.counts.positionsWatched === 1 ? '' : 's' %></span>
+  <span><strong><%= stats.itemCount %></strong> product<%= stats.itemCount === 1 ? '' : 's' %></span>
+  <span><strong><%= stats.locationCount %></strong> location<%= stats.locationCount === 1 ? '' : 's' %></span>
+  <a href="/overview">Open the traditional overview</a>
 </div>

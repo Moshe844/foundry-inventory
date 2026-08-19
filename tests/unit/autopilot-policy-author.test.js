@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const policyAuthor = require('../../src/autopilot/policy-author');
 const policyService = require('../../src/autopilot/policy-service');
 const authService = require('../../src/domain/auth-service');
+const supplierService = require('../../src/purchasing/supplier-service');
 const { makeDatabase, cleanupAll, seedWorkspace } = require('../helpers');
 
 test.after(cleanupAll);
@@ -35,10 +36,14 @@ const provider = (data) => ({ complete: async () => ({ data }) });
 
 const GOOD = {
   understood: true,
+  actionType: 'transfer',
   name: 'Automatic warehouse balancing',
   maximumQuantity: 20,
+  maximumValue: 0,
+  maxUnitPriceChangePercent: -1,
   dailyLimit: 0,
   locationNames: ['Main Warehouse', 'Downtown Store'],
+  supplierNames: [],
   unsupportedReason: '',
 };
 
@@ -80,27 +85,34 @@ test('the model cannot authorise an action Foundry does not automate', async () 
   );
 });
 
-test('a request Foundry cannot automate is refused, not quietly narrowed', async () => {
+test('a bounded routine purchasing request becomes an inert policy draft', async () => {
   const env = setup();
+  const supplier = supplierService.createSupplier(env.db, env.ctx, env.membership, { name: 'ABC Supply' });
   const drafted = await policyAuthor.draft(
     env.db,
     env.workspace.workspaceId,
     'Just order from the supplier when we run low',
     {
       provider: provider({
-        understood: false,
-        name: '',
+        ...GOOD,
+        understood: true,
+        actionType: 'approve_purchase_order',
+        name: 'Routine ABC replenishment',
         maximumQuantity: 0,
-        dailyLimit: 0,
+        maximumValue: 500,
+        maxUnitPriceChangePercent: 5,
         locationNames: [],
-        unsupportedReason: 'Foundry never sends orders to a supplier.',
+        supplierNames: ['ABC Supply'],
       }),
     }
   );
 
-  assert.equal(drafted.understood, false);
-  assert.match(drafted.unsupportedReason, /never sends orders/);
-  assert.equal(drafted.draft, undefined, 'nothing to approve when the answer is no');
+  assert.equal(drafted.understood, true);
+  assert.deepEqual(drafted.draft.allowedActionTypes, ['approve_purchase_order']);
+  assert.deepEqual(drafted.draft.supplierScope, [supplier.id]);
+  assert.equal(drafted.draft.maximumValue, 500);
+  assert.equal(drafted.draft.thresholds.maxUnitPriceChangePercent, 5);
+  assert.equal(policyService.list(env.db, env.workspace.workspaceId).length, 0, 'reading still writes nothing');
 });
 
 test('no limit given means a question, never a number Foundry chose', async () => {

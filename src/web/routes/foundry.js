@@ -5,12 +5,14 @@ const config = require('../../config');
 const understandingService = require('../../foundry/understanding-service');
 const planBuilder = require('../../foundry/plan-builder');
 const firstItemService = require('../../foundry/first-item-service');
+const documentIntake = require('../../foundry/document-intake');
 const planApplier = require('../../foundry/plan-applier');
 const onboardingPaths = require('../../onboarding/paths');
 const assistant = require('../../foundry/assistant-service');
 const jobRunner = require('../../foundry/job-runner');
 const inventoryQuery = require('../../domain/inventory-query');
 const repo = require('../../domain/repository');
+const { inTransaction } = require('../../db');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 const { toArray, trimOrNull, nowIso } = require('../../lib/util');
 
@@ -66,26 +68,35 @@ router.post(
   '/foundry/understand',
   asyncRoute(async (req, res) => {
     const description = trimOrNull(req.body.description) || '';
+    const source = (req.files || []).find((file) => file.field === 'source' && file.size > 0) || null;
 
-    // Cheap validation happens now, so an obviously unusable description gets an
-    // immediate answer instead of a progress page that fails a second later.
-    if (description.length < understandingService.MIN_DESCRIPTION) {
+    // A real document is a complete starting point. Text-only setup still needs
+    // enough context to understand the operation safely.
+    if (!source && description.length < understandingService.MIN_DESCRIPTION) {
       return res.status(400).page('foundry/setup', {
         title: 'Set up your inventory',
         nav: 'foundry',
       otherWorkspaces: Math.max(0, (res.locals.workspaces || []).length - 1),
         aiConfigured: config.ai.configured,
         description,
-        error: 'Tell Foundry a little more about what you keep track of — a sentence or two is enough.',
+        error: 'Add an invoice, spreadsheet, Word document, or PDF — or tell Foundry a sentence or two about what you keep track of.',
       });
     }
 
     const jobId = jobRunner.createJob(req.ctx.workspaceId, 'understanding');
     const ctx = req.ctx;
     const db = req.db;
+    const membership = req.user;
     const provider = req.app.locals.aiProvider || undefined;
 
     jobRunner.run(jobId, async (setStage) => {
+      if (source) {
+        const prepared = await documentIntake.prepare(db, ctx, membership, source, {
+          provider,
+          onStage: setStage,
+        });
+        return { understandingId: prepared.understandingId, setupDocumentId: prepared.document.id };
+      }
       const { id } = await understandingService.describeBusiness(db, ctx, description, {
         provider,
         onStage: setStage,
@@ -181,6 +192,7 @@ router.get(
       nav: 'foundry',
       understandingId: stored.id,
       understanding: stored.understanding,
+      setupDocument: documentIntake.getByUnderstanding(req.db, req.ctx.workspaceId, stored.id),
       recommendations: understandingService.listRecommendations(req.db, req.ctx.workspaceId, stored.id),
       existingLocations: repo.listLocations(req.db, req.ctx.workspaceId),
     });
@@ -192,6 +204,10 @@ router.post(
   '/foundry/proposal/:id/configure',
   requireOwner,
   asyncRoute(async (req, res) => {
+    const existingDocument = documentIntake.getByUnderstanding(req.db, req.ctx.workspaceId, req.params.id);
+    if (existingDocument && existingDocument.status === 'APPLIED' && existingDocument.appliedPlanId) {
+      return res.redirect(303, `/foundry/ready/${existingDocument.appliedPlanId}`);
+    }
     const answers = {};
     for (const [key, value] of Object.entries(req.body)) {
       if (!key.startsWith('answer_')) continue;
@@ -201,14 +217,26 @@ router.post(
       if (answer && answer !== '__foundry__') answers[questionId] = answer;
     }
 
-    const { planId } = planBuilder.buildPlan(req.db, req.ctx, {
-      understandingId: req.params.id,
-      answers,
-      acceptedRecommendationIds: toArray(req.body.acceptRecommendation),
-    });
-
-    planApplier.applyPlan(req.db, req.ctx, planId);
-    res.redirect(303, `/foundry/ready/${planId}`);
+    try {
+      const planId = inTransaction(req.db, () => {
+        if (existingDocument) {
+          documentIntake.setSupplierCodeLabel(req.db, req.ctx, req.params.id, req.body.supplierCodeLabel);
+        }
+        const built = planBuilder.buildPlan(req.db, req.ctx, {
+          understandingId: req.params.id,
+          answers,
+          acceptedRecommendationIds: toArray(req.body.acceptRecommendation),
+        });
+        planApplier.applyPlan(req.db, req.ctx, built.planId);
+        documentIntake.apply(req.db, req.ctx, req.user, req.params.id, built.planId);
+        return built.planId;
+      });
+      res.redirect(303, `/foundry/ready/${planId}`);
+    } catch (error) {
+      if (!error.status || error.status >= 500) throw error;
+      req.flash('error', error.message);
+      res.redirect(303, `/foundry/proposal/${req.params.id}`);
+    }
   })
 );
 
@@ -225,6 +253,7 @@ router.get(
       nav: 'foundry',
       plan: stored.plan,
       summary: stored.applied_summary ? JSON.parse(stored.applied_summary) : null,
+      setupDocument: documentIntake.getByPlan(req.db, req.ctx.workspaceId, stored.id),
       decisions: planBuilder.listDecisions(req.db, req.ctx.workspaceId, stored.id),
       // What Foundry would create from what they already described. Null once
       // the inventory has anything in it.
@@ -259,12 +288,69 @@ router.post(
           ? `Created ${created.name} with ${created.skuCount} combinations. Nothing is in stock yet — receive some to get started.`
           : `Created ${created.name}. Nothing is in stock yet — receive some to get started.`
       );
-      return res.redirect(303, `/inventory/${created.itemId}`);
+      onboardingPaths.setStatus(req.db, req.ctx.workspaceId, 'collecting');
+      return res.redirect(303, `/foundry/quantities/${created.itemId}`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);
       return res.redirect(303, '/foundry/ready');
     }
+  })
+);
+
+/**
+ * Finish the starting-fresh conversation. Foundry has built the structure, but
+ * it must not pretend that zeroes are the customer's real stock. The customer
+ * chooses how to supply current quantities instead of being dropped into a
+ * traditional item screen.
+ */
+router.get(
+  '/foundry/quantities',
+  asyncRoute(async (req, res) => {
+    const item = req.db
+      .prepare('SELECT id FROM items WHERE workspace_id = ? AND is_active = 1 ORDER BY created_at LIMIT 1')
+      .get(req.ctx.workspaceId);
+    if (!item) return res.redirect(303, '/foundry');
+    return res.redirect(303, `/foundry/quantities/${item.id}`);
+  })
+);
+
+router.get(
+  '/foundry/quantities/:itemId',
+  asyncRoute(async (req, res) => {
+    const onboarding = onboardingPaths.reconcileWithInventoryTruth(req.db, req.ctx.workspaceId);
+    if (onboarding && onboarding.isComplete) {
+      req.flash('success', 'Foundry has current inventory truth and is now managing it.');
+      return res.redirect(303, '/');
+    }
+    const item = repo.requireItem(req.db, req.ctx.workspaceId, req.params.itemId);
+    const skus = repo.listSkusForItem(req.db, req.ctx.workspaceId, item.id);
+    const locations = repo.listLocations(req.db, req.ctx.workspaceId);
+    const total = req.db
+      .prepare(
+        `SELECT COALESCE(SUM(b.on_hand), 0) AS total
+           FROM balances b JOIN skus s ON s.id = b.sku_id
+          WHERE b.workspace_id = ? AND s.item_id = ?`
+      )
+      .get(req.ctx.workspaceId, item.id).total;
+
+    return res.page('foundry/quantities', {
+      title: 'Add your current quantities',
+      nav: 'foundry',
+      item,
+      skuCount: skus.length,
+      locations,
+      total,
+    });
+  })
+);
+
+router.post(
+  '/foundry/quantities/complete',
+  asyncRoute(async (req, res) => {
+    onboardingPaths.setStatus(req.db, req.ctx.workspaceId, 'ready');
+    req.flash('success', 'Setup complete. Foundry is now watching and managing this inventory.');
+    return res.redirect(303, '/');
   })
 );
 

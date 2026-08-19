@@ -46,7 +46,7 @@ test('a person can create a second inventory and is handed to Foundry', async ()
 
   const created = await post(agent, '/inventories', { name: 'Equipment Company' }, '/inventories/new');
   assert.equal(created.status, 303);
-  assert.equal(created.headers.location, '/foundry', 'a new inventory goes straight to setup');
+  assert.equal(created.headers.location, '/onboarding', 'a new inventory goes straight to the management-path question');
 
   const mine = workspaceService.listForAccount(store.db, first.accountId);
   assert.deepEqual(mine.map((w) => w.name).sort(), ['Clothing Business', 'Equipment Company']);
@@ -56,10 +56,11 @@ test('a person can create a second inventory and is handed to Foundry', async ()
   const front = await agent.get('/foundry');
   assert.equal(front.headers.location, '/onboarding');
   const chooser = plain((await agent.get('/onboarding')).text);
-  assert.match(chooser, /How are you managing it today/);
+  assert.match(chooser, /How are you managing inventory today/);
 
   const describe = plain((await agent.get('/foundry/describe')).text);
-  assert.match(describe, /Tell Foundry about Equipment Company/);
+  assert.match(describe, /Give Foundry what you already have/);
+  assert.match(describe, /Equipment Company/);
 });
 
 test('switching changes what every page shows', async () => {
@@ -306,5 +307,5 @@ test('an account with no inventory is asked to make one, not shown an empty cons
   const home = await agent.get('/');
   assert.equal(home.status, 302);
   assert.equal(home.headers.location, '/inventories');
-  assert.match(plain((await agent.get('/inventories')).text), /do not have an inventory yet/);
+  assert.match(plain((await agent.get('/inventories')).text), /Give Foundry an inventory to manage/);
 });

@@ -36,6 +36,7 @@
     </div>
   </div>
   <div class="page-actions">
+    <a class="btn btn--sm" href="<%= skus.length === 1 ? '/purchasing/why/' + skus[0].id : '#reorder-settings' %>"><%- helpers.icon('purchasing', { size: 15 }) %> Reorder settings</a>
     <button class="btn btn--ghost btn--sm" type="button" data-modal-open="modal-edit"><%- helpers.icon('settings', { size: 15 }) %> Edit details</button>
   </div>
 </div>
@@ -270,6 +271,33 @@
   </div>
 
   <div class="grid">
+    <div class="card item-reorder" id="reorder-settings">
+      <div class="card-head">
+        <div>
+          <span class="item-reorder__kicker">Purchasing</span>
+          <h2>Reorder settings</h2>
+        </div>
+      </div>
+      <div class="item-reorder__lines">
+        <% purchasingLines.forEach(function (line) { %>
+          <a class="item-reorder__line" href="/purchasing/why/<%= line.skuId %>">
+            <div class="item-reorder__name">
+              <strong><%= line.label %></strong>
+              <span><%= helpers.qty(line.total) %> on hand · <%= line.suppliers.length ? line.suppliers[0].supplierName : 'No supplier linked' %></span>
+            </div>
+            <% if (line.policy.isSet) { %>
+              <span class="item-reorder__policy"><small>Reorder at</small><strong><%= line.policy.reorderPoint === null ? '—' : line.policy.reorderPoint %></strong></span>
+              <span class="item-reorder__policy"><small>Order up to</small><strong><%= line.policy.targetStock === null ? '—' : line.policy.targetStock %></strong></span>
+            <% } else { %>
+              <span class="badge badge--warn">Not configured</span>
+            <% } %>
+            <span class="item-reorder__go">Configure <%- helpers.icon('chevron', { size: 14 }) %></span>
+          </a>
+        <% }) %>
+      </div>
+      <div class="card-foot">Foundry watches each variant separately and will never invent a reorder point without usage history or a setting you approved.</div>
+    </div>
+
     <div class="card">
       <div class="card-head"><h2>Details</h2></div>
       <div class="card-body">

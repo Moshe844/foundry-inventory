@@ -48,6 +48,7 @@ const CATEGORY_LABEL = {
   balance_transfer: 'Move stock between locations',
   replenishment: 'Replenishment',
   purchase_preparation: 'Prepare a purchase order',
+  purchase_approval: 'Approve a purchase order',
   receiving_followup: 'Follow up a delivery',
   expiration_review: 'Review stock approaching expiry',
   attention_review: 'Review a finding',
@@ -136,8 +137,9 @@ function upsert(db, workspaceId, input) {
     `INSERT INTO work_items (
        id, workspace_id, work_plan_id, category, source, source_evidence, affected_entities,
        recommended_action, priority, urgency, confidence, policy_id, policy_evaluation,
-       approval_requirement, execution_status, verification_status, idempotency_key, due_at, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       approval_requirement, execution_status, verification_status, purchase_order_id,
+       idempotency_key, due_at, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, workspaceId, input.workPlanId || null, input.category, input.source || 'autopilot',
     JSON.stringify(input.sourceEvidence || []), JSON.stringify(input.affectedEntities || {}),
@@ -147,7 +149,7 @@ function upsert(db, workspaceId, input) {
     input.approvalRequirement || 'REQUIRED',
     input.executionStatus || STATUS.PLANNED,
     input.verificationStatus || 'PENDING',
-    key, input.dueAt || null, now
+    input.purchaseOrderId || null, key, input.dueAt || null, now
   );
 
   recordEvent(db, workspaceId, id, 'planned', {

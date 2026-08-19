@@ -1,10 +1,10 @@
 <div class="foundry-hero">
   <span class="foundry-mark"><%- helpers.icon('foundry', { size: 26 }) %></span>
-  <h1>Tell Foundry about <%= workspace ? workspace.name : 'your inventory' %></h1>
+  <h1>Give Foundry what you already have</h1>
   <p>
-    Describe how <%= workspace ? 'this part of your business' : 'your business' %> works in your own
-    words. Foundry will work out the right inventory structure, show you what it intends to set up,
-    and configure it for you.
+    Start with an invoice or inventory sheet in the format you already have. Foundry reads
+    the actual file, works out the inventory structure and opening transaction, then shows you exactly
+    what it will create before anything changes.
   </p>
   <% if (typeof otherWorkspaces !== 'undefined' && otherWorkspaces > 0) { %>
     <p class="muted" style="font-size:13px;">
@@ -30,18 +30,30 @@
   </div>
 <% } %>
 
-<form class="foundry-form" method="post" action="/foundry/understand" data-busy>
+<form class="foundry-form" method="post" action="/foundry/understand" enctype="multipart/form-data" data-busy>
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <div class="card">
     <div class="card-body">
+      <div class="foundry-source">
+        <span class="foundry-source__icon"><%- helpers.icon('import', { size: 22 }) %></span>
+        <span class="foundry-source__body">
+          <strong data-source-name>Add the file you already use</strong>
+          <span>PDF, Word (.docx), Excel, CSV, TSV, or text · up to 32 MB</span>
+          <span class="foundry-source__truth">The file is read as evidence. Foundry never guesses quantities that are not in it.</span>
+        </span>
+        <button class="btn" type="button" data-source-picker>Choose file</button>
+        <input id="source" name="source" type="file" accept=".pdf,.docx,.xlsx,.xls,.csv,.tsv,.txt,application/pdf" hidden>
+      </div>
+
+      <div class="foundry-divider"><span>or describe it in your own words</span></div>
       <label class="visually-hidden" for="description">Describe your inventory</label>
-      <textarea class="textarea foundry-input" id="description" name="description" rows="5" required
+      <textarea class="textarea foundry-input" id="description" name="description" rows="4"
                 placeholder="We wholesale children's shoes. Every style comes in colors and sizes. We keep stock in Brooklyn and New Jersey and transfer between them."><%= description %></textarea>
       <div class="foundry-actions">
         <button class="btn btn--primary btn--lg" type="submit" <%= aiConfigured ? '' : 'disabled' %>>
           <%- helpers.icon('foundry', { size: 17 }) %> Understand my inventory
         </button>
-        <span class="foundry-hint">Foundry reads this once. Nothing is configured until you approve it.</span>
+        <span class="foundry-hint">One preview. One approval. Then the products, supplier, order, and stock are live.</span>
       </div>
     </div>
   </div>

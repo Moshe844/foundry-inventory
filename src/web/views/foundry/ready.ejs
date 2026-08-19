@@ -4,6 +4,7 @@
   var created = s.locationsCreated || [];
   var existing = s.locationsAlreadyPresent || [];
   var locationCount = created.length + existing.length;
+  var imported = setupDocument && setupDocument.result;
 %>
 
 <div class="foundry-hero foundry-hero--tight">
@@ -11,6 +12,31 @@
   <h1>Your inventory is ready</h1>
   <p>Foundry configured the inventory engine. Everything below is live now.</p>
 </div>
+
+<% if (imported) { %>
+  <div class="card ready-card" style="margin-bottom:16px;border-color:var(--accent-line);">
+    <div class="card-head">
+      <%- helpers.icon('check', { size: 17 }) %>
+      <h2><%= setupDocument.sourceName %> is now inventory truth</h2>
+    </div>
+    <div class="card-body">
+      <ul class="ready-list">
+        <li><%- helpers.icon('check', { size: 16 }) %><span><strong><%= imported.products %></strong> products and <strong><%= imported.variants %></strong> variants created from the file</span></li>
+        <li><%- helpers.icon('check', { size: 16 }) %><span><strong><%= imported.units %></strong> <%= helpers.plural(imported.units, imported.unitLabel || 'unit') %> received into <strong><%= imported.location %></strong></span></li>
+        <li><%- helpers.icon('check', { size: 16 }) %><span><strong><%= imported.supplier %></strong> linked as supplier with its codes and unit costs</span></li>
+        <li><%- helpers.icon('check', { size: 16 }) %><span>This file called the vendor identifier <strong><%= imported.detectedSupplierCodeLabel || setupDocument.detectedSupplierCodeLabel %></strong>. Foundry will call it <strong><%= imported.itemCodeLabel || setupDocument.supplierCodeLabel %></strong> for <%= imported.supplier %> and recognize alternate headings on future documents.</span></li>
+        <li><%- helpers.icon('check', { size: 16 }) %><span>Purchase order <strong><%= imported.poNumber %></strong> recorded, approved, and fully received</span></li>
+      </ul>
+    </div>
+    <div class="card-foot ready-next">
+      <span class="muted">Every quantity is backed by a receipt and inventory movement.</span>
+      <span class="btn-row" style="margin-left:auto;">
+        <a class="btn" href="/purchasing/orders/<%= imported.purchaseOrderId %>">See the order</a>
+        <a class="btn btn--primary" href="/inventory">See live inventory</a>
+      </span>
+    </div>
+  </div>
+<% } %>
 
 <div class="card ready-card">
   <div class="card-body">
@@ -67,7 +93,7 @@
     <span class="muted">Configuration version <%= plan.configurationVersion %></span>
     <span class="btn-row" style="margin-left:auto;">
       <a class="btn" href="/foundry">Ask Foundry something</a>
-      <% if (!firstItem) { %>
+      <% if (!firstItem && !imported) { %>
         <a class="btn btn--primary" href="/inventory/new">Add my first <%= term('item').toLowerCase() %></a>
       <% } %>
     </span>
