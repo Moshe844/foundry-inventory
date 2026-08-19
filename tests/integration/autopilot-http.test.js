@@ -73,7 +73,7 @@ test('the primary home is Foundry managing work, not an inventory dashboard', as
   assert.doesNotMatch(page, /There is no routine work in progress/);
   assert.match(page, /What did Foundry do\?/);
   assert.match(page, /Open the traditional overview/);
-  assert.match(page, /Foundry cannot see stock leaving the business/);
+  assert.match(page, /Tell Foundry when you sell something/);
   assert.match(page, /1 real check/);
   assert.match(page, /Checked inventory after stock arrived/);
 });
@@ -90,9 +90,11 @@ test('Needs you exposes the missing operating input instead of silently showing 
 
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/needs-you')).text);
-  assert.match(page, /Operating inputs/);
-  assert.match(page, /Foundry cannot see stock leaving the business/);
-  assert.match(page, /no live sales or warehouse feed/i);
+  // Named in the words somebody new to inventory would use, and saying what
+  // to do about it rather than which internal input is absent.
+  assert.match(page, /Missing information/);
+  assert.match(page, /Tell Foundry when you sell something/);
+  assert.match(page, /not how fast they go/i);
   assert.match(page, /cannot silently observe another system or invent demand/i);
 });
 

@@ -31,11 +31,11 @@ test('Needs you is one consolidated, authenticated exception queue', async () =>
   const page = await env.agent.get('/needs-you');
   assert.equal(page.status, 200);
   const text = plain(page.text);
-  assert.match(text, /Exceptions only/);
-  assert.match(text, /Operating inputs/);
-  assert.match(text, /Investigations/);
-  assert.match(text, /Physical events to match/);
-  assert.match(text, /Decisions/);
+  assert.match(text, /things Foundry cannot settle itself/i);
+  assert.match(text, /Missing information/);
+  assert.match(text, /Differences to look into/);
+  assert.match(text, /Deliveries and counts to confirm/);
+  assert.match(text, /Your decision/);
   env.db.close();
 });
 

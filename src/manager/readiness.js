@@ -27,11 +27,23 @@ function assess(db, workspaceId, { now = Date.now() } = {}) {
     )
     .get(workspaceId).n;
 
+  // Each of these is read by somebody who may never have run an inventory
+  // system. They say what Foundry cannot do and what would change it, in the
+  // words a shopkeeper would use — not "outbound history", "standing authority"
+  // or "replenishment orders".
   const notes = [];
-  if (!connectedSources) notes.push('No live sales or warehouse system is connected, so physical changes must be reported or uploaded.');
-  if (!usageReady && inventorySignals.length) notes.push('Foundry does not yet have enough outbound history to calculate trustworthy stockout timing.');
-  if (locationCount < 2) notes.push('There is only one active location, so warehouse balancing is not possible.');
-  if (!supplierCount) notes.push('No supplier is configured, so Foundry cannot prepare replenishment orders.');
+  if (!connectedSources) {
+    notes.push('Nothing is feeding Foundry automatically yet, so tell it when stock comes in or goes out.');
+  }
+  if (!usageReady && inventorySignals.length) {
+    notes.push('It has not seen enough selling yet to say when you will run out.');
+  }
+  if (locationCount < 2) {
+    notes.push('You have one location, so there is nowhere for Foundry to move stock to.');
+  }
+  if (!supplierCount) {
+    notes.push('No supplier is set up, so Foundry cannot draft an order even when something is low.');
+  }
 
   return {
     canAssessDemand: usageReady > 0,
@@ -53,13 +65,13 @@ function decisions(db, workspaceId, options = {}) {
     result.push({
       kind: 'operating_input',
       id: 'outbound-source',
-      title: 'Foundry cannot see stock leaving the business',
+      title: 'Tell Foundry when you sell something',
       because:
-        `Foundry knows the current quantities for ${state.skuCount} stock position${state.skuCount === 1 ? '' : 's'}, ` +
-        'but it has no live sales or warehouse feed and no usable outbound history. Until that input exists, ' +
-        'it cannot truthfully decide what is low, forecast a stockout, or calculate replenishment.',
-      action: 'See what is missing',
-      link: '/needs-you#operating-inputs',
+        `Foundry knows how many of your ${state.skuCount} product${state.skuCount === 1 ? '' : 's'} you have, ` +
+        'but not how fast they go. Until it sees stock leaving, it cannot tell you what is running low ' +
+        'or what to reorder — and it will not guess. Record a sale, or a delivery going out, and it starts learning.',
+      action: 'Record a sale',
+      link: '/#tell-foundry',
       priority: 95,
     });
   }

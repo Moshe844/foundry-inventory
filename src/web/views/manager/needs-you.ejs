@@ -5,9 +5,9 @@
 
 <header class="needs-you-hero">
   <div>
-    <div class="eyebrow">Exceptions only</div>
+    <div class="eyebrow">Only the things Foundry cannot settle itself</div>
     <h1>Needs you</h1>
-    <p>Foundry is handling everything else within the authority you approved.</p>
+    <p>Everything else, Foundry is getting on with.</p>
   </div>
   <div class="needs-you-total <%= totalWaiting ? 'has-work' : 'is-clear' %>">
     <span><%- helpers.icon(totalWaiting ? 'attention' : 'check', { size: 18 }) %></span>
@@ -15,16 +15,19 @@
   </div>
 </header>
 
-<div class="needs-you-purpose"><strong>You do not need to watch Foundry all day.</strong> Anything Foundry cannot safely resolve itself — missing evidence, an unexplained discrepancy, missing context, or a decision outside its authority — appears here with the reason and the next action.</div>
+<%# Was a four-item list of internal categories. Somebody new to inventory
+    does not need the taxonomy; they need to know this page is short on
+    purpose and that each line says what to do. %>
+<div class="needs-you-purpose"><strong>You do not need to watch Foundry all day.</strong> When it needs something from you — a number it cannot know, a difference it cannot explain, or permission it does not have — it waits here and says why.</div>
 
 <div class="needs-you-queue">
   <section class="needs-section <%= operating.length ? 'needs-section--attention' : '' %>" id="operating-inputs">
     <div class="needs-section__head">
       <span class="needs-section__icon"><%- helpers.icon('activity', { size: 18 }) %></span>
-      <div><span class="needs-section__label">Missing operating signal</span><h2>Operating inputs</h2></div>
+      <div><span class="needs-section__label">Foundry needs to be told something</span><h2>Missing information</h2></div>
       <span class="needs-count <%= operating.length ? 'has-work' : 'is-clear' %>"><%= operating.length ? operating.length + ' waiting' : 'Clear' %></span>
     </div>
-    <% if (!operating.length) { %><div class="needs-empty"><span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span><div><strong>Foundry has the inputs it needs</strong><p>No missing operating evidence currently requires you.</p></div></div><% } %>
+    <% if (!operating.length) { %><div class="needs-empty"><span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span><div><strong>Foundry has what it needs</strong><p>Nothing is missing at the moment.</p></div></div><% } %>
     <% operating.forEach(function (entry) { %>
       <article class="needs-input">
         <div class="needs-input__mark"><%- helpers.icon('alert', { size: 20 }) %></div>
@@ -39,19 +42,19 @@
   </section>
 
   <section class="needs-section">
-    <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('search', { size: 18 }) %></span><div><span class="needs-section__label">Physical discrepancies</span><h2>Investigations</h2></div><span class="needs-count <%= investigations.length ? 'has-work' : 'is-clear' %>"><%= investigations.length ? investigations.length + ' waiting' : 'Clear' %></span></div>
+    <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('search', { size: 18 }) %></span><div><span class="needs-section__label">The count does not match</span><h2>Differences to look into</h2></div><span class="needs-count <%= investigations.length ? 'has-work' : 'is-clear' %>"><%= investigations.length ? investigations.length + ' waiting' : 'Clear' %></span></div>
     <% if (!investigations.length) { %><div class="needs-empty"><span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span><div><strong>No investigations need you</strong><p>There are no unexplained inventory discrepancies waiting.</p></div></div><% } %>
     <% investigations.forEach(function (entry) { %><a class="needs-row" href="/investigations/<%= entry.investigationId %>"><span class="needs-row__icon is-warn"><%- helpers.icon('alert', { size: 18 }) %></span><div><strong><%= entry.affectedEntities.displayName || 'Inventory discrepancy' %></strong><p><%= entry.recommendedNextStep %></p></div><span class="needs-count has-work"><%= entry.unexplainedAmount === null ? 'Review' : entry.unexplainedAmount + ' unexplained' %></span><%- helpers.icon('chevron', { size: 17 }) %></a><% }) %>
   </section>
 
   <section class="needs-section">
-    <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('box', { size: 18 }) %></span><div><span class="needs-section__label">Reports needing context</span><h2>Physical events to match</h2></div><span class="needs-count <%= physical.length ? 'has-work' : 'is-clear' %>"><%= physical.length ? physical.length + ' waiting' : 'Clear' %></span></div>
+    <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('box', { size: 18 }) %></span><div><span class="needs-section__label">Something happened, Foundry needs the detail</span><h2>Deliveries and counts to confirm</h2></div><span class="needs-count <%= physical.length ? 'has-work' : 'is-clear' %>"><%= physical.length ? physical.length + ' waiting' : 'Clear' %></span></div>
     <% if (!physical.length) { %><div class="needs-empty"><span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span><div><strong>Every physical event is matched</strong><p>No reported count, receipt, or movement is missing context.</p></div></div><% } %>
     <% physical.forEach(function (entry) { %><div class="needs-row"><span class="needs-row__icon is-warn"><%- helpers.icon('question', { size: 18 }) %></span><div><strong><%= entry.event_type.replaceAll('_', ' ') %></strong><p><%= entry.stated_as %></p></div><a class="btn btn--sm" href="/#tell-foundry">Add missing detail</a></div><% }) %>
   </section>
 
   <section class="needs-section">
-    <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('shield', { size: 18 }) %></span><div><span class="needs-section__label">Outside approved authority</span><h2>Decisions</h2></div><span class="needs-count <%= waiting.length ? 'has-work' : 'is-clear' %>"><%= waiting.length ? waiting.length + ' waiting' : 'Clear' %></span></div>
+    <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('shield', { size: 18 }) %></span><div><span class="needs-section__label">Foundry will not do this without you</span><h2>Your decision</h2></div><span class="needs-count <%= waiting.length ? 'has-work' : 'is-clear' %>"><%= waiting.length ? waiting.length + ' waiting' : 'Clear' %></span></div>
     <% if (!waiting.length) { %><div class="needs-empty"><span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span><div><strong>No decisions are waiting</strong><p>Foundry is working within the boundaries you approved.</p></div></div><% } %>
     <% waiting.forEach(function (entry) { %><a class="needs-row" href="/autopilot/work/<%= entry.id %>"><span class="needs-row__icon is-warn"><%- helpers.icon('attention', { size: 18 }) %></span><div><strong><%= entry.categoryLabel %></strong><p><%= entry.policyEvaluation.reason || 'Your approval is required.' %></p></div><span class="needs-count has-work">Review</span><%- helpers.icon('chevron', { size: 17 }) %></a><% }) %>
   </section>

@@ -85,7 +85,7 @@ test('a healthy brief creates no operational busywork and names the missing exte
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM work_items').get().n, 0);
   assert.equal(result.needsYou.length, 1);
   assert.equal(result.needsYou[0].type, 'operating_input');
-  assert.match(result.needsYou[0].reason, /no live sales or warehouse feed/);
+  assert.match(result.needsYou[0].reason, /not how fast they go/);
   assert.match(result.summary, /1 item needs your decision/);
   env.db.close();
 });

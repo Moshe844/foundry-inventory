@@ -2,18 +2,19 @@
   <div class="titles">
     <h1>What to order</h1>
     <div class="page-sub">
-      Foundry worked this out from what you have, what is already coming, and what you have been using.
-      Nothing is ordered until you approve it.
+      What you are running low on, based on what you have, what is already on its way, and how fast it
+      has been selling. Nothing is ordered until you say so.
     </div>
 
 <% if (setup && setup.lines && !setup.alreadySet) { %>
   <div class="card section card--warn">
     <div class="card-body">
-      <p class="lede">Purchasing is not set up for this inventory yet.</p>
+      <%# "Reorder points", "lines" and "enough history" all assume the reader
+          already runs a stockroom. Say what is missing and what it unlocks. %>
+      <p class="lede">Foundry does not know who you buy from yet.</p>
       <p class="muted">
-        Foundry can work the reorder points out from what has actually sold — <%= setup.canPropose %>
-        of <%= setup.lines %> lines have enough history today — and attach a supplier to a whole range
-        at once. Until then this screen has nothing to go on.
+        Once it knows your supplier and how long they take to deliver, it can tell you what to order
+        and write the order for you to check. It takes a minute and you only do it once.
       </p>
       <div class="btn-row"><a class="btn btn--primary" href="/purchasing/setup">Set up purchasing</a></div>
     </div>
@@ -78,9 +79,9 @@
   <div class="card section <%= stuck ? 'card--warn' : '' %>">
     <div class="card-head">
       <h2><%= stuck
-        ? (short.length === 1 ? 'One line needs ordering, and Foundry cannot do it' : short.length + ' lines need ordering, and Foundry cannot do them')
+        ? (short.length === 1 ? 'One product needs ordering, and Foundry cannot do it for you' : short.length + ' products need ordering, and Foundry cannot do them for you')
         : (plan.covered.length && unknown.length
-            ? (plan.covered.length === 1 ? 'One line is covered. The rest Foundry cannot judge yet' : plan.covered.length + ' lines are covered. The rest Foundry cannot judge yet')
+            ? (plan.covered.length === 1 ? 'One product is fine. Foundry cannot judge the rest yet' : plan.covered.length + ' products are fine. Foundry cannot judge the rest yet')
             : unknown.length ? 'Foundry cannot tell yet' : 'Nothing needs ordering') %></h2>
       <span class="spacer"></span>
       <span class="badge badge--<%= stuck ? 'danger' : unknown.length ? 'muted' : 'ok' %>"><%= stuck ? 'Needs you' : unknown.length ? 'Not enough history' : 'All covered' %></span>
@@ -110,16 +111,16 @@
           <% if (plan.covered.length) { %>
             <p class="lede">
               Foundry checked
-              <%= plan.covered.length === 1 ? 'one line' : plan.covered.length + ' lines' %>
-              against usage and what is already on order, and
-              <%= plan.covered.length === 1 ? 'it does' : 'they do' %> not need ordering yet.
+              <%= plan.covered.length === 1 ? 'one product' : plan.covered.length + ' products' %>
+              against how fast <%= plan.covered.length === 1 ? 'it sells' : 'they sell' %> and what is
+              already on the way — <%= plan.covered.length === 1 ? 'it is' : 'they are' %> fine for now.
             </p>
           <% } %>
           <p class="lede">
-            It has no outbound history for
-            <%= unknown.length === 1 ? 'the other line' : 'the other ' + unknown.length + ' lines' %> yet, so it
-            cannot say whether they need ordering. It will not guess a demand figure. Record sales or
-            usage — or set a reorder point yourself — and it can start.
+            It has not seen
+            <%= unknown.length === 1 ? 'the other one' : 'the other ' + unknown.length %> selling yet, so it
+            cannot say whether <%= unknown.length === 1 ? 'it needs' : 'they need' %> ordering — and it will
+            not guess. Record a sale, or tell it the level to reorder at, and it can start.
           </p>
         <% } else { %>
           <p class="lede">
