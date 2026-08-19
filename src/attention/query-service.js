@@ -163,13 +163,36 @@ const PURCHASING_EXECUTORS = {
 
     if (rows.length === 0) {
       const covered = result.covered.length;
-      const blocked = result.blocked.length;
+      const stuck = result.blocked;
+
+      // A line below its reorder point that Foundry cannot act on still needs
+      // ordering. Answering "nothing needs ordering" and appending a bare count
+      // of what "cannot be assessed" is the opposite of what was asked, and it
+      // hides the only line the question was about.
+      if (stuck.length) {
+        return {
+          rows: stuck.slice(0, plan.limit).map((line) => ({
+            label: line.displayName,
+            onHand: line.onHand,
+            onOrder: line.onOrder,
+            recommended: null,
+            why: line.headline,
+          })),
+          columns: ['label', 'onHand', 'onOrder', 'recommended', 'why'],
+          answer:
+            `${stuck.length} line(s) need ordering, but Foundry cannot prepare an order for ` +
+            `${stuck.length === 1 ? 'it' : 'them'} yet. ${stuck[0].displayName}: ${stuck[0].headline}.` +
+            (stuck.some((line) => line.reason === 'no_supplier')
+              ? ' Add a supplier for the product and Foundry can prepare the order.'
+              : ''),
+        };
+      }
+
       return {
         rows: [],
         answer:
-          covered || blocked
-            ? `Nothing needs ordering right now. ${covered} line(s) are above their reorder point or already covered by stock on order` +
-              (blocked ? `, and ${blocked} cannot be assessed yet.` : '.')
+          covered
+            ? `Nothing needs ordering right now. ${covered} line(s) are above their reorder point or already covered by stock on order.`
             : 'Nothing needs ordering right now.',
       };
     }

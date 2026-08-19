@@ -60,18 +60,45 @@
   </div>
 <% } %>
 
+<%
+  // Something below its reorder point that Foundry cannot act on is still
+  // something below its reorder point. Heading the page "Nothing needs
+  // ordering / All covered" over the top of it is false, and it buries the one
+  // line the customer came here to find.
+  var stuck = plan.blocked.length > 0;
+%>
 <% if (plan.recommendations.length === 0) { %>
-  <div class="card section">
+  <div class="card section <%= stuck ? 'card--warn' : '' %>">
     <div class="card-head">
-      <h2>Nothing needs ordering</h2>
+      <h2><%= stuck
+        ? (plan.blocked.length === 1 ? 'One line needs ordering, and Foundry cannot do it' : plan.blocked.length + ' lines need ordering, and Foundry cannot do them')
+        : 'Nothing needs ordering' %></h2>
       <span class="spacer"></span>
-      <span class="badge badge--ok">All covered</span>
+      <span class="badge badge--<%= stuck ? 'danger' : 'ok' %>"><%= stuck ? 'Needs you' : 'All covered' %></span>
     </div>
     <div class="card-body">
-      <p class="lede">
-        Foundry checked every line against its usage and what is already on order, and none of them
-        are below their reorder point.
-      </p>
+      <% if (stuck) { %>
+        <p class="lede">
+          Foundry worked out what these need, but something is missing before it can prepare an order.
+          Nothing has been ordered.
+        </p>
+        <ul class="plain-list">
+          <% plan.blocked.forEach(function (line) { %>
+            <li>
+              <a href="/purchasing/why/<%= line.skuId %>"><strong><%= line.displayName %></strong></a>
+              — <%= line.headline %>
+              <% if (line.reason === 'no_supplier') { %>
+                <div class="muted">Add a supplier for this product and Foundry can prepare the order.</div>
+              <% } %>
+            </li>
+          <% }) %>
+        </ul>
+      <% } else { %>
+        <p class="lede">
+          Foundry checked every line against its usage and what is already on order, and none of them
+          are below their reorder point.
+        </p>
+      <% } %>
       <% if (plan.covered.length) { %>
         <table class="table table--tight">
           <thead><tr><th>Product</th><th class="num">On hand</th><th class="num">On order</th><th>Why not</th></tr></thead>
@@ -87,7 +114,7 @@
           </tbody>
         </table>
       <% } %>
-      <% if (plan.blocked.length) { %>
+      <% if (plan.blocked.length && !stuck) { %>
         <h3 class="sub-head">Foundry cannot assess these yet</h3>
         <ul class="plain-list">
           <% plan.blocked.slice(0, 8).forEach(function (line) { %>

@@ -19,6 +19,8 @@ const assert = require('node:assert/strict');
 const suppliers = require('../../src/purchasing/supplier-service');
 const policies = require('../../src/purchasing/policy-service');
 const replenishment = require('../../src/purchasing/replenishment');
+const queryService = require('../../src/attention/query-service');
+const policyService = require('../../src/purchasing/policy-service');
 const position = require('../../src/purchasing/position');
 const poService = require('../../src/purchasing/po-service');
 const receiving = require('../../src/purchasing/receiving-service');
@@ -1065,4 +1067,52 @@ test('setting purchasing up cannot be done by someone without the permission', (
     () => setupService.linkSupplierToMany(env.db, env.ctx, staff, { supplierId: 'x', skuIds: [item.skuId] }),
     /permission/
   );
+});
+
+// --- a line Foundry cannot act on still needs ordering -----------------------
+//
+// Reported from the console: a SKU set to reorder at 20, sold down to 15, with
+// no supplier attached. Foundry worked out it was 85 short and then answered
+// "nothing needs ordering right now", with the real finding reduced to a count
+// of things that "cannot be assessed".
+
+test('a shortfall with no supplier is reported as needing ordering, not as nothing', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  const item = makeQuantityItem(db, workspace.ctx, { name: 'Test Shirt Blue M' });
+
+  engine.receive(db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 50 });
+  policyService.setPolicy(db, workspace.ctx, membership, item.skuId, { reorderPoint: 20, targetStock: 100 });
+  engine.issue(db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 35, reasonCode: 'sold' });
+
+  const plan = replenishment.evaluateWorkspace(db, workspace.workspaceId, {});
+
+  // The arithmetic was never the problem.
+  assert.equal(plan.recommendations.length, 0, 'it cannot recommend without a supplier');
+  assert.equal(plan.blocked.length, 1);
+  assert.equal(plan.blocked[0].reason, 'no_supplier');
+  assert.match(plan.blocked[0].headline, /85 short/);
+
+  // What Foundry says about it is.
+  const answer = queryService.execute(db, workspace.workspaceId, { intent: 'replenishment' });
+  assert.doesNotMatch(answer.answer, /^Nothing needs ordering/, 'something is 85 short');
+  assert.match(answer.answer, /need ordering/);
+  assert.match(answer.answer, /Test Shirt Blue M/);
+  assert.match(answer.answer, /85 short/);
+  assert.match(answer.answer, /Add a supplier/);
+  assert.equal(answer.rows.length, 1, 'and it is listed, not just counted');
+});
+
+test('with nothing short at all, it still says so plainly', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  const item = makeQuantityItem(db, workspace.ctx, { name: 'Test Shirt Blue M' });
+
+  engine.receive(db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 50 });
+  policyService.setPolicy(db, workspace.ctx, membership, item.skuId, { reorderPoint: 20, targetStock: 100 });
+
+  const answer = queryService.execute(db, workspace.workspaceId, { intent: 'replenishment' });
+  assert.match(answer.answer, /Nothing needs ordering/);
 });
