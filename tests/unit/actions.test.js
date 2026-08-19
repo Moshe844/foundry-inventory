@@ -1337,3 +1337,47 @@ test('a single letter does not claim a longer colour', () => {
   assert.ok(found.ok, found.message);
   assert.match(found.value.variant_label, /Silver/);
 });
+
+// --- questions an inventory has already answered -----------------------------
+//
+// The same fault kept surfacing from different directions: Foundry asking
+// something its own records settle, then failing over the unanswered question.
+// Three instances were fixed one at a time; this is the general case.
+
+test('with one location, "receive 20" does not ask which location', () => {
+  const env = clothing();
+  env.db
+    .prepare('UPDATE locations SET is_active = 0 WHERE workspace_id = ? AND id != ?')
+    .run(env.workspace.workspaceId, env.workspace.main.id);
+
+  const built = proposals.build(env.db, env.ctx, intent({
+    actionType: 'receive', sourceLocation: '', destinationLocation: '', quantity: 20,
+  }));
+
+  assert.ok(built.ok, built.question || built.unsupported);
+  assert.equal(built.proposal.destinationLocationId, env.workspace.main.id);
+});
+
+test('with two locations it still asks, because there is a choice to make', () => {
+  const env = clothing();
+
+  const built = proposals.build(env.db, env.ctx, intent({
+    actionType: 'receive', sourceLocation: '', destinationLocation: '', quantity: 20,
+  }));
+
+  assert.equal(built.ok, false);
+  assert.match(built.question, /Which/i);
+});
+
+test('a transfer is still refused rather than silently sent to the only location', () => {
+  // The shortcut must not turn "move 5" into a move from a place to itself.
+  const env = clothing();
+  env.db
+    .prepare('UPDATE locations SET is_active = 0 WHERE workspace_id = ? AND id != ?')
+    .run(env.workspace.workspaceId, env.workspace.main.id);
+
+  const built = proposals.build(env.db, env.ctx, intent({ destinationLocation: '' }));
+
+  assert.equal(built.ok, false);
+  assert.match(built.unsupported, /only location in this inventory/);
+});

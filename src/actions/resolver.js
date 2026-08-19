@@ -14,6 +14,7 @@
  */
 
 const { searchTerms } = require('../attention/query-service');
+const repo = require('../domain/repository');
 
 const like = (text) => `%${String(text).replace(/[%_]/g, (c) => `\\${c}`)}%`;
 
@@ -105,7 +106,16 @@ function ambiguous(message, candidates) {
 /** Locations, by name. */
 function resolveLocation(db, workspaceId, text, { role = 'location' } = {}) {
   const query = String(text || '').trim();
-  if (!query) return none(`Which ${role}?`);
+  if (!query) {
+    // Nothing named. An inventory with one location has already answered
+    // "which location?", and asking anyway is how a perfectly clear
+    // instruction — "receive 20" in a business with a single warehouse —
+    // becomes a question with one possible answer. Transfers never reach this
+    // shortcut: they are refused earlier for having nowhere to move to.
+    const places = repo.listLocations(db, workspaceId);
+    if (places.length === 1) return found(places[0]);
+    return none(`Which ${role}?`);
+  }
 
   const exact = db
     .prepare(
