@@ -176,7 +176,11 @@ function proposePolicy(db, workspaceId, skuId, options = {}) {
       skuId,
       displayName: sku.displayName,
       canPropose: false,
-      because: `Only ${sku.measured.issuedInWindow} issued in the last ${sku.measured.windowDays} days — not enough to derive a policy from.`,
+      // Repeated once per product down a whole table, so it has to read as a
+      // fact about that product rather than a sentence about Foundry's method.
+      because: sku.measured.issuedInWindow === 0
+        ? `None sold in the last ${sku.measured.windowDays} days`
+        : `${sku.measured.issuedInWindow} sold in the last ${sku.measured.windowDays} days — too few to judge by`,
     };
   }
 

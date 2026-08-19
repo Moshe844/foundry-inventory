@@ -86,6 +86,14 @@
       <button class="btn" type="button" data-modal-open="modal-transfer" <%= locations.length < 2 ? 'disabled title="Add a second location to transfer stock"' : '' %>><%- helpers.icon('transfer', { size: 16 }) %> Transfer</button>
       <button class="btn" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 16 }) %> Adjust</button>
     </div>
+    <%# A greyed-out button explains itself in a tooltip, which nobody hovers and
+        no phone has. Say it on the page. %>
+    <% if (locations.length < 2) { %>
+      <p class="muted" style="flex-basis:100%;font-size:12.5px;margin-top:6px;">
+        Transfer is off because you only have one location — there is nowhere to move stock to.
+        <a href="/locations">Add another</a> and it turns on.
+      </p>
+    <% } %>
   <% } %>
 </div>
 
@@ -289,13 +297,13 @@
               <span class="item-reorder__policy"><small>Reorder at</small><strong><%= line.policy.reorderPoint === null ? '—' : line.policy.reorderPoint %></strong></span>
               <span class="item-reorder__policy"><small>Order up to</small><strong><%= line.policy.targetStock === null ? '—' : line.policy.targetStock %></strong></span>
             <% } else { %>
-              <span class="badge badge--warn">Not configured</span>
+              <span class="badge badge--muted">No reorder level set</span>
             <% } %>
             <span class="item-reorder__go">Configure <%- helpers.icon('chevron', { size: 14 }) %></span>
           </a>
         <% }) %>
       </div>
-      <div class="card-foot">Foundry watches each variant separately and will never invent a reorder point without usage history or a setting you approved.</div>
+      <div class="card-foot">Each size is counted on its own. Foundry will not pick a reorder level for you until it has seen one sell — or you set it yourself.</div>
     </div>
 
     <div class="card">

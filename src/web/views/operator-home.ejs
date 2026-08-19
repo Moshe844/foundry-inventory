@@ -102,6 +102,27 @@
   // it, and the detail folded away for anyone who wants it.
   var noHistory = home.readiness.usageReady === 0 && home.readiness.skuCount > 0;
 %>
+<details class="capability-guide" id="foundry-capabilities">
+  <summary><%- helpers.icon('question', { size: 18 }) %> What can Foundry do? <span>A practical guide to what exists today</span></summary>
+  <div class="capability-guide__body">
+    <p class="capability-guide__intro">Not sure where to start? Type what happened into <strong>Tell Foundry</strong> below — a delivery, a sale, a count — and it works out the rest. The screens on the left are there when you would rather do it by hand.</p>
+    <div class="capability-grid">
+      <div class="capability-card"><h3>Inventory</h3><p>Receive stock, record usage, move inventory between locations, correct counts through controlled adjustments, locate items and explain recorded balances.</p></div>
+      <div class="capability-card"><h3>Purchasing</h3><p>Review replenishment evidence, work with suppliers and purchase orders, and receive inventory against orders.</p></div>
+      <div class="capability-card"><h3>Questions</h3><p>Ask what needs attention, what changed, why a recorded event happened, where inventory is, and what Foundry has done.</p></div>
+      <div class="capability-card"><h3>Files</h3><p>Attach supported spreadsheets and operational documents. Imports show you what will be created before anything becomes inventory truth.</p></div>
+      <div class="capability-card"><h3>Exceptions</h3><p>Foundry surfaces missing evidence, discrepancies, physical events needing context, and work outside its approved authority in Needs you.</p></div>
+      <div class="capability-card"><h3>Management</h3><p>Inspect activity, configure authority and preferences, pause or resume Foundry, and review the evidence behind its work.</p></div>
+    </div>
+    <div class="authority-legend" aria-label="Foundry authority levels">
+      <div><strong>Foundry knows</strong><span>A claim supported by recorded evidence.</span></div>
+      <div><strong>Foundry recommends</strong><span>Analysis suggests an action, but nothing has happened yet.</span></div>
+      <div><strong>Foundry can do</strong><span>A controlled engine action exists and can be proposed/executed safely.</span></div>
+      <div><strong>Foundry may do automatically</strong><span>You explicitly approved a bounded policy and enabled autonomy.</span></div>
+    </div>
+  </div>
+</details>
+
 <% if (home.readiness.notes.length) { %>
 <section class="operator-readiness" aria-labelledby="readiness-title">
   <div>
@@ -230,26 +251,6 @@
 </section>
 <% } %>
 
-<details class="capability-guide" id="foundry-capabilities">
-  <summary><%- helpers.icon('question', { size: 18 }) %> What can Foundry do? <span>A practical guide to what exists today</span></summary>
-  <div class="capability-guide__body">
-    <p class="capability-guide__intro">You do not need to learn Foundry's internal architecture. Start with Tell Foundry for ordinary work; use the record screens when you want precise manual control or inspection.</p>
-    <div class="capability-grid">
-      <div class="capability-card"><h3>Inventory</h3><p>Receive stock, record usage, move inventory between locations, correct counts through controlled adjustments, locate items and explain recorded balances.</p></div>
-      <div class="capability-card"><h3>Purchasing</h3><p>Review replenishment evidence, work with suppliers and purchase orders, and receive inventory against orders.</p></div>
-      <div class="capability-card"><h3>Questions</h3><p>Ask what needs attention, what changed, why a recorded event happened, where inventory is, and what Foundry has done.</p></div>
-      <div class="capability-card"><h3>Files</h3><p>Attach supported spreadsheets and operational documents. Imports show you what will be created before anything becomes inventory truth.</p></div>
-      <div class="capability-card"><h3>Exceptions</h3><p>Foundry surfaces missing evidence, discrepancies, physical events needing context, and work outside its approved authority in Needs you.</p></div>
-      <div class="capability-card"><h3>Management</h3><p>Inspect activity, configure authority and preferences, pause or resume Foundry, and review the evidence behind its work.</p></div>
-    </div>
-    <div class="authority-legend" aria-label="Foundry authority levels">
-      <div><strong>Foundry knows</strong><span>A claim supported by recorded evidence.</span></div>
-      <div><strong>Foundry recommends</strong><span>Analysis suggests an action, but nothing has happened yet.</span></div>
-      <div><strong>Foundry can do</strong><span>A controlled engine action exists and can be proposed/executed safely.</span></div>
-      <div><strong>Foundry may do automatically</strong><span>You explicitly approved a bounded policy and enabled autonomy.</span></div>
-    </div>
-  </div>
-</details>
 
 <div class="operator-proof">
   <span>Foundry checked <strong><%= home.did.counts.positionsWatched %></strong> stock position<%= home.did.counts.positionsWatched === 1 ? '' : 's' %></span>

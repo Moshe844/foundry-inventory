@@ -2,19 +2,22 @@
   <div class="titles">
     <h1>Set up purchasing</h1>
     <div class="page-sub">
-      Foundry works the reorder points out from what has actually sold. Nothing is set until you say so.
+      Tell Foundry who you buy from, and it can work out what to order and draft the order for you.
+      Nothing is set until you say so.
     </div>
   </div>
 </div>
 
 <div class="card section">
-  <div class="card-head"><h2>Where this inventory stands</h2></div>
+  <div class="card-head"><h2>Where you are</h2></div>
   <div class="card-body">
     <div class="act-ledger">
-      <div class="act-row"><span class="act-place">Lines Foundry can work out a reorder point for</span><span class="act-move"><span class="num"><%= assessment.summary.canPropose %></span></span></div>
-      <div class="act-row"><span class="act-place">Lines with too little history yet</span><span class="act-move"><span class="num"><%= assessment.summary.needHistory %></span></span></div>
-      <div class="act-row"><span class="act-place">Already configured</span><span class="act-move"><span class="num"><%= assessment.summary.alreadySet %></span></span></div>
-      <div class="act-row"><span class="act-place">Lines with no supplier</span><span class="act-move"><span class="num"><%= assessment.summary.withoutSupplier %></span></span></div>
+      <%# Four counters headed "Lines ..." told a first-time reader nothing they
+          could act on. Same numbers, said as facts about their products. %>
+      <div class="act-row"><span class="act-place">Products Foundry could suggest a reorder level for</span><span class="act-move"><span class="num"><%= assessment.summary.canPropose %></span></span></div>
+      <div class="act-row"><span class="act-place">Products it has not seen sell yet</span><span class="act-move"><span class="num"><%= assessment.summary.needHistory %></span></span></div>
+      <div class="act-row"><span class="act-place">Products already set up</span><span class="act-move"><span class="num"><%= assessment.summary.alreadySet %></span></span></div>
+      <div class="act-row"><span class="act-place">Products with nobody to buy them from</span><span class="act-move"><span class="num"><%= assessment.summary.withoutSupplier %></span></span></div>
     </div>
     <% if (!assessment.summary.lines) { %>
       <p class="lede">There are no products here yet. Add them, or bring your data in, and Foundry can set purchasing up from what sells.</p>
@@ -136,14 +139,15 @@
 
 <% if (assessment.blocked.length) { %>
   <div class="card section">
-    <div class="card-head"><h2>Not enough history yet</h2></div>
+    <div class="card-head"><h2>Waiting to see these sell</h2></div>
     <div class="card-body">
       <p class="lede">
-        Foundry will not invent a reorder point from an opening balance — that becomes a purchase order for
-        stock nobody needs. These lines start working as soon as they have sold a few times.
+        Foundry could guess a reorder level from what is on the shelf today, but a guess turns into a real
+        order for stock nobody asked for. So it waits. Each of these starts working on its own once it has
+        sold a few times — you do not have to come back and do anything.
       </p>
       <table class="table table--tight">
-        <thead><tr><th>Product</th><th class="num">On hand</th><th>Why not yet</th></tr></thead>
+        <thead><tr><th>Product</th><th class="num">On hand</th><th>Sold recently</th></tr></thead>
         <tbody>
           <% assessment.blocked.forEach(function (line) { %>
             <tr>

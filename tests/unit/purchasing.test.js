@@ -1010,7 +1010,8 @@ test('Foundry proposes reorder points only where the history supports one', () =
   // The one that never sold gets nothing invented for it, and says why.
   assert.equal(assessment.summary.needHistory, 1);
   assert.equal(assessment.blocked[0].displayName, 'Never Sold');
-  assert.match(assessment.blocked[0].because, /not enough/i);
+  // Said as a fact about the product rather than about Foundry’s method.
+  assert.match(assessment.blocked[0].because, /sold in the last/i);
 });
 
 test('accepting the proposals writes them, marked as derived', () => {
