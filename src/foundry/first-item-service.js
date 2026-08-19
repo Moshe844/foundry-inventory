@@ -34,38 +34,39 @@ const MAX_NAME = 80;
  * Trims a described product to something usable as a name.
  *
  * What comes back is rarely the bare product. Asked about baby headbands in
- * three sizes and five colours, the model answers with worked examples —
- * "Baby headband - White, 0-6 months" — because that is a better illustration
- * of the inventory than the noun on its own.
+ * three sizes and five colours, the model answers with a worked example —
+ * "Baby headband - White, 0-6 months" — because that illustrates the inventory
+ * better than the noun alone.
  *
- * So the option values are subtracted using the axes actually configured for
- * this workspace, which leaves the product. Guessing at the punctuation instead
- * would produce an item called "Baby headband - White, 0-6 month", and a
- * customer would rightly conclude Foundry had not understood a word.
+ * The example is read as a list, not as prose: it is cut at the first piece
+ * that is one of this workspace's own option values, and everything before it
+ * is the product. Subtracting the values instead was the obvious approach and
+ * it was wrong — sizes are routinely single letters, so striking out "S", "M"
+ * and "L" turned "Children's t-shirt" into "Chi dren' t hirt", the product name
+ * destroyed by the very options describing it.
+ *
+ * Splitting only on separators that carry a space ("- ", ", ") keeps hyphenated
+ * words whole, so "T-shirt" and "0-6 months" survive intact.
  */
 function tidyName(raw, optionValues = []) {
-  let text = String(raw || '').replace(/\([^)]*\)/g, ' ');
+  const values = new Set([...optionValues].filter(Boolean).map((v) => String(v).trim().toLowerCase()));
+  const cleaned = String(raw || '').replace(/\([^)]*\)/g, ' ').trim();
+  if (!cleaned) return null;
 
-  // Longest first, so "12-24 months" is removed before "12-24" could be.
-  for (const value of [...optionValues].filter(Boolean).sort((a, b) => b.length - a.length)) {
-    text = text.replace(new RegExp(escapeRegExp(value), 'gi'), ' ');
+  const parts = cleaned.split(/\s*[,–—]\s+|\s+-\s+/);
+  const kept = [];
+  for (const part of parts) {
+    if (values.has(part.trim().toLowerCase())) break;
+    kept.push(part.trim());
   }
 
-  text = text
-    // Whatever separators the values were strung together with.
-    .replace(/[\s]*[-–—,/|]+[\s]*/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const text = (kept.join(', ') || parts[0] || cleaned).replace(/\s+/g, ' ').trim();
   if (!text) return null;
 
-  // "Baby headbands" reads better as the singular on a product record, but only
-  // for the obvious plural: "boxes" and "batches" are left alone rather than
-  // mangled by a rule that cannot tell them apart.
-  const singular = /[a-z]{3,}s$/i.test(text) && !/(ss|us|is|ches|shes|xes|zes)$/i.test(text)
-    ? text.slice(0, -1)
-    : text;
-
-  return singular.slice(0, MAX_NAME).replace(/^./, (c) => c.toUpperCase());
+  // Left in the customer's own words. Singularising looks tidy until it meets
+  // tights, scissors or trousers, and a product name they can edit in one click
+  // is not worth being wrong about.
+  return text.slice(0, MAX_NAME).replace(/^./, (c) => c.toUpperCase());
 }
 
 /** A code like KT-100 from "Kids Tights", or null if nothing sensible falls out. */

@@ -20,6 +20,8 @@ const attention = require('../../src/attention/attention-engine');
 const proposals = require('../../src/actions/proposal-service');
 const execution = require('../../src/actions/execution-service');
 const actionService = require('../../src/actions/action-service');
+const intentService = require('../../src/actions/intent-service');
+const resolver = require('../../src/actions/resolver');
 const presenter = require('../../src/actions/presenter');
 const permissions = require('../../src/actions/permissions');
 const policy = require('../../src/actions/policy');
@@ -1261,4 +1263,77 @@ test('with somewhere to move it to, it still asks which one', () => {
   assert.equal(built.ok, false);
   assert.ok(built.question, 'a destination genuinely needs choosing, so asking is right');
   assert.doesNotMatch(String(built.unsupported || ''), /only location/);
+});
+
+test('the instruction reader is told the catalogue, so it need not ask which product', () => {
+  // Walking a new account through setup: a workspace with exactly one product
+  // was asked "what product are the white small variants of?" — a question with
+  // one possible answer, which Foundry already had.
+  const env = clothing();
+  const context = actionService.instructionContext(env.db, env.workspace.workspaceId);
+
+  assert.ok(context.itemNames.length >= 1, 'the products travel with the instruction');
+  assert.equal(context.itemCount, context.itemNames.length);
+  assert.ok(context.locationNames.length >= 1, 'as the locations already did');
+
+  const prompt = intentService.intentPrompt('add 40 white small', context);
+  assert.match(prompt, /product/i, 'and the reader is actually told about them');
+});
+
+test('a single-product inventory tells the reader never to ask which product', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  makeQuantityItem(db, workspace.ctx, { name: 'Copper Elbow' });
+
+  const context = actionService.instructionContext(db, workspace.workspaceId);
+  assert.deepEqual(context.itemNames, ['Copper Elbow']);
+
+  const prompt = intentService.intentPrompt('receive 20 into Main Warehouse', context);
+  assert.match(prompt, /exactly one product: Copper Elbow/);
+  assert.match(prompt, /never ask which product/);
+});
+
+test('a size said in words finds the size stored as a letter', () => {
+  // "We have 40 white small" against a catalogue holding "S / White". Refusing
+  // that is indefensible; every clothing business says it the first way.
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const created = itemService.createItem(db, workspace.ctx, {
+    name: "Children's t-shirt",
+    baseCode: 'CT-100',
+    trackingMode: 'quantity',
+    hasVariants: true,
+    options: [{ name: 'Size', values: 'S, M, L' }, { name: 'Colour', values: 'White, Navy' }],
+  });
+
+  const small = resolver.resolveSku(db, workspace.workspaceId, "Children's t-shirt", 'white small');
+  assert.ok(small.ok, small.message);
+  assert.match(small.value.variant_label, /S \/ White/);
+
+  const large = resolver.resolveSku(db, workspace.workspaceId, "Children's t-shirt", 'navy large');
+  assert.ok(large.ok, large.message);
+  assert.match(large.value.variant_label, /L \/ Navy/);
+
+  // The abbreviation still works, and still means the same thing.
+  const abbreviated = resolver.resolveSku(db, workspace.workspaceId, "Children's t-shirt", 'S white');
+  assert.ok(abbreviated.ok, abbreviated.message);
+  assert.equal(abbreviated.value.id, small.value.id);
+  assert.ok(created.itemId);
+});
+
+test('a single letter does not claim a longer colour', () => {
+  // The mapping runs one way only. "S" must not resolve "Silver".
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  itemService.createItem(db, workspace.ctx, {
+    name: 'Travel Mug',
+    baseCode: 'TM-100',
+    trackingMode: 'quantity',
+    hasVariants: true,
+    options: [{ name: 'Colour', values: 'Silver, Black' }],
+  });
+
+  const found = resolver.resolveSku(db, workspace.workspaceId, 'Travel Mug', 'silver');
+  assert.ok(found.ok, found.message);
+  assert.match(found.value.variant_label, /Silver/);
 });

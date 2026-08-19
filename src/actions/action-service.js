@@ -29,8 +29,15 @@ function instructionContext(db, workspaceId) {
   const configuration = planApplier.getConfiguration(db, workspaceId);
   const terminology = (configuration && configuration.terminology) || {};
   const pending = proposals.listOpen(db, workspaceId, { limit: 3 });
+  const items = db
+    .prepare('SELECT name FROM items WHERE workspace_id = ? AND is_active = 1 ORDER BY name LIMIT 41')
+    .all(workspaceId)
+    .map((row) => row.name);
+
   return {
     locationNames: repo.listLocations(db, workspaceId).map((l) => l.name),
+    itemNames: items,
+    itemCount: db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ? AND is_active = 1').get(workspaceId).n,
     stockNoun: terminology.item || null,
     pendingAction: pending.length === 1 ? presenter.oneLine(db, workspaceId, pending[0]) : null,
     pendingCount: pending.length,

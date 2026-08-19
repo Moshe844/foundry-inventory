@@ -178,6 +178,16 @@ function intentPrompt(instruction, context) {
   if (context.locationNames && context.locationNames.length) {
     lines.push(`Their locations: ${context.locationNames.slice(0, 12).join(', ')}.`);
   }
+  if (context.itemNames && context.itemNames.length) {
+    // Without this the reader cannot tell a one-product inventory from a
+    // thousand-product one, so it asks "which product?" of a business that has
+    // exactly one. Foundry knows the answer; the reader should too.
+    lines.push(
+      context.itemNames.length === 1
+        ? `They have exactly one product: ${context.itemNames[0]}. Any variant they name belongs to it — never ask which product.`
+        : `Their products: ${context.itemNames.slice(0, 40).join(', ')}${context.itemCount > 40 ? `, and ${context.itemCount - 40} more` : ''}.`
+    );
+  }
   if (context.stockNoun) lines.push(`They call their stock "${context.stockNoun}".`);
   if (context.pendingAction) {
     lines.push(

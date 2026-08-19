@@ -263,3 +263,29 @@ test('the offer disappears once it has been taken', async () => {
   assert.doesNotMatch(after, /Shall I create it\?/);
   assert.match(after, /Add my first/, 'the ordinary route back is still there');
 });
+
+// --- names the options must not destroy --------------------------------------
+
+test('single-letter sizes do not eat the product name', () => {
+  // Found walking a new account through setup: a clothing business with sizes
+  // S, M and L was offered an item called "Chi dren' t hirt", because the option
+  // values were being struck out of the name as substrings.
+  const cases = [
+    ["Children's t-shirt", ['S', 'M', 'L', 'White', 'Navy'], "Children's t-shirt"],
+    ['T-shirt - S, Navy', ['S', 'M', 'L', 'White', 'Navy'], 'T-shirt'],
+    ['Small Parts Kit', ['S', 'M', 'L'], 'Small Parts Kit'],
+    ['Baby headband - White, 0-6 months', ['White', '0-6 months'], 'Baby headband'],
+    ['Kids Tights - Black, 5', ['Black', '5'], 'Kids Tights'],
+  ];
+
+  for (const [example, values, expected] of cases) {
+    assert.equal(firstItemService.tidyName(example, values), expected, `from ${example}`);
+  }
+});
+
+test('a plural product keeps the customer\u2019s own wording', () => {
+  // "Tights" is not "Tight". Guessing at grammar is not worth being wrong about
+  // when the field is editable anyway.
+  assert.equal(firstItemService.tidyName('Kids Tights', []), 'Kids Tights');
+  assert.equal(firstItemService.tidyName('Safety scissors', []), 'Safety scissors');
+});

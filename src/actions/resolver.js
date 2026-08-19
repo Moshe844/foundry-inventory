@@ -153,6 +153,22 @@ function resolveLocation(db, workspaceId, text, { role = 'location' } = {}) {
 }
 
 /**
+ * Sizes as people say them, against how catalogues store them.
+ *
+ * Small enough to read at a glance and stop there. This is not a general
+ * synonym engine: it exists because "small" and "S" are the same size in every
+ * clothing business, and refusing an instruction over that is indefensible.
+ */
+const SIZE_WORDS = {
+  small: 's',
+  medium: 'm',
+  large: 'l',
+  xsmall: 'xs',
+  xlarge: 'xl',
+  xxlarge: 'xxl',
+};
+
+/**
  * SKUs, by product wording plus optional variant wording.
  *
  * A quantity item has one SKU, so naming the product is enough. A variant item
@@ -214,6 +230,17 @@ function resolveSku(db, workspaceId, itemText, variantText) {
   const narrowBy = (candidates, wording) => {
     const terms = String(wording || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
     if (!terms.length) return candidates;
+
+    // Every option value across the whole range, gathered once. Deciding this
+    // per row lets a row that simply lacks the value discard the term and match
+    // on whatever is left — so asking for "S white" would return the medium and
+    // large whites as well, each having quietly ignored the size.
+    const vocabulary = new Set(
+      candidates.flatMap((row) =>
+        `${row.variant_label || ''} ${optionText(db, row.id)}`.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+      )
+    );
+
     return candidates.filter((row) => {
       const label = `${row.variant_label || ''} ${row.code || ''} ${optionText(db, row.id)}`.toLowerCase();
       const labelTokens = label.split(/[^a-z0-9]+/).filter(Boolean);
@@ -224,13 +251,25 @@ function resolveSku(db, workspaceId, itemText, variantText) {
       // — the split is a matter of taste and the product really is called Navy
       // Oxford, so requiring "navy" to appear in the size label would refuse a
       // perfectly clear instruction.
-      const meaningful = terms.filter((term) => !nameTokens.includes(term));
+      // ...unless it is genuinely one of this variant's option values. The
+      // product "Children's t-shirt" contains the token "s", which would
+      // otherwise discard the size S and match every white shirt in the range.
+      // What the catalogue calls an option beats what the name happens to spell.
+      const meaningful = terms.filter((term) => vocabulary.has(term) || !nameTokens.includes(term));
       if (!meaningful.length) return true;
 
       // A short token must match a whole token; a longer one may match inside.
-      return meaningful.every((term) =>
-        term.length <= 2 ? labelTokens.includes(term) : label.includes(term)
-      );
+      //
+      // A written-out size also matches its abbreviation. People say "white
+      // small"; catalogues store "S / White". Deliberately only the other way
+      // round — a spelt-out word standing in for a single letter — because the
+      // reverse would let "S" claim "Silver".
+      return meaningful.every((term) => {
+        if (term.length <= 2) return labelTokens.includes(term);
+        if (label.includes(term)) return true;
+        const abbreviation = SIZE_WORDS[term];
+        return Boolean(abbreviation) && labelTokens.includes(abbreviation);
+      });
     });
   };
 
