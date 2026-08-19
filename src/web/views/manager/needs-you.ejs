@@ -42,7 +42,9 @@
           <p><%= entry.because %></p>
           <div class="needs-input__safety">
             <%- helpers.icon('shield', { size: 16 }) %>
-            <span>Foundry will not guess demand or create a false low-stock alert. Record sales, usage, or stock leaving here and it can begin learning immediately.</span>
+            <span>Foundry cannot silently observe another system or invent demand, and it will not
+              raise a low-stock alert it cannot stand behind. Record sales, usage, or stock leaving
+              here and it can begin learning immediately.</span>
           </div>
         </div>
         <a class="btn btn--primary needs-input__action" href="/#tell-foundry">Report a sale or movement <%- helpers.icon('chevron', { size: 15 }) %></a>
