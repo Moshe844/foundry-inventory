@@ -1,5 +1,6 @@
 <%
-  var totalWaiting = operating.length + investigations.length + physical.length + waiting.length + findings.length;
+  var safeFindings = typeof findings === 'undefined' || !findings ? [] : findings;
+  var totalWaiting = operating.length + investigations.length + physical.length + waiting.length + safeFindings.length;
   var totalLabel = totalWaiting === 1 ? '1 thing needs you' : totalWaiting + ' things need you';
 %>
 
@@ -42,9 +43,9 @@
   </section>
 
   <section class="needs-section">
-    <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('alert', { size: 18 }) %></span><div><span class="needs-section__label">Foundry noticed something</span><h2>Worth a look</h2></div><span class="needs-count <%= findings.length ? 'has-work' : 'is-clear' %>"><%= findings.length ? findings.length + ' waiting' : 'Clear' %></span></div>
-    <% if (!findings.length) { %><div class="needs-empty"><span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span><div><strong>Nothing stands out</strong><p>Foundry has not found anything in your records worth raising.</p></div></div><% } %>
-    <% findings.forEach(function (entry) { %><a class="needs-row" href="<%= entry.link %>"><span class="needs-row__icon is-warn"><%- helpers.icon('alert', { size: 18 }) %></span><div><strong><%= entry.title %></strong><% if (entry.because) { %><p><%= entry.because %></p><% } %></div><%- helpers.icon('chevron', { size: 17 }) %></a><% }) %>
+    <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('alert', { size: 18 }) %></span><div><span class="needs-section__label">Foundry noticed something</span><h2>Worth a look</h2></div><span class="needs-count <%= safeFindings.length ? 'has-work' : 'is-clear' %>"><%= safeFindings.length ? safeFindings.length + ' waiting' : 'Clear' %></span></div>
+    <% if (!safeFindings.length) { %><div class="needs-empty"><span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span><div><strong>Nothing stands out</strong><p>Foundry has not found anything in your records worth raising.</p></div></div><% } %>
+    <% safeFindings.forEach(function (entry) { %><a class="needs-row" href="<%= entry.link %>"><span class="needs-row__icon is-warn"><%- helpers.icon('alert', { size: 18 }) %></span><div><strong><%= entry.title %></strong><% if (entry.because) { %><p><%= entry.because %></p><% } %></div><%- helpers.icon('chevron', { size: 17 }) %></a><% }) %>
   </section>
 
   <section class="needs-section">

@@ -127,29 +127,10 @@ function foundryContext(db) {
     // Deliberately defensive: this runs on every page, and a missing badge is a
     // cosmetic loss where a thrown error would be an outage of the whole app.
     try {
-      // Counted from the same sources the Needs you page lists, and never from
-      // "every open attention row": the badge said 3 while the page it links to
-      // said one thing needs you, because most findings are things Foundry is
-      // watching rather than decisions waiting on a person.
-      const investigations = require('../manager/investigations');
-      const workItems = require('../autopilot/work-items');
-      const autopilotPresenter = require('../autopilot/presenter');
-
-      const operating = require('../manager/readiness').decisions(db, req.ctx.workspaceId).length;
-      const openInvestigations = investigations.list(db, req.ctx.workspaceId, {
-        statuses: ['NEEDS_HUMAN', 'INCONCLUSIVE'],
-        limit: 100,
-      }).length;
-      const physical = db
-        .prepare(
-          `SELECT COUNT(*) AS n FROM physical_events
-            WHERE workspace_id = ? AND status = 'NEEDS_HUMAN' AND investigation_id IS NULL`
-        )
-        .get(req.ctx.workspaceId).n;
-      const waiting = workItems.awaitingApproval(db, req.ctx.workspaceId).length;
-      const findings = autopilotPresenter.whatNeedsYou(db, req.ctx.workspaceId).length;
-
-      res.locals.attentionCount = operating + openInvestigations + physical + waiting + findings;
+      res.locals.attentionCount = require('../attention/needs-you-count').countNeedsYou(
+        db,
+        req.ctx.workspaceId
+      );
     } catch {
       res.locals.attentionCount = 0;
     }

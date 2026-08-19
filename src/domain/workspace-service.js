@@ -14,7 +14,6 @@
 const { inTransaction } = require('../db');
 const authService = require('./auth-service');
 const entitlements = require('../entitlements/service');
-const managerReadiness = require('../manager/readiness');
 const { NotFoundError, AuthorizationError } = require('./errors');
 const { nowIso } = require('../lib/util');
 
@@ -49,13 +48,9 @@ function listForAccount(db, accountId) {
     // whole application down. A missing badge is a cosmetic loss.
     let attentionCount = 0;
     try {
-      const findings = db
-        .prepare(
-          `SELECT COUNT(*) AS n FROM attention_items
-            WHERE workspace_id = ? AND status IN ('OPEN', 'ACKNOWLEDGED')`
-        )
-        .get(row.id).n;
-      attentionCount = findings + managerReadiness.decisions(db, row.id).length;
+      // The same count the nav badge and the Needs you page use, so switching
+      // inventories cannot show a number the destination page disagrees with.
+      attentionCount = require('../attention/needs-you-count').countNeedsYou(db, row.id);
     } catch {
       attentionCount = 0;
     }
