@@ -190,7 +190,22 @@ function resolveSku(db, workspaceId, itemText, variantText) {
   // whole identifier. Searching on the variant wording when that is all there
   // is beats refusing to look, and the narrowing below still applies.
   const query = String(itemText || '').trim() || String(variantText || '').trim();
-  if (!query) return none('Which product?');
+  if (!query) {
+    // Nothing named at all. An inventory with a single product has already
+    // answered "which product?", exactly as a single location answers "which
+    // location?". A variant range is deliberately excluded: naming one of six
+    // t-shirts is a real choice, and picking the first row would be a guess
+    // dressed up as an answer.
+    const only = db
+      .prepare(
+        `SELECT s.*, i.name AS item_name, i.tracking_mode, i.unit_label, i.has_variants
+           FROM skus s JOIN items i ON i.id = s.item_id
+          WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1 LIMIT 2`
+      )
+      .all(workspaceId);
+    if (only.length === 1) return found(only[0]);
+    return none('Which product?');
+  }
 
   const columns = `(i.name LIKE ? ESCAPE '\\' OR i.base_code LIKE ? ESCAPE '\\'
                     OR s.code LIKE ? ESCAPE '\\' OR s.variant_label LIKE ? ESCAPE '\\')`;

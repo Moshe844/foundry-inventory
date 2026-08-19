@@ -229,7 +229,10 @@ test('a serialized unit moves as itself and ends up in exactly one place', () =>
   assert.ok(result.verification.checks.some((c) => c.label === 'DL-829193 location' && c.passed));
 });
 
-test('a quantity instruction is refused for serialized stock', () => {
+test('the only unit in stock is the unit meant', () => {
+  // Serialized stock cannot move by quantity alone — but with one unit on the
+  // shelf there is nothing to choose between, exactly as with a single batch.
+  // The assumption is recorded and the whole thing is previewed before approval.
   const env = setup();
   const item = makeSerialItem(env.db, env.ctx);
   engine.receive(env.db, env.ctx, {
@@ -239,8 +242,31 @@ test('a quantity instruction is refused for serialized stock', () => {
     item: 'Dell Latitude', variant: '', quantity: 1,
     sourceLocation: 'Main Warehouse', destinationLocation: 'Downtown Store',
   }));
+
+  assert.ok(built.ok, built.question || built.unsupported);
+  assert.deepEqual(built.proposal.serialUnitIds.length, 1);
+  assert.ok(built.proposal.assumptions.some((a) => /DL-1 is the only/.test(a)), 'and it says so');
+});
+
+test('with several units it asks which, and says what they are', () => {
+  // "Which serial numbers did you mean?" with no list is unanswerable without
+  // going to another screen to look them up.
+  const env = setup();
+  const item = makeSerialItem(env.db, env.ctx);
+  engine.receive(env.db, env.ctx, {
+    skuId: item.skuId,
+    locationId: env.workspace.main.id,
+    serials: [{ serial: 'DL-1' }, { serial: 'DL-2' }, { serial: 'DL-3' }],
+  });
+  const built = proposals.build(env.db, env.ctx, intent({
+    item: 'Dell Latitude', variant: '', quantity: 1,
+    sourceLocation: 'Main Warehouse', destinationLocation: 'Downtown Store',
+  }));
+
   assert.equal(built.ok, false);
   assert.match(built.question, /tracked by individual unit/);
+  assert.match(built.question, /DL-1/);
+  assert.match(built.question, /DL-3/, 'every option it could mean');
 });
 
 test('a named lot moves as that lot, not as generic stock', () => {
@@ -1380,4 +1406,39 @@ test('a transfer is still refused rather than silently sent to the only location
 
   assert.equal(built.ok, false);
   assert.match(built.unsupported, /only location in this inventory/);
+});
+
+test('with one product, "receive 20" does not ask which product', () => {
+  // The twin of the single-location case. A business with one thing on its
+  // shelves has already answered "which product?".
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  makeQuantityItem(db, workspace.ctx, { name: 'Only Thing' });
+
+  const found = resolver.resolveSku(db, workspace.workspaceId, '', '');
+  assert.ok(found.ok, found.message);
+  assert.equal(found.value.item_name, 'Only Thing');
+});
+
+test('one product in six versions is still a real question', () => {
+  // Naming one of six t-shirts is a choice, not an inference. Resolving to the
+  // first row would be a guess wearing the costume of an answer.
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  makeVariantItem(db, workspace.ctx);
+
+  const asked = resolver.resolveSku(db, workspace.workspaceId, '', '');
+  assert.equal(asked.ok, false);
+  assert.match(asked.message, /Which product/i);
+});
+
+test('two products are still a real question', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  makeQuantityItem(db, workspace.ctx, { name: 'First Thing' });
+  makeQuantityItem(db, workspace.ctx, { name: 'Second Thing' });
+
+  const asked = resolver.resolveSku(db, workspace.workspaceId, '', '');
+  assert.equal(asked.ok, false);
+  assert.match(asked.message, /Which product/i);
 });

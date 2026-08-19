@@ -271,12 +271,41 @@ function resolveSubject(db, workspaceId, intent, draft) {
   draft.itemId = sku.value.item_id;
   draft.subject = { kind: 'sku', sku: sku.value };
 
-  // A serialized product cannot be moved by quantity alone.
+  // A serialized product cannot be moved by quantity alone. Asking which units
+  // without naming any is the same bad question the location resolver refuses
+  // to ask below: one unit in stock is not a choice at all, and several is only
+  // answerable if Foundry says what they are.
   if (sku.value.tracking_mode === 'serial' && ['issue', 'transfer', 'adjust'].includes(draft.actionType)) {
-    return {
-      ok: false,
-      question: `${sku.value.item_name} is tracked by individual unit. Which serial numbers did you mean?`,
-    };
+    const units = db
+      .prepare(
+        `SELECT su.id, su.serial, l.name AS location_name
+           FROM serial_units su LEFT JOIN locations l ON l.id = su.location_id
+          WHERE su.workspace_id = ? AND su.sku_id = ? AND su.status = 'in_stock'
+          ORDER BY su.serial LIMIT 9`
+      )
+      .all(workspaceId, draft.skuId);
+
+    if (units.length === 0) {
+      return {
+        ok: false,
+        question: null,
+        unsupported: `${sku.value.item_name} has no units in stock, so there is nothing to ${draft.actionType}.`,
+      };
+    }
+    if (units.length === 1) {
+      draft.serialUnitIds = [units[0].id];
+      draft.assumptions.push(
+        `${units[0].serial} is the only ${sku.value.item_name} in stock, so that is the one.`
+      );
+    } else {
+      const listed = units.slice(0, 8).map((u) => u.serial).join(', ');
+      return {
+        ok: false,
+        question:
+          `${sku.value.item_name} is tracked by individual unit. Which one? ` +
+          `${listed}${units.length > 8 ? ', and others' : ''}.`,
+      };
+    }
   }
   return { ok: true };
 }
