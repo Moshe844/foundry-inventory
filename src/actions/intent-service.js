@@ -42,7 +42,21 @@ const ACTION_TYPES = [
   'unsupported',
 ];
 
-const MAX_LINES = 6;
+/**
+ * How many operations Foundry will read out of one instruction.
+ *
+ * Six was far too few for the thing people actually type first: opening stock
+ * for a product with variants, across more than one location. "Main Warehouse
+ * has 50 Black Small, 40 Black Medium... Downtown Store has 10 Black Small..."
+ * is twelve corrections, and the cap silently kept the first six — an approval
+ * screen that looked complete while half the sentence had been thrown away.
+ *
+ * Two colours by three sizes across two locations is twelve; three by five is
+ * thirty. The bound exists to keep one request from becoming unbounded work,
+ * not to decide what a real instruction looks like, and going past it is now
+ * reported rather than trimmed.
+ */
+const MAX_LINES = 40;
 
 /**
  * One requested operation. An instruction naming several products becomes
@@ -236,11 +250,27 @@ function normaliseLine(raw) {
   };
 }
 
-/** Normalises the wire shape into what the proposal builder expects. */
+/**
+ * Normalises the wire shape into what the proposal builder expects.
+ *
+ * Over the limit is refused, not trimmed. Quietly dropping the tail is the one
+ * outcome nobody can catch: the lines that survive are all individually
+ * correct, so the preview reads as a complete and accurate plan.
+ */
 function normalise(raw) {
-  const lines = Array.isArray(raw.lines) ? raw.lines.slice(0, MAX_LINES).map(normaliseLine) : [];
+  const raws = Array.isArray(raw.lines) ? raw.lines : [];
+  if (raws.length > MAX_LINES) {
+    return {
+      lines: [],
+      clarifyingQuestion: '',
+      unsupportedReason:
+        `That asks for ${raws.length} separate changes and Foundry reads up to ${MAX_LINES} at once. `
+        + 'It will not carry out part of an instruction, so send it in smaller pieces — '
+        + 'one location at a time works well — or bring the quantities in as a file.',
+    };
+  }
   return {
-    lines,
+    lines: raws.map(normaliseLine),
     clarifyingQuestion: String(raw.clarifyingQuestion || '').trim(),
     unsupportedReason: String(raw.unsupportedReason || '').trim(),
   };

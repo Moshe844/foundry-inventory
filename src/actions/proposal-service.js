@@ -952,8 +952,22 @@ function revalidate(db, ctx, proposal, options = {}) {
     }
   }
 
+  // A plan's own earlier lines are not somebody else moving the stock.
+  //
+  // expectedBeforeState carries `total`, which for a product without lots is
+  // the total across every location. Twelve opening counts for one product at
+  // two locations therefore invalidated themselves: line 1 set Main Warehouse
+  // to 50, which moved the product's total, and line 7 — a different location
+  // entirely — was then judged stale against the snapshot it was built from.
+  // The whole plan rolled back with "the stock changed since this was worked
+  // out", which was true only of the plan itself.
+  //
+  // Outside interference still counts: only the exact amounts this plan has
+  // already applied are forgiven, so a real change underneath it is caught.
+  const expectedBefore = rebaseForPlan(proposal, options.appliedByPlan);
+
   const drift = policy.materiallyChanged(
-    { ...proposal, expectedBeforeState: proposal.expectedBeforeState },
+    { ...proposal, expectedBeforeState: expectedBefore },
     { ...proposal, expectedBeforeState: current }
   );
 
@@ -964,6 +978,32 @@ function revalidate(db, ctx, proposal, options = {}) {
     changedField: drift.field,
     current,
   };
+}
+
+/** Keys the running effect of a plan by what it actually moves. */
+function planKeys(proposal) {
+  const subject = proposal.lotId || proposal.skuId;
+  return {
+    total: subject,
+    source: proposal.sourceLocationId ? `${subject}@${proposal.sourceLocationId}` : null,
+    destination: proposal.destinationLocationId ? `${subject}@${proposal.destinationLocationId}` : null,
+  };
+}
+
+/** The starting position this line should now expect, given what its plan already did. */
+function rebaseForPlan(proposal, applied) {
+  const before = proposal.expectedBeforeState || {};
+  if (!applied) return before;
+  const keys = planKeys(proposal);
+  const shifted = { ...before };
+  const move = (value, delta) => (typeof value === 'number' ? value + delta : value);
+
+  shifted.total = move(shifted.total, applied.totals.get(keys.total) || 0);
+  if (keys.source) shifted.sourceOnHand = move(shifted.sourceOnHand, applied.positions.get(keys.source) || 0);
+  if (keys.destination) {
+    shifted.destinationOnHand = move(shifted.destinationOnHand, applied.positions.get(keys.destination) || 0);
+  }
+  return shifted;
 }
 
 function currentState(db, workspaceId, proposal) {
@@ -1050,6 +1090,7 @@ module.exports = {
   record,
   revalidate,
   currentState,
+  planKeys,
   setStatus,
   cancel,
   expired,

@@ -1442,3 +1442,173 @@ test('two products are still a real question', () => {
   assert.equal(asked.ok, false);
   assert.match(asked.message, /Which product/i);
 });
+
+// --- a whole instruction, or an honest account of what is missing -----------
+
+/**
+ * The reported failure: an opening-stock instruction covering two locations
+ * arrived as twelve corrections and was approved as six. The screen looked
+ * entirely valid, and the Downtown Store half of the sentence was gone.
+ */
+function apparel() {
+  const base = setup({ workspaceName: 'Apparel Business' });
+  const item = makeVariantItem(base.db, base.ctx, {
+    name: 'Cotton Tee',
+    options: [
+      { name: 'Colour', values: 'Black, White' },
+      { name: 'Size', values: 'Small, Medium, Large' },
+    ],
+  });
+  return { ...base, item };
+}
+
+const OPENING_COUNTS = [
+  ['Main Warehouse', 'Black Small', 50], ['Main Warehouse', 'Black Medium', 40],
+  ['Main Warehouse', 'Black Large', 30], ['Main Warehouse', 'White Small', 45],
+  ['Main Warehouse', 'White Medium', 35], ['Main Warehouse', 'White Large', 25],
+  ['Downtown Store', 'Black Small', 10], ['Downtown Store', 'Black Medium', 8],
+  ['Downtown Store', 'Black Large', 6], ['Downtown Store', 'White Small', 12],
+  ['Downtown Store', 'White Medium', 9], ['Downtown Store', 'White Large', 7],
+];
+
+/** A complete wire line, so the schema is exercised exactly as the model fills it. */
+const wireLine = (over = {}) => ({
+  actionType: 'adjust', item: '', variant: '', lotCode: '', serials: [],
+  sourceLocation: '', destinationLocation: '', quantity: -1, adjustmentTarget: -1,
+  reasonCode: '', terminologyKey: '', terminologyValue: '',
+  productName: '', productCode: '', variantAxes: '', unitLabel: '',
+  supplier: '', purchaseUnit: '', ...over,
+});
+
+const countLines = () => OPENING_COUNTS.map(([location, variant, target]) => wireLine({
+  actionType: 'adjust', item: 'Cotton Tee', variant,
+  sourceLocation: location, adjustmentTarget: target, reasonCode: 'physical_count',
+}));
+
+const providerReturning = (data) => ({ complete: async () => ({ data }) });
+
+test('every position in a multi-location instruction survives into the plan', async () => {
+  const env = apparel();
+  const result = await actionService.interpret(
+    env.db, env.ctx, env.membership,
+    'Main Warehouse has 50 Black Small, 40 Black Medium, 30 Black Large, 45 White Small, '
+      + '35 White Medium and 25 White Large. Downtown Store has 10 Black Small, 8 Black Medium, '
+      + '6 Black Large, 12 White Small, 9 White Medium and 7 White Large. Physical count.',
+    { provider: providerReturning({ lines: countLines(), clarifyingQuestion: '', unsupportedReason: '' }) }
+  );
+
+  assert.equal(result.kind, 'plan', 'twelve corrections are one plan, not a proposal');
+  assert.equal(result.plan.lines.length, 12, 'no position may be dropped between the words and the approval');
+
+  const total = result.plan.lines.reduce((sum, line) => sum + line.adjustmentTarget, 0);
+  assert.equal(total, 277, 'the approved quantities must add up to what was asked for');
+
+  const byLocation = new Set(result.plan.lines.map((line) => line.expectedBeforeState.sourceLocationName));
+  assert.deepEqual([...byLocation].sort(), ['Downtown Store', 'Main Warehouse']);
+});
+
+test('a plan that cannot be built whole is not quietly built in part', async () => {
+  const env = apparel();
+  const lines = countLines();
+  lines.push(wireLine({
+    actionType: 'adjust', item: 'Hooded Sweatshirt', variant: 'Black Small',
+    sourceLocation: 'Main Warehouse', adjustmentTarget: 5, reasonCode: 'physical_count',
+  }));
+  const result = await actionService.interpret(
+    env.db, env.ctx, env.membership, 'twelve counts plus one for a product that does not exist',
+    { provider: providerReturning({ lines, clarifyingQuestion: '', unsupportedReason: '' }) }
+  );
+
+  assert.notEqual(result.kind, 'plan', 'an unresolvable line must stop the plan, not be dropped from it');
+  assert.match(String(result.question || result.message), /Hooded Sweatshirt/,
+    'Foundry must name the part it could not resolve');
+});
+
+test('lines beyond what Foundry will read at once are reported, never truncated', async () => {
+  const env = apparel();
+  const many = [];
+  for (let i = 0; i < intentService.MAX_LINES + 4; i += 1) many.push(countLines()[i % 12]);
+  const result = await actionService.interpret(
+    env.db, env.ctx, env.membership, 'far too many things at once',
+    { provider: providerReturning({ lines: many, clarifyingQuestion: '', unsupportedReason: '' }) }
+  );
+
+  assert.notEqual(result.kind, 'plan', 'more lines than Foundry reads at once must not silently become a short plan');
+  assert.match(String(result.question || result.message || ''), /\d+/,
+    'the refusal has to say how much was asked for');
+});
+
+test('a twelve-line opening count runs whole, and lands every quantity', async () => {
+  const env = apparel();
+  const result = await actionService.interpret(
+    env.db, env.ctx, env.membership, 'opening counts for both locations',
+    { provider: providerReturning({ lines: countLines(), clarifyingQuestion: '', unsupportedReason: '' }) }
+  );
+  assert.equal(result.kind, 'plan');
+
+  execution.approvePlan(env.db, env.ctx, env.membership, result.plan.planId);
+  const run = execution.executePlan(env.db, env.ctx, env.membership, result.plan.planId);
+
+  assert.equal(run.status, 'SUCCEEDED', 'the plan must not invalidate itself as it runs');
+  assert.equal(run.verified, true, 'every line is checked against the inventory afterwards');
+
+  // The same product at two locations is the case that used to break: line 1
+  // moved the product's total, and line 7 was judged stale because of it.
+  const onHand = (variant, location) => resolver.balanceAt(
+    env.db, env.workspace.workspaceId,
+    env.item.byLabel(variant).id,
+    location.id
+  );
+  assert.equal(onHand('Black / Small', env.workspace.main), 50);
+  assert.equal(onHand('Black / Small', env.workspace.store), 10);
+  assert.equal(onHand('White / Large', env.workspace.main), 25);
+  assert.equal(onHand('White / Large', env.workspace.store), 7);
+
+  const total = env.item.skus.reduce(
+    (sum, sku) => sum + resolver.skuTotal(env.db, env.workspace.workspaceId, sku.id), 0
+  );
+  assert.equal(total, 277, 'all 277 units asked for are on the shelves');
+});
+
+test('stock moving underneath a running plan is still caught', async () => {
+  const env = apparel();
+  const result = await actionService.interpret(
+    env.db, env.ctx, env.membership, 'opening counts for both locations',
+    { provider: providerReturning({ lines: countLines(), clarifyingQuestion: '', unsupportedReason: '' }) }
+  );
+  execution.approvePlan(env.db, env.ctx, env.membership, result.plan.planId);
+
+  // Somebody else receives stock into a position the plan is about to correct.
+  engine.receive(env.db, env.ctx, {
+    skuId: env.item.byLabel('White / Large').id, locationId: env.workspace.store.id, quantity: 3,
+  });
+
+  assert.throws(
+    () => execution.executePlan(env.db, env.ctx, env.membership, result.plan.planId),
+    /changed/i,
+    'forgiving the plan its own effects must not forgive a real change underneath it'
+  );
+  assert.equal(
+    resolver.balanceAt(env.db, env.workspace.workspaceId, env.item.byLabel('Black / Small').id, env.workspace.main.id),
+    0,
+    'and the whole plan rolls back'
+  );
+});
+
+test('two counts for the same shelf are a question, not a silent last-one-wins', async () => {
+  const env = apparel();
+  const lines = [
+    wireLine({ actionType: 'adjust', item: 'Cotton Tee', variant: 'Black Small',
+      sourceLocation: 'Main Warehouse', adjustmentTarget: 50, reasonCode: 'physical_count' }),
+    wireLine({ actionType: 'adjust', item: 'Cotton Tee', variant: 'Black Small',
+      sourceLocation: 'Main Warehouse', adjustmentTarget: 37, reasonCode: 'physical_count' }),
+  ];
+  const result = await actionService.interpret(
+    env.db, env.ctx, env.membership, 'Main Warehouse has 50 Black Small. Actually 37 Black Small.',
+    { provider: providerReturning({ lines, clarifyingQuestion: '', unsupportedReason: '' }) }
+  );
+
+  assert.equal(result.kind, 'question');
+  assert.match(result.question, /50/);
+  assert.match(result.question, /37/);
+});

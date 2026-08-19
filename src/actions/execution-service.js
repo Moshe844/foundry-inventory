@@ -414,8 +414,18 @@ function executePlan(db, ctx, membership, planId, options = {}) {
 
       const results = [];
       let allVerified = true;
+
+      // What this plan has moved so far, so a later line is judged against the
+      // position its own siblings left behind rather than against a snapshot
+      // they have already made out of date.
+      const appliedByPlan = { totals: new Map(), positions: new Map() };
+      const addEffect = (map, key, delta) => {
+        if (!key || !delta) return;
+        map.set(key, (map.get(key) || 0) + delta);
+      };
+
       for (const line of plan.lines) {
-        const check = proposals.revalidate(db, ctx, line, { ignoreExpiry: true });
+        const check = proposals.revalidate(db, ctx, line, { ignoreExpiry: true, appliedByPlan });
         if (!check.ok) {
           throw new StaleProposalError(
             describe(check)[0] || 'The inventory changed before this could run.',
@@ -435,6 +445,17 @@ function executePlan(db, ctx, membership, planId, options = {}) {
         ).run(
           newId('avf'), ctx.workspaceId, executionId, line.proposalId, verdict.verified ? 1 : 0,
           JSON.stringify(verdict.checks), JSON.stringify(after), JSON.stringify(verdict.problems), nowIso()
+        );
+
+        // Measured, not predicted: the effect recorded is the difference the
+        // engine actually made.
+        const keys = proposals.planKeys(line);
+        addEffect(appliedByPlan.totals, keys.total, (after.total ?? 0) - (before.total ?? 0));
+        addEffect(appliedByPlan.positions, keys.source, (after.sourceOnHand ?? 0) - (before.sourceOnHand ?? 0));
+        addEffect(
+          appliedByPlan.positions,
+          keys.destination,
+          (after.destinationOnHand ?? 0) - (before.destinationOnHand ?? 0)
         );
 
         proposals.setStatus(db, ctx, line.proposalId, 'SUCCEEDED', { completed: true });

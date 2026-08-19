@@ -91,6 +91,30 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
 
   const usable = intent.lines.filter((line) => !['clarify', 'unsupported'].includes(line.actionType));
   const blocked = intent.lines.find((line) => ['clarify', 'unsupported'].includes(line.actionType));
+
+  // Part of an instruction is not a smaller instruction.
+  //
+  // When some lines resolved and others did not, the ones that did used to go
+  // ahead on their own and nothing was said about the rest — the preview showed
+  // a run of correct changes with no sign that anything was missing. If any
+  // part of what somebody asked for cannot be carried out, none of it proceeds
+  // until they have seen which part.
+  if (usable.length > 0 && blocked) {
+    const named = intent.lines
+      .filter((line) => ['clarify', 'unsupported'].includes(line.actionType))
+      .map((line) => [line.item, line.variant].filter(Boolean).join(' ') || 'one of them')
+      .filter((value, index, all) => all.indexOf(value) === index);
+    const detail = intent.clarifyingQuestion || intent.unsupportedReason || '';
+    return {
+      kind: 'question',
+      question:
+        `Foundry understood ${usable.length} of the ${intent.lines.length} changes you asked for, `
+        + `but not this: ${named.join(', ')}. `
+        + `${detail} `.trim()
+        + ' Nothing has been prepared — say that part another way and Foundry will do the whole instruction together.',
+    };
+  }
+
   if (usable.length === 0) {
     if (blocked && blocked.actionType === 'unsupported') {
       return { kind: 'unsupported', message: intent.unsupportedReason || 'Foundry cannot do that yet.' };
@@ -143,6 +167,29 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
         return { kind: 'question', question: result.question, needsReason: Boolean(result.needsReason) };
       }
       built.push(result.proposal);
+    }
+
+    // Two counts for the same shelf in one instruction contradict each other.
+    //
+    // A plan applies its lines in order, so the second would quietly win and
+    // the first would vanish without ever being wrong out loud. Foundry says
+    // which position was named twice and lets the person pick the number.
+    const seen = new Map();
+    for (const draft of built) {
+      if (draft.actionType !== 'adjust') continue;
+      const key = `${draft.lotId || draft.skuId}@${draft.sourceLocationId}`;
+      if (seen.has(key)) {
+        const subject = presenter.subjectOf(db, ctx.workspaceId, draft);
+        const name = [subject.name, subject.detail].filter(Boolean).join(' / ');
+        const where = draft.expectedBeforeState.sourceLocationName || 'that location';
+        return {
+          kind: 'question',
+          question:
+            `That gives ${name} at ${where} two different counts — ${seen.get(key)} and ${draft.adjustmentTarget}. `
+            + 'Foundry will not pick one. Which is right?',
+        };
+      }
+      seen.set(key, draft.adjustmentTarget);
     }
 
     if (built.length === 1) {
