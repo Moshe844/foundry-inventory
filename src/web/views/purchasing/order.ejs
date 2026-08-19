@@ -43,7 +43,7 @@
             <td>
               <%= line.displayName %>
               <div class="muted">
-                <%= line.quantityPurchaseUnits %> <%= line.purchaseUnit %><%= line.quantityPurchaseUnits === 1 ? '' : 's' %>
+                <%= helpers.unitCount(line.quantityPurchaseUnits, line.purchaseUnit) %>
                 <% if (line.unitsPerPurchaseUnit > 1) { %> of <%= line.unitsPerPurchaseUnit %><% } %>
                 <% if (line.destinationLocationName) { %> → <%= line.destinationLocationName %><% } %>
               </div>

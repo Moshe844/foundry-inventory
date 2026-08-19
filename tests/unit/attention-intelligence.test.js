@@ -420,3 +420,19 @@ test('feedback cannot reach another workspace\'s item', () => {
   );
   assert.equal(attention.getAttention(db, a.workspaceId, item.attentionId).status, 'OPEN');
 });
+
+test('a unit label is counted in English, not by bolting on an s', () => {
+  // "90 eachs" appeared on a purchase order. The unit label is the customer's
+  // own word, and mangling it makes them wonder what else was generated rather
+  // than understood.
+  const { unitCount } = require('../../src/lib/units');
+
+  assert.equal(unitCount(90, 'each'), '90 each', 'some unit words do not inflect');
+  assert.equal(unitCount(1, 'each'), '1 each');
+  assert.equal(unitCount(64, 'kg'), '64 kg', 'a measure abbreviation is already plural');
+  assert.equal(unitCount(2, 'box'), '2 boxes', 'a sibilant takes es');
+  assert.equal(unitCount(3, 'case'), '3 cases');
+  assert.equal(unitCount(1, 'case'), '1 case');
+  assert.equal(unitCount(7, 'pair'), '7 pairs');
+  assert.equal(unitCount(2, 'pcs'), '2 pcs');
+});

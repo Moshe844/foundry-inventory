@@ -12,7 +12,7 @@
     <span class="spacer"></span>
     <% if (line.recommend) { %>
       <span class="badge badge--muted">
-        <%= line.quantityUnits %> <%= line.unitLabel %><%= line.quantityUnits === 1 ? '' : 's' %>
+        <%= helpers.unitCount(line.quantityUnits, line.unitLabel) %>
       </span>
     <% } else { %>
       <span class="badge badge--ok">No order</span>

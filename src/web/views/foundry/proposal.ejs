@@ -7,7 +7,7 @@
   var doc = setupDocument && setupDocument.interpretation;
   var docLines = doc ? doc.lines : [];
   var docUnits = docLines.reduce(function (sum, line) { return sum + line.quantity; }, 0);
-  var docUnitText = doc ? helpers.plural(docUnits, doc.unitLabel || 'unit') : 'units';
+  var docUnitText = doc ? helpers.unitLabel(docUnits, doc.unitLabel || 'unit') : 'units';
   var docValue = docLines.reduce(function (sum, line) { return sum + (line.unitCost == null ? 0 : line.quantity * line.unitCost); }, 0);
   var docStyles = new Set(docLines.map(function (line) { return [line.styleName, line.color].filter(Boolean).join(' / ').toLowerCase(); })).size;
   var docCodeLabel = setupDocument ? setupDocument.supplierCodeLabel : 'Supplier code';

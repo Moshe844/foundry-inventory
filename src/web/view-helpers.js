@@ -20,6 +20,8 @@ function qty(value) {
   return numberFormat.format(n);
 }
 
+const { unitCount, unitLabel } = require('../lib/units');
+
 function plural(count, one, many) {
   return Number(count) === 1 ? one : many || `${one}s`;
 }
@@ -163,6 +165,8 @@ function columnLabel(key) {
 }
 
 module.exports = {
+  unitCount,
+  unitLabel,
   icon,
   qty,
   plural,

@@ -29,20 +29,8 @@ const dayCount = (days) => {
   return `${whole} ${whole === 1 ? 'day' : 'days'}`;
 };
 
-/**
- * "64 units", "1 unit", "64 kg", "12 boxes".
- *
- * The unit label is the customer's word, so it is pluralised as English does
- * rather than by bolting an "s" on: a measure abbreviation is already plural
- * ("64 kg", never "64 kgs") and a word ending in a sibilant takes "es".
- */
-const unitCount = (quantity, label) => {
-  const word = String(label || 'unit').trim() || 'unit';
-  if (Number(quantity) === 1 || word.length <= 2 || !/^[a-z]+$/i.test(word)) {
-    return `${quantity} ${word}`;
-  }
-  return `${quantity} ${/(s|x|z|ch|sh)$/i.test(word) ? `${word}es` : `${word}s`}`;
-};
+// One implementation, shared with the views: see lib/units.
+const { unitCount } = require('../lib/units');
 
 function candidate(fields) {
   return { detectionRuleVersion: DETECTION_RULE_VERSION, relatedCategories: [], ...fields };
