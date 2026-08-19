@@ -26,10 +26,7 @@
       <span class="brand-mark" aria-hidden="true">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6l-8-3.8z"/><path d="m4 8.2 8 3.8 8-3.8M12 12v7.6"/></svg>
       </span>
-      <span class="brand-text">
-        <strong>Foundry</strong>
-        <small>Inventory manager</small>
-      </span>
+      <span class="brand-text"><strong>Foundry</strong><small>Inventory manager</small></span>
     </a>
 
     <%
@@ -50,10 +47,7 @@
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <input type="hidden" name="workspaceId" value="<%= other.workspaceId %>">
                 <input type="hidden" name="next" value="/">
-                <button class="wsp-switch-item" type="submit">
-                  <span><%= other.name %></span>
-                  <% if (other.attentionCount > 0) { %><span class="nav-count"><%= other.attentionCount %></span><% } %>
-                </button>
+                <button class="wsp-switch-item" type="submit"><span><%= other.name %></span><% if (other.attentionCount > 0) { %><span class="nav-count"><%= other.attentionCount %></span><% } %></button>
               </form>
             <% }) %>
           <% } %>
@@ -69,15 +63,11 @@
         <a class="nav-item nav-item--primary" href="/inventories/new"><%- helpers.icon('plus') %><span>New Inventory</span></a>
       <% } else { %>
         <div class="nav-group-label">Work with Foundry</div>
-        <a class="nav-item nav-item--primary <%= nav === 'home' || nav === 'overview' ? 'is-active' : '' %>" href="/">
-          <%- helpers.icon('foundry') %><span class="nav-item__copy"><span>Foundry</span><small>Your daily home</small></span>
-        </a>
-        <a class="nav-item nav-item--primary <%= nav === 'attention' ? 'is-active' : '' %>" href="/needs-you">
-          <%- helpers.icon('attention') %><span class="nav-item__copy"><span>Needs you</span><small>Only exceptions and decisions</small></span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %>
-        </a>
+        <a class="nav-item nav-item--primary <%= nav === 'home' ? 'is-active' : '' %>" href="/"><%- helpers.icon('foundry') %><span class="nav-item__copy"><span>Foundry</span><small>Your daily home</small></span></a>
+        <a class="nav-item nav-item--primary <%= nav === 'attention' ? 'is-active' : '' %>" href="/needs-you"><%- helpers.icon('attention') %><span class="nav-item__copy"><span>Needs you</span><small>Only exceptions and decisions</small></span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %></a>
 
         <div class="nav-group-label">Records & operation</div>
-        <a class="nav-item <%= nav === 'inventory' ? 'is-active' : '' %>" href="/inventory"><%- helpers.icon('inventory') %><span class="nav-item__copy"><span>Inventory</span><small>Products, stock and locations</small></span></a>
+        <a class="nav-item <%= nav === 'inventory' || nav === 'overview' ? 'is-active' : '' %>" href="/inventory"><%- helpers.icon('inventory') %><span class="nav-item__copy"><span>Inventory</span><small>Products, stock and locations</small></span></a>
         <a class="nav-item <%= nav === 'purchasing' ? 'is-active' : '' %>" href="/purchasing"><%- helpers.icon('purchasing') %><span class="nav-item__copy"><span>Purchasing</span><small>Suppliers, orders and receiving</small></span></a>
         <a class="nav-item <%= nav === 'activity' || nav === 'history' ? 'is-active' : '' %>" href="/autopilot/history"><%- helpers.icon('activity') %><span class="nav-item__copy"><span>Activity</span><small>Everything that happened</small></span></a>
 
@@ -89,14 +79,8 @@
     <div class="sidebar-foot">
       <% if (currentUser || account) { %>
         <% var signedInPerson = currentUser || account; %>
-        <div class="who">
-          <span class="avatar"><%= helpers.initials(signedInPerson.name) %></span>
-          <span class="who-text"><strong><%= signedInPerson.name %></strong><small><%= currentUser ? helpers.roleLabel(currentUser.role) : 'Account' %></small></span>
-        </div>
-        <form method="post" action="/logout">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn btn--ghost btn--sm btn--block" type="submit"><%- helpers.icon('logout', { size: 16 }) %> Sign out</button>
-        </form>
+        <div class="who"><span class="avatar"><%= helpers.initials(signedInPerson.name) %></span><span class="who-text"><strong><%= signedInPerson.name %></strong><small><%= currentUser ? helpers.roleLabel(currentUser.role) : 'Account' %></small></span></div>
+        <form method="post" action="/logout"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm btn--block" type="submit"><%- helpers.icon('logout', { size: 16 }) %> Sign out</button></form>
       <% } else { %>
         <a class="btn btn--ghost btn--sm btn--block" href="/login">Sign in</a>
       <% } %>
@@ -124,11 +108,7 @@
 
     <main class="content" id="main">
       <% if (flash && flash.length) { %>
-        <div class="flash-stack">
-          <% flash.forEach(function (message) { %>
-            <div class="flash flash--<%= message.type %>" role="status"><%- helpers.icon(message.type === 'error' ? 'alert' : 'check', { size: 18 }) %><span><%= message.message %></span></div>
-          <% }) %>
-        </div>
+        <div class="flash-stack"><% flash.forEach(function (message) { %><div class="flash flash--<%= message.type %>" role="status"><%- helpers.icon(message.type === 'error' ? 'alert' : 'check', { size: 18 }) %><span><%= message.message %></span></div><% }) %></div>
       <% } %>
       <%- body %>
     </main>
@@ -139,10 +119,10 @@
       <a class="<%= nav === 'inventories' ? 'is-active' : '' %>" href="/inventories"><%- helpers.icon('inventory', { size: 22 }) %><span>Inventories</span></a>
       <a href="/inventories/new"><%- helpers.icon('plus', { size: 22 }) %><span>New</span></a>
     <% } else { %>
-      <a class="<%= nav === 'home' || nav === 'overview' ? 'is-active' : '' %>" href="/"><%- helpers.icon('foundry', { size: 22 }) %><span>Foundry</span></a>
+      <a class="<%= nav === 'home' ? 'is-active' : '' %>" href="/"><%- helpers.icon('foundry', { size: 22 }) %><span>Foundry</span></a>
       <a class="<%= nav === 'attention' ? 'is-active' : '' %>" href="/needs-you"><%- helpers.icon('attention', { size: 22 }) %><span>Needs you</span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %></a>
       <a href="/#tell-foundry"><%- helpers.icon('send', { size: 22 }) %><span>Tell Foundry</span></a>
-      <a class="<%= nav === 'inventory' ? 'is-active' : '' %>" href="/inventory"><%- helpers.icon('inventory', { size: 22 }) %><span>Inventory</span></a>
+      <a class="<%= nav === 'inventory' || nav === 'overview' ? 'is-active' : '' %>" href="/inventory"><%- helpers.icon('inventory', { size: 22 }) %><span>Inventory</span></a>
       <a class="<%= nav === 'settings' ? 'is-active' : '' %>" href="/settings"><%- helpers.icon('settings', { size: 22 }) %><span>Settings</span></a>
     <% } %>
   </nav>
