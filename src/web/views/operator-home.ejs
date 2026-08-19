@@ -4,8 +4,59 @@
   var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
   var needsCount = home.needsYou.length;
   var handlingCount = home.handling.length;
+  var isSettingUp = !!home.setup;
+  var hasProducts = stats.itemCount > 0;
+  var hasLocations = stats.locationCount > 0;
+  var hasUsageEvidence = home.readiness.usageReady > 0;
 %>
 
+<% if (isSettingUp) { %>
+<section class="setup-journey" aria-labelledby="setup-journey-title">
+  <div class="setup-journey__head">
+    <div class="setup-journey__head-copy">
+      <span class="setup-journey__eyebrow">Getting Foundry ready</span>
+      <h1 id="setup-journey-title">Let's get Foundry running your inventory.</h1>
+      <p>Foundry needs the shape of your business and real inventory facts before it can responsibly manage the operation. You always have one clear next step.</p>
+    </div>
+  </div>
+
+  <div class="setup-steps">
+    <div class="setup-step setup-step--done">
+      <span class="setup-step__number">✓</span>
+      <div><strong>Tell Foundry how your business works</strong><p>Products, variants, locations and tracking rules come from what you described and approved.</p></div>
+      <span class="setup-step__state">Completed</span>
+    </div>
+
+    <div class="setup-step <%= hasProducts ? 'setup-step--done' : 'setup-step--current' %>">
+      <span class="setup-step__number"><%= hasProducts ? '✓' : '2' %></span>
+      <div><strong>Add your inventory records</strong><p>Import a spreadsheet, attach a file to Tell Foundry, or start manually. Foundry will not merge or invent records on a guess.</p></div>
+      <span class="setup-step__state"><%= hasProducts ? 'Completed' : 'Do this next' %></span>
+    </div>
+
+    <div class="setup-step <%= hasProducts ? 'setup-step--current' : '' %>">
+      <span class="setup-step__number">3</span>
+      <div><strong>Confirm what is actually on hand</strong><p>Starting quantities must come from you or imported evidence. Foundry never invents a balance.</p></div>
+      <span class="setup-step__state"><%= hasProducts ? 'Do this next' : 'Not ready yet' %></span>
+    </div>
+
+    <div class="setup-step">
+      <span class="setup-step__number">4</span>
+      <div><strong>Record real activity</strong><p>Sales, usage, receipts, transfers and counts give Foundry the evidence needed to understand demand and exceptions.</p></div>
+      <span class="setup-step__state">After stock is confirmed</span>
+    </div>
+
+    <div class="setup-step">
+      <span class="setup-step__number">5</span>
+      <div><strong>Decide what Foundry may handle</strong><p>Start supervised. Routine work becomes automatic only after you explicitly approve bounded authority.</p></div>
+      <span class="setup-step__state">Optional later</span>
+    </div>
+  </div>
+
+  <div class="setup-journey__action">
+    <a class="btn btn--primary" href="<%= home.setup.link %>"><%= hasProducts ? 'Confirm current stock' : 'Continue setup' %></a>
+  </div>
+</section>
+<% } else { %>
 <section class="operator-hero">
   <div class="operator-hero__copy">
     <span class="operator-status <%= home.status.paused || home.status.suspended ? 'operator-status--paused' : '' %>">
@@ -40,198 +91,124 @@
     <% } %>
   </div>
 </section>
+<% } %>
 
 <% if (home.readiness.notes.length) { %>
-  <section class="operator-readiness" aria-labelledby="readiness-title">
-    <div>
-      <span class="operator-lane__eyebrow">What Foundry can verify right now</span>
-      <h2 id="readiness-title"><%= home.readiness.usageReady %> of <%= home.readiness.skuCount %> stock positions have enough usage history for demand-based monitoring</h2>
-    </div>
-    <ul class="plain-list">
-      <% home.readiness.notes.forEach(function (note) { %><li><%= note %></li><% }) %>
-    </ul>
-  </section>
+<section class="operator-readiness" aria-labelledby="readiness-title">
+  <div>
+    <span class="operator-lane__eyebrow">What Foundry can verify right now</span>
+    <h2 id="readiness-title"><%= home.readiness.usageReady %> of <%= home.readiness.skuCount %> stock positions have enough usage history for demand-based monitoring</h2>
+    <p class="readiness-explainer"><strong>What this means:</strong> Foundry can always report recorded stock and movements. Demand-based advice needs real outbound history first; until then it will say what evidence is missing instead of inventing demand.</p>
+  </div>
+  <ul class="plain-list"><% home.readiness.notes.forEach(function (note) { %><li><%= note %></li><% }) %></ul>
+</section>
 <% } %>
 
 <% if (home.status.paused || home.status.suspended) { %>
-  <div class="operator-alert" role="status">
-    <%- helpers.icon('alert', { size: 18 }) %>
-    <div>
-      <strong><%= home.status.suspended ? 'Foundry stopped itself.' : 'Foundry is paused.' %></strong>
-      <span><%= home.status.suspendedReason || home.status.pausedReason || 'Nothing will happen automatically until you resume it.' %></span>
-    </div>
-  </div>
+<div class="operator-alert" role="status">
+  <%- helpers.icon('alert', { size: 18 }) %>
+  <div><strong><%= home.status.suspended ? 'Foundry stopped itself.' : 'Foundry is paused.' %></strong><span><%= home.status.suspendedReason || home.status.pausedReason || 'Nothing will happen automatically until you resume it.' %></span></div>
+</div>
 <% } %>
 
-<% if (home.setup) { %>
-  <section class="operator-setup-callout">
-    <span class="operator-setup-callout__icon"><%- helpers.icon('foundry', { size: 20 }) %></span>
-    <div>
-      <span class="setup-eyebrow">Finish the takeover</span>
-      <% if (home.setup.item) { %>
-        <strong>Foundry created <%= home.setup.item.name %> with <%= home.setup.item.sku_count %> trackable <%= home.setup.item.sku_count === 1 ? 'item' : 'variants' %>.</strong>
-        <p>Now tell Foundry what is currently on hand so it can start managing real inventory.</p>
-      <% } else { %>
-        <strong>Foundry still needs your inventory information.</strong>
-        <p>Continue setup so Foundry has real inventory truth to manage.</p>
-      <% } %>
-    </div>
-    <a class="btn btn--primary" href="<%= home.setup.link %>">Continue setup</a>
-  </section>
-<% } %>
+<section class="product-intro" aria-label="How to use Foundry">
+  <div>
+    <h2>One place to run the inventory operation.</h2>
+    <p>Tell Foundry what happened or what you need. It uses the same verified inventory engine underneath, watches the resulting evidence, handles only what you authorized, and puts anything unsafe or uncertain in Needs you.</p>
+  </div>
+  <div class="product-intro__steps" aria-label="Foundry workflow">
+    <span>Tell it</span><span>Foundry verifies</span><span>It acts within authority</span><span>Exceptions come to you</span>
+  </div>
+</section>
 
 <section class="operator-command" id="tell-foundry" aria-labelledby="operator-command-title">
   <div class="operator-command__mark" aria-hidden="true"><%- helpers.icon('foundry', { size: 20 }) %></div>
   <div class="operator-command__body">
     <label id="operator-command-title" for="ask-question">Tell Foundry</label>
-    <span class="visually-hidden">Ask Foundry anything</span>
+    <span class="operator-command__promise">Tell Foundry anything about your inventory operation — a question, a delivery, a count, a movement, a purchasing task, a policy change, or a file.</span>
     <form class="operator-command__form" method="post" action="/foundry/tell" enctype="multipart/form-data" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <input class="operator-command__input" id="ask-question" type="text" name="message"
-             placeholder="Ask what is happening, why it happened, or tell Foundry what you need done…"
-             maxlength="400" autocomplete="off">
-      <label class="operator-command__attach" title="Attach a file"><span class="visually-hidden">Attach a file</span>
-        <input type="file" name="file" accept=".csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*"><%- helpers.icon('import', { size: 17 }) %>
-      </label>
-      <button class="operator-command__send" type="submit" aria-label="Tell Foundry">
-        <%- helpers.icon('send', { size: 17 }) %>
-      </button>
+      <input class="operator-command__input" id="ask-question" type="text" name="message" placeholder="For example: We received 40 units in Brooklyn…" maxlength="400" autocomplete="off">
+      <label class="operator-command__attach" title="Attach a file"><span class="visually-hidden">Attach a file</span><input type="file" name="file" accept=".csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*"><%- helpers.icon('import', { size: 17 }) %></label>
+      <button class="operator-command__send" type="submit" aria-label="Tell Foundry"><%- helpers.icon('send', { size: 17 }) %></button>
     </form>
-    <div class="operator-command__shortcuts">
-      <a href="/ask?q=<%= encodeURIComponent('What needs my attention?') %>">What needs me?</a>
-      <a href="/ask?q=<%= encodeURIComponent('What did you do today?') %>">What did you do?</a>
-      <a href="/ask?q=<%= encodeURIComponent('What should I order?') %>">What should I order?</a>
-      <span>One place for questions, work, counts, deliveries, purchasing, policy, and files.</span>
+    <div class="operator-command__examples">
+      <% if (isSettingUp) { %>
+        <a href="/#tell-foundry">Add my products</a>
+        <a href="/#tell-foundry">Upload my inventory</a>
+        <a href="/#tell-foundry">We received stock</a>
+        <a href="<%= home.setup.link %>">Help me finish setup</a>
+      <% } else { %>
+        <a href="/ask?q=<%= encodeURIComponent('What needs my attention?') %>">What needs my attention?</a>
+        <a href="/#tell-foundry">Record a delivery</a>
+        <a href="/#tell-foundry">Move stock</a>
+        <a href="/#tell-foundry">I counted an item</a>
+        <a href="/ask?q=<%= encodeURIComponent('What should I order?') %>">What should I order?</a>
+        <a href="/ask?q=<%= encodeURIComponent('What did you do today?') %>">What did you do today?</a>
+      <% } %>
     </div>
   </div>
 </section>
 
+<% if (!isSettingUp) { %>
 <section class="operator-lanes" aria-label="Foundry work">
   <article class="operator-lane operator-lane--needs <%= needsCount ? 'has-work' : '' %>">
-    <header class="operator-lane__head">
-      <span class="operator-lane__icon"><%- helpers.icon(needsCount ? 'alert' : 'check', { size: 18 }) %></span>
-      <div>
-        <span class="operator-lane__eyebrow">Foundry needs you</span>
-        <h2><%= needsCount ? needsCount + ' decision' + (needsCount === 1 ? '' : 's') : 'Nothing needs you' %></h2>
-      </div>
-    </header>
+    <header class="operator-lane__head"><span class="operator-lane__icon"><%- helpers.icon(needsCount ? 'alert' : 'check', { size: 18 }) %></span><div><span class="operator-lane__eyebrow">What needs me?</span><h2><%= needsCount ? needsCount + ' decision' + (needsCount === 1 ? '' : 's') : 'Nothing needs you' %></h2></div></header>
     <div class="operator-lane__body">
-      <% if (!needsCount) { %>
-        <p class="operator-empty">There are no exceptions waiting for your judgement.</p>
-      <% } %>
-      <% home.needsYou.forEach(function (entry) { %>
-        <div class="operator-work-item act-row">
-          <div>
-            <strong><%= entry.title %></strong>
-            <% if (entry.because) { %><p><%= entry.because %></p><% } %>
-          </div>
-          <a href="<%= entry.link %>"><%= entry.action %></a>
-        </div>
-      <% }) %>
+      <% if (!needsCount) { %><p class="operator-empty">There are no exceptions waiting for your judgement.</p><% } %>
+      <% home.needsYou.forEach(function (entry) { %><div class="operator-work-item act-row"><div><strong><%= entry.title %></strong><% if (entry.because) { %><p><%= entry.because %></p><% } %></div><a href="<%= entry.link %>"><%= entry.action %></a></div><% }) %>
     </div>
     <% if (needsCount) { %><footer><a href="/needs-you">See all exceptions</a></footer><% } %>
   </article>
 
   <article class="operator-lane operator-lane--prepared <%= handlingCount ? 'has-work' : '' %>">
-    <header class="operator-lane__head">
-      <span class="operator-lane__icon"><%- helpers.icon('activity', { size: 18 }) %></span>
-      <div>
-        <span class="operator-lane__eyebrow">Foundry is handling</span><span class="visually-hidden">Foundry prepared this</span>
-        <h2><%= handlingCount ? handlingCount + ' in progress' : 'Nothing in progress' %></h2>
-      </div>
-    </header>
+    <header class="operator-lane__head"><span class="operator-lane__icon"><%- helpers.icon('activity', { size: 18 }) %></span><div><span class="operator-lane__eyebrow">What is Foundry handling?</span><h2><%= handlingCount ? handlingCount + ' in progress' : 'Nothing in progress' %></h2></div></header>
     <div class="operator-lane__body">
-      <% if (!handlingCount) { %>
-        <p class="operator-empty">
-          There is no routine work in progress.
-          <% if (home.did.evaluations.length) { %>
-            The latest evaluation finished <%= helpers.timeAgo(home.did.evaluations[0].finishedAt) %>.
-            <a href="/autopilot/history#evaluations">See what it checked and why it stopped.</a>
-          <% } %>
-        </p>
-      <% } %>
-      <% home.handling.forEach(function (entry) { %>
-        <div class="operator-work-item act-row">
-          <div>
-            <strong><%= entry.title %></strong>
-            <% if (entry.because) { %><p><%= entry.because %></p><% } %>
-          </div>
-          <a href="<%= entry.link %>"><%= entry.action %></a>
-        </div>
-      <% }) %>
+      <% if (!handlingCount) { %><p class="operator-empty">There is no routine work in progress.<% if (home.did.evaluations.length) { %> The latest evaluation finished <%= helpers.timeAgo(home.did.evaluations[0].finishedAt) %>. <a href="/autopilot/history#evaluations">See what it checked and why it stopped.</a><% } %></p><% } %>
+      <% home.handling.forEach(function (entry) { %><div class="operator-work-item act-row"><div><strong><%= entry.title %></strong><% if (entry.because) { %><p><%= entry.because %></p><% } %></div><a href="<%= entry.link %>"><%= entry.action %></a></div><% }) %>
     </div>
     <% if (handlingCount) { %><footer><a href="/autopilot/history">See handling queue</a></footer><% } %>
   </article>
 
   <article class="operator-lane operator-lane--handled">
-    <header class="operator-lane__head">
-      <span class="operator-lane__icon"><%- helpers.icon('check', { size: 18 }) %></span>
-      <div>
-        <span class="operator-lane__eyebrow">Foundry handled this</span>
-        <h2><%= home.did.counts.handled
-          ? home.did.counts.handled + ' completed'
-          : home.did.counts.evaluations
-            ? home.did.counts.evaluations + ' real check' + (home.did.counts.evaluations === 1 ? '' : 's')
-            : 'Nothing checked yet' %></h2>
-      </div>
-    </header>
+    <header class="operator-lane__head"><span class="operator-lane__icon"><%- helpers.icon('check', { size: 18 }) %></span><div><span class="operator-lane__eyebrow">What did Foundry do?</span><h2><%= home.did.counts.handled ? home.did.counts.handled + ' completed' : home.did.counts.evaluations ? home.did.counts.evaluations + ' real check' + (home.did.counts.evaluations === 1 ? '' : 's') : 'Nothing checked yet' %></h2></div></header>
     <div class="operator-lane__body">
       <p class="operator-empty"><%= home.did.headline %></p>
-      <% home.did.actions.slice(0, 4).forEach(function (action) { %>
-        <div class="operator-work-item operator-work-item--done">
-          <span class="operator-done-check">✓</span>
-          <div>
-            <a href="<%= action.link %>"><strong><%= action.headline %></strong></a>
-            <% if (action.detail) { %><p><%= action.detail %></p><% } %>
-          </div>
-        </div>
-      <% }) %>
-      <% if (!home.did.actions.length) { %>
-        <% home.did.evaluations.slice(0, 2).forEach(function (evaluation) { %>
-          <div class="operator-work-item operator-work-item--done">
-            <span class="operator-done-check">✓</span>
-            <div>
-              <a href="/autopilot/history#evaluations"><strong><%= evaluation.title %></strong></a>
-              <p><%= evaluation.detail %></p>
-            </div>
-          </div>
-        <% }) %>
-      <% } %>
+      <% home.did.actions.slice(0, 4).forEach(function (action) { %><div class="operator-work-item operator-work-item--done"><span class="operator-done-check">✓</span><div><a href="<%= action.link %>"><strong><%= action.headline %></strong></a><% if (action.detail) { %><p><%= action.detail %></p><% } %></div></div><% }) %>
+      <% if (!home.did.actions.length) { home.did.evaluations.slice(0, 2).forEach(function (evaluation) { %><div class="operator-work-item operator-work-item--done"><span class="operator-done-check">✓</span><div><a href="/autopilot/history#evaluations"><strong><%= evaluation.title %></strong></a><p><%= evaluation.detail %></p></div></div><% }); } %>
     </div>
     <footer><a href="/autopilot/history">See everything Foundry has done</a></footer>
   </article>
 </section>
 
 <section class="operator-next">
-  <div class="operator-section-head">
-    <div>
-      <span class="operator-lane__eyebrow">On the horizon</span>
-      <h2>What's happening next</h2>
-    </div>
-    <% if (canOperate) { %>
-      <form method="post" action="/autopilot/run" data-busy>
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button class="btn btn--sm" type="submit">Check now</button>
-      </form>
-    <% } %>
-  </div>
-  <% if (!home.next.length) { %>
-    <div class="operator-next__empty">Nothing scheduled. No deliveries are expected and no important dates are approaching.</div>
-  <% } else { %>
-    <div class="operator-timeline">
-      <% home.next.forEach(function (event) { %>
-        <div class="operator-event <%= event.overdue ? 'is-overdue' : '' %>">
-          <time><%= event.when %></time>
-          <span class="operator-event__dot" aria-hidden="true"></span>
-          <div>
-            <% if (event.link) { %><a href="<%= event.link %>"><strong><%= event.title %></strong></a><% } else { %><strong><%= event.title %></strong><% } %>
-            <% if (event.detail) { %><p><%= event.detail %></p><% } %>
-          </div>
-        </div>
-      <% }) %>
-    </div>
+  <div class="operator-section-head"><div><span class="operator-lane__eyebrow">What happens next?</span><h2>On the horizon</h2></div><% if (canOperate) { %><form method="post" action="/autopilot/run" data-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm" type="submit">Check now</button></form><% } %></div>
+  <% if (!home.next.length) { %><div class="operator-next__empty">Nothing scheduled. No deliveries are expected and no important dates are approaching.</div><% } else { %>
+    <div class="operator-timeline"><% home.next.forEach(function (event) { %><div class="operator-event <%= event.overdue ? 'is-overdue' : '' %>"><time><%= event.when %></time><span class="operator-event__dot" aria-hidden="true"></span><div><% if (event.link) { %><a href="<%= event.link %>"><strong><%= event.title %></strong></a><% } else { %><strong><%= event.title %></strong><% } %><% if (event.detail) { %><p><%= event.detail %></p><% } %></div></div><% }) %></div>
   <% } %>
 </section>
+<% } %>
+
+<details class="capability-guide" id="foundry-capabilities">
+  <summary><%- helpers.icon('question', { size: 18 }) %> What can Foundry do? <span>A practical guide to what exists today</span></summary>
+  <div class="capability-guide__body">
+    <p class="capability-guide__intro">You do not need to learn Foundry's internal architecture. Start with Tell Foundry for ordinary work; use the record screens when you want precise manual control or inspection.</p>
+    <div class="capability-grid">
+      <div class="capability-card"><h3>Inventory</h3><p>Receive stock, record usage, move inventory between locations, correct counts through controlled adjustments, locate items and explain recorded balances.</p></div>
+      <div class="capability-card"><h3>Purchasing</h3><p>Review replenishment evidence, work with suppliers and purchase orders, and receive inventory against orders.</p></div>
+      <div class="capability-card"><h3>Questions</h3><p>Ask what needs attention, what changed, why a recorded event happened, where inventory is, and what Foundry has done.</p></div>
+      <div class="capability-card"><h3>Files</h3><p>Attach supported spreadsheets and operational documents. Imports show you what will be created before anything becomes inventory truth.</p></div>
+      <div class="capability-card"><h3>Exceptions</h3><p>Foundry surfaces missing evidence, discrepancies, physical events needing context, and work outside its approved authority in Needs you.</p></div>
+      <div class="capability-card"><h3>Management</h3><p>Inspect activity, configure authority and preferences, pause or resume Foundry, and review the evidence behind its work.</p></div>
+    </div>
+    <div class="authority-legend" aria-label="Foundry authority levels">
+      <div><strong>Foundry knows</strong><span>A claim supported by recorded evidence.</span></div>
+      <div><strong>Foundry recommends</strong><span>Analysis suggests an action, but nothing has happened yet.</span></div>
+      <div><strong>Foundry can do</strong><span>A controlled engine action exists and can be proposed/executed safely.</span></div>
+      <div><strong>Foundry may do automatically</strong><span>You explicitly approved a bounded policy and enabled autonomy.</span></div>
+    </div>
+  </div>
+</details>
 
 <div class="operator-proof">
   <span>Foundry checked <strong><%= home.did.counts.positionsWatched %></strong> stock position<%= home.did.counts.positionsWatched === 1 ? '' : 's' %></span>
