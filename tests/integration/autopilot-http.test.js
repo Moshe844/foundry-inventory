@@ -253,3 +253,30 @@ test('taking authority away is available to anyone who can operate the inventory
   assert.equal((await post(agent, '/autopilot/pause', {})).status, 303);
   assert.equal(modes.get(env.db, env.workspace.workspaceId).paused, true, 'stopping it is never the harder path');
 });
+
+test('a one-location inventory is not offered a policy that cannot fire', async () => {
+  // Balancing moves stock between locations. Offering the form to somebody with
+  // one location invites them to write a policy that can never do anything, and
+  // then wonder why Foundry never acts.
+  const env = setup();
+  env.db
+    .prepare('UPDATE locations SET is_active = 0 WHERE workspace_id = ? AND id != ?')
+    .run(env.workspace.workspaceId, env.workspace.main.id);
+
+  const agent = await ownerAgent(env);
+  const page = plain((await agent.get('/autopilot')).text);
+
+  assert.match(page, /only location in this inventory/);
+  assert.match(page, /nothing to balance yet/);
+  assert.doesNotMatch(page, /Write this policy/, 'the form is not offered');
+  assert.match(page, /Add a location/, 'and the way forward is named');
+});
+
+test('with two locations the balancing policy is offered as normal', async () => {
+  const env = setup();
+  const agent = await ownerAgent(env);
+  const page = plain((await agent.get('/autopilot')).text);
+
+  assert.match(page, /Write this policy/);
+  assert.doesNotMatch(page, /nothing to balance yet/);
+});

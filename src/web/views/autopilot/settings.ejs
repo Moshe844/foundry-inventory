@@ -142,6 +142,28 @@
   </form>
 <% } %>
 
+<%# Balancing moves stock between locations. Offering it to an inventory with
+    one location invites somebody to write a policy that can never fire, and
+    then wonder why Foundry never does anything. Say why instead. %>
+<% if (locations.length < 2) { %>
+  <div class="card section">
+    <div class="card-head"><h2>Let Foundry balance your warehouses</h2></div>
+    <div class="card-body">
+      <p class="lede">
+        This needs somewhere to move stock <em>to</em>.
+        <%= locations.length === 1 ? locations[0].name + ' is the only location in this inventory' : 'This inventory has no locations yet' %>,
+        so there is nothing to balance yet.
+      </p>
+      <p class="muted">
+        Add a second location and Foundry can keep them level — moving stock when one is running out
+        and the other has plenty, within a limit you set.
+      </p>
+    </div>
+    <div class="card-foot">
+      <a class="btn" href="/locations">Add a location</a>
+    </div>
+  </div>
+<% } else { %>
 <form method="post" action="/autopilot/policies" class="card section">
   <div class="card-head"><h2>Let Foundry balance your warehouses</h2></div>
   <div class="card-body">
@@ -182,6 +204,7 @@
     <button class="btn btn--primary" type="submit" <%= canAdmin ? '' : 'disabled' %>>Write this policy</button>
   </div>
 </form>
+<% } %>
 
 <% if (suppliers.length) { %>
 <form method="post" action="/autopilot/policies" class="card section">
