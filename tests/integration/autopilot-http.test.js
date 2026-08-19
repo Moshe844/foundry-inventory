@@ -62,11 +62,13 @@ test('the primary home is Foundry managing work, not an inventory dashboard', as
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
 
+  // The home page is organised around Foundry's work — what it needs from you,
+  // what it is holding, what it did — rather than around stock counters.
   assert.match(page, /Foundry is managing Autopilot Co/);
-  assert.match(page, /Ask Foundry anything/);
-  assert.match(page, /Foundry needs you/);
-  assert.match(page, /Foundry prepared this/);
-  assert.match(page, /Foundry handled this/);
+  assert.match(page, /Tell Foundry anything/);
+  assert.match(page, /I need you for/);
+  assert.match(page, /What is Foundry handling\?/);
+  assert.match(page, /What did Foundry do\?/);
   assert.match(page, /Open the traditional overview/);
   assert.match(page, /Foundry cannot see stock leaving the business/);
   assert.match(page, /1 real check/);

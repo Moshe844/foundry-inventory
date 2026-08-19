@@ -197,8 +197,8 @@ test('current quantities remain an explicit setup step until the customer finish
   assert.equal(onboarding.status, 'collecting');
 
   const homeBefore = plain((await agent.get('/')).text);
-  assert.match(homeBefore, /Finish the takeover/);
-  assert.match(homeBefore, /Continue setup/);
+  assert.match(homeBefore, /Getting Foundry ready/);
+  assert.match(homeBefore, /Confirm current stock/);
 
   const completed = await agent
     .post('/foundry/quantities/complete')

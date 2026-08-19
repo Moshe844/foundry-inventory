@@ -272,7 +272,13 @@ test('after configuring, the console uses the customer terminology', async () =>
   const locations = plain((await agent.get('/locations')).text);
   assert.match(locations, /Brooklyn Warehouse/);
 
-  const overview = plain((await agent.get('/')).text);
+  // A configured workspace lands on Foundry's guided home, whether or not it has
+  // products yet. Customer terminology belongs to the traditional overview, so
+  // that is where it is checked.
+  const home = plain((await agent.get('/')).text);
+  assert.match(home, /Getting Foundry ready/);
+
+  const overview = plain((await agent.get('/overview')).text);
   assert.match(overview, /Ask Foundry about your inventory/);
   assert.match(overview, /2 warehouses/i);
 });
