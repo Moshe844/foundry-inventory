@@ -79,7 +79,9 @@
     <div class="card-head">
       <h2><%= stuck
         ? (short.length === 1 ? 'One line needs ordering, and Foundry cannot do it' : short.length + ' lines need ordering, and Foundry cannot do them')
-        : (unknown.length ? 'Foundry cannot tell yet' : 'Nothing needs ordering') %></h2>
+        : (plan.covered.length && unknown.length
+            ? (plan.covered.length === 1 ? 'One line is covered. The rest Foundry cannot judge yet' : plan.covered.length + ' lines are covered. The rest Foundry cannot judge yet')
+            : unknown.length ? 'Foundry cannot tell yet' : 'Nothing needs ordering') %></h2>
       <span class="spacer"></span>
       <span class="badge badge--<%= stuck ? 'danger' : unknown.length ? 'muted' : 'ok' %>"><%= stuck ? 'Needs you' : unknown.length ? 'Not enough history' : 'All covered' %></span>
     </div>
@@ -102,9 +104,20 @@
         </ul>
       <% } else { %>
         <% if (unknown.length) { %>
+          <%# A line that was assessed and found fine has to be visible, or
+              somebody who just set one up and tested it sees only a paragraph
+              about the lines they did not touch and concludes nothing worked. %>
+          <% if (plan.covered.length) { %>
+            <p class="lede">
+              Foundry checked
+              <%= plan.covered.length === 1 ? 'one line' : plan.covered.length + ' lines' %>
+              against usage and what is already on order, and
+              <%= plan.covered.length === 1 ? 'it does' : 'they do' %> not need ordering yet.
+            </p>
+          <% } %>
           <p class="lede">
-            Foundry has no outbound history for
-            <%= unknown.length === 1 ? 'this line' : 'these ' + unknown.length + ' lines' %> yet, so it
+            It has no outbound history for
+            <%= unknown.length === 1 ? 'the other line' : 'the other ' + unknown.length + ' lines' %> yet, so it
             cannot say whether they need ordering. It will not guess a demand figure. Record sales or
             usage — or set a reorder point yourself — and it can start.
           </p>
@@ -116,6 +129,7 @@
         <% } %>
       <% } %>
       <% if (plan.covered.length) { %>
+        <h3 class="sub-head">Checked and not needed yet</h3>
         <table class="table table--tight">
           <thead><tr><th>Product</th><th class="num">On hand</th><th class="num">On order</th><th>Why not</th></tr></thead>
           <tbody>

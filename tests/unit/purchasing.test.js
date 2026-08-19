@@ -1152,3 +1152,27 @@ test('a known shortfall with no supplier is still reported as needing ordering',
   assert.match(answer.answer, /need ordering/i);
   assert.match(answer.answer, /Known Short/);
 });
+
+test('a line that was checked and found fine is visible next to ones Foundry cannot judge', () => {
+  // Found walking purchasing setup: after configuring one product and testing
+  // it, the page talked only about the five untouched variants — so the line
+  // the customer had just set up and proven looked as though nothing happened.
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+
+  const configured = makeQuantityItem(db, workspace.ctx, { name: 'Configured Line' });
+  const untouched = makeQuantityItem(db, workspace.ctx, { name: 'Untouched Line' });
+  engine.receive(db, workspace.ctx, { skuId: configured.skuId, locationId: workspace.main.id, quantity: 50 });
+  engine.receive(db, workspace.ctx, { skuId: untouched.skuId, locationId: workspace.main.id, quantity: 10 });
+  policyService.setPolicy(db, workspace.ctx, membership, configured.skuId, { reorderPoint: 5, targetStock: 60 });
+
+  const plan = replenishment.evaluateWorkspace(db, workspace.workspaceId, {});
+
+  assert.equal(plan.covered.length, 1, 'the configured line is above its reorder point');
+  assert.equal(plan.covered[0].displayName, 'Configured Line');
+  assert.ok(plan.blocked.some((line) => line.reason === 'no_usage_evidence'), 'the other cannot be judged');
+
+  // Both facts are true at once, and the page has to be able to say both.
+  assert.notEqual(plan.covered.length, 0, 'so a page reading only blocked would hide the tested line');
+});
