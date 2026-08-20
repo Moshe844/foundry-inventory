@@ -14,7 +14,35 @@ const signalEngine = require('../signals/signal-engine');
 function assess(db, workspaceId, { now = Date.now() } = {}) {
   const inventorySignals = signalEngine.skuSignals(db, workspaceId, { now })
     .filter((entry) => entry.isActive);
-  const usageReady = inventorySignals.filter((entry) => entry.estimated.hasUsageEvidence).length;
+
+  // Never seen anything leave, and seen some but not enough, are two different
+  // facts about the same inventory. Collapsing them into "no usage evidence"
+  // meant that recording a real sale changed nothing anybody could see: Foundry
+  // went on saying it did not know what you sell, and went on asking to be told.
+  const withOutbound = inventorySignals.filter((entry) => entry.measured.issueEventsInWindow > 0);
+  const withoutOutbound = inventorySignals.filter((entry) => entry.measured.issueEventsInWindow === 0);
+  const ready = inventorySignals.filter((entry) => entry.estimated.hasUsageEvidence);
+  const usageReady = ready.length;
+
+  // The threshold for acting on demand is not lowered by any of this. A single
+  // sale moves Foundry from knowing nothing to learning; it does not make it
+  // ready to reorder on.
+  const demandStage = inventorySignals.length === 0
+    ? 'no-products'
+    : usageReady > 0
+      ? 'ready'
+      : withOutbound.length > 0
+        ? 'learning'
+        : 'none';
+
+  const position = (entry) => ({
+    skuId: entry.skuId,
+    displayName: entry.displayName,
+    issued: entry.measured.issuedInWindow,
+    outboundEvents: entry.measured.issueEventsInWindow,
+    observedDays: entry.measured.observedDays,
+    ready: entry.estimated.hasUsageEvidence,
+  });
   const locationCount = db
     .prepare('SELECT COUNT(*) AS n FROM locations WHERE workspace_id = ? AND is_active = 1')
     .get(workspaceId).n;
@@ -35,8 +63,15 @@ function assess(db, workspaceId, { now = Date.now() } = {}) {
   if (!connectedSources) {
     notes.push('Nothing is feeding Foundry automatically yet, so tell it when stock comes in or goes out.');
   }
-  if (!usageReady && inventorySignals.length) {
-    notes.push('It has not seen enough selling yet to say when you will run out.');
+  if (demandStage === 'none') {
+    notes.push('It has not seen anything leave yet, so it cannot say when you will run out.');
+  }
+  if (demandStage === 'learning') {
+    notes.push(
+      `It has seen ${withOutbound.length} of ${inventorySignals.length} ` +
+      `${inventorySignals.length === 1 ? 'product' : 'products'} selling, but not for long enough ` +
+      'to say when you will run out.'
+    );
   }
   if (locationCount < 2) {
     notes.push('You have one location, so there is nowhere for Foundry to move stock to.');
@@ -47,7 +82,12 @@ function assess(db, workspaceId, { now = Date.now() } = {}) {
 
   return {
     canAssessDemand: usageReady > 0,
+    demandStage,
     usageReady,
+    observingCount: withOutbound.length,
+    // Which products Foundry has actually watched move, and which it has not.
+    positionsWithOutbound: withOutbound.map(position),
+    positionsWithoutOutbound: withoutOutbound.map(position),
     skuCount: inventorySignals.length,
     connectedSources,
     locationCount,
@@ -61,7 +101,11 @@ function decisions(db, workspaceId, options = {}) {
   const state = options.readiness || assess(db, workspaceId, options);
   const result = [];
 
-  if (state.skuCount > 0 && state.usageReady === 0 && state.connectedSources === 0) {
+  // Only when there is nothing at all to learn from. Once a real sale exists,
+  // asking to be told about sales is asking for something already provided —
+  // and it sat in Needs you as the one thing standing between the customer and
+  // a working system.
+  if (state.demandStage === 'none' && state.connectedSources === 0) {
     result.push({
       kind: 'operating_input',
       id: 'outbound-source',

@@ -126,9 +126,15 @@ test('an active product reaching zero appears automatically in Foundry needs you
 
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
-  assert.match(page, /I need you for 2 things/i);
   assert.match(page, /Essential Filter is out of stock/i);
   assert.match(page, /0 on hand/i);
+
+  // The stockout is the only thing waiting. This inventory has a real sale
+  // behind it — that is how the filter reached zero — so Foundry has already
+  // been told what it sells and must not still be asking.
+  assert.match(page, /I need you for 1 thing/i);
+  assert.doesNotMatch(page, /Tell Foundry when you sell something/i);
+  assert.match(page, /started learning how your inventory moves/i);
 });
 
 test('the settings page shows what Foundry may do and how you want it run', async () => {

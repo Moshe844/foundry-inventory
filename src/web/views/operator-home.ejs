@@ -100,7 +100,10 @@
   //
   // So: one plain sentence about where Foundry stands, one thing to do about
   // it, and the detail folded away for anyone who wants it.
-  var noHistory = home.readiness.usageReady === 0 && home.readiness.skuCount > 0;
+  // Three states, not two: nothing seen leaving, something seen but not enough
+  // to act on, and enough to act on. The middle one used to read as the first.
+  var demandStage = home.readiness.demandStage
+    || (home.readiness.usageReady > 0 ? 'ready' : home.readiness.skuCount > 0 ? 'none' : 'no-products');
 %>
 <details class="capability-guide" id="foundry-capabilities">
   <summary><%- helpers.icon('question', { size: 18 }) %> What can Foundry do? <span>A practical guide to what exists today</span></summary>
@@ -127,7 +130,7 @@
 <section class="operator-readiness" aria-labelledby="readiness-title">
   <div>
     <span class="operator-lane__eyebrow">Where Foundry stands</span>
-    <% if (noHistory) { %>
+    <% if (demandStage === 'none') { %>
       <h2 id="readiness-title">Foundry knows what you have. It does not yet know what you sell.</h2>
       <p class="readiness-explainer">
         It can tell you your counts and every change to them today. To go further — telling you what is
@@ -135,6 +138,28 @@
         delivery going out and it starts learning straight away.
       </p>
       <p><a class="btn btn--primary" href="/#tell-foundry">Record a sale or movement</a></p>
+    <% } else if (demandStage === 'learning') { %>
+      <h2 id="readiness-title">Foundry has started learning how your inventory moves.</h2>
+      <p class="readiness-explainer">
+        It has seen <strong><%= home.readiness.observingCount %></strong> of
+        <strong><%= home.readiness.skuCount %></strong>
+        <%= home.readiness.skuCount === 1 ? 'product' : 'products' %> actually sell. It needs more
+        history before it can reliably say what is running low or what to reorder, and it will say so
+        rather than guess in the meantime. Nothing more is needed from you — keep recording what
+        happens and it keeps learning.
+      </p>
+      <% if (home.readiness.positionsWithOutbound && home.readiness.positionsWithOutbound.length) { %>
+        <p class="readiness-explainer">
+          Watched so far:
+          <%= home.readiness.positionsWithOutbound.map(function (p) {
+                return p.displayName + ' (' + p.issued + ' out over ' + p.observedDays + ' days)';
+              }).join(', ') %>.
+          <% if (home.readiness.positionsWithoutOutbound.length) { %>
+            Nothing has left yet for
+            <%= home.readiness.positionsWithoutOutbound.map(function (p) { return p.displayName; }).join(', ') %>.
+          <% } %>
+        </p>
+      <% } %>
     <% } else { %>
       <h2 id="readiness-title">
         Foundry can judge <%= home.readiness.usageReady %> of <%= home.readiness.skuCount %>
