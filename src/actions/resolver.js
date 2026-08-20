@@ -311,6 +311,23 @@ function resolveSku(db, workspaceId, itemText, variantText) {
       );
     }
     rows = narrowed;
+
+    // Every axis value the person supplied narrows the choice, wherever in the
+    // sentence it landed.
+    //
+    // Which words become the "product" and which become the "version" is a
+    // reading of one sentence, and the reading varies: "move 5 Black Small"
+    // can arrive as item "Black T-shirt" with version "Small". Narrowing on
+    // the version alone then left Black / Small and White / Small and asked
+    // which — about a colour the person had already named. Only tokens that
+    // are genuinely option values of the remaining candidates survive
+    // narrowBy's vocabulary check, so the product's own words cannot filter
+    // anything out, and a narrowing that matches nothing is discarded rather
+    // than turned into a refusal.
+    if (rows.length > 1) {
+      const alsoNamed = narrowBy(rows, itemText);
+      if (alsoNamed.length && alsoNamed.length < rows.length) rows = alsoNamed;
+    }
   } else if (rows.length > 1) {
     // No separate variant wording, but the name they used may itself name one —
     // "move 15 Navy 4" has no product in it at all. Narrowing on the same words

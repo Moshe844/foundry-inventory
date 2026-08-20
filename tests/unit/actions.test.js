@@ -1612,3 +1612,116 @@ test('two counts for the same shelf are a question, not a silent last-one-wins',
   assert.match(result.question, /50/);
   assert.match(result.question, /37/);
 });
+
+// --- every axis value the person supplied ------------------------------------
+
+/**
+ * Reported: "Move 5 Black Small from Main Warehouse to Downtown Store" was
+ * answered with "which one — Black / Small or White / Small?". The colour was
+ * in the sentence; it arrived in the product field rather than the version
+ * field, and only the version field was used to narrow.
+ */
+function tees() {
+  const base = setup({ workspaceName: 'Tee Business' });
+  const item = makeVariantItem(base.db, base.ctx, {
+    // The product's own name contains a colour, which is what made the split
+    // ambiguous in the first place.
+    name: 'Black T-shirt',
+    baseCode: 'BT-1',
+    options: [
+      { name: 'Colour', values: 'Black, White' },
+      { name: 'Size', values: 'Small, Medium, Large' },
+    ],
+  });
+  for (const sku of item.skus) {
+    engine.receive(base.db, base.ctx, { skuId: sku.id, locationId: base.workspace.main.id, quantity: 20 });
+  }
+  return { ...base, item };
+}
+
+const resolvedLabel = (env, over) => {
+  const built = proposals.build(env.db, env.ctx, intent(over));
+  assert.ok(built.ok, built.question || built.unsupported);
+  return env.item.skus.find((s) => s.id === built.proposal.skuId).variant_label;
+};
+
+test('a colour in the product field still narrows the version: transfer', () => {
+  const env = tees();
+  assert.equal(
+    resolvedLabel(env, { actionType: 'transfer', item: 'Black T-shirt', variant: 'Small', quantity: 5 }),
+    'Black / Small'
+  );
+});
+
+test('the same for issue, receive and a corrected count', () => {
+  const env = tees();
+  assert.equal(
+    resolvedLabel(env, {
+      actionType: 'issue', item: 'White T-shirt', variant: 'Medium', quantity: 2,
+      sourceLocation: 'Main Warehouse', destinationLocation: '', reasonCode: 'sold',
+    }),
+    'White / Medium'
+  );
+  assert.equal(
+    resolvedLabel(env, {
+      actionType: 'receive', item: 'Black T-shirt', variant: 'Large', quantity: 4,
+      sourceLocation: '', destinationLocation: 'Main Warehouse',
+    }),
+    'Black / Large'
+  );
+  assert.equal(
+    resolvedLabel(env, {
+      actionType: 'adjust', item: 'White T-shirt', variant: 'Small', quantity: -1,
+      adjustmentTarget: 7, sourceLocation: 'Main Warehouse', destinationLocation: '',
+      reasonCode: 'physical_count',
+    }),
+    'White / Small'
+  );
+});
+
+test('the order the two axes are written in does not matter', () => {
+  const env = tees();
+  for (const variant of ['Black Small', 'Small Black']) {
+    assert.equal(
+      resolvedLabel(env, { actionType: 'transfer', item: 'T-shirt', variant, quantity: 5 }),
+      'Black / Small'
+    );
+  }
+  // And with both axes left in the product field.
+  assert.equal(
+    resolvedLabel(env, { actionType: 'transfer', item: 'Black T-shirt Small', variant: '', quantity: 5 }),
+    'Black / Small'
+  );
+});
+
+test('several variants in one instruction each resolve on their own', async () => {
+  const env = tees();
+  const lines = [
+    wireLine({ actionType: 'transfer', item: 'Black T-shirt', variant: 'Small', quantity: 5,
+      sourceLocation: 'Main Warehouse', destinationLocation: 'Downtown Store' }),
+    wireLine({ actionType: 'transfer', item: 'White T-shirt', variant: 'Medium', quantity: 3,
+      sourceLocation: 'Main Warehouse', destinationLocation: 'Downtown Store' }),
+  ];
+  const result = await actionService.interpret(
+    env.db, env.ctx, env.membership, 'move 5 Black Small and 3 White Medium to the store',
+    { provider: providerReturning({ lines, clarifyingQuestion: '', unsupportedReason: '' }) }
+  );
+
+  assert.equal(result.kind, 'plan');
+  const labels = result.plan.lines.map(
+    (line) => env.item.skus.find((s) => s.id === line.skuId).variant_label
+  );
+  assert.deepEqual(labels, ['Black / Small', 'White / Medium']);
+});
+
+test('a version that genuinely is ambiguous is still asked about', () => {
+  const env = tees();
+  // "Small" alone really does leave two colours. Foundry must still ask, and
+  // must not have invented an answer to look decisive.
+  const built = proposals.build(env.db, env.ctx, intent({
+    actionType: 'transfer', item: 'T-shirt', variant: 'Small', quantity: 5,
+  }));
+  assert.equal(built.ok, false);
+  assert.match(built.question, /Black \/ Small/);
+  assert.match(built.question, /White \/ Small/);
+});
