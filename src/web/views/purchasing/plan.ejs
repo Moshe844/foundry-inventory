@@ -6,16 +6,35 @@
       has been selling. Nothing is ordered until you say so.
     </div>
 
+<%# Say what is actually missing.
+    This was worded as "Foundry does not know who you buy from" but shown
+    whenever no reorder points had been set — so it went on claiming to know no
+    suppliers immediately after somebody had just added one. %>
 <% if (setup && setup.lines && !setup.alreadySet) { %>
   <div class="card section card--warn">
     <div class="card-body">
-      <%# "Reorder points", "lines" and "enough history" all assume the reader
-          already runs a stockroom. Say what is missing and what it unlocks. %>
-      <p class="lede">Foundry does not know who you buy from yet.</p>
-      <p class="muted">
-        Once it knows your supplier and how long they take to deliver, it can tell you what to order
-        and write the order for you to check. It takes a minute and you only do it once.
-      </p>
+      <% if (!setup.suppliers) { %>
+        <p class="lede">Foundry does not know who you buy from yet.</p>
+        <p class="muted">
+          Once it knows your supplier and how long they take to deliver, it can tell you what to order
+          and write the order for you to check. It takes a minute and you only do it once.
+        </p>
+      <% } else if (setup.withoutSupplier) { %>
+        <p class="lede">
+          <%= setup.withoutSupplier %>
+          <%= setup.withoutSupplier === 1 ? 'product has' : 'products have' %> nobody to buy from yet.
+        </p>
+        <p class="muted">
+          Foundry can work out what those need, but not who to order them from. The ones that are
+          short say so on the line itself, and take you straight to it.
+        </p>
+      <% } else { %>
+        <p class="lede">Foundry is working these out from what they have been selling.</p>
+        <p class="muted">
+          You have not set your own reorder levels, so Foundry uses the ones it derives from usage
+          and says so. Set them yourself whenever you want to be exact.
+        </p>
+      <% } %>
       <div class="btn-row"><a class="btn btn--primary" href="/purchasing/setup">Set up purchasing</a></div>
     </div>
   </div>
@@ -95,10 +114,19 @@
         <ul class="plain-list">
           <% short.forEach(function (line) { %>
             <li>
-              <a href="/purchasing/why/<%= line.skuId %>"><strong><%= line.displayName %></strong></a>
+              <%# The product name goes to the thing that is blocking it, not to
+                  the arithmetic — which is the one part that is not missing. %>
+              <a href="<%= line.reason === 'no_supplier'
+                    ? '/purchasing/supplier-for/' + line.skuId
+                    : '/purchasing/why/' + line.skuId %>"><strong><%= line.displayName %></strong></a>
               — <%= line.headline %>
               <% if (line.reason === 'no_supplier') { %>
-                <div class="muted">Add a supplier for this product and Foundry can prepare the order.</div>
+                <div class="muted">
+                  <a class="btn btn--sm btn--primary" href="/purchasing/supplier-for/<%= line.skuId %>">
+                    Add the supplier for <%= line.displayName %>
+                  </a>
+                  <a class="btn btn--sm btn--ghost" href="/purchasing/why/<%= line.skuId %>">See the numbers</a>
+                </div>
               <% } %>
             </li>
           <% }) %>

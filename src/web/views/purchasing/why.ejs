@@ -6,6 +6,27 @@
   </div>
 </div>
 
+<%# Landing here from a line that is short but has nobody to buy it from used
+    to be the end of the road: this page is the arithmetic, and the arithmetic
+    was never the problem. %>
+<% if (line.reason === 'no_supplier') { %>
+  <div class="card section" style="border-color:var(--accent-line);">
+    <div class="card-head">
+      <%- helpers.icon('alert', { size: 18 }) %>
+      <h2>Foundry cannot order this yet</h2>
+    </div>
+    <div class="card-body">
+      <p class="lede" style="margin-top:0;">
+        The numbers below are settled — <%= line.displayName %> is
+        <strong><%= line.shortfall %></strong> short. What is missing is who you buy it from.
+      </p>
+      <a class="btn btn--primary" href="/purchasing/supplier-for/<%= line.skuId %>">
+        Add the supplier for <%= line.displayName %>
+      </a>
+    </div>
+  </div>
+<% } %>
+
 <div class="card section">
   <div class="card-head">
     <h2><%= line.recommend ? 'Why this quantity' : 'Why nothing' %></h2>

@@ -1,0 +1,116 @@
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/purchasing">What to order</a><span>›</span><span><%= line.displayName %></span>
+</nav>
+
+<div class="page-head">
+  <div class="titles">
+    <h1>Who do you buy <%= line.displayName %> from?</h1>
+    <div class="page-sub">
+      Foundry knows this one needs ordering. It cannot prepare the order until it knows who supplies it.
+    </div>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head">
+    <%- helpers.icon('alert', { size: 18 }) %>
+    <h2>What Foundry already worked out</h2>
+  </div>
+  <div class="card-body">
+    <div class="act-ledger">
+      <div class="act-row">
+        <span class="act-place">On hand<small>across every location</small></span>
+        <span class="act-move"><span class="num"><%= line.onHand %></span></span>
+      </div>
+      <% if (line.reorderPoint !== undefined && line.reorderPoint !== null) { %>
+        <div class="act-row">
+          <span class="act-place">Reorder point<small>where Foundry starts asking</small></span>
+          <span class="act-move"><span class="num"><%= line.reorderPoint %></span></span>
+        </div>
+      <% } %>
+      <% if (line.shortfall) { %>
+        <div class="act-row act-row--total">
+          <span class="act-place">Short by<small>what is missing to reach the level you set</small></span>
+          <span class="act-move"><span class="num act-after"><%= line.shortfall %></span></span>
+        </div>
+      <% } %>
+    </div>
+    <p class="muted" style="margin-bottom:0;">
+      <%= line.explanation %>
+    </p>
+  </div>
+</div>
+
+<% if (!canManageSuppliers) { %>
+  <div class="notice notice--warn">
+    <%- helpers.icon('alert', { size: 16 }) %>
+    <span>You do not have permission to add or change suppliers in this inventory. Ask an owner.</span>
+  </div>
+<% } else { %>
+<div class="card section">
+  <div class="card-head">
+    <%- helpers.icon('purchasing', { size: 18 }) %>
+    <h2>Tell Foundry who supplies it</h2>
+  </div>
+  <form method="post" action="/purchasing/supplier-for/<%= line.skuId %>">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="card-body">
+      <% if (suppliers.length) { %>
+        <label class="field" style="max-width:420px;">
+          <span class="field-label">One you already buy from</span>
+          <select class="select" name="supplierId">
+            <option value="">— a new one —</option>
+            <% suppliers.forEach(function (supplier) { %>
+              <option value="<%= supplier.id %>"><%= supplier.name %></option>
+            <% }) %>
+          </select>
+        </label>
+      <% } %>
+
+      <label class="field" style="max-width:420px;">
+        <span class="field-label"><%= suppliers.length ? '…or the new supplier’s name' : 'Supplier name' %></span>
+        <input class="input" type="text" name="newSupplierName" maxlength="120"
+               placeholder="The company you order this from">
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">They sell it by the</span>
+          <input class="input" type="text" name="purchaseUnit" value="unit" maxlength="40">
+          <span class="field-help">A case, a box, a pallet — or leave it as “unit” if you buy singles.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Units in one of those</span>
+          <input class="input num" type="number" name="unitsPerPurchaseUnit" value="1" min="1" step="1">
+          <span class="field-help">A case of twelve is 12. Foundry rounds orders up to whole ones.</span>
+        </label>
+      </div>
+
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">Minimum order <span class="optional">optional</span></span>
+          <input class="input num" type="number" name="minimumOrderQuantity" min="0" step="1">
+          <span class="field-help">The fewest they will sell at a time, in the unit above.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Lead time in days <span class="optional">optional</span></span>
+          <input class="input num" type="number" name="leadTimeDays" min="0" step="1">
+          <span class="field-help">How long a delivery takes. Foundry orders early enough to cover it.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">What you last paid <span class="optional">optional</span></span>
+          <input class="input num" type="number" name="lastUnitCost" min="0" step="0.01">
+          <span class="field-help">Per unit. Used to estimate what an order will cost.</span>
+        </label>
+      </div>
+    </div>
+    <div class="card-foot">
+      <span class="muted">Nothing is ordered here. Foundry recalculates this line and shows you the order to review.</span>
+      <span class="btn-row" style="margin-left:auto;">
+        <a class="btn" href="/purchasing">Cancel</a>
+        <button class="btn btn--primary" type="submit">Save supplier and work out the order</button>
+      </span>
+    </div>
+  </form>
+</div>
+<% } %>

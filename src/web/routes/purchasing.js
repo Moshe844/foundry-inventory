@@ -105,6 +105,84 @@ router.get(
   })
 );
 
+/**
+ * The way out of "no supplier on file".
+ *
+ * Replenishment can work out that a line is short and still be unable to do
+ * anything about it, and it says so plainly. But the only link on that line
+ * went to the arithmetic — reorder point, order-up-to, safety stock — which is
+ * the one thing that was not missing. Somebody new was told exactly what was
+ * wrong and given nowhere to fix it, with suppliers living on a screen they had
+ * no reason to have found.
+ *
+ * This is that screen, scoped to the product that is blocked, using the same
+ * linking the setup page uses. Afterwards it goes back to what to order, where
+ * the same line is recalculated with the supplier's pack size, cost and lead
+ * time and is ready to become an order.
+ */
+router.get(
+  '/purchasing/supplier-for/:skuId',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.VIEW_PURCHASING, 'see purchasing');
+    const line = replenishment.evaluateOne(req.db, req.ctx.workspaceId, req.params.skuId);
+    if (!line) {
+      req.flash('error', 'That product is not in this inventory.');
+      return res.redirect('/purchasing');
+    }
+    return res.page('purchasing/supplier-for', {
+      title: `Who do you buy ${line.displayName} from?`,
+      nav: 'purchasing',
+      line,
+      suppliers: supplierService.listSuppliers(req.db, req.ctx.workspaceId),
+      canManageSuppliers: permissions.can(req.user, permissions.MANAGE_SUPPLIERS),
+    });
+  })
+);
+
+router.post(
+  '/purchasing/supplier-for/:skuId',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.MANAGE_SUPPLIERS, 'manage suppliers');
+    try {
+      let supplierId = trimOrNull(req.body.supplierId);
+      if (!supplierId) {
+        const created = supplierService.createSupplier(req.db, req.ctx, req.user, {
+          name: req.body.newSupplierName,
+          defaultLeadTimeDays: req.body.leadTimeDays,
+        });
+        supplierId = created.id;
+      }
+      // The same linking the setup screen performs, so there is one way a
+      // supplier gets attached to a product rather than two that can diverge.
+      const result = setupService.linkSupplierToMany(req.db, req.ctx, req.user, {
+        supplierId,
+        skuIds: [req.params.skuId],
+        purchaseUnit: req.body.purchaseUnit,
+        unitsPerPurchaseUnit: req.body.unitsPerPurchaseUnit,
+        minimumOrderQuantity: req.body.minimumOrderQuantity,
+        leadTimeDays: req.body.leadTimeDays,
+        lastUnitCost: req.body.lastUnitCost,
+        isPreferred: true,
+      });
+
+      // Recalculated immediately, so the answer to "what now?" is the number
+      // rather than another screen.
+      const line = replenishment.evaluateOne(req.db, req.ctx.workspaceId, req.params.skuId);
+      req.flash(
+        'success',
+        line && line.recommend
+          ? `${result.supplier.name} now supplies ${line.displayName}. ${line.headline} — review it below.`
+          : `${result.supplier.name} now supplies that product.`
+      );
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+      return res.redirect(303, `/purchasing/supplier-for/${req.params.skuId}`);
+    }
+    return res.redirect(303, '/purchasing');
+  })
+);
+
 /** Turns one supplier's recommended lines into a draft order to review. */
 router.post(
   '/purchasing/prepare/:supplierId',

@@ -412,3 +412,88 @@ test('a delivery that matches the order is booked in with one click', async () =
     'booked in once'
   );
 });
+
+// --- being told what is missing, and being able to fix it --------------------
+
+/**
+ * A line can be short and unorderable at the same time, and Foundry says so.
+ * The only link on it went to the reorder arithmetic — the one thing that was
+ * not missing — so somebody new was told exactly what was wrong and left to
+ * find suppliers on a screen they had no reason to know about.
+ */
+function shortWithNoSupplier() {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Tee Business' });
+  const item = makeQuantityItem(store.db, workspace.ctx, { name: 'Black T-shirt' });
+
+  engine.receive(store.db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 40 });
+  store.db.exec('DROP TRIGGER IF EXISTS movements_no_update');
+  const stmt = store.db.prepare('UPDATE movements SET occurred_at = ? WHERE id = ?');
+  for (let i = 0; i < 6; i += 1) {
+    const result = engine.issue(store.db, workspace.ctx, {
+      skuId: item.skuId, locationId: workspace.main.id, quantity: 6, reasonCode: 'sold',
+    });
+    for (const id of result.movementIds) stmt.run(new Date(Date.now() - (28 - i * 4) * DAY).toISOString(), id);
+  }
+  store.db.exec(
+    `CREATE TRIGGER IF NOT EXISTS movements_no_update BEFORE UPDATE ON movements
+     BEGIN SELECT RAISE(ABORT, 'movements are immutable'); END`
+  );
+
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'supplier-gap-test' });
+  return { ...store, workspace, item, app };
+}
+
+test('a line blocked for want of a supplier leads to setting one up, and then becomes orderable', async () => {
+  const env = shortWithNoSupplier();
+  const { agent } = await owner(env);
+
+  // 1. Foundry sees the shortfall and says what is missing.
+  const plan = await agent.get('/purchasing');
+  const planText = plain(plan.text);
+  assert.match(planText, /no supplier on file/i);
+  assert.match(planText, /Add the supplier for Black T-shirt/i,
+    'the thing that is missing has to be the thing you can click');
+
+  // 2. The primary action goes to supplier setup for this product — not back to
+  //    the arithmetic, which is where it used to go.
+  assert.match(plan.text, new RegExp(`/purchasing/supplier-for/${env.item.skuId}`));
+  const form = await agent.get(`/purchasing/supplier-for/${env.item.skuId}`);
+  assert.equal(form.status, 200);
+  const formText = plain(form.text);
+  assert.match(formText, /Who do you buy Black T-shirt from/i);
+  assert.match(formText, /short/i, 'it carries the shortfall it is unblocking');
+
+  // Reaching it from the numbers page works too.
+  const why = plain((await agent.get(`/purchasing/why/${env.item.skuId}`)).text);
+  assert.match(why, /Foundry cannot order this yet/i);
+  assert.match(why, /Add the supplier for Black T-shirt/i);
+
+  // 3. Creating and linking the supplier, in one step, from here.
+  const saved = await agent.post(`/purchasing/supplier-for/${env.item.skuId}`).type('form').send({
+    _csrf: csrfFrom(form.text),
+    newSupplierName: 'Cotton Mills',
+    purchaseUnit: 'case',
+    unitsPerPurchaseUnit: 12,
+    leadTimeDays: 7,
+    lastUnitCost: 4.5,
+  });
+  assert.equal(saved.status, 303);
+  assert.equal(saved.headers.location, '/purchasing', 'it returns to the order flow');
+
+  // The link is real, and preferred, so replenishment can use it.
+  const linked = suppliers.suppliersForSku(env.db, env.workspace.workspaceId, env.item.skuId);
+  assert.equal(linked.length, 1);
+  assert.equal(linked[0].supplierName, 'Cotton Mills');
+
+  // 4. Back on What to order, the same line is now actionable and costed with
+  //    the supplier's pack size and lead time.
+  const after = await agent.get('/purchasing');
+  const afterText = plain(after.text);
+  assert.doesNotMatch(afterText, /no supplier on file/i, 'the blocker is gone');
+  assert.match(afterText, /Cotton Mills/);
+  assert.match(afterText, /case/i, "the supplier's pack size is in the recommendation");
+  assert.match(after.text, /\/purchasing\/prepare\//,
+    'and the order can now actually be prepared');
+  env.db.close();
+});
