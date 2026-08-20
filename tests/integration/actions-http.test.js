@@ -633,3 +633,46 @@ test('a question is rendered where it can be answered, not as a message you dism
   assert.match(html, /name="answer"/, 'and a box to type the answer into');
   assert.match(html, /name="original" value="move 3 oxfords"/, 'carrying what was originally asked');
 });
+
+// --- the console authorises too ---------------------------------------------
+
+/**
+ * The manual screens had no permission check at all, so they were a way around
+ * the whole scheme: a staff member could correct a count from the item page —
+ * the one operation that changes a balance without stock moving — while the
+ * same correction through Tell Foundry was refused.
+ */
+test('a staff member can handle stock but cannot correct a count from the item page', async () => {
+  const env = setup();
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.staffEmail, 'password123');
+
+  // Handling stock is their job, and still works.
+  const issued = await post(agent, `/inventory/${env.item.itemId}/issue`, {
+    skuId: env.navy4.id, locationId: env.workspace.main.id, quantity: 2, reasonCode: 'sold',
+  }, `/inventory/${env.item.itemId}`);
+  assert.ok(issued.status < 400 || issued.status === 303);
+  assert.equal(balance(env, env.workspace.main.id), 46, 'staff may issue');
+
+  // Correcting the count is not.
+  await post(agent, `/inventory/${env.item.itemId}/adjust`, {
+    skuId: env.navy4.id, locationId: env.workspace.main.id, countedQty: 999, reasonCode: 'physical_count',
+  }, `/inventory/${env.item.itemId}`);
+  assert.equal(balance(env, env.workspace.main.id), 46, 'the correction must not have happened');
+
+  const adjustments = env.db
+    .prepare('SELECT COUNT(*) AS n FROM adjustments WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n;
+  assert.equal(adjustments, 0, 'and must not be on record either');
+});
+
+test('an owner may still correct a count from the item page', async () => {
+  const env = setup();
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  await post(agent, `/inventory/${env.item.itemId}/adjust`, {
+    skuId: env.navy4.id, locationId: env.workspace.main.id, countedQty: 50, reasonCode: 'physical_count',
+  }, `/inventory/${env.item.itemId}`);
+  assert.equal(balance(env, env.workspace.main.id), 50, 'the guard must not block the people it is not for');
+});

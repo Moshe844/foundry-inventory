@@ -12,11 +12,35 @@ const attention = require('../../attention/attention-engine');
 const presenter = require('../../attention/presenter');
 const purchasingPolicy = require('../../purchasing/policy-service');
 const supplierService = require('../../purchasing/supplier-service');
+const permissions = require('../../actions/permissions');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { toArray, trimOrNull } = require('../../lib/util');
 
 const router = express.Router();
 router.use('/inventory', requireAuth);
+
+/**
+ * The console authorises exactly like everything else.
+ *
+ * permissions.js states the rule it exists to keep — "every action authorises
+ * here, on the server, before anything is validated or executed; hiding a
+ * button is presentation, not security" — and the actions pipeline and
+ * purchasing both honour it. These routes did not check at all, so the manual
+ * screens were a way round the whole scheme: a staff member could correct a
+ * count, which is the one operation that changes a balance without stock
+ * moving, and is deliberately withheld from them.
+ *
+ * The permission is the one the action already declares in ACTION_PERMISSION,
+ * so the console and Tell Foundry can never drift apart on who may do what.
+ */
+const may = (actionType) => (req, res, next) => {
+  try {
+    permissions.assertCanPerform(req.user, actionType);
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+};
 
 /** Serial numbers are entered one per line; blank lines are ignored. */
 function parseSerialLines(raw, condition) {
@@ -100,6 +124,7 @@ router.get(
 
 router.post(
   '/inventory',
+  may('create_item'),
   asyncRoute(async (req, res) => {
     const hasVariants = req.body.hasVariants === '1' || req.body.hasVariants === 'on';
     let created;
@@ -154,6 +179,7 @@ router.get(
 
 router.post(
   '/inventory/:id/details',
+  may('create_item'),
   asyncRoute(async (req, res) => {
     itemService.updateItem(req.db, req.ctx, req.params.id, {
       name: req.body.name,
@@ -169,6 +195,7 @@ router.post(
 
 router.post(
   '/inventory/:id/variants',
+  may('create_item'),
   asyncRoute(async (req, res) => {
     const values = req.body.optionValues || {};
     const result = itemService.addVariant(req.db, req.ctx, req.params.id, values);
@@ -179,6 +206,7 @@ router.post(
 
 router.post(
   '/inventory/:id/archive',
+  may('create_item'),
   asyncRoute(async (req, res) => {
     const archived = req.body.restore !== '1';
     itemService.setItemActive(req.db, req.ctx, req.params.id, !archived);
@@ -189,6 +217,7 @@ router.post(
 
 router.post(
   '/inventory/:id/receive',
+  may('receive'),
   asyncRoute(async (req, res) => {
     const item = repo.requireItem(req.db, req.ctx.workspaceId, req.params.id);
     const input = {
@@ -217,6 +246,7 @@ router.post(
 
 router.post(
   '/inventory/:id/issue',
+  may('issue'),
   asyncRoute(async (req, res) => {
     const item = repo.requireItem(req.db, req.ctx.workspaceId, req.params.id);
     const input = {
@@ -243,6 +273,7 @@ router.post(
 
 router.post(
   '/inventory/:id/transfer',
+  may('transfer'),
   asyncRoute(async (req, res) => {
     const item = repo.requireItem(req.db, req.ctx.workspaceId, req.params.id);
     const input = {
@@ -266,6 +297,7 @@ router.post(
 
 router.post(
   '/inventory/:id/adjust',
+  may('adjust'),
   asyncRoute(async (req, res) => {
     const item = repo.requireItem(req.db, req.ctx.workspaceId, req.params.id);
     const input = {
