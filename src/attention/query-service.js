@@ -81,13 +81,34 @@ const since = (days) => new Date(Date.now() - days * 86400000).toISOString();
  * plain plural is stemmed — "valves" finds "Valve". Words must all be present,
  * which keeps this a stricter search rather than a fuzzy one.
  */
+/**
+ * Words that name nothing.
+ *
+ * Every term has to match, which is what keeps this a strict search rather
+ * than a fuzzy one — but it also means one word that identifies nothing
+ * guarantees no result at all. "The" is three letters, so it survived the
+ * length filter, and "move it to the warehouse" found no warehouse while
+ * "move it to warehouse" found one. Shorter articles were already dropped by
+ * the length rule; this finishes the job for the rest.
+ *
+ * A product or place genuinely called "The Works" is unaffected: the remaining
+ * words still match it, and locations try an exact name first.
+ */
+const NAMES_NOTHING = new Set([
+  'the', 'our', 'my', 'its', 'their', 'this', 'that', 'these', 'those', 'some', 'any', 'all',
+]);
+
 function searchTerms(query) {
-  return String(query)
+  const words = String(query)
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((word) => word.length >= 3)
-    .map((word) => (word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word))
-    .slice(0, 6);
+    .map((word) => (word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word));
+
+  // Only drop them when something identifying is left. A query of nothing but
+  // filler should go on finding nothing rather than matching everything.
+  const meaningful = words.filter((word) => !NAMES_NOTHING.has(word));
+  return (meaningful.length ? meaningful : words).slice(0, 6);
 }
 
 const SKU_SELECT = `SELECT s.id, s.code, i.name, i.unit_label, s.variant_label

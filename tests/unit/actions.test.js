@@ -1725,3 +1725,25 @@ test('a version that genuinely is ambiguous is still asked about', () => {
   assert.match(built.question, /Black \/ Small/);
   assert.match(built.question, /White \/ Small/);
 });
+
+test('ordinary words around a location name do not defeat it', () => {
+  const env = clothing();
+  // "Move it to the store" is how people talk. Every search term has to match,
+  // so "the" — three letters, and past the length filter — guaranteed no match
+  // at all and turned a clear instruction into a question.
+  for (const wording of ['the store', 'Downtown Store', 'downtown', 'store']) {
+    const built = proposals.build(env.db, env.ctx, intent({
+      actionType: 'transfer', sourceLocation: 'Main Warehouse', destinationLocation: wording, quantity: 5,
+    }));
+    assert.ok(built.ok, `"${wording}" should resolve: ${built.question || built.unsupported}`);
+    assert.equal(built.proposal.destinationLocationId, env.workspace.store.id);
+  }
+});
+
+test('a location named only by filler is still refused', () => {
+  const env = clothing();
+  const built = proposals.build(env.db, env.ctx, intent({
+    actionType: 'transfer', sourceLocation: 'Main Warehouse', destinationLocation: 'the', quantity: 5,
+  }));
+  assert.equal(built.ok, false, 'dropping filler must not turn "the" into a match for everything');
+});

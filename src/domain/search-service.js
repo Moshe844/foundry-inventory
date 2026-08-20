@@ -3,6 +3,44 @@
 const { escapeLike } = require('../lib/util');
 
 /**
+ * Words that name nothing, so requiring them would find nothing. Kept in step
+ * with the resolver's own list.
+ */
+const NAMES_NOTHING = new Set([
+  'the', 'our', 'my', 'its', 'their', 'this', 'that', 'these', 'those', 'some', 'any', 'all',
+]);
+
+/**
+ * The words worth matching, for a box people type sentences into.
+ *
+ * The query used to be matched as one literal string, so it only found text
+ * stored in exactly that order. Somebody reading "Black / Small" off the screen
+ * and typing "black small" got nothing, because of the slash between them, and
+ * so did anyone who typed "the cotton tee".
+ */
+function wordsOf(term) {
+  return String(term)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 2 && !NAMES_NOTHING.has(word))
+    .slice(0, 6);
+}
+
+/**
+ * Every word of the query, somewhere in `columns`.
+ *
+ * The literal match is kept alongside this: it is what makes a part code like
+ * "CT-100-BLACK" work, and it still ranks an exact hit first.
+ */
+function wordClause(columns, words) {
+  if (!words.length) return { sql: '0', params: [] };
+  return {
+    sql: words.map(() => columns + " LIKE ? ESCAPE '\\' COLLATE NOCASE").join(' AND '),
+    params: words.map((word) => '%' + escapeLike(word) + '%'),
+  };
+}
+
+/**
  * One search box, four kinds of answer: items, variants, serial numbers and
  * lots. Every result knows the record it should open.
  */
@@ -11,6 +49,12 @@ function search(db, workspaceId, rawTerm, { limit = 8 } = {}) {
   if (term.length < 1) return { term, results: [], total: 0 };
   const like = `%${escapeLike(term)}%`;
   const exact = term;
+  const words = wordsOf(term);
+  const itemWords = wordClause("(i.name || ' ' || COALESCE(i.base_code, ''))", words);
+  const variantWords = wordClause(
+    "(i.name || ' ' || COALESCE(s.variant_label, '') || ' ' || COALESCE(s.code, ''))",
+    words
+  );
 
   const items = db
     .prepare(
@@ -19,11 +63,12 @@ function search(db, workspaceId, rawTerm, { limit = 8 } = {}) {
                          WHERE s.item_id = i.id), 0) AS on_hand
          FROM items i
         WHERE i.workspace_id = ?
-          AND (i.name LIKE ? ESCAPE '\\' COLLATE NOCASE OR i.base_code LIKE ? ESCAPE '\\' COLLATE NOCASE)
+          AND (i.name LIKE ? ESCAPE '\\' COLLATE NOCASE OR i.base_code LIKE ? ESCAPE '\\' COLLATE NOCASE
+               OR (${itemWords.sql}))
         ORDER BY (i.name = ? COLLATE NOCASE) DESC, i.name COLLATE NOCASE
         LIMIT ?`
     )
-    .all(workspaceId, like, like, exact, limit)
+    .all(workspaceId, like, like, ...itemWords.params, exact, limit)
     .map((row) => ({
       type: 'item',
       id: row.id,
@@ -41,11 +86,12 @@ function search(db, workspaceId, rawTerm, { limit = 8 } = {}) {
          FROM skus s
          JOIN items i ON i.id = s.item_id
         WHERE s.workspace_id = ?
-          AND (s.code LIKE ? ESCAPE '\\' COLLATE NOCASE OR s.variant_label LIKE ? ESCAPE '\\' COLLATE NOCASE)
+          AND (s.code LIKE ? ESCAPE '\\' COLLATE NOCASE OR s.variant_label LIKE ? ESCAPE '\\' COLLATE NOCASE
+               OR (${variantWords.sql}))
         ORDER BY (s.code = ? COLLATE NOCASE) DESC, i.name COLLATE NOCASE
         LIMIT ?`
     )
-    .all(workspaceId, like, like, exact, limit)
+    .all(workspaceId, like, like, ...variantWords.params, exact, limit)
     .map((row) => ({
       type: row.variant_label ? 'variant' : 'sku',
       id: row.id,

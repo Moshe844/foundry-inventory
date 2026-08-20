@@ -223,3 +223,28 @@ test('the overview counts what it says it counts', () => {
   assert.equal(stats.expiringLots.length, 1);
   assert.equal(stats.expiringLots[0].quantity, 80);
 });
+
+test('search matches the words people type, not just the exact phrase', () => {
+  const { db, workspace } = busyWorkspace();
+
+  // Read off the screen as "Navy / 4" and typed without the slash.
+  const twoWords = searchService.search(db, workspace.workspaceId, 'navy 4');
+  assert.ok(
+    twoWords.results.some((r) => r.title.includes('Navy / 4')),
+    'a variant has to be findable by the words it is displayed with'
+  );
+
+  // Ordinary English around the name.
+  const withArticle = searchService.search(db, workspace.workspaceId, 'the copper elbow');
+  assert.ok(
+    withArticle.results.some((r) => r.title === 'Copper Elbow'),
+    '"the" names nothing and must not stop the search finding anything'
+  );
+
+  // A code is still matched as written, and still ranks first.
+  const byCode = searchService.search(db, workspace.workspaceId, 'CE-100');
+  assert.ok(byCode.results.some((r) => r.title === 'Copper Elbow'));
+
+  // A query of nothing but filler still finds nothing, rather than everything.
+  assert.equal(searchService.search(db, workspace.workspaceId, 'the').results.length, 0);
+});
