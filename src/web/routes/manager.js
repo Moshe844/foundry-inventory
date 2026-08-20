@@ -8,6 +8,8 @@ const physicalEvents = require('../../manager/physical-events');
 const documentEvents = require('../../manager/document-events');
 const managerReadiness = require('../../manager/readiness');
 const actionService = require('../../actions/action-service');
+const proposals = require('../../actions/proposal-service');
+const actionPresenter = require('../../actions/presenter');
 const importPlans = require('../../imports/plan-service');
 const workItems = require('../../autopilot/work-items');
 const policyAuthor = require('../../autopilot/policy-author');
@@ -365,6 +367,17 @@ router.get('/needs-you', asyncRoute(async (req, res) => {
     // missing here, so home said one decision was waiting and the page it sent
     // you to said nothing was.
     findings: autopilotPresenter.whatNeedsYou(req.db, req.ctx.workspaceId),
+    // A correction that has been confirmed but not yet approved is still
+    // somebody's job. Without it here, confirming a count emptied Needs you
+    // while the ledger was known to be wrong.
+    corrections: proposals
+      .listOpen(req.db, req.ctx.workspaceId, { limit: 20 })
+      .filter((proposal) => proposal.status === 'AWAITING_APPROVAL')
+      .map((proposal) => ({
+        proposalId: proposal.proposalId,
+        summary: actionPresenter.oneLine(req.db, req.ctx.workspaceId, proposal),
+        actionType: proposal.actionType,
+      })),
   });
 }));
 
@@ -375,9 +388,72 @@ router.get('/investigations/:id', asyncRoute(async (req, res) => {
     events: investigations.events(req.db, req.ctx.workspaceId, req.params.id) });
 }));
 
+/**
+ * Confirming a count and correcting the ledger are one job in two halves.
+ *
+ * Resolving an investigation deliberately does not touch stock, and it must
+ * stay that way — a button that silently writes a balance is the thing this
+ * whole layer exists to avoid. But closing the investigation and stopping there
+ * left the opposite problem: Foundry had confirmed physical evidence that the
+ * shelf held five, went on recording eight, and reported that nothing needed
+ * anybody. Known-wrong inventory with an empty exceptions list is worse than an
+ * open question.
+ *
+ * So confirming prepares the ordinary correction instead — the same adjust
+ * proposal any person could raise, carrying the count and the words they
+ * confirmed it with — and it waits for the same approval as every other
+ * correction. Nothing here writes a balance.
+ */
 router.post('/investigations/:id/resolve', asyncRoute(async (req, res) => {
-  investigations.resolve(req.db, req.ctx, req.params.id, trimOrNull(req.body.note));
-  req.flash('success', 'Investigation resolved. The evidence remains in Activity.');
+  const note = trimOrNull(req.body.note);
+  const investigation = investigations.get(req.db, req.ctx.workspaceId, req.params.id);
+  const entities = (investigation && investigation.affectedEntities) || {};
+  const observed = Number((investigation && investigation.observedDifference || {}).observed);
+  const wantsCorrection = req.body.correct === '1';
+
+  investigations.resolve(req.db, req.ctx, req.params.id, note);
+
+  if (wantsCorrection && entities.skuId && entities.locationId && Number.isFinite(observed)) {
+    const location = req.db
+      .prepare('SELECT name FROM locations WHERE id = ? AND workspace_id = ?')
+      .get(entities.locationId, req.ctx.workspaceId);
+    const built = proposals.build(req.db, req.ctx, {
+      actionType: 'adjust',
+      resolvedSkuId: entities.skuId,
+      lotCode: '',
+      serials: [],
+      sourceLocation: location ? location.name : '',
+      destinationLocation: '',
+      quantity: -1,
+      adjustmentTarget: observed,
+      reasonCode: 'physical_count',
+      assumptions: [
+        `Counted ${observed} against ${investigation.observedDifference.expected} on record.`,
+        note ? `You confirmed it: “${note}”` : 'You confirmed the physical count.',
+      ].filter(Boolean),
+    });
+
+    if (built.ok) {
+      const stored = proposals.persist(req.db, req.ctx, built.proposal, {
+        sourceType: 'FOUNDRY_RECOMMENDATION',
+        instruction: `Confirmed physical count of ${observed} for ${entities.displayName || 'this product'}`,
+      });
+      req.flash(
+        'success',
+        'Count confirmed. Foundry prepared the correction to the ledger — it still needs your approval, '
+          + 'and nothing has changed yet.'
+      );
+      return res.redirect(303, `/actions/${stored.proposalId}`);
+    }
+
+    // The ledger may already agree by the time this is confirmed. Say so rather
+    // than pretending a correction is waiting.
+    req.flash('info', built.unsupported || built.question
+      || 'Foundry could not prepare that correction. The investigation is closed and stock is unchanged.');
+    return res.redirect(303, '/needs-you');
+  }
+
+  req.flash('success', 'Investigation closed without changing stock. The evidence remains in Activity.');
   res.redirect(303, '/needs-you');
 }));
 

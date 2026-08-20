@@ -94,12 +94,20 @@ test('resolving an investigation clears the linked physical event from Needs you
   assert.match(detailText, /Recorded\s+20\s+in Foundry/);
   assert.match(detailText, /Counted\s+17\s+reported physically/);
   assert.match(detailText, /Difference\s+3\s+3 fewer than recorded/);
-  assert.match(detailText, /does not change recorded stock from 20 to 17/);
+  assert.match(detailText, /Neither button changes stock/);
+
+  // This is the "the records were right" half: it closes the investigation and
+  // deliberately leaves the ledger alone.
   const response = await env.agent.post(`/investigations/${event.investigationId}/resolve`).type('form').send({
-    _csrf: csrfFrom(detail.text), note: 'A second count confirmed 17.',
+    _csrf: csrfFrom(detail.text), note: 'The miscount was mine; the shelf really holds 20.',
   });
   assert.equal(response.status, 303);
   assert.equal(response.headers.location, '/needs-you');
+  assert.equal(
+    repo.getBalance(env.db, env.workspace.workspaceId, item.skuId, env.workspace.main.id),
+    20,
+    'closing without correcting must not move the balance'
+  );
 
   const needsYou = plain((await env.agent.get('/needs-you')).text);
   assert.match(needsYou, /No investigations need you/);
@@ -273,5 +281,79 @@ test('an operational document is read, matched to one PO, and becomes a verified
   const learnedSupplier = supplierService.getSupplier(env.db, env.workspace.workspaceId, supplier.id);
   assert.equal(learnedSupplier.itemCodeLabel, 'Supplier code');
   assert.ok(learnedSupplier.itemCodeAliases.includes('Vendor Item No.'));
+  env.db.close();
+});
+
+/**
+ * Recorded 8, counted 5, confirmed — and then the ledger still said 8 while
+ * Needs you said nothing was waiting. Closing the investigation was never meant
+ * to write a balance, and still does not; it prepares the ordinary correction
+ * and that correction waits for approval like any other.
+ */
+test('confirming a count prepares the correction, and Needs you stays actionable until it is approved', async () => {
+  const env = await setup({});
+  const item = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Black T-shirt' });
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: item.skuId, locationId: env.workspace.store.id, quantity: 8,
+  });
+  const event = await physicalEvents.recordNatural(env.db, env.workspace.ctx,
+    'I counted 5 Black T-shirt at Downtown Store');
+  assert.equal(event.status, 'NEEDS_HUMAN');
+
+  const detail = await env.agent.get(`/investigations/${event.investigationId}`);
+  const confirm = await env.agent.post(`/investigations/${event.investigationId}/resolve`).type('form').send({
+    _csrf: csrfFrom(detail.text),
+    correct: '1',
+    note: 'I counted the shelf again and confirmed there are 5.',
+  });
+
+  // It goes to the prepared correction, not to an empty exceptions list.
+  assert.equal(confirm.status, 303);
+  assert.match(confirm.headers.location, /^\/actions\/act_/);
+  const proposalId = confirm.headers.location.split('/').pop();
+
+  // Nothing has moved yet.
+  assert.equal(
+    repo.getBalance(env.db, env.workspace.workspaceId, item.skuId, env.workspace.store.id),
+    8,
+    'confirming must not write the balance by itself'
+  );
+
+  // The correction carries the count and the words it was confirmed with.
+  const preview = plain((await env.agent.get(`/actions/${proposalId}`)).text);
+  assert.match(preview, /8/);
+  assert.match(preview, /5/);
+  assert.match(preview, /counted the shelf again/i);
+
+  // And Needs you still has something to do, because the ledger is still wrong.
+  const midway = plain((await env.agent.get('/needs-you')).text);
+  assert.match(midway, /Corrections to approve/);
+  assert.doesNotMatch(midway, /Nothing is waiting/,
+    'the ledger is known to be wrong, so Needs you must not report all clear');
+
+  // Approving it runs the correction through the normal engine path.
+  const approvePage = await env.agent.get(`/actions/${proposalId}`);
+  const approved = await env.agent.post(`/actions/${proposalId}/approve`).type('form').send({
+    _csrf: csrfFrom(approvePage.text), confirm: 'on',
+  });
+  assert.equal(approved.status, 303);
+  // Execution is its own GET-after-POST landing, so follow it.
+  await env.agent.get(approved.headers.location);
+
+  assert.equal(
+    repo.getBalance(env.db, env.workspace.workspaceId, item.skuId, env.workspace.store.id),
+    5,
+    'the ledger now agrees with the confirmed count'
+  );
+  assert.equal(inventory.verifyIntegrity(env.db, env.workspace.workspaceId).ok, true);
+
+  // Only now is the correction gone from Needs you. (This fixture has never
+  // sold anything, so the "tell Foundry when you sell something" input is still
+  // legitimately waiting — asserting a globally empty queue would be asserting
+  // an unrelated fact about the fixture.)
+  const settled = plain((await env.agent.get('/needs-you')).text);
+  assert.match(settled, /Corrections to approve Clear/);
+  assert.match(settled, /No investigations need you/);
+  assert.doesNotMatch(settled, /Black T-shirt.*8.*5/);
   env.db.close();
 });

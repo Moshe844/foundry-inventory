@@ -167,18 +167,45 @@
         </div>
       </div>
       <div class="card-body">
-        <p class="investigation-decision__lead">Only close this after someone has counted again or found reliable evidence.</p>
+        <p class="investigation-decision__lead">
+          Only settle this after somebody has counted again or found reliable evidence.
+          Say which of the two numbers is right.
+        </p>
         <div class="investigation-safety">
-          <%- helpers.icon('alert', { size: 16 }) %>
-          <span>Resolving closes this investigation. It does <strong>not</strong> change recorded stock from <%= expected ?? 'its current quantity' %> to <%= observed ?? 'the reported count' %>.</span>
+          <%- helpers.icon('shield', { size: 16 }) %>
+          <span>
+            Neither button changes stock. Confirming the count prepares the correction
+            from <strong><%= expected %></strong> to <strong><%= observed %></strong> and asks you to approve
+            it, exactly like any other correction.
+          </span>
         </div>
+
+        <%# The count was right: prepare the ordinary correction, carrying the
+            evidence and the words it was confirmed with into it. %>
         <form method="post" action="/investigations/<%= investigation.investigationId %>/resolve">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="correct" value="1">
           <label class="field">
             <span class="label">What confirmed the count?</span>
-            <textarea class="textarea" name="note" rows="4" required placeholder="Example: Jamie counted the shelf again and confirmed 7 pairs."></textarea>
+            <textarea class="textarea" name="note" rows="4" required
+                      placeholder="Example: Jamie counted the shelf again and confirmed <%= observed %>."></textarea>
           </label>
-          <button class="btn btn--primary btn--block" type="submit"><%- helpers.icon('check', { size: 16 }) %> Mark investigation resolved</button>
+          <button class="btn btn--primary btn--block" type="submit">
+            <%- helpers.icon('check', { size: 16 }) %>
+            The count is right — prepare the correction to <%= observed %>
+          </button>
+        </form>
+
+        <%# The records were right, or it is not settled yet. Closes the
+            investigation and leaves the ledger alone. %>
+        <form method="post" action="/investigations/<%= investigation.investigationId %>/resolve" style="margin-top:14px;">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <label class="field">
+            <span class="label">Or the records were right — why?</span>
+            <textarea class="textarea" name="note" rows="3" required
+                      placeholder="Example: the miscount was mine, the shelf really does hold <%= expected %>."></textarea>
+          </label>
+          <button class="btn btn--block" type="submit">Close without changing stock</button>
         </form>
       </div>
     <% } else { %>
