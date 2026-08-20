@@ -712,3 +712,66 @@ test('two different batches of the same product stay two findings', () => {
   const expiring = byCategory(open(db, workspace), 'expiring_inventory');
   assert.equal(expiring.length, 2);
 });
+
+// --- opening stock is not a correction ---------------------------------------
+
+/**
+ * Reported from a clean onboarding run: after twelve approved opening counts,
+ * Needs you held six "unusual adjustment" exceptions for the larger balances.
+ * Establishing a position from nothing is a 100% swing by arithmetic, so every
+ * opening balance over the floor looked like an anomaly.
+ */
+function openingCounts(db, workspace) {
+  scenarios.configure(db, workspace.workspaceId);
+  const item = itemService.createItem(db, workspace.ctx, {
+    name: 'Cotton Tee', baseCode: 'CT-1', trackingMode: 'quantity',
+  });
+  const sku = repo.listSkusForItem(db, workspace.workspaceId, item.itemId)[0];
+
+  // What a person types in when Foundry asks what is on the shelf.
+  for (const [location, counted] of [[workspace.main, 50], [workspace.store, 10]]) {
+    scenarios.at(db, workspace.ctx, 3, 'adjust', {
+      skuId: sku.id, locationId: location.id, countedQty: counted, reasonCode: 'physical_count',
+    });
+  }
+  return { sku };
+}
+
+test('opening balances do not become unusual-adjustment exceptions', () => {
+  const { db, workspace } = setup();
+  const { sku } = openingCounts(db, workspace);
+
+  attention.evaluate(db, workspace.workspaceId, { trigger: 'test' });
+  assert.equal(
+    byCategory(open(db, workspace), 'unusual_adjustment').length,
+    0,
+    'telling Foundry what is on the shelf is not an anomaly'
+  );
+
+  // The ledger keeps every entry — this is a detection change, not a hidden one.
+  assert.equal(repo.getBalance(db, workspace.workspaceId, sku.id, workspace.main.id), 50);
+  assert.equal(repo.getBalance(db, workspace.workspaceId, sku.id, workspace.store.id), 10);
+  const adjustments = db
+    .prepare('SELECT COUNT(*) AS n FROM adjustments WHERE workspace_id = ?')
+    .get(workspace.workspaceId).n;
+  assert.equal(adjustments, 2, 'the adjustments are still on record');
+  assert.equal(engine.verifyIntegrity(db, workspace.workspaceId).ok, true);
+});
+
+test('a large correction after the opening balance is still raised', () => {
+  const { db, workspace } = setup();
+  const { sku } = openingCounts(db, workspace);
+
+  // Later, someone corrects that same shelf by a large amount. This one has a
+  // real prior state to be unusual against.
+  scenarios.at(db, workspace.ctx, 1, 'adjust', {
+    skuId: sku.id, locationId: workspace.main.id, countedQty: 12, reasonCode: 'physical_count',
+  });
+
+  attention.evaluate(db, workspace.workspaceId, { trigger: 'test' });
+  const [item] = byCategory(open(db, workspace), 'unusual_adjustment');
+  assert.ok(item, 'a genuine correction must still be raised');
+  assert.equal(item.metrics.expected, 50);
+  assert.equal(item.metrics.counted, 12);
+  assert.equal(item.metrics.delta, -38);
+});

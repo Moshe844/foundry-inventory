@@ -305,7 +305,27 @@ function detectUnusualAdjustment(signals) {
     if (recent.length === 0) continue;
 
     for (const adjustment of recent) {
-      const priors = group.adjustments.filter((a) => a.createdAt < adjustment.createdAt);
+      // Establishing opening stock is not a correction.
+      //
+      // Somebody entering what is on the shelf for the first time produces an
+      // adjustment from nothing to whatever is there, and the larger the
+      // business the larger that number. Judged as a correction it is a 100%
+      // swing every time, so a clean setup filled Needs you with exceptions
+      // for the entirely expected act of telling Foundry what it holds.
+      //
+      // It is skipped on the shape of the ledger — first movement at this
+      // position, from zero — and not on the reason text, which anyone can
+      // word differently. A later correction to the same position has movements
+      // behind it and is still judged normally.
+      if (adjustment.establishesPosition) continue;
+
+      // Openings are excluded from the baseline as well as from detection. A
+      // +50 opening balance sitting in the history would define "normal
+      // correction" as fifty units and quietly hide the real anomalies that
+      // followed it.
+      const priors = group.adjustments.filter(
+        (a) => a.createdAt < adjustment.createdAt && !a.establishesPosition
+      );
       const hasBaseline = priors.length >= t.minBaselineCount;
 
       let unusual = false;

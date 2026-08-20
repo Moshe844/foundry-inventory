@@ -201,12 +201,21 @@ function adjustmentSignals(db, workspaceId, { skuIds = null, now = Date.now(), l
       `SELECT a.id, a.sku_id, a.location_id, a.expected_qty, a.counted_qty, a.reason_code,
               a.notes, a.created_at, a.movement_id, a.actor_user_id,
               u.name AS actor_name, l.name AS location_name,
-              s.variant_label, i.name AS item_name, i.id AS item_id
+              s.variant_label, i.name AS item_name, i.id AS item_id,
+              m.seq AS movement_seq,
+              -- The first thing that ever happened to this product at this
+              -- location. An adjustment that IS that first thing established the
+              -- position rather than corrected it.
+              (SELECT MIN(m2.seq) FROM movements m2
+                WHERE m2.workspace_id = a.workspace_id
+                  AND m2.sku_id = a.sku_id
+                  AND m2.location_id = a.location_id) AS first_movement_seq
          FROM adjustments a
          JOIN users u ON u.id = a.actor_user_id
          JOIN locations l ON l.id = a.location_id
          JOIN skus s ON s.id = a.sku_id
          JOIN items i ON i.id = s.item_id
+         LEFT JOIN movements m ON m.id = a.movement_id
         WHERE a.workspace_id = ? AND a.created_at >= ?${filter}
         ORDER BY a.created_at`
     )
@@ -233,6 +242,16 @@ function adjustmentSignals(db, workspaceId, { skuIds = null, now = Date.now(), l
       actorId: row.actor_user_id,
       createdAt: row.created_at,
       daysAgo: round(daysBetween(row.created_at, now), 1),
+      // Opening stock, not a correction: the first movement this product ever
+      // had at this location, starting from nothing. A zero balance with no
+      // history behind it is the absence of a measurement, not a measurement of
+      // an empty shelf, so there is nothing for the figure to be unusual
+      // against. Read from the ledger rather than from the reason someone
+      // typed, because the ledger cannot be worded differently.
+      establishesPosition:
+        row.expected_qty === 0 &&
+        row.movement_seq !== null &&
+        row.movement_seq === row.first_movement_seq,
     });
   }
 
