@@ -347,6 +347,18 @@ test('confirming a count prepares the correction, and Needs you stays actionable
   );
   assert.equal(inventory.verifyIntegrity(env.db, env.workspace.workspaceId).ok, true);
 
+  // What the person actually looks at. The reported symptom was the Inventory
+  // screen still showing the old figure, so the screen is asserted, not just
+  // the row underneath it.
+  const itemPage = plain((await env.agent.get(`/inventory/${item.itemId}`)).text);
+  assert.match(itemPage, /Downtown Store\s*5/,
+    'the item page must show the corrected quantity at that location');
+  assert.match(itemPage, /Corrected|Adjusted/i, 'and the correction appears in its recent activity');
+
+  const activity = plain((await env.agent.get('/activity')).text);
+  assert.match(activity, /Black T-shirt/);
+  assert.match(activity, /8 to 5|Adjusted/i, 'the ledger entry is visible in Activity');
+
   // Only now is the correction gone from Needs you. (This fixture has never
   // sold anything, so the "tell Foundry when you sell something" input is still
   // legitimately waiting — asserting a globally empty queue would be asserting
