@@ -222,3 +222,90 @@ test('manager reconciliation includes whole-inventory ledger, lot and serial int
   assert.equal(result.failed, 0);
   env.db.close();
 });
+
+// --- what the banner is allowed to claim -------------------------------------
+
+/**
+ * A count that agreed with the records was announced as "Foundry recorded the
+ * physical event and put the unresolved part in Needs you", and the person was
+ * sent to Needs you to look for an exception that was never created. The words
+ * have to follow the outcome.
+ */
+const outcomeOf = (env, event) =>
+  physicalEvents.describeOutcome(env.db, env.workspace.workspaceId, event);
+
+test('a count that matches says so, and does not send anyone to Needs you', async () => {
+  const env = setup();
+  const event = await physicalEvents.recordNatural(env.db, env.workspace.ctx,
+    'I counted 20 Filter Cartridge at Main Warehouse');
+
+  assert.equal(event.status, 'COMPLETED', 'a matching count resolves itself');
+  const outcome = outcomeOf(env, event);
+
+  assert.match(outcome.message, /match/i);
+  assert.match(outcome.message, /20/, 'says what it was compared against');
+  assert.doesNotMatch(outcome.message, /Needs you/i, 'nothing is waiting, so it must not say so');
+  assert.doesNotMatch(outcome.message, /unresolved/i);
+  assert.notEqual(outcome.redirectTo, '/needs-you');
+
+  // And the claim is true: nothing is actually waiting.
+  assert.equal(env.db.prepare(
+    "SELECT COUNT(*) AS n FROM physical_events WHERE workspace_id = ? AND status = 'NEEDS_HUMAN'"
+  ).get(env.workspace.workspaceId).n, 0);
+  assert.equal(env.db.prepare(
+    'SELECT COUNT(*) AS n FROM adjustments WHERE workspace_id = ?'
+  ).get(env.workspace.workspaceId).n, 0, 'and no adjustment was invented');
+  env.db.close();
+});
+
+test('a count that does not match says that, and does send them to Needs you', async () => {
+  const env = setup();
+  const event = await physicalEvents.recordNatural(env.db, env.workspace.ctx,
+    'I counted 17 Filter Cartridge at Main Warehouse');
+
+  assert.equal(event.status, 'NEEDS_HUMAN');
+  const outcome = outcomeOf(env, event);
+  assert.match(outcome.message, /does not match/i);
+  assert.equal(outcome.redirectTo, '/needs-you');
+
+  // The claim is true the other way round: something really is waiting.
+  assert.ok(investigations.get(env.db, env.workspace.workspaceId, event.investigationId));
+  env.db.close();
+});
+
+test('an event Foundry could not place says that, without pretending to have compared anything', async () => {
+  const env = setup();
+  const event = await physicalEvents.recordNatural(env.db, env.workspace.ctx,
+    'something odd happened in the back room');
+
+  assert.equal(event.status, 'NEEDS_HUMAN');
+  assert.equal(event.investigationId, null);
+  const outcome = outcomeOf(env, event);
+  assert.match(outcome.message, /could not place it/i);
+  assert.doesNotMatch(outcome.message, /match/i, 'nothing was compared, so nothing matched or failed to');
+  assert.equal(outcome.redirectTo, '/needs-you');
+  env.db.close();
+});
+
+test('the banner never sends anyone to Needs you when nothing is waiting', async () => {
+  for (const said of [
+    'I counted 20 Filter Cartridge at Main Warehouse',
+    'I counted 17 Filter Cartridge at Main Warehouse',
+    'something odd happened in the back room',
+  ]) {
+    const env = setup();
+    const event = await physicalEvents.recordNatural(env.db, env.workspace.ctx, said);
+    const outcome = outcomeOf(env, event);
+    const waiting = env.db.prepare(
+      "SELECT COUNT(*) AS n FROM physical_events WHERE workspace_id = ? AND status = 'NEEDS_HUMAN'"
+    ).get(env.workspace.workspaceId).n
+      + investigations.list(env.db, env.workspace.workspaceId, { statuses: ['NEEDS_HUMAN', 'INCONCLUSIVE'] }).length;
+
+    if (outcome.redirectTo === '/needs-you') {
+      assert.ok(waiting > 0, `"${said}" sent them to Needs you with nothing waiting`);
+    } else {
+      assert.equal(waiting, 0, `"${said}" left something waiting but did not say so`);
+    }
+    env.db.close();
+  }
+});

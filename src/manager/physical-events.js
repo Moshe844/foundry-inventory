@@ -53,6 +53,69 @@ function record(db, ctx, input) {
   return get(db, ctx.workspaceId, id);
 }
 
+/**
+ * What actually happened to a reported event, in words, and where to send the
+ * person next.
+ *
+ * The route used to say one of two things: matched to an order, or "recorded
+ * the physical event and put the unresolved part in Needs you". That second
+ * sentence was printed for every other outcome including the happiest one — a
+ * count that agreed with the records. It claimed an exception existed, sent the
+ * person to Needs you to find it, and Needs you correctly showed nothing there.
+ *
+ * A count that reconciles is a real result and worth saying plainly, with the
+ * figure it was checked against, because "no change was needed" is only
+ * reassuring if you can see what it was compared with.
+ */
+function describeOutcome(db, workspaceId, event) {
+  const entities = event.matchedEntities || {};
+  const subject = entities.displayName || 'that product';
+
+  if (event.status === 'ROUTED' && entities.purchaseOrderId) {
+    return {
+      message: 'Foundry matched that event. Check the receiving details before stock changes.',
+      redirectTo: `/purchasing/orders/${entities.purchaseOrderId}`,
+    };
+  }
+
+  if (event.status === 'COMPLETED') {
+    const investigation = event.investigationId
+      ? db
+          .prepare('SELECT observed_difference FROM inventory_investigations WHERE id = ? AND workspace_id = ?')
+          .get(event.investigationId, workspaceId)
+      : null;
+    let counted = null;
+    try {
+      counted = investigation ? JSON.parse(investigation.observed_difference || '{}') : null;
+    } catch {
+      counted = null;
+    }
+    const message = counted && Number.isFinite(Number(counted.expected))
+      ? `Count recorded. Foundry compared it with the recorded ${counted.expected} `
+        + `${counted.expected === 1 ? 'unit' : 'units'} of ${subject} and they match — `
+        + 'no inventory change was needed.'
+      : 'Count recorded. It agrees with what Foundry already had, so nothing needed changing.';
+    return {
+      message,
+      redirectTo: entities.itemId ? `/inventory/${entities.itemId}` : '/',
+    };
+  }
+
+  if (event.investigationId) {
+    return {
+      message: `Count recorded. It does not match what Foundry has for ${subject}, `
+        + 'so the difference is in Needs you with the evidence behind it.',
+      redirectTo: '/needs-you',
+    };
+  }
+
+  return {
+    message: 'Foundry recorded what you said but could not place it on its own. '
+      + 'It is in Needs you with what it still needs.',
+    redirectTo: '/needs-you',
+  };
+}
+
 function get(db, workspaceId, id) {
   const row = db.prepare('SELECT * FROM physical_events WHERE id = ? AND workspace_id = ?').get(id, workspaceId);
   if (!row) return null;
@@ -214,4 +277,4 @@ async function recordNatural(db, ctx, statedAs, options = {}) {
   });
 }
 
-module.exports = { record, get, complete, recordNatural };
+module.exports = { record, get, complete, recordNatural, describeOutcome };

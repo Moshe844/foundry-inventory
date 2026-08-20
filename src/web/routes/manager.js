@@ -260,11 +260,10 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     }
 
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'physical_event', event.id);
-    req.flash('info', event.status === 'ROUTED'
-      ? 'Foundry matched that event. Check the receiving details before stock changes.'
-      : 'Foundry recorded the physical event and put the unresolved part in Needs you.');
-    return res.redirect(303, event.matchedEntities.purchaseOrderId
-      ? `/purchasing/orders/${event.matchedEntities.purchaseOrderId}` : '/needs-you');
+    // What is said, and where they are sent, both follow what actually happened.
+    const outcome = physicalEvents.describeOutcome(req.db, req.ctx.workspaceId, event);
+    req.flash('info', outcome.message);
+    return res.redirect(303, outcome.redirectTo);
   }
   if (intent.intentClass === 'INVESTIGATION_REQUEST') {
     const created = investigations.create(req.db, req.ctx.workspaceId, {
