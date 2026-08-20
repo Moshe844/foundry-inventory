@@ -154,7 +154,12 @@ function buildPlan(db, ctx, membership, options = {}) {
       options.configurationSource || 'inferred',
       JSON.stringify(draft.proposedLocations),
       JSON.stringify(draft.locationMappings),
-      JSON.stringify({ products: analysis.products.length, rows: analysis.totalRows }),
+      JSON.stringify({
+        products: analysis.products.length,
+        rows: analysis.totalRows,
+        // Which file row owns each position more than one row speaks to.
+        cells: analysis.cells || [],
+      }),
       JSON.stringify(analysis.products.filter((product) => product.sourceCount > 1)),
       JSON.stringify(analysis.excluded),
       JSON.stringify(draft.expectedTotals),
@@ -302,13 +307,16 @@ async function migrate(db, ctx, membership, planId, options = {}) {
 
     // 2. The catalog and opening balances, through Mission 5.
     const decisions = decisionsFor(db, ctx.workspaceId, planId);
+    const suppressed = suppressedRows(plan, decisions);
     const imports = [];
     for (const sourceId of plan.sourceIds) {
       const source = sourceService.get(db, ctx.workspaceId, sourceId);
       if (source.excluded) continue;
       // Sequential on purpose: two imports creating the same product at once
       // would race to create it twice.
-      imports.push(await runImport(db, ctx, membership, source, plan, decisions));
+      imports.push(
+        await runImport(db, ctx, membership, source, plan, suppressed.get(sourceId) || new Set())
+      );
     }
 
     stage(db, runId, 'reconciling');
@@ -316,7 +324,7 @@ async function migrate(db, ctx, membership, planId, options = {}) {
       .run(JSON.stringify(imports.map((entry) => entry.importId)), runId);
 
     // 3. The part that decides whether this worked.
-    const reconciliation = reconcile(db, ctx.workspaceId, runId, plan, imports);
+    const reconciliation = reconcile(db, ctx.workspaceId, runId, plan, imports, decisions);
 
     const result = {
       locationsCreated: created.length,
@@ -376,6 +384,68 @@ function ensureLocations(db, ctx, plan) {
 }
 
 /** Decisions keyed for lookup while importing. */
+/**
+ * Which rows each file must NOT contribute.
+ *
+ * A position counted in two files is one position. Exactly one row establishes
+ * it and the rest are dropped, so the same stock is not created twice — which
+ * is what happened when the migration simply re-imported every file whole:
+ * a product counted 120 in one file and 95 in another arrived as 215, and one
+ * counted 45 in both arrived as 90.
+ *
+ * The winner is the row the person chose when they settled the conflict. Where
+ * the files agreed there was nothing to settle, so the first row wins — any of
+ * them would give the same number.
+ */
+function suppressedRows(plan, decisions) {
+  const suppressed = new Map();
+  const drop = (sourceId, sourceRow) => {
+    if (!suppressed.has(sourceId)) suppressed.set(sourceId, new Set());
+    suppressed.get(sourceId).add(sourceRow);
+  };
+
+  const decidedSourceFor = (cellKey) => {
+    for (const conflict of decisions.values()) {
+      if (!conflict.decision || (conflict.detail || {}).cellKey !== cellKey) continue;
+      const match = /^source:(.+)$/.exec(conflict.decision);
+      if (match) return match[1];
+    }
+    return null;
+  };
+
+  for (const cell of (plan.proposedRecords || {}).cells || []) {
+    const entries = cell.entries || [];
+    if (entries.length < 2) continue;
+    const decided = decidedSourceFor(cell.key);
+    const winner = (decided && entries.find((entry) => entry.sourceId === decided)) || entries[0];
+    for (const entry of entries) {
+      if (entry === winner) continue;
+      drop(entry.sourceId, entry.sourceRow);
+    }
+  }
+  return suppressed;
+}
+
+/** What the files add up to once the duplicates and decisions are applied. */
+function resolvedUnits(plan, decisions) {
+  const cells = (plan.proposedRecords || {}).cells || [];
+  if (!cells.length) return null;
+  const suppressed = suppressedRows(plan, decisions);
+  let adjustment = 0;
+  for (const cell of cells) {
+    const entries = cell.entries || [];
+    const dropped = entries.filter(
+      (entry) => (suppressed.get(entry.sourceId) || new Set()).has(entry.sourceRow)
+    );
+    // expectedTotals counted each position once, at its highest figure. Correct
+    // that to the row actually kept.
+    const kept = entries.find((entry) => !dropped.includes(entry));
+    if (!kept) continue;
+    adjustment += kept.quantity - Math.max(...entries.map((entry) => entry.quantity));
+  }
+  return adjustment;
+}
+
 function decisionsFor(db, workspaceId, planId) {
   const map = new Map();
   for (const conflict of conflictsFor(db, workspaceId, planId)) {
@@ -394,7 +464,7 @@ function decisionsFor(db, workspaceId, planId) {
  * establishing opening stock as real receives, verifying — is Mission 5 doing
  * exactly what it already does.
  */
-async function runImport(db, ctx, membership, source, plan, decisions) {
+async function runImport(db, ctx, membership, source, plan, suppressedRowNumbers) {
   const { buffer, filename } = sourceService.contentOf(db, ctx.workspaceId, source.id);
 
   // The canonical location for every spelling the files used.
@@ -423,6 +493,16 @@ async function runImport(db, ctx, membership, source, plan, decisions) {
     importPlans.revalidate(db, ctx, membership, imported.id, { locationMappings });
   }
 
+  // Rows another file already establishes. Excluded before approval, so the
+  // preview a person would see and the rows that actually run are the same set.
+  if (suppressedRowNumbers && suppressedRowNumbers.size) {
+    for (const row of importPlans.rowsFor(db, imported.id, { limit: 100000 })) {
+      if (suppressedRowNumbers.has(row.rowNumber)) {
+        importPlans.excludeRow(db, ctx, membership, imported.id, row.id, true);
+      }
+    }
+  }
+
   importPlans.approve(db, ctx, membership, imported.id);
   const run = importExecutor.execute(db, ctx, membership, imported.id, {
     // Keyed to this migration so a retried migration replays rather than
@@ -449,8 +529,16 @@ async function runImport(db, ctx, membership, source, plan, decisions) {
  * Counted independently on both sides. A check that cannot be made honestly is
  * reported as unmeasured rather than quietly passing.
  */
-function reconcile(db, workspaceId, runId, plan, imports) {
-  const expected = plan.expectedTotals || {};
+function reconcile(db, workspaceId, runId, plan, imports, decisions = new Map()) {
+  // expectedTotals counts each position once at its highest figure, because
+  // before the conflicts are settled the true number is not yet knowable. Now
+  // that they are settled, it is — and comparing against the upper bound would
+  // report a discrepancy on a migration that did exactly what was asked.
+  const base = plan.expectedTotals || {};
+  const correction = resolvedUnits(plan, decisions);
+  const expected = correction === null || typeof base.units !== 'number'
+    ? base
+    : { ...base, units: base.units + correction };
 
   const observed = {
     products: db
@@ -576,6 +664,8 @@ module.exports = {
   migrate,
   ensureLocations,
   reconcile,
+  resolvedUnits,
+  decisionsFor,
   check,
   hydrateRun,
   latestRun,

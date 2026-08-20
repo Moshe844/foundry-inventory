@@ -73,7 +73,10 @@ function readRows(db, workspaceId, source) {
       ? ''
       : String(cells[sheetProfile.mappings[field]] ?? '').trim();
 
-  return { sheet: sheetProfile, rows: sheet ? sheet.rows.map((row) => row.cells) : [], at };
+  // The parser's own row number is kept, not just the cells. It is what lets a
+  // migration exclude exactly the rows consolidation decided against, matched
+  // against the identical parse the import engine does.
+  return { sheet: sheetProfile, rows: sheet ? sheet.rows : [], at };
 }
 
 /**
@@ -205,9 +208,9 @@ function analyse(db, workspaceId, sources) {
 
   for (const entry of readSources) {
     if (!entry.sheet) continue;
-    for (const cells of entry.rows) {
+    for (const sourceRow of entry.rows) {
       if (entry.sheet.mappings.location === undefined) continue;
-      const where = entry.at(cells, 'location');
+      const where = entry.at(sourceRow.cells, 'location');
       if (where) locationNames.push(where);
     }
   }
@@ -221,8 +224,10 @@ function analyse(db, workspaceId, sources) {
     if (!sheet) continue;
     totalRows += sheet.rows;
 
-    for (const cells of rows) {
+    for (const parsedRow of rows) {
+      const cells = parsedRow.cells;
       const row = {
+        sourceRow: parsedRow.sourceRow,
         name: at(cells, 'name'),
         code: at(cells, 'code'),
         location: at(cells, 'location'),
@@ -262,6 +267,7 @@ function analyse(db, workspaceId, sources) {
         quantities.get(cell).push({
           sourceId: source.id,
           sourceName: source.name,
+          sourceRow: row.sourceRow,
           quantity,
           observedAt: source.observedAt,
           purpose: source.inferredPurpose,
@@ -302,7 +308,7 @@ function analyse(db, workspaceId, sources) {
   }
 
   // --- two files disagreeing about a quantity -------------------------------
-  for (const [, entries] of quantities) {
+  for (const [cellKey, entries] of quantities) {
     const distinct = [...new Set(entries.map((entry) => entry.quantity))];
     if (entries.length < 2 || distinct.length < 2) continue;
 
@@ -332,6 +338,7 @@ function analyse(db, workspaceId, sources) {
       severity: recommended ? 'review' : 'blocking',
       subject: `${first.product}${first.variants.length ? ` ${first.variants.join('/')}` : ''} at ${first.location || 'no location'}`,
       detail: {
+        cellKey,
         product: first.product,
         variants: first.variants,
         location: first.location,
@@ -425,7 +432,25 @@ function analyse(db, workspaceId, sources) {
 
   const expectedTotals = expectedFrom(usable, quantities, products, locationGroups);
 
+  // Every position more than one row speaks to, and which row said what.
+  //
+  // Consolidation decides what the files add up to; the migration then imports
+  // the files. Without this the two disagreed — the migration re-imported every
+  // row of every file, so a product counted in two places was created twice and
+  // a settled conflict was ignored entirely.
+  const cells = [...quantities.entries()]
+    .filter(([, entries]) => entries.length > 1)
+    .map(([key, entries]) => ({
+      key,
+      entries: entries.map((entry) => ({
+        sourceId: entry.sourceId,
+        sourceRow: entry.sourceRow,
+        quantity: entry.quantity,
+      })),
+    }));
+
   return {
+    cells,
     products: [...products.values()].map((product) => ({
       key: product.key,
       by: product.by,

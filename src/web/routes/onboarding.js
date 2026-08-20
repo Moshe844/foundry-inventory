@@ -153,6 +153,15 @@ router.get(
   asyncRoute(async (req, res) => {
     const plan = migration.getPlan(req.db, req.ctx.workspaceId, req.params.id);
     const conflicts = migration.conflictsFor(req.db, req.ctx.workspaceId, plan.id);
+    // What the files come to once the duplicates and any settled conflicts are
+    // applied, so the figure approved here is the figure that gets created.
+    const correction = migration.resolvedUnits(
+      plan,
+      migration.decisionsFor(req.db, req.ctx.workspaceId, plan.id)
+    );
+    if (correction !== null && typeof plan.expectedTotals.units === 'number') {
+      plan.expectedTotals = { ...plan.expectedTotals, units: plan.expectedTotals.units + correction };
+    }
 
     return res.page('onboarding/review', {
       title: 'How Foundry would set this up',

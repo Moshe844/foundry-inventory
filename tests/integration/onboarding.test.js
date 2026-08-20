@@ -461,3 +461,59 @@ test('files, plans and onboarding state never cross between inventories', async 
   // Each inventory decides its own onboarding independently.
   assert.equal(paths.get(env.db, other.workspaceId), null);
 });
+
+// --- the same position counted in two files ----------------------------------
+
+/**
+ * The migration used to re-import every file whole, so consolidation's whole
+ * job was undone at the last step: a product counted 120 in one file and 95 in
+ * another was created as 215, and one counted 45 in both was created as 90.
+ */
+const COUNT_A = 'Product,Qty,Location\nRope 10mm,120,Main Store\nShackle 8mm,45,Main Store\n';
+const COUNT_B = 'Item,Quantity,Where\nRope 10mm,95,Main Store\nShackle 8mm,45,Main Store\nFender Large,12,Main Store\n';
+
+test('a position counted in two files is established once, from the row that won', async () => {
+  const env = setup();
+  addSource(env, 'warehouse-count.csv', COUNT_A);
+  addSource(env, 'stocktake-march.csv', COUNT_B);
+
+  const plan = migration.buildPlan(env.db, env.ctx, env.membership);
+  const conflicts = migration.conflictsFor(env.db, env.workspace.workspaceId, plan.id);
+  const quantity = conflicts.find((entry) => entry.kind === 'quantity_conflict');
+  assert.ok(quantity, 'files disagreeing about one position is a conflict');
+  assert.equal(quantity.severity, 'blocking', 'Foundry will not pick a stock figure itself');
+
+  // The agreeing rows are not a conflict — there is nothing to decide.
+  assert.equal(conflicts.filter((entry) => entry.kind === 'quantity_conflict').length, 1);
+
+  const stocktake = plan.expectedTotals.sources.find((s) => s.name === 'stocktake-march.csv');
+  migration.decide(env.db, env.ctx, env.membership, quantity.id, `source:${stocktake.id}`);
+
+  const { run } = await migration.migrate(env.db, env.ctx, env.membership, plan.id);
+  assert.equal(run.status, 'VERIFIED', JSON.stringify(run.reconciliation && run.reconciliation.discrepancies));
+
+  const held = (name) => env.db
+    .prepare(
+      `SELECT COALESCE(SUM(b.on_hand), 0) AS n FROM balances b
+         JOIN skus s ON s.id = b.sku_id JOIN items i ON i.id = s.item_id
+        WHERE b.workspace_id = ? AND i.name = ?`
+    )
+    .get(env.workspace.workspaceId, name).n;
+
+  assert.equal(held('Rope 10mm'), 95, 'the number the person chose, not the sum of both files');
+  assert.equal(held('Shackle 8mm'), 45, 'counted in both files, established once');
+  assert.equal(held('Fender Large'), 12);
+
+  const units = env.db
+    .prepare('SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n;
+  assert.equal(units, 152);
+  assert.equal(run.reconciliation.expected.units, 152, 'the figure approved is the figure checked');
+
+  // One receipt per position, not one per row across the files.
+  const receipts = env.db
+    .prepare("SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ? AND operation = 'receive'")
+    .get(env.workspace.workspaceId).n;
+  assert.equal(receipts, 3);
+  assert.equal(engine.verifyIntegrity(env.db, env.workspace.workspaceId).ok, true);
+});
