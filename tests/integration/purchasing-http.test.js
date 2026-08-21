@@ -633,3 +633,93 @@ test('discarding reorder levels is a deliberate, separate act', async () => {
   );
   env.db.close();
 });
+
+test('reorder settings persist through supplier attachment and later supplier edits', async () => {
+  const env = sixVariantsNoHistory();
+  const { agent } = await owner(env);
+  const readRow = () => env.db
+    .prepare('SELECT reorder_point, target_stock, safety_stock, source FROM reorder_policies WHERE workspace_id = ? AND sku_id = ?')
+    .get(env.workspace.workspaceId, env.small.id);
+
+  // Saved, and actually on the row rather than only in a page.
+  const whyPage = await agent.get(`/purchasing/why/${env.small.id}`);
+  await agent.post(`/purchasing/policies/${env.small.id}`).type('form').send({
+    _csrf: csrfFrom(whyPage.text), reorderPoint: 60, targetStock: 80, safetyStock: 10,
+  });
+  assert.deepEqual(readRow(), { reorder_point: 60, target_stock: 80, safety_stock: 10, source: 'manual' });
+
+  // Attaching the supplier to the whole range leaves the row untouched.
+  const setupPage = await agent.get('/purchasing/setup');
+  await agent.post('/purchasing/setup/supplier').type('form').send({
+    _csrf: csrfFrom(setupPage.text),
+    newSupplierName: 'ABC Apparel',
+    purchaseUnit: 'case', unitsPerPurchaseUnit: 12, minimumOrderQuantity: 2, leadTimeDays: 15,
+    skuIds: env.item.skus.map((sku) => sku.id),
+  });
+  assert.deepEqual(readRow(), { reorder_point: 60, target_stock: 80, safety_stock: 10, source: 'manual' },
+    'attaching a supplier must not write to the reorder policy at all');
+
+  // Nor does attaching one to this variant on its own, through the other route.
+  const single = await agent.get(`/purchasing/supplier-for/${env.small.id}`);
+  if (single.status === 200) {
+    await agent.post(`/purchasing/supplier-for/${env.small.id}`).type('form').send({
+      _csrf: csrfFrom(single.text),
+      newSupplierName: 'Second Source',
+      purchaseUnit: 'box', unitsPerPurchaseUnit: 6, leadTimeDays: 4,
+    });
+    assert.deepEqual(readRow(), { reorder_point: 60, target_stock: 80, safety_stock: 10, source: 'manual' },
+      'linking a second supplier must not disturb the levels either');
+  }
+
+  // Editing supplier terms afterwards leaves them alone as well.
+  const supplier = suppliers.listSuppliers(env.db, env.workspace.workspaceId)
+    .find((entry) => entry.name === 'ABC Apparel');
+  suppliers.linkItem(env.db, env.workspace.ctx, env.membership, {
+    supplierId: supplier.id, skuId: env.small.id,
+    purchaseUnit: 'case', unitsPerPurchaseUnit: 24, minimumOrderQuantity: 1, leadTimeDays: 9,
+    isPreferred: true,
+  });
+  assert.deepEqual(readRow(), { reorder_point: 60, target_stock: 80, safety_stock: 10, source: 'manual' },
+    'changing pack size or lead time is not a change to the reorder levels');
+
+  // A partial write cannot take unrelated configuration with it.
+  policyService.setPolicy(env.db, env.workspace.ctx, env.membership, env.small.id, {
+    preferredSupplierId: supplier.id,
+  });
+  const merged = policyService.effectivePolicy(env.db, env.workspace.workspaceId, env.small.id);
+  assert.equal(merged.reorderPoint, 60, 'setting one field must not erase the others');
+  assert.equal(merged.targetStock, 80);
+  assert.equal(merged.safetyStock, 10);
+  assert.equal(merged.preferredSupplierId, supplier.id);
+
+  // Blanking a box on the form is still a deliberate clear of that one field.
+  policyService.setPolicy(env.db, env.workspace.ctx, env.membership, env.small.id, {
+    reorderPoint: 60, targetStock: 80, safetyStock: '',
+  });
+  assert.equal(policyService.effectivePolicy(env.db, env.workspace.workspaceId, env.small.id).safetyStock, null);
+  env.db.close();
+});
+
+test('the product page shows the levels that are saved, not "no reorder level set"', async () => {
+  const env = sixVariantsNoHistory();
+  const { agent } = await owner(env);
+  const whyPage = await agent.get(`/purchasing/why/${env.small.id}`);
+  await agent.post(`/purchasing/policies/${env.small.id}`).type('form').send({
+    _csrf: csrfFrom(whyPage.text), reorderPoint: 60, targetStock: 80, safetyStock: 10,
+  });
+
+  const setupPage = await agent.get('/purchasing/setup');
+  await agent.post('/purchasing/setup/supplier').type('form').send({
+    _csrf: csrfFrom(setupPage.text),
+    newSupplierName: 'ABC Apparel',
+    purchaseUnit: 'case', unitsPerPurchaseUnit: 12, minimumOrderQuantity: 2, leadTimeDays: 15,
+    skuIds: env.item.skus.map((sku) => sku.id),
+  });
+
+  // The reported symptom was on this screen, so it is asserted on this screen.
+  const itemPage = plain((await agent.get(`/inventory/${env.item.itemId}`)).text);
+  assert.match(itemPage, /Reorder at 60/i, 'the saved level has to be visible on the product');
+  const smallRow = itemPage.slice(itemPage.indexOf('Black / Small'));
+  assert.doesNotMatch(smallRow.slice(0, 200), /No reorder level set/i);
+  env.db.close();
+});

@@ -99,15 +99,34 @@ function setPolicy(db, ctx, membership, skuId, input) {
   const sku = repo.requireSku(db, ctx.workspaceId, skuId);
   const now = nowIso();
 
+  const existingPolicy = effectivePolicy(db, ctx.workspaceId, sku.id);
+
+  // Only what was actually sent is written.
+  //
+  // This used to replace every column from the input, so any caller that
+  // supplied part of a policy silently erased the rest — a screen that set only
+  // a preferred supplier would have taken the reorder point, order-up-to and
+  // safety stock with it. Nothing does that today, and it should not be
+  // possible for anything to start.
+  //
+  // Present-but-empty is still a deliberate clear: the form posts all three
+  // boxes, so blanking one goes on meaning "unset this". Absent means "leave it
+  // as it was".
+  const sent = (field) => Object.prototype.hasOwnProperty.call(input, field);
+  const keep = (field, parsed) => (sent(field) ? parsed() : existingPolicy[field]);
+
   const values = {
-    reorderPoint: optionalInt(input.reorderPoint, 'Reorder point'),
-    targetStock: optionalInt(input.targetStock, 'Target stock'),
-    safetyStock: optionalInt(input.safetyStock, 'Safety stock'),
-    defaultOrderQuantity: optionalInt(input.defaultOrderQuantity, 'Default order quantity'),
-    leadTimeDays: optionalInt(input.leadTimeDays, 'Lead time', { max: 365 }),
-    preferredSupplierId: trimOrNull(input.preferredSupplierId),
-    notes: trimOrNull(input.notes),
-    source: input.source === 'foundry' ? 'foundry' : 'manual',
+    reorderPoint: keep('reorderPoint', () => optionalInt(input.reorderPoint, 'Reorder point')),
+    targetStock: keep('targetStock', () => optionalInt(input.targetStock, 'Target stock')),
+    safetyStock: keep('safetyStock', () => optionalInt(input.safetyStock, 'Safety stock')),
+    defaultOrderQuantity: keep('defaultOrderQuantity',
+      () => optionalInt(input.defaultOrderQuantity, 'Default order quantity')),
+    leadTimeDays: keep('leadTimeDays', () => optionalInt(input.leadTimeDays, 'Lead time', { max: 365 })),
+    preferredSupplierId: keep('preferredSupplierId', () => trimOrNull(input.preferredSupplierId)),
+    notes: keep('notes', () => trimOrNull(input.notes)),
+    source: sent('source')
+      ? (input.source === 'foundry' ? 'foundry' : 'manual')
+      : (existingPolicy.isSet ? existingPolicy.source : 'manual'),
   };
 
   if (values.preferredSupplierId) {
