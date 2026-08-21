@@ -269,6 +269,9 @@ function migrate(db) {
   relaxColumnCheck(db, 'attention_items', 'category');
   relaxColumnCheck(db, 'action_proposals', 'action_type');
   relaxColumnCheck(db, 'work_items', 'category');
+  // Routing outcomes grow with the ways a request can end. REFUSED — understood
+  // and declined by a rule — is one the enumerated list did not have.
+  relaxColumnCheck(db, 'manager_intents', 'status');
 
   db.exec(fs.readFileSync(ATTENTION_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(ACTIONS_SCHEMA_PATH, 'utf8'));

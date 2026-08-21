@@ -6,7 +6,7 @@ const request = require('supertest');
 const { createApp } = require('../../src/app');
 const { fakeProvider } = require('../helpers/fake-provider');
 const { makeDatabase, cleanupAll, seedWorkspace, signIn, csrfFrom, plain } = require('../helpers');
-const { makeQuantityItem } = require('../helpers');
+const { makeQuantityItem, makeVariantItem } = require('../helpers');
 const authService = require('../../src/domain/auth-service');
 const supplierService = require('../../src/purchasing/supplier-service');
 const purchasingPolicyService = require('../../src/purchasing/policy-service');
@@ -367,5 +367,136 @@ test('confirming a count prepares the correction, and Needs you stays actionable
   assert.match(settled, /Corrections to approve Clear/);
   assert.match(settled, /No investigations need you/);
   assert.doesNotMatch(settled, /Black T-shirt.*8.*5/);
+  env.db.close();
+});
+
+/**
+ * A sale bigger than the stock is understood, refused, and explained.
+ *
+ * The four endings a sale can have are asserted together because the bug was
+ * that two of them were the same ending: a refusal by an inventory rule was
+ * filed as a report Foundry could not place, which is what "missing
+ * information" means everywhere else in the product.
+ */
+const locationService = require('../../src/domain/location-service');
+
+function saleProvider({ quantity, intentClass = 'PHYSICAL_EVENT', variant = 'Black / Large', item = 'Black T-shirt' }) {
+  return fakeProvider((req) => {
+    if (req.schemaName === 'manager_intent') {
+      return { intentClass, confidence: 'high', reason: 'A sale is something that happened.',
+        resolvedReference: '', clarifyingQuestion: '' };
+    }
+    if (req.schemaName === 'physical_inventory_event') {
+      return { eventType: 'reported_event', skuId: '', locationId: '', countedQuantity: -1,
+        reason: 'A sale is not a count.' };
+    }
+    if (req.schemaName === 'inventory_action_intent') {
+      return { lines: [{ actionType: 'issue', item, variant, lotCode: '', serials: [],
+        sourceLocation: 'Downtown Store', destinationLocation: '', quantity,
+        adjustmentTarget: -1, reasonCode: 'sold', terminologyKey: '', terminologyValue: '',
+        productName: '', productCode: '', variantAxes: '', unitLabel: '', supplier: '', purchaseUnit: '' }],
+        clarifyingQuestion: '', unsupportedReason: '' };
+    }
+    return {};
+  });
+}
+
+async function shopWithFourLarge(provider) {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Downtown Co' });
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'sale-block', aiProvider: provider });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  const downtown = store.db
+    .prepare("SELECT id, name FROM locations WHERE workspace_id = ? AND name = 'Downtown Store'")
+    .get(workspace.workspaceId)
+    || locationService.createLocation(store.db, workspace.ctx, { name: 'Downtown Store', kind: 'store' });
+  const item = makeVariantItem(store.db, workspace.ctx, {
+    name: 'Black T-shirt',
+    options: [{ name: 'Colour', values: 'Black, White' }, { name: 'Size', values: 'Large, Small' }],
+  });
+  const large = item.byLabel('Black / Large');
+  inventory.receive(store.db, workspace.ctx, { skuId: large.id, locationId: downtown.id, quantity: 4 });
+  const tell = async (message) => {
+    const home = await agent.get('/');
+    const res = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message });
+    return { res, landed: await agent.get(res.headers.location.split('#')[0]) };
+  };
+  const balance = () => (store.db
+    .prepare('SELECT on_hand FROM balances WHERE sku_id = ? AND location_id = ?')
+    .get(large.id, downtown.id) || { on_hand: 0 }).on_hand;
+  return { ...store, workspace, agent, downtown, item, large, tell, balance };
+}
+
+test('a sale within stock goes to the ordinary approval, and nothing moves until it is approved', async () => {
+  const env = await shopWithFourLarge(saleProvider({ quantity: 3 }));
+  const { res, landed } = await env.tell('We sold 3 Black Large at Downtown Store');
+  assert.match(res.headers.location, /^\/actions\//, 'a sale it can do becomes a proposal to approve');
+  const text = plain(landed.text);
+  assert.match(text, /Downtown Store/);
+  assert.equal(env.balance(), 4, 'a proposal on its own does not move stock');
+  assert.equal(env.db.prepare("SELECT COUNT(*) c FROM physical_events WHERE status = 'NEEDS_HUMAN'").get().c, 0);
+  env.db.close();
+});
+
+test('a sale larger than stock is refused by name, not filed as missing information', async () => {
+  const env = await shopWithFourLarge(saleProvider({ quantity: 10 }));
+  const { res, landed } = await env.tell('We sold 10 Black Large at Downtown Store');
+  assert.equal(res.headers.location, '/actions', 'the refusal goes back to the person who asked');
+  const text = plain(landed.text).replace(/\s+/g, ' ');
+
+  // The actual constraint, with both numbers, in the words of the rule.
+  assert.match(text, /cannot record it/i);
+  assert.match(text, /take 10 .*Black \/ Large.* out of Downtown Store, where 4 are recorded/i);
+  assert.match(text, /does not allow stock to go below zero/i);
+  assert.match(text, /Nothing has been changed/i);
+
+  // And the three ways out, each naming what it would do.
+  assert.match(text, /recorded number is wrong/i);
+  assert.match(text, /Record 4 instead/i);
+
+  // None of the things that made this confusing.
+  assert.doesNotMatch(text, /Add details/i);
+  assert.doesNotMatch(text, /could not place it/i);
+
+  assert.equal(env.balance(), 4, 'a refused sale changes nothing');
+  assert.equal(env.db.prepare('SELECT COUNT(*) c FROM movements').get().c, 1, 'only the original receipt');
+  env.db.close();
+});
+
+test('a refusal by a rule is never left waiting in Needs you', async () => {
+  const env = await shopWithFourLarge(saleProvider({ quantity: 10 }));
+  await env.tell('We sold 10 Black Large at Downtown Store');
+
+  const stuck = env.db
+    .prepare("SELECT event_type, status FROM physical_events WHERE status = 'NEEDS_HUMAN'").all();
+  assert.deepEqual(stuck, [], 'validation failure must not leave a generic event behind');
+
+  const routed = env.db.prepare('SELECT status, routed_to FROM manager_intents ORDER BY created_at DESC').get();
+  assert.equal(routed.status, 'REFUSED', 'declined by a rule is its own outcome, not clarification');
+
+  const needsYou = plain((await env.agent.get('/needs-you')).text).replace(/\s+/g, ' ');
+  assert.doesNotMatch(needsYou, /Black \/ Large/, 'nothing about this sale is waiting for a person');
+  env.db.close();
+});
+
+test('a sale Foundry genuinely cannot resolve still asks, and still records nothing', async () => {
+  const env = await shopWithFourLarge(saleProvider({ quantity: 2, variant: '' }));
+  const { res, landed } = await env.tell('We sold 2 Black T-shirt at Downtown Store');
+  assert.equal(res.headers.location, '/actions');
+  const text = plain(landed.text).replace(/\s+/g, ' ');
+  assert.match(text, /Black T-shirt/);
+  // Ambiguity is a question. It must not borrow the refusal's wording.
+  assert.doesNotMatch(text, /does not allow stock to go below zero/i);
+  assert.equal(env.balance(), 4);
+  env.db.close();
+});
+
+test('an item allowed to go negative is not refused by a rule it does not have', async () => {
+  const env = await shopWithFourLarge(saleProvider({ quantity: 10 }));
+  env.db.prepare('UPDATE items SET allow_negative = 1 WHERE name = ?').run('Black T-shirt');
+  const { res } = await env.tell('We sold 10 Black Large at Downtown Store');
+  assert.match(res.headers.location, /^\/actions\//,
+    'the engine would accept this, so Foundry must not refuse it first');
   env.db.close();
 });

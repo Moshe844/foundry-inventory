@@ -451,6 +451,43 @@ function lotTotal(db, workspaceId, lotId) {
     .get(workspaceId, lotId).n;
 }
 
+/**
+ * The item behind a sku, including the rules it carries.
+ *
+ * Whether stock may go below zero is the item's answer, so anything enforcing
+ * that rule has to read it from here rather than assume one way or the other.
+ */
+function skuById(db, workspaceId, skuId) {
+  if (!skuId) return null;
+  return db
+    .prepare(
+      `SELECT s.id, s.item_id, s.variant_label, i.name, i.tracking_mode, i.allow_negative
+         FROM skus s JOIN items i ON i.id = s.item_id
+        WHERE s.workspace_id = ? AND s.id = ?`
+    )
+    .get(workspaceId, skuId) || null;
+}
+
+/**
+ * Where else this sku is, most-stocked first, excluding one location.
+ *
+ * A refusal that says only "there are not enough here" leaves the reader to go
+ * looking. If the stock exists somewhere else, that is the next action, and it
+ * is cheap to know at the moment of refusing.
+ */
+function stockElsewhere(db, workspaceId, skuId, exceptLocationId) {
+  if (!skuId) return [];
+  return db
+    .prepare(
+      `SELECT b.location_id AS id, l.name, b.on_hand AS onHand
+         FROM balances b JOIN locations l ON l.id = b.location_id
+        WHERE b.workspace_id = ? AND b.sku_id = ? AND b.on_hand > 0
+          AND (@except IS NULL OR b.location_id != @except)
+        ORDER BY b.on_hand DESC, l.name`
+    )
+    .all(workspaceId, skuId, { except: exceptLocationId || null });
+}
+
 module.exports = {
   distance,
   tolerance,
@@ -465,4 +502,6 @@ module.exports = {
   lotBalanceAt,
   skuTotal,
   lotTotal,
+  skuById,
+  stockElsewhere,
 };

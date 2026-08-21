@@ -163,7 +163,11 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
             question: result.question,
           };
         }
-        if (result.unsupported) return { kind: 'unsupported', message: result.unsupported };
+        // A refusal the engine can explain travels with its explanation. The
+        // caller needs the numbers to say what is wrong and what to do next.
+        if (result.unsupported) {
+          return { kind: 'unsupported', message: result.unsupported, blocked: result.blocked || null };
+        }
         return { kind: 'question', question: result.question, needsReason: Boolean(result.needsReason) };
       }
       built.push(result.proposal);

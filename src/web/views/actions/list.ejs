@@ -85,7 +85,52 @@
       </div>
     <% } %>
 
-    <% if (unsupported) { %>
+    <%# A rule said no. That is not the same as Foundry not understanding, and
+        it does not read the same either: the numbers are named, and so are the
+        three things that can actually be done about it. %>
+    <% const blocked = locals.blocked; %>
+    <% if (blocked && blocked.reason === 'insufficient_stock') { %>
+      <div class="act-question act-question--blocked">
+        <span class="att-rec-icon"><%- helpers.icon('alert', { size: 15 }) %></span>
+        <div class="act-question-body">
+          <p><strong>Foundry understood this, and cannot record it.</strong></p>
+          <p>
+            You asked to take <strong><%= blocked.wanted %></strong> of
+            <%= blocked.subject %> out of <%= blocked.locationName %>, where
+            <strong><%= blocked.available %></strong>
+            <%= blocked.available === 1 ? 'is' : 'are' %> recorded.
+            This inventory does not allow stock to go below zero, so recording
+            it would leave a balance of <%= blocked.available - blocked.wanted %>.
+          </p>
+          <p class="muted" style="font-size:12.5px; margin-top:8px;">Nothing has been changed. What would you like to do?</p>
+          <ul class="act-blocked-ways">
+            <li>
+              <a href="/actions?q=<%= encodeURIComponent('I counted ' + blocked.wanted + ' ' + blocked.subject + ' at ' + blocked.locationName) %>">The recorded number is wrong — count it</a>
+              <span class="muted">If <%= blocked.locationName %> really holds more than <%= blocked.available %>, correct the record first and this will go through.</span>
+            </li>
+            <% if (blocked.elsewhere && blocked.elsewhere.length) { %>
+              <li>
+                <a href="/actions?q=<%= encodeURIComponent('move ' + (blocked.wanted - blocked.available) + ' ' + blocked.subject + ' from ' + blocked.elsewhere[0].name + ' to ' + blocked.locationName) %>">Bring stock in from <%= blocked.elsewhere[0].name %></a>
+                <span class="muted">
+                  There <%= blocked.elsewhere[0].onHand === 1 ? 'is' : 'are' %>
+                  <%= blocked.elsewhere.map(function (p) { return p.onHand + ' at ' + p.name; }).join(', ') %>.
+                  You need <%= blocked.wanted - blocked.available %> more.
+                </span>
+              </li>
+            <% } else { %>
+              <li>
+                <span>There is none anywhere else to bring in</span>
+                <span class="muted"><%= blocked.subject %> is not in stock at any other location.</span>
+              </li>
+            <% } %>
+            <li>
+              <a href="/actions?q=<%= encodeURIComponent('sell ' + blocked.available + ' ' + blocked.subject + ' from ' + blocked.locationName) %>">Record <%= blocked.available %> instead</a>
+              <span class="muted">Take out only what is recorded there.</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    <% } else if (unsupported) { %>
       <div class="act-question act-question--muted">
         <span class="att-rec-icon"><%- helpers.icon('alert', { size: 15 }) %></span>
         <div class="act-question-body">

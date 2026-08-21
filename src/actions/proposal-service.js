@@ -425,8 +425,23 @@ function shapeOperation(db, workspaceId, intent, draft) {
    * engine would refuse it anyway; hearing that at the moment you ask is worth
    * far more than hearing it after you approve.
    */
+  /**
+   * Refusing is a fact about the inventory, not a gap in the sentence.
+   *
+   * Everything needed to answer is already known here — the product, the
+   * place, what is there and what was asked for — so the refusal carries all
+   * of it rather than a sentence someone downstream has to re-derive. What
+   * cannot be re-derived from prose is where else the stock is, which is the
+   * one thing that makes the refusal actionable.
+   *
+   * The rule itself is the item's, not this function's: an item allowed to go
+   * negative has already said this is permitted, and blocking it here would
+   * refuse something the engine would accept.
+   */
   const checkAvailable = (wanted, available, where) => {
     if (wanted <= available) return null;
+    const sku = resolver.skuById(db, workspaceId, draft.skuId);
+    if (sku && sku.tracking_mode === 'quantity' && sku.allow_negative) return null;
     return {
       ok: false,
       question: null,
@@ -434,6 +449,16 @@ function shapeOperation(db, workspaceId, intent, draft) {
         available === 0
           ? `There is none at ${where}.`
           : `There ${available === 1 ? 'is' : 'are'} only ${available} at ${where}, and you asked for ${wanted}.`,
+      blocked: {
+        reason: 'insufficient_stock',
+        wanted,
+        available,
+        subject: subjectName(draft),
+        skuId: draft.skuId,
+        locationId: draft.sourceLocationId || null,
+        locationName: where,
+        elsewhere: resolver.stockElsewhere(db, workspaceId, draft.skuId, draft.sourceLocationId),
+      },
     };
   };
 

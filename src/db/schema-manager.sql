@@ -114,8 +114,9 @@ CREATE TABLE IF NOT EXISTS manager_intents (
   payload              TEXT NOT NULL DEFAULT '{}',
   confidence           TEXT NOT NULL DEFAULT 'medium'
                          CHECK (confidence IN ('high', 'medium', 'low')),
-  status               TEXT NOT NULL DEFAULT 'CLASSIFIED'
-                         CHECK (status IN ('CLASSIFIED', 'ROUTED', 'NEEDS_CLARIFICATION', 'COMPLETED', 'FAILED')),
+  -- The list of ways a request can end lives in application code, which is the
+  -- only place it can be kept honest as new endings are added.
+  status               TEXT NOT NULL DEFAULT 'CLASSIFIED',
   routed_to            TEXT,
   related_record_id    TEXT,
   created_at           TEXT NOT NULL,

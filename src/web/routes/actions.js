@@ -91,6 +91,9 @@ router.get(
       examples: exampleInstructions(req.db, req.ctx.workspaceId),
       question: (handed && handed.question) || null,
       unsupported: (handed && handed.unsupported) || null,
+      // A refusal an inventory rule produced carries its numbers, so the page
+      // can name the rule and offer the ways out rather than restate the prose.
+      blocked: (handed && handed.blocked) || null,
       choices: (handed && handed.choices) || null,
     });
   })
@@ -157,6 +160,7 @@ router.post(
       examples: exampleInstructions(req.db, req.ctx.workspaceId),
       question: result.kind === 'question' ? result.question : null,
       unsupported: result.kind === 'unsupported' ? result.message : null,
+      blocked: (result.kind === 'unsupported' && result.blocked) || null,
       choices: result.choices || null,
     });
   })

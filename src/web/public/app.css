@@ -1113,6 +1113,17 @@ dialog.modal::backdrop { background: rgba(15, 23, 42, .32); backdrop-filter: blu
 }
 .act-question--muted { background: var(--surface-2); border-color: var(--line); color: var(--ink-soft); }
 
+/* Blocked by a rule, not by a missing detail: it reads as a stop, and the ways
+   out are listed as choices rather than buried in a sentence. */
+.act-question--blocked { background: var(--surface-2); border-color: #fca5a5; }
+.act-blocked-ways { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 9px; }
+.act-blocked-ways li {
+  display: grid; gap: 2px; padding: 9px 11px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+}
+.act-blocked-ways a { font-weight: 600; }
+.act-blocked-ways .muted { font-size: 12.5px; line-height: 1.5; }
+
 .act-plan { display: grid; gap: 12px; }
 .plain-list { list-style: disc; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
 .card--warn { border-color: #fca5a5; }

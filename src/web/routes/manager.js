@@ -202,9 +202,17 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
       return res.redirect(303, '/actions');
     }
+    // The same refusal, whichever class the sentence was read as. Being
+    // declined by a rule is not a request for clarification, and is not
+    // recorded as one.
     if (result.kind === 'unsupported' && (result.message || result.unsupported)) {
-      req.session.pendingActionQuestion = { unsupported: result.message || result.unsupported, instruction: message };
-      intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
+      req.session.pendingActionQuestion = {
+        unsupported: result.message || result.unsupported,
+        blocked: result.blocked || null,
+        instruction: message,
+      };
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null,
+        result.blocked ? 'REFUSED' : 'NEEDS_CLARIFICATION');
       return res.redirect(303, '/actions');
     }
     req.flash('error', result.message || 'Foundry needs more detail.');
@@ -257,6 +265,29 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
           choices: asAction.choices || null,
         };
         intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
+        return res.redirect(303, '/actions');
+      }
+      // Understood perfectly, and refused anyway.
+      //
+      // "We sold 10 Black Large at Downtown Store" leaves nothing to ask: the
+      // product, the place, the quantity and the direction are all settled.
+      // What stops it is that Downtown has four and this inventory does not
+      // allow negative stock. That is a fact about the stock, not a gap in the
+      // sentence — and it used to be filed as one, as a reported event sitting
+      // in Needs you asking for details nobody could name, because this
+      // fallback only forwarded proposals and questions and let a refusal
+      // drop through to the generic "could not place it" ending.
+      //
+      // A refusal is an answer. It goes back to the person who asked, with the
+      // numbers behind it, and the event is closed rather than left waiting.
+      if (asAction.kind === 'unsupported' && asAction.message) {
+        physicalEvents.complete(req.db, req.ctx.workspaceId, event.id);
+        req.session.pendingActionQuestion = {
+          unsupported: asAction.message,
+          blocked: asAction.blocked || null,
+          instruction: message,
+        };
+        intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'REFUSED');
         return res.redirect(303, '/actions');
       }
     }
