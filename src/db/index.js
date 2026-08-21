@@ -219,15 +219,30 @@ function dropLegacyUserLogin(db) {
 function relaxColumnCheck(db, table, column) {
   if (!tableExists(db, table)) return false;
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
-  const pattern = new RegExp(`${column}\\s+TEXT NOT NULL CHECK`);
-  if (!row || !pattern.test(row.sql)) return false;
+  if (!row) return false;
+
+  // The whole column definition up to its CHECK, whatever sits in between.
+  //
+  // A DEFAULT clause between the type and the CHECK used to mean no match, and
+  // no match was indistinguishable from nothing to do. So the constraint stayed
+  // and the first write of a newly allowed value failed at runtime — but only in
+  // databases that already existed, because fresh ones are built from the schema
+  // file and never needed the rebuild. That is what made the silence expensive:
+  // every test passed and the customer's own database was the one that broke.
+  const KEEP = `${column}\\s+TEXT NOT NULL(?:\\s+DEFAULT\\s+(?:'[^']*'|[^\\s(]+))?`;
+  const stillChecked = (sql) => new RegExp(`${KEEP}\\s*CHECK`, 's').test(sql);
+  if (!stillChecked(row.sql)) return false;
 
   const rebuilt = row.sql
     .replace(new RegExp(`CREATE TABLE (IF NOT EXISTS )?${table}`, 'i'), `CREATE TABLE ${table}_rebuilt`)
-    .replace(
-      new RegExp(`${column}\\s+TEXT NOT NULL CHECK \\([^)]*\\)\\)?,`, 's'),
-      `${column} TEXT NOT NULL,`
-    );
+    .replace(new RegExp(`(${KEEP})\\s*CHECK\\s*\\([^)]*\\)\\)?,`, 's'), '$1,');
+
+  // A rebuild that did not actually drop the constraint is worse than none: it
+  // reports success and fails later, somewhere else.
+  if (stillChecked(rebuilt)) {
+    throw new Error(`relaxColumnCheck could not drop the CHECK on ${table}.${column}`);
+  }
+
 
   const columns = db
     .prepare(`PRAGMA table_info(${table})`)
