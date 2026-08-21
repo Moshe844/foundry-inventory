@@ -222,8 +222,18 @@ router.post(
   asyncRoute(async (req, res) => {
     guard(req, permissions.MANAGE_REPLENISHMENT, 'set reorder policies');
     if (req.body.clear === '1') {
+      // Say what was removed. A line that silently reverts to "not enough
+      // history" afterwards looks like Foundry lost the settings rather than
+      // like something the person asked for.
+      const had = policyService.effectivePolicy(req.db, req.ctx.workspaceId, req.params.skuId);
       policyService.clearPolicy(req.db, req.ctx, req.user, req.params.skuId);
-      req.flash('success', 'Foundry will work this line out from usage again.');
+      req.flash(
+        'success',
+        had && had.isSet
+          ? `Your settings for this line are gone (reorder at ${had.reorderPoint}, up to ${had.targetStock}). `
+            + 'Foundry works it out from usage again, and will say so if it has not seen enough selling.'
+          : 'Foundry will work this line out from usage again.'
+      );
     } else {
       policyService.setPolicy(req.db, req.ctx, req.user, req.params.skuId, req.body);
       req.flash('success', 'Saved.');

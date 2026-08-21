@@ -155,11 +155,24 @@
         </div>
         <div class="btn-row">
           <button class="btn btn--primary" type="submit">Save settings</button>
-          <% if (policy.isSet) { %>
-            <button class="btn btn--ghost" type="submit" name="clear" value="1">Go back to working it out</button>
-          <% } %>
         </div>
       </form>
+
+      <%# Discarding settings somebody typed is its own act, in its own form.
+          It used to sit beside Save as "Go back to working it out", which reads
+          like a way back to the calculation rather than the deletion of the
+          numbers you had just entered — and it deleted them without asking. %>
+      <% if (policy.isSet) { %>
+        <form method="post" action="/purchasing/policies/<%= line.skuId %>" class="reorder-clear"
+              data-confirm="Discard your reorder settings for <%= line.displayName %>? Foundry will go back to working the levels out from usage, and it needs enough sales history to do that.">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="clear" value="1">
+          <p class="muted" style="margin:14px 0 6px;">
+            Your own levels are in use for this line. Foundry will not change them.
+          </p>
+          <button class="btn btn--ghost btn--sm" type="submit">Discard my settings for this line</button>
+        </form>
+      <% } %>
     <% } %>
   </div>
 </div>

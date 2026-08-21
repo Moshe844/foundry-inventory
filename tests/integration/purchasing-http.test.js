@@ -17,10 +17,12 @@ const engine = require('../../src/domain/inventory-engine');
 const authService = require('../../src/domain/auth-service');
 const suppliers = require('../../src/purchasing/supplier-service');
 const poService = require('../../src/purchasing/po-service');
+const replenishment = require('../../src/purchasing/replenishment');
+const policyService = require('../../src/purchasing/policy-service');
 const position = require('../../src/purchasing/position');
 const repo = require('../../src/domain/repository');
 const { createApp } = require('../../src/app');
-const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, csrfFrom, plain, signIn } = require('../helpers');
+const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, makeVariantItem, csrfFrom, plain, signIn } = require('../helpers');
 
 test.after(cleanupAll);
 
@@ -495,5 +497,139 @@ test('a line blocked for want of a supplier leads to setting one up, and then be
   assert.match(afterText, /case/i, "the supplier's pack size is in the recommendation");
   assert.match(after.text, /\/purchasing\/prepare\//,
     'and the order can now actually be prepared');
+  env.db.close();
+});
+
+// --- settings somebody typed in outrank what Foundry can infer ---------------
+
+/**
+ * Reported as: reorder point 60 / up to 80 / safety 10 set by hand on one
+ * variant, supplier attached to all six afterwards, and the whole range came
+ * back as "not enough history". The engine turned out to be right; the settings
+ * had been deleted by a button labelled "Go back to working it out", which
+ * reads like a way back to the calculation rather than a deletion.
+ *
+ * These lock the two properties the report asked for, whatever the wording of
+ * any button: explicit levels beat missing history, and they survive supplier
+ * attachment.
+ */
+function sixVariantsNoHistory() {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Tee Business' });
+  const membership = authService.getMembership(store.db, workspace.workspaceId, workspace.accountId);
+  const item = makeVariantItem(store.db, workspace.ctx, {
+    name: 'Black T-shirt',
+    baseCode: 'BT-1',
+    options: [
+      { name: 'Colour', values: 'Black, White' },
+      { name: 'Size', values: 'Small, Medium, Large' },
+    ],
+  });
+  // Stock, and deliberately no sales at all: nothing here can be inferred.
+  for (const sku of item.skus) {
+    engine.receive(store.db, workspace.ctx, {
+      skuId: sku.id, locationId: workspace.main.id, quantity: 56,
+    });
+  }
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'reorder-precedence-test' });
+  return { ...store, workspace, membership, item, small: item.byLabel('Black / Small'), app };
+}
+
+test('reorder levels set by hand survive attaching a supplier and drive the recommendation', async () => {
+  const env = sixVariantsNoHistory();
+  const { agent } = await owner(env);
+
+  // 1. The levels are typed in on the line itself.
+  const whyPage = await agent.get(`/purchasing/why/${env.small.id}`);
+  const saved = await agent.post(`/purchasing/policies/${env.small.id}`).type('form').send({
+    _csrf: csrfFrom(whyPage.text), reorderPoint: 60, targetStock: 80, safetyStock: 10,
+  });
+  assert.ok(saved.status === 303 || saved.status === 302);
+
+  // 2. With no sales history whatsoever, the line is still assessed — because
+  //    the levels came from a person, not from inference.
+  const beforeSupplier = replenishment.evaluateOne(env.db, env.workspace.workspaceId, env.small.id);
+  assert.equal(beforeSupplier.reason, 'no_supplier',
+    'explicit levels must outrank "not enough history"');
+  assert.equal(beforeSupplier.shortfall, 24, '80 target − 56 on hand');
+
+  // 3. A supplier is attached to all six variants, as a range.
+  const supplierPage = await agent.get('/purchasing/setup');
+  const linked = await agent.post('/purchasing/setup/supplier').type('form').send({
+    _csrf: csrfFrom(supplierPage.text),
+    newSupplierName: 'ABC Apparel',
+    purchaseUnit: 'case',
+    unitsPerPurchaseUnit: 12,
+    minimumOrderQuantity: 2,
+    leadTimeDays: 15,
+    skuIds: env.item.skus.map((sku) => sku.id),
+  });
+  assert.ok(linked.status === 303 || linked.status === 302);
+
+  // 4. The settings are still there afterwards, still the person's own.
+  const policy = policyService.effectivePolicy(env.db, env.workspace.workspaceId, env.small.id);
+  assert.equal(policy.isSet, true, 'attaching a supplier must not disturb saved levels');
+  assert.equal(policy.reorderPoint, 60);
+  assert.equal(policy.targetStock, 80);
+  assert.equal(policy.safetyStock, 10);
+  assert.equal(policy.source, 'manual');
+
+  // 5. And the line is now actionable on exactly those numbers plus the
+  //    supplier's terms: 24 short, rounded to whole cases, minimum 2.
+  const line = replenishment.evaluateOne(env.db, env.workspace.workspaceId, env.small.id);
+  assert.equal(line.recommend, true);
+  assert.equal(line.reason, 'below_reorder_point');
+  assert.equal(line.reorderPoint, 60);
+  assert.equal(line.target, 80);
+  assert.equal(line.shortfall, 24);
+  assert.equal(line.quantityUnits, 24);
+  assert.equal(line.quantityPurchaseUnits, 2, '24 units is exactly two cases of twelve');
+  assert.equal(line.leadTimeDays, 15);
+
+  // 6. On the page itself: this one is orderable, the other five honestly are not.
+  const plan = plain((await agent.get('/purchasing')).text);
+  assert.match(plan, /Black \/ Small/);
+  assert.doesNotMatch(plan, /You have not set your own reorder levels/,
+    'a line configured by hand must not be reported as unconfigured');
+  const workspacePlan = replenishment.evaluateWorkspace(env.db, env.workspace.workspaceId);
+  assert.equal(workspacePlan.recommendations.length, 1);
+  assert.equal(workspacePlan.recommendations[0].skuId, env.small.id);
+  assert.equal(workspacePlan.blocked.length, 5, 'the other five stay honest about having no history');
+  env.db.close();
+});
+
+test('discarding reorder levels is a deliberate, separate act', async () => {
+  const env = sixVariantsNoHistory();
+  const { agent } = await owner(env);
+  const whyPage = await agent.get(`/purchasing/why/${env.small.id}`);
+  await agent.post(`/purchasing/policies/${env.small.id}`).type('form').send({
+    _csrf: csrfFrom(whyPage.text), reorderPoint: 60, targetStock: 80, safetyStock: 10,
+  });
+
+  // Saving again must never be a way of losing them.
+  const withPolicy = await agent.get(`/purchasing/why/${env.small.id}`);
+  await agent.post(`/purchasing/policies/${env.small.id}`).type('form').send({
+    _csrf: csrfFrom(withPolicy.text), reorderPoint: 60, targetStock: 80, safetyStock: 10,
+  });
+  assert.equal(
+    policyService.effectivePolicy(env.db, env.workspace.workspaceId, env.small.id).isSet,
+    true
+  );
+
+  // The discard control is its own form, asks first, and says what it removed.
+  const page = (await agent.get(`/purchasing/why/${env.small.id}`)).text;
+  assert.match(page, /data-confirm="Discard your reorder settings/,
+    'deleting somebody\'s settings has to ask');
+  assert.doesNotMatch(page, /Go back to working it out/,
+    'and must not be worded as though it were navigation');
+
+  await agent.post(`/purchasing/policies/${env.small.id}`).type('form').send({
+    _csrf: csrfFrom(page), clear: '1',
+  });
+  assert.equal(
+    policyService.effectivePolicy(env.db, env.workspace.workspaceId, env.small.id).isSet,
+    false,
+    'and when it is asked for, it works'
+  );
   env.db.close();
 });
