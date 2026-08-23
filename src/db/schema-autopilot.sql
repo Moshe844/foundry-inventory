@@ -191,9 +191,9 @@ CREATE TABLE IF NOT EXISTS work_items (
   approval_requirement  TEXT NOT NULL DEFAULT 'REQUIRED'
                           CHECK (approval_requirement IN ('NONE', 'REQUIRED', 'REQUIRED_WITH_WARNING')),
 
-  execution_status      TEXT NOT NULL DEFAULT 'DETECTED' CHECK (execution_status IN
-                          ('DETECTED', 'PLANNED', 'WAITING_FOR_APPROVAL', 'AUTHORIZED', 'EXECUTING',
-                           'VERIFYING', 'COMPLETED', 'FAILED', 'BLOCKED', 'CANCELLED')),
+  -- The list of states work can be in lives in application code, which is the
+  -- only place it can be kept honest as new ones are added.
+  execution_status      TEXT NOT NULL DEFAULT 'DETECTED',
   verification_status   TEXT NOT NULL DEFAULT 'PENDING'
                           CHECK (verification_status IN ('PENDING', 'VERIFIED', 'FAILED', 'NOT_APPLICABLE')),
 

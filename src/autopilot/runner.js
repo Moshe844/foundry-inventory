@@ -141,6 +141,11 @@ function planWork(db, ctx, membership, options = {}) {
       idempotencyKey: `replenishment_plan:${plan.skuId}`,
     });
 
+    // Every run, not only the run that created the plan. Older work can appear
+    // or be reopened at any time, and a plan that tidies up once on the day it
+    // was made would leave the same double-execution open a day later.
+    supersedeOlderWork(db, workspaceId, plan.skuId, item);
+
     if (isNew) {
       created.push(item);
       notify(db, workspaceId, {
@@ -435,6 +440,64 @@ function planWork(db, ctx, membership, options = {}) {
  * authorised then may not be authorised now.
  */
 /**
+ * Retires the older, narrower work a replenishment plan has taken over.
+ *
+ * Excluding a governed line from the two independent paths stops new fragments
+ * being made. It does nothing about the ones already sitting in Needs you, and
+ * those stay approvable: a person could approve the plan — moving stock and
+ * drafting an order — and then approve the older "Move 45 to Downtown Store?"
+ * and "PO-1002 is ready to send" that the plan had already accounted for, and
+ * move and buy the same stock twice.
+ *
+ * They are not cancelled, because nobody rejected them, and not failed. They
+ * are superseded: kept in history with the plan that took them over named, and
+ * terminal, so neither approval nor execution will touch them again.
+ *
+ * Work already under way is left alone. Stopping something mid-execution is not
+ * this function's business, and a transfer that has already moved stock is a
+ * fact the next plan will read from the ledger anyway.
+ */
+function supersedeOlderWork(db, workspaceId, skuId, planItem) {
+  const superseded = [];
+  const concerns = (entry) => {
+    const entities = entry.affectedEntities || {};
+    if (entities.skuId === skuId) return true;
+    const action = entry.recommendedAction || {};
+    if (action.skuId === skuId) return true;
+    return (action.lines || []).some((line) => line.skuId === skuId);
+  };
+
+  for (const category of ['balance_transfer', 'purchase_preparation', 'purchase_approval']) {
+    for (const entry of workItems.list(db, workspaceId, { category, limit: 200 })) {
+      if (entry.id === planItem.id) continue;
+      if (entry.isTerminal) continue;
+      if (workItems.IN_FLIGHT.includes(entry.executionStatus)) continue;
+      if (!concerns(entry)) continue;
+
+      workItems.transition(db, workspaceId, entry.id, workItems.STATUS.SUPERSEDED, {
+        completedAt: nowIso(),
+        verificationStatus: 'NOT_APPLICABLE',
+        errorMessage: null,
+        outcome: {
+          ...(entry.outcome || {}),
+          supersededByWorkItemId: planItem.id,
+          supersededBecause:
+            'One replenishment plan now covers this stock need, including this action.',
+        },
+      });
+      superseded.push(entry.id);
+    }
+  }
+
+  if (superseded.length) {
+    workItems.recordEvent(db, workspaceId, planItem.id, 'superseded_earlier_work', {
+      supersededWorkItemIds: superseded,
+    });
+  }
+  return superseded;
+}
+
+/**
  * Carries out one replenishment plan: the moves, then the order.
  *
  * Approval is given once, to the plan. Execution is still one controlled action
@@ -612,6 +675,16 @@ function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
   const workspaceId = ctx.workspaceId;
   const item = workItems.get(db, workspaceId, workItemId);
 
+  // Superseded work is terminal, so this would return quietly as a replay. It
+  // is worth its own answer: nothing ran, and there is a reason nothing ran.
+  if (item.executionStatus === workItems.STATUS.SUPERSEDED) {
+    return {
+      executed: false,
+      superseded: true,
+      item,
+      because: 'One replenishment plan now covers this stock need, and it includes this action.',
+    };
+  }
   if (item.isTerminal) return { replayed: true, item };
   if (item.executionStatus === workItems.STATUS.WAITING_FOR_APPROVAL) {
     throw new ValidationError('That work is waiting for a person to approve it.');
@@ -903,6 +976,15 @@ function preparePurchase(db, ctx, membership, item) {
 function approveWorkItem(db, ctx, membership, workItemId) {
   permissions.assertCan(membership, permissions.OPERATE, 'approve inventory work');
   const item = workItems.get(db, ctx.workspaceId, workItemId);
+  // Say which decision took it over. "Not waiting for approval" would leave
+  // someone pressing a button that has quietly stopped meaning anything.
+  if (item.executionStatus === workItems.STATUS.SUPERSEDED) {
+    const by = (item.outcome || {}).supersededByWorkItemId;
+    throw new ValidationError(
+      'One replenishment plan now covers this stock need, and it includes this action.' +
+        (by ? ' Approve that plan instead.' : '')
+    );
+  }
   if (item.executionStatus !== workItems.STATUS.WAITING_FOR_APPROVAL) {
     throw new ValidationError('That work is not waiting for approval.');
   }

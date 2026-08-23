@@ -455,3 +455,158 @@ test('approving the one plan carries out both halves and verifies each', async (
   assert.equal(engine.verifyIntegrity(env.db, env.workspace.workspaceId).ok, true);
   env.db.close();
 });
+
+/**
+ * Older fragments must not survive the plan that replaced them.
+ *
+ * Excluding a governed line from the two independent paths stops new fragments
+ * being made and does nothing about the ones already in Needs you. Those stayed
+ * approvable, so a person could approve the plan — moving stock and drafting an
+ * order — and then approve the older transfer and the older PO the plan had
+ * already accounted for, and move and buy the same stock twice.
+ */
+function olderFragmentsFor(env) {
+  const transfer = workItems.upsert(env.db, env.workspace.workspaceId, {
+    workPlanId: null,
+    category: 'balance_transfer',
+    source: 'balance_signal',
+    affectedEntities: {
+      skuId: env.small.id,
+      displayName: 'Black T-shirt / Black / Small',
+      fromLocationId: env.workspace.main.id,
+      toLocationId: env.workspace.store.id,
+    },
+    recommendedAction: {
+      actionType: 'transfer',
+      skuId: env.small.id,
+      quantity: 45,
+      fromLocationId: env.workspace.main.id,
+      toLocationId: env.workspace.store.id,
+      fromLocationName: 'Main Warehouse',
+      toLocationName: 'Downtown Store',
+      displayName: 'Black T-shirt / Black / Small',
+    },
+    approvalRequirement: 'REQUIRED',
+    executionStatus: workItems.STATUS.WAITING_FOR_APPROVAL,
+    priority: 50,
+    urgency: 'normal',
+    confidence: 'high',
+    reason: 'Downtown Store is running low.',
+    idempotencyKey: `balance_transfer:${env.small.id}:old`,
+  }).item;
+
+  const purchase = workItems.upsert(env.db, env.workspace.workspaceId, {
+    workPlanId: null,
+    category: 'purchase_preparation',
+    source: 'replenishment',
+    affectedEntities: { supplierId: env.supplier.id, supplierName: 'ABC Apparel' },
+    recommendedAction: {
+      actionType: 'prepare_purchase_order',
+      supplierId: env.supplier.id,
+      supplierName: 'ABC Apparel',
+      lines: [{ skuId: env.small.id, quantityPurchaseUnits: 3, quantityUnits: 36 }],
+    },
+    approvalRequirement: 'REQUIRED',
+    executionStatus: workItems.STATUS.WAITING_FOR_APPROVAL,
+    priority: 60,
+    urgency: 'normal',
+    confidence: 'high',
+    reason: 'Below the reorder point.',
+    idempotencyKey: `purchase_preparation:${env.supplier.id}:old`,
+  }).item;
+
+  return { transfer, purchase };
+}
+
+test('a plan supersedes the older transfer and PO it replaces, leaving one decision', async () => {
+  const env = await blackSmall();
+  const older = olderFragmentsFor(env);
+
+  // Both are live and approvable before the plan exists.
+  assert.equal(workItems.get(env.db, env.workspace.workspaceId, older.transfer.id).isTerminal, false);
+  assert.equal(workItems.get(env.db, env.workspace.workspaceId, older.purchase.id).isTerminal, false);
+
+  runner.run(env.db, env.workspace.ctx, env.membership, { trigger: 'manual' });
+
+  const concernsSmall = (entry) => (entry.affectedEntities || {}).skuId === env.small.id
+    || ((entry.recommendedAction || {}).skuId === env.small.id)
+    || (((entry.recommendedAction || {}).lines) || []).some((line) => line.skuId === env.small.id);
+
+  const active = workItems.list(env.db, env.workspace.workspaceId, { limit: 200 })
+    .filter((entry) => !entry.isTerminal)
+    .filter(concernsSmall);
+  assert.equal(
+    active.length, 1,
+    `exactly one active decision, got: ${active.map((entry) => `${entry.category}/${entry.executionStatus}`).join(', ')}`
+  );
+  assert.equal(active[0].category, 'replenishment_plan');
+
+  // The old ones are retired, not deleted, and say what took them over.
+  for (const id of [older.transfer.id, older.purchase.id]) {
+    const retired = workItems.get(env.db, env.workspace.workspaceId, id);
+    assert.equal(retired.executionStatus, 'SUPERSEDED', `${retired.category} must be superseded`);
+    assert.equal(retired.isTerminal, true, 'and terminal, so nothing can run it');
+    assert.equal(retired.outcome.supersededByWorkItemId, active[0].id, 'naming the plan that took it over');
+    assert.match(retired.outcome.supersededBecause, /one replenishment plan now covers this stock need/i);
+  }
+
+  // Still there to read afterwards.
+  const everything = workItems.list(env.db, env.workspace.workspaceId, { limit: 200 }).map((entry) => entry.id);
+  assert.ok(everything.includes(older.transfer.id), 'history keeps it');
+  assert.ok(everything.includes(older.purchase.id), 'history keeps it');
+  env.db.close();
+});
+
+test('a superseded action cannot be approved or executed', async () => {
+  const env = await blackSmall();
+  const older = olderFragmentsFor(env);
+  runner.run(env.db, env.workspace.ctx, env.membership, { trigger: 'manual' });
+
+  const movementsBefore = env.db.prepare('SELECT COUNT(*) c FROM movements').get().c;
+  const ordersBefore = env.db.prepare('SELECT COUNT(*) c FROM purchase_orders').get().c;
+
+  for (const id of [older.transfer.id, older.purchase.id]) {
+    assert.throws(
+      () => runner.approveWorkItem(env.db, env.workspace.ctx, env.membership, id),
+      /one replenishment plan now covers this stock need/i,
+      'approving a superseded action must be refused, and say why'
+    );
+    const result = runner.executeWorkItem(env.db, env.workspace.ctx, env.membership, id);
+    assert.equal(result.executed, false);
+    assert.equal(result.superseded, true);
+  }
+
+  // The double execution this exists to prevent.
+  assert.equal(env.db.prepare('SELECT COUNT(*) c FROM movements').get().c, movementsBefore,
+    'no stock moved twice');
+  assert.equal(env.db.prepare('SELECT COUNT(*) c FROM purchase_orders').get().c, ordersBefore,
+    'nothing was ordered twice');
+  env.db.close();
+});
+
+test('pressing Check now again reuses the plan rather than making another', async () => {
+  const env = await blackSmall();
+  olderFragmentsFor(env);
+
+  runner.run(env.db, env.workspace.ctx, env.membership, { trigger: 'manual' });
+  runner.run(env.db, env.workspace.ctx, env.membership, { trigger: 'manual' });
+  runner.run(env.db, env.workspace.ctx, env.membership, { trigger: 'manual' });
+
+  const plans = workItems.list(env.db, env.workspace.workspaceId, { category: 'replenishment_plan', limit: 100 });
+  assert.equal(plans.length, 1, 'three checks, one plan');
+
+  const active = workItems.list(env.db, env.workspace.workspaceId, { limit: 200 })
+    .filter((entry) => !entry.isTerminal);
+  assert.equal(
+    active.length, 1,
+    `re-checking must not accumulate work: ${active.map((entry) => entry.category).join(', ')}`
+  );
+
+  // And nothing was carried out by re-checking.
+  assert.equal(
+    env.db.prepare("SELECT COUNT(*) c FROM movements WHERE operation = 'transfer'").get().c, 0,
+    'checking is not doing'
+  );
+  assert.equal(env.db.prepare('SELECT COUNT(*) c FROM purchase_orders').get().c, 0);
+  env.db.close();
+});

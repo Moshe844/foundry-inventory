@@ -37,10 +37,14 @@ const STATUS = {
   FAILED: 'FAILED',
   BLOCKED: 'BLOCKED',
   CANCELLED: 'CANCELLED',
+  // Not cancelled — nobody rejected it — and not failed. A later decision that
+  // covers the same stock need took it over, and it must not be approvable or
+  // executable any more, because carrying out both would move or buy twice.
+  SUPERSEDED: 'SUPERSEDED',
 };
 
 /** Statuses that are finished, one way or another. */
-const TERMINAL = [STATUS.COMPLETED, STATUS.FAILED, STATUS.CANCELLED];
+const TERMINAL = [STATUS.COMPLETED, STATUS.FAILED, STATUS.CANCELLED, STATUS.SUPERSEDED];
 /** Statuses where a restart has to reconcile before doing anything. */
 const IN_FLIGHT = [STATUS.EXECUTING, STATUS.VERIFYING];
 

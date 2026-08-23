@@ -216,6 +216,10 @@ function dropLegacyUserLogin(db) {
  * Called *before* the schema file that owns the table, so the CREATE INDEX
  * statements in that file put back the indexes the rebuild drops.
  */
+/** A table name as SQLite may have stored it: bare, or quoted after a rename. */
+const QUOTED_NAME = (table) =>
+  "CREATE TABLE (IF NOT EXISTS )?[\"'`\\[]?" + table + "[\"'`\\]]?";
+
 function relaxColumnCheck(db, table, column) {
   if (!tableExists(db, table)) return false;
   const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
@@ -234,7 +238,14 @@ function relaxColumnCheck(db, table, column) {
   if (!stillChecked(row.sql)) return false;
 
   const rebuilt = row.sql
-    .replace(new RegExp(`CREATE TABLE (IF NOT EXISTS )?${table}`, 'i'), `CREATE TABLE ${table}_rebuilt`)
+    // The stored name may be quoted. SQLite rewrites a table's own DDL when a
+    // column is renamed, writing the name back as "work_items" — so a pattern
+    // matching only the bare word silently failed to rename the copy, and the
+    // rebuild then tried to create a table that already existed.
+    .replace(
+      new RegExp(QUOTED_NAME(table), 'i'),
+      `CREATE TABLE ${table}_rebuilt`
+    )
     .replace(new RegExp(`(${KEEP})\\s*CHECK\\s*\\([^)]*\\)\\)?,`, 's'), '$1,');
 
   // A rebuild that did not actually drop the constraint is worse than none: it
@@ -287,6 +298,9 @@ function migrate(db) {
   // Routing outcomes grow with the ways a request can end. REFUSED — understood
   // and declined by a rule — is one the enumerated list did not have.
   relaxColumnCheck(db, 'manager_intents', 'status');
+  // SUPERSEDED — work a later, better decision has taken over — is a state the
+  // enumerated list did not have.
+  relaxColumnCheck(db, 'work_items', 'execution_status');
 
   db.exec(fs.readFileSync(ATTENTION_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(ACTIONS_SCHEMA_PATH, 'utf8'));

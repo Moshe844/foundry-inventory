@@ -104,3 +104,35 @@ test('a rebuild that fails to drop the constraint is not reported as success', (
   assert.match(source, /could not drop the CHECK/,
     'relaxColumnCheck must verify its own result');
 });
+
+test('a table whose stored name is quoted is still rebuilt', () => {
+  // SQLite writes a table's name back quoted in its own DDL after some
+  // alterations, which is how the real database had it. The rebuild matched
+  // only the bare word, so the copy kept the original name and creating it
+  // failed with "table already exists" — opening the database crashed outright
+  // rather than degrading. Written quoted here directly: how it came to be
+  // quoted varies by SQLite version, that it can be is the point.
+  const file = databaseFrom(`
+    CREATE TABLE "work_items" (
+      id                 TEXT PRIMARY KEY,
+      workspace_id       TEXT NOT NULL,
+      work_plan_id       TEXT,
+      category           TEXT NOT NULL,
+      idempotency_key    TEXT NOT NULL,
+      execution_status   TEXT NOT NULL DEFAULT 'DETECTED'
+                           CHECK (execution_status IN ('DETECTED', 'PLANNED', 'COMPLETED')),
+      created_at         TEXT NOT NULL
+    );
+    INSERT INTO work_items (id, workspace_id, category, idempotency_key, created_at)
+      VALUES ('keep-me', 'w1', 'balance_transfer', 'k1', '2026-01-01');
+  `);
+
+  const db = openDatabase(file);
+  db.prepare("UPDATE work_items SET execution_status = 'SUPERSEDED' WHERE id = 'keep-me'").run();
+  assert.equal(
+    db.prepare("SELECT execution_status FROM work_items WHERE id = 'keep-me'").get().execution_status,
+    'SUPERSEDED'
+  );
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM work_items').get().c, 1, 'the row survived the rebuild');
+  db.close();
+});

@@ -17,6 +17,9 @@
   </div>
   <div class="card-body">
     <% paragraphs.forEach(function (line) { %><p class="lede"><%= line %></p><% }) %>
+    <% if (locals.supersededBy) { %>
+      <p><a class="btn btn--sm" href="/autopilot/work/<%= locals.supersededBy %>">Open the plan that replaced this</a></p>
+    <% } %>
 
     <% if (evidence.length) { %>
       <h3 class="sub-head">What I measured</h3>

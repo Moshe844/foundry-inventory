@@ -511,6 +511,18 @@ function explain(db, workspaceId, workItemId) {
   const policy = item.policyId ? policyService.get(db, workspaceId, item.policyId) : null;
 
   const paragraphs = [];
+
+  // Said before anything else, and in the past tense. Work a plan has taken
+  // over still described as "I want to move 45. Nothing has moved yet." reads
+  // as pending, which is the one thing it is not.
+  const supersededBy = (outcome || {}).supersededByWorkItemId || null;
+  if (item.executionStatus === workItems.STATUS.SUPERSEDED) {
+    paragraphs.push(
+      'This was replaced before it ran. One replenishment plan now covers this stock need, ' +
+        'including this action, so it is kept here as a record and cannot be approved or carried out.'
+    );
+  }
+
   if (item.category === 'balance_transfer') {
     const evidence = Object.fromEntries((item.sourceEvidence || []).map((entry) => [entry.label, entry.value]));
     const toName = action.toLocationName;
@@ -534,12 +546,16 @@ function explain(db, workspaceId, workItemId) {
       );
     } else if (done && item.approvedAt) {
       paragraphs.push('You approved this one yourself.');
-    } else if (!done) {
+    } else if (!done && item.executionStatus !== workItems.STATUS.SUPERSEDED) {
       paragraphs.push('No policy covers this, so it is waiting for you rather than being carried out.');
     }
 
     paragraphs.push(
-      done ? `I transferred ${action.quantity}.` : `I want to move ${action.quantity}. Nothing has moved yet.`
+      done
+        ? `I transferred ${action.quantity}.`
+        : item.executionStatus === workItems.STATUS.SUPERSEDED
+          ? `It would have moved ${action.quantity}. Nothing moved.`
+          : `I want to move ${action.quantity}. Nothing has moved yet.`
     );
 
     if (outcome.after) {
@@ -603,6 +619,7 @@ function explain(db, workspaceId, workItemId) {
   return {
     item,
     policy,
+    supersededBy,
     paragraphs,
     checks: (item.policyEvaluation || {}).checks || [],
     evidence: item.sourceEvidence || [],
