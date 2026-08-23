@@ -120,7 +120,11 @@ router.get(
         blocked: items.filter((item) => ['FAILED', 'BLOCKED'].includes(item.executionStatus)),
       },
       evaluations: presenter.recentEvaluations(req.db, req.ctx.workspaceId, { limit: 50 }),
-      describe: presenter.describeCompleted,
+      // Bound to who owns each order, so history does not offer an approval the
+      // replenishment plan has taken over.
+      describe: ((owned) => (item) => presenter.describeCompleted(item, owned))(
+        new Set(presenter.ordersOwnedByAPlan(req.db, req.ctx.workspaceId).keys())
+      ),
     });
   })
 );

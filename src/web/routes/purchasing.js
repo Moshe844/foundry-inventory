@@ -28,6 +28,7 @@ const physicalEvents = require('../../manager/physical-events');
 const permissions = require('../../actions/permissions');
 const repo = require('../../domain/repository');
 const reevaluate = require('../../attention/reevaluate');
+const autopilotPresenter = require('../../autopilot/presenter');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { unitCount } = require('../../lib/units');
 const { trimOrNull } = require('../../lib/util');
@@ -324,6 +325,19 @@ router.post(
   '/purchasing/orders/:id/approve',
   asyncRoute(async (req, res) => {
     guard(req, permissions.APPROVE_PO, 'approve purchase orders');
+    // An order a replenishment plan contains is approved through that plan.
+    // Hiding the button is not enough: the route is the thing that spends the
+    // money, and a stale page or a typed URL would otherwise still place it —
+    // beside the plan that also intends to.
+    const owner = autopilotPresenter.ordersOwnedByAPlan(req.db, req.ctx.workspaceId).get(req.params.id);
+    if (owner) {
+      req.flash(
+        'error',
+        'This order is part of a replenishment plan. Approve the plan and Foundry will place it, ' +
+          'so the same stock is not ordered twice.'
+      );
+      return res.redirect(303, `/autopilot/work/${owner.id}`);
+    }
     const order = poService.approve(req.db, req.ctx, req.user, req.params.id, {
       expectedHash: trimOrNull(req.body.integrityHash),
     });

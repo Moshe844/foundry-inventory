@@ -49,7 +49,7 @@ function timeAgo(iso, now = Date.now()) {
  * something waiting for approval would be a plain untruth, so the verb follows
  * the status rather than the category.
  */
-function describeCompleted(item) {
+function describeCompleted(item, ownedByPlan = new Set()) {
   const action = item.recommendedAction || {};
   const outcome = item.outcome || {};
   const done = item.executionStatus === workItems.STATUS.COMPLETED;
@@ -75,11 +75,17 @@ function describeCompleted(item) {
         `for ${(item.affectedEntities || {}).supplierName || 'a supplier'}`,
       // No unit costs on file means no total, and a bare "0" reads as a
       // zero-value order rather than as a price nobody has told Foundry.
+      // Whether it is waiting for you depends on who owns the decision. Once a
+      // replenishment plan contains this order, approving it is that plan's
+      // decision, and saying otherwise sends someone looking for a button that
+      // is deliberately no longer there.
       detail: outcome.lines === undefined
         ? null
-        : Number(outcome.subtotal) > 0
-          ? `${plural(outcome.lines || 0, 'line')}, ${outcome.subtotal}. Waiting for you to approve it.`
-          : `${plural(outcome.lines || 0, 'line')}, no prices on file yet. Waiting for you to approve it.`,
+        : `${plural(outcome.lines || 0, 'line')}, ` +
+          `${Number(outcome.subtotal) > 0 ? outcome.subtotal : 'no prices on file yet'}. ` +
+          (ownedByPlan.has(item.purchaseOrderId)
+            ? 'It is part of a replenishment plan, and is approved there.'
+            : 'Waiting for you to approve it.'),
       verified: true,
       link: item.purchaseOrderId ? `/purchasing/orders/${item.purchaseOrderId}` : `/autopilot/work/${item.id}`,
     };
@@ -129,7 +135,8 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
     )
     .get(workspaceId, from).n;
 
-  const actions = completed.map(describeCompleted);
+  const ownedOrders = new Set(ordersOwnedByAPlan(db, workspaceId).keys());
+  const actions = completed.map((item) => describeCompleted(item, ownedOrders));
   const transfers = completed.filter((item) => item.category === 'balance_transfer');
   const purchases = completed.filter((item) => item.category === 'purchase_preparation');
 
@@ -166,9 +173,62 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
   };
 }
 
+/**
+ * Purchase orders that a live replenishment plan has taken responsibility for.
+ *
+ * A plan whose order is already drafted stops proposing a new one and shows the
+ * draft as its own — which left the draft listed separately as well, under
+ * "ready to send", with its own approve button. Two live buttons for one order:
+ * the plan, and the order it contains.
+ *
+ * The order is not hidden. It stays on the purchasing pages, in Activity and
+ * inside the plan; what it loses is a second, independent decision alongside
+ * the decision that already covers it.
+ *
+ * Matched by SKU rather than by a stored link, because the draft may predate
+ * the plan entirely — that is exactly the case that went wrong.
+ */
+function ordersOwnedByAPlan(db, workspaceId) {
+  const owned = new Map();
+  const live = workItems
+    .list(db, workspaceId, { category: 'replenishment_plan', limit: 200 })
+    .filter((item) => !item.isTerminal);
+  if (!live.length) return owned;
+
+  const bySku = new Map();
+  for (const plan of live) {
+    const skuId = (plan.affectedEntities || {}).skuId || (plan.recommendedAction || {}).skuId;
+    if (skuId) bySku.set(skuId, plan);
+  }
+  if (!bySku.size) return owned;
+
+  const placeholders = [...bySku.keys()].map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT l.purchase_order_id AS orderId, l.sku_id AS skuId
+         FROM purchase_order_lines l
+         JOIN purchase_orders po ON po.id = l.purchase_order_id
+        WHERE l.workspace_id = ? AND po.status IN ('DRAFT', 'AWAITING_APPROVAL')
+          AND l.sku_id IN (${placeholders})`
+    )
+    .all(workspaceId, ...bySku.keys());
+
+  for (const row of rows) {
+    const plan = bySku.get(row.skuId);
+    if (plan) owned.set(row.orderId, plan);
+  }
+  return owned;
+}
+
 /** Work Foundry has worked out already and is holding for review. */
 function whatFoundryPrepared(db, workspaceId, { limit = 8 } = {}) {
-  const waitingItems = workItems.awaitingApproval(db, workspaceId);
+  const planOwned = ordersOwnedByAPlan(db, workspaceId);
+  const waitingItems = workItems.awaitingApproval(db, workspaceId)
+    // Approving a purchase order the plan contains is the plan's decision.
+    .filter((item) => {
+      const orderId = item.purchaseOrderId || (item.recommendedAction || {}).purchaseOrderId;
+      return !(orderId && planOwned.has(orderId));
+    });
   const waitingOrderIds = new Set(waitingItems
     .map((item) => item.purchaseOrderId || (item.recommendedAction || {}).purchaseOrderId)
     .filter(Boolean));
@@ -198,6 +258,9 @@ function whatFoundryPrepared(db, workspaceId, { limit = 8 } = {}) {
     action: item.category === 'receiving_followup' ? 'Book it in' : 'Review',
   }));
 
+  // An order a plan already speaks for is reviewed through that plan.
+  const ownedByPlan = ordersOwnedByAPlan(db, workspaceId);
+
   const drafts = db
     .prepare(
       `SELECT po.id, po.po_number, s.name AS supplier, po.status FROM purchase_orders po
@@ -206,6 +269,7 @@ function whatFoundryPrepared(db, workspaceId, { limit = 8 } = {}) {
     )
     .all(workspaceId)
     .filter((row) => !waitingOrderIds.has(row.id))
+    .filter((row) => !ownedByPlan.has(row.id))
     .map((row) => ({
       kind: 'purchase',
       id: row.id,
@@ -580,6 +644,14 @@ function explain(db, workspaceId, workItemId) {
         (action.byLocation || []).map((loc) => `${loc.locationName} holds ${loc.onHand} and needs ${loc.need}`).join('; ') + '.'
     );
 
+    if (action.prepared) {
+      paragraphs.push(
+        `The order for this is already drafted on ${action.prepared.orders.map((order) => order.poNumber).join(', ')} ` +
+          `— ${action.prepared.units} units — so nothing more needs buying. It is part of this plan and is ` +
+          'approved here rather than on its own.'
+      );
+    }
+
     if (moved && action.purchase) {
       paragraphs.push(
         (done ? `I moved ${moved} and prepared an order for ` : `I want to move ${moved} and order `) +
@@ -606,7 +678,16 @@ function explain(db, workspaceId, workItemId) {
     }
 
     if (!done) {
-      paragraphs.push('Nothing has moved and nothing has been ordered. Approving this carries out both, one controlled action at a time, and checks each result.');
+      // "Both" is only true when there are two things to do. With the order
+      // already drafted there is just the move, and saying otherwise implies an
+      // order will be raised that will not be.
+      paragraphs.push(
+        (moved && action.purchase
+          ? 'Nothing has moved and nothing has been ordered. Approving this carries out both, one controlled action at a time, and checks each result.'
+          : action.purchase
+            ? 'Nothing has been ordered. Approving this prepares the order as a draft; it is not sent.'
+            : 'Nothing has moved. Approving this carries out the move as one controlled action and checks the result.')
+      );
     }
   } else if (item.category === 'purchase_preparation') {
     paragraphs.push(
@@ -656,6 +737,7 @@ function summariseDay(db, workspaceId, { now = Date.now() } = {}) {
 }
 
 module.exports = {
+  ordersOwnedByAPlan,
   timeAgo,
   recentEvaluations,
   describeCompleted,

@@ -25,6 +25,7 @@ const supplierService = require('../../src/purchasing/supplier-service');
 const runner = require('../../src/autopilot/runner');
 const workItems = require('../../src/autopilot/work-items');
 const repo = require('../../src/domain/repository');
+const autopilotPresenter = require('../../src/autopilot/presenter');
 
 test.after(cleanupAll);
 
@@ -608,5 +609,112 @@ test('pressing Check now again reuses the plan rather than making another', asyn
     'checking is not doing'
   );
   assert.equal(env.db.prepare('SELECT COUNT(*) c FROM purchase_orders').get().c, 0);
+  env.db.close();
+});
+
+/**
+ * A draft order the plan contains is not a second decision.
+ *
+ * Superseding retired the older *work items*. A purchase order that had already
+ * been drafted is not a work item — it is a row in purchase_orders — and it was
+ * still listed on its own as "PO-1002 is ready to send", with its own approve
+ * button, beside the plan that had already accounted for it.
+ */
+async function planWithAnExistingDraft() {
+  const poService = require('../../src/purchasing/po-service');
+  const env = await blackSmall();
+  const order = poService.createOrder(env.db, env.workspace.ctx, env.membership, {
+    supplierId: env.supplier.id,
+    source: 'foundry_recommendation',
+    lines: [{ skuId: env.small.id, quantityPurchaseUnits: 3 }],
+  });
+  runner.run(env.db, env.workspace.ctx, env.membership, { trigger: 'manual' });
+  return { ...env, order };
+}
+
+test('an order the plan contains is not offered for approval on its own', async () => {
+  const env = await planWithAnExistingDraft();
+  const prepared = autopilotPresenter.whatFoundryPrepared(env.db, env.workspace.workspaceId);
+
+  assert.deepEqual(
+    prepared.filter((entry) => entry.kind === 'purchase'), [],
+    'the draft is reviewed through the plan, not beside it'
+  );
+  const plans = prepared.filter((entry) => entry.kind === 'work');
+  assert.equal(plans.length, 1, `one decision, got: ${prepared.map((e) => e.title).join(' | ')}`);
+
+  // The plan says it owns the order, and names it.
+  const planItem = workItems.list(env.db, env.workspace.workspaceId, { category: 'replenishment_plan' })[0];
+  const explained = autopilotPresenter.explain(env.db, env.workspace.workspaceId, planItem.id);
+  const text = explained.paragraphs.join(' ');
+  assert.match(text, /already drafted on PO-/);
+  assert.match(text, /approved here rather than on its own/);
+  env.db.close();
+});
+
+test('a plan-owned order cannot be approved from the purchasing page', async () => {
+  const poService = require('../../src/purchasing/po-service');
+  const env = await planWithAnExistingDraft();
+
+  const page = await env.agent.get(`/purchasing/orders/${env.order.id}`);
+  const posted = await env.agent.post(`/purchasing/orders/${env.order.id}/approve`).type('form')
+    .send({ _csrf: csrfFrom(page.text), integrityHash: env.order.integrityHash });
+
+  // Sent to the plan rather than quietly placing the order.
+  assert.match(posted.headers.location, /\/autopilot\/work\//);
+  assert.equal(
+    poService.get(env.db, env.workspace.workspaceId, env.order.id).status, 'DRAFT',
+    'the order must not have been placed independently of the plan'
+  );
+  env.db.close();
+});
+
+test('completed work does not claim an approval the plan now owns', async () => {
+  const env = await planWithAnExistingDraft();
+  const done = workItems.upsert(env.db, env.workspace.workspaceId, {
+    workPlanId: null, category: 'purchase_preparation', source: 'replenishment',
+    affectedEntities: { supplierId: env.supplier.id, supplierName: 'ABC Apparel' },
+    recommendedAction: { actionType: 'prepare_purchase_order', supplierId: env.supplier.id, lines: [] },
+    approvalRequirement: 'NONE', executionStatus: workItems.STATUS.DETECTED,
+    priority: 60, urgency: 'normal', confidence: 'high',
+    idempotencyKey: `purchase_preparation:${env.order.id}:done`,
+  }).item;
+  workItems.transition(env.db, env.workspace.workspaceId, done.id, workItems.STATUS.COMPLETED, {
+    purchaseOrderId: env.order.id,
+    verificationStatus: 'VERIFIED',
+    outcome: { poNumber: 'PO-1002', lines: 1, subtotal: 0 },
+  });
+
+  const owned = new Set(autopilotPresenter.ordersOwnedByAPlan(env.db, env.workspace.workspaceId).keys());
+  const card = autopilotPresenter.describeCompleted(
+    workItems.get(env.db, env.workspace.workspaceId, done.id), owned
+  );
+  assert.match(card.detail, /part of a replenishment plan, and is approved there/);
+  assert.doesNotMatch(card.detail, /Waiting for you to approve it/);
+
+  // And without a plan owning it, the ordinary wording is unchanged.
+  const plain = autopilotPresenter.describeCompleted(
+    workItems.get(env.db, env.workspace.workspaceId, done.id), new Set()
+  );
+  assert.match(plain.detail, /Waiting for you to approve it/);
+  env.db.close();
+});
+
+test('once the plan is done, the order is an ordinary draft again', async () => {
+  const env = await planWithAnExistingDraft();
+  const planItem = workItems.list(env.db, env.workspace.workspaceId, { category: 'replenishment_plan' })[0];
+
+  runner.approveWorkItem(env.db, env.workspace.ctx, env.membership, planItem.id);
+  runner.executeWorkItem(env.db, env.workspace.ctx, env.membership, planItem.id);
+
+  // Placing the order is the act Foundry never does by itself, so once the plan
+  // has finished it is the remaining decision and belongs back on its own.
+  const owned = autopilotPresenter.ordersOwnedByAPlan(env.db, env.workspace.workspaceId);
+  assert.equal(owned.size, 0, 'a finished plan owns nothing');
+  const prepared = autopilotPresenter.whatFoundryPrepared(env.db, env.workspace.workspaceId);
+  assert.ok(
+    prepared.some((entry) => entry.kind === 'purchase'),
+    'the draft is offered again once nothing else speaks for it'
+  );
   env.db.close();
 });
