@@ -1,7 +1,7 @@
 <div class="page-head">
   <div class="titles">
     <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> Foundry</a>
-    <h1><%= item.categoryLabel %></h1>
+    <h1><%= locals.title || item.categoryLabel %></h1>
     <div class="page-sub">
       <%= item.executionStatus === 'COMPLETED' ? 'Done' : helpers.columnLabel(item.executionStatus.toLowerCase().replace(/_/g, ' ')) %>
       <% if (item.verificationStatus === 'VERIFIED') { %> · verified against your records<% } %>
@@ -57,11 +57,15 @@
       </table>
     <% } %>
 
+    <% if (locals.orderLink) { %>
+      <p><a class="btn btn--sm" href="<%= locals.orderLink %>">Open the order</a></p>
+    <% } %>
+
     <% if (locals.supersededBy) { %>
       <p><a class="btn btn--sm" href="/autopilot/work/<%= locals.supersededBy %>">Open the plan that replaced this</a></p>
     <% } %>
 
-    <% if (evidence.length) { %>
+    <% if (evidence.filter(function (f) { return f && f.label; }).length) { %>
       <h3 class="sub-head">What I measured</h3>
       <table class="table table--tight">
         <tbody>
@@ -78,7 +82,10 @@
         <% checks.forEach(function (check) { %>
           <li class="<%= check.passed ? '' : 'is-warn' %>">
             <%- helpers.icon(check.passed ? 'check' : 'alert', { size: 14 }) %>
-            <%= check.name %><% if (check.detail) { %> <span class="muted">— <%= check.detail %></span><% } %>
+            <%# Every check is named as a claim — "Price is within the approved
+                change limit" — which reads as a lie the moment it fails beside
+                "17% > 5%". A failed one is marked as not met, in words. %>
+            <%= check.passed ? check.name : 'Not met — ' + check.name.charAt(0).toLowerCase() + check.name.slice(1) %><% if (check.detail) { %> <span class="muted">(<%= check.detail %>)</span><% } %>
           </li>
         <% }) %>
       </ul>

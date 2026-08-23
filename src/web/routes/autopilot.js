@@ -139,7 +139,10 @@ router.get(
       // decided rather than only what kind of decision it is.
       title: (explanation.item.affectedEntities || {}).displayName
         ? `${explanation.item.affectedEntities.displayName} — ${explanation.item.categoryLabel.toLowerCase()}`
-        : explanation.item.categoryLabel,
+        // An order has a number, and it is the thing the reader is looking for.
+        : (explanation.item.recommendedAction || {}).poNumber
+          ? `${explanation.item.recommendedAction.poNumber} — ${explanation.item.categoryLabel.toLowerCase()}`
+          : explanation.item.categoryLabel,
       nav: 'autopilot',
       ...explanation,
       canOperate: permissions.can(req.user, permissions.OPERATE),

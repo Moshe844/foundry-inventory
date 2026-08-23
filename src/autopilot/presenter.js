@@ -593,6 +593,7 @@ function explain(db, workspaceId, workItemId) {
   const policy = item.policyId ? policyService.get(db, workspaceId, item.policyId) : null;
 
   const paragraphs = [];
+  let orderLink = null;
 
   // Said before anything else, and in the past tense. Work a plan has taken
   // over still described as "I want to move 45. Nothing has moved yet." reads
@@ -701,6 +702,40 @@ function explain(db, workspaceId, workItemId) {
     if (!done) {
       paragraphs.push('Nothing has moved and nothing has been ordered yet.');
     }
+  } else if (item.category === 'purchase_approval') {
+    // This page had no branch at all for these, so "Why" showed the policy name
+    // and nothing else — on the one screen where somebody is being asked to
+    // accept a price rise.
+    const po = action.poNumber || outcome.poNumber || 'the order';
+    const exception = item.source === 'price_exception';
+    const priceCheck = ((item.policyEvaluation || {}).checks || [])
+      .find((entry) => /price/i.test(entry.name) && !entry.passed);
+
+    paragraphs.push(
+      exception
+        ? `${po} for ${action.supplierName || 'this supplier'} is ready, but it costs more than your rule allows.`
+        : `${po} for ${action.supplierName || 'this supplier'} is prepared and waiting to be placed.`
+    );
+    if (exception) {
+      paragraphs.push(
+        (item.policyEvaluation || {}).reason ||
+          `The price moved further than ${policy ? policy.name : 'your rule'} permits.`
+      );
+      if (priceCheck && priceCheck.detail) {
+        paragraphs.push(`Measured against your limit: ${priceCheck.detail}.`);
+      }
+      paragraphs.push(
+        'Everything else about the order passed. Approving accepts the new price and places this order; ' +
+          'it does not change your rule, so the next order over the limit will stop here too.'
+      );
+    } else {
+      paragraphs.push('Approving places it with the supplier. Foundry does not contact anyone itself.');
+    }
+    // The link is rendered as a link. Telling somebody to go and open the order
+    // without giving them a way to is the loop this whole pass is about.
+    orderLink = item.purchaseOrderId || action.purchaseOrderId
+      ? `/purchasing/orders/${item.purchaseOrderId || action.purchaseOrderId}`
+      : null;
   } else if (item.category === 'purchase_preparation') {
     paragraphs.push(
       `Replenishment showed ${plural((action.lines || []).length, 'line')} below their reorder point for ` +
@@ -715,6 +750,7 @@ function explain(db, workspaceId, workItemId) {
     item,
     policy,
     supersededBy,
+    orderLink,
     // Only before it runs: afterwards the record of what happened is the truth,
     // and a list of intentions beside it would read as things still to come.
     actions: planForActions && !item.isTerminal ? replenishmentPlan.plannedActions(planForActions) : [],

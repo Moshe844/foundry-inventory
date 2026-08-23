@@ -290,7 +290,11 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
     checks.push(check('Within the policy quantity limit', false, `${quantity} > ${policy.maximumQuantity}`));
     return refuse(`${policy.name} allows at most ${policy.maximumQuantity} units in one go; this is ${quantity}.`);
   }
-  checks.push(check('Within the policy quantity limit', true, `${quantity} of ${policy.maximumQuantity}`));
+  checks.push(check(
+    'Within the policy quantity limit',
+    true,
+    policy.maximumQuantity ? `${quantity} of ${policy.maximumQuantity}` : `${quantity}; this rule sets no quantity cap`
+  ));
 
   if (quantity > limits.maxUnitsPerAction) {
     checks.push(check('Within the workspace unit limit', false, `${quantity} > ${limits.maxUnitsPerAction}`));
