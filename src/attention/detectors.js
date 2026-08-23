@@ -14,6 +14,7 @@
 
 const { THRESHOLDS, DETECTION_RULE_VERSION } = require('./policy');
 const { round, daysBetween } = require('../signals/signal-engine');
+const replenishmentPlan = require('../purchasing/replenishment-plan');
 
 const fact = (label, value, kind = 'measured') => ({ label, value: String(value), kind });
 
@@ -222,12 +223,18 @@ function detectStockoutRisk(signals) {
 }
 
 /** One location is short of stock it is using while another sits on it. */
-function detectLocationImbalance(signals) {
+function detectLocationImbalance(signals, options = {}) {
   const out = [];
   const t = THRESHOLDS.imbalance;
 
+  // A line with a configured reorder point is the replenishment planner's, not
+  // this one's. Two engines proposing movements for the same product is how
+  // "move all 45 to Downtown" ended up printed beside "order 36 from ABC".
+  const planned = (options.replenishment && options.replenishment.governedSkuIds) || new Set();
+
   for (const sku of signals.skus) {
     if (!sku.isActive) continue;
+    if (planned.has(sku.skuId)) continue;
     if (sku.measured.onHand < t.minTotalOnHand) continue;
     if (sku.perLocation.length < 2) continue;
 
@@ -573,6 +580,90 @@ function rolledUpBatch(group) {
   });
 }
 
+/**
+ * A configured reorder point has been crossed, and here is the whole answer.
+ *
+ * This is the one card for the situation. It does not say "stock is low" and
+ * leave the reader to go and find Reorder Settings, and it does not appear
+ * beside a separate transfer suggestion that assumed the order would not
+ * happen: the plan behind it decided between moving stock, buying stock, both
+ * or neither, from the same set of facts, in one pass.
+ *
+ * Nothing here is computed. The arithmetic belongs to the planner, and this
+ * turns one plan into one card so that what is shown and what was decided
+ * cannot drift apart.
+ */
+function detectReplenishment(signals, options = {}) {
+  const planned = (options.replenishment && options.replenishment.actionable) || [];
+  const out = [];
+
+  for (const plan of planned) {
+    const moved = plan.transfers.reduce((total, move) => total + move.quantity, 0);
+    const severity =
+      plan.onHandTotal === 0 ? 'critical'
+        : plan.blocked ? 'important'
+          : plan.networkPosition <= (plan.safetyStock || 0) ? 'critical'
+            : 'important';
+
+    const evidence = [
+      fact('On hand', plan.onHandTotal),
+      ...plan.byLocation.map((loc) =>
+        fact(`${loc.locationName} on hand`, loc.onHand, 'measured')),
+      fact('On order', plan.onOrder),
+      fact('Position', plan.networkPosition),
+      fact('Reorder point', plan.reorderPoint, plan.policySource === 'foundry' ? 'estimated' : 'measured'),
+      fact('Order up to', plan.target, plan.policySource === 'foundry' ? 'estimated' : 'measured'),
+    ];
+    for (const loc of plan.byLocation) {
+      if (loc.reserveFloor > 0) evidence.push(fact(`${loc.locationName} reserve`, loc.reserveFloor));
+    }
+    if (plan.purchase) {
+      evidence.push(fact('Supplier', plan.purchase.supplierName));
+      evidence.push(fact('Lead time', `${plan.purchase.leadTimeDays} days`,
+        plan.purchase.leadTimeAssumed ? 'estimated' : 'measured'));
+    }
+
+    const recommendation = replenishmentPlan.recommendationFor(plan);
+
+    out.push(
+      candidate({
+        category: 'replenishment_needed',
+        severity,
+        confidence: 'high',
+        fingerprint: `replenishment_needed:${plan.skuId}`,
+        title: plan.blocked === 'no_supplier'
+          ? `${plan.displayName} is below its reorder point, with no supplier`
+          : `${plan.displayName}: ${plan.headline.toLowerCase()}`,
+        conciseSummary:
+          `${plan.onHandTotal} on hand${plan.onOrder ? ` · ${plan.onOrder} on order` : ''} ` +
+          `· reorder at ${plan.reorderPoint}`,
+        explanation: plan.explanation,
+        recommendation: plan.blocked === 'no_supplier'
+          ? 'Add a supplier for this line and Foundry can work out the quantity.'
+          : recommendation,
+        affectedEntityType: 'sku',
+        affectedEntityIds: [plan.skuId],
+        affectedLocationIds: plan.byLocation.map((loc) => loc.locationId),
+        evidence,
+        metrics: {
+          decision: plan.decision,
+          onHand: plan.onHandTotal,
+          onOrder: plan.onOrder,
+          position: plan.networkPosition,
+          reorderPoint: plan.reorderPoint,
+          target: plan.target,
+          transferUnits: moved,
+          orderUnits: plan.purchase ? plan.purchase.quantityUnits : 0,
+          blocked: plan.blocked,
+        },
+        skuId: plan.skuId,
+        itemId: plan.itemId,
+      })
+    );
+  }
+  return out;
+}
+
 /** Meaningful quantity that has not moved outward for a long time. */
 function detectStaleInventory(signals) {
   const out = [];
@@ -914,6 +1005,7 @@ function detectSupplierPriceChanges(signals) {
 }
 
 const DETECTORS = {
+  replenishment_needed: detectReplenishment,
   low_stock: detectLowStock,
   stockout_risk: detectStockoutRisk,
   late_purchase_order: detectLatePurchaseOrders,
@@ -929,6 +1021,7 @@ const DETECTORS = {
 module.exports = {
   unitCount,
   DETECTORS,
+  detectReplenishment,
   detectLowStock,
   detectStockoutRisk,
   detectLatePurchaseOrders,

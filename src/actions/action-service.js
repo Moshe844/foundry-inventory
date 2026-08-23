@@ -21,6 +21,8 @@ const permissions = require('./permissions');
 const attention = require('../attention/attention-engine');
 const planApplier = require('../foundry/plan-applier');
 const repo = require('../domain/repository');
+const replenishmentPlan = require('../purchasing/replenishment-plan');
+const signalEngine = require('../signals/signal-engine');
 const { newId, nowIso } = require('../lib/util');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 
@@ -290,12 +292,45 @@ function proposeFromAttention(db, ctx, membership, attentionId) {
   const item = attention.getAttention(db, ctx.workspaceId, attentionId);
   if (!item) throw new NotFoundError('That item could not be found.');
 
-  if (item.category !== 'location_imbalance' && !item.relatedCategories.includes('location_imbalance')) {
+  const isReplenishment =
+    item.category === 'replenishment_needed' || item.relatedCategories.includes('replenishment_needed');
+  const isImbalance =
+    item.category === 'location_imbalance' || item.relatedCategories.includes('location_imbalance');
+  if (!isReplenishment && !isImbalance) {
     return { kind: 'unsupported', message: actionabilityMessage(item) };
   }
 
   const metrics = item.metrics || {};
-  const quantity = Number(metrics.suggestedTransferQuantity);
+  let quantity;
+  let fromId;
+  let toId;
+
+  if (isReplenishment) {
+    // Rebuilt from current stock rather than read from the finding: approving a
+    // movement worked out against yesterday's balances is how a plan and the
+    // ledger end up disagreeing. The order half is not created here — buying
+    // money goes through purchasing, on its own approval.
+    const sku = signalEngine.skuSignals(db, ctx.workspaceId, { skuIds: [item.skuId] })[0];
+    if (!sku) return { kind: 'unsupported', message: 'That product is no longer active.' };
+    const plan = replenishmentPlan.buildPlan(db, ctx.workspaceId, sku);
+    const move = plan.transfers[0];
+    if (!move) {
+      return {
+        kind: 'unsupported',
+        message: plan.purchase
+          ? 'Nothing needs moving — this plan is an order, which is raised from Purchasing.'
+          : 'There is no move that would clearly improve this.',
+      };
+    }
+    quantity = move.quantity;
+    fromId = move.fromLocationId;
+    toId = move.toLocationId;
+  } else {
+    quantity = Number(metrics.suggestedTransferQuantity);
+    fromId = metrics.quietLocationId;
+    toId = metrics.busyLocationId;
+  }
+
   if (!Number.isFinite(quantity) || quantity < 1) {
     return { kind: 'unsupported', message: 'There is no move that would clearly improve this.' };
   }
@@ -303,9 +338,9 @@ function proposeFromAttention(db, ctx, membership, attentionId) {
   permissions.assertCanPerform(membership, 'transfer');
 
   const from = db.prepare('SELECT name FROM locations WHERE id = ? AND workspace_id = ?')
-    .get(metrics.quietLocationId, ctx.workspaceId);
+    .get(fromId, ctx.workspaceId);
   const to = db.prepare('SELECT name FROM locations WHERE id = ? AND workspace_id = ?')
-    .get(metrics.busyLocationId, ctx.workspaceId);
+    .get(toId, ctx.workspaceId);
   if (!from || !to) return { kind: 'unsupported', message: 'The locations involved have changed.' };
 
   return inTransaction(db, () => {

@@ -1925,3 +1925,17 @@ dialog.modal::backdrop { background: rgba(15, 23, 42, .32); backdrop-filter: blu
   .item-reorder__line .badge { grid-column: 2; }
   .item-reorder__go { grid-column: 2; }
 }
+
+/* A replenishment plan: the numbers first, the working available but folded. */
+.rep-plan { margin: 14px 0 4px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.rep-plan-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.rep-plan-sub { font-size: 12.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); margin: 12px 0 5px; }
+.rep-plan-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rep-plan-table th { text-align: left; font-weight: 600; color: var(--ink-soft); font-size: 12px; padding: 4px 8px 4px 0; }
+.rep-plan-table td { padding: 4px 8px 4px 0; border-top: 1px solid var(--line); }
+.rep-plan-table .rep-short { color: #b91c1c; font-weight: 600; }
+.rep-plan-working { margin-top: 12px; font-size: 13px; }
+.rep-plan-working summary { cursor: pointer; color: var(--ink-soft); }
+.rep-plan-working ol { margin-top: 8px; }
+.rep-plan-after { margin-top: 12px; font-size: 13px; padding-top: 10px; border-top: 1px solid var(--line); }
+.rep-plan-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }

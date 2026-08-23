@@ -120,6 +120,40 @@ function positionForSku(db, workspaceId, skuId) {
 }
 
 /** Purchase orders with something still outstanding. */
+/**
+ * Units for a SKU sitting in orders that are prepared but not yet placed.
+ *
+ * Deliberately separate from on-order. A draft is not stock coming: nobody has
+ * told the supplier anything, and counting it as inbound would overstate what
+ * the business actually has claim to. But it is a decision already taken and
+ * waiting on a signature, and a recommendation that ignores it will keep
+ * telling you to order what is already prepared — and will happily prepare it
+ * a second time when you agree.
+ */
+function draftedForSku(db, workspaceId, skuId) {
+  const rows = db
+    .prepare(
+      `SELECT l.quantity_units, l.quantity_received_units, po.id AS poId, po.po_number AS poNumber
+         FROM purchase_order_lines l
+         JOIN purchase_orders po ON po.id = l.purchase_order_id
+        WHERE l.workspace_id = ? AND l.sku_id = ?
+          AND po.status IN ('DRAFT', 'AWAITING_APPROVAL')`
+    )
+    .all(workspaceId, skuId);
+
+  let units = 0;
+  const orders = [];
+  for (const row of rows) {
+    const outstanding = Math.max(0, row.quantity_units - row.quantity_received_units);
+    if (outstanding === 0) continue;
+    units += outstanding;
+    if (!orders.some((o) => o.poId === row.poId)) {
+      orders.push({ poId: row.poId, poNumber: row.poNumber });
+    }
+  }
+  return { units, orders };
+}
+
 function openOrders(db, workspaceId, { supplierId = null } = {}) {
   const clause = supplierId ? ' AND po.supplier_id = ?' : '';
   const params = supplierId ? [workspaceId, ...OPEN_STATUSES, supplierId] : [workspaceId, ...OPEN_STATUSES];
@@ -164,6 +198,7 @@ function arrivingSoon(db, workspaceId, { days = 7, now = Date.now() } = {}) {
 }
 
 module.exports = {
+  draftedForSku,
   OPEN_STATUSES,
   onOrderBySku,
   onOrderForSku,

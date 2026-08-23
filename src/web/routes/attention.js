@@ -15,6 +15,8 @@ const actionService = require('../../actions/action-service');
 const workItems = require('../../autopilot/work-items');
 const actionPermissions = require('../../actions/permissions');
 const proposalService = require('../../actions/proposal-service');
+const replenishmentPlan = require('../../purchasing/replenishment-plan');
+const signalEngine = require('../../signals/signal-engine');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 
@@ -109,6 +111,35 @@ router.get(
   })
 );
 
+/**
+ * The replenishment plan for the product a finding is about, as it stands now.
+ *
+ * Returns null rather than throwing: a finding whose product has since been
+ * archived should still open and still explain itself.
+ */
+function withPlanWording(presented, plan) {
+  if (!plan) return presented;
+  return {
+    ...presented,
+    title: plan.blocked === 'no_supplier' ? presented.title : `${plan.displayName}: ${plan.headline.toLowerCase()}`,
+    narrativeTitle: null,
+    explanation: plan.explanation,
+    recommendation: replenishmentPlan.recommendationFor(plan),
+  };
+}
+
+function currentPlan(db, workspaceId, item) {
+  const skuId = (item.affectedEntityIds || [])[0];
+  if (!skuId) return null;
+  try {
+    const sku = signalEngine.skuSignals(db, workspaceId, { skuIds: [skuId] })[0];
+    if (!sku) return null;
+    return replenishmentPlan.buildPlan(db, workspaceId, sku);
+  } catch {
+    return null;
+  }
+}
+
 router.get(
   '/attention/:id',
   asyncRoute(async (req, res) => {
@@ -119,17 +150,39 @@ router.get(
     }
     // Only a finding an operation Foundry actually has can address is offered
     // an action. Inventing one for a stockout would be worse than offering none.
+    const isReplenishment =
+      item.category === 'replenishment_needed' || item.relatedCategories.includes('replenishment_needed');
+
+    // Rebuilt now rather than read back from the finding.
+    //
+    // A plan is a statement about stock as it currently stands, and the gap
+    // between a nightly sweep and someone opening the page is exactly where a
+    // delivery lands or a sale happens. Showing the stored version would mean
+    // approving arithmetic that was true yesterday.
+    const plan = isReplenishment ? currentPlan(req.db, req.ctx.workspaceId, item) : null;
+
     const actionable =
-      (item.category === 'location_imbalance' || item.relatedCategories.includes('location_imbalance')) &&
-      Number(item.metrics.suggestedTransferQuantity) >= 1 &&
-      actionPermissions.can(req.user, actionPermissions.OPERATE);
+      ((item.category === 'location_imbalance' || item.relatedCategories.includes('location_imbalance')) &&
+        Number(item.metrics.suggestedTransferQuantity) >= 1 &&
+        actionPermissions.can(req.user, actionPermissions.OPERATE)) ||
+      Boolean(plan && plan.transfers.length && actionPermissions.can(req.user, actionPermissions.OPERATE));
+
+    const presented = withPlanWording(presenter.present(req.db, req.ctx.workspaceId, item), plan);
 
     return res.page('attention/detail', {
-      title: item.title,
+      // The tab title comes from the same place as the heading. Reading the
+      // stored one here left the browser tab advertising an order the page had
+      // already withdrawn.
+      title: presented.title,
       nav: 'attention',
-      item: presenter.present(req.db, req.ctx.workspaceId, item),
+      // A finding stores its wording when it is detected. By the time someone
+      // opens it, an order may have been drafted or stock received, and the
+      // stored heading would then contradict the plan printed beneath it — the
+      // same screen arguing with itself. The live plan wins where there is one.
+      item: presented,
       history: feedback.listFeedback(req.db, req.ctx.workspaceId, item.attentionId),
       actionable,
+      plan,
       actionMessage: actionable ? null : actionService.actionabilityMessage(item),
       proposals: proposalService.listForAttention(req.db, req.ctx.workspaceId, item.attentionId),
     });

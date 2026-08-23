@@ -255,6 +255,40 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
     };
   }
 
+  // An order already drafted is a decision taken and waiting on a signature.
+  //
+  // It is not counted as on-order, because nobody has told the supplier
+  // anything and the stock is not coming. But recommending it again is how the
+  // same shortfall gets ordered twice — once from the Purchasing page and once
+  // from wherever else the recommendation is shown.
+  const drafted = options.drafted || position.draftedForSku(db, workspaceId, sku.skuId);
+  if (drafted.units >= shortfall) {
+    steps.push({
+      step: 'already_prepared',
+      detail:
+        `${drafted.units} ${sku.unitLabel}(s) are already prepared on ` +
+        `${drafted.orders.map((o) => o.poNumber).join(', ')}, which covers the ${shortfall} needed.`,
+      value: 0,
+    });
+    return {
+      ...base,
+      recommend: false,
+      reason: 'already_prepared',
+      reorderPoint,
+      target,
+      safetyStock,
+      shortfall,
+      prepared: drafted,
+      headline: 'Already prepared',
+      explanation:
+        `This line is ${shortfall} short of its target, and ${drafted.units} ` +
+        `${sku.unitLabel}(s) are already drafted on ` +
+        `${drafted.orders.map((o) => o.poNumber).join(', ')}. Approve that rather than ordering again.`,
+      evidence: evidenceFor(base, { reorderPoint, target, safetyStock, usagePerDay, shortfall }),
+      calculation: steps,
+    };
+  }
+
   if (!supplierItem) {
     return {
       ...base,

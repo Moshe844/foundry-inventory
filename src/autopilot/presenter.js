@@ -291,8 +291,14 @@ function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
   return attention
     .listAttention(db, workspaceId)
     .filter((item) => ['critical', 'important'].includes(item.severity))
-    .filter((item) => ['low_stock', 'stockout_risk', 'unusual_adjustment', 'data_integrity', 'supplier_price_change'].includes(item.category))
-    .filter((item) => !['low_stock', 'stockout_risk'].includes(item.category) || !workCoveredSkus.has(item.skuId))
+    // A worked replenishment plan belongs here above all: a configured level
+    // being crossed is the definition of something needing a person, and it
+    // reached nobody while this list did not name it.
+    .filter((item) => [
+      'replenishment_needed', 'low_stock', 'stockout_risk', 'unusual_adjustment',
+      'data_integrity', 'supplier_price_change',
+    ].includes(item.category))
+    .filter((item) => !['low_stock', 'stockout_risk', 'replenishment_needed'].includes(item.category) || !workCoveredSkus.has(item.skuId))
     .map((item) => ({
       kind: 'finding',
       // The hydrated finding calls its own key attentionId. Reading `id` here

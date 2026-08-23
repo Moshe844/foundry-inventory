@@ -46,18 +46,136 @@
       <div class="card-body">
         <p class="lede"><%= item.explanation %></p>
 
+        <%# The whole replenishment answer, in the order it was worked out. It is
+            rendered here rather than summarised because approving a plan you
+            cannot check is not approval. %>
+        <% const plan = locals.plan; %>
+        <% if (plan) { %>
+          <div class="rep-plan">
+            <div class="rep-plan-head">
+              <strong><%= plan.headline %></strong>
+              <span class="badge <%= plan.decision === 'none' ? 'badge--muted' : 'badge--warn' %>">
+                <%= { transfer_and_purchase: 'Move and order', transfer: 'Move only',
+                      purchase: 'Order only', none: 'No action' }[plan.decision] %>
+              </span>
+            </div>
+
+            <table class="rep-plan-table">
+              <thead>
+                <tr><th>Location</th><th>Now</th><th>Needs</th><th>Reserve</th><th>After</th></tr>
+              </thead>
+              <tbody>
+                <% (plan.after ? plan.after.byLocation : plan.byLocation).forEach(function (row) { %>
+                  <tr>
+                    <td><%= row.locationName %></td>
+                    <td><%= row.before === undefined ? row.onHand : row.before %></td>
+                    <td><%= row.need %></td>
+                    <td><%= row.reserveFloor ? row.reserveFloor : '—' %></td>
+                    <td<%= row.meetsNeed === false ? ' class="rep-short"' : '' %>><%= row.after === undefined ? row.onHand : row.after %></td>
+                  </tr>
+                <% }); %>
+              </tbody>
+            </table>
+
+            <% if (plan.transfers.length) { %>
+              <h3 class="rep-plan-sub">Move</h3>
+              <ul class="plain-list">
+                <% plan.transfers.forEach(function (move) { %>
+                  <li>
+                    <strong><%= move.quantity %> <%= plan.unitLabel %>(s)</strong>
+                    from <%= move.fromLocationName %> to <%= move.toLocationName %>.
+                    <span class="muted"><%= move.why %></span>
+                  </li>
+                <% }); %>
+              </ul>
+            <% } %>
+
+            <% if (plan.purchase) { %>
+              <h3 class="rep-plan-sub">Order</h3>
+              <ul class="plain-list">
+                <li>
+                  <strong><%= plan.purchase.quantityPurchaseUnits %> <%= plan.purchase.purchaseUnit %>(s)</strong>
+                  — <%= plan.purchase.quantityUnits %> <%= plan.unitLabel %>(s) from <%= plan.purchase.supplierName %>,
+                  arriving in about <%= plan.purchase.leadTimeDays %> days<%= plan.purchase.leadTimeAssumed ? ' (assumed)' : '' %>.
+                  <% if (plan.purchase.estimatedCost !== null) { %>
+                    <span class="muted">About <%= plan.purchase.estimatedCost %> in total.</span>
+                  <% } %>
+                </li>
+              </ul>
+            <% } %>
+
+            <% if (plan.prepared) { %>
+              <h3 class="rep-plan-sub">Already prepared</h3>
+              <ul class="plain-list">
+                <li>
+                  <%= plan.prepared.units %> <%= plan.unitLabel %>(s) are on
+                  <% plan.prepared.orders.forEach(function (order, i) { %><%= i ? ', ' : '' %><a href="/purchasing/orders/<%= order.poId %>"><%= order.poNumber %></a><% }); %>,
+                  waiting for approval. Foundry is not proposing another order for the same stock.
+                </li>
+              </ul>
+            <% } %>
+
+            <% if (plan.blocked === 'no_supplier') { %>
+              <p class="muted" style="margin-top:8px;">
+                No supplier is linked to this line, so Foundry cannot work out a pack size, a cost or a lead time.
+                <a href="/purchasing/supplier-for/<%= plan.skuId %>">Add one for this line</a> and it will.
+              </p>
+            <% } %>
+
+            <details class="rep-plan-working">
+              <summary>How Foundry worked this out</summary>
+              <ol class="plain-list">
+                <% plan.calculation.forEach(function (line) { %>
+                  <li><%= line.detail %></li>
+                <% }); %>
+              </ol>
+            </details>
+
+            <% if (plan.after) { %>
+              <p class="rep-plan-after">
+                Afterwards: <strong><%= plan.after.onHandAfterMoves %></strong> on hand across every location<%
+                  %><% if (plan.purchase) { %>, rising to <strong><%= plan.after.onHandAfterDelivery %></strong>
+                  when the order arrives — the order-up-to level of <%= plan.target %><% } %>.
+              </p>
+            <% } %>
+          </div>
+        <% } %>
+
         <div class="att-rec-box">
           <span class="att-rec-icon"><%- helpers.icon('foundry', { size: 16 }) %></span>
           <div>
             <strong>What you might do</strong>
             <p><%= item.recommendation %></p>
             <% if (typeof actionable !== 'undefined' && actionable) { %>
-              <form method="post" action="/attention/<%= item.attentionId %>/action" style="margin-top:10px;">
+              <%# Both halves of the plan get a way to act on them. Offering only
+                  the transfer left the order — the half that spends money —
+                  with nowhere to go but a screen the reader has to find. %>
+              <div class="rep-plan-actions">
+                <form method="post" action="/attention/<%= item.attentionId %>/action">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button class="btn btn--primary btn--sm" type="submit">Review transfer</button>
+                </form>
+                <% if (locals.plan && locals.plan.purchase) { %>
+                  <form method="post" action="/purchasing/prepare/<%= locals.plan.purchase.supplierId %>">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button class="btn btn--sm" type="submit">Review the order</button>
+                  </form>
+                <% } %>
+              </div>
+              <p class="muted" style="font-size:12px; margin-top:8px;">
+                <% if (locals.plan && locals.plan.purchase) { %>
+                  Each opens as a draft you approve. Nothing moves and nothing is ordered until you say so.
+                <% } else { %>
+                  Foundry will work out the exact movement and show it to you. Nothing moves until you approve it.
+                <% } %>
+              </p>
+            <% } else if (locals.plan && locals.plan.purchase) { %>
+              <form method="post" action="/purchasing/prepare/<%= locals.plan.purchase.supplierId %>" style="margin-top:10px;">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <button class="btn btn--primary btn--sm" type="submit">Review transfer</button>
+                <button class="btn btn--primary btn--sm" type="submit">Review the order</button>
               </form>
               <p class="muted" style="font-size:12px; margin-top:8px;">
-                Foundry will work out the exact movement and show it to you. Nothing moves until you approve it.
+                It opens as a draft order you approve. Nothing is ordered until you say so.
               </p>
             <% } else { %>
               <%# True as written: the one thing Foundry does unattended is balancing

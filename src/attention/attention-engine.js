@@ -27,6 +27,7 @@ const {
   CONFIDENCE_WEIGHT,
   relevantCategories,
 } = require('./policy');
+const replenishmentPlan = require('../purchasing/replenishment-plan');
 const { newId, nowIso } = require('../lib/util');
 
 /** Gathers every deterministic fact the detectors need. */
@@ -43,6 +44,21 @@ function collectSignals(db, workspaceId, { skuIds = null, now = Date.now(), incl
     purchasing: safePurchasingSignals(db, workspaceId, { skuIds, now }),
     integrity: includeIntegrity ? engine.verifyIntegrity(db, workspaceId) : null,
   };
+}
+
+/**
+ * Replenishment plans, or none at all.
+ *
+ * Wrapped for the same reason the purchasing signals are: a workspace with no
+ * suppliers, no policies or no purchasing tables must not have its whole
+ * attention sweep fail because the planner had nothing to read.
+ */
+function safeReplenishmentPlans(db, workspaceId, signals, options) {
+  try {
+    return replenishmentPlan.planWorkspace(db, workspaceId, signals, options);
+  } catch {
+    return { plans: [], governed: [], governedSkuIds: new Set(), actionable: [] };
+  }
 }
 
 function safePurchasingSignals(db, workspaceId, options) {
@@ -157,11 +173,20 @@ function evaluate(db, workspaceId, options = {}) {
   const context = workspaceContext(db, workspaceId);
   const relevant = relevantCategories(context);
   const signals = collectSignals(db, workspaceId, { skuIds, now, includeIntegrity: !skuIds });
+  const replenishment = safeReplenishmentPlans(db, workspaceId, signals, { now });
 
   let candidates = [];
   for (const [category, detector] of Object.entries(DETECTORS)) {
     if (!relevant.has(category)) continue; // never raise what this business cannot have
-    candidates.push(...detector(signals, { integrity: signals.integrity }));
+    // Detectors that reason about replenishment need the records behind the
+    // signals — policies, suppliers, open orders — not just the measurements.
+    candidates.push(...detector(signals, {
+      integrity: signals.integrity,
+      // Worked out once and shared, so the planner and the older heuristics
+      // cannot reach different conclusions about the same product.
+      replenishment,
+      db, workspaceId, now,
+    }));
   }
 
   candidates = group(candidates).map((c) => ({ ...c, priorityScore: score(c) }));
