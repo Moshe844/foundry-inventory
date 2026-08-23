@@ -162,12 +162,24 @@ test('"order what we need" runs the manager loop and prepares supported purchasi
   });
   assert.equal(response.status, 303);
   assert.equal(response.headers.location, '/');
-  const order = env.db.prepare("SELECT * FROM purchase_orders WHERE workspace_id = ? AND source = 'foundry_recommendation'")
-    .get(env.workspace.workspaceId);
-  assert.ok(order, 'the request must produce a concrete supported draft, not disappear into chat');
-  assert.equal(order.status, 'DRAFT');
-  const next = await env.agent.get('/');
-  assert.match(plain(next.text), new RegExp(`${order.po_number} for Packaging Supply is ready to send`));
+  // A general "order what we need" is a replenishment question, so the answer
+  // is the replenishment decision — which explains the level, the position and
+  // the quantity — rather than a bare draft order the customer is asked to
+  // approve without ever seeing why. Asking for a specific product by name
+  // still drafts that order directly; that path is unchanged.
+  //
+  // What this test protects is the same: the request produces something
+  // concrete and named, not a summary that disappears into chat.
+  const workItems = require('../../src/autopilot/work-items');
+  const plan = workItems.list(env.db, env.workspace.workspaceId, { category: 'replenishment_plan' })[0];
+  assert.ok(plan, 'the request must produce concrete work, not disappear into chat');
+  assert.equal(plan.executionStatus, 'WAITING_FOR_APPROVAL');
+  assert.equal((plan.affectedEntities || {}).displayName, 'Packing Tape', 'and it names the product');
+
+  const next = plain((await env.agent.get('/')).text);
+  assert.match(next, /Packing Tape needs replenishing/, 'named on the home page too');
+  assert.doesNotMatch(next, /No purchase is currently supported/,
+    'a plan was prepared, so saying nothing is supported is false');
   env.db.close();
 });
 

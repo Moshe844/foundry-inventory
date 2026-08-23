@@ -263,8 +263,12 @@ function whatFoundryPrepared(db, workspaceId, { limit = 8 } = {}) {
             ? `${item.recommendedAction.poNumber || 'A purchase order'} has a price exception`
             : item.category === 'purchase_approval'
               ? `${item.recommendedAction.poNumber || 'A purchase order'} for ${item.recommendedAction.supplierName || 'the supplier'} is ready to send`
+            // Named for the product, like everywhere else. "Replenishment plan"
+            // with no subject is the internal category showing through.
+            : item.category === 'replenishment_plan' && (item.affectedEntities || {}).displayName
+              ? `${item.affectedEntities.displayName} needs replenishing`
             : item.categoryLabel,
-    because: (item.policyEvaluation || {}).reason || null,
+    because: (item.recommendedAction || {}).explanation || (item.policyEvaluation || {}).reason || null,
     evidence: item.sourceEvidence || [],
     priority: item.priority,
     // A delivery reminder should land on the order, where one button books the

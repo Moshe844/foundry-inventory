@@ -389,13 +389,27 @@ test('Foundry prepares purchase orders but never sends them', () => {
   policies.setPolicy(env.db, env.ctx, env.membership, env.black5.id, { reorderPoint: 200, targetStock: 260 });
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
 
-  const result = runner.run(env.db, env.ctx, env.membership, { trigger: 'test' });
-  const prepared = workItems.list(env.db, env.workspace.workspaceId, { category: 'purchase_preparation' });
+  runner.run(env.db, env.ctx, env.membership, { trigger: 'test' });
 
-  assert.equal(prepared.length, 1);
-  assert.equal(prepared[0].executionStatus, 'COMPLETED');
+  // A configured line's replenishment is now one decision, so the order is a
+  // component of a plan rather than work standing on its own. What this test
+  // protects is unchanged and still asserted below: Foundry prepares, and never
+  // places, an order by itself.
+  const plan = workItems.list(env.db, env.workspace.workspaceId, { category: 'replenishment_plan' })[0];
+  assert.ok(plan, 'the reorder condition is a replenishment decision');
+  assert.equal(plan.executionStatus, 'WAITING_FOR_APPROVAL');
+  assert.deepEqual(
+    workItems.list(env.db, env.workspace.workspaceId, { category: 'purchase_approval' }), [],
+    'and no bare "approve this order" decision appears before the plan'
+  );
+  assert.equal(
+    env.db.prepare('SELECT COUNT(*) c FROM purchase_orders').get().c, 0,
+    'nothing is drafted until the plan is approved'
+  );
 
-  const order = poService.get(env.db, env.workspace.workspaceId, prepared[0].purchaseOrderId);
+  runner.approveWorkItem(env.db, env.ctx, env.membership, plan.id);
+  const carried = runner.executeWorkItem(env.db, env.ctx, env.membership, plan.id);
+  const order = poService.get(env.db, env.workspace.workspaceId, carried.purchaseOrderId);
   assert.equal(order.status, 'DRAFT', 'Foundry must never place an order by itself');
   assert.equal(order.source, 'foundry_recommendation');
   assert.ok(order.lines.length >= 1);

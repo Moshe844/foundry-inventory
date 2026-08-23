@@ -135,7 +135,10 @@ function planWork(db, ctx, membership, options = {}) {
       approvalRequirement: 'REQUIRED',
       executionStatus: workItems.STATUS.WAITING_FOR_APPROVAL,
       priority: plan.decision === 'transfer_and_purchase' ? 80 : 65,
-      urgency: plan.onHandTotal === 0 ? 'urgent' : 'normal',
+      // 'immediate', not 'urgent': the column enumerates its values, and the
+      // wrong one failed the whole run rather than this one item — which only
+      // showed up once a line with nothing on hand reached here.
+      urgency: plan.onHandTotal === 0 ? 'immediate' : 'normal',
       confidence: 'high',
       reason: plan.explanation,
       idempotencyKey: `replenishment_plan:${plan.skuId}`,
@@ -631,6 +634,16 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
         }],
       });
       purchaseOrderId = order.id;
+      // Preparing an order is worth announcing, whichever path prepared it.
+      // Moving this work into the plan quietly dropped it from the record.
+      notify(db, workspaceId, {
+        kind: 'purchase_prepared',
+        severity: 'important',
+        title: `Prepared ${order.poNumber} for ${plan.purchase.supplierName}`,
+        body: `${order.lines.length} line(s), ${order.subtotal}. Nothing has been sent to the supplier.`,
+        workItemId: item.id,
+        link: `/purchasing/orders/${order.id}`,
+      });
       checks.push({
         kind: 'purchase',
         supplier: plan.purchase.supplierName,

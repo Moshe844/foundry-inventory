@@ -18,6 +18,7 @@ const position = require('../purchasing/position');
 const replenishment = require('../purchasing/replenishment');
 const replenishmentPlan = require('../purchasing/replenishment-plan');
 const policyService = require('./policy-service');
+const modes = require('./modes');
 const preferences = require('./preferences');
 const workItems = require('./work-items');
 
@@ -207,6 +208,8 @@ function planBalanceTransfer(db, workspaceId, sku, options = {}) {
  */
 function plan(db, workspaceId, options = {}) {
   const now = options.now || Date.now();
+  // Whether Foundry may act on its own decides which work reaches a person.
+  const state = modes.ensure(db, workspaceId);
   const skus = signalEngine.skuSignals(db, workspaceId, { now }).filter((sku) => sku.isActive);
   const incoming = position.onOrderBySku(db, workspaceId, { now });
 
@@ -258,22 +261,37 @@ function plan(db, workspaceId, options = {}) {
   // move drained the warehouse to zero on the assumption the order was not
   // happening, and the order was sized on the assumption the move was not.
   const replenishmentPlans = safePlans(db, workspaceId, skus, now);
-  // Two different exclusions, because the two paths fail differently.
+  // A configured line's replenishment is one decision, and the plan is it.
   //
-  // Moves: a line with a configured reorder point belongs to the replenishment
-  // planner outright. The older balance heuristic reasons only about days of
-  // cover and knows nothing about the level, the order-up-to or the order — it
-  // proposed emptying a warehouse of 45 into a shop the planner had already
-  // measured as adequately stocked. Two engines proposing movements for one
-  // product is the fragmentation itself.
+  // Moves were already the planner's: the older balance heuristic reasons only
+  // about days of cover, knows nothing about the level or the order, and
+  // proposed emptying a warehouse of 45 into a shop the planner had measured as
+  // adequately stocked.
   //
-  // Orders: only withheld when the plan also has a move, because then the two
-  // must be decided together. A line needing nothing but an order has nothing
-  // to be fragmented against, and leaving it on the ordinary purchasing path
-  // keeps the authority Foundry already has to prepare it under an approved
-  // policy.
+  // Orders were left on the ordinary purchasing path whenever a line needed
+  // nothing else, on the reasoning that a single action cannot be fragmented.
+  // That was wrong from the customer's side. On a fresh workspace it meant the
+  // first thing they ever saw was "PO-1001 is ready to send", opening onto a
+  // page that says only that the order is prepared — being asked to approve the
+  // consequence without ever seeing the replenishment decision that caused it.
+  //
+  // The one exception is work that never reaches a person at all: an order an
+  // approved policy will place by itself, on a line needing no movement. There
+  // is no decision to fragment there, and routing it through a plan would take
+  // away authority the customer explicitly granted.
+  const handledByPolicy = (plan) =>
+    plan.transfers.length === 0
+    && Boolean(plan.purchase)
+    && state.mode === 'POLICY_AUTOMATED'
+    && policyService
+      .list(db, workspaceId, { activeOnly: true })
+      .some((policy) =>
+        policy.allowedActionTypes.includes('approve_purchase_order')
+        && (!policy.supplierScope.length || policy.supplierScope.includes(plan.purchase.supplierId)));
+
+  const userFacing = replenishmentPlans.actionable.filter((plan) => !handledByPolicy(plan));
   const governedMoves = replenishmentPlans.governedSkuIds;
-  const governedOrders = replenishmentPlans.combinedSkuIds;
+  const governedOrders = new Set(userFacing.map((plan) => plan.skuId));
 
   for (const sku of skus) {
     const engine = require('./policy-engine');
@@ -346,13 +364,17 @@ function plan(db, workspaceId, options = {}) {
     purchases,
     // Each is one coherent answer: where the stock should move, what should be
     // bought, and the arithmetic that says both are needed at once.
-    replenishmentPlans: replenishmentPlans.combined,
+    replenishmentPlans: userFacing,
     receiving,
     conflicts,
     declined,
     settings,
+    // A prepared replenishment plan is emphatically something to do. Left out
+    // of this count, "order what we need" answered "no purchase is currently
+    // supported" while the plan it had just prepared sat on the home page.
     nothingToDo:
-      transfers.length === 0 && purchases.length === 0 && receiving.length === 0 && conflicts.length === 0,
+      transfers.length === 0 && purchases.length === 0 && receiving.length === 0
+      && conflicts.length === 0 && userFacing.length === 0,
     evaluatedAt: new Date(now).toISOString(),
   };
 }

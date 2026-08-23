@@ -18,6 +18,7 @@ const {
   makeDatabase, cleanupAll, seedWorkspace, signIn, plain, makeQuantityItem,
 } = require('../helpers');
 const inventory = require('../../src/domain/inventory-engine');
+const engine = inventory;
 const authService = require('../../src/domain/auth-service');
 const attention = require('../../src/attention/attention-engine');
 const policyService = require('../../src/purchasing/policy-service');
@@ -736,4 +737,117 @@ test('once the plan is done, the order is an ordinary draft again', async () => 
     'the draft is offered again once nothing else speaks for it'
   );
   env.db.close();
+});
+
+/**
+ * A brand-new workspace, from opening stock to the first replenishment.
+ *
+ * Reported from a clean QA run: after configuring Black/Small and pressing
+ * Check now, the one decision offered was "PO-1001 for ABC Apparel is ready to
+ * send", opening onto a page that said only that the order was prepared. The
+ * customer was being asked to approve the consequence without ever being shown
+ * the replenishment decision that produced it — no reorder point, no position,
+ * no shortfall, no pack arithmetic.
+ *
+ * Nothing here is borrowed from another fixture: the workspace is registered,
+ * stocked, sold from and configured in the order a person would do it.
+ */
+test('a fresh workspace reaches exactly one replenishment decision, and it explains itself', async () => {
+  const itemService = require('../../src/domain/item-service');
+  const locationService = require('../../src/domain/location-service');
+  const supplierService = require('../../src/purchasing/supplier-service');
+  const purchasingPolicies = require('../../src/purchasing/policy-service');
+  const runner = require('../../src/autopilot/runner');
+  const workItems = require('../../src/autopilot/work-items');
+  const poService = require('../../src/purchasing/po-service');
+
+  const DAY = 24 * 60 * 60 * 1000;
+  const daysAgo = (n) => new Date(Date.now() - n * DAY).toISOString();
+
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Fresh Tees' });
+  const membership = authService.getMembership(store.db, workspace.workspaceId, workspace.accountId);
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'fresh-qa' });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const downtown = store.db
+    .prepare("SELECT id, name FROM locations WHERE workspace_id = ? AND name = 'Downtown Store'")
+    .get(workspace.workspaceId)
+    || locationService.createLocation(store.db, workspace.ctx, { name: 'Downtown Store', kind: 'store' });
+
+  // Opening inventory.
+  const created = itemService.createItem(store.db, workspace.ctx, {
+    name: 'Black T-shirt', baseCode: 'BT-1', trackingMode: 'quantity', hasVariants: true,
+    options: [{ name: 'Colour', values: 'Black, White' }, { name: 'Size', values: 'Small, Large' }],
+  });
+  const small = repo.listSkusForItem(store.db, workspace.workspaceId, created.itemId)
+    .find((sku) => sku.variant_label === 'Black / Small');
+  engine.receive(store.db, workspace.ctx, {
+    skuId: small.id, locationId: downtown.id, quantity: 50, occurredAt: daysAgo(40),
+  });
+
+  // Real sales, so demand is measured rather than assumed.
+  for (let i = 0; i < 40; i += 1) {
+    engine.issue(store.db, workspace.ctx, {
+      skuId: small.id, locationId: downtown.id, quantity: 1, reasonCode: 'sold',
+      occurredAt: daysAgo(28 - (i % 28)),
+    });
+  }
+
+  // Supplier and reorder settings, as a customer would configure them.
+  const supplier = supplierService.createSupplier(store.db, workspace.ctx, membership, { name: 'ABC Apparel' });
+  supplierService.linkItem(store.db, workspace.ctx, membership, {
+    supplierId: supplier.id, skuId: small.id, purchaseUnit: 'case',
+    unitsPerPurchaseUnit: 12, minimumOrderQuantity: 1, leadTimeDays: 15, isPreferred: true,
+  });
+  purchasingPolicies.setPolicy(store.db, workspace.ctx, membership, small.id,
+    { reorderPoint: 60, targetStock: 80 });
+
+  // Check now.
+  runner.run(store.db, workspace.ctx, membership, { trigger: 'manual' });
+
+  // Exactly one replenishment decision, and it is the plan.
+  const live = workItems.list(store.db, workspace.workspaceId, { limit: 100 })
+    .filter((entry) => !entry.isTerminal);
+  assert.equal(
+    live.length, 1,
+    `one decision, got: ${live.map((entry) => `${entry.category}/${entry.executionStatus}`).join(', ')}`
+  );
+  assert.equal(live[0].category, 'replenishment_plan');
+  assert.equal((live[0].affectedEntities || {}).displayName, 'Black T-shirt / Black / Small');
+
+  // No order exists yet, so none can be approved ahead of the plan.
+  assert.equal(store.db.prepare('SELECT COUNT(*) c FROM purchase_orders').get().c, 0);
+  assert.deepEqual(
+    workItems.list(store.db, workspace.workspaceId, { category: 'purchase_approval' }), [],
+    'no standalone "approve this order" decision for a plan-owned order'
+  );
+
+  // Needs you offers that one thing, by name.
+  const inbox = plain((await agent.get('/needs-you')).text).replace(/\s+/g, ' ');
+  assert.match(inbox, /Black T-shirt \/ Black \/ Small needs a decision/);
+  assert.doesNotMatch(inbox, /ready to send/, 'the consequence must not be the decision');
+
+  // Opening it shows the whole calculation, not just the consequence.
+  const page = plain((await agent.get(`/autopilot/work/${live[0].id}`)).text).replace(/\s+/g, ' ');
+  assert.match(page, /reorder point of 60/, 'what triggered it');
+  assert.match(page, /order-up-to level of 80/);
+  assert.match(page, /On hand 10, with nothing on order/, 'the position');
+  assert.match(page, /Downtown Store holds 10/, 'the location balances');
+  assert.match(page, /6 case\(s\)/, 'the purchase-unit arithmetic: 80 - 10 = 70, rounded up to whole cases of 12');
+  assert.match(page, /72 unit\(s\)/);
+  assert.match(page, /ABC Apparel/);
+  assert.match(page, /What approving this will do/, 'and exactly what the button does');
+  assert.match(page, /Prepare a draft order/);
+  assert.match(page, /Shortfall/, 'the shortfall is in the measurements');
+
+  // Approving the plan is what produces the order.
+  runner.approveWorkItem(store.db, workspace.ctx, membership, live[0].id);
+  const carried = runner.executeWorkItem(store.db, workspace.ctx, membership, live[0].id);
+  assert.equal(carried.executed, true);
+  const order = poService.get(store.db, workspace.workspaceId, carried.purchaseOrderId);
+  assert.equal(order.status, 'DRAFT', 'prepared, never sent');
+  assert.equal(order.lines[0].quantity_units || order.lines[0].quantityUnits, 72);
+  store.db.close();
 });
