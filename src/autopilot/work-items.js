@@ -45,6 +45,7 @@ const TERMINAL = [STATUS.COMPLETED, STATUS.FAILED, STATUS.CANCELLED];
 const IN_FLIGHT = [STATUS.EXECUTING, STATUS.VERIFYING];
 
 const CATEGORY_LABEL = {
+  replenishment_plan: 'Replenishment plan',
   balance_transfer: 'Move stock between locations',
   replenishment: 'Replenishment',
   purchase_preparation: 'Prepare a purchase order',

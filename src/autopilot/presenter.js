@@ -548,6 +548,50 @@ function explain(db, workspaceId, workItemId) {
           `Total unchanged at ${outcome.after.total}.`
       );
     }
+  } else if (item.category === 'replenishment_plan') {
+    // One decision, so one explanation, and it has to carry both halves and the
+    // arithmetic joining them — otherwise the page is back to presenting a move
+    // and an order as two things that happen to share a product.
+    const done = item.executionStatus === workItems.STATUS.COMPLETED;
+    const moved = (action.transfers || []).reduce((total, move) => total + move.quantity, 0);
+
+    paragraphs.push(action.explanation);
+    paragraphs.push(
+      (action.onOrder
+        ? `On hand ${action.onHandTotal} plus ${action.onOrder} on order is ${action.networkPosition}`
+        : `On hand ${action.onHandTotal}, with nothing on order`) +
+        `, against a reorder point of ${action.reorderPoint} and an order-up-to level of ${action.target}. ` +
+        (action.byLocation || []).map((loc) => `${loc.locationName} holds ${loc.onHand} and needs ${loc.need}`).join('; ') + '.'
+    );
+
+    if (moved && action.purchase) {
+      paragraphs.push(
+        (done ? `I moved ${moved} and prepared an order for ` : `I want to move ${moved} and order `) +
+          `${action.purchase.quantityPurchaseUnits} ${action.purchase.purchaseUnit}(s) — ` +
+          `${action.purchase.quantityUnits} units — from ${action.purchase.supplierName}. ` +
+          'Moving stock does not change how much of it exists, so the order is the same size either way.'
+      );
+    } else if (moved) {
+      paragraphs.push(done ? `I moved ${moved}.` : `I want to move ${moved}. Nothing has moved yet.`);
+    } else if (action.purchase) {
+      paragraphs.push(
+        (done ? 'I prepared an order for ' : 'I want to order ') +
+          `${action.purchase.quantityPurchaseUnits} ${action.purchase.purchaseUnit}(s) from ${action.purchase.supplierName}.`
+      );
+    }
+
+    if (action.after) {
+      paragraphs.push(
+        'Afterwards: ' +
+          action.after.byLocation.map((row) => `${row.locationName} ${row.before} → ${row.after}`).join(', ') +
+          `, ${action.after.onHandAfterMoves} in total` +
+          (action.purchase ? `, rising to ${action.after.onHandAfterDelivery} when the order arrives.` : '.')
+      );
+    }
+
+    if (!done) {
+      paragraphs.push('Nothing has moved and nothing has been ordered. Approving this carries out both, one controlled action at a time, and checks each result.');
+    }
   } else if (item.category === 'purchase_preparation') {
     paragraphs.push(
       `Replenishment showed ${plural((action.lines || []).length, 'line')} below their reorder point for ` +

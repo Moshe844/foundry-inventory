@@ -16,6 +16,7 @@ const signalEngine = require('../signals/signal-engine');
 const repo = require('../domain/repository');
 const position = require('../purchasing/position');
 const replenishment = require('../purchasing/replenishment');
+const replenishmentPlan = require('../purchasing/replenishment-plan');
 const policyService = require('./policy-service');
 const preferences = require('./preferences');
 const workItems = require('./work-items');
@@ -77,6 +78,20 @@ function locationDemand(sku) {
  * Returns the evidence alongside the numbers, because every one of these has to
  * survive being read back to a customer months later.
  */
+/**
+ * Replenishment plans, or none.
+ *
+ * Wrapped because a workspace with no purchasing configured must not lose its
+ * whole autopilot run to a planner that had nothing to read.
+ */
+function safePlans(db, workspaceId, skus, now) {
+  try {
+    return replenishmentPlan.planWorkspace(db, workspaceId, { skus }, { now });
+  } catch {
+    return { plans: [], governed: [], governedSkuIds: new Set(), actionable: [], combined: [], combinedSkuIds: new Set() };
+  }
+}
+
 function planBalanceTransfer(db, workspaceId, sku, options = {}) {
   const maximum = options.maximumQuantity || null;
   const incoming = options.incoming || { onOrder: 0 };
@@ -233,6 +248,33 @@ function plan(db, workspaceId, options = {}) {
   const declined = [];
   const settings = preferences.balanceSettings(db, workspaceId, BALANCE);
 
+  // One decision per stock need.
+  //
+  // A line with a configured reorder point is the replenishment planner's, and
+  // it decides the move and the order together. Letting the two independent
+  // paths below also speak for those lines is what put "Move 45 to Downtown"
+  // and "PO-1002 is ready to send" in front of the same person as two separate
+  // approvals, with nothing tying them together and no shared arithmetic — the
+  // move drained the warehouse to zero on the assumption the order was not
+  // happening, and the order was sized on the assumption the move was not.
+  const replenishmentPlans = safePlans(db, workspaceId, skus, now);
+  // Two different exclusions, because the two paths fail differently.
+  //
+  // Moves: a line with a configured reorder point belongs to the replenishment
+  // planner outright. The older balance heuristic reasons only about days of
+  // cover and knows nothing about the level, the order-up-to or the order — it
+  // proposed emptying a warehouse of 45 into a shop the planner had already
+  // measured as adequately stocked. Two engines proposing movements for one
+  // product is the fragmentation itself.
+  //
+  // Orders: only withheld when the plan also has a move, because then the two
+  // must be decided together. A line needing nothing but an order has nothing
+  // to be fragmented against, and leaving it on the ordinary purchasing path
+  // keeps the authority Foundry already has to prepare it under an approved
+  // policy.
+  const governedMoves = replenishmentPlans.governedSkuIds;
+  const governedOrders = replenishmentPlans.combinedSkuIds;
+
   for (const sku of skus) {
     const engine = require('./policy-engine');
     const conflict = engine.detectConflicts(db, workspaceId, sku.skuId, { totalOnHand: sku.measured.onHand });
@@ -240,6 +282,7 @@ function plan(db, workspaceId, options = {}) {
       conflicts.push(conflict);
       continue;                       // never plan a move while the rules argue
     }
+    if (governedMoves.has(sku.skuId)) continue;   // the plan speaks for this one
 
     const proposal = planBalanceTransfer(db, workspaceId, sku, {
       maximumQuantity: ceiling && Number.isFinite(ceiling) ? ceiling : null,
@@ -256,7 +299,12 @@ function plan(db, workspaceId, options = {}) {
   let purchases = [];
   try {
     const replenish = replenishment.evaluateWorkspace(db, workspaceId, { now });
-    purchases = replenish.bySupplier.map((group) => ({
+    purchases = replenish.bySupplier
+      // Governed lines are bought as part of their own plan, beside the move
+      // that goes with them. A supplier group emptied of every line is dropped.
+      .map((group) => ({ ...group, lines: group.lines.filter((line) => !governedOrders.has(line.skuId)) }))
+      .filter((group) => group.lines.length)
+      .map((group) => ({
       supplierId: group.supplierId,
       supplierName: group.supplierName,
       lines: group.lines.map((line) => ({
@@ -296,6 +344,9 @@ function plan(db, workspaceId, options = {}) {
   return {
     transfers,
     purchases,
+    // Each is one coherent answer: where the stock should move, what should be
+    // bought, and the arithmetic that says both are needed at once.
+    replenishmentPlans: replenishmentPlans.combined,
     receiving,
     conflicts,
     declined,

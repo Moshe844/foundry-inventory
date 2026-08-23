@@ -22,6 +22,9 @@ const authService = require('../../src/domain/auth-service');
 const attention = require('../../src/attention/attention-engine');
 const policyService = require('../../src/purchasing/policy-service');
 const supplierService = require('../../src/purchasing/supplier-service');
+const runner = require('../../src/autopilot/runner');
+const workItems = require('../../src/autopilot/work-items');
+const repo = require('../../src/domain/repository');
 
 test.after(cleanupAll);
 
@@ -316,5 +319,139 @@ test('a plan whose order is already drafted does not claim there is enough', asy
     '48 against a reorder point of 60 is not enough, whatever is drafted');
   assert.match(text, /at or below the reorder point of 60/);
   assert.match(text, /already drafted on PO-1001/);
+  env.db.close();
+});
+
+/**
+ * The reported scenario, exactly: Black/Small at 55, reorder 60, target 80,
+ * Downtown 10, Main Warehouse 45, ABC Apparel in cases of 12.
+ *
+ * What Needs Me held two independent approvals — "Move 45 to Downtown Store?"
+ * and "PO-1002 is ready to send" — with no shared arithmetic. The move drained
+ * the warehouse to zero as though the order were not happening, and the order
+ * was sized as though the move were not.
+ */
+async function blackSmall() {
+  const itemService = require('../../src/domain/item-service');
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Tee Co' });
+  const membership = authService.getMembership(store.db, workspace.workspaceId, workspace.accountId);
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'plan-one' });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const created = itemService.createItem(store.db, workspace.ctx, {
+    name: 'Black T-shirt', baseCode: 'BT-1', trackingMode: 'quantity', hasVariants: true,
+    options: [{ name: 'Colour', values: 'Black, White' }, { name: 'Size', values: 'Small, Large' }],
+  });
+  const small = repo.listSkusForItem(store.db, workspace.workspaceId, created.itemId)
+    .find((sku) => sku.variant_label === 'Black / Small');
+
+  inventory.receive(store.db, workspace.ctx, {
+    skuId: small.id, locationId: workspace.main.id, quantity: 45, occurredAt: daysAgo(40),
+  });
+  inventory.receive(store.db, workspace.ctx, {
+    skuId: small.id, locationId: workspace.store.id, quantity: 50, occurredAt: daysAgo(40),
+  });
+  // Downtown sells steadily and is down to 10 — short of its own fortnight of
+  // cover, while the warehouse sits on 45 and sells none. 55 in total.
+  for (let i = 0; i < 40; i += 1) {
+    inventory.issue(store.db, workspace.ctx, {
+      skuId: small.id, locationId: workspace.store.id, quantity: 1, reasonCode: 'sold',
+      occurredAt: daysAgo(28 - (i % 28)),
+    });
+  }
+
+  const supplier = supplierService.createSupplier(store.db, workspace.ctx, membership, { name: 'ABC Apparel' });
+  supplierService.linkItem(store.db, workspace.ctx, membership, {
+    supplierId: supplier.id, skuId: small.id, purchaseUnit: 'case',
+    unitsPerPurchaseUnit: 12, minimumOrderQuantity: 1, leadTimeDays: 15, isPreferred: true,
+  });
+  policyService.setPolicy(store.db, workspace.ctx, membership, small.id, { reorderPoint: 60, targetStock: 80 });
+
+  return { ...store, workspace, membership, agent, small, supplier, itemId: created.itemId };
+}
+
+test('one need produces one decision, not a transfer approval and a PO approval', async () => {
+  const env = await blackSmall();
+  runner.run(env.db, env.workspace.ctx, env.membership, { trigger: 'test' });
+
+  const concernsSmall = (entry) => (entry.affectedEntities || {}).skuId === env.small.id
+    || (((entry.recommendedAction || {}).lines) || []).some((line) => line.skuId === env.small.id);
+
+  const open = workItems.list(env.db, env.workspace.workspaceId, { limit: 100 })
+    .filter((entry) => !entry.isTerminal);
+  const forSmall = open.filter(concernsSmall);
+
+  assert.equal(
+    forSmall.length, 1,
+    `one stock need is one decision, got: ${forSmall.map((entry) => entry.category).join(', ')}`
+  );
+  const plan = forSmall[0];
+  assert.equal(plan.category, 'replenishment_plan');
+  assert.deepEqual(
+    open.filter((entry) => ['balance_transfer', 'purchase_preparation'].includes(entry.category))
+      .filter(concernsSmall),
+    [],
+    'neither half may also stand on its own'
+  );
+
+  // Both halves, with the arithmetic that says both are needed.
+  const action = plan.recommendedAction;
+  assert.equal(action.onHandTotal, 55);
+  assert.equal(action.reorderPoint, 60);
+  assert.equal(action.target, 80);
+  assert.ok(action.transfers.length, 'the shop is short');
+  assert.equal(action.orderUnits, 36, '80 - 55 = 25, rounded up to whole cases of 12');
+  assert.equal(action.purchase.quantityPurchaseUnits, 3);
+
+  // The warehouse is not drained to zero to satisfy the shop.
+  const warehouseAfter = action.after.byLocation.find((row) => row.locationName === 'Main Warehouse');
+  assert.ok(
+    warehouseAfter.after > 0,
+    `Main Warehouse must not be emptied without a rule saying it may: left ${warehouseAfter.after}`
+  );
+  assert.ok(action.transferUnits < 45, `moved ${action.transferUnits} of 45`);
+
+  // Before and after, per location, with the total conserved by the move alone.
+  assert.equal(action.after.onHandAfterMoves, 55, 'moving stock cannot create any');
+  assert.equal(action.after.onHandAfterDelivery, 55 + action.orderUnits);
+  env.db.close();
+});
+
+test('approving the one plan carries out both halves and verifies each', async () => {
+  const poService = require('../../src/purchasing/po-service');
+  const engine = require('../../src/domain/inventory-engine');
+
+  const env = await blackSmall();
+  runner.run(env.db, env.workspace.ctx, env.membership, { trigger: 'test' });
+  const plan = workItems.list(env.db, env.workspace.workspaceId, { category: 'replenishment_plan' })[0];
+  assert.equal(plan.approvalRequirement, 'REQUIRED', 'a plan that spends money is never Foundry alone');
+
+  const balance = (locationId) => repo.getBalance(env.db, env.workspace.workspaceId, env.small.id, locationId);
+  const before = { warehouse: balance(env.workspace.main.id), shop: balance(env.workspace.store.id) };
+
+  runner.approveWorkItem(env.db, env.workspace.ctx, env.membership, plan.id);
+  const result = runner.executeWorkItem(env.db, env.workspace.ctx, env.membership, plan.id);
+
+  assert.equal(result.executed, true);
+  assert.equal(result.verified, true, JSON.stringify(result.checks));
+
+  // The move happened through the ledger, and each leg was checked on its own.
+  const after = { warehouse: balance(env.workspace.main.id), shop: balance(env.workspace.store.id) };
+  const moved = before.warehouse - after.warehouse;
+  assert.ok(moved > 0, 'the move ran');
+  assert.equal(after.shop, before.shop + moved, 'what left one place arrived at the other');
+  assert.equal(after.warehouse + after.shop, before.warehouse + before.shop, 'a move creates nothing');
+  assert.ok(after.warehouse > 0, 'and it does not empty the warehouse');
+  assert.ok(result.checks.some((check) => check.kind === 'transfer' && check.ok));
+
+  // The order was prepared, not placed.
+  assert.ok(result.purchaseOrderId, 'the order half ran too');
+  const order = poService.get(env.db, env.workspace.workspaceId, result.purchaseOrderId);
+  assert.equal(order.status, 'DRAFT', 'approving a plan does not tell a supplier anything');
+
+  // And the ledger still agrees with itself afterwards.
+  assert.equal(engine.verifyIntegrity(env.db, env.workspace.workspaceId).ok, true);
   env.db.close();
 });

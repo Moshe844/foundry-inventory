@@ -35,7 +35,14 @@ const DAY = 24 * 60 * 60 * 1000;
  * Kids Tights: Black and White in sizes 2, 5 and 8, across two warehouses,
  * with Brooklyn selling and New Jersey barely moving.
  */
-function tights() {
+/**
+ * @param {object} options
+ *   allStockAtBrooklyn — put every unit where the trading happens, so the line
+ *     needs an order and nothing else. Purchasing authority is what those tests
+ *     are about; a line that also needs a transfer is now one combined
+ *     replenishment decision, which is a different behaviour with its own test.
+ */
+function tights({ allStockAtBrooklyn = false } = {}) {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Kids Tights' });
   const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
@@ -57,8 +64,12 @@ function tights() {
   const jersey = workspace.store;       // "Downtown Store"
 
   // Opening stock, then a month of trading that only Brooklyn did.
-  inventory.receive(db, workspace.ctx, { skuId: black5.id, locationId: brooklyn.id, quantity: 29 });
-  inventory.receive(db, workspace.ctx, { skuId: black5.id, locationId: jersey.id, quantity: 65 });
+  inventory.receive(db, workspace.ctx, {
+    skuId: black5.id, locationId: brooklyn.id, quantity: allStockAtBrooklyn ? 94 : 29,
+  });
+  if (!allStockAtBrooklyn) {
+    inventory.receive(db, workspace.ctx, { skuId: black5.id, locationId: jersey.id, quantity: 65 });
+  }
 
   db.exec('DROP TRIGGER IF EXISTS movements_no_update');
   const backdate = db.prepare('UPDATE movements SET occurred_at = ? WHERE id = ?');
@@ -71,7 +82,7 @@ function tights() {
   for (const [quantity, daysAgo] of [[5, 28], [4, 22], [3, 16], [4, 10], [5, 4]]) {
     issue(black5.id, brooklyn.id, quantity, daysAgo);
   }
-  issue(black5.id, jersey.id, 4, 12);
+  if (!allStockAtBrooklyn) issue(black5.id, jersey.id, 4, 12);
   db.exec(
     `CREATE TRIGGER IF NOT EXISTS movements_no_update BEFORE UPDATE ON movements
      BEGIN SELECT RAISE(ABORT, 'movements are immutable'); END`
@@ -364,7 +375,7 @@ test('work that did complete before the restart is finished, not repeated', () =
 // --- purchasing --------------------------------------------------------------
 
 test('Foundry prepares purchase orders but never sends them', () => {
-  const env = tights();
+  const env = tights({ allStockAtBrooklyn: true });
   const suppliers = require('../../src/purchasing/supplier-service');
   const policies = require('../../src/purchasing/policy-service');
   const poService = require('../../src/purchasing/po-service');
@@ -396,7 +407,7 @@ test('Foundry prepares purchase orders but never sends them', () => {
 });
 
 test('an approved routine-purchasing policy lets Foundry approve a supported replenishment', () => {
-  const env = tights();
+  const env = tights({ allStockAtBrooklyn: true });
   const suppliers = require('../../src/purchasing/supplier-service');
   const policies = require('../../src/purchasing/policy-service');
   const poService = require('../../src/purchasing/po-service');
@@ -425,7 +436,7 @@ test('an approved routine-purchasing policy lets Foundry approve a supported rep
 });
 
 test('a 17 percent supplier price increase stops routine purchasing in Needs you', () => {
-  const env = tights();
+  const env = tights({ allStockAtBrooklyn: true });
   const suppliers = require('../../src/purchasing/supplier-service');
   const policies = require('../../src/purchasing/policy-service');
   const poService = require('../../src/purchasing/po-service');

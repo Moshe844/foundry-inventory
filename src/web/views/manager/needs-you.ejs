@@ -71,6 +71,11 @@
   <section class="needs-section">
     <div class="needs-section__head"><span class="needs-section__icon"><%- helpers.icon('shield', { size: 18 }) %></span><div><span class="needs-section__label">Foundry will not do this without you</span><h2>Your decision</h2></div><span class="needs-count <%= waiting.length ? 'has-work' : 'is-clear' %>"><%= waiting.length ? waiting.length + ' waiting' : 'Clear' %></span></div>
     <% if (!waiting.length) { %><div class="needs-empty"><span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span><div><strong>No decisions are waiting</strong><p>Foundry is working within the boundaries you approved.</p></div></div><% } %>
-    <% waiting.forEach(function (entry) { %><a class="needs-row" href="/autopilot/work/<%= entry.id %>"><span class="needs-row__icon is-warn"><%- helpers.icon('attention', { size: 18 }) %></span><div><strong><%= entry.categoryLabel %></strong><p><%= entry.policyEvaluation.reason || 'Your approval is required.' %></p></div><span class="needs-count has-work">Review</span><%- helpers.icon('chevron', { size: 17 }) %></a><% }) %>
+    <% waiting.forEach(function (entry) { %><a class="needs-row" href="/autopilot/work/<%= entry.id %>"><span class="needs-row__icon is-warn"><%- helpers.icon('attention', { size: 18 }) %></span><div><%# The product and the numbers, not just the kind of work. "Replenishment
+        plan — your approval is required" tells a first-time customer nothing
+        about what they are being asked to decide. %><strong><%= (entry.affectedEntities && entry.affectedEntities.displayName)
+          ? entry.affectedEntities.displayName + ' — ' + entry.categoryLabel.toLowerCase()
+          : entry.categoryLabel %></strong><p><%= (entry.recommendedAction && entry.recommendedAction.explanation)
+          || entry.policyEvaluation.reason || 'Your approval is required.' %></p></div><span class="needs-count has-work">Review</span><%- helpers.icon('chevron', { size: 17 }) %></a><% }) %>
   </section>
 </div>

@@ -131,7 +131,11 @@ router.get(
   asyncRoute(async (req, res) => {
     const explanation = presenter.explain(req.db, req.ctx.workspaceId, req.params.id);
     res.page('autopilot/work', {
-      title: explanation.item.categoryLabel,
+      // Named, so the browser tab and the heading say which product is being
+      // decided rather than only what kind of decision it is.
+      title: (explanation.item.affectedEntities || {}).displayName
+        ? `${explanation.item.affectedEntities.displayName} — ${explanation.item.categoryLabel.toLowerCase()}`
+        : explanation.item.categoryLabel,
       nav: 'autopilot',
       ...explanation,
       canOperate: permissions.can(req.user, permissions.OPERATE),

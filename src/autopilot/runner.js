@@ -35,6 +35,7 @@ const policyService = require('./policy-service');
 const policyEngine = require('./policy-engine');
 const planner = require('./planner');
 const signalEngine = require('../signals/signal-engine');
+const replenishmentPlan = require('../purchasing/replenishment-plan');
 const workItems = require('./work-items');
 
 function notify(db, workspaceId, { kind, severity = 'info', title, body = '', workItemId = null, link = null }) {
@@ -84,6 +85,74 @@ function planWork(db, ctx, membership, options = {}) {
 
   const proposed = planner.plan(db, workspaceId, { now });
   const created = [];
+
+  // --- one replenishment decision per stock need -----------------------------
+  //
+  // Not a transfer item and a purchase item that happen to concern the same
+  // product. One item, carrying both halves and the arithmetic that says both
+  // are needed, so the person approving is approving a plan rather than
+  // arbitrating between two recommendations that never met.
+  for (const plan of proposed.replenishmentPlans || []) {
+    const moved = plan.transfers.reduce((total, move) => total + move.quantity, 0);
+    const headline = plan.blocked === 'no_supplier'
+      ? `${plan.displayName} is below its reorder point, with no supplier`
+      : `${plan.displayName}: ${plan.headline.toLowerCase()}`;
+
+    const { item, created: isNew } = workItems.upsert(db, workspaceId, {
+      workPlanId: planId,
+      category: 'replenishment_plan',
+      source: 'replenishment',
+      sourceEvidence: (plan.evidence || []).slice(0, 12),
+      affectedEntities: {
+        skuId: plan.skuId,
+        itemId: plan.itemId,
+        displayName: plan.displayName,
+        supplierId: plan.purchase ? plan.purchase.supplierId : null,
+      },
+      recommendedAction: {
+        actionType: 'replenishment_plan',
+        skuId: plan.skuId,
+        decision: plan.decision,
+        transfers: plan.transfers,
+        purchase: plan.purchase,
+        prepared: plan.prepared,
+        blocked: plan.blocked,
+        reorderPoint: plan.reorderPoint,
+        target: plan.target,
+        onHandTotal: plan.onHandTotal,
+        onOrder: plan.onOrder,
+        networkPosition: plan.networkPosition,
+        byLocation: plan.byLocation,
+        after: plan.after,
+        calculation: plan.calculation,
+        explanation: plan.explanation,
+        transferUnits: moved,
+        orderUnits: plan.purchase ? plan.purchase.quantityUnits : 0,
+      },
+      // A plan that both moves stock and spends money is never Foundry's alone.
+      // Autopilot may rebalance under an approved policy; it may not decide to
+      // buy, and a single approval covering both has to be a person's.
+      approvalRequirement: 'REQUIRED',
+      executionStatus: workItems.STATUS.WAITING_FOR_APPROVAL,
+      priority: plan.decision === 'transfer_and_purchase' ? 80 : 65,
+      urgency: plan.onHandTotal === 0 ? 'urgent' : 'normal',
+      confidence: 'high',
+      reason: plan.explanation,
+      idempotencyKey: `replenishment_plan:${plan.skuId}`,
+    });
+
+    if (isNew) {
+      created.push(item);
+      notify(db, workspaceId, {
+        kind: 'approval_required',
+        severity: plan.onHandTotal === 0 ? 'critical' : 'important',
+        title: headline,
+        body: plan.explanation,
+        workItemId: item.id,
+        link: `/autopilot/work/${item.id}`,
+      });
+    }
+  }
 
   // --- transfers ------------------------------------------------------------
   for (const transfer of proposed.transfers) {
@@ -365,6 +434,180 @@ function planWork(db, ctx, membership, options = {}) {
  * planning and now somebody may have moved the same stock — and a plan that was
  * authorised then may not be authorised now.
  */
+/**
+ * Carries out one replenishment plan: the moves, then the order.
+ *
+ * Approval is given once, to the plan. Execution is still one controlled action
+ * at a time, through the same proposal-approve-execute path a person typing the
+ * instruction would use, and each result is checked against the balance it was
+ * supposed to produce. A single approval is a convenience for the person, not a
+ * shortcut through the engine.
+ *
+ * The plan is rebuilt from current stock before anything runs. What was worked
+ * out at detection is a recommendation; what executes has to be true now, and a
+ * move sized against balances that have since changed is exactly the kind of
+ * quiet wrongness the whole design is meant to prevent.
+ */
+function executeReplenishmentPlan(db, ctx, membership, item) {
+  const workspaceId = ctx.workspaceId;
+  const action = item.recommendedAction || {};
+  const skuId = action.skuId;
+
+  const [sku] = signalEngine.skuSignals(db, workspaceId, { skuIds: [skuId] });
+  if (!sku) {
+    workItems.transition(db, workspaceId, item.id, workItems.STATUS.FAILED, {
+      errorMessage: 'That product is no longer active.', verificationStatus: 'NOT_APPLICABLE',
+    });
+    return { executed: false, item: workItems.get(db, workspaceId, item.id) };
+  }
+
+  const plan = replenishmentPlan.buildPlan(db, workspaceId, sku);
+  if (plan.decision === 'none' && !plan.purchase) {
+    const settled = workItems.transition(db, workspaceId, item.id, workItems.STATUS.COMPLETED, {
+      completedAt: nowIso(),
+      verificationStatus: 'NOT_APPLICABLE',
+      outcome: { nothingToDo: true, because: plan.explanation },
+    });
+    return { executed: false, item: settled, because: plan.explanation };
+  }
+
+  workItems.transition(db, workspaceId, item.id, workItems.STATUS.EXECUTING, { countAttempt: true });
+
+  const before = {
+    byLocation: plan.byLocation.map((loc) => ({ locationId: loc.locationId, onHand: loc.onHand })),
+    total: plan.onHandTotal,
+  };
+  const movementIds = [];
+  const checks = [];
+  const moved = [];
+
+  try {
+    for (const move of plan.transfers) {
+      const sourceBefore = repo.getBalance(db, workspaceId, skuId, move.fromLocationId);
+      const destinationBefore = repo.getBalance(db, workspaceId, skuId, move.toLocationId);
+
+      const built = proposals.build(db, ctx, {
+        actionType: 'transfer',
+        resolvedSkuId: skuId,
+        quantity: move.quantity,
+        sourceLocation: move.fromLocationName,
+        destinationLocation: move.toLocationName,
+        assumptions: [],
+      });
+      if (!built.ok) throw new ValidationError(built.question || built.unsupported || 'Could not build the transfer.');
+
+      const stored = proposals.persist(db, ctx, built.proposal, {
+        instruction: `Replenishment plan: ${item.idempotencyKey}`,
+        source: 'FOUNDRY_RECOMMENDATION',
+      });
+      execution.approve(db, ctx, membership, stored.proposalId);
+      const done = execution.execute(db, ctx, membership, stored.proposalId, {
+        idempotencyKey: `plan:${item.id}:${move.fromLocationId}:${move.toLocationId}`,
+      });
+      for (const id of done.movementIds || []) movementIds.push(id);
+
+      // Each move is checked on its own, against the two balances it claimed to
+      // change. A plan that reports success while one leg silently did nothing
+      // is worse than a plan that fails.
+      const sourceAfter = repo.getBalance(db, workspaceId, skuId, move.fromLocationId);
+      const destinationAfter = repo.getBalance(db, workspaceId, skuId, move.toLocationId);
+      checks.push({
+        kind: 'transfer',
+        from: move.fromLocationName,
+        to: move.toLocationName,
+        quantity: move.quantity,
+        ok: sourceAfter === sourceBefore - move.quantity && destinationAfter === destinationBefore + move.quantity,
+        sourceBefore, sourceAfter, destinationBefore, destinationAfter,
+      });
+      moved.push({ ...move, proposalId: stored.proposalId });
+    }
+  } catch (error) {
+    workItems.transition(db, workspaceId, item.id, workItems.STATUS.FAILED, {
+      errorMessage: error.message, verificationStatus: 'NOT_APPLICABLE', movementIds,
+    });
+    notify(db, workspaceId, {
+      kind: 'action_failed', severity: 'important',
+      title: `Could not carry out the plan for ${plan.displayName}`,
+      body: error.message, workItemId: item.id, link: `/autopilot/work/${item.id}`,
+    });
+    return { executed: false, item: workItems.get(db, workspaceId, item.id), error: error.message };
+  }
+
+  // The order is prepared, never placed. Approving a plan authorises Foundry to
+  // work out the order and put it in front of somebody; telling the supplier is
+  // a separate act, and stays one.
+  let purchaseOrderId = null;
+  if (plan.purchase) {
+    try {
+      const order = poService.createOrder(db, ctx, membership, {
+        supplierId: plan.purchase.supplierId,
+        source: 'foundry_recommendation',
+        sourceDetail: {
+          fromReplenishmentPlan: true,
+          workItemId: item.id,
+          reorderPoint: plan.reorderPoint,
+          target: plan.target,
+          position: plan.networkPosition,
+        },
+        lines: [{
+          skuId,
+          quantityPurchaseUnits: plan.purchase.quantityPurchaseUnits,
+          unitCost: plan.purchase.unitCost,
+        }],
+      });
+      purchaseOrderId = order.id;
+      checks.push({
+        kind: 'purchase',
+        supplier: plan.purchase.supplierName,
+        purchaseUnits: plan.purchase.quantityPurchaseUnits,
+        units: plan.purchase.quantityUnits,
+        ok: true,
+        poNumber: order.po_number || order.poNumber || null,
+        status: 'DRAFT',
+      });
+    } catch (error) {
+      checks.push({ kind: 'purchase', ok: false, error: error.message });
+    }
+  }
+
+  const after = {
+    byLocation: plan.byLocation.map((loc) => ({
+      locationId: loc.locationId,
+      onHand: repo.getBalance(db, workspaceId, skuId, loc.locationId),
+    })),
+  };
+  after.total = after.byLocation.reduce((total, row) => total + row.onHand, 0);
+
+  // Moving stock cannot change how much of it there is. If it did, something
+  // other than these transfers touched the product mid-run, and that is worth
+  // failing verification over rather than reporting a tidy total.
+  const conserved = after.total === before.total;
+  const verified = conserved && checks.every((check) => check.ok);
+
+  const completed = workItems.transition(
+    db, workspaceId, item.id,
+    verified ? workItems.STATUS.COMPLETED : workItems.STATUS.NEEDS_REVIEW,
+    {
+      completedAt: nowIso(),
+      movementIds,
+      purchaseOrderId,
+      verificationStatus: verified ? 'VERIFIED' : 'FAILED',
+      outcome: {
+        decision: plan.decision,
+        transfers: moved.map((move) => ({
+          from: move.fromLocationName, to: move.toLocationName, quantity: move.quantity,
+        })),
+        purchaseOrderId,
+        before,
+        after,
+        checks,
+      },
+    }
+  );
+
+  return { executed: true, verified, item: completed, before, after, checks, purchaseOrderId };
+}
+
 function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
   const workspaceId = ctx.workspaceId;
   const item = workItems.get(db, workspaceId, workItemId);
@@ -373,6 +616,8 @@ function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
   if (item.executionStatus === workItems.STATUS.WAITING_FOR_APPROVAL) {
     throw new ValidationError('That work is waiting for a person to approve it.');
   }
+
+  if (item.category === 'replenishment_plan') return executeReplenishmentPlan(db, ctx, membership, item);
 
   if (item.category === 'purchase_preparation') return preparePurchase(db, ctx, membership, item);
 

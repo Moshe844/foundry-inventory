@@ -527,6 +527,18 @@ function planWorkspace(db, workspaceId, signals, options = {}) {
     governed,
     governedSkuIds: new Set(governed.map((plan) => plan.skuId)),
     actionable: governed.filter((plan) => plan.decision !== 'none' || plan.blocked),
+    // Lines where one need produces two actions at once. These are the ones
+    // that must be decided together — a move sized as though the order is not
+    // happening, beside an order sized as though the move is not, is two
+    // opinions rather than a plan. A line needing only one of the two has
+    // nothing to be fragmented against and keeps the ordinary single-action
+    // path, which is also where Foundry's own authority to act lives.
+    combined: governed.filter((plan) => plan.transfers.length > 0 && Boolean(plan.purchase || plan.prepared)),
+    combinedSkuIds: new Set(
+      governed
+        .filter((plan) => plan.transfers.length > 0 && Boolean(plan.purchase || plan.prepared))
+        .map((plan) => plan.skuId)
+    ),
   };
 }
 
