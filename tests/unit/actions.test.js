@@ -1241,6 +1241,55 @@ test('two batches at the source is a question, with the codes', () => {
   assert.match(built.question, /B-2 \(25\)/);
 });
 
+test('the batch question never offers expired stock as an equal choice', () => {
+  // Found in the browser: with an expired batch, a soon-to-expire one and a
+  // long-dated one, the question read "Chiller has B-GONE (6), B-SOON (24),
+  // B-FAR (40)". Expired sorts earliest, so the expired batch was offered
+  // first, unlabelled — and reaching for the oldest batch is normally right.
+  const { db } = makeDatabase();
+  const w = seedWorkspace(db);
+  const lot = makeLotItem(db, w.ctx);
+  const day = 24 * 60 * 60 * 1000;
+  const on = (n) => new Date(Date.now() + n * day).toISOString().slice(0, 10);
+
+  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 6, lotCode: 'B-GONE', expiresAt: on(-3) });
+  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 24, lotCode: 'B-SOON', expiresAt: on(5) });
+  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 40, lotCode: 'B-FAR', expiresAt: on(120) });
+
+  const built = proposals.build(db, w.ctx, {
+    actionType: 'issue',
+    item: 'Trail Ration Pack',
+    sourceLocation: w.main.name,
+    quantity: 10,
+  });
+
+  assert.equal(built.ok, false, 'which batch leaves is not for Foundry to assume');
+  assert.match(built.question, /B-GONE \(6, EXPIRED/, 'an expired batch has to say so where it is offered');
+  assert.match(built.question, /B-SOON \(24, expires/);
+  assert.match(built.question, /B-GONE has already expired/);
+  // And the safe default is named, so there is a right answer to give.
+  assert.match(built.question, /Foundry would take B-SOON, the earliest to expire of the ones still good/);
+  // Still a question: using up an expired batch on purpose is a real decision.
+  assert.ok(built.question.includes('B-GONE'), 'the expired batch is not hidden either');
+});
+
+test('when every batch has expired, the question says so rather than suggesting one', () => {
+  const { db } = makeDatabase();
+  const w = seedWorkspace(db);
+  const lot = makeLotItem(db, w.ctx);
+  const day = 24 * 60 * 60 * 1000;
+  const on = (n) => new Date(Date.now() + n * day).toISOString().slice(0, 10);
+  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 6, lotCode: 'OLD-1', expiresAt: on(-9) });
+  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 4, lotCode: 'OLD-2', expiresAt: on(-2) });
+
+  const built = proposals.build(db, w.ctx, {
+    actionType: 'issue', item: 'Trail Ration Pack', sourceLocation: w.main.name, quantity: 3,
+  });
+  assert.equal(built.ok, false);
+  assert.match(built.question, /Every batch here has expired/);
+  assert.doesNotMatch(built.question, /the earliest to expire of the ones still good/);
+});
+
 test('a lot-tracked transfer Foundry proposed actually executes', () => {
   const { db } = makeDatabase();
   const w = seedWorkspace(db);

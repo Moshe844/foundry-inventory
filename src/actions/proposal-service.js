@@ -203,11 +203,39 @@ function resolveLotAtSource(db, workspaceId, draft, location, verb) {
     );
     return { ok: true };
   }
+  // Batches are not interchangeable, and a list that says only "B-GONE (6)"
+  // presents an expired one as an equal choice — offered first, because the
+  // ordering is by expiry and expired sorts earliest. Someone reaching for the
+  // oldest batch, which is ordinarily the right instinct, issues expired stock.
+  //
+  // So each batch says when it expires, expired ones say so, and the one
+  // Foundry would take — the earliest-expiring batch that is still good — is
+  // named. It is still a question: which batch leaves is not Foundry's to
+  // assume, and using up an expired batch deliberately is a real decision
+  // somebody is allowed to make.
+  const today = new Date().toISOString().slice(0, 10);
+  const expiryNote = (lot) => {
+    if (!lot.expires_at) return '';
+    const on = String(lot.expires_at).slice(0, 10);
+    return on < today ? `, EXPIRED ${on}` : `, expires ${on}`;
+  };
+  const usable = lots.filter((lot) => !lot.expires_at || String(lot.expires_at).slice(0, 10) >= today);
+  const expired = lots.filter((lot) => !usable.includes(lot));
+  const suggestion = usable.length
+    ? ` Foundry would take ${usable[0].code}, the earliest to expire of the ones still good.`
+    : ' Every batch here has expired.';
+
   return {
     ok: false,
-    question: `Which batch should it come from? ${location.name} has ${lots
-      .map((lot) => `${lot.code} (${lot.quantity})`)
-      .join(', ')}.`,
+    question:
+      `Which batch should it come from? ${location.name} has ${lots
+        .map((lot) => `${lot.code} (${lot.quantity}${expiryNote(lot)})`)
+        .join(', ')}.` +
+      (expired.length
+        ? ` ${expired.map((lot) => lot.code).join(', ')} ${expired.length === 1 ? 'has' : 'have'} already expired.`
+        : '') +
+      suggestion,
+    choices: lots.map((lot) => lot.code),
   };
 }
 
