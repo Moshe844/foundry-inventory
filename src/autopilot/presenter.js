@@ -21,6 +21,7 @@ const modes = require('./modes');
 const workItems = require('./work-items');
 const policyService = require('./policy-service');
 const position = require('../purchasing/position');
+const replenishmentPlan = require('../purchasing/replenishment-plan');
 const attention = require('../attention/attention-engine');
 const managerReadiness = require('../manager/readiness');
 
@@ -188,6 +189,23 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
  * Matched by SKU rather than by a stored link, because the draft may predate
  * the plan entirely — that is exactly the case that went wrong.
  */
+/** The stored action, shaped as the plan functions expect to read it. */
+function planShape(action) {
+  return {
+    unitLabel: action.unitLabel || 'unit',
+    transfers: action.transfers || [],
+    purchase: action.purchase || null,
+    prepared: action.prepared || null,
+    onHandTotal: action.onHandTotal,
+    onOrder: action.onOrder,
+    networkPosition: action.networkPosition,
+    reorderPoint: action.reorderPoint,
+    target: action.target,
+  };
+}
+
+const plan_unit = (action) => action.unitLabel || 'unit';
+
 function ordersOwnedByAPlan(db, workspaceId) {
   const owned = new Map();
   const live = workItems
@@ -646,9 +664,9 @@ function explain(db, workspaceId, workItemId) {
 
     if (action.prepared) {
       paragraphs.push(
-        `The order for this is already drafted on ${action.prepared.orders.map((order) => order.poNumber).join(', ')} ` +
-          `— ${action.prepared.units} units — so nothing more needs buying. It is part of this plan and is ` +
-          'approved here rather than on its own.'
+        `${action.prepared.units} ${plan_unit(action)}(s) are already drafted on ` +
+          `${action.prepared.orders.map((order) => order.poNumber).join(', ')}, which is why no further order ` +
+          'is proposed. Drafted is not the same as on order: nobody has told the supplier anything yet.'
       );
     }
 
@@ -677,17 +695,11 @@ function explain(db, workspaceId, workItemId) {
       );
     }
 
+    // What the button does is a list, not a sentence. It is rendered from the
+    // plan by the same function the executor runs, so the promise and the
+    // behaviour cannot describe different things.
     if (!done) {
-      // "Both" is only true when there are two things to do. With the order
-      // already drafted there is just the move, and saying otherwise implies an
-      // order will be raised that will not be.
-      paragraphs.push(
-        (moved && action.purchase
-          ? 'Nothing has moved and nothing has been ordered. Approving this carries out both, one controlled action at a time, and checks each result.'
-          : action.purchase
-            ? 'Nothing has been ordered. Approving this prepares the order as a draft; it is not sent.'
-            : 'Nothing has moved. Approving this carries out the move as one controlled action and checks the result.')
-      );
+      paragraphs.push('Nothing has moved and nothing has been ordered yet.');
     }
   } else if (item.category === 'purchase_preparation') {
     paragraphs.push(
@@ -697,10 +709,16 @@ function explain(db, workspaceId, workItemId) {
     );
   }
 
+  const planForActions = item.category === 'replenishment_plan' ? planShape(action) : null;
+
   return {
     item,
     policy,
     supersededBy,
+    // Only before it runs: afterwards the record of what happened is the truth,
+    // and a list of intentions beside it would read as things still to come.
+    actions: planForActions && !item.isTerminal ? replenishmentPlan.plannedActions(planForActions) : [],
+    position: planForActions ? replenishmentPlan.positionBreakdown(planForActions) : null,
     paragraphs,
     checks: (item.policyEvaluation || {}).checks || [],
     evidence: item.sourceEvidence || [],

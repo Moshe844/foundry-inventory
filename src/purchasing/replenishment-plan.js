@@ -461,6 +461,105 @@ function buildPlan(db, workspaceId, sku, options = {}) {
 }
 
 /**
+ * Exactly what approving this plan will do, and what it deliberately will not.
+ *
+ * The page said an order was "approved here rather than on its own" and then
+ * that approval "carries out the move as one controlled action" — two sentences
+ * that cannot both be true, and between them no statement of what happens to
+ * the order. Someone was being asked to approve a multi-part plan without being
+ * told which parts the button performs.
+ *
+ * So the list is generated here, from the plan, and the executor performs this
+ * list rather than re-deriving the same decisions separately. A description and
+ * a behaviour that are worked out twice are a description and a behaviour that
+ * will eventually disagree; that is the failure this whole module exists to
+ * remove, and it applies to Foundry's account of itself too.
+ *
+ * `when: 'now'` is carried out by the approval. `when: 'after'` is a separate
+ * decision that becomes available once the plan has run — placing an order is
+ * a commercial commitment with its own permission, made on the order itself
+ * where the supplier, the prices and the terms are visible. Hiding that behind
+ * a button whose subject is a stock move would be the wrong kind of tidy.
+ */
+function plannedActions(plan) {
+  const actions = [];
+
+  for (const move of plan.transfers) {
+    actions.push({
+      when: 'now',
+      kind: 'transfer',
+      text: `Move ${move.quantity} ${plan.unitLabel}(s) from ${move.fromLocationName} to ${move.toLocationName}`,
+      detail: 'Recorded as a transfer in the ledger, and checked against both balances afterwards.',
+      quantity: move.quantity,
+      fromLocationId: move.fromLocationId,
+      toLocationId: move.toLocationId,
+    });
+  }
+
+  if (plan.purchase) {
+    actions.push({
+      when: 'now',
+      kind: 'prepare_order',
+      text:
+        `Prepare a draft order for ${plan.purchase.quantityPurchaseUnits} ` +
+        `${plan.purchase.purchaseUnit}(s) — ${plan.purchase.quantityUnits} ${plan.unitLabel}(s) — ` +
+        `from ${plan.purchase.supplierName}`,
+      detail: 'Nothing is sent. Placing it with the supplier is a separate decision on the order.',
+      units: plan.purchase.quantityUnits,
+      supplierId: plan.purchase.supplierId,
+    });
+    actions.push({
+      when: 'after',
+      kind: 'place_order',
+      text: `Place that order with ${plan.purchase.supplierName} when you are ready`,
+      detail: 'Foundry never tells a supplier anything by itself.',
+    });
+  }
+
+  if (plan.prepared) {
+    const numbers = plan.prepared.orders.map((order) => order.poNumber).join(', ');
+    actions.push({
+      when: 'after',
+      kind: 'place_order',
+      text: `Place ${numbers} with the supplier — ${plan.prepared.units} ${plan.unitLabel}(s) — when you are ready`,
+      detail:
+        'It is already drafted and is counted in this plan, which is why no further order is proposed. ' +
+        'Approving the plan does not place it; that stays a decision of its own.',
+      orders: plan.prepared.orders,
+      units: plan.prepared.units,
+    });
+  }
+
+  return actions;
+}
+
+/**
+ * The three quantities that were being conflated.
+ *
+ * "36 already drafted" beside "On order 0" reads as a contradiction, and it is
+ * not one: drafted stock is a decision taken, on-order stock is a commitment
+ * made, and only the second is coming. Separating them, and stating the
+ * position each produces, is the difference between a reader trusting the
+ * arithmetic and a reader checking it by hand.
+ */
+function positionBreakdown(plan) {
+  const drafted = plan.prepared ? plan.prepared.units : 0;
+  const ordering = plan.purchase ? plan.purchase.quantityUnits : 0;
+  return {
+    onHand: plan.onHandTotal,
+    onOrder: plan.onOrder,
+    drafted,
+    position: plan.networkPosition,
+    reorderPoint: plan.reorderPoint,
+    target: plan.target,
+    // What the position becomes once this plan's own actions have happened, and
+    // then once every drafted order has actually been placed and delivered.
+    afterApproval: plan.networkPosition + ordering,
+    afterEveryOrderArrives: plan.networkPosition + ordering + drafted,
+  };
+}
+
+/**
  * The single sentence telling someone what this plan asks of them.
  *
  * It lives beside the arithmetic because it is derived from the decision rather
@@ -543,6 +642,8 @@ function planWorkspace(db, workspaceId, signals, options = {}) {
 }
 
 module.exports = {
+  plannedActions,
+  positionBreakdown,
   recommendationFor,
   LOCAL_COVER_DAYS,
   buildPlan,

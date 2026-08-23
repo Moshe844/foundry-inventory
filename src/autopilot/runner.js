@@ -544,17 +544,26 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
   const checks = [];
   const moved = [];
 
+  // The same list the page showed, performed in order. Iterating the plan's
+  // transfers separately would be a second derivation of what approval means,
+  // and the promise on screen and the behaviour here would drift apart.
+  const actions = replenishmentPlan.plannedActions(plan);
+  const toCarryOut = actions.filter((entry) => entry.when === 'now');
+
   try {
-    for (const move of plan.transfers) {
+    for (const move of toCarryOut.filter((entry) => entry.kind === 'transfer')) {
       const sourceBefore = repo.getBalance(db, workspaceId, skuId, move.fromLocationId);
       const destinationBefore = repo.getBalance(db, workspaceId, skuId, move.toLocationId);
+      const named = plan.transfers.find(
+        (entry) => entry.fromLocationId === move.fromLocationId && entry.toLocationId === move.toLocationId
+      ) || move;
 
       const built = proposals.build(db, ctx, {
         actionType: 'transfer',
         resolvedSkuId: skuId,
         quantity: move.quantity,
-        sourceLocation: move.fromLocationName,
-        destinationLocation: move.toLocationName,
+        sourceLocation: named.fromLocationName,
+        destinationLocation: named.toLocationName,
         assumptions: [],
       });
       if (!built.ok) throw new ValidationError(built.question || built.unsupported || 'Could not build the transfer.');
@@ -576,13 +585,13 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
       const destinationAfter = repo.getBalance(db, workspaceId, skuId, move.toLocationId);
       checks.push({
         kind: 'transfer',
-        from: move.fromLocationName,
-        to: move.toLocationName,
+        from: named.fromLocationName,
+        to: named.toLocationName,
         quantity: move.quantity,
         ok: sourceAfter === sourceBefore - move.quantity && destinationAfter === destinationBefore + move.quantity,
         sourceBefore, sourceAfter, destinationBefore, destinationAfter,
       });
-      moved.push({ ...move, proposalId: stored.proposalId });
+      moved.push({ ...named, proposalId: stored.proposalId });
     }
   } catch (error) {
     workItems.transition(db, workspaceId, item.id, workItems.STATUS.FAILED, {
@@ -600,7 +609,7 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
   // work out the order and put it in front of somebody; telling the supplier is
   // a separate act, and stays one.
   let purchaseOrderId = null;
-  if (plan.purchase) {
+  if (toCarryOut.some((entry) => entry.kind === 'prepare_order') && plan.purchase) {
     try {
       const order = poService.createOrder(db, ctx, membership, {
         supplierId: plan.purchase.supplierId,
@@ -657,6 +666,7 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
       verificationStatus: verified ? 'VERIFIED' : 'FAILED',
       outcome: {
         decision: plan.decision,
+        actions,
         transfers: moved.map((move) => ({
           from: move.fromLocationName, to: move.toLocationName, quantity: move.quantity,
         })),

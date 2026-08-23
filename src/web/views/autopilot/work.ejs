@@ -17,6 +17,46 @@
   </div>
   <div class="card-body">
     <% paragraphs.forEach(function (line) { %><p class="lede"><%= line %></p><% }) %>
+    <%# What the button does, listed, and what it deliberately does not. %>
+    <% if ((locals.actions || []).length) { %>
+      <% const now = locals.actions.filter(function (a) { return a.when === 'now'; }); %>
+      <% const later = locals.actions.filter(function (a) { return a.when === 'after'; }); %>
+      <% if (now.length) { %>
+        <h3 class="rep-plan-sub">What approving this will do</h3>
+        <ol class="plain-list">
+          <% now.forEach(function (a) { %>
+            <li><strong><%= a.text %></strong><br><span class="muted"><%= a.detail %></span></li>
+          <% }) %>
+        </ol>
+      <% } %>
+      <% if (later.length) { %>
+        <h3 class="rep-plan-sub">What it will not do</h3>
+        <ul class="plain-list">
+          <% later.forEach(function (a) { %>
+            <li><%= a.text %><br><span class="muted"><%= a.detail %></span></li>
+          <% }) %>
+        </ul>
+      <% } %>
+    <% } %>
+
+    <% if (locals.position) { %>
+      <h3 class="rep-plan-sub">Where this leaves the position</h3>
+      <table class="rep-plan-table">
+        <tbody>
+          <tr><td>On hand</td><td class="num"><%= locals.position.onHand %></td></tr>
+          <tr><td>On order <span class="muted">— placed with a supplier</span></td><td class="num"><%= locals.position.onOrder %></td></tr>
+          <tr><td>Drafted <span class="muted">— decided, not yet placed</span></td><td class="num"><%= locals.position.drafted %></td></tr>
+          <tr><td><strong>Position now</strong> <span class="muted">— on hand + on order</span></td><td class="num"><strong><%= locals.position.position %></strong></td></tr>
+          <tr><td>Reorder point</td><td class="num"><%= locals.position.reorderPoint %></td></tr>
+          <tr><td>Order up to</td><td class="num"><%= locals.position.target %></td></tr>
+          <tr><td><strong>Position after approving this</strong></td><td class="num"><strong><%= locals.position.afterApproval %></strong></td></tr>
+          <% if (locals.position.drafted) { %>
+            <tr><td>Once every drafted order is placed and arrives</td><td class="num"><%= locals.position.afterEveryOrderArrives %></td></tr>
+          <% } %>
+        </tbody>
+      </table>
+    <% } %>
+
     <% if (locals.supersededBy) { %>
       <p><a class="btn btn--sm" href="/autopilot/work/<%= locals.supersededBy %>">Open the plan that replaced this</a></p>
     <% } %>

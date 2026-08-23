@@ -648,7 +648,26 @@ test('an order the plan contains is not offered for approval on its own', async 
   const explained = autopilotPresenter.explain(env.db, env.workspace.workspaceId, planItem.id);
   const text = explained.paragraphs.join(' ');
   assert.match(text, /already drafted on PO-/);
-  assert.match(text, /approved here rather than on its own/);
+  assert.match(text, /Drafted is not the same as on order/,
+    'the two numbers are distinguished rather than left looking contradictory');
+
+  // What the button does is listed, and what it does not do is listed too.
+  const now = explained.actions.filter((entry) => entry.when === 'now');
+  const after = explained.actions.filter((entry) => entry.when === 'after');
+  assert.ok(now.length, 'approval has to name what it performs');
+  assert.ok(now.every((entry) => entry.kind === 'transfer'),
+    'with the order already drafted, approval moves stock and nothing else');
+  assert.ok(
+    after.some((entry) => entry.kind === 'place_order' && /PO-/.test(entry.text)),
+    'and says placing the drafted order stays a separate decision'
+  );
+
+  // The three quantities, separated.
+  assert.equal(explained.position.onOrder, 0);
+  assert.equal(explained.position.drafted, 36);
+  assert.equal(explained.position.position, 55);
+  assert.equal(explained.position.afterApproval, 55, 'moving stock does not change the position');
+  assert.equal(explained.position.afterEveryOrderArrives, 91);
   env.db.close();
 });
 
