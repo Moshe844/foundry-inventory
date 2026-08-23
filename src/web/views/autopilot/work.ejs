@@ -49,9 +49,22 @@
           <tr><td><strong>Position now</strong> <span class="muted">— on hand + on order</span></td><td class="num"><strong><%= locals.position.position %></strong></td></tr>
           <tr><td>Reorder point</td><td class="num"><%= locals.position.reorderPoint %></td></tr>
           <tr><td>Order up to</td><td class="num"><%= locals.position.target %></td></tr>
-          <tr><td><strong>Position after approving this</strong></td><td class="num"><strong><%= locals.position.afterApproval %></strong></td></tr>
-          <% if (locals.position.drafted) { %>
-            <tr><td>Once every drafted order is placed and arrives</td><td class="num"><%= locals.position.afterEveryOrderArrives %></td></tr>
+        </tbody>
+      </table>
+
+      <%# The same three figures again, as approving this leaves them. One
+          combined number hid the movement between them: placing an order does
+          not change what is on hand, and drafting one does not change the
+          position at all. %>
+      <h3 class="rep-plan-sub">After approving this</h3>
+      <table class="rep-plan-table">
+        <tbody>
+          <tr><td>On hand <span class="muted">— unchanged until the delivery is booked in</span></td><td class="num"><%= locals.position.after.onHand %></td></tr>
+          <tr><td>On order</td><td class="num"><%= locals.position.after.onOrder %></td></tr>
+          <tr><td>Drafted</td><td class="num"><%= locals.position.after.drafted %></td></tr>
+          <tr><td><strong>Position</strong></td><td class="num"><strong><%= locals.position.after.position %></strong></td></tr>
+          <% if (locals.position.afterEveryOrderArrives !== locals.position.after.position) { %>
+            <tr><td>Once every order is placed and arrives <span class="muted">— all of it on hand</span></td><td class="num"><%= locals.position.afterEveryOrderArrives %></td></tr>
           <% } %>
         </tbody>
       </table>

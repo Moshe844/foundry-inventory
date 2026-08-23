@@ -178,7 +178,7 @@ function planTransfers(needs, unitLabel) {
 }
 
 /** What each location holds once the transfers, and any delivery, have landed. */
-function projectAfter(needs, moves, purchase) {
+function projectAfter(needs, moves, purchase, draftedUnits = 0) {
   const byId = new Map(needs.map((loc) => [loc.locationId, { ...loc, after: loc.onHand }]));
   for (const move of moves) {
     byId.get(move.fromLocationId).after -= move.quantity;
@@ -197,7 +197,9 @@ function projectAfter(needs, moves, purchase) {
   return {
     byLocation: rows,
     onHandAfterMoves,
-    onHandAfterDelivery: onHandAfterMoves + (purchase ? purchase.quantityUnits : 0),
+    // Stock already drafted arrives too. Counting only a newly proposed order
+    // made "rising to 56 once the order arrives" out of 56 plus 24 coming.
+    onHandAfterDelivery: onHandAfterMoves + (purchase ? purchase.quantityUnits : 0) + draftedUnits,
   };
 }
 
@@ -394,7 +396,7 @@ function buildPlan(db, workspaceId, sku, options = {}) {
           ? 'purchase'
           : 'none';
 
-  const after = projectAfter(needs, moves, purchase);
+  const after = projectAfter(needs, moves, purchase, prepared ? prepared.units : 0);
   const moved = sum(moves, (m) => m.quantity);
 
   // Built by branch rather than by lookup: a lookup table evaluates every arm,
@@ -552,7 +554,29 @@ function plannedActions(plan) {
  */
 function positionBreakdown(plan) {
   const drafted = plan.prepared ? plan.prepared.units : 0;
-  const ordering = plan.purchase ? plan.purchase.quantityUnits : 0;
+
+  // What approval does to each figure, which is not the same for the two kinds
+  // of order. Preparing a draft decides to buy and tells nobody, so it moves
+  // units into "drafted" and leaves the position alone. Placing one commits
+  // them, so they leave "drafted" and become "on order" — and only then does
+  // the position rise. Adding a merely-drafted order to the position, and
+  // ignoring one actually being placed, were both wrong: a plan that placed 24
+  // units reported a position unchanged at 56.
+  const placing = plannedActions(plan)
+    .filter((entry) => entry.when === 'now' && entry.kind === 'place_order')
+    .reduce((total, entry) => total + (entry.units || 0), 0);
+  const drafting = plannedActions(plan)
+    .filter((entry) => entry.when === 'now' && entry.kind === 'prepare_order')
+    .reduce((total, entry) => total + (entry.units || 0), 0);
+
+  const after = {
+    // Stock does not arrive by being ordered. On hand only moves on receipt.
+    onHand: plan.onHandTotal,
+    onOrder: plan.onOrder + placing,
+    drafted: drafted - placing + drafting,
+  };
+  after.position = after.onHand + after.onOrder;
+
   return {
     onHand: plan.onHandTotal,
     onOrder: plan.onOrder,
@@ -560,10 +584,11 @@ function positionBreakdown(plan) {
     position: plan.networkPosition,
     reorderPoint: plan.reorderPoint,
     target: plan.target,
-    // What the position becomes once this plan's own actions have happened, and
-    // then once every drafted order has actually been placed and delivered.
-    afterApproval: plan.networkPosition + ordering,
-    afterEveryOrderArrives: plan.networkPosition + ordering + drafted,
+    after,
+    // Kept for callers reading the single figure.
+    afterApproval: after.position,
+    // Everything eventually placed and delivered, whichever step places it.
+    afterEveryOrderArrives: plan.onHandTotal + plan.onOrder + drafted + drafting,
   };
 }
 

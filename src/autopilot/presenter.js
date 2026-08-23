@@ -692,11 +692,19 @@ function explain(db, workspaceId, workItemId) {
     }
 
     if (action.after) {
+      // Say which figure this is. "56 in total" directly above a position of 80
+      // reads as a contradiction unless it is clear one counts what is on the
+      // shelf and the other counts what is on the shelf plus what is coming.
       paragraphs.push(
-        'Afterwards: ' +
+        'On hand afterwards: ' +
           action.after.byLocation.map((row) => `${row.locationName} ${row.before} → ${row.after}`).join(', ') +
           `, ${action.after.onHandAfterMoves} in total` +
-          (action.purchase ? `, rising to ${action.after.onHandAfterDelivery} when the order arrives.` : '.')
+          // Derived from the same breakdown the table below uses, not from the
+          // projection stored when the plan was made — otherwise the sentence
+          // and the table can disagree about the same product.
+          (action.purchase || action.prepared
+            ? `, rising to ${replenishmentPlan.positionBreakdown(planShape(action)).afterEveryOrderArrives} once the order arrives.`
+            : '.')
       );
     }
 

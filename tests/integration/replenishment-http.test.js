@@ -872,3 +872,127 @@ test('a fresh workspace reaches exactly one replenishment decision, and it expla
   store.db.close();
 });
 
+/**
+ * Drafted, on order and on hand are three different things, and approving a
+ * plan moves units between them in a particular way.
+ *
+ * The table defined the position as on hand plus on order and then reported
+ * "position after approving this" as unchanged at 56, on a plan whose whole
+ * action was placing 24 drafted units. It was wrong in both directions:
+ * merely drafting an order was being added to the position, and actually
+ * placing one was not.
+ */
+test('placing a drafted order moves units into on-order, and only receipt moves them on hand', async () => {
+  const itemService = require('../../src/domain/item-service');
+  const poService = require('../../src/purchasing/po-service');
+  const receiving = require('../../src/purchasing/receiving-service');
+  const replenishmentPlan = require('../../src/purchasing/replenishment-plan');
+  const signalEngine = require('../../src/signals/signal-engine');
+
+  const DAY = 24 * 60 * 60 * 1000;
+  const when = (n) => new Date(Date.now() - n * DAY).toISOString();
+
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Position Co' });
+  const membership = authService.getMembership(store.db, workspace.workspaceId, workspace.accountId);
+
+  const created = itemService.createItem(store.db, workspace.ctx, {
+    name: 'Cotton Tee', baseCode: 'CT-1', trackingMode: 'quantity',
+  });
+  const sku = repo.listSkusForItem(store.db, workspace.workspaceId, created.itemId)[0];
+
+  // 56 on hand in one place, selling slowly enough that the location is not
+  // short of itself — so the plan's only business is the order.
+  inventory.receive(store.db, workspace.ctx, {
+    skuId: sku.id, locationId: workspace.main.id, quantity: 60, occurredAt: when(40),
+  });
+  for (let i = 0; i < 4; i += 1) {
+    inventory.issue(store.db, workspace.ctx, {
+      skuId: sku.id, locationId: workspace.main.id, quantity: 1, reasonCode: 'sold', occurredAt: when(20 - i * 4),
+    });
+  }
+
+  const supplier = supplierService.createSupplier(store.db, workspace.ctx, membership, { name: 'ABC Apparel' });
+  supplierService.linkItem(store.db, workspace.ctx, membership, {
+    supplierId: supplier.id, skuId: sku.id, purchaseUnit: 'case',
+    unitsPerPurchaseUnit: 12, minimumOrderQuantity: 1, leadTimeDays: 15, isPreferred: true,
+  });
+  policyService.setPolicy(store.db, workspace.ctx, membership, sku.id, { reorderPoint: 60, targetStock: 80 });
+
+  // A draft for 24, already prepared.
+  let order = poService.createOrder(store.db, workspace.ctx, membership, {
+    supplierId: supplier.id, source: 'foundry_recommendation',
+    lines: [{ skuId: sku.id, quantityPurchaseUnits: 2, unitCost: 3,
+      destinationLocationId: workspace.main.id }],
+  });
+  assert.equal(order.status, 'DRAFT');
+
+  const planFor = () => replenishmentPlan.buildPlan(
+    store.db, workspace.workspaceId,
+    signalEngine.skuSignals(store.db, workspace.workspaceId, { skuIds: [sku.id] })[0]
+  );
+
+  // Before approval: 56 on hand, nothing on order, 24 decided but not placed.
+  const before = replenishmentPlan.positionBreakdown(planFor());
+  assert.equal(before.onHand, 56);
+  assert.equal(before.onOrder, 0);
+  assert.equal(before.drafted, 24);
+  assert.equal(before.position, 56, 'position is on hand plus on order, and nothing is on order');
+
+  // Approving places those 24, so they become on order and the position rises.
+  assert.equal(before.after.onHand, 56, 'ordering does not put stock on a shelf');
+  assert.equal(before.after.onOrder, 24);
+  assert.equal(before.after.drafted, 0, 'they are no longer merely drafted');
+  assert.equal(before.after.position, 80, '56 on hand + 24 on order');
+
+  // Carry it out for real and check the figures land where the plan said.
+  order = poService.approve(store.db, workspace.ctx, membership, order.id, {
+    expectedHash: order.integrityHash, markOrdered: true,
+  });
+  assert.equal(order.status, 'ORDERED');
+
+  const placed = replenishmentPlan.positionBreakdown(planFor());
+  assert.equal(placed.onHand, 56, 'still not arrived');
+  assert.equal(placed.onOrder, 24);
+  assert.equal(placed.drafted, 0);
+  assert.equal(placed.position, 80);
+
+  // Receipt is what moves them on hand.
+  receiving.receive(store.db, workspace.ctx, membership, order.id, {
+    idempotencyKey: 'arrived',
+    lines: order.lines.map((line) => ({
+      lineId: line.id,
+      quantityUnits: line.quantity_units || line.quantityUnits,
+      locationId: workspace.main.id,
+    })),
+  });
+
+  const received = replenishmentPlan.positionBreakdown(planFor());
+  assert.equal(received.onHand, 80, 'now it is on the shelf');
+  assert.equal(received.onOrder, 0, 'and no longer coming');
+  assert.equal(received.position, 80, 'the position did not double-count it on the way');
+  store.db.close();
+});
+
+test('preparing a draft order does not raise the position', async () => {
+  // The other half of the same mistake: a plan that only drafts an order was
+  // reporting the position as though the order had already been placed.
+  const env = await blackSmall();
+  const replenishmentPlan = require('../../src/purchasing/replenishment-plan');
+  const signalEngine = require('../../src/signals/signal-engine');
+
+  const plan = replenishmentPlan.buildPlan(
+    env.db, env.workspace.workspaceId,
+    signalEngine.skuSignals(env.db, env.workspace.workspaceId, { skuIds: [env.small.id] })[0]
+  );
+  const figures = replenishmentPlan.positionBreakdown(plan);
+
+  assert.ok(plan.purchase, 'this plan proposes a new order');
+  assert.equal(figures.after.onOrder, figures.onOrder, 'a draft is not on order');
+  assert.equal(figures.after.position, figures.position, 'so the position does not move');
+  assert.equal(
+    figures.after.drafted, figures.drafted + plan.purchase.quantityUnits,
+    'the units are decided, and that is all'
+  );
+  env.db.close();
+});
