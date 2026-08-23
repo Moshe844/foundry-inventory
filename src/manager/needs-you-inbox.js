@@ -30,6 +30,8 @@ const autopilotPresenter = require('../autopilot/presenter');
 const managerReadiness = require('./readiness');
 const actionPresenter = require('../actions/presenter');
 const proposals = require('../actions/proposal-service');
+const importPlans = require('../imports/plan-service');
+const autopilotPolicies = require('../autopilot/policy-service');
 
 /**
  * What Foundry does not know about a reported event.
@@ -133,16 +135,68 @@ function fromWorkItems(db, workspaceId) {
   return workItems.awaitingApproval(db, workspaceId).map((item) => {
     const action = item.recommendedAction || {};
     const named = (item.affectedEntities || {}).displayName;
+    const base = { id: `work:${item.id}`, at: item.createdAt, href: `/autopilot/work/${item.id}` };
+
+    // Checking in a delivery is not an approval, and describing it as one —
+    // "Foundry will not move stock or commit money without you", above a button
+    // called Review the plan — told somebody the opposite of what to do. It is
+    // a box that has arrived, and the job is to count what is in it.
+    if (item.category === 'receiving_followup') {
+      const po = action.poNumber || 'A delivery';
+      const from = action.supplierName ? ` from ${action.supplierName}` : '';
+      return {
+        ...base,
+        kind: 'receiving',
+        title: `${po}${from} ${action.late ? 'is late' : 'is due'}`,
+        happened: (() => {
+          // Older items stored the date only as evidence, so it is read from
+          // there too rather than telling somebody Foundry is still waiting for
+          // a delivery the heading has just called late.
+          const evidence = (item.sourceEvidence || []).find((fact) => fact.label === 'Expected');
+          const due = action.expectedDate || (evidence && evidence.value) || null;
+          const outstanding = action.outstandingUnits
+            ? `, with ${action.outstandingUnits} unit(s) still outstanding.` : '.';
+          if (due && action.late) {
+            return `It was due on ${due}` +
+              `${action.daysLate ? `, ${action.daysLate} day(s) ago` : ''}${outstanding}`;
+          }
+          if (due) return `It is due on ${due}${outstanding}`;
+          return `Foundry is watching for it to arrive${outstanding}`;
+        })(),
+        why: 'Foundry cannot see what is physically in the box, so it will not book a delivery in for you.',
+        missing: 'How many actually arrived.',
+        actionLabel: 'Book it in',
+        // Straight to the order, where one button books the whole thing in.
+        href: action.purchaseOrderId ? `/purchasing/orders/${action.purchaseOrderId}` : base.href,
+        priority: action.late ? 88 : 82,
+      };
+    }
+
+    if (item.category === 'purchase_approval') {
+      const po = action.poNumber || 'A purchase order';
+      const exception = item.source === 'price_exception';
+      return {
+        ...base,
+        kind: 'decision',
+        title: exception ? `${po} costs more than your rule allows` : `${po} is ready to send`,
+        happened: (item.policyEvaluation || {}).reason || `${po} for ${action.supplierName || 'a supplier'}.`,
+        why: exception
+          ? 'Your rule caps how far a price may move, and this order is over it, so Foundry stopped.'
+          : 'Foundry prepared it but will not place an order with a supplier by itself.',
+        missing: exception ? 'Whether to accept the new price.' : 'Your decision to place it.',
+        actionLabel: 'Review the order',
+        priority: 84,
+      };
+    }
+
     return {
-      id: `work:${item.id}`,
+      ...base,
       kind: 'decision',
       title: named ? `${named} needs a decision` : item.categoryLabel,
       happened: action.explanation || (item.policyEvaluation || {}).reason || item.categoryLabel,
       why: 'Foundry will not move stock or commit money without you.',
       missing: 'Your approval of the plan.',
       actionLabel: 'Review the plan',
-      href: `/autopilot/work/${item.id}`,
-      at: item.createdAt,
       priority: 85,
     };
   });
@@ -174,10 +228,82 @@ function fromReadiness(db, workspaceId) {
       happened: entry.because || 'Foundry cannot do part of its job yet.',
       why: entry.why || 'Foundry needs something from you before it can work this out.',
       missing: entry.missing || entry.action || 'The information named above.',
-      actionLabel: entry.actionLabel || 'Sort this out',
+      actionLabel: entry.actionLabel || entry.action || 'Sort this out',
       href: entry.link || entry.href || '/settings',
       at: null,
       priority: 50,
+    }));
+}
+
+
+/**
+ * A file read but not yet brought in.
+ *
+ * Uploading a spreadsheet and walking away left nothing anywhere: the plan sat
+ * in Imports waiting to be approved, and Needs you — the page whose whole
+ * promise is "everything waiting for you is here" — said nothing was. Somebody
+ * had to remember they had started.
+ */
+function fromImports(db, workspaceId) {
+  return importPlans
+    .listFor(db, workspaceId, 20)
+    // Approving an import is only half of it — the rows are brought in by a
+    // second press. Filtering on "not yet approved" made the item vanish the
+    // moment somebody approved, leaving the import undone and nothing anywhere
+    // saying so. What matters is whether the rows exist yet.
+    .filter((plan) => ['DRAFT', 'AWAITING_APPROVAL', 'APPROVED'].includes(plan.approvalStatus)
+      && plan.status === 'READY'
+      // An expired plan is not a job waiting; it is one that has to start again.
+      && !plan.isExpired)
+    .map((plan) => {
+      const rows = plan.recordsDetected || 0;
+      const problems = plan.recordsInvalid || 0;
+      return {
+        id: `import:${plan.id}`,
+        kind: 'import',
+        title: plan.approvalStatus === 'APPROVED'
+          ? `${plan.sourceName || 'A file'} is approved and waiting to be brought in`
+          : `${plan.sourceName || 'A file'} is read and waiting to be brought in`,
+        happened: rows
+          ? `Foundry read ${rows} row(s) from it. Nothing has been created yet.`
+          : 'Foundry read the file. Nothing has been created yet.',
+        why: 'Foundry does not create products or stock from a file until somebody has looked at what it found.',
+        missing: plan.approvalStatus === 'APPROVED'
+          ? 'One more press to actually bring the rows in. Nothing has been created yet.'
+          : problems
+            ? `A decision on ${problems} row(s) it could not place, then your approval.`
+            : 'Your approval to bring these rows in.',
+        actionLabel: plan.approvalStatus === 'APPROVED' ? 'Bring it in' : 'Review the file',
+        href: `/imports/${plan.id}`,
+        at: plan.createdAt,
+        priority: 75,
+      };
+    });
+}
+
+/**
+ * A rule written but never switched on.
+ *
+ * Foundry proposes a policy after watching how somebody works, and it does
+ * nothing at all until approved. Left off this page, the proposal was invisible
+ * unless you went looking in Settings for something you did not know existed.
+ */
+function fromPolicies(db, workspaceId) {
+  return autopilotPolicies
+    .list(db, workspaceId)
+    .filter((policy) => !policy.approvedAt && !policy.disabledAt)
+    .map((policy) => ({
+      id: `policy:${policy.id}`,
+      kind: 'authority',
+      title: `A rule is waiting for your decision: ${policy.name}`,
+      happened: policy.description
+        || `Foundry has drafted a rule covering ${policy.allowedActionTypes.join(', ') || 'some work'}.`,
+      why: 'Foundry will not act on its own authority until you have read the rule and agreed to it.',
+      missing: 'Whether Foundry may do this without asking, and within what limits.',
+      actionLabel: 'Read the rule',
+      href: `/autopilot/policies/${policy.id}`,
+      at: policy.createdAt,
+      priority: 65,
     }));
 }
 
@@ -192,6 +318,8 @@ function inbox(db, workspaceId) {
     ...safely(fromWorkItems),
     ...safely(fromInvestigations),
     ...safely(fromCorrections),
+    ...safely(fromImports),
+    ...safely(fromPolicies),
     ...safely(fromFindings),
     ...safely(fromReadiness),
   ].sort((a, b) => (b.priority - a.priority) || String(b.at || '').localeCompare(String(a.at || '')));
@@ -203,6 +331,8 @@ module.exports = {
   fromPhysicalEvents,
   fromInvestigations,
   fromCorrections,
+  fromImports,
+  fromPolicies,
   fromWorkItems,
   fromFindings,
   fromReadiness,

@@ -42,6 +42,29 @@ const json = (value, fallback) => {
 };
 
 /** What is still outstanding on an order, ready for a receiving screen. */
+/**
+ * Retires any outstanding "book this delivery in" work for an order.
+ *
+ * Wrapped so a workspace without the autopilot tables, or a reminder already
+ * dealt with, cannot turn a successful receipt into a failed one. Booking stock
+ * in is the important half; tidying the reminder is not worth losing it over.
+ */
+function closeReceivingReminders(db, workspaceId, purchaseOrderId) {
+  try {
+    const workItems = require('../autopilot/work-items');
+    for (const item of workItems.list(db, workspaceId, { category: 'receiving_followup', limit: 200 })) {
+      if (item.isTerminal) continue;
+      const orderId = item.purchaseOrderId || (item.recommendedAction || {}).purchaseOrderId;
+      if (orderId !== purchaseOrderId) continue;
+      workItems.transition(db, workspaceId, item.id, workItems.STATUS.COMPLETED, {
+        completedAt: new Date().toISOString(),
+        verificationStatus: 'NOT_APPLICABLE',
+        outcome: { ...(item.outcome || {}), bookedIn: true, purchaseOrderId },
+      });
+    }
+  } catch { /* the receipt is what matters */ }
+}
+
 function outstandingLines(db, workspaceId, poId) {
   const order = poService.get(db, workspaceId, poId);
   return {
@@ -287,6 +310,12 @@ function receive(db, ctx, membership, poId, input = {}) {
       poId,
       ctx.workspaceId
     );
+
+    // A reminder to book in a delivery is finished when the delivery is booked
+    // in, whichever screen did it. Left open, "PO-1001 is late" stayed in Needs
+    // you after the stock had arrived and been counted — the queue telling
+    // somebody to do a job they had just done.
+    if (status === poService.STATUS.RECEIVED) closeReceivingReminders(db, ctx.workspaceId, poId);
 
     const result = {
       unitsReceived: checked.totalUnits,

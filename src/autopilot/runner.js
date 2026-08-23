@@ -345,6 +345,9 @@ function planWork(db, ctx, membership, options = {}) {
         poNumber: delivery.poNumber,
         supplierName: delivery.supplierName,
         outstandingUnits: delivery.outstandingUnits,
+        // The date belongs with the action, not only in the evidence: anything
+        // describing this to a person needs to say when it was due.
+        expectedDate: delivery.expectedDate,
         late: delivery.late,
         daysLate: delivery.daysLate,
       },

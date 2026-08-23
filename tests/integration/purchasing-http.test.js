@@ -723,3 +723,48 @@ test('the product page shows the levels that are saved, not "no reorder level se
   assert.doesNotMatch(smallRow.slice(0, 200), /No reorder level set/i);
   env.db.close();
 });
+
+test('booking a delivery in clears the reminder to book it in', async () => {
+  // Found in the browser: the stock arrived, was counted and was live, and
+  // "PO-1001 from Nordic Filters is late" was still sitting in Needs you —
+  // the queue asking for a job that had just been done.
+  const runner = require('../../src/autopilot/runner');
+  const workItems = require('../../src/autopilot/work-items');
+  const receiving = require('../../src/purchasing/receiving-service');
+
+  const env = sixVariantsNoHistory();
+  const { agent } = await owner(env);
+  const supplier = suppliers.createSupplier(env.db, env.workspace.ctx, env.membership, { name: 'Nordic Filters' });
+  suppliers.linkItem(env.db, env.workspace.ctx, env.membership, {
+    supplierId: supplier.id, skuId: env.small.id, purchaseUnit: 'box',
+    unitsPerPurchaseUnit: 10, lastUnitCost: 4, leadTimeDays: 7, isPreferred: true,
+  });
+  const yesterday = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  let order = poService.createOrder(env.db, env.workspace.ctx, env.membership, {
+    supplierId: supplier.id, expectedDate: yesterday,
+    lines: [{ skuId: env.small.id, quantityPurchaseUnits: 4, unitCost: 4,
+      destinationLocationId: env.workspace.main.id }],
+  });
+  order = poService.approve(env.db, env.workspace.ctx, env.membership, order.id, {
+    expectedHash: order.integrityHash, markOrdered: true,
+  });
+
+  runner.run(env.db, env.workspace.ctx, env.membership, { trigger: 'test' });
+  const reminder = workItems.list(env.db, env.workspace.workspaceId, { category: 'receiving_followup' })[0];
+  assert.ok(reminder, 'an overdue delivery is worth a reminder');
+  assert.equal(reminder.isTerminal, false);
+
+  receiving.receive(env.db, env.workspace.ctx, env.membership, order.id, {
+    idempotencyKey: 'booked-in',
+    lines: order.lines.map((line) => ({
+      lineId: line.id, quantityUnits: line.quantity_units || line.quantityUnits,
+      locationId: env.workspace.main.id,
+    })),
+  });
+
+  const after = workItems.get(env.db, env.workspace.workspaceId, reminder.id);
+  assert.equal(after.isTerminal, true, 'the reminder is finished once the delivery is booked in');
+  const inbox = plain((await agent.get('/needs-you')).text);
+  assert.doesNotMatch(inbox, /is late/, 'and it leaves Needs you');
+  env.db.close();
+});
