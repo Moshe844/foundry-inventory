@@ -518,13 +518,21 @@ function plannedActions(plan) {
 
   if (plan.prepared) {
     const numbers = plan.prepared.orders.map((order) => order.poNumber).join(', ');
+    // If the plan has something else to carry out, placing the order stays a
+    // separate decision. If it has not, placing that order is the whole plan —
+    // and calling it "what this will not do" would make the plan a no-op with
+    // an approve button.
+    const nothingElse = plan.transfers.length === 0 && !plan.purchase;
     actions.push({
-      when: 'after',
+      when: nothingElse ? 'now' : 'after',
       kind: 'place_order',
-      text: `Place ${numbers} with the supplier — ${plan.prepared.units} ${plan.unitLabel}(s) — when you are ready`,
-      detail:
-        'It is already drafted and is counted in this plan, which is why no further order is proposed. ' +
-        'Approving the plan does not place it; that stays a decision of its own.',
+      text: nothingElse
+        ? `Place ${numbers} with ${plan.prepared.orders.length === 1 ? 'the supplier' : 'the suppliers'} — ${plan.prepared.units} ${plan.unitLabel}(s)`
+        : `Place ${numbers} with the supplier — ${plan.prepared.units} ${plan.unitLabel}(s) — when you are ready`,
+      detail: nothingElse
+        ? 'It was drafted earlier and covers what this line is short. Approving records that you have placed it.'
+        : 'It is already drafted and is counted in this plan, which is why no further order is proposed. ' +
+          'Approving the plan does not place it; that stays a decision of its own.',
       orders: plan.prepared.orders,
       units: plan.prepared.units,
     });
@@ -625,7 +633,12 @@ function planWorkspace(db, workspaceId, signals, options = {}) {
     plans,
     governed,
     governedSkuIds: new Set(governed.map((plan) => plan.skuId)),
-    actionable: governed.filter((plan) => plan.decision !== 'none' || plan.blocked),
+    // A line below its level with an order already drafted still has a decision
+    // outstanding — placing it. Treating that as "nothing to do" left the plan
+    // unmade, so nothing owned the order and the bare "PO-1001 is ready to
+    // send" survived as the only thing the customer was offered.
+    actionable: governed.filter((plan) =>
+      plan.decision !== 'none' || plan.blocked || (plan.prepared && plan.belowReorderPoint)),
     // Lines where one need produces two actions at once. These are the ones
     // that must be decided together — a move sized as though the order is not
     // happening, beside an order sized as though the move is not, is two

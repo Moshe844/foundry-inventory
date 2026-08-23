@@ -523,6 +523,26 @@ function olderFragmentsFor(env) {
 test('a plan supersedes the older transfer and PO it replaces, leaving one decision', async () => {
   const env = await blackSmall();
   const older = olderFragmentsFor(env);
+  // A purchase approval records only an order and a supplier — no sku, no
+  // lines — so matching superseded work by sku alone never recognised it as
+  // being about this product, and "PO-1001 is ready to send" outlived the plan
+  // that had taken it over. Found on a real workspace.
+  const poService = require('../../src/purchasing/po-service');
+  const order = poService.createOrder(env.db, env.workspace.ctx, env.membership, {
+    supplierId: env.supplier.id, source: 'foundry_recommendation',
+    lines: [{ skuId: env.small.id, quantityPurchaseUnits: 3 }],
+  });
+  const orderOnly = workItems.upsert(env.db, env.workspace.workspaceId, {
+    category: 'purchase_approval', source: 'purchase_policy',
+    purchaseOrderId: order.id,
+    affectedEntities: { supplierId: env.supplier.id, purchaseOrderId: order.id },
+    recommendedAction: { actionType: 'approve_purchase_order', purchaseOrderId: order.id,
+      poNumber: order.poNumber, supplierName: 'ABC Apparel' },
+    approvalRequirement: 'REQUIRED', executionStatus: workItems.STATUS.WAITING_FOR_APPROVAL,
+    priority: 70, urgency: 'normal', confidence: 'high',
+    idempotencyKey: `purchase_approval:${order.id}`,
+  }).item;
+
 
   // Both are live and approvable before the plan exists.
   assert.equal(workItems.get(env.db, env.workspace.workspaceId, older.transfer.id).isTerminal, false);
@@ -544,7 +564,7 @@ test('a plan supersedes the older transfer and PO it replaces, leaving one decis
   assert.equal(active[0].category, 'replenishment_plan');
 
   // The old ones are retired, not deleted, and say what took them over.
-  for (const id of [older.transfer.id, older.purchase.id]) {
+  for (const id of [older.transfer.id, older.purchase.id, orderOnly.id]) {
     const retired = workItems.get(env.db, env.workspace.workspaceId, id);
     assert.equal(retired.executionStatus, 'SUPERSEDED', `${retired.category} must be superseded`);
     assert.equal(retired.isTerminal, true, 'and terminal, so nothing can run it');
@@ -851,3 +871,4 @@ test('a fresh workspace reaches exactly one replenishment decision, and it expla
   assert.equal(order.lines[0].quantity_units || order.lines[0].quantityUnits, 72);
   store.db.close();
 });
+

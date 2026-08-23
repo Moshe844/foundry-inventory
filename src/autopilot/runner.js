@@ -465,12 +465,25 @@ function planWork(db, ctx, membership, options = {}) {
  */
 function supersedeOlderWork(db, workspaceId, skuId, planItem) {
   const superseded = [];
+  // Matching by sku alone missed the one that mattered most. A purchase
+  // approval records only the order and the supplier — no sku, no lines — so
+  // "PO-1001 is ready to send" was never recognised as being about this
+  // product, and survived the plan that had taken it over.
+  const orderCoversSku = (orderId) => {
+    if (!orderId) return false;
+    const row = db
+      .prepare('SELECT 1 FROM purchase_order_lines WHERE workspace_id = ? AND purchase_order_id = ? AND sku_id = ?')
+      .get(workspaceId, orderId, skuId);
+    return Boolean(row);
+  };
+
   const concerns = (entry) => {
     const entities = entry.affectedEntities || {};
     if (entities.skuId === skuId) return true;
     const action = entry.recommendedAction || {};
     if (action.skuId === skuId) return true;
-    return (action.lines || []).some((line) => line.skuId === skuId);
+    if ((action.lines || []).some((line) => line.skuId === skuId)) return true;
+    return orderCoversSku(entry.purchaseOrderId || action.purchaseOrderId || entities.purchaseOrderId);
   };
 
   for (const category of ['balance_transfer', 'purchase_preparation', 'purchase_approval']) {
@@ -531,7 +544,9 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
   }
 
   const plan = replenishmentPlan.buildPlan(db, workspaceId, sku);
-  if (plan.decision === 'none' && !plan.purchase) {
+  const placing = replenishmentPlan.plannedActions(plan)
+    .filter((entry) => entry.when === 'now' && entry.kind === 'place_order');
+  if (plan.decision === 'none' && !plan.purchase && !placing.length) {
     const settled = workItems.transition(db, workspaceId, item.id, workItems.STATUS.COMPLETED, {
       completedAt: nowIso(),
       verificationStatus: 'NOT_APPLICABLE',
@@ -655,6 +670,23 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
       });
     } catch (error) {
       checks.push({ kind: 'purchase', ok: false, error: error.message });
+    }
+  }
+
+  // An order this plan owns and said it would place. Placing is recording that
+  // the order has been put to the supplier; Foundry still contacts nobody.
+  for (const entry of placing) {
+    for (const order of entry.orders || []) {
+      try {
+        const current = poService.get(db, workspaceId, order.poId);
+        const placed = poService.approve(db, ctx, membership, order.poId, {
+          expectedHash: current.integrityHash, markOrdered: true,
+        });
+        purchaseOrderId = purchaseOrderId || order.poId;
+        checks.push({ kind: 'purchase', poNumber: placed.poNumber, status: placed.status, ok: true });
+      } catch (error) {
+        checks.push({ kind: 'purchase', poNumber: order.poNumber, ok: false, error: error.message });
+      }
     }
   }
 
