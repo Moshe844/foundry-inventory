@@ -368,7 +368,78 @@ function mentionsKnownProduct(db, workspaceId, message) {
 }
 
 const autopilotPresenter = require('../../autopilot/presenter');
+const needsYouInbox = require('../../manager/needs-you-inbox');
 const autopilotModes = require('../../autopilot/modes');
+
+/**
+ * Finishing one thing Foundry could not record.
+ *
+ * The card used to point at the general Tell Foundry box, where the only thing
+ * a customer could do was retype the sentence that had already failed. This
+ * takes the sentence they already gave, works it out again now, and lands them
+ * on whatever actually resolves it:
+ *
+ *   it resolves      → the prepared change, ready to approve
+ *   it needs an answer → that exact question, with a box to answer it, and the
+ *                        original sentence carried along so nothing is retyped
+ *   a rule refuses it → the refusal, with the ways out
+ *
+ * The event is closed the moment it stops being something waiting for a person,
+ * rather than being left behind as a second copy of a job already done.
+ */
+router.get(
+  '/needs-you/event/:id',
+  asyncRoute(async (req, res) => {
+    const event = physicalEvents.get(req.db, req.ctx.workspaceId, req.params.id);
+    if (!event) {
+      req.flash('error', 'That is no longer waiting for you.');
+      return res.redirect(303, '/needs-you');
+    }
+
+    const result = await actionService.interpret(req.db, req.ctx, req.user, event.statedAs, {
+      provider: req.app.locals.aiProvider || undefined,
+    });
+
+    // It resolves now: the change is prepared and the event has been dealt with.
+    const target = actionRedirect(result);
+    if (target) {
+      physicalEvents.complete(req.db, req.ctx.workspaceId, event.id);
+      req.flash('info', 'Foundry worked this out. Nothing changes until you approve it.');
+      return res.redirect(303, target);
+    }
+
+    // It needs an answer. The question is carried to the one screen that can
+    // take it, along with the sentence, so answering continues the original
+    // request instead of starting a new one.
+    if (result.kind === 'question' && result.question) {
+      req.session.pendingActionQuestion = {
+        question: result.question,
+        instruction: event.statedAs,
+        choices: result.choices || null,
+        physicalEventId: event.id,
+      };
+      return res.redirect(303, '/actions');
+    }
+
+    if (result.kind === 'unsupported' && result.message) {
+      physicalEvents.complete(req.db, req.ctx.workspaceId, event.id);
+      req.session.pendingActionQuestion = {
+        unsupported: result.message,
+        blocked: result.blocked || null,
+        instruction: event.statedAs,
+      };
+      return res.redirect(303, '/actions');
+    }
+
+    // Nothing above fits. Say so plainly rather than bouncing them somewhere.
+    req.session.pendingActionQuestion = {
+      question: 'What should Foundry record for this? Say the product, the place and how many.',
+      instruction: event.statedAs,
+      physicalEventId: event.id,
+    };
+    return res.redirect(303, '/actions');
+  })
+);
 
 router.get('/needs-you', asyncRoute(async (req, res) => {
   // An opening-balance investigation is answered by recording the stock, and
@@ -393,6 +464,10 @@ router.get('/needs-you', asyncRoute(async (req, res) => {
   });
   res.page('manager/needs-you', {
     title: 'Needs you', nav: 'attention', operating,
+    // One list, built by one contract. The per-mechanism collections below are
+    // still passed for anything else reading this page, but the page itself
+    // renders the inbox.
+    inbox: needsYouInbox.inbox(req.db, req.ctx.workspaceId),
     investigations: openInvestigations, waiting, physical,
     // The same findings the home page counts under "what needs me". They were
     // missing here, so home said one decision was waiting and the page it sent

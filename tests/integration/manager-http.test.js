@@ -32,10 +32,13 @@ test('Needs you is one consolidated, authenticated exception queue', async () =>
   assert.equal(page.status, 200);
   const text = plain(page.text);
   assert.match(text, /things Foundry cannot settle itself/i);
-  assert.match(text, /Missing information/);
-  assert.match(text, /Differences to look into/);
-  assert.match(text, /Deliveries and counts to confirm/);
-  assert.match(text, /Your decision/);
+  // The queue is one list now rather than a section per internal mechanism, so
+  // the contract is what is asserted: an empty inbox says so once, plainly, and
+  // does not name physical events, investigations or work items at a customer.
+  assert.match(text, /Nothing is waiting/);
+  for (const internal of [/physical event/i, /work item/i, /attention item/i, /proposal/i]) {
+    assert.doesNotMatch(text, internal, 'internal vocabulary must not reach the page');
+  }
   env.db.close();
 });
 
@@ -110,7 +113,9 @@ test('resolving an investigation clears the linked physical event from Needs you
   );
 
   const needsYou = plain((await env.agent.get('/needs-you')).text);
-  assert.match(needsYou, /No investigations need you/);
+  // Resolved means gone from the inbox, not moved to a quieter section of it.
+  assert.doesNotMatch(needsYou, /does not match the records/,
+    'the investigation must leave Needs you the moment it is settled');
   assert.doesNotMatch(needsYou, /I counted 17 Filter Cartridge/);
   assert.equal(env.db.prepare('SELECT status FROM physical_events WHERE id = ?').get(event.id).status, 'COMPLETED');
   env.db.close();
@@ -327,7 +332,9 @@ test('confirming a count prepares the correction, and Needs you stays actionable
 
   // And Needs you still has something to do, because the ledger is still wrong.
   const midway = plain((await env.agent.get('/needs-you')).text);
-  assert.match(midway, /Corrections to approve/);
+  assert.match(midway, /A change is prepared and waiting for you/,
+    'the prepared correction is still an item, with what it is and what it needs');
+  assert.match(midway, /Review and approve/, 'and one obvious action');
   assert.doesNotMatch(midway, /Nothing is waiting/,
     'the ledger is known to be wrong, so Needs you must not report all clear');
 
@@ -364,8 +371,9 @@ test('confirming a count prepares the correction, and Needs you stays actionable
   // legitimately waiting — asserting a globally empty queue would be asserting
   // an unrelated fact about the fixture.)
   const settled = plain((await env.agent.get('/needs-you')).text);
-  assert.match(settled, /Corrections to approve Clear/);
-  assert.match(settled, /No investigations need you/);
+  assert.doesNotMatch(settled, /A change is prepared and waiting for you/,
+    'once approved it leaves the inbox immediately');
+  assert.doesNotMatch(settled, /does not match the records/, 'and so does the investigation');
   assert.doesNotMatch(settled, /Black T-shirt.*8.*5/);
   env.db.close();
 });

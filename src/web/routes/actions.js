@@ -17,6 +17,7 @@ const execution = require('../../actions/execution-service');
 const presenter = require('../../actions/presenter');
 const permissions = require('../../actions/permissions');
 const attention = require('../../attention/attention-engine');
+const physicalEvents = require('../../manager/physical-events');
 const importPlans = require('../../imports/plan-service');
 const { requireAuth, asyncRoute } = require('../middleware');
 const repo = require('../../domain/repository');
@@ -94,6 +95,10 @@ router.get(
       // A refusal an inventory rule produced carries its numbers, so the page
       // can name the rule and offer the ways out rather than restate the prose.
       blocked: (handed && handed.blocked) || null,
+      // Carried through the answer so resolving the question also closes the
+      // thing in Needs you that sent them here, rather than leaving a second
+      // copy of a job now done.
+      physicalEventId: (handed && handed.physicalEventId) || null,
       choices: (handed && handed.choices) || null,
     });
   })
@@ -136,9 +141,27 @@ router.post(
       return res.redirect(303, '/actions');
     }
 
-    if (result.kind === 'proposal') return res.redirect(303, `/actions/${result.proposal.proposalId}`);
-    if (result.kind === 'existing') return res.redirect(303, `/actions/${result.proposal.proposalId}`);
-    if (result.kind === 'plan') return res.redirect(303, `/actions/plan/${result.plan.planId}`);
+    // The answer produced the change, so whatever was waiting in Needs you for
+    // that answer is finished. Leaving it open would show one need twice: the
+    // report that could not be placed, and the correction it just became.
+    const settleEvent = () => {
+      const eventId = trimOrNull(req.body.physicalEventId);
+      if (!eventId) return;
+      try { physicalEvents.complete(req.db, req.ctx.workspaceId, eventId); } catch { /* already gone */ }
+    };
+
+    if (result.kind === 'proposal') {
+      settleEvent();
+      return res.redirect(303, `/actions/${result.proposal.proposalId}`);
+    }
+    if (result.kind === 'existing') {
+      settleEvent();
+      return res.redirect(303, `/actions/${result.proposal.proposalId}`);
+    }
+    if (result.kind === 'plan') {
+      settleEvent();
+      return res.redirect(303, `/actions/plan/${result.plan.planId}`);
+    }
     if (result.kind === 'missing_location') {
       req.session.pendingLocationTransfer = {
         locationName: result.locationName,
@@ -161,6 +184,7 @@ router.post(
       question: result.kind === 'question' ? result.question : null,
       unsupported: result.kind === 'unsupported' ? result.message : null,
       blocked: (result.kind === 'unsupported' && result.blocked) || null,
+      physicalEventId: trimOrNull(req.body.physicalEventId) || null,
       choices: result.choices || null,
     });
   })

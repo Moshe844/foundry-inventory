@@ -72,6 +72,11 @@
             <form class="act-reply" method="post" action="/actions/ask" data-busy>
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <input type="hidden" name="original" value="<%= instruction %>">
+              <%# So answering the question also closes the Needs you item that
+                  asked it, instead of leaving the same need listed twice. %>
+              <% if (locals.physicalEventId) { %>
+                <input type="hidden" name="physicalEventId" value="<%= locals.physicalEventId %>">
+              <% } %>
               <label class="visually-hidden" for="action-answer">Your answer</label>
               <input class="input" id="action-answer" name="answer" type="text" maxlength="200"
                      placeholder="Type your answer" autocomplete="off" autofocus required>

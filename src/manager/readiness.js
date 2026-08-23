@@ -114,6 +114,14 @@ function decisions(db, workspaceId, options = {}) {
         `Foundry knows how many of your ${state.skuCount} product${state.skuCount === 1 ? '' : 's'} you have, ` +
         'but not how fast they go. Until it sees stock leaving, it cannot tell you what is running low ' +
         'or what to reorder — and it will not guess. Record a sale, or a delivery going out, and it starts learning.',
+      // Why Foundry cannot get this for itself. It lived as copy in the Needs
+      // you view, which meant it vanished the moment that page was rebuilt —
+      // and it is the sentence that stops "record a sale" reading as busywork.
+      why:
+        'Foundry cannot silently observe another system or invent demand, and it will not raise a ' +
+        'low-stock alert it cannot stand behind. Record sales, usage, or stock leaving and it can ' +
+        'begin learning immediately.',
+      missing: 'One outbound movement — a sale, or stock going out — so Foundry can measure demand.',
       action: 'Record a sale',
       link: '/#tell-foundry',
       priority: 95,

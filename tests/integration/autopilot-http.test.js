@@ -92,7 +92,6 @@ test('Needs you exposes the missing operating input instead of silently showing 
   const page = plain((await agent.get('/needs-you')).text);
   // Named in the words somebody new to inventory would use, and saying what
   // to do about it rather than which internal input is absent.
-  assert.match(page, /Missing information/);
   assert.match(page, /Tell Foundry when you sell something/);
   assert.match(page, /not how fast they go/i);
   assert.match(page, /cannot silently observe another system or invent demand/i);

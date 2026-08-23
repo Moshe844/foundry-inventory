@@ -1939,3 +1939,23 @@ dialog.modal::backdrop { background: rgba(15, 23, 42, .32); backdrop-filter: blu
 .rep-plan-working ol { margin-top: 8px; }
 .rep-plan-after { margin-top: 12px; font-size: 13px; padding-top: 10px; border-top: 1px solid var(--line); }
 .rep-plan-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+/* Needs you as an inbox: one card per thing, same shape every time. */
+.needs-inbox { display: grid; gap: 12px; }
+.needs-item {
+  display: flex; gap: 16px; align-items: flex-start; justify-content: space-between;
+  padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+}
+.needs-item__body { display: grid; gap: 6px; }
+.needs-item h2 { font-size: 15.5px; margin: 0; }
+.needs-item__happened { font-size: 13.5px; }
+.needs-item__why { font-size: 13px; color: var(--ink-soft); margin: 0; }
+.needs-item__missing { font-size: 13.5px; margin: 4px 0 0; }
+.needs-item__label {
+  display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--ink-soft); margin-right: 6px;
+}
+.needs-item__do { flex: 0 0 auto; padding-top: 2px; }
+@media (max-width: 620px) {
+  .needs-item { flex-direction: column; }
+}
