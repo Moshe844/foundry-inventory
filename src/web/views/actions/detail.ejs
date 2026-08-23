@@ -80,7 +80,14 @@
       <div class="card act-preview">
         <div class="card-body">
           <div class="act-subject">
-            <span class="act-quantity"><%= helpers.qty(action.quantity) %></span>
+            <%# The rows below are re-read from current stock when this is stale,
+                but the quantity is the one worked out originally. Shown side by
+                side they contradict each other — 3, above 12 becoming 5 — so on
+                a stale action the figure that no longer follows is left out
+                rather than presented as though it still holds. %>
+            <% if (!stale) { %>
+              <span class="act-quantity"><%= helpers.qty(action.quantity) %></span>
+            <% } %>
             <span class="act-subject-text">
               <strong><%= action.subject.name %></strong>
               <% if (action.subject.detail) { %><span><%= action.subject.detail %></span><% } %>
@@ -154,7 +161,29 @@
               You do not have permission to do this in this inventory.
               It needs “<%= permissionLabel %>”. Ask an owner.
             </p>
-          <% } else if (action.status === 'AWAITING_APPROVAL' || action.status === 'INVALIDATED') { %>
+          <%# A proposal whose numbers have moved is not approvable, and must not
+              look approvable. It kept its ticked warning box and a live Approve
+              button, so the most obvious thing on the page was the one thing
+              guaranteed to fail — the engine refuses it, but being invited to
+              press it is its own kind of wrong. The same is true of one already
+              marked invalid: pressing Approve again only fails again. %>
+          <% } else if (stale || action.status === 'INVALIDATED') { %>
+            <p class="muted">
+              These figures were worked out against stock that has since changed, so this cannot be
+              approved as it stands. Nothing has happened to your inventory.
+            </p>
+            <form method="post" action="/actions/<%= action.proposalId %>/recalculate">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <div class="btn-row">
+                <button class="btn btn--primary" type="submit">Work it out again</button>
+                <a class="btn" href="/actions">Not now</a>
+              </div>
+            </form>
+            <form method="post" action="/actions/<%= action.proposalId %>/cancel">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn--ghost btn--sm" type="submit">Discard this action</button>
+            </form>
+          <% } else if (action.status === 'AWAITING_APPROVAL') { %>
             <form method="post" action="/actions/<%= action.proposalId %>/approve" data-confirm-action>
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <% if (action.needsWarningConfirm) { %>

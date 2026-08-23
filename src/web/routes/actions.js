@@ -365,6 +365,30 @@ router.get(
   })
 );
 
+/**
+ * Work it out again against stock as it stands now.
+ *
+ * The one action a stale proposal offers, because it is the only one that can
+ * do anything. It supersedes the old figures rather than editing them, and
+ * lands on the fresh proposal so the before and after being approved are the
+ * ones just re-read.
+ */
+router.post(
+  '/actions/:id/recalculate',
+  asyncRoute(async (req, res) => {
+    let fresh;
+    try {
+      fresh = actionService.recalculate(req.db, req.ctx, membershipOf(req), req.params.id);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+      return res.redirect(303, `/actions/${req.params.id}`);
+    }
+    req.flash('info', 'Foundry worked it out again against your stock as it is now. Check the figures before approving.');
+    return res.redirect(303, `/actions/${fresh.proposalId}`);
+  })
+);
+
 router.post(
   '/actions/:id/quantity',
   asyncRoute(async (req, res) => {

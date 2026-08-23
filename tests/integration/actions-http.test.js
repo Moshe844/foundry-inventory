@@ -676,3 +676,106 @@ test('an owner may still correct a count from the item page', async () => {
   }, `/inventory/${env.item.itemId}`);
   assert.equal(balance(env, env.workspace.main.id), 50, 'the guard must not block the people it is not for');
 });
+
+/**
+ * A proposal whose numbers have moved must stop being approvable — on screen
+ * as well as in the engine.
+ *
+ * Reported from a clean QA run: a correction for Black/Medium at Downtown, 8 to
+ * 5, said "The stock changed since Foundry worked this out. This proposal has
+ * expired." and then rendered its warning box already ticked above a live
+ * Approve button. The engine refuses it, so nothing could actually go wrong in
+ * the ledger; being told to press a button that cannot work is the bug.
+ */
+test('a proposal goes non-approvable the moment its stock moves, and can be worked out again', async () => {
+  const engine = require('../../src/domain/inventory-engine');
+  const proposalService = require('../../src/actions/proposal-service');
+  const executionService = require('../../src/actions/execution-service');
+
+  const env = setup();
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const membership = authService.getMembership(env.db, env.workspace.workspaceId, env.workspace.accountId);
+  const downtown = env.workspace.store;
+  const sku = env.navy4;
+  // Downtown starts at 4; bring it to 8, the reported starting figure.
+  engine.receive(env.db, env.workspace.ctx, {
+    skuId: sku.id, locationId: downtown.id, quantity: 4,
+  });
+
+  // A correction from 8 to 5, prepared and waiting.
+  const built = proposalService.build(env.db, env.workspace.ctx, {
+    actionType: 'adjust',
+    resolvedSkuId: sku.id,
+    sourceLocation: downtown.name,
+    adjustmentTarget: 5,
+    reasonCode: 'found',
+  });
+  assert.equal(built.ok, true, JSON.stringify(built));
+  const stale = proposalService.persist(env.db, env.workspace.ctx, built.proposal, {
+    instruction: 'I counted 5 at Downtown Store',
+  });
+
+  const before = plain((await agent.get(`/actions/${stale.proposalId}`)).text);
+  assert.match(before, /Approve the correction/, 'it is approvable while its figures still hold');
+
+  // The stock moves underneath it.
+  engine.receive(env.db, env.workspace.ctx, {
+    skuId: sku.id, locationId: downtown.id, quantity: 4,
+  });
+
+  // Revisit: the page must not offer approval, in words or in controls.
+  const page = await agent.get(`/actions/${stale.proposalId}`);
+  const text = plain(page.text);
+  assert.match(text, /changed/i, 'and it says why');
+  assert.doesNotMatch(text, /Approve the correction/, 'the stale figures must not be approvable');
+  assert.doesNotMatch(page.text, /name="acknowledged"/,
+    'nor may it present a pre-ticked warning above a dead button');
+  assert.match(text, /Work it out again/, 'one obvious way forward');
+  // The rows are re-read from current stock; the original quantity is not, and
+  // printing 3 above "12 becomes 5" is a stale figure dressed as a current one.
+  assert.doesNotMatch(page.text, /class="act-quantity"/,
+    'no figure that no longer follows from the numbers beside it');
+
+  // And the engine refuses it too, whatever a stale page might post.
+  assert.throws(
+    () => executionService.approve(env.db, env.workspace.ctx, membership, stale.proposalId),
+    /changed|expired/i
+  );
+  assert.equal(
+    repo.getBalance(env.db, env.workspace.workspaceId, sku.id, downtown.id), 12,
+    'nothing was applied'
+  );
+
+  // Working it out again supersedes the old one and prepares a fresh proposal.
+  const detail = await agent.get(`/actions/${stale.proposalId}`);
+  const again = await agent.post(`/actions/${stale.proposalId}/recalculate`).type('form')
+    .send({ _csrf: csrfFrom(detail.text) });
+  assert.match(again.headers.location, /^\/actions\/act_/);
+  const freshId = again.headers.location.split('/').pop();
+  assert.notEqual(freshId, stale.proposalId, 'a new proposal, not an edited one');
+  assert.equal(
+    proposalService.get(env.db, env.workspace.workspaceId, stale.proposalId).status, 'SUPERSEDED',
+    'the old figures are retired, and kept'
+  );
+
+  // The fresh one shows today's before, and only it can be approved.
+  const freshPage = await agent.get(`/actions/${freshId}`);
+  const fresh = plain(freshPage.text);
+  assert.match(fresh, /12/, 'the before is re-read from the stock as it stands now');
+  const badge = /class="act-quantity">([^<]*)</.exec(freshPage.text);
+  assert.ok(badge, 'the delta is shown again, because it now holds');
+  assert.match(badge[1], /7/, '12 becoming 5 is a change of 7, not the original 3');
+  assert.match(fresh, /Approve the correction/);
+  assert.doesNotMatch(fresh, /Work it out again/);
+
+  const approvePage = await agent.get(`/actions/${freshId}`);
+  await agent.post(`/actions/${freshId}/approve`).type('form')
+    .send({ _csrf: csrfFrom(approvePage.text), acknowledged: 'on' });
+  await agent.get(`/actions/${freshId}/run`);
+  assert.equal(
+    repo.getBalance(env.db, env.workspace.workspaceId, sku.id, downtown.id), 5,
+    'and only the fresh one moved the ledger'
+  );
+  env.db.close();
+});

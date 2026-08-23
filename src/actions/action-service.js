@@ -390,6 +390,55 @@ function actionabilityMessage(item) {
  * A change of mind supersedes rather than edits: what was approved has to stay
  * exactly what was approved, so a new quantity is a new proposal.
  */
+/**
+ * Works the same action out again against stock as it stands now.
+ *
+ * A proposal is reasoning about numbers at a moment in time. When those numbers
+ * move it stops being a thing that can be approved — but it was still rendered
+ * with its warning box ticked and its Approve button live, so the one obvious
+ * move on the page was the one guaranteed to fail. The engine refused it, which
+ * is the important half; being told to press a button that cannot work is the
+ * other half, and it is not a small one.
+ *
+ * The old proposal is superseded rather than edited: what somebody saw and did
+ * not approve is part of the record. The new one carries the same intent — the
+ * same product, place and target — re-derived from current balances, so the
+ * before and after on screen are today's before and after.
+ */
+function recalculate(db, ctx, membership, proposalId) {
+  const existing = proposals.get(db, ctx.workspaceId, proposalId);
+  if (!existing) throw new NotFoundError('That action could not be found.');
+  permissions.assertCanPerform(membership, existing.actionType);
+  if (!['AWAITING_APPROVAL', 'INVALIDATED'].includes(existing.status)) {
+    throw new ValidationError('That action can no longer be worked out again.');
+  }
+
+  return inTransaction(db, () => {
+    const intent = intentFromProposal(db, ctx.workspaceId, existing);
+    const built = proposals.build(db, ctx, intent);
+    if (!built.ok) {
+      throw new ValidationError(
+        built.question || built.unsupported ||
+        'Foundry cannot work this out against your stock as it stands now.'
+      );
+    }
+    built.proposal.proposalVersion = existing.proposalVersion + 1;
+    built.proposal.integrityHash = proposals.computeIntegrityHash(built.proposal);
+
+    proposals.setStatus(db, ctx, proposalId, 'SUPERSEDED');
+    proposals.record(db, ctx, proposalId, 'SUPERSEDED', { recalculated: true });
+
+    return proposals.persist(db, ctx, built.proposal, {
+      sourceType: existing.sourceType,
+      sourceAttentionId: existing.sourceAttentionId,
+      sourceProposalId: proposalId,
+      planId: existing.planId,
+      lineNumber: existing.lineNumber,
+      instruction: existing.originalInstruction,
+    });
+  });
+}
+
 function reviseQuantity(db, ctx, membership, proposalId, quantity) {
   const existing = proposals.get(db, ctx.workspaceId, proposalId);
   if (!existing) throw new NotFoundError('That action could not be found.');
@@ -507,6 +556,7 @@ module.exports = {
   setPlanStatus,
   proposeFromAttention,
   actionabilityMessage,
+  recalculate,
   reviseQuantity,
   proposeCompensation,
   intentFromProposal,
