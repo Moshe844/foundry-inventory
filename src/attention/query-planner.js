@@ -55,6 +55,10 @@ Intents:
 - top_moving: what is selling or being used most.
 - attention_summary: what needs attention right now.
 - replenishment: what they should buy or reorder, and how much.
+- why_low: why a named product is low, short, running out or below its level —
+  "why is this low", "why are we short of navy oxfords", "how did we get so low
+  on rope", "should I be worried about yoghurt". They are asking for the
+  reasoning, not the number. Put the product in entityQuery.
 - on_order: what is already ordered and not yet arrived, or what is due to
   arrive in a period.
 - late_orders: purchase orders past their expected arrival date.

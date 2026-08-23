@@ -409,9 +409,17 @@ function buildPlan(db, workspaceId, sku, options = {}) {
       'fixes where it is; the order fixes how much there is. Neither changes the other’s number.';
   } else if (decision === 'transfer') {
     headline = `Move ${moved} ${unitLabel}(s) between locations`;
-    explanation =
-      `There is enough overall — ${networkPosition} against a reorder point of ${reorderPoint} — but it is not ` +
-      'where the demand is. Moving it is enough, and nothing needs to be bought.';
+    // Two quite different reasons end in a move and no order, and they must not
+    // borrow each other's sentence. Genuinely having enough is not the same as
+    // being short with the order already drafted — saying "there is enough
+    // overall" about a position below the reorder point is simply false.
+    explanation = prepared
+      ? `${networkPosition} is at or below the reorder point of ${reorderPoint}, but ` +
+        `${prepared.units} ${unitLabel}(s) are already drafted on ` +
+        `${prepared.orders.map((order) => order.poNumber).join(', ')}, so nothing more needs buying. ` +
+        'What is left is that the stock is not where the demand is.'
+      : `There is enough overall — ${networkPosition} against a reorder point of ${reorderPoint} — but it is not ` +
+        'where the demand is. Moving it is enough, and nothing needs to be bought.';
   } else if (decision === 'purchase') {
     headline = buy.headline;
     explanation = buy.explanation;

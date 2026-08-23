@@ -33,6 +33,11 @@ const INTENTS = [
   // no longer refusals — a question about what to buy, what is coming, what is
   // late, what something cost, or who sells it now has an answer.
   'replenishment',
+  // "Why is this low?" is a different question from "how many are there?" and
+  // from "what should I order?". It asks for the reasoning, and Foundry has it
+  // — the replenishment planner produces exactly that. Answering with the
+  // on-hand figure told someone what they already knew.
+  'why_low',
   'on_order',
   'late_orders',
   'last_cost',
@@ -249,6 +254,90 @@ const PURCHASING_EXECUTORS = {
   },
 
   /** "What's already on order?" / "What is arriving this week?" */
+  /**
+   * Why a product is low, rather than how much of it there is.
+   *
+   * Asking "why is this low?" and being told "48 units on hand" is being told
+   * the thing you already knew — and Foundry had the whole answer, worked out
+   * and sitting in Needs you. This reaches it.
+   *
+   * The plan is the answer: the level, the position against it, where the stock
+   * actually is, and what Foundry would do about it. Nothing is computed here.
+   */
+  why_low(db, workspaceId, plan) {
+    const replenishmentPlan = require('../purchasing/replenishment-plan');
+    const signalEngine = require('../signals/signal-engine');
+
+    const scoped = plan.entityQuery ? resolveSkus(db, workspaceId, plan.entityQuery, plan.limit) : null;
+    if (plan.entityQuery && (!scoped || scoped.length === 0)) return { rows: [], answer: notFound(plan) };
+    const skuIds = scoped ? scoped.map((s) => s.id) : null;
+
+    const signals = signalEngine.skuSignals(db, workspaceId, skuIds ? { skuIds } : {});
+    const plans = signals
+      .filter((sku) => sku.isActive)
+      .map((sku) => replenishmentPlan.buildPlan(db, workspaceId, sku));
+
+    // Without a product, only the ones actually asking for something are worth
+    // listing; naming one means answering about that one either way.
+    const relevant = skuIds
+      ? plans
+      : plans.filter((entry) => entry.belowReorderPoint || entry.decision !== 'none');
+
+    if (!relevant.length) {
+      return {
+        rows: [],
+        answer: 'Nothing is below a reorder point at the moment.',
+      };
+    }
+
+    const rows = relevant.slice(0, plan.limit).map((entry) => ({
+      label: entry.displayName,
+      onHand: entry.onHandTotal,
+      onOrder: entry.onOrder,
+      reorderPoint: entry.reorderPoint === null ? null : entry.reorderPoint,
+      where: entry.byLocation.map((loc) => `${loc.onHand} at ${loc.locationName}`).join(', '),
+      why: entry.explanation,
+    }));
+    const columns = ['label', 'onHand', 'onOrder', 'reorderPoint', 'where', 'why'];
+
+    const first = relevant[0];
+
+    // No level set is not a shortage — it is the absence of anything to be
+    // short of, and saying so is more use than an invented judgement.
+    if (first.reorderPoint === null) {
+      return {
+        rows,
+        columns,
+        answer:
+          `${first.displayName} has ${first.onHandTotal} on hand and no reorder point set, so Foundry ` +
+          'has nothing to call it low against. Set one on the product and Foundry will watch it, ' +
+          'and tell you when it is crossed.',
+      };
+    }
+
+    if (!first.belowReorderPoint) {
+      return {
+        rows,
+        columns,
+        answer:
+          `${first.displayName} is not low: ${first.onHandTotal} on hand` +
+          `${first.onOrder ? ` and ${first.onOrder} on order` : ''} is ${first.networkPosition}, ` +
+          `above its reorder point of ${first.reorderPoint}.` +
+          (first.decision === 'transfer'
+            ? ` It is not evenly spread, though — ${first.explanation}`
+            : ''),
+      };
+    }
+
+    const doing = replenishmentPlan.recommendationFor(first);
+    return {
+      rows,
+      columns,
+      answer: `${first.explanation} ${doing}`,
+    };
+  },
+
+
   on_order(db, workspaceId, plan) {
     const position = require('../purchasing/position');
     const scoped = plan.entityQuery ? resolveSkus(db, workspaceId, plan.entityQuery, plan.limit) : null;

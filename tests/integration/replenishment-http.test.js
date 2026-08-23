@@ -294,3 +294,27 @@ test('a card never argues with the plan printed inside it', async () => {
   assert.match(text, /Move 7 unit\(s\) between locations/);
   env.db.close();
 });
+
+test('a plan whose order is already drafted does not claim there is enough', async () => {
+  // Found by asking "why is this low?" in the browser: the answer read "There
+  // is enough overall — 48 against a reorder point of 60", which is false. Two
+  // different reasons end in move-and-do-not-buy, and they were sharing a
+  // sentence that only fits one of them.
+  const env = await warehouseAndShop({
+    warehouseStock: 45, shopStock: 3, shopSales: 20, levels: { reorderPoint: 60, targetStock: 84 },
+  });
+  const row = env.db
+    .prepare("SELECT id FROM attention_items WHERE category = 'replenishment_needed' AND status = 'OPEN'")
+    .get();
+  const detail = await env.agent.get(`/attention/${row.id}`);
+  const supplierId = env.db.prepare('SELECT id FROM suppliers LIMIT 1').get().id;
+  await env.agent.post(`/purchasing/prepare/${supplierId}`).type('form')
+    .send({ _csrf: csrfFrom(detail.text) });
+
+  const text = plain((await env.agent.get(`/attention/${row.id}`)).text).replace(/\s+/g, ' ');
+  assert.doesNotMatch(text, /There is enough overall/,
+    '48 against a reorder point of 60 is not enough, whatever is drafted');
+  assert.match(text, /at or below the reorder point of 60/);
+  assert.match(text, /already drafted on PO-1001/);
+  env.db.close();
+});
