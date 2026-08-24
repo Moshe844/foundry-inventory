@@ -1,9 +1,77 @@
 <div class="page-head">
   <div class="titles">
     <h1>Activity</h1>
-    <div class="page-sub">Every inventory change, who made it, and why.</div>
+    <div class="page-sub">
+      What happened to your operation — stock, orders, differences and the work
+      Foundry did about them. <a href="/autopilot/history">Foundry's own working</a> is kept separately.
+    </div>
   </div>
 </div>
+
+<%# Which part of the story to read. Everything is one stream underneath, but
+    a person asking "what happened to my stock" and a person auditing routine
+    checks are asking different questions, and answering both at once is what
+    buried the sale under fifty inventory checks. %>
+<nav class="act-streams section" aria-label="Filter activity">
+  <% streams.concat(['all']).filter(function (s, i, a) { return a.indexOf(s) === i; }).sort(function (a, b) {
+       var order = ['all', 'inventory', 'purchasing', 'foundry', 'exception', 'system'];
+       return order.indexOf(a) - order.indexOf(b);
+     }).forEach(function (name) { %>
+    <a class="chip <%= stream === name ? 'is-active' : '' %>"
+       href="/activity?stream=<%= name %><%= query ? '&q=' + encodeURIComponent(query) : '' %>">
+      <%= streamLabels[name] %>
+      <% if (log.counts[name]) { %><span class="chip-count"><%= log.counts[name] %></span><% } %>
+    </a>
+  <% }) %>
+</nav>
+
+<form class="filters" method="get" action="/activity">
+  <input type="hidden" name="stream" value="<%= stream %>">
+  <input class="input filter-search" type="search" name="q" value="<%= query %>"
+         placeholder="Search this activity" aria-label="Search activity">
+</form>
+
+<div class="card section">
+  <div class="card-head">
+    <h2><%= streamLabels[stream] %></h2>
+    <span class="spacer"></span>
+    <span class="muted" style="font-size:12.5px;">Newest first</span>
+  </div>
+  <div class="card-body">
+    <% if (!log.events.length) { %>
+      <div class="empty">
+        <div class="icon-wrap"><%- helpers.icon('empty', { size: 22 }) %></div>
+        <h3>Nothing here yet</h3>
+        <p>When stock moves, an order is placed or a difference is found, it appears here.</p>
+      </div>
+    <% } else { %>
+      <ol class="act-log">
+        <% log.events.forEach(function (event) { %>
+          <li class="act-log__row act-log__row--<%= event.stream %>">
+            <div class="act-log__body">
+              <a class="act-log__title" href="<%= event.href %>"><%= event.title %></a>
+              <% if (event.detail) { %><p class="act-log__detail"><%= event.detail %></p><% } %>
+              <p class="act-log__meta">
+                <span class="badge badge--muted"><%= streamLabels[event.stream] %></span>
+                <% if (event.who) { %><span><%= event.who %></span><% } %>
+                <% if (event.at) { %><span><%= helpers.timeAgo ? helpers.timeAgo(event.at) : event.at %></span><% } %>
+              </p>
+            </div>
+          </li>
+        <% }) %>
+      </ol>
+      <% if (stream === 'all' && log.quietChecks) { %>
+        <p class="muted" style="font-size:12.5px; margin-top:12px;">
+          <%= log.quietChecks %> routine check<%= log.quietChecks === 1 ? '' : 's' %> found nothing and
+          <a href="/activity?stream=system">are kept out of the way</a>.
+        </p>
+      <% } %>
+    <% } %>
+  </div>
+</div>
+
+<details class="section">
+  <summary class="muted" style="cursor:pointer; font-size:13px;">The raw movement ledger, with filters</summary>
 
 <form class="filters" method="get" action="/activity">
   <select class="select" name="operation" aria-label="Operation" data-auto-submit>
@@ -68,3 +136,4 @@
     <% } %>
   <% } %>
 </div>
+</details>
