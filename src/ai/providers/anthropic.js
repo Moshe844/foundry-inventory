@@ -140,6 +140,16 @@ function translateError(err) {
       cause: err,
     });
   }
+  // The message a customer sees asks them to check the connection, which is the
+  // right thing to say and impossible to act on without knowing what failed.
+  // Every other branch above logs; this one — the branch that catches
+  // everything unrecognised, and so the one most likely to be hit by something
+  // nobody predicted — said nothing to the operator at all.
+  console.error(
+    '[foundry] could not reach the model provider:',
+    (err && (err.code || err.name)) || 'unknown',
+    (err && err.message) || String(err)
+  );
   return new ProviderError(
     'Foundry could not reach the model provider. Check the connection and try again.',
     { code: 'ai_request_failed', status: 503, retryable: true, cause: err }
