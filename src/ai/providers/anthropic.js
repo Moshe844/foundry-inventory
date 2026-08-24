@@ -105,8 +105,46 @@ function create(options = {}) {
   };
 }
 
+/**
+ * Records a provider failure where it can actually be found afterwards.
+ *
+ * Standard error is only useful to whoever started the process, and on a
+ * machine where more than one thing starts the server that is nobody. The same
+ * failure was reported twice with no trace of a cause either time, because the
+ * output went to a console that had already scrolled away or belonged to
+ * another session entirely.
+ *
+ * So it goes to a file beside the database as well: same host, same data
+ * directory, readable regardless of who launched the server. Appending, because
+ * the interesting case is a pattern over time rather than the latest line.
+ * Wrapped in its own try — a logger that throws would turn a bad request into a
+ * crash, which is a worse failure than the one it was trying to explain.
+ */
+function recordFailure(err) {
+  const code = (err && (err.code || err.name)) || 'unknown';
+  const message = (err && err.message) || String(err);
+  const status = err && err.status;
+  console.error('[foundry] provider call failed:', code, status ? 'status ' + status : '', message);
+  try {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const { dataDir } = require('../../config');
+    fs.appendFileSync(
+      path.join(dataDir, 'provider-errors.log'),
+      `${new Date().toISOString()}	${code}	${status || '-'}	${message}
+`
+    );
+  } catch {
+    /* the request already failed; losing the note is not worth a second failure */
+  }
+}
+
 function translateError(err) {
   const status = err && err.status;
+  // Every failure is recorded, not only the unrecognised ones. A wrong key, a
+  // rate limit and an outage are all equally invisible to somebody reading a
+  // calm sentence on a screen, and all three were.
+  recordFailure(err);
   if (status === 401 || status === 403) {
     return new ProviderError('Foundry could not authenticate with the model provider.', {
       code: 'ai_unauthorized',
@@ -133,23 +171,12 @@ function translateError(err) {
   if (status === 400) {
     // A 400 is Foundry's own bug, not a network problem. The operator needs the
     // provider's actual complaint; the customer still sees something calm.
-    console.error('[foundry] provider rejected the request:', err && err.message);
     return new ProviderError('Foundry could not ask the model that. This has been logged.', {
       code: 'ai_bad_request',
       status: 500,
       cause: err,
     });
   }
-  // The message a customer sees asks them to check the connection, which is the
-  // right thing to say and impossible to act on without knowing what failed.
-  // Every other branch above logs; this one — the branch that catches
-  // everything unrecognised, and so the one most likely to be hit by something
-  // nobody predicted — said nothing to the operator at all.
-  console.error(
-    '[foundry] could not reach the model provider:',
-    (err && (err.code || err.name)) || 'unknown',
-    (err && err.message) || String(err)
-  );
   return new ProviderError(
     'Foundry could not reach the model provider. Check the connection and try again.',
     { code: 'ai_request_failed', status: 503, retryable: true, cause: err }
