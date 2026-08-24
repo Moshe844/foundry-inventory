@@ -5,14 +5,14 @@
       <% if (searchTerm) { %>
         <%= results.length %> <%= helpers.plural(results.length, 'result') %> for &ldquo;<%= searchTerm %>&rdquo;
       <% } else { %>
-        Find items, variants, serial numbers and lots.
+        Find products, variants, serial numbers, batches, locations, suppliers and purchase orders.
       <% } %>
     </div>
   </div>
 </div>
 
 <form class="filters" method="get" action="/search">
-  <input class="input filter-search" type="search" name="q" value="<%= searchTerm %>" placeholder="Item name, SKU, serial number or lot" autofocus aria-label="Search">
+  <input class="input filter-search" type="search" name="q" value="<%= searchTerm %>" placeholder="Product, SKU, serial, batch, location, supplier or PO number" autofocus aria-label="Search">
   <button class="btn btn--primary btn--sm" type="submit">Search</button>
 </form>
 
@@ -21,7 +21,7 @@
     <div class="empty">
       <div class="icon-wrap"><%- helpers.icon('search', { size: 22 }) %></div>
       <h3>What are you looking for?</h3>
-      <p>Search by item name, SKU, variant, serial number or lot number. Press <kbd>/</kbd> anywhere to jump to the search box.</p>
+      <p>Search by product, SKU, variant, serial number, batch, location, supplier or purchase order number. Press <kbd>/</kbd> anywhere to jump to the search box.</p>
     </div>
   <% } else if (results.length === 0) { %>
     <div class="empty">
@@ -42,8 +42,10 @@
                 <span class="cell-sub"><%= result.subtitle %></span>
               </td>
               <td data-label="Type">
+                <%# The record's own name for itself, from one place, so a new
+                    kind of result cannot arrive unlabelled or mislabelled. %>
                 <span class="badge badge--<%= result.type === 'serial' ? 'serial' : (result.type === 'lot' ? 'lot' : (result.type === 'variant' ? 'variant' : 'quantity')) %>">
-                  <%= result.type === 'sku' ? 'Item' : result.type.charAt(0).toUpperCase() + result.type.slice(1) %>
+                  <%= result.typeLabel || result.type %>
                 </span>
               </td>
               <td class="right cell-end" data-label="Status"><span class="muted"><%= result.meta %></span></td>
