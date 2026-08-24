@@ -19,6 +19,18 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230f766e'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
 <body class="page-<%= nav || 'plain' %>">
+<%
+  // A configured inventory has the universal Tell Foundry command on its
+  // Foundry home. A manually-created inventory still uses the action command
+  // page; sending it to a home-page fragment that does not exist is a dead
+  // link disguised as navigation.
+  var tellFoundryHref = foundry && foundry.configured
+    ? '/#tell-foundry'
+    : '/actions#action-instruction';
+  var foundryHelpHref = foundry && foundry.configured
+    ? '/#foundry-capabilities'
+    : '/foundry';
+%>
 <a class="skip-link" href="#main">Skip to content</a>
 <div class="app">
   <aside class="sidebar">
@@ -69,7 +81,12 @@
         <div class="nav-group-label">Records & operation</div>
         <a class="nav-item <%= nav === 'inventory' || nav === 'overview' ? 'is-active' : '' %>" href="/inventory"><%- helpers.icon('inventory') %><span class="nav-item__copy"><span>Inventory</span><small>Products, stock and locations</small></span></a>
         <a class="nav-item <%= nav === 'purchasing' ? 'is-active' : '' %>" href="/purchasing"><%- helpers.icon('purchasing') %><span class="nav-item__copy"><span>Purchasing</span><small>Suppliers, orders and receiving</small></span></a>
-        <a class="nav-item <%= nav === 'activity' || nav === 'history' ? 'is-active' : '' %>" href="/autopilot/history"><%- helpers.icon('activity') %><span class="nav-item__copy"><span>Activity</span><small>Everything that happened</small></span></a>
+        <%# Activity is the business's own history and goes to the ledger. It
+            pointed at Foundry's work log, so somebody looking for their sales
+            landed on fifty scheduled checks. The two are separate entries now
+            because they answer separate questions. %>
+        <a class="nav-item <%= nav === 'activity' ? 'is-active' : '' %>" href="/activity"><%- helpers.icon('activity') %><span class="nav-item__copy"><span>Activity</span><small>What happened to your stock</small></span></a>
+        <a class="nav-item <%= nav === 'history' ? 'is-active' : '' %>" href="/autopilot/history"><%- helpers.icon('foundry') %><span class="nav-item__copy"><span>Foundry's work</span><small>What Foundry checked and did</small></span></a>
 
         <div class="nav-group-label">Control</div>
         <a class="nav-item <%= nav === 'settings' ? 'is-active' : '' %>" href="/settings"><%- helpers.icon('settings') %><span class="nav-item__copy"><span>Settings</span><small>Authority, preferences and workspace</small></span></a>
@@ -98,8 +115,8 @@
           <div class="search-results" data-search-results hidden></div>
         </form>
         <div class="topbar-actions">
-          <a class="topbar-help" href="/#foundry-capabilities"><%- helpers.icon('question', { size: 15 }) %> What can Foundry do?</a>
-          <a class="btn btn--primary btn--sm" href="/#tell-foundry"><%- helpers.icon('foundry', { size: 16 }) %><span class="btn-label">Tell Foundry</span></a>
+          <a class="topbar-help" href="<%= foundryHelpHref %>"><%- helpers.icon('question', { size: 15 }) %> What can Foundry do?</a>
+          <a class="btn btn--primary btn--sm" href="<%= tellFoundryHref %>"><%- helpers.icon('foundry', { size: 16 }) %><span class="btn-label">Tell Foundry</span></a>
         </div>
       <% } else { %>
         <div class="topbar-actions"><a class="btn btn--primary btn--sm" href="/inventories/new"><%- helpers.icon('plus', { size: 16 }) %><span class="btn-label">New Inventory</span></a></div>
@@ -128,7 +145,7 @@
     <% } else { %>
       <a class="<%= nav === 'home' ? 'is-active' : '' %>" href="/"><%- helpers.icon('foundry', { size: 22 }) %><span>Foundry</span></a>
       <a class="<%= nav === 'attention' ? 'is-active' : '' %>" href="/needs-you"><%- helpers.icon('attention', { size: 22 }) %><span>Needs you</span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %></a>
-      <a href="/#tell-foundry"><%- helpers.icon('send', { size: 22 }) %><span>Tell Foundry</span></a>
+      <a href="<%= tellFoundryHref %>"><%- helpers.icon('send', { size: 22 }) %><span>Tell Foundry</span></a>
       <a class="<%= nav === 'inventory' || nav === 'overview' ? 'is-active' : '' %>" href="/inventory"><%- helpers.icon('inventory', { size: 22 }) %><span>Inventory</span></a>
       <a class="<%= nav === 'settings' ? 'is-active' : '' %>" href="/settings"><%- helpers.icon('settings', { size: 22 }) %><span>Settings</span></a>
     <% } %>

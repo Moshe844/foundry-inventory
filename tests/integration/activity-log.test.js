@@ -165,13 +165,8 @@ test('every event says who did it, when, and where to read more', async () => {
   env.db.close();
 });
 
-/**
- * The sidebar entry is what actually sent people to the wrong page, and the fix
- * lives in the shared layout — a file another session is editing right now. The
- * assertion is written and waiting rather than committed against work in
- * flight; enable it once that lands.
- */
-test('the sidebar sends Activity to the business history', { skip: 'layout.ejs is being edited by another session' }, async () => {
+/** The sidebar entry is what actually sent people to the wrong page. */
+test('the sidebar sends Activity to the business history', async () => {
   const env = await traded({ quietChecks: 1 });
   const raw = (await env.agent.get('/activity')).text;
   const anchors = raw.match(/<a[^>]*class="nav-item[^"]*"[^>]*>[\s\S]*?<\/a>/g) || [];

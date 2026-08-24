@@ -45,6 +45,10 @@
 
 html, body { height: 100%; }
 
+/* Fragment links land below the sticky command bar instead of underneath it. */
+html { scroll-padding-top: 72px; }
+[id] { scroll-margin-top: 72px; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -1959,3 +1963,15 @@ dialog.modal::backdrop { background: rgba(15, 23, 42, .32); backdrop-filter: blu
 @media (max-width: 620px) {
   .needs-item { flex-direction: column; }
 }
+
+/* Activity as a readable timeline of business events. */
+.act-streams { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.act-streams .chip { display: inline-flex; align-items: center; gap: 6px; }
+.chip-count { font-size: 11px; opacity: .7; }
+.act-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.act-log__row { display: flex; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); }
+.act-log__row:first-child { border-top: 0; }
+.act-log__body { display: grid; gap: 3px; }
+.act-log__title { font-weight: 600; font-size: 14px; }
+.act-log__detail { margin: 0; font-size: 13px; color: var(--ink-soft); }
+.act-log__meta { margin: 2px 0 0; display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--ink-soft); }
