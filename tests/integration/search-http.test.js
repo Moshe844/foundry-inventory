@@ -145,28 +145,32 @@ test('a SKU code finds that exact variant', async () => {
   env.db.close();
 });
 
-test('every dimension matching outranks a sibling that only shares the product name', async () => {
-  // "Black Small" ranked Black/Small first but returned White/Small as an
-  // equally strong result — because the product is called "Black T-shirt", so
-  // every variant of it contains the word "black" somewhere.
+test('naming both dimensions returns that variant, not its siblings', async () => {
+  // "Black Small" listed White / Small underneath the right answer. Ranking it
+  // lower was not enough: somebody who has named both dimensions has said which
+  // one they mean, and offering the other reads as Foundry not being sure. It
+  // matched at all only because the product they share is called Black T-shirt,
+  // so every variant of it contains the word "black".
   const env = await shop();
   const hits = await env.suggest('Black Small');
 
   assert.ok(hits.length, 'a variant read off the screen and typed without the slash still matches');
   assert.equal(hits[0].title, 'Black T-shirt / Black / Small');
+  assert.deepEqual(
+    hits.filter((hit) => hit.title === 'Black T-shirt / White / Small'), [],
+    'the sibling that only shares the product name is not offered'
+  );
 
-  const positions = Object.fromEntries(hits.map((hit, index) => [hit.title, index]));
-  const white = positions['Black T-shirt / White / Small'];
-  if (white !== undefined) {
-    assert.ok(white > 0, 'the one matching both dimensions comes first');
-    const service = require('../../src/domain/search-service');
-    const scored = service.search(env.db, env.workspace.workspaceId, 'Black Small', { limit: 20 }).results;
-    const scoreOf = (title) => (scored.find((r) => r.title === title) || {}).score;
-    assert.ok(
-      scoreOf('Black T-shirt / Black / Small') > scoreOf('Black T-shirt / White / Small'),
-      'and it is a stronger match, not merely an earlier one'
-    );
-  }
+  // One dimension is genuinely ambiguous, and both are still offered.
+  const colourOnly = await env.suggest('Black Large');
+  assert.equal(colourOnly[0].title, 'Black T-shirt / Black / Large');
+
+  const sizeOnly = (await env.suggest('Small')).map((hit) => hit.title);
+  assert.ok(
+    sizeOnly.includes('Black T-shirt / Black / Small')
+      && sizeOnly.includes('Black T-shirt / White / Small'),
+    'naming only the size does not choose a colour for them'
+  );
   env.db.close();
 });
 

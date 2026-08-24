@@ -327,16 +327,28 @@ function search(db, workspaceId, rawTerm, { limit = 8 } = {}) {
     );
   }
 
-  // When something matched the identifier that was typed, its weak neighbours
-  // are noise rather than alternatives. Searching a SKU code returned the
-  // sibling variant too, because the product name they share carries the same
-  // words. Other kinds of record are left alone: a supplier's orders are a
-  // useful thing to see under the supplier's name.
-  const exact = found.filter((row) => row.score === SCORE.identifier);
-  const exactTypes = new Set(exact.map((row) => row.type));
-  const kept = exactTypes.size
-    ? found.filter((row) => !exactTypes.has(row.type) || row.score >= SCORE.prefix)
-    : found;
+  // Once something of a given kind has matched properly — the identifier typed
+  // in full, or every word inside the field that tells it from its siblings —
+  // the weaker records of that same kind are noise, not alternatives.
+  //
+  // Ranking them lower was not enough. Searching "Black Small" still listed
+  // White / Small underneath the right answer, and a person who has named both
+  // dimensions has said which one they mean; offering the other reads as
+  // Foundry not being sure. The sibling only matched at all because the product
+  // they share is called "Black T-shirt".
+  //
+  // Deliberately per kind. A supplier's orders are worth seeing under the
+  // supplier's name, so an exact supplier match does not hide purchase orders —
+  // those are a different kind of record answering a different question.
+  const strongestByType = new Map();
+  for (const row of found) {
+    const best = strongestByType.get(row.type) || 0;
+    if (row.score > best) strongestByType.set(row.type, row.score);
+  }
+  const kept = found.filter((row) => {
+    const best = strongestByType.get(row.type) || 0;
+    return best < SCORE.distinguishing || row.score >= SCORE.distinguishing;
+  });
 
   const results = kept
     .sort((a, b) => (b.score - a.score) || String(a.title).localeCompare(String(b.title)))
