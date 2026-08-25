@@ -9,10 +9,32 @@
  * security boundary.
  */
 
+const dns = require('node:dns');
 const Anthropic = require('@anthropic-ai/sdk');
 const config = require('../../config');
 const { ProviderError, ProviderOutputError } = require('../provider');
 const { toWireSchema } = require('../../foundry/schema-tools');
+
+/**
+ * Resolve the provider over IPv4 first.
+ *
+ * api.anthropic.com publishes both an A and an AAAA record. This host answers
+ * the AAAA and then cannot route to it — connecting to the IPv6 address fails
+ * with ENETUNREACH — so every request depends on Node racing the two families
+ * and abandoning the dead one inside its fallback window. That usually works,
+ * which is why it fails intermittently rather than always: the log shows bursts
+ * of "Connection error" through the day and overnight on scheduled runs, three
+ * attempts each because the SDK had already retried twice.
+ *
+ * Preferring IPv4 removes the race rather than winning it. On a host with
+ * working IPv6 this changes only the order things are tried, so it costs
+ * nothing there either.
+ */
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  /* An older runtime without the setting is no worse off than before. */
+}
 
 function create(options = {}) {
   const apiKey = options.apiKey || config.ai.apiKey;
@@ -121,8 +143,26 @@ function create(options = {}) {
  * crash, which is a worse failure than the one it was trying to explain.
  */
 function recordFailure(err) {
+  // "Connection error." is all the SDK says when the request never reached the
+  // API, and on its own it is barely more use than the sentence the customer
+  // sees. What distinguishes a reset socket from a DNS failure, a refused
+  // connection or an expired certificate is underneath, in the cause chain the
+  // SDK wraps — so the chain is unwound and recorded with it.
+  const causes = [];
+  let cursor = err && err.cause;
+  for (let depth = 0; cursor && depth < 4; depth += 1) {
+    causes.push([
+      cursor.code || cursor.name || '',
+      cursor.syscall || '',
+      cursor.errno === undefined ? '' : String(cursor.errno),
+      cursor.hostname || cursor.host || '',
+      cursor.message || '',
+    ].filter(Boolean).join(' '));
+    cursor = cursor.cause;
+  }
+
   const code = (err && (err.code || err.name)) || 'unknown';
-  const message = (err && err.message) || String(err);
+  const message = [(err && err.message) || String(err), ...causes].join(' <- ');
   const status = err && err.status;
   console.error('[foundry] provider call failed:', code, status ? 'status ' + status : '', message);
   try {
