@@ -142,6 +142,16 @@ function create(options = {}) {
  * Wrapped in its own try — a logger that throws would turn a bad request into a
  * crash, which is a worse failure than the one it was trying to explain.
  */
+/** True when the operating system refused the socket rather than failing to route it. */
+function deniedLocally(err) {
+  let cursor = err;
+  for (let depth = 0; cursor && depth < 5; depth += 1) {
+    if (cursor.code === 'EACCES' || cursor.code === 'EPERM') return true;
+    cursor = cursor.cause;
+  }
+  return false;
+}
+
 function recordFailure(err) {
   // "Connection error." is all the SDK says when the request never reached the
   // API, and on its own it is barely more use than the sentence the customer
@@ -217,6 +227,20 @@ function translateError(err) {
       cause: err,
     });
   }
+  // Denied locally, not unreachable. On Windows a filter driver — endpoint
+  // security, a firewall — refusing an outbound socket surfaces as EACCES or
+  // EPERM on connect, and telling somebody to check their connection sends
+  // them to look at the one thing that is working. The connection is fine; a
+  // program on this machine is not letting Foundry open it.
+  if (deniedLocally(err)) {
+    return new ProviderError(
+      'Something on this computer blocked Foundry from reaching the model provider. '
+        + 'The network itself is fine — security software is refusing the connection. '
+        + 'Ask whoever manages this machine to allow it.',
+      { code: 'ai_blocked_locally', status: 503, retryable: true, cause: err }
+    );
+  }
+
   return new ProviderError(
     'Foundry could not reach the model provider. Check the connection and try again.',
     { code: 'ai_request_failed', status: 503, retryable: true, cause: err }
