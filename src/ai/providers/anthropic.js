@@ -11,6 +11,7 @@
 
 const dns = require('node:dns');
 const Anthropic = require('@anthropic-ai/sdk');
+const netTrust = require('../../net-trust');
 const config = require('../../config');
 const { ProviderError, ProviderOutputError } = require('../provider');
 const { toWireSchema } = require('../../foundry/schema-tools');
@@ -34,6 +35,72 @@ try {
   dns.setDefaultResultOrder('ipv4first');
 } catch {
   /* An older runtime without the setting is no worse off than before. */
+}
+
+// The other half of reaching the provider on this machine: trusting the roots
+// the machine itself trusts. Done here as well as at server start, because the
+// provider is also reached from tests, scripts and scheduled work that never
+// go through src/server.js.
+netTrust.installSystemCertificates();
+
+/**
+ * Connection failures the machine recovers from on its own.
+ *
+ * An outbound socket here is refused outright — EACCES from connect, which on
+ * Windows is a filtering driver saying no rather than a network failing to
+ * carry the packet. It arrives in windows: a run of calls fails, and calls a
+ * minute later succeed with nothing changed in between. The log shows this
+ * plainly, three logged failures inside forty-five seconds and then hours of
+ * quiet, and a connection opened by hand during a quiet stretch works forty
+ * times out of forty.
+ *
+ * The SDK does retry, twice, but immediately — all three attempts land inside
+ * the same few seconds and so inside the same window. That is why the customer
+ * saw a failure at all: not because the machine could not be reached, but
+ * because Foundry gave up in six seconds on something that clears in under a
+ * minute. Waiting longer between attempts is the whole fix.
+ *
+ * Deliberately narrow. A refused socket and a dropped connection are worth
+ * outliving; a rejected certificate, a bad key or a rejected request are not,
+ * and retrying those would only make a settled answer take longer to arrive.
+ */
+const OUTLIVABLE = new Set(['EACCES', 'EPERM', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN']);
+const BACKOFF_MS = [2000, 6000, 15000];
+
+function outlivable(err) {
+  if (err && err.status) return false; // the provider answered; this is not the network
+  let cursor = err;
+  for (let depth = 0; cursor && depth < 5; depth += 1) {
+    if (cursor.code && OUTLIVABLE.has(cursor.code)) return true;
+    cursor = cursor.cause;
+  }
+  return false;
+}
+
+const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/**
+ * Runs the call, and waits out a refusal the machine is likely to withdraw.
+ *
+ * Anything that is not one of those is thrown on the first attempt, translated
+ * as it always was. Only the last failure is translated, so the customer is
+ * told what was still true after Foundry had genuinely stopped trying.
+ */
+async function outlive(attempt, delays = BACKOFF_MS) {
+  let last;
+  for (let tries = 0; tries <= delays.length; tries += 1) {
+    try {
+      return await attempt();
+    } catch (err) {
+      last = err;
+      if (!outlivable(err) || tries === delays.length) break;
+      console.error(
+        `[foundry] provider connection refused locally; waiting ${delays[tries] / 1000}s and trying again`
+      );
+      await pause(delays[tries]);
+    }
+  }
+  throw translateError(last);
 }
 
 function create(options = {}) {
@@ -60,30 +127,27 @@ function create(options = {}) {
      */
     async complete(request) {
       const startedAt = Date.now();
-      let response;
-      try {
-        // Extended thinking is a per-tier choice, not a constant. The small
-        // models Foundry uses for bounded extraction do not support it at all,
-        // and would not benefit from it if they did — deciding which column
-        // holds quantities is not a reasoning problem.
-        const wantsThinking = effort !== 'none' && effort !== null;
-        response = await client.messages.create({
-          model,
-          max_tokens: maxTokens,
-          system: request.system,
-          ...(wantsThinking ? { thinking: { type: 'adaptive' } } : {}),
-          output_config: {
-            ...(wantsThinking ? { effort } : {}),
-            format: {
-              type: 'json_schema',
-              schema: toWireSchema(request.schema),
-            },
+      // Extended thinking is a per-tier choice, not a constant. The small
+      // models Foundry uses for bounded extraction do not support it at all,
+      // and would not benefit from it if they did — deciding which column
+      // holds quantities is not a reasoning problem.
+      const wantsThinking = effort !== 'none' && effort !== null;
+      const body = {
+        model,
+        max_tokens: maxTokens,
+        system: request.system,
+        ...(wantsThinking ? { thinking: { type: 'adaptive' } } : {}),
+        output_config: {
+          ...(wantsThinking ? { effort } : {}),
+          format: {
+            type: 'json_schema',
+            schema: toWireSchema(request.schema),
           },
-          messages: [{ role: 'user', content: request.prompt }],
-        });
-      } catch (err) {
-        throw translateError(err);
-      }
+        },
+        messages: [{ role: 'user', content: request.prompt }],
+      };
+
+      const response = await outlive(() => client.messages.create(body));
 
       if (response.stop_reason === 'refusal') {
         throw new ProviderError('The model declined to answer that request.', {
@@ -152,6 +216,24 @@ function deniedLocally(err) {
   return false;
 }
 
+/** True when the chain the certificate arrived under was not one this runtime trusts. */
+const CERT_CODES = new Set([
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'CERT_SIGNATURE_FAILURE',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+]);
+
+function certificateRejected(err) {
+  let cursor = err;
+  for (let depth = 0; cursor && depth < 5; depth += 1) {
+    if (cursor.code && CERT_CODES.has(cursor.code)) return true;
+    cursor = cursor.cause;
+  }
+  return false;
+}
+
 function recordFailure(err) {
   // "Connection error." is all the SDK says when the request never reached the
   // API, and on its own it is barely more use than the sentence the customer
@@ -175,6 +257,13 @@ function recordFailure(err) {
   const message = [(err && err.message) || String(err), ...causes].join(' <- ');
   const status = err && err.status;
   console.error('[foundry] provider call failed:', code, status ? 'status ' + status : '', message);
+
+  // The value of this file is that every line in it really happened to this
+  // machine. A test that invents a refused socket to check the wording would
+  // write a refused socket into the record, and the next person reading it for
+  // a pattern would be reading a fault nobody had.
+  if (process.env.NODE_TEST_CONTEXT) return;
+
   try {
     const fs = require('node:fs');
     const path = require('node:path');
@@ -234,10 +323,23 @@ function translateError(err) {
   // program on this machine is not letting Foundry open it.
   if (deniedLocally(err)) {
     return new ProviderError(
-      'Something on this computer blocked Foundry from reaching the model provider. '
-        + 'The network itself is fine — security software is refusing the connection. '
-        + 'Ask whoever manages this machine to allow it.',
+      'Security software on this computer is refusing to let Foundry open the connection. '
+        + 'Foundry kept trying for half a minute and it was still refused. The network itself '
+        + 'is fine. Try again in a few minutes, and if it keeps happening ask whoever manages '
+        + 'this machine to allow Foundry out to the model provider.',
       { code: 'ai_blocked_locally', status: 503, retryable: true, cause: err }
+    );
+  }
+
+  // An intercepted certificate this runtime will not accept. Foundry adds the
+  // machine's own authorities at startup, so reaching here means the runtime is
+  // too old to expose them — a fact about the installation, not the network.
+  if (certificateRejected(err)) {
+    return new ProviderError(
+      'Foundry could not verify the model provider\'s certificate. This computer inspects '
+        + 'secure traffic, and the version of Node.js running Foundry is too old to read the '
+        + 'certificate authorities this machine trusts. Upgrading Node.js fixes it.',
+      { code: 'ai_untrusted_certificate', status: 503, cause: err }
     );
   }
 
@@ -247,4 +349,7 @@ function translateError(err) {
   );
 }
 
-module.exports = { create };
+// outlive and translateError are exported so the reachability rules can be
+// tested without a network: which failures are worth waiting out, and what a
+// customer is told about the ones that are not.
+module.exports = { create, outlive, translateError };

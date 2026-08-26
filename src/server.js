@@ -1,12 +1,22 @@
 'use strict';
 
 const config = require('./config');
+const netTrust = require('./net-trust');
 const { openDatabase } = require('./db');
 const { createApp } = require('./app');
 const reevaluate = require('./attention/reevaluate');
 const autopilotScheduler = require('./autopilot/scheduler');
 
 config.ensureDataDir();
+
+// Before anything tries to leave the machine. This host reissues certificates
+// through a locally installed root, and a runtime that does not read the system
+// certificate store rejects every outbound call with an error naming neither
+// the store nor the machine.
+const trust = netTrust.installSystemCertificates();
+if (trust.applied) {
+  console.log(`TLS: trusting ${trust.added} certificate authorities from this machine's store`);
+}
 
 const db = openDatabase(config.databasePath);
 const app = createApp({ db });
