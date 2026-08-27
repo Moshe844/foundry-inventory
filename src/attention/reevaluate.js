@@ -17,6 +17,9 @@ const { inTransaction } = require('../db');
 const attention = require('./attention-engine');
 const { nowIso } = require('../lib/util');
 const managerTriggers = require('../manager/triggers');
+const managerEvents = require('../manager/events');
+const reactions = require('../manager/reactions');
+const patience = require('../ai/patience');
 
 const DEFAULT_SWEEP_MS = 60 * 60 * 1000; // hourly: expiry and idleness move by the day
 const LEASE_ID = 'sweep';
@@ -54,14 +57,39 @@ function acquireSweepLease(db, leaseMs) {
 }
 
 /** Narrow re-evaluation after an operation. Never throws into the caller. */
-function afterMovement(db, workspaceId, skuIds, trigger = 'movement') {
+function afterMovement(db, workspaceId, skuIds, trigger = 'movement', options = {}) {
   const scope = Array.isArray(skuIds) && skuIds.length ? { skuIds: [...new Set(skuIds)] } : undefined;
   try {
-    const result = attention.evaluate(db, workspaceId, { trigger, scope });
-    managerTriggers.enqueue(db, workspaceId, trigger, scope || {}, {
+    // Keep the Mission 8 trigger row as compatibility/audit history, but mark
+    // it complete: Mission 9's durable domain event owns the reaction now.
+    const legacy = managerTriggers.enqueue(db, workspaceId, trigger, scope || {}, {
       idempotencyKey: managerTriggers.keyFor(trigger, scope || {}),
     });
-    return result;
+    if (legacy.created) managerTriggers.finish(db, legacy.trigger.id);
+
+    const raw = String(trigger || '').replace(/^connector:/, '').replace(/^action:/, '');
+    const type = raw === 'issue' ? managerEvents.TYPES.INVENTORY_ISSUED
+      : raw === 'receive' ? managerEvents.TYPES.INVENTORY_RECEIVED
+        : raw === 'transfer' || raw === 'plan' ? managerEvents.TYPES.INVENTORY_TRANSFERRED
+          : raw === 'adjust' ? managerEvents.TYPES.INVENTORY_CORRECTED
+            : `inventory.${raw || 'changed'}`;
+    const latest = options.sourceRecordId || (scope && db.prepare(
+      `SELECT id FROM movements WHERE workspace_id = ? AND sku_id IN (${scope.skuIds.map(() => '?').join(',')})
+       ORDER BY rowid DESC LIMIT 1`
+    ).get(workspaceId, ...scope.skuIds)?.id);
+    const reacted = reactions.publishAndReact(db, workspaceId, type, scope || {}, {
+      source: trigger.startsWith('connector:') ? 'connector'
+        : trigger.startsWith('action:') ? 'tell_foundry' : 'inventory',
+      // A committed movement has its own idempotency at the engine layer. At
+      // this boundary callers do not all expose the movement id, so a narrow
+      // event key includes the original trigger and current ledger watermark.
+      sourceRecordType: latest ? 'movement' : null,
+      sourceRecordId: latest || null,
+      idempotencyKey: options.idempotencyKey || (latest
+        ? `${type}:movement:${latest}`
+        : managerTriggers.keyFor(type, { trigger, ...(scope || {}) })),
+    });
+    return reacted.reaction;
   } catch (error) {
     // The operation succeeded; the briefing is stale until the next sweep.
     console.error('[attention] re-evaluation failed after %s: %s', trigger, error.message);
@@ -102,7 +130,9 @@ function startScheduler(db, { intervalMs = DEFAULT_SWEEP_MS, immediate = true } 
   const leaseMs = Math.max(30000, Math.floor(intervalMs * 0.9));
   const tick = (trigger) => {
     if (!acquireSweepLease(db, leaseMs)) return null;
-    return sweepAll(db, trigger);
+    // A sweep runs on the clock, not because anybody asked, so it can wait out
+    // a refused connection far longer than a web request could.
+    return patience.unattended(() => sweepAll(db, trigger));
   };
 
   if (immediate) tick('startup');

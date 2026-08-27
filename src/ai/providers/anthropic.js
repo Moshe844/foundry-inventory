@@ -12,6 +12,7 @@
 const dns = require('node:dns');
 const Anthropic = require('@anthropic-ai/sdk');
 const netTrust = require('../../net-trust');
+const patience = require('../patience');
 const config = require('../../config');
 const { ProviderError, ProviderOutputError } = require('../provider');
 const { toWireSchema } = require('../../foundry/schema-tools');
@@ -65,7 +66,14 @@ netTrust.installSystemCertificates();
  * and retrying those would only make a settled answer take longer to arrive.
  */
 const OUTLIVABLE = new Set(['EACCES', 'EPERM', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN']);
+
+// Roughly half a minute when somebody is waiting for the answer, and roughly
+// four when nobody is. The first day these retries ran, three refusals outlasted
+// the shorter budget — so the longer one exists, but only where the cost of
+// waiting is a scheduled run finishing later rather than a person watching a
+// spinner.
 const BACKOFF_MS = [2000, 6000, 15000];
+const BACKOFF_UNATTENDED = [5000, 15000, 30000, 60000, 120000];
 
 function outlivable(err) {
   if (err && err.status) return false; // the provider answered; this is not the network
@@ -86,7 +94,12 @@ const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
  * as it always was. Only the last failure is translated, so the customer is
  * told what was still true after Foundry had genuinely stopped trying.
  */
-async function outlive(attempt, delays = BACKOFF_MS) {
+/** How long this occasion is willing to wait for the machine to change its mind. */
+function backoffFor() {
+  return patience.nobodyIsWaiting() ? BACKOFF_UNATTENDED : BACKOFF_MS;
+}
+
+async function outlive(attempt, delays = backoffFor()) {
   let last;
   for (let tries = 0; tries <= delays.length; tries += 1) {
     try {
@@ -352,4 +365,4 @@ function translateError(err) {
 // outlive and translateError are exported so the reachability rules can be
 // tested without a network: which failures are worth waiting out, and what a
 // customer is told about the ones that are not.
-module.exports = { create, outlive, translateError };
+module.exports = { create, outlive, backoffFor, translateError };

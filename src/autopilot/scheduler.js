@@ -35,6 +35,9 @@ const policyService = require('./policy-service');
 const reevaluate = require('../attention/reevaluate');
 const { nowIso } = require('../lib/util');
 const { inTransaction } = require('../db');
+const managerEvents = require('../manager/events');
+const patience = require('../ai/patience');
+const reactions = require('../manager/reactions');
 
 /**
  * Quarter-hourly. Inventory does not change by the second, and a customer who
@@ -135,13 +138,25 @@ function activeWorkspaces(db) {
 function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled', intervalMs = DEFAULT_INTERVAL_MS } = {}) {
   const state = modes.ensure(db, workspaceId);
   const nextAt = new Date(now + intervalMs).toISOString();
+  const bucket = new Date(Math.floor(now / intervalMs) * intervalMs).toISOString();
+  const published = managerEvents.publish(db, workspaceId, managerEvents.TYPES.TIME_REEVALUATION_DUE, {
+    dueAt: bucket,
+  }, { source: 'clock', idempotencyKey: `${managerEvents.TYPES.TIME_REEVALUATION_DUE}:${bucket}` });
+  const triggerEventId = published.event.id;
+  const complete = (result) => {
+    const current = managerEvents.get(db, workspaceId, triggerEventId);
+    if (current && current.status !== managerEvents.STATUS.PROCESSED) {
+      managerEvents.finish(db, triggerEventId, result);
+    }
+    return result;
+  };
 
   // Watching, paused or stopped: the calendar still moves, so findings are still
   // re-evaluated. No work is planned and nothing is carried out.
   if (state.paused || state.suspended || state.mode === modes.MODES.OBSERVE) {
     const refreshed = reevaluate.refresh(db, workspaceId, trigger);
     modes.recordEvaluation(db, workspaceId, { nextAt });
-    return {
+    return complete({
       workspaceId,
       readOnly: true,
       because: state.paused
@@ -151,7 +166,7 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
           : 'watching only',
       opened: refreshed.opened,
       resolved: refreshed.resolved,
-    };
+    });
   }
 
   const authority = authorityFor(db, workspaceId);
@@ -162,22 +177,26 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
     const owner = db
       .prepare("SELECT * FROM users WHERE workspace_id = ? AND role = 'owner' ORDER BY created_at LIMIT 1")
       .get(workspaceId);
-    if (!owner) return { workspaceId, skipped: true, because: 'no one to act for' };
+    if (!owner) return complete({ workspaceId, skipped: true, because: 'no one to act for' });
 
     const ctx = { workspaceId, actorId: owner.id, accountId: owner.account_id };
-    const planned = managerLoop.run(db, ctx, owner, { trigger, now, planOnly: true });
+    const planned = managerLoop.run(db, ctx, owner, {
+      trigger, triggerEventId, idempotencyKey: `event:${triggerEventId}`, now, planOnly: true,
+    });
     modes.recordEvaluation(db, workspaceId, { nextAt });
-    return {
+    return complete({
       workspaceId,
       plannedOnly: true,
       because: 'no approved policy',
       planned: planned.planned || 0,
-    };
+    });
   }
 
-  const result = managerLoop.run(db, authority.ctx, authority.membership, { trigger, now });
+  const result = managerLoop.run(db, authority.ctx, authority.membership, {
+    trigger, triggerEventId, idempotencyKey: `event:${triggerEventId}`, now,
+  });
   modes.recordEvaluation(db, workspaceId, { nextAt });
-  return { workspaceId, ...result, under: authority.policy.name };
+  return complete({ workspaceId, ...result, under: authority.policy.name });
 }
 
 /**
@@ -219,13 +238,21 @@ function tick(db, { now = Date.now(), trigger = 'scheduled', intervalMs = DEFAUL
 function start(db, { intervalMs = DEFAULT_INTERVAL_MS, immediate = true } = {}) {
   let running = false;
 
+  // A committed event whose process died mid-reaction is safe to reconsider:
+  // the event key, work key, execution key and movement engine are all
+  // idempotent. Recover it before accepting new timed work.
+  managerEvents.recover(db);
+  reactions.drain(db);
+
   const turn = (trigger) => {
     // A slow turn must not overlap the next one. Overlapping ticks would race
     // each other for the same work.
     if (running) return null;
     running = true;
     try {
-      return tick(db, { trigger, intervalMs });
+      // Nobody is watching a scheduled turn, so it can afford to wait out a
+      // refused connection for minutes rather than seconds.
+      return patience.unattended(() => tick(db, { trigger, intervalMs }));
     } catch (error) {
       console.error('[autopilot] tick failed: %s', error.message);
       return null;
@@ -240,7 +267,10 @@ function start(db, { intervalMs = DEFAULT_INTERVAL_MS, immediate = true } = {}) 
   const eventTimer = setInterval(() => {
     if (running) return;
     running = true;
-    try { managerLoop.processPending(db, authorityFor); }
+    try {
+      reactions.drain(db);
+      managerLoop.processPending(db, authorityFor);
+    }
     catch (error) { console.error('[manager] event turn failed: %s', error.message); }
     finally { running = false; }
   }, Math.min(intervalMs, 1000));

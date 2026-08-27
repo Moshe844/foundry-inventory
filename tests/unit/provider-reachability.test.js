@@ -24,6 +24,7 @@ const assert = require('node:assert/strict');
 const tls = require('node:tls');
 
 const netTrust = require('../../src/net-trust');
+const patience = require('../../src/ai/patience');
 const anthropic = require('../../src/ai/providers/anthropic');
 
 /** The failure shape the SDK produces: a flat message wrapping the real cause. */
@@ -150,6 +151,34 @@ test('an answer from the provider is never retried, however it reads', async () 
   }
 });
 
+/**
+ * Three refusals outlasted the first day of retrying, so scheduled work waits
+ * longer than a person will. Counting attempts is how the two are told apart
+ * without a test that actually sits there for four minutes.
+ */
+test('scheduled work waits out a refusal far longer than someone at a screen', async () => {
+  const attended = anthropic.backoffFor();
+  const unattended = await patience.unattended(async () => anthropic.backoffFor());
+
+  const total = (delays) => delays.reduce((sum, ms) => sum + ms, 0);
+  assert.ok(total(unattended) > total(attended) * 3,
+    'a scheduled run outlasts windows a web request cannot');
+
+  // The one a person is waiting on still has to end while they are still there.
+  assert.ok(total(attended) <= 45000, 'nobody watches a spinner for a minute');
+  assert.ok(total(unattended) >= 120000, 'and the windows seen here outlast half a minute');
+});
+
+test('patience does not leak out of the scheduled run that asked for it', async () => {
+  let inside = null;
+  await patience.unattended(async () => {
+    inside = patience.nobodyIsWaiting();
+  });
+  assert.equal(inside, true, 'inside the run, nobody is waiting');
+  assert.equal(patience.nobodyIsWaiting(), false,
+    'and the next web request is not quietly given four minutes of patience');
+});
+
 test('the provider still says which failures may be tried again', () => {
   const blocked = anthropic.translateError(connectionError('EACCES', 'connect EACCES'));
   assert.equal(blocked.retryable, true, 'a filtering driver changes its mind');
@@ -158,4 +187,49 @@ test('the provider still says which failures may be tried again', () => {
     connectionError('UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'unable to verify')
   );
   assert.notEqual(untrusted.retryable, true, 'an untrusted root does not');
+});
+
+
+/**
+ * The wiring, not just the mechanism.
+ *
+ * Patience is worth nothing unless the schedulers actually claim it, and unsafe
+ * unless the Check now button does not — that button has a person behind it,
+ * and four minutes of silent retrying is the spinner this was meant to avoid.
+ * So both schedulers are started for real and asked what they did.
+ */
+test('a scheduled turn runs unattended; the button a person presses does not', () => {
+  const { makeDatabase, cleanupAll: _c, seedWorkspace } = require('../../tests/helpers');
+  const scheduler = require('../../src/autopilot/scheduler');
+  const reevaluate = require('../../src/attention/reevaluate');
+
+  const store = makeDatabase();
+  seedWorkspace(store.db, { workspaceName: 'Patience Co' });
+
+  let claims = 0;
+  const real = patience.unattended;
+  patience.unattended = (fn) => { claims += 1; return real(fn); };
+
+  try {
+    // Long intervals: the only turn either scheduler takes here is the
+    // immediate one, so what is counted is that turn and nothing else.
+    const stopAutopilot = scheduler.start(store.db, { intervalMs: 3600000, immediate: true });
+    const afterAutopilot = claims;
+    assert.ok(afterAutopilot > 0, 'the autopilot turn claimed patience');
+
+    const stopSweeper = reevaluate.startScheduler(store.db, { intervalMs: 3600000, immediate: true });
+    assert.ok(claims > afterAutopilot, 'and so did the sweep');
+
+    stopAutopilot();
+    stopSweeper();
+
+    // The same work, asked for by a person, must not.
+    const before = claims;
+    scheduler.tick(store.db, { trigger: 'manual' });
+    assert.equal(claims, before,
+      'Check now keeps the shorter wait, because somebody is looking at it');
+  } finally {
+    patience.unattended = real;
+    store.db.close();
+  }
 });
