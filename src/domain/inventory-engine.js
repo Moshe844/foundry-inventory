@@ -23,6 +23,7 @@
 
 const { inTransaction } = require('../db');
 const repo = require('./repository');
+const operatingGuards = require('./operating-guards');
 const { ValidationError, InvariantError, InsufficientStockError } = require('./errors');
 const {
   ADJUSTMENT_REASON_IDS,
@@ -426,6 +427,9 @@ function issue(db, ctx, input) {
 
     if (sku.tracking_mode === 'serial') {
       const units = resolveSerialUnits(db, ctx, sku, location, input.serialUnitIds);
+      operatingGuards.assertIssueAllowed(db, ctx.workspaceId, {
+        skuId: sku.id, locationId: location.id, quantity: units.length,
+      });
       const movementIds = [];
       for (const unit of units) {
         db.prepare(
@@ -448,6 +452,10 @@ function issue(db, ctx, input) {
     }
 
     const quantity = requirePositiveInt(input.quantity, 'Quantity');
+
+    operatingGuards.assertIssueAllowed(db, ctx.workspaceId, {
+      skuId: sku.id, locationId: location.id, quantity,
+    });
 
     if (sku.tracking_mode === 'lot') {
       const lot = resolveLotForMove(db, ctx, sku, input);

@@ -14,6 +14,12 @@ const poService = require('../../src/purchasing/po-service');
 const repo = require('../../src/domain/repository');
 const inventory = require('../../src/domain/inventory-engine');
 const physicalEvents = require('../../src/manager/physical-events');
+const documentRemovals = require('../../src/manager/document-removals');
+const catalogCodeChanges = require('../../src/manager/catalog-code-changes');
+const operatingGuards = require('../../src/domain/operating-guards');
+const attention = require('../../src/attention/attention-engine');
+const planService = require('../../src/imports/plan-service');
+const importRemovals = require('../../src/manager/import-removals');
 
 test.after(cleanupAll);
 
@@ -24,6 +30,23 @@ async function setup(response) {
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
   return { ...store, workspace, agent };
+}
+
+function operatingChange(overrides = {}) {
+  return {
+    operation: 'set', domain: 'replenishment', itemText: '', variantText: '', locationText: '', sourceLocationText: '', supplierText: '',
+    reorderPoint: -1, targetStock: -1, safetyStock: -1, locationMinimum: -1, locationTarget: -1,
+    leadTimeDays: -1, unitsPerPurchaseUnit: -1, minimumOrderQuantity: -1, orderMultiple: -1,
+    maximumQuantity: -1, maximumValue: -1, cooldownHours: -1, daysOfStock: -1,
+    purchaseUnit: '', contactName: '', email: '', orderingMethod: '',
+    preferTransferBeforePurchasing: false, approvalRequired: true,
+    guardAction: '', guardMetric: '', guardComparator: '', guardThreshold: -1,
+    guardReleaseCondition: '', guardReleaseThreshold: -1, ...overrides,
+  };
+}
+
+function operatingResult(changes, summary = 'Operating rule') {
+  return { understood: true, summary, changes, clarifyingQuestion: '', unsupportedReason: '' };
 }
 
 test('Needs you is one consolidated, authenticated exception queue', async () => {
@@ -122,19 +145,15 @@ test('resolving an investigation clears the linked physical event from Needs you
 });
 
 test('the universal input routes a policy request without changing policy on a guess', async () => {
-  const env = await setup([
-    { intentClass: 'POLICY_CHANGE', confidence: 'high', reason: 'Changes autonomy.',
-      resolvedReference: '', clarifyingQuestion: '' },
-    { understood: true, actionType: 'approve_purchase_order', name: 'Routine replenishment',
-      maximumQuantity: 0, maximumValue: 500, maxUnitPriceChangePercent: 5,
-      locationNames: [], supplierNames: [], dailyLimit: 0, unsupportedReason: '' },
-  ]);
+  const env = await setup(operatingResult([
+    operatingChange({ domain: 'purchase_authority', supplierText: '', maximumValue: 500 }),
+  ], 'Purchasing limit'));
   const home = await env.agent.get('/');
   const response = await env.agent.post('/foundry/tell').type('form').send({
     _csrf: csrfFrom(home.text), message: 'Never approve an order over $500',
   });
   assert.equal(response.status, 303);
-  assert.equal(response.headers.location, '/autopilot');
+  assert.match(response.headers.location, /^\/operating-instructions\//);
   assert.equal(env.db.prepare('SELECT COUNT(*) n FROM automation_policies WHERE workspace_id = ?').get(env.workspace.workspaceId).n, 0);
   assert.equal(env.db.prepare('SELECT intent_class FROM manager_intents').get().intent_class, 'POLICY_CHANGE');
   env.db.close();
@@ -229,12 +248,324 @@ test('Tell Foundry prepares a remembered vendor-code mapping without changing co
   env.db.close();
 });
 
+test('universal Tell Foundry keeps the all-locations continuation through its redirect', async () => {
+  const env = await setup({
+    lines: [{
+      actionType: 'receive', item: 'Display Hook', variant: '', sourceText: 'received 1 Display Hook',
+      lotCode: '', serials: [], sourceLocation: '', destinationLocation: '', quantity: 1,
+      adjustmentTarget: -1, reasonCode: '', terminologyKey: '', terminologyValue: '',
+      productName: '', productCode: '', variantAxes: '', unitLabel: '', supplier: '', purchaseUnit: '',
+    }],
+    clarifyingQuestion: '', unsupportedReason: '',
+  });
+  makeQuantityItem(env.db, env.workspace.ctx, { name: 'Display Hook', baseCode: 'HOOK-1' });
+  const home = await env.agent.get('/');
+  const asked = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text), message: 'We received 1 Display Hook.',
+  });
+  assert.equal(asked.status, 303);
+  assert.equal(asked.headers.location, '/actions');
+  const question = await env.agent.get('/actions');
+  assert.match(plain(question.text), /Both locations/);
+  const continuationId = /name="continuationId" value="([^"]+)"/.exec(question.text)?.[1];
+  assert.ok(continuationId);
+  const answered = await env.agent.post('/actions/ask').type('form').send({
+    _csrf: csrfFrom(question.text), original: 'We received 1 Display Hook.',
+    answer: '__all_locations__', continuationId,
+  });
+  assert.equal(answered.status, 303, plain(answered.text));
+  assert.match(answered.headers.location, /^\/actions\/plan\/apl_/);
+  const plan = plain((await env.agent.get(answered.headers.location)).text);
+  assert.match(plan, /Downtown Store/);
+  assert.match(plan, /Main Warehouse/);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM action_proposals WHERE plan_id IS NOT NULL').get().n, 2);
+  env.db.close();
+});
+
+test('Tell Foundry prepares and atomically applies a catalogue-wide code prefix change', async () => {
+  const env = await setup({});
+  const first = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Classic T-Shirt', baseCode: 'TS-BLK' });
+  const second = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Straight Jeans', baseCode: 'TS-JEAN' });
+  const untouched = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Zip Hoodie', baseCode: 'HD-NVY' });
+
+  const home = await env.agent.get('/');
+  const routed = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'Can you replace the first two letters of the code for each item from TS to ME',
+  });
+  assert.equal(routed.status, 303);
+  assert.match(routed.headers.location, /^\/catalog-code-changes\/ccp_/);
+  const preview = await env.agent.get(routed.headers.location);
+  const text = plain(preview.text);
+  assert.match(text, /TS-BLK → ME-BLK/);
+  assert.match(text, /TS-JEAN → ME-JEAN/);
+  assert.doesNotMatch(text, /HD-NVY →/);
+  assert.equal(repo.requireItem(env.db, env.workspace.workspaceId, first.itemId).base_code, 'TS-BLK',
+    'previewing changes nothing');
+
+  const id = routed.headers.location.split('/').pop();
+  const proposal = catalogCodeChanges.get(env.db, env.workspace.workspaceId, id);
+  const approved = await env.agent.post(`${routed.headers.location}/approve`).type('form').send({
+    _csrf: csrfFrom(preview.text), integrityHash: proposal.integrityHash,
+  });
+  assert.equal(approved.status, 303);
+  assert.equal(repo.requireItem(env.db, env.workspace.workspaceId, first.itemId).base_code, 'ME-BLK');
+  assert.equal(repo.requireSku(env.db, env.workspace.workspaceId, first.skuId).code, 'ME-BLK');
+  assert.equal(repo.requireItem(env.db, env.workspace.workspaceId, second.itemId).base_code, 'ME-JEAN');
+  assert.equal(repo.requireSku(env.db, env.workspace.workspaceId, second.skuId).code, 'ME-JEAN');
+  assert.equal(repo.requireItem(env.db, env.workspace.workspaceId, untouched.itemId).base_code, 'HD-NVY');
+  env.db.close();
+});
+
 test('manager pages cannot be read without signing in', async () => {
   const store = makeDatabase();
   const app = createApp({ db: store.db, env: 'test', sessionSecret: 'manager-anon' });
   assert.equal((await request(app).get('/needs-you')).status, 302);
   assert.equal((await request(app).get('/investigations/not-real')).status, 302);
   store.db.close();
+});
+
+test('Home confirms a selected attachment and a file-only Tell Foundry request reaches its preview', async () => {
+  const env = await setup({});
+  env.db.prepare(
+    `INSERT INTO workspace_configuration
+       (workspace_id, configured_at, configuration_version, terminology, operational_defaults, inventory_model, updated_at)
+     VALUES (?, datetime('now'), 1, '{}', '{}', '{"primaryArchetype":"quantity"}', datetime('now'))`
+  ).run(env.workspace.workspaceId);
+  const home = await env.agent.get('/');
+  assert.match(home.text, /data-operator-attachment/);
+  assert.match(home.text, /data-operator-attachment-status/);
+  assert.match(plain(home.text), /Attach file/);
+
+  const csv = [
+    'Item Name,SKU,Warehouse,Qty On Hand',
+    'Copper Elbow,CE-050,Main Warehouse,140',
+  ].join('\n');
+  const response = await env.agent.post('/foundry/tell')
+    .field('_csrf', csrfFrom(home.text))
+    .attach('file', Buffer.from(csv, 'utf8'), { filename: 'opening-stock.csv', contentType: 'text/csv' });
+
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /^\/imports\/imp_/);
+  const preview = plain((await env.agent.get(response.headers.location)).text);
+  assert.match(preview, /Copper Elbow/);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items').get().n, 0,
+    'reading the attachment must still wait for review before creating inventory');
+  env.db.close();
+});
+
+test('Tell Foundry treats an attached pricing sheet as updates to exact SKU codes and never creates products', async () => {
+  const env = await setup({});
+  const existing = makeQuantityItem(env.db, env.workspace.ctx, {
+    name: 'Black Jeans / Small', baseCode: 'JEANS-BLACK-S',
+  });
+  const home = await env.agent.get('/');
+  const csv = [
+    'SKU,Selling Price',
+    'JEANS-BLACK-S,12.00',
+    'NOT-IN-INVENTORY,99.00',
+  ].join('\n');
+  const response = await env.agent.post('/foundry/tell')
+    .field('_csrf', csrfFrom(home.text))
+    .field('message', 'Take a look at this sheet and update the pricing accordingly')
+    .attach('file', Buffer.from(csv, 'utf8'), { filename: 'prices.csv', contentType: 'text/csv' });
+
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /^\/imports\/imp_/);
+  const importId = response.headers.location.split('/').pop();
+  const plan = planService.get(env.db, env.workspace.workspaceId, importId);
+  assert.equal(plan.transformations.operationScope, 'selling_price_update');
+  assert.equal(plan.recordsValid, 1);
+  assert.equal(plan.recordsInvalid, 1, 'an unknown SKU is blocked rather than created');
+
+  const preview = await env.agent.get(response.headers.location);
+  const previewText = plain(preview.text);
+  assert.match(previewText, /selling-price update/i);
+  assert.match(previewText, /create no products and change no stock quantities/i);
+  assert.match(previewText, /USD 12\.00/);
+  assert.match(previewText, /NOT-IN-INVENTORY does not match exactly one active SKU code/i);
+  assert.doesNotMatch(previewText, /just create the products/i);
+
+  const token = csrfFrom(preview.text);
+  const hash = /name="integrityHash" value="([^"]+)"/.exec(preview.text)[1];
+  await env.agent.post(`${response.headers.location}/approve`).type('form').send({ _csrf: token, integrityHash: hash });
+  await env.agent.post(`${response.headers.location}/run`).type('form').send({ _csrf: token });
+
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 1);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM skus WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 1);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ? AND base_code = ?')
+    .get(env.workspace.workspaceId, 'NOT-IN-INVENTORY').n, 0);
+  const price = env.db.prepare(`SELECT amount_minor FROM sku_prices
+    WHERE workspace_id = ? AND sku_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+    .get(env.workspace.workspaceId, existing.skuId);
+  assert.equal(price.amount_minor, 1200);
+  env.db.close();
+});
+
+test('newly added products resolve to the latest import and allow subset or select-all removal', async () => {
+  const env = await setup({});
+  const home = await env.agent.get('/');
+  const csv = [
+    'Item Name,SKU',
+    'Imported One,NEW-ONE',
+    'Imported Two,NEW-TWO',
+    'Imported Three,NEW-THREE',
+  ].join('\n');
+  const uploaded = await env.agent.post('/foundry/tell')
+    .field('_csrf', csrfFrom(home.text))
+    .attach('file', Buffer.from(csv, 'utf8'), { filename: 'new-products.csv', contentType: 'text/csv' });
+  const preview = await env.agent.get(uploaded.headers.location);
+  const hash = /name="integrityHash" value="([^"]+)"/.exec(preview.text)[1];
+  const token = csrfFrom(preview.text);
+  await env.agent.post(`${uploaded.headers.location}/approve`).type('form').send({ _csrf: token, integrityHash: hash });
+  await env.agent.post(`${uploaded.headers.location}/run`).type('form').send({ _csrf: token });
+  const unrelated = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Unrelated Existing Product', baseCode: 'OLD-ONE' });
+
+  const after = await env.agent.get('/');
+  const asked = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(after.text), message: 'Remove the newly added inventory products',
+  });
+  assert.equal(asked.status, 303);
+  assert.match(asked.headers.location, /^\/import-removals\/irp_/);
+  const page = await env.agent.get(asked.headers.location);
+  const text = plain(page.text);
+  assert.match(text, /new-products\.csv/i);
+  assert.match(text, /Imported One/);
+  assert.match(text, /Imported Two/);
+  assert.match(text, /Imported Three/);
+  assert.doesNotMatch(text, /Unrelated Existing Product/);
+  assert.match(text, /Select all/);
+  assert.match(text, /Remove all 3/);
+
+  const proposalId = asked.headers.location.split('/').pop();
+  const proposal = importRemovals.get(env.db, env.workspace.workspaceId, proposalId);
+  const one = proposal.snapshot.items.find((item) => item.name === 'Imported One');
+  await env.agent.post(`${asked.headers.location}/approve`).type('form').send({
+    _csrf: csrfFrom(page.text), integrityHash: proposal.integrityHash,
+    selectionMode: 'selected', itemIds: one.id,
+  });
+  assert.equal(env.db.prepare('SELECT is_active FROM items WHERE id = ?').get(one.id).is_active, 0);
+  assert.equal(env.db.prepare('SELECT is_active FROM items WHERE id = ?').get(unrelated.itemId).is_active, 1);
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM items
+    WHERE workspace_id = ? AND is_active = 1 AND base_code LIKE 'NEW-%'`).get(env.workspace.workspaceId).n, 2);
+
+  const againHome = await env.agent.get('/');
+  const again = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(againHome.text), message: 'Remove the newly added inventory products',
+  });
+  const allPage = await env.agent.get(again.headers.location);
+  const allProposal = importRemovals.get(env.db, env.workspace.workspaceId, again.headers.location.split('/').pop());
+  await env.agent.post(`${again.headers.location}/approve`).type('form').send({
+    _csrf: csrfFrom(allPage.text), integrityHash: allProposal.integrityHash, selectionMode: 'all',
+  });
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM items
+    WHERE workspace_id = ? AND is_active = 1 AND base_code LIKE 'NEW-%'`).get(env.workspace.workspaceId).n, 0);
+  assert.equal(env.db.prepare('SELECT is_active FROM items WHERE id = ?').get(unrelated.itemId).is_active, 1);
+  env.db.close();
+});
+
+test('an unmatched supplier invoice becomes an exact inventory review instead of a generic exception', async () => {
+  const interpretation = {
+    documentType: 'invoice', businessDescription: 'New shoe inventory from Step & Style Wholesale.', unitLabel: 'pair',
+    supplierName: 'Step & Style Wholesale', supplierCodeLabel: 'Style #', supplierEmail: '',
+    documentNumber: 'INV-NEW-1', documentDate: '2026-08-26', paymentTerms: '', currency: 'USD',
+    destinationName: 'Main Warehouse', destinationAddress: '',
+    lines: [{ styleName: 'Kids Loafer', color: 'Black', variantDimension: 'Size', size: '23',
+      supplierSku: 'SH-101-BLK', description: 'Kids Loafer Black size 23', quantity: 12, unitCost: 11.5 }],
+    warnings: [],
+  };
+  const env = await setup(interpretation);
+  env.db.prepare(
+    `INSERT INTO workspace_configuration
+       (workspace_id, configured_at, configuration_version, terminology, operational_defaults, inventory_model, updated_at)
+     VALUES (?, datetime('now'), 1, '{}', '{}', '{"primaryArchetype":"quantity"}', datetime('now'))`
+  ).run(env.workspace.workspaceId);
+  makeQuantityItem(env.db, env.workspace.ctx, { name: 'Classic Cotton T-Shirt', baseCode: 'TS-BLK' });
+
+  const home = await env.agent.get('/');
+  const routed = await env.agent.post('/foundry/tell')
+    .field('_csrf', csrfFrom(home.text))
+    .field('message', 'This is a supplier invoice')
+    .attach('file', Buffer.from('Step & Style Wholesale\nINV-NEW-1\nSH-101-BLK Kids Loafer Black 23 Qty 12'),
+      { filename: 'new-shoes.txt', contentType: 'text/plain' });
+
+  assert.equal(routed.status, 303);
+  assert.match(routed.headers.location, /^\/foundry\/proposal\/und_/);
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM physical_events WHERE workspace_id = ? AND status = ?')
+    .get(env.workspace.workspaceId, 'NEEDS_HUMAN').n, 0);
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM items WHERE workspace_id = ?').get(env.workspace.workspaceId).n, 1,
+    'reading the invoice must not create inventory before approval');
+
+  const review = await env.agent.get(routed.headers.location);
+  const reviewText = plain(review.text);
+  assert.match(reviewText, /what Foundry read from your file/i);
+  assert.match(reviewText, /Kids Loafer/);
+  assert.match(reviewText, /Black/);
+  assert.match(reviewText, /23/);
+  assert.match(reviewText, /12 pairs/);
+  assert.match(reviewText, /This file looks different from Manager HTTP Co/i);
+  assert.match(reviewText, /Already here Classic Cotton T-Shirt/i);
+
+  const blocked = await env.agent.post(`${routed.headers.location}/configure`).type('form').send({
+    _csrf: csrfFrom(review.text), supplierCodeLabel: 'Style #',
+  });
+  assert.equal(blocked.status, 303);
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM items WHERE workspace_id = ?').get(env.workspace.workspaceId).n, 1);
+
+  const confirmed = await env.agent.post(`${routed.headers.location}/configure`).type('form').send({
+    _csrf: csrfFrom(review.text), scopeDecision: 'confirm',
+  });
+  assert.equal(confirmed.status, 303);
+  const resumed = await env.agent.get(confirmed.headers.location);
+  assert.match(plain(resumed.text), /Nothing changes until you approve the exact records below/i);
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM items WHERE workspace_id = ?').get(env.workspace.workspaceId).n, 1,
+    'confirming the destination inventory must not apply the document');
+
+  const approved = await env.agent.post(`${routed.headers.location}/configure`).type('form').send({
+    _csrf: csrfFrom(resumed.text), supplierCodeLabel: 'Style #',
+  });
+  assert.equal(approved.status, 303);
+  assert.match(plain((await env.agent.get(approved.headers.location)).text), /existing inventory setup was not changed/i);
+  assert.equal(env.db.prepare('SELECT configuration_version FROM workspace_configuration WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).configuration_version, 1);
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM items WHERE workspace_id = ?').get(env.workspace.workspaceId).n, 2);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId,
+    env.db.prepare("SELECT sku_id AS id FROM supplier_items WHERE workspace_id = ? AND supplier_sku = 'SH-101-BLK'")
+      .get(env.workspace.workspaceId).id,
+    env.workspace.main.id), 12);
+
+  const afterImport = await env.agent.get('/');
+  const removalRequest = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(afterImport.text),
+    message: 'Can you delete the newly added items from the document provided earlier?',
+  });
+  assert.equal(removalRequest.status, 303);
+  assert.match(removalRequest.headers.location, /^\/document-removals\/drp_/);
+  const removalPage = await env.agent.get(removalRequest.headers.location);
+  const removalText = plain(removalPage.text);
+  assert.match(removalText, /Foundry traced these products to new-shoes\.txt/i);
+  assert.match(removalText, /Kids Loafer - Black/i);
+  assert.match(removalText, /Current stock 12/i);
+  assert.doesNotMatch(removalText, /Attach the spreadsheet, PDF or document/i);
+  assert.equal(env.db.prepare("SELECT is_active FROM items WHERE workspace_id = ? AND name LIKE 'Kids Loafer%'")
+    .get(env.workspace.workspaceId).is_active, 1, 'the review must not remove the product');
+
+  const proposalId = removalRequest.headers.location.split('/').pop();
+  const removal = documentRemovals.get(env.db, env.workspace.workspaceId, proposalId);
+  const removed = await env.agent.post(`${removalRequest.headers.location}/approve`).type('form').send({
+    _csrf: csrfFrom(removalPage.text), integrityHash: removal.integrityHash,
+  });
+  assert.equal(removed.status, 303);
+  assert.equal(env.db.prepare("SELECT is_active FROM items WHERE workspace_id = ? AND name LIKE 'Kids Loafer%'")
+    .get(env.workspace.workspaceId).is_active, 0);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId,
+    env.db.prepare("SELECT sku_id AS id FROM supplier_items WHERE workspace_id = ? AND supplier_sku = 'SH-101-BLK'")
+      .get(env.workspace.workspaceId).id, env.workspace.main.id), 0);
+  assert.equal(env.db.prepare("SELECT COUNT(*) AS n FROM items WHERE workspace_id = ? AND is_active = 1")
+    .get(env.workspace.workspaceId).n, 1, 'the earlier T-shirt remains active');
+  env.db.close();
 });
 
 test('a photo is kept as physical evidence instead of being forced through spreadsheet import', async () => {
@@ -459,6 +790,392 @@ test('a sale within stock goes to the ordinary approval, and nothing moves until
   env.db.close();
 });
 
+test('an unclear Tell Foundry request becomes an orange answerable continuation, never a blue top message', async () => {
+  let classifications = 0;
+  const env = await setup((req) => {
+    if (req.schemaName !== 'manager_intent') return {};
+    classifications += 1;
+    return classifications === 1
+      ? { intentClass: 'UNKNOWN', confidence: 'low', reason: 'The requested outcome is unclear.',
+          resolvedReference: '', clarifyingQuestion: 'Which inventory outcome do you want?' }
+      : { intentClass: 'QUESTION', confidence: 'high', reason: 'The clarification says this is a question.',
+          resolvedReference: '', clarifyingQuestion: '' };
+  });
+  const home = await env.agent.get('/');
+  const first = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text), message: 'Do something with the blue line',
+  });
+  assert.equal(first.status, 303);
+  assert.equal(first.headers.location, '/actions');
+
+  const continuation = await env.agent.get('/actions');
+  const text = plain(continuation.text);
+  assert.match(text, /Which inventory outcome do you want/i);
+  assert.match(continuation.text, /value="Do something with the blue line"/i);
+  assert.match(continuation.text, /act-question--warning/);
+  assert.match(continuation.text, /action="\/foundry\/tell"/);
+  assert.doesNotMatch(continuation.text, /flash--info[^>]*>[^<]*Which inventory outcome/i);
+
+  const answered = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(continuation.text),
+    original: 'Do something with the blue line',
+    answer: 'This is a question about my current inventory.',
+  });
+  assert.equal(answered.status, 303);
+  assert.match(answered.headers.location, /^\/ask\?q=/);
+  assert.match(decodeURIComponent(answered.headers.location), /Do something with the blue line.*Clarification:.*question about my current inventory/i);
+  env.db.close();
+});
+
+test('Tell Foundry treats an exact SKU code as the variant even when the reader calls it a lot', async () => {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'SKU identity QA' });
+  const item = makeVariantItem(store.db, workspace.ctx, {
+    name: 'Straight Jeans - Blue', baseCode: 'JN-BLU-28',
+    options: [{ name: 'Size', values: '28' }],
+  });
+  const size28 = item.byLabel('28');
+  inventory.receive(store.db, workspace.ctx, {
+    skuId: size28.id, locationId: workspace.main.id, quantity: 16,
+  });
+  const provider = fakeProvider((req) => {
+    if (req.schemaName === 'manager_intent') {
+      return { intentClass: 'PHYSICAL_EVENT', confidence: 'high', reason: 'A sale happened.',
+        resolvedReference: '', clarifyingQuestion: '' };
+    }
+    if (req.schemaName === 'physical_inventory_event') {
+      return { eventType: 'reported_event', skuId: '', locationId: '', countedQuantity: -1,
+        reason: 'A sale is not a count.' };
+    }
+    if (req.schemaName === 'inventory_action_intent') {
+      return { lines: [{
+        actionType: 'issue', item: 'Straight Jeans - Blue Quantity Variants', variant: '',
+        lotCode: 'JN-BLU-28', serials: [], sourceLocation: 'Main Warehouse', destinationLocation: '',
+        quantity: 1, adjustmentTarget: -1, reasonCode: 'sold', terminologyKey: '', terminologyValue: '',
+        productName: '', productCode: '', variantAxes: '', unitLabel: '', supplier: '', purchaseUnit: '',
+      }], clarifyingQuestion: '', unsupportedReason: '' };
+    }
+    return {};
+  });
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'sku-identity', aiProvider: provider });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  const home = await agent.get('/');
+  const response = await agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'I sold 1 Straight Jeans - Blue Quantity Variants JN-BLU-28',
+  });
+
+  assert.match(response.headers.location, /^\/actions\/act_/);
+  const preview = plain((await agent.get(response.headers.location)).text).replace(/\s+/g, ' ');
+  assert.match(preview, /Straight Jeans - Blue \/ 28/);
+  assert.match(preview, /Main Warehouse/);
+  assert.doesNotMatch(preview, /There is no lot/);
+  assert.equal(repo.getBalance(store.db, workspace.workspaceId, size28.id, workspace.main.id), 16,
+    'the sale is still only a preview');
+  store.db.close();
+});
+
+test('a complete past-tense sale bypasses an UNKNOWN manager answer and reaches the grounded preview', async () => {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Natural sale routing QA' });
+  const item = makeVariantItem(store.db, workspace.ctx, {
+    name: 'Straight Jeans - Blue', baseCode: 'JN-BLU',
+    options: [{ name: 'Size', values: '28, 30' }],
+  });
+  const size28 = item.byLabel('28');
+  inventory.receive(store.db, workspace.ctx, {
+    skuId: size28.id, locationId: workspace.main.id, quantity: 10,
+  });
+  let managerClassifierCalls = 0;
+  const provider = fakeProvider((req) => {
+    if (req.schemaName === 'manager_intent') {
+      managerClassifierCalls += 1;
+      return { intentClass: 'UNKNOWN', confidence: 'low', reason: 'Incorrect generic fallback.',
+        resolvedReference: '', clarifyingQuestion: 'What would you like Foundry to do with the inventory?' };
+    }
+    if (req.schemaName === 'inventory_action_intent') {
+      return { lines: [{
+        actionType: 'issue', item: 'Straight Jeans - Blue', variant: '28', sourceText: '1 Straight Jeans - Blue size 28',
+        lotCode: '', serials: [], sourceLocation: 'Main Warehouse', destinationLocation: '', quantity: 1,
+        adjustmentTarget: -1, reasonCode: 'sold', terminologyKey: '', terminologyValue: '',
+        productName: '', productCode: '', variantAxes: '', unitLabel: '', supplier: '', purchaseUnit: '',
+      }], clarifyingQuestion: '', unsupportedReason: '' };
+    }
+    return {};
+  });
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'natural-sale-routing', aiProvider: provider });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  const home = await agent.get('/');
+  const response = await agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'I sold 1 Straight Jeans - Blue size 28 at Main Warehouse.',
+  });
+
+  assert.equal(managerClassifierCalls, 0, 'clear transaction grammar must not be demoted by a model answer');
+  assert.match(response.headers.location, /^\/actions\/act_/);
+  const preview = plain((await agent.get(response.headers.location)).text).replace(/\s+/g, ' ');
+  assert.match(preview, /Straight Jeans - Blue \/ 28/);
+  assert.match(preview, /Main Warehouse/);
+  assert.doesNotMatch(preview, /What would you like Foundry to do/i);
+  assert.equal(repo.getBalance(store.db, workspace.workspaceId, size28.id, workspace.main.id), 10,
+    'the sale remains a preview until approval');
+  store.db.close();
+});
+
+test('Tell Foundry preserves a supplied split-catalogue attribute and asks only for the missing axis', async () => {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Split catalogue Tell Foundry QA' });
+  for (const colour of ['Black', 'White']) {
+    for (const size of ['Small', 'Medium', 'Large']) {
+      makeVariantItem(store.db, workspace.ctx, {
+        name: `Classic Cotton T-Shirt - ${colour}`,
+        options: [{ name: 'Size', values: size }],
+      });
+    }
+  }
+  const provider = fakeProvider((req) => {
+    if (req.schemaName === 'inventory_action_intent') {
+      return { lines: [{
+        actionType: 'issue', item: 'Classic Cotton T-Shirt', variant: 'White',
+        sourceText: '15 Classic Cotton T-Shirt - White', lotCode: '', serials: [],
+        sourceLocation: '', destinationLocation: '', quantity: 15, adjustmentTarget: -1,
+        reasonCode: 'sold', terminologyKey: '', terminologyValue: '', productName: '', productCode: '',
+        variantAxes: '', unitLabel: '', supplier: '', purchaseUnit: '',
+      }], clarifyingQuestion: '', unsupportedReason: '' };
+    }
+    return {};
+  });
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'split-catalogue-home', aiProvider: provider });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  const home = await agent.get('/');
+  const response = await agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text), message: 'I sold 15 Classic Cotton T-Shirt - White',
+  });
+
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.location, '/actions');
+  const asked = await agent.get('/actions');
+  const page = plain(asked.text);
+  assert.match(page, /Which size of Classic Cotton T-Shirt - White do you mean\?/);
+  assert.doesNotMatch(page, /Classic Cotton T-Shirt - Black/);
+  for (const size of ['Small', 'Medium', 'Large']) {
+    assert.match(asked.text, new RegExp(`name="answer" value="${size}"`));
+  }
+  store.db.close();
+});
+
+test('Tell Foundry previews reorder language in the same settings the UI saves', async () => {
+  const env = await setup(operatingResult([
+    operatingChange({ domain: 'replenishment', itemText: 'T-shirt', variantText: 'Black Small', reorderPoint: 60, targetStock: 80 }),
+  ], 'Black Small replenishment'));
+  const item = makeVariantItem(env.db, env.workspace.ctx, {
+    name: 'T-shirt',
+    options: [
+      { name: 'Colour', values: 'Black, White' },
+      { name: 'Size', values: 'Small, Large' },
+    ],
+  });
+  const blackSmall = item.byLabel('Black / Small');
+  const home = await env.agent.get('/');
+  const routed = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'Reorder Black Small at 60 and bring it back to 80.',
+  });
+  assert.equal(routed.status, 303);
+  assert.match(routed.headers.location, /^\/operating-instructions\//);
+  assert.equal(purchasingPolicyService.effectivePolicy(env.db, env.workspace.workspaceId, blackSmall.id).isSet, false,
+    'reading the sentence must not save the rule');
+
+  const preview = await env.agent.get(routed.headers.location);
+  const text = plain(preview.text);
+  assert.match(text, /reorder at 60/i);
+  assert.match(text, /bring the network position to 80/i);
+
+  const saved = await env.agent.post(`${routed.headers.location}/approve`).type('form').send({
+    _csrf: csrfFrom(preview.text), integrityHash: preview.text.match(/name="integrityHash" value="([^"]+)"/)[1],
+  });
+  assert.equal(saved.status, 303);
+  const policy = purchasingPolicyService.effectivePolicy(env.db, env.workspace.workspaceId, blackSmall.id);
+  assert.equal(policy.reorderPoint, 60);
+  assert.equal(policy.targetStock, 80);
+  env.db.close();
+});
+
+test('Tell Foundry previews a variant-and-location minimum and the shared control enforces it', async () => {
+  const env = await setup(operatingResult([
+    operatingChange({ domain: 'location_stock', itemText: 'T-shirt', variantText: 'Black Small', locationText: 'Downtown Store', locationMinimum: 20 }),
+  ], 'Downtown keep-back'));
+  const item = makeVariantItem(env.db, env.workspace.ctx, {
+    name: 'T-shirt',
+    options: [
+      { name: 'Colour', values: 'Black, White' },
+      { name: 'Size', values: 'Small, Large' },
+    ],
+  });
+  const blackSmall = item.byLabel('Black / Small');
+  const home = await env.agent.get('/');
+  const routed = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'Never let Black Small fall below 20 at Downtown Store.',
+  });
+  assert.equal(routed.status, 303);
+  assert.match(routed.headers.location, /^\/operating-instructions\//);
+  const preview = await env.agent.get(routed.headers.location);
+  assert.match(plain(preview.text), /keep at least 20/i);
+  assert.equal(purchasingPolicyService.locationPolicies(env.db, env.workspace.workspaceId, blackSmall.id).length, 0);
+
+  const saved = await env.agent.post(`${routed.headers.location}/approve`).type('form').send({
+    _csrf: csrfFrom(preview.text), integrityHash: preview.text.match(/name="integrityHash" value="([^"]+)"/)[1],
+  });
+  assert.equal(saved.status, 303);
+  assert.deepEqual(
+    purchasingPolicyService.locationPolicies(env.db, env.workspace.workspaceId, blackSmall.id)
+      .map((row) => ({ locationId: row.locationId, minimum: row.minimum })),
+    [{ locationId: env.workspace.store.id, minimum: 20 }]
+  );
+
+  // The saved UI rule must be the rule used by the ordinary workspace scan,
+  // not merely something that reappears in the form.
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: blackSmall.id, locationId: env.workspace.main.id, quantity: 30,
+  });
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: blackSmall.id, locationId: env.workspace.store.id, quantity: 1,
+  });
+  const signalEngine = require('../../src/signals/signal-engine');
+  const replenishmentPlan = require('../../src/purchasing/replenishment-plan');
+  const scan = replenishmentPlan.planWorkspace(
+    env.db,
+    env.workspace.workspaceId,
+    { skus: signalEngine.skuSignals(env.db, env.workspace.workspaceId) }
+  );
+  const planned = scan.plans.find((entry) => entry.skuId === blackSmall.id);
+  const downtown = planned.byLocation.find((entry) => entry.locationId === env.workspace.store.id);
+  assert.equal(downtown.reserveFloor, 20, 'Check now uses this exact variant/location minimum');
+  assert.equal(downtown.need, 20);
+  env.db.close();
+});
+
+test('Tell Foundry routes a direct currency assignment to a selling-price preview', async () => {
+  const env = await setup({});
+  makeQuantityItem(env.db, env.workspace.ctx, { name: 'Black Jeans', baseCode: 'JEANS-BLACK-S' });
+
+  const home = await env.agent.get('/');
+  const response = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'Can you set JEANS-BLACK-S to $12 each',
+  });
+
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /^\/pricing\/proposals\//);
+  const preview = plain((await env.agent.get(response.headers.location)).text);
+  assert.match(preview, /Review the selling price/i);
+  assert.match(preview, /\$12\.00/);
+  assert.match(preview, /Nothing changes until you approve/i);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM sku_prices WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 0);
+  env.db.close();
+});
+
+test('Tell Foundry previews and approves one list of different selling prices', async () => {
+  const env = await setup({});
+  const black = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Black Jeans', baseCode: 'JEANS-BLACK-S' });
+  const navy = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Navy Jeans', baseCode: 'JEANS-NAVY-M' });
+  const home = await env.agent.get('/');
+  const response = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'Set these selling prices:\nJEANS-BLACK-S: $12.00 each\nJEANS-NAVY-M: $18.75 each',
+  });
+
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.location, '/pricing/proposals/batch');
+  const batchPage = await env.agent.get('/pricing/proposals/batch');
+  const preview = plain(batchPage.text);
+  assert.match(preview, /Review 2 selling prices/i);
+  assert.match(preview, /JEANS-BLACK-S/);
+  assert.match(preview, /\$12\.00/);
+  assert.match(preview, /JEANS-NAVY-M/);
+  assert.match(preview, /\$18\.75/);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM sku_prices WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 0);
+
+  const pending = env.db.prepare(`SELECT id, integrity_hash FROM price_change_proposals
+    WHERE workspace_id = ? AND status = 'PENDING' ORDER BY created_at, rowid`).all(env.workspace.workspaceId);
+  const body = { _csrf: csrfFrom(batchPage.text) };
+  pending.forEach((proposal) => { body[`approval[${proposal.id}]`] = proposal.integrity_hash; });
+  const approved = await env.agent.post('/pricing/proposals/batch/approve').type('form').send(body);
+  assert.equal(approved.status, 303);
+  assert.equal(env.db.prepare('SELECT amount_minor FROM sku_prices WHERE sku_id = ? ORDER BY rowid DESC LIMIT 1')
+    .get(black.skuId).amount_minor, 1200);
+  assert.equal(env.db.prepare('SELECT amount_minor FROM sku_prices WHERE sku_id = ? ORDER BY rowid DESC LIMIT 1')
+    .get(navy.skuId).amount_minor, 1875);
+  env.db.close();
+});
+
+test('Tell Foundry carries each multi-sale clause into one correctly grouped preview', async () => {
+  const provider = fakeProvider((req) => {
+    if (req.schemaName === 'manager_intent') {
+      return { intentClass: 'PHYSICAL_EVENT', confidence: 'high', reason: 'A sale happened.',
+        resolvedReference: '', clarifyingQuestion: '' };
+    }
+    if (req.schemaName === 'physical_inventory_event') {
+      return { eventType: 'reported_event', skuId: '', locationId: '', countedQuantity: -1,
+        reason: 'This sale contains several stock lines.' };
+    }
+    if (req.schemaName === 'inventory_action_intent') {
+      const line = (variant) => ({
+        actionType: 'issue', item: 'Black T-shirt', variant, lotCode: '', serials: [],
+        sourceLocation: 'Downtown Store', destinationLocation: '', quantity: 2,
+        adjustmentTarget: -1, reasonCode: 'sold', terminologyKey: '', terminologyValue: '',
+        productName: '', productCode: '', variantAxes: '', unitLabel: '', supplier: '', purchaseUnit: '',
+      });
+      // Deliberately omit each colour and sourceText, reproducing the live
+      // parser shape. Clause provenance must recover Black and White from the
+      // person's exact request, independently.
+      return { lines: [line('Large'), line('Small')], clarifyingQuestion: '', unsupportedReason: '' };
+    }
+    return {};
+  });
+
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Multi-sale QA' });
+  const item = makeVariantItem(store.db, workspace.ctx, {
+    name: 'Black T-shirt',
+    options: [{ name: 'Colour', values: 'Black, White' }, { name: 'Size', values: 'Small, Large' }],
+  });
+  for (const sku of item.skus) {
+    inventory.receive(store.db, workspace.ctx, {
+      skuId: sku.id, locationId: workspace.store.id, quantity: 10,
+    });
+  }
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'multi-sale', aiProvider: provider });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const home = await agent.get('/');
+  const response = await agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'We sold 2 Black Large and 2 White Small at Downtown Store.',
+  });
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /^\/actions\/plan\//,
+    'the universal Tell Foundry input must end on one grouped action preview');
+
+  const preview = plain((await agent.get(response.headers.location)).text).replace(/\s+/g, ' ');
+  assert.match(preview, /several changes/i);
+  assert.match(preview, /Black T-shirt \/ Black \/ Large/);
+  assert.match(preview, /Black T-shirt \/ White \/ Small/);
+  assert.doesNotMatch(preview, /Which .*T-shirt do you mean/i);
+  for (const sku of item.skus) {
+    assert.equal(repo.getBalance(store.db, workspace.workspaceId, sku.id, workspace.store.id), 10,
+      'the grouped preview must not change any stock before approval');
+  }
+  store.db.close();
+});
+
 test('a sale larger than stock is refused by name, not filed as missing information', async () => {
   const env = await shopWithFourLarge(saleProvider({ quantity: 10 }));
   const { res, landed } = await env.tell('We sold 10 Black Large at Downtown Store');
@@ -497,6 +1214,37 @@ test('a refusal by a rule is never left waiting in Needs you', async () => {
 
   const needsYou = plain((await env.agent.get('/needs-you')).text).replace(/\s+/g, ' ');
   assert.doesNotMatch(needsYou, /Black \/ Large/, 'nothing about this sale is waiting for a person');
+  env.db.close();
+});
+
+test('a protected stock boundary appears as one orange Needs You warning and its refusal is orange too', async () => {
+  const env = await shopWithFourLarge(saleProvider({ quantity: 1 }));
+  const membership = authService.getMembership(env.db, env.workspace.workspaceId, env.workspace.accountId);
+  operatingGuards.set(env.db, env.workspace.ctx, membership, {
+    skuId: env.large.id, actionType: 'issue', metric: 'location_on_hand', locationId: env.downtown.id,
+    comparator: 'below', threshold: 4, releaseCondition: 'stock_recovered', releaseThreshold: 4,
+    source: 'tell_foundry', statedAs: 'Do not let this location fall below four.',
+  });
+  attention.evaluate(env.db, env.workspace.workspaceId, { trigger: 'rule-approved' });
+
+  const needsPage = await env.agent.get('/needs-you');
+  const needsText = plain(needsPage.text);
+  assert.match(needsText, /Black T-shirt.*Black \/ Large is at its protected stock limit/i);
+  assert.match(needsText, /4 on hand at Downtown Store.*protected limit 4/i);
+  assert.match(needsPage.text, /badge--warn/);
+
+  const warning = attention.listAttention(env.db, env.workspace.workspaceId, {
+    category: 'stock_protection_boundary',
+  })[0];
+  const detail = await env.agent.get(`/attention/${warning.attentionId}`);
+  assert.match(plain(detail.text), /Review stock and ordering/i);
+  assert.match(detail.text, new RegExp(`/inventory/${env.item.itemId}`));
+
+  const { landed } = await env.tell('We sold 1 Black Large at Downtown Store');
+  assert.match(plain(landed.text), /Stock protection stopped this outgoing stock/i);
+  assert.match(landed.text, /act-question--warning/);
+  assert.doesNotMatch(landed.text, /act-question--muted/);
+  assert.equal(env.balance(), 4, 'the warning never weakens the enforcement rule');
   env.db.close();
 });
 

@@ -1,24 +1,93 @@
 <div class="page-head">
   <div class="titles">
     <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> Foundry</a>
-    <h1><%= locals.title || item.categoryLabel %></h1>
+    <h1><%= locals.approvalCopy ? locals.approvalCopy.heading : (locals.title || item.categoryLabel) %></h1>
     <div class="page-sub">
-      <%= item.executionStatus === 'COMPLETED' ? 'Done' : helpers.columnLabel(item.executionStatus.toLowerCase().replace(/_/g, ' ')) %>
+      <%= locals.approvalCopy
+        ? locals.approvalCopy.status
+        : item.executionStatus === 'COMPLETED'
+          ? 'Done'
+          : helpers.columnLabel(item.executionStatus.toLowerCase().replace(/_/g, ' ')) %>
       <% if (item.verificationStatus === 'VERIFIED') { %> · verified against your records<% } %>
       <% if (item.isAutomatic) { %> · carried out automatically<% } %>
     </div>
   </div>
 </div>
 
+<% if (locals.currentResult) { %>
+  <div class="notice notice--ok section current-result" role="status">
+    <strong>Current result:</strong>
+    <%= locals.currentResult.summary %>
+    <% if (locals.currentResult.order) { %>
+      <a href="/purchasing/orders/<%= locals.currentResult.order.id %>">Open <%= locals.currentResult.order.poNumber %></a>
+    <% } %>
+  </div>
+<% } %>
+
 <div class="card section <%= item.verificationStatus === 'FAILED' ? 'card--warn' : '' %>">
   <div class="card-head">
-    <h2>Why</h2>
-    <% if (policy) { %><span class="spacer"></span><a class="btn btn--sm btn--ghost" href="/autopilot/policies/<%= policy.id %>"><%= policy.name %></a><% } %>
+    <h2><%= locals.approvalCopy ? 'The decision' : 'Why' %></h2>
+    <% if (policy) { %><span class="spacer"></span><a class="btn btn--sm btn--ghost" href="/autopilot/policies/<%= policy.id %>"><%= policy.name %> · version <%= (item.policyEvaluation || {}).policyVersion || policy.version %></a><% } %>
   </div>
   <div class="card-body">
-    <% paragraphs.forEach(function (line) { %><p class="lede"><%= line %></p><% }) %>
+    <% if (locals.approvalCopy) { %>
+      <p class="lede"><strong><%= locals.approvalCopy.summary %></strong></p>
+      <% if (locals.approvalCopy.orderRule) { %>
+        <div class="notice section" role="note">
+          <strong>Why this quantity?</strong>
+          <div><%= locals.approvalCopy.orderRule %></div>
+        </div>
+      <% } %>
+
+      <h3 class="rep-plan-sub">What approval does</h3>
+      <p><strong><%= locals.approvalCopy.approvalEffect %></strong></p>
+      <p class="muted"><%= locals.approvalCopy.approvalLimit %></p>
+
+      <% if (locals.approvalCopy.kind === 'transfer') { %>
+        <h3 class="rep-plan-sub">What changes</h3>
+        <table class="rep-plan-table">
+          <thead><tr><th>Location</th><th class="num">Before</th><th class="num">After</th></tr></thead>
+          <tbody>
+            <% locals.approvalCopy.movementRows.forEach(function (row) { %>
+              <tr><td><strong><%= row.locationName %></strong></td><td class="num"><%= row.before %></td><td class="num"><strong><%= row.after %></strong></td></tr>
+            <% }) %>
+          </tbody>
+        </table>
+        <p class="muted">Total stock remains unchanged.</p>
+      <% } else { %>
+        <h3 class="rep-plan-sub">What changes at each stage</h3>
+        <table class="rep-plan-table">
+          <thead>
+            <tr><th>Stage</th><th class="num">On hand</th><th class="num">Draft</th><th class="num">Placed order</th><th class="num">Planned total</th></tr>
+          </thead>
+          <tbody>
+            <% locals.approvalCopy.stages.forEach(function (stage) { %>
+              <tr>
+                <td><strong><%= stage.label %></strong></td>
+                <td class="num"><%= stage.onHand %></td>
+                <td class="num"><%= stage.drafted %></td>
+                <td class="num"><%= stage.onOrder %></td>
+                <td class="num"><strong><%= stage.covered %></strong></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+        <p class="muted">A draft is only a prepared decision. Stock becomes “on order” only after the purchase order is placed, and on-hand changes only when the delivery is received.</p>
+      <% } %>
+
+      <% if (locals.approvalCopy.locationDetail.length) { %>
+        <details class="section">
+          <summary><strong>Location detail</strong></summary>
+          <ul class="plain-list">
+            <% locals.approvalCopy.locationDetail.forEach(function (line) { %><li><%= line %></li><% }) %>
+          </ul>
+        </details>
+      <% } %>
+    <% } else { %>
+      <% paragraphs.forEach(function (line) { %><p class="lede"><%= line %></p><% }) %>
+    <% } %>
     <%# What the button does, listed, and what it deliberately does not. %>
-    <% if ((locals.actions || []).length) { %>
+    <% if (!locals.approvalCopy && (locals.actions || []).length) { %>
       <% const now = locals.actions.filter(function (a) { return a.when === 'now'; }); %>
       <% const later = locals.actions.filter(function (a) { return a.when === 'after'; }); %>
       <% if (now.length) { %>
@@ -39,14 +108,26 @@
       <% } %>
     <% } %>
 
-    <% if (locals.position) { %>
-      <h3 class="rep-plan-sub">Where this leaves the position</h3>
+    <% if (!locals.approvalCopy && locals.position) { %>
+      <h3 class="rep-plan-sub"><%=
+        item.executionStatus === 'COMPLETED'
+          ? 'Position when this plan was made'
+          : item.executionStatus === 'SUPERSEDED'
+            ? 'Position in the replaced plan'
+            : 'Where this leaves the position'
+      %></h3>
       <table class="rep-plan-table">
         <tbody>
           <tr><td>On hand</td><td class="num"><%= locals.position.onHand %></td></tr>
           <tr><td>On order <span class="muted">— placed with a supplier</span></td><td class="num"><%= locals.position.onOrder %></td></tr>
           <tr><td>Drafted <span class="muted">— decided, not yet placed</span></td><td class="num"><%= locals.position.drafted %></td></tr>
-          <tr><td><strong>Position now</strong> <span class="muted">— on hand + on order</span></td><td class="num"><strong><%= locals.position.position %></strong></td></tr>
+          <tr><td><strong><%=
+            item.executionStatus === 'COMPLETED'
+              ? 'Inventory position at plan creation'
+              : item.executionStatus === 'SUPERSEDED'
+                ? 'Inventory position in the replaced plan'
+                : 'Inventory position now'
+          %></strong> <span class="muted">— on hand + on order</span></td><td class="num"><strong><%= locals.position.position %></strong></td></tr>
           <tr><td>Reorder point</td><td class="num"><%= locals.position.reorderPoint %></td></tr>
           <tr><td>Order up to</td><td class="num"><%= locals.position.target %></td></tr>
         </tbody>
@@ -56,18 +137,20 @@
           combined number hid the movement between them: placing an order does
           not change what is on hand, and drafting one does not change the
           position at all. %>
-      <h3 class="rep-plan-sub">After approving this</h3>
-      <table class="rep-plan-table">
-        <tbody>
-          <tr><td>On hand <span class="muted">— unchanged until the delivery is booked in</span></td><td class="num"><%= locals.position.after.onHand %></td></tr>
-          <tr><td>On order</td><td class="num"><%= locals.position.after.onOrder %></td></tr>
-          <tr><td>Drafted</td><td class="num"><%= locals.position.after.drafted %></td></tr>
-          <tr><td><strong>Position</strong></td><td class="num"><strong><%= locals.position.after.position %></strong></td></tr>
-          <% if (locals.position.afterEveryOrderArrives !== locals.position.after.position) { %>
-            <tr><td>Once every order is placed and arrives <span class="muted">— all of it on hand</span></td><td class="num"><%= locals.position.afterEveryOrderArrives %></td></tr>
-          <% } %>
-        </tbody>
-      </table>
+      <% if (!item.isTerminal) { %>
+        <h3 class="rep-plan-sub">After approving this</h3>
+        <table class="rep-plan-table">
+          <tbody>
+            <tr><td>On hand <span class="muted">— unchanged until the delivery is booked in</span></td><td class="num"><%= locals.position.after.onHand %></td></tr>
+            <tr><td>On order</td><td class="num"><%= locals.position.after.onOrder %></td></tr>
+            <tr><td>Drafted</td><td class="num"><%= locals.position.after.drafted %></td></tr>
+            <tr><td><strong>Position</strong></td><td class="num"><strong><%= locals.position.after.position %></strong></td></tr>
+            <% if (locals.position.afterEveryOrderArrives !== locals.position.after.position) { %>
+              <tr><td>Once every order is placed and arrives <span class="muted">— all of it on hand</span></td><td class="num"><%= locals.position.afterEveryOrderArrives %></td></tr>
+            <% } %>
+          </tbody>
+        </table>
+      <% } %>
     <% } %>
 
     <% if (locals.orderLink) { %>
@@ -78,12 +161,24 @@
       <p><a class="btn btn--sm" href="/autopilot/work/<%= locals.supersededBy %>">Open the plan that replaced this</a></p>
     <% } %>
 
-    <% if (evidence.filter(function (f) { return f && f.label; }).length) { %>
-      <h3 class="sub-head">What I measured</h3>
+    <% const hasEvidence = evidence.filter(function (f) { return f && f.label; }).length; %>
+    <% if (locals.approvalCopy && (hasEvidence || checks.length)) { %>
+      <details class="section">
+        <summary><strong>Show calculations and safety checks</strong></summary>
+    <% } %>
+
+    <% if (hasEvidence) { %>
+      <h3 class="sub-head"><%= locals.approvalCopy ? 'Calculation inputs' : 'What I measured' %></h3>
       <table class="table table--tight">
         <tbody>
           <% evidence.forEach(function (fact) { %>
-            <tr><td><%= fact.label %></td><td class="num"><%= fact.value %></td></tr>
+            <tr>
+              <td><%= fact.label %></td>
+              <td class="num">
+                <%= fact.value %>
+                <% if (fact.note) { %><div class="muted"><%= fact.note %></div><% } %>
+              </td>
+            </tr>
           <% }) %>
         </tbody>
       </table>
@@ -104,14 +199,18 @@
       </ul>
     <% } %>
 
+    <% if (locals.approvalCopy && (hasEvidence || checks.length)) { %>
+      </details>
+    <% } %>
+
     <% if (verification.length) { %>
       <h3 class="sub-head">What I checked afterwards</h3>
       <ul class="plain-list">
-        <% verification.forEach(function (check) { %>
-          <li class="<%= check.ok ? '' : 'is-warn' %>">
-            <%- helpers.icon(check.ok ? 'check' : 'alert', { size: 14 }) %> <%= check.name %>
-          </li>
-        <% }) %>
+          <% verification.forEach(function (check) { %>
+            <li class="<%= check.ok ? '' : 'is-warn' %>">
+              <%= check.text || check.name || 'Verification completed.' %>
+            </li>
+          <% }) %>
       </ul>
     <% } %>
   </div>
@@ -121,11 +220,11 @@
       <div class="btn-row">
         <form method="post" action="/autopilot/work/<%= item.id %>/approve" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn btn--primary" type="submit">Do it</button>
+          <button class="btn btn--primary" type="submit"><%= locals.approvalCopy ? locals.approvalCopy.primaryLabel : 'Do it' %></button>
         </form>
         <form method="post" action="/autopilot/work/<%= item.id %>/cancel">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn btn--ghost" type="submit">Leave it</button>
+          <button class="btn btn--ghost" type="submit"><%= locals.approvalCopy ? locals.approvalCopy.secondaryLabel : 'Leave it' %></button>
         </form>
       </div>
     </div>

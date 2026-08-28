@@ -39,13 +39,14 @@
     <% items.forEach(function (entry) { %>
       <article class="needs-item">
         <div class="needs-item__body">
+          <span class="badge <%= entry.importance === 'Urgent' ? 'badge--danger' : entry.importance === 'Important' ? 'badge--warn' : 'badge--muted' %>"><%= entry.importance %></span>
           <h2><%= entry.title %></h2>
-          <p class="needs-item__happened"><%= entry.happened %></p>
-          <p class="needs-item__why"><%= entry.why %></p>
-          <p class="needs-item__missing">
-            <span class="needs-item__label">Foundry needs</span>
-            <%= entry.missing %>
-          </p>
+          <dl class="needs-item__answers">
+            <div><dt>What happened?</dt><dd><%= entry.happened %></dd></div>
+            <div><dt>Why does Foundry need me?</dt><dd><%= entry.why %></dd></div>
+            <div><dt>What does Foundry recommend?</dt><dd><%= entry.recommendation || entry.missing %></dd></div>
+            <div><dt>What do I do now?</dt><dd><%= entry.missing %></dd></div>
+          </dl>
         </div>
         <div class="needs-item__do">
           <a class="btn btn--primary btn--sm" href="<%= entry.href %>"><%= entry.actionLabel %></a>

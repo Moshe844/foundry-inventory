@@ -29,11 +29,12 @@ const activityService = require('./activity-service');
  *   system     — routine checks that produced nothing, kept for the audit trail
  */
 
-const STREAMS = ['inventory', 'purchasing', 'foundry', 'exception', 'system'];
+const STREAMS = ['inventory', 'sales', 'purchasing', 'foundry', 'exception', 'system'];
 
 const STREAM_LABEL = {
   all: 'All activity',
   inventory: 'Inventory',
+  sales: 'Sales orders',
   purchasing: 'Purchasing',
   foundry: 'Foundry actions',
   exception: 'Exceptions',
@@ -162,6 +163,33 @@ function purchasingEvents(db, workspaceId) {
   }
 
   return events;
+}
+
+/** Customer demand, commitments and fulfillment. */
+function salesEvents(db, workspaceId) {
+  return db.prepare(`SELECT soe.id, soe.event_type, soe.detail, soe.created_at,
+      so.id AS order_id, so.order_number, c.name AS customer_name, u.name AS actor_name
+    FROM sales_order_events soe JOIN sales_orders so ON so.id = soe.sales_order_id
+    JOIN customers c ON c.id = so.customer_id LEFT JOIN users u ON u.id = soe.actor_user_id
+    WHERE soe.workspace_id = ? ORDER BY soe.created_at DESC LIMIT 300`).all(workspaceId).map((row) => {
+      let detail = {}; try { detail = JSON.parse(row.detail || '{}'); } catch { detail = {}; }
+      const titles = {
+        CREATED: `${row.order_number} drafted for ${row.customer_name}`,
+        CONFIRMED: `${row.order_number} confirmed and stock allocated`,
+        CHANGED: `${row.order_number} changed and allocation recalculated`,
+        PARTIALLY_FULFILLED: `${row.order_number} partly fulfilled`,
+        FULFILLED: `${row.order_number} fulfilled`,
+        CANCELLED: `${row.order_number} cancelled and commitments released`,
+      };
+      const quantities = detail.allocations
+        ? `${detail.allocations.reduce((n, line) => n + Number(line.allocated || 0), 0)} allocated · ${detail.allocations.reduce((n, line) => n + Number(line.backordered || 0), 0)} backordered`
+        : detail.fulfilled ? `${detail.fulfilled.reduce((n, line) => n + Number(line.quantity || 0), 0)} fulfilled`
+          : detail.released !== undefined ? `${detail.released} commitment(s) released` : '';
+      return { id: `sales:${row.id}`, stream: 'sales', at: row.created_at,
+        kind: row.event_type.toLowerCase(), title: titles[row.event_type] || `${row.order_number} updated`,
+        subject: row.order_number, who: row.actor_name || 'Foundry', detail: quantities,
+        href: `/sales/orders/${row.order_id}` };
+    });
 }
 
 /** Differences opened, and how they were settled. */
@@ -304,6 +332,7 @@ function timeline(db, workspaceId, { stream = 'all', query = '', limit = 50, fil
   const stockOnly = Boolean(filters.operation || filters.actorId || filters.itemId);
   const everything = [
     ...inventoryEvents(db, workspaceId, filters),
+    ...(stockOnly ? [] : salesEvents(db, workspaceId)),
     ...(stockOnly ? [] : purchasingEvents(db, workspaceId)),
     ...(stockOnly ? [] : foundryEvents(db, workspaceId)),
     ...(stockOnly ? [] : exceptionEvents(db, workspaceId)),

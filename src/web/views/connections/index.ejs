@@ -1,0 +1,82 @@
+<header class="page-head">
+  <div class="titles">
+    <div class="eyebrow">Settings · Connections</div>
+    <h1>Keep Foundry informed automatically</h1>
+    <p class="page-sub">Connect the systems where your business activity happens. Their events flow through the same guarded inventory and Sales Order engines you already use.</p>
+  </div>
+</header>
+
+<section class="grid section">
+  <div class="section-head"><div><h2>Your connections</h2><p class="muted">No scripts, manual JSON, or Check now.</p></div></div>
+  <% var activeConnections = connections.filter(function(connection) {
+    return connection.credential_ref || connection.provider_account_id || !['AUTHORIZING', 'AUTHORIZATION_FAILED'].includes(connection.setup_status);
+  });
+  var setupAttempts = connections.filter(function(connection) { return !activeConnections.includes(connection); }); %>
+  <% if (!activeConnections.length) { %>
+    <div class="card"><div class="card-body empty-state"><h2>No systems connected yet</h2><p>Choose a provider below. Foundry will guide authorization, discover products and locations, and ask only about uncertain matches.</p></div></div>
+  <% } %>
+  <% activeConnections.forEach(function(connection) { %>
+    <a class="card list-row" href="/settings/connections/<%= connection.id %>">
+      <div style="min-width:0">
+        <strong><%= connection.display_name %></strong>
+        <p><%= connection.provider_account_name || connection.provider_type.replaceAll('_', ' ') %></p>
+        <% if (connection.status === 'connected' && connection.setup_status === 'MAPPING') { %>
+          <p class="is-warn"><strong>Connected.</strong> <%= connection.itemsNeedingMapping %> product or location record<%= connection.itemsNeedingMapping === 1 ? '' : 's' %> need matching before setup is complete.</p>
+        <% } else if (connection.status === 'connected') { %>
+          <p class="is-ok"><strong>Connected.</strong> Foundry is ready to receive activity from this account.</p>
+        <% } else if (connection.status === 'error') { %>
+          <p class="is-warn"><strong>Connection needs attention.</strong> Open it to see the exact problem.</p>
+        <% } else { %>
+          <p class="muted"><strong>Disconnected.</strong> Its mappings and history are still saved.</p>
+        <% } %>
+        <p class="muted"><%= connection.last_activity_at ? 'Last event ' + helpers.timeAgo(connection.last_activity_at) : 'Waiting for first event' %> · Last successful sync <%= connection.last_synced_at ? helpers.timeAgo(connection.last_synced_at) : 'not yet' %></p>
+        <p class="muted"><%= connection.productsMapped %> products mapped · <%= connection.locationsMapped %> locations mapped<%= connection.itemsNeedingMapping ? ' · ' + connection.itemsNeedingMapping + ' need mapping' : '' %></p>
+      </div>
+      <span class="badge <%= connection.publicStatus === 'Connected' ? 'badge--ok' : connection.publicStatus === 'Needs attention' ? 'badge--warn' : 'badge--muted' %>"><%= connection.publicStatus %></span>
+    </a>
+  <% }) %>
+  <% if (setupAttempts.length) { %>
+    <details class="card">
+      <summary class="card-head"><h2>Unfinished setup attempts (<%= setupAttempts.length %>)</h2></summary>
+      <div class="card-body grid">
+        <p class="muted">These did not replace or disconnect any working connection.</p>
+        <% setupAttempts.forEach(function(connection) { %>
+          <div class="list-row"><div><strong><%= connection.display_name %></strong><p><%= connection.last_error || 'Authorization was not completed.' %></p></div><span class="badge badge--muted">Not connected</span></div>
+        <% }) %>
+      </div>
+    </details>
+  <% } %>
+</section>
+
+<% var providerGroups = [
+  { key: 'selling', title: 'Selling', description: 'Stores and point-of-sale systems where customer activity happens.' },
+  { key: 'business', title: 'Business systems', description: 'Custom POS, ERP, and warehouse software.' },
+  { key: 'supplier', title: 'Supplier communication', description: 'Mailboxes that provide supplier evidence and documents.' }
+]; %>
+<% providerGroups.forEach(function(group) { var groupProviders = providerCatalog.filter(function(provider) { return provider.category === group.key; }); %>
+  <section class="section" aria-labelledby="connection-group-<%= group.key %>">
+    <div class="section-head"><div><h2 id="connection-group-<%= group.key %>"><%= group.title %></h2><p class="muted"><%= group.description %></p></div></div>
+    <div class="grid grid--2">
+      <% groupProviders.forEach(function(provider) { var alreadyConnected = activeConnections.some(function(connection) { return connection.provider_type === provider.type && connection.status === 'connected'; }); %>
+        <article class="card"><div class="card-body grid">
+          <div class="list-row" style="padding:0;border:0"><div><span class="eyebrow"><%= provider.mark %></span><h2><%= provider.name %></h2></div><span class="badge <%= provider.available ? 'badge--ok' : 'badge--muted' %>"><%= provider.available ? 'Available' : 'Setup required' %></span></div>
+          <p><%= provider.description %></p><p class="muted">Provides: <%= provider.provides.join(', ') %>.</p>
+          <% if (currentUser.role !== 'owner') { %><p class="hint">Ask an owner to connect this provider.</p>
+          <% } else if (!provider.available) { %><div class="notice"><div><strong>Not available on this installation</strong><p><%= provider.unavailableReason %></p></div></div>
+          <% } else if (provider.type === 'reference_webhook') { %>
+            <form method="post" action="/settings/connections" class="grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="reference_webhook"><label class="field"><span class="label">Connection name</span><input class="input" name="displayName" placeholder="Warehouse ERP" required></label><button class="btn btn--primary" type="submit">Create secure API connection</button><p class="hint">Foundry gives your technical team one endpoint, a scoped API token, and the complete event contract.</p></form>
+          <% } else { %>
+            <form method="post" action="/settings/connections/connect" class="grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= provider.type %>">
+              <% if (provider.type === 'shopify') { %><label class="field"><span class="label">Shopify store</span><input class="input" name="shop" placeholder="your-store.myshopify.com" required></label><% } %>
+              <% if (provider.type === 'woocommerce') { %><label class="field"><span class="label">WooCommerce store URL</span><input class="input" type="url" name="storeUrl" placeholder="https://shop.example.com" required></label><% } %>
+              <button class="btn btn--primary" type="submit"><%= alreadyConnected ? 'Connect another ' : 'Connect ' %><%= provider.name %></button>
+              <% if (provider.type === 'shopify') { %><p class="hint">An installed store in this Shopify organization connects directly. Other stores open Shopify for approval. Foundry stores the resulting credential encrypted.</p>
+              <% } else if (provider.type === 'clover') { %><p class="hint">Clover opens so you can choose and authorize the merchant. Foundry then discovers that merchant’s catalog and store automatically.</p>
+              <% } else { %><p class="hint">You will sign in with <%= provider.name %> and approve access. Foundry stores the resulting credential encrypted.</p><% } %>
+            </form>
+          <% } %>
+        </div></article>
+      <% }) %>
+    </div>
+  </section>
+<% }) %>

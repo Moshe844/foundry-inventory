@@ -16,6 +16,7 @@ const SEVERITY = {
 
 const CATEGORY_LABEL = {
   replenishment_needed: 'Replenishment plan',
+  stock_protection_boundary: 'Protected stock limit',
   low_stock: 'Out of stock',
   stockout_risk: 'Running low',
   location_imbalance: 'Stock in the wrong place',

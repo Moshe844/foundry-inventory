@@ -84,6 +84,7 @@ function hydrate(row) {
     workspaceId: row.workspace_id,
     createdByUserId: row.created_by_user_id,
     approvedByUserId: row.approved_by_user_id,
+    scopeConfirmedAt: row.scope_confirmed_at,
     sourceName: row.source_name,
     sourceKind: row.source_kind,
     sourceHash: row.source_hash,
@@ -149,6 +150,8 @@ function hydrateRow(row) {
 async function analyse(db, ctx, membership, input) {
   permissions.assertCan(membership, permissions.OPERATE, 'import data');
 
+  const operationScope = input.operationScope || null;
+
   const buffer = input.buffer || null;
   const text = input.text !== undefined ? input.text : null;
   if (!buffer && !String(text || '').trim()) {
@@ -180,6 +183,12 @@ async function analyse(db, ctx, membership, input) {
     { provider: input.provider, mappings: input.mappings, detectedType: input.detectedType }
   );
 
+  if (operationScope === 'selling_price_update' && proposal.mappings.sellingPrice === undefined) {
+    throw new ValidationError(
+      'Foundry could not find a selling-price column in that file. Nothing was imported.'
+    );
+  }
+
   const model = require('./catalog-service').workspaceDefaults(db, ctx.workspaceId);
 
   // Where the stock goes when the file does not say. An inventory with exactly
@@ -197,6 +206,7 @@ async function analyse(db, ctx, membership, input) {
     detectedType: proposal.detectedType,
     defaultLocationId,
     locationMappings: {},
+    operationScope,
   });
 
   const now = nowIso();
@@ -242,6 +252,7 @@ async function analyse(db, ctx, membership, input) {
     sourceColumns: sheet.columns.map((column) => ({ index: column.index, name: column.name })),
     fieldMappings: proposal.mappings,
     transformations: {
+      operationScope,
       axisNames: proposal.axisNames,
       aiApplied: proposal.aiApplied,
       aiRejected: proposal.aiRejected,
@@ -259,7 +270,7 @@ async function analyse(db, ctx, membership, input) {
     recordsDetected: validated.summary.total,
     recordsValid: validated.summary.valid + validated.summary.needsReview,
     recordsInvalid: validated.summary.invalid,
-    warnings: warningsFor(validated, proposal),
+    warnings: warningsFor(validated, proposal, operationScope),
     conflicts: validated.locationsNeeded.map((entry) => ({
       kind: 'unknown_location',
       text: entry.text,
@@ -281,7 +292,7 @@ async function analyse(db, ctx, membership, input) {
   return { plan: hydrate(read(db, ctx.workspaceId, id)), validated };
 }
 
-function warningsFor(validated, proposal) {
+function warningsFor(validated, proposal, operationScope = null) {
   const warnings = [];
   if (validated.summary.invalid) {
     warnings.push(`${validated.summary.invalid} row(s) cannot be imported as they stand.`);
@@ -289,7 +300,9 @@ function warningsFor(validated, proposal) {
   if (proposal.detectedType === 'unknown') {
     warnings.push('Foundry could not tell what kind of file this is. Check the columns below.');
   }
-  if (proposal.mappings.quantity === undefined) {
+  if (operationScope === 'selling_price_update') {
+    warnings.push('Only selling prices on exact existing SKU-code matches will change. Products and stock quantities will not change.');
+  } else if (proposal.mappings.quantity === undefined) {
     warnings.push('No quantity column, so this creates products without any opening stock.');
   }
   for (const rejected of proposal.aiRejected || []) {
@@ -440,6 +453,7 @@ function revalidate(db, ctx, membership, importId, changes = {}) {
     detectedType,
     defaultLocationId,
     locationMappings,
+    operationScope: plan.transformations.operationScope || null,
   });
 
   const now = nowIso();
@@ -498,7 +512,7 @@ function revalidate(db, ctx, membership, importId, changes = {}) {
           detectedType,
           mappings,
           aiRejected: plan.transformations.aiRejected || [],
-        })
+        }, plan.transformations.operationScope || null)
       ),
       computeIntegrityHash({ ...next, transformations: plan.transformations }),
       // Changing what will be created invalidates any approval of the old plan.

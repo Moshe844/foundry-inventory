@@ -94,6 +94,58 @@ function policiesBySku(db, workspaceId) {
   return new Map(rows.map((row) => [row.sku_id, hydrate(row)]));
 }
 
+/** Location keep-back levels for one variant. These use the same policy table as the main reorder settings. */
+function locationPolicies(db, workspaceId, skuId) {
+  return db.prepare(
+    `SELECT rp.location_id AS locationId, l.name AS locationName, rp.safety_stock AS minimum,
+            rp.target_stock AS target,
+            rp.source, rp.updated_at AS updatedAt
+       FROM reorder_policies rp JOIN locations l ON l.id = rp.location_id
+      WHERE rp.workspace_id = ? AND rp.sku_id = ? AND rp.location_id IS NOT NULL
+      ORDER BY l.name`
+  ).all(workspaceId, skuId);
+}
+
+/** A location floor and destination target, stored in the same structured row. */
+function setLocationPolicy(db, ctx, membership, skuId, locationId, input = {}) {
+  permissions.assertCan(membership, permissions.MANAGE_REPLENISHMENT, 'set location stock rules');
+  const sku = repo.requireSku(db, ctx.workspaceId, skuId);
+  const location = repo.requireLocation(db, ctx.workspaceId, locationId);
+  const existingRow = db.prepare(
+    'SELECT id, safety_stock AS minimum, target_stock AS target FROM reorder_policies WHERE workspace_id = ? AND sku_id = ? AND location_id = ?'
+  ).get(ctx.workspaceId, sku.id, location.id);
+  const minimum = Object.prototype.hasOwnProperty.call(input, 'minimum')
+    ? optionalInt(input.minimum, 'Location minimum') : (existingRow?.minimum ?? null);
+  const target = Object.prototype.hasOwnProperty.call(input, 'target')
+    ? optionalInt(input.target, 'Location target') : (existingRow?.target ?? null);
+  if (minimum !== null && target !== null && target < minimum) {
+    throw new ValidationError('The location target must be at least its keep-back minimum.');
+  }
+  const existing = existingRow;
+  if (minimum === null && target === null) {
+    if (existing) db.prepare('DELETE FROM reorder_policies WHERE id = ?').run(existing.id);
+    return { minimum: null, target: null };
+  }
+  const now = nowIso();
+  const source = input.source === 'foundry' ? 'foundry' : 'manual';
+  if (existing) {
+    db.prepare('UPDATE reorder_policies SET safety_stock = ?, target_stock = ?, source = ?, updated_at = ? WHERE id = ?')
+      .run(minimum, target, source, now, existing.id);
+  } else {
+    db.prepare(
+      `INSERT INTO reorder_policies
+         (id, workspace_id, sku_id, location_id, safety_stock, target_stock, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(newId('rpol'), ctx.workspaceId, sku.id, location.id, minimum, target, source, now, now);
+  }
+  return { minimum, target };
+}
+
+function setLocationMinimum(db, ctx, membership, skuId, locationId, value) {
+  const result = setLocationPolicy(db, ctx, membership, skuId, locationId, { minimum: value });
+  return { skuId, locationId, minimum: result.minimum };
+}
+
 function setPolicy(db, ctx, membership, skuId, input) {
   permissions.assertCan(membership, permissions.MANAGE_REPLENISHMENT, 'set reorder policies');
   const sku = repo.requireSku(db, ctx.workspaceId, skuId);
@@ -254,6 +306,9 @@ module.exports = {
   hydrate,
   effectivePolicy,
   policiesBySku,
+  locationPolicies,
+  setLocationPolicy,
+  setLocationMinimum,
   setPolicy,
   clearPolicy,
   proposePolicy,

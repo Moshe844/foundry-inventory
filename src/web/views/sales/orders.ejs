@@ -1,0 +1,55 @@
+<div class="page-head">
+  <div class="titles"><h1>Sales</h1><p>Completed connected sales and customer orders in one place.</p></div>
+  <div class="page-actions"><a class="btn btn--primary" href="/sales/new"><%- helpers.icon('plus', { size: 15 }) %> New sales order</a></div>
+</div>
+
+<div class="stats-row">
+  <div class="stat"><strong><%= orders.filter(function(o){ return ['CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED'].includes(o.status); }).length %></strong><span>Open customer orders</span></div>
+  <div class="stat"><strong><%= orders.reduce(function(n,o){ return n + o.totals.allocated; }, 0) %></strong><span>committed to customer orders</span></div>
+  <div class="stat"><strong><%= orders.reduce(function(n,o){ return n + o.totals.backordered; }, 0) %></strong><span>Units waiting for stock</span></div>
+</div>
+
+<div class="card">
+  <div class="card-head"><div><h2>Completed sales</h2><p class="muted">Sales completed in connected POS and commerce systems.</p></div></div>
+  <% if (!completedSales.length) { %>
+    <div class="empty"><h3>No connected sales yet</h3><p>A completed sale from Square or another connected system will appear here automatically.</p></div>
+  <% } else { %>
+    <div class="table-wrap"><table class="table table--stack sales-table"><thead><tr><th>Sale</th><th>Source</th><th>Items</th><th>Location</th><th>When</th><th class="right">Total</th></tr></thead><tbody>
+      <% completedSales.forEach(function(sale){ %><tr>
+        <td class="cell-main"><strong class="cell-title"><%= sale.reference %></strong><small>Completed</small></td>
+        <td><%= sale.providerName %></td>
+        <td><strong><%= sale.itemSummary %></strong><small><%= sale.totalUnits %> unit<%= sale.totalUnits === 1 ? '' : 's' %></small></td>
+        <td><%= sale.locations.join(', ') %></td>
+        <td><%= helpers.dateTime(sale.occurredAt) %></td>
+        <td class="right"><%= sale.priceComplete ? helpers.money(sale.totalMinor, sale.currency || 'USD') : 'Price unavailable' %></td>
+      </tr><% }) %>
+    </tbody></table></div>
+  <% } %>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <div class="card-head"><h2>Sales orders</h2></div>
+  <% if (!orders.length) { %>
+    <div class="empty"><h3>No sales orders yet</h3><p>Create one when a customer commits to buy stock. On hand will not change until fulfillment.</p><a class="btn" href="/sales/new">Create the first order</a></div>
+  <% } else { %>
+    <div class="table-wrap"><table class="table table--stack sales-table"><thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Needed by</th><th class="right">Total</th><th class="right">Ordered</th><th class="right">Reserved</th><th class="right">Waiting</th></tr></thead><tbody>
+      <% orders.forEach(function(order){ %><tr>
+        <td class="cell-main"><a class="cell-title" href="/sales/orders/<%= order.id %>"><%= order.order_number %></a><small><%= order.order_date %></small></td>
+        <td><%= order.customer.name %><% if (order.customer.company) { %><small><%= order.customer.company %></small><% } %></td>
+        <td><span class="badge <%= order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= order.status === 'BACKORDERED' ? 'waiting for stock' : order.status.replace(/_/g,' ').toLowerCase() %></span></td>
+        <td><%= order.needed_by || 'Not specified' %></td>
+        <td class="right"><%= order.pricing.missingPriceLines ? 'Price incomplete' : helpers.money(order.pricing.totalMinor, order.currency) %></td>
+        <td class="right sales-number"><%= order.totals.ordered %></td>
+        <td class="right sales-number"><%= order.totals.allocated %></td>
+        <td class="right sales-number"><%= order.totals.backordered %></td>
+      </tr><% }) %>
+    </tbody></table></div>
+  <% } %>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <div class="card-head"><h2>Customers</h2><span class="muted">Lightweight records for inventory operations</span></div>
+  <% if (!customers.length) { %><div class="empty"><p>Customers are created with their first sales order.</p></div><% } else { %>
+    <div class="list-rows"><% customers.forEach(function(customer){ %><a class="list-row" href="/sales/customers/<%= customer.id %>"><span><strong><%= customer.name %></strong><small><%= customer.company || customer.email || 'Add contact and delivery details' %></small></span><span><%= customer.order_count %> order<%= customer.order_count === 1 ? '' : 's' %> <%- helpers.icon('chevron', { size: 13 }) %></span></a><% }) %></div>
+  <% } %>
+</div>

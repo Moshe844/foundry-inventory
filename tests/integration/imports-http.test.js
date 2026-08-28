@@ -16,7 +16,7 @@ const request = require('supertest');
 const authService = require('../../src/domain/auth-service');
 const planService = require('../../src/imports/plan-service');
 const { createApp } = require('../../src/app');
-const { makeDatabase, cleanupAll, seedWorkspace, csrfFrom, plain, signIn } = require('../helpers');
+const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, csrfFrom, plain, signIn } = require('../helpers');
 const scenarios = require('../helpers/scenarios');
 
 test.after(cleanupAll);
@@ -74,6 +74,46 @@ test('a csv upload becomes a preview that creates nothing yet', async () => {
   assert.match(text, /Qty On Hand/);           // the mapping is shown, column by column
 
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items').get().n, 0);
+});
+
+test('an unrelated spreadsheet stops for inventory confirmation and resumes the same import', async () => {
+  const env = setup();
+  makeQuantityItem(env.db, env.workspace.ctx, { name: 'Classic Cotton T-Shirt', baseCode: 'TS-BLK' });
+  const agent = request.agent(env.app);
+  const session = await signIn(agent, env.workspace.account.email);
+  const token = await session.token('/imports');
+
+  const posted = await upload(agent, token, {
+    buffer: Buffer.from(CSV, 'utf8'), filename: 'new-catalogue.csv', contentType: 'text/csv',
+  });
+  const page = await agent.get(posted.headers.location);
+  assert.match(plain(page.text), /This file looks different from Import Co/i);
+  assert.match(plain(page.text), /Already here Classic Cotton T-Shirt/i);
+  assert.match(plain(page.text), /In this file Copper Elbow, Copper Tee/i);
+
+  const id = posted.headers.location.split('/').pop();
+  const plan = planService.get(env.db, env.workspace.workspaceId, id);
+  const blocked = await agent.post(`/imports/${id}/approve`).type('form').send({
+    _csrf: csrfFrom(page.text), integrityHash: plan.integrityHash,
+  });
+  assert.equal(blocked.status, 302);
+  assert.equal(planService.get(env.db, env.workspace.workspaceId, id).approvalStatus, 'AWAITING_APPROVAL');
+
+  const confirmation = await agent.post(`/imports/${id}/confirm-scope`).type('form').send({
+    _csrf: csrfFrom(page.text),
+  });
+  assert.equal(confirmation.status, 302);
+  const resumed = await agent.get(confirmation.headers.location);
+  assert.doesNotMatch(resumed.text, /data-scope-warning/);
+  assert.match(plain(resumed.text), /Nothing changes until you approve and import the exact rows below/i);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 1, 'scope confirmation alone imports nothing');
+
+  const approved = await agent.post(`/imports/${id}/approve`).type('form').send({
+    _csrf: csrfFrom(resumed.text), integrityHash: plan.integrityHash,
+  });
+  assert.equal(approved.status, 302);
+  assert.equal(planService.get(env.db, env.workspace.workspaceId, id).approvalStatus, 'APPROVED');
 });
 
 test('an xlsx upload survives the round trip byte for byte', async () => {
@@ -157,6 +197,26 @@ test('approve then run imports it, and a second run does not import it again', a
     env.db.prepare('SELECT COUNT(*) AS n FROM import_executions WHERE import_id = ?').get(id).n,
     1
   );
+});
+
+test('an approved inventory sheet imports explicit selling prices, not supplier cost', async () => {
+  const env = setup();
+  const agent = request.agent(env.app);
+  const session = await signIn(agent, env.workspace.account.email);
+  const token = await session.token('/imports');
+  const csv = ['Item Name,SKU,Warehouse,Qty On Hand,Selling Price,Unit Cost',
+    'Black Jeans,JEANS-BLACK-S,Main Warehouse,8,12.50,6.00'].join('\n');
+  const posted = await upload(agent, token, { buffer: Buffer.from(csv), filename: 'catalogue.csv', contentType: 'text/csv' });
+  const path = posted.headers.location;
+  const preview = await agent.get(path);
+  const hash = /name="integrityHash" value="([^"]+)"/.exec(preview.text)[1];
+  await agent.post(`${path}/approve`).type('form').send({ _csrf: csrfFrom(preview.text), integrityHash: hash });
+  await agent.post(`${path}/run`).type('form').send({ _csrf: csrfFrom(preview.text) });
+  const sku = env.db.prepare("SELECT id FROM skus WHERE workspace_id = ? AND code = 'JEANS-BLACK-S'").get(env.workspace.workspaceId);
+  const price = env.db.prepare('SELECT amount_minor FROM sku_prices WHERE workspace_id = ? AND sku_id = ? ORDER BY created_at DESC LIMIT 1')
+    .get(env.workspace.workspaceId, sku.id);
+  assert.equal(price.amount_minor, 1250);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM supplier_items WHERE workspace_id = ?').get(env.workspace.workspaceId).n, 0);
 });
 
 test('running before approving is refused', async () => {

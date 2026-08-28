@@ -8,24 +8,65 @@
 <div class="grid grid--sidebar">
   <div class="grid">
     <div class="card">
-      <div class="card-head"><h2>Manage Foundry</h2></div>
+      <div class="card-head"><h2>How Foundry manages this inventory</h2></div>
       <div class="card-body grid">
-        <a class="list-row" href="/autopilot"><div><strong>Authority & policies</strong><p>What Foundry may handle automatically, and the limits.</p></div><span>Open</span></a>
+        <a class="list-row" href="/purchasing/setup"><div><strong>Stock management</strong><p>Foundry managed · adjust reorder points, targets, safety stock and suppliers.</p></div><span>Adjust rules</span></a>
+        <a class="list-row" href="/autopilot"><div><strong>Automatic work</strong><p>Choose whether Foundry asks first or handles routine work inside your limits.</p></div><span>Choose</span></a>
         <a class="list-row" href="/locations"><div><strong>Locations</strong><p>Where inventory is stored and moved.</p></div><span>Open</span></a>
         <a class="list-row" href="/imports"><div><strong>Imports</strong><p>Bring in spreadsheets and review exact changes.</p></div><span>Open</span></a>
         <a class="list-row" href="/foundry"><div><strong>Inventory configuration</strong><p>Terminology and tracking setup.</p></div><span>Open</span></a>
+        <a class="list-row" href="/autopilot/history"><div><strong>System & audit</strong><p>Advanced record of what Foundry checked, decided and carried out.</p></div><span>Open</span></a>
+        <a class="list-row" href="/settings/connections"><div><strong>Connections</strong><p>Keep Foundry informed automatically from systems outside Foundry.</p></div><span>Manage</span></a>
       </div>
     </div>
 
-    <div class="card" id="live-event-feed">
-      <div class="card-head">
+    <% if (stockGuards.length) { %>
+      <div class="card" id="stock-protection">
+        <div class="card-head"><div><h2>Stock protection</h2><p class="muted">Hard stops enforced wherever outgoing stock is recorded.</p></div><span class="spacer"></span><span class="badge"><%= stockGuards.length %> active</span></div>
+        <div class="card-body grid">
+          <% stockGuards.forEach(function(rule) { %>
+            <div class="list-row">
+              <div>
+                <strong><%= rule.itemName %><%= rule.variantLabel ? ' / ' + rule.variantLabel : '' %><%= rule.locationName ? ' at ' + rule.locationName : '' %></strong>
+                <p>Block a sale or issue that would leave stock <%= rule.boundary.blockedWhen %>. <%= rule.boundary.permittedExplanation %> <%= rule.releaseCondition === 'on_order' ? 'Resume after a supplier order is placed.' : rule.releaseCondition === 'stock_recovered' ? 'Resume after on-hand stock recovers to ' + rule.releaseThreshold + '.' : 'An owner must release it.' %></p>
+              </div>
+              <% if (rule.instructionId) { %>
+                <a class="btn btn--sm" href="/operating-instructions/<%= rule.instructionId %>">Manage</a>
+              <% } %>
+            </div>
+          <% }) %>
+        </div>
+      </div>
+    <% } %>
+
+    <% if (learnedInstructions.length) { %>
+      <details class="card advanced-settings" id="learned-instructions">
+        <summary class="card-head">
+          <div><h2>Rule history</h2><p class="muted">Original instructions and previous versions, kept for audit.</p></div>
+          <span class="spacer"></span><span class="badge"><%= learnedInstructions.length %> record<%= learnedInstructions.length === 1 ? '' : 's' %></span>
+        </summary>
+        <div class="card-body grid">
+          <% learnedInstructions.forEach(function(instruction) { %>
+            <div class="list-row" style="align-items:flex-start;">
+              <div><strong><%= instruction.status === 'APPROVED' ? 'Current instruction' : instruction.status === 'SUPERSEDED' ? 'Previous instruction' : 'Removed instruction' %></strong><p>“<%= instruction.statedAs %>”</p></div>
+              <div class="actions-inline">
+                <a class="btn btn--sm" href="/operating-instructions/<%= instruction.id %>">Inspect</a>
+              </div>
+            </div>
+          <% }) %>
+        </div>
+      </details>
+    <% } %>
+
+    <details class="card advanced-settings" id="live-event-feed" <%= newFeedToken || eventFeed.connected ? 'open' : '' %>>
+      <summary class="card-head">
         <div>
           <h2>Live operating feed</h2>
           <p class="muted">Sales and warehouse systems can push real movements to Foundry as they happen.</p>
         </div>
         <span class="spacer"></span>
         <span class="badge <%= eventFeed.connected ? 'badge--ok' : eventFeed.configured ? 'badge--warn' : 'badge--muted' %>"><%= eventFeed.connected ? 'Connected' : eventFeed.configured ? 'Waiting for first event' : 'Not configured' %></span>
-      </div>
+      </summary>
       <div class="card-body grid">
         <% if (newFeedToken) { %>
           <div class="notice notice--warn">
@@ -91,7 +132,7 @@
           </div>
         <% } %>
       </div>
-    </div>
+    </details>
 
     <div class="card">
       <div class="card-head"><h2>This inventory</h2></div>
@@ -126,7 +167,7 @@
               <tr>
                 <td class="muted">
                   <%= { workspaces: 'Inventories', members: 'People on this inventory',
-                        locations: 'Locations here', skus: 'Items here' }[limit.key] || limit.key %>
+                        locations: 'Locations here', skus: 'Tracked variants here' }[limit.key] || limit.key %>
                 </td>
                 <td class="right num">
                   <%= limit.used %><% if (!limit.unlimited) { %> of <%= limit.limit %><% } %>

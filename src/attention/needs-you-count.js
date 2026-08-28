@@ -17,26 +17,10 @@
  * the workspace list without either pulling a cycle through the other.
  */
 function countNeedsYou(db, workspaceId) {
-  const investigations = require('../manager/investigations');
-  const workItems = require('../autopilot/work-items');
-  const autopilotPresenter = require('../autopilot/presenter');
-  const readiness = require('../manager/readiness');
-
-  const operating = readiness.decisions(db, workspaceId).length;
-  const openInvestigations = investigations.list(db, workspaceId, {
-    statuses: ['NEEDS_HUMAN', 'INCONCLUSIVE'],
-    limit: 100,
-  }).length;
-  const physical = db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM physical_events
-        WHERE workspace_id = ? AND status = 'NEEDS_HUMAN' AND investigation_id IS NULL`
-    )
-    .get(workspaceId).n;
-  const waiting = workItems.awaitingApproval(db, workspaceId).length;
-  const findings = autopilotPresenter.whatNeedsYou(db, workspaceId).length;
-
-  return operating + openInvestigations + physical + waiting + findings;
+  // The inbox is the customer-facing source of truth. Counting its entries
+  // keeps the sidebar, workspace switcher and Needs you page identical as new
+  // decision types (such as uncovered customer orders) are added.
+  return require('../manager/needs-you-inbox').inbox(db, workspaceId).length;
 }
 
 module.exports = { countNeedsYou };

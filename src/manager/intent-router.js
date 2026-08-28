@@ -2,16 +2,15 @@
 
 const { createProviderForTier } = require('../ai/provider');
 const config = require('../config');
-const { validate } = require('../foundry/validator');
-const { toWireSchema } = require('../foundry/schema-tools');
 const { newId, nowIso, requireText } = require('../lib/util');
-const { ValidationError } = require('../domain/errors');
 const managerContext = require('./context');
+const capabilityPlanner = require('./capability-planner');
+const capabilityRegistry = require('./capability-registry');
 
 const INTENT_CLASSES = [
   'QUESTION', 'INVENTORY_ACTION', 'CATALOG_CHANGE', 'IMPORT', 'PHYSICAL_EVENT',
-  'PURCHASING_REQUEST', 'POLICY_CHANGE', 'INVESTIGATION_REQUEST',
-  'CONFIGURATION_CHANGE', 'EXPLANATION', 'STOP', 'UNKNOWN',
+  'PURCHASING_REQUEST', 'SALES_ORDER', 'POLICY_CHANGE', 'INVESTIGATION_REQUEST',
+  'OPERATING_INSTRUCTION', 'CONFIGURATION_CHANGE', 'EXPLANATION', 'STOP', 'UNKNOWN',
 ];
 
 const SCHEMA = {
@@ -29,12 +28,17 @@ const SCHEMA = {
 const SYSTEM = `Classify one message to an AI inventory manager. Return only the structured result.
 
 QUESTION asks about current inventory or how the system works.
-INVENTORY_ACTION asks to receive, issue, transfer or correct stock.
+INVENTORY_ACTION asks for or reports an ordinary stock movement that should be
+recorded: receiving stock, selling/using/issuing stock, transferring it between
+locations, or correcting the ledger. Past-tense reports such as "I sold 2",
+"we received 5" and "we moved 3" are INVENTORY_ACTION, not UNKNOWN.
 CATALOG_CHANGE adds or changes products, variants or locations.
 IMPORT asks to load data from a file or another system.
 PHYSICAL_EVENT reports something that happened in the physical world: a count, delivery, damage, return or found stock.
 PURCHASING_REQUEST asks to buy, reorder or manage a purchase order.
 POLICY_CHANGE changes what Foundry may do automatically or its limits.
+OPERATING_INSTRUCTION teaches a lasting inventory rule: reorder/target/safety levels, location floors,
+supplier assignment or terms, transfer-before-buying, lead time, MOQ, packs, cooldowns, or approval requirements.
 INVESTIGATION_REQUEST asks why records differ or asks Foundry to investigate.
 CONFIGURATION_CHANGE changes terminology or inventory configuration, including mapping a vendor's product code to the customer's own internal code.
 EXPLANATION asks why Foundry did, did not do, or recommends something.
@@ -64,6 +68,9 @@ function fallbackClassify(message) {
   if (/\b(handle everything|automatically|autopilot|may (?:approve|move|order)|never (?:approve|move|order)|policy|authority|limit)\b/i.test(clean)) {
     return result('POLICY_CHANGE', 'This explicitly changes what Foundry may do or its limits.');
   }
+  if (/(?:\breorder\b.*\b(?:at|below|when|to)\b)|\b(restock(?:ing)?|replenish(?:ment|ing)?|stock (?:level|reaches)|order[- ]?up[- ]?to|safety stock|keep(?: at least)?|never let|days? of stock|lead time|minimum order|moq|purchase unit|order multiple|preferred supplier|use .+ for|transfer before (?:buying|purchasing)|cooldown)\b/i.test(clean)) {
+    return result('OPERATING_INSTRUCTION', 'This teaches a lasting inventory operating rule.');
+  }
   if (/\b(order what|what should (?:i|we) order|buy|purchase|reorder|purchase order|supplier order)\b/i.test(clean)) {
     return result('PURCHASING_REQUEST', 'This explicitly asks about purchasing or replenishment.');
   }
@@ -73,6 +80,16 @@ function fallbackClassify(message) {
   if (/\b(investigate|discrepancy|doesn'?t match|do not match|records? (?:is|are) (?:wrong|off)|why (?:is|are).*(?:off|different))\b/i.test(clean)) {
     return result('INVESTIGATION_REQUEST', 'This explicitly asks Foundry to investigate a mismatch.');
   }
+  if (/\b(delete|remove|undo|roll\s*back|take\s+out)\b/i.test(clean) &&
+      /\b(items?|products?|records?|inventory|stock)\b/i.test(clean) &&
+      /\b(pdf|document|file|sheet|spreadsheet|upload|import)\b/i.test(clean)) {
+    return result('CATALOG_CHANGE', 'This asks to remove products created by an earlier stored document.');
+  }
+  if (/\b(replace|change|rewrite|rename|swap|convert)\b/i.test(clean) &&
+      /\b(code|codes|sku|skus|identifier|identifiers)\b/i.test(clean) &&
+      /\b(?:from\s+\S+\s+(?:to|with)|prefix\s+\S+\s+(?:to|with))\b/i.test(clean)) {
+    return result('CATALOG_CHANGE', 'This changes existing internal catalogue identifiers.');
+  }
   if (/\b(import|upload|spreadsheet|csv|excel|pdf|document|file)\b/i.test(clean)) {
     return result('IMPORT', 'This explicitly asks Foundry to read or import a source.');
   }
@@ -80,8 +97,30 @@ function fallbackClassify(message) {
       /(?:vendor|supplier)\s+(?:code|sku)\s+[A-Za-z0-9][A-Za-z0-9._/-]*\s*,?\s*(?:use|make it|call it)\b/i.test(clean)) {
     return result('CONFIGURATION_CHANGE', 'This maps a vendor product identifier to the customer\'s own internal code.');
   }
-  if (/\b(add|create|rename|archive)\b.*\b(product|item|sku|variant|location|warehouse)\b/i.test(clean)) {
+  if (/\b(add|create|rename|archive|remove|delete)\b.*\b(product|item|sku|variant|location|warehouse|inventory)\b/i.test(clean)) {
     return result('CATALOG_CHANGE', 'This explicitly changes the inventory catalogue.');
+  }
+  // Normal inventory work is most often reported after it happens. The older
+  // fallback recognised only command-form verbs ("issue", "move", "receive")
+  // and missed the ordinary sentences shown by Foundry itself: "I sold...",
+  // "we received..." and "we moved...". That made a complete transaction
+  // depend on a probabilistic top-level classifier and, when it answered
+  // UNKNOWN, produced the meaningless "what would you like Foundry to do?"
+  // question. This is grammar-level routing only: product, variant, quantity
+  // and location are still resolved by the normal grounded action pipeline.
+  if (/\b(?:customer|client|school|company)\b.*\b(?:ordered|cancelled|canceled)\b|\badd\b.*\bto\b.*\border\b|\b(?:ship|fulfill)\b.*\b(?:order|customer)\b|\b(?:sales order|backorder|waiting for stock)\b/i.test(clean)) {
+    return result('SALES_ORDER', 'This creates, changes, fulfills, cancels or inspects committed customer demand.');
+  }
+  const actorReportedMovement =
+    /\b(?:i|we)\s+(?:sold|used(?!\s+to\b)|consumed|shipped|dispatched|delivered|scrapped|discarded|issued|received|moved|transferred|corrected|adjusted)\b/i;
+  const directReportedMovement =
+    /^\s*(?:sold|used|consumed|shipped|dispatched|delivered|scrapped|discarded|issued|received|moved|transferred|corrected|adjusted)\b/i;
+  const passiveSale =
+    /\b(?:customer|customers|client|clients)\s+(?:bought|purchased)\b|\b(?:record|log)\s+(?:a\s+)?sale\b/i;
+  const stockCameIn = /\b(?:stock|inventory|units?|items?|products?|goods|delivery|shipment)\b.*\b(?:came|come)\s+in\b/i;
+  if (actorReportedMovement.test(clean) || directReportedMovement.test(clean)
+      || passiveSale.test(clean) || stockCameIn.test(clean)) {
+    return result('INVENTORY_ACTION', 'This reports an ordinary inventory movement to record.');
   }
   if (/\b(receive|issue|move|transfer|adjust|correct|set)\b.*\b(stock|inventory|units?|items?|sku|warehouse|location)\b/i.test(clean)) {
     return result('INVENTORY_ACTION', 'This explicitly asks for an inventory movement or correction.');
@@ -103,25 +142,29 @@ async function classify(db, ctx, message, options = {}) {
   const state = managerContext.snapshot(db, ctx);
   let data;
   const deterministic = fallbackClassify(clean);
-  if (deterministic.intentClass !== 'UNKNOWN') data = deterministic;
+  // Only transaction grammar and an explicit pause bypass the semantic
+  // planner. They are closed, safety-sensitive forms whose meaning is already
+  // complete ("we sold...", "I counted...", "pause"). Everything else is
+  // planned by business capability first, even if the old keyword classifier
+  // has a guess. That is what prevents a new phrasing from needing a new route
+  // patch. The keyword classifier remains an offline fallback, not the product
+  // intelligence layer.
+  const safeFastPath = ['INVENTORY_ACTION', 'PHYSICAL_EVENT', 'STOP'].includes(deterministic.intentClass);
+  if (safeFastPath) data = deterministic;
   else if (options.provider || config.ai.configured) {
-    const provider = options.provider || createProviderForTier('fast');
     try {
-      const response = await provider.complete({
-        system: SYSTEM,
-        prompt: `Durable context:\n${JSON.stringify(state)}\n\nMessage: ${clean}`,
-        schema: SCHEMA,
-        schemaName: 'manager_intent',
+      data = await capabilityPlanner.plan(db, ctx, clean, {
+        provider: options.provider || createProviderForTier('fast'),
       });
-      const result = validate(toWireSchema(SCHEMA), response.data, { key: 'manager-intent-wire' });
-      if (!result.ok) throw new ValidationError('Foundry could not reliably understand that request.');
-      data = result.data;
     } catch {
       data = deterministic;
     }
   } else data = deterministic;
 
   if (!INTENT_CLASSES.includes(data.intentClass)) data.intentClass = 'UNKNOWN';
+  data.capabilityId = data.capabilityId || capabilityRegistry.defaultForIntent(data.intentClass);
+  data.parameters = data.parameters || { fromText: '', toText: '', transformMode: '', documentReference: '' };
+  data.handler = (capabilityRegistry.get(data.capabilityId) || {}).handler || '';
   if (data.resolvedReference) {
     const known = new Set([
       state.conversation.lastWorkItemId, state.conversation.lastPurchaseOrderId,
@@ -137,7 +180,9 @@ async function classify(db, ctx, message, options = {}) {
        (id, workspace_id, user_id, stated_as, intent_class, payload, confidence, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(id, ctx.workspaceId, ctx.actorId, clean, data.intentClass,
-    JSON.stringify({ reason: data.reason, resolvedReference: data.resolvedReference, clarifyingQuestion: data.clarifyingQuestion }),
+    JSON.stringify({ reason: data.reason, capabilityId: data.capabilityId, goal: data.goal || clean,
+      parameters: data.parameters, resolvedReference: data.resolvedReference,
+      clarifyingQuestion: data.clarifyingQuestion }),
     data.confidence, data.clarifyingQuestion ? 'NEEDS_CLARIFICATION' : 'CLASSIFIED', now, now);
   managerContext.remember(db, ctx, { intentClass: data.intentClass, turn: { role: 'user', text: clean, intentClass: data.intentClass, at: now } });
   return { id, ...data };

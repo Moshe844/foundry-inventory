@@ -14,6 +14,7 @@
 const { inTransaction } = require('../db');
 const intentService = require('./intent-service');
 const proposals = require('./proposal-service');
+const resolver = require('./resolver');
 const presenter = require('./presenter');
 const purchaseIntent = require('../purchasing/purchase-intent');
 const policy = require('./policy');
@@ -48,6 +49,102 @@ function instructionContext(db, workspaceId) {
 
 /** Phrases that mean "the thing you already proposed", not a new instruction. */
 const AGREEMENT = /^\s*(yes|yep|yeah|ok(ay)?|sure|go ahead|do it|do that|please do|carry on|confirm(ed)?|approve( it)?|make it so|do what you recommended|do your recommendation)\s*[.!]?\s*$/i;
+const ALL_LOCATIONS = '__all_locations__';
+
+function locationFieldFor(actionType) {
+  if (actionType === 'receive') return 'destinationLocation';
+  if (['issue', 'adjust'].includes(actionType)) return 'sourceLocation';
+  return null;
+}
+
+function locationClarification(result, actionType) {
+  const field = locationFieldFor(actionType);
+  const clarification = result && result.clarification;
+  if (!field || !clarification || !Array.isArray(clarification.choices) || clarification.choices.length < 2) return null;
+  if (!/(^|_)location$/.test(String(clarification.dimension || ''))) return null;
+  const individual = clarification.choices.filter((choice) => choice && choice.value !== ALL_LOCATIONS);
+  if (individual.length < 2) return null;
+  return {
+    field,
+    individual,
+    choices: [
+      ...individual,
+      { label: individual.length === 2 ? 'Both locations' : 'All locations', value: ALL_LOCATIONS },
+    ],
+  };
+}
+
+function exactInstructionSlice(instruction, candidate) {
+  const source = String(instruction || '');
+  const wanted = String(candidate || '').trim();
+  if (!wanted) return '';
+  const index = source.toLowerCase().indexOf(wanted.toLowerCase());
+  return index < 0 ? '' : source.slice(index, index + wanted.length);
+}
+
+/**
+ * Gives each parsed action only the words that belong to that action.
+ *
+ * The model may provide an exact source slice. It is accepted only when every
+ * line has a distinct, literal slice of the person's instruction. Otherwise a
+ * conservative deterministic split handles ordinary lists ("A and B", comma
+ * lists, semicolons and new lines). Numeric anchors are a final fallback for
+ * repeated quantities. If none can be proved, empty slices force a grounded
+ * clarification instead of leaking a colour or size from a neighbouring line.
+ */
+function instructionSlices(instruction, lines) {
+  const source = String(instruction || '').trim();
+  if (lines.length <= 1) return [source];
+
+  const supplied = lines.map((line) => exactInstructionSlice(source, line.sourceText));
+  if (supplied.every(Boolean)
+      && new Set(supplied.map((slice) => slice.toLowerCase())).size === lines.length
+      && supplied.every((slice) => slice.length < source.length)) {
+    return supplied;
+  }
+
+  const splitPatterns = [
+    /\s*(?:;|\n+|,\s*(?:and\s+)?(?=\d+\b)|\band\b(?=\s+\d+\b)|\bthen\b)\s*/i,
+    /\s*(?:;|\n+|\band\b|\bthen\b)\s*/i,
+    /\s*(?:;|\n+|,\s*(?:and\s+)?|\band\b|\bthen\b)\s*/i,
+  ];
+  for (const pattern of splitPatterns) {
+    const clauses = source.split(pattern).map((part) => part.trim()).filter(Boolean);
+    // A split is evidence only when it accounts for every parsed action once.
+    // Product names containing "and" usually create extra pieces and are
+    // therefore rejected rather than guessed through.
+    if (clauses.length === lines.length) return clauses;
+  }
+
+  const positions = [];
+  let cursor = 0;
+  for (const line of lines) {
+    const amount = Number.isInteger(line.quantity) && line.quantity >= 0
+      ? line.quantity
+      : Number.isInteger(line.adjustmentTarget) && line.adjustmentTarget >= 0
+        ? line.adjustmentTarget : null;
+    if (amount === null) return lines.map(() => '');
+    const tail = source.slice(cursor);
+    const match = new RegExp(`(^|[^a-z0-9])${amount}(?=$|[^a-z0-9])`, 'i').exec(tail);
+    if (!match) return lines.map(() => '');
+    const position = cursor + match.index + match[1].length;
+    positions.push(position);
+    cursor = position + String(amount).length;
+  }
+  const boundaries = [0];
+  for (let index = 1; index < positions.length; index += 1) {
+    const previous = positions[index - 1];
+    const current = positions[index];
+    const between = source.slice(previous, current);
+    const separator = /(?:[;,\n]+|[.!?]\s+|\band\b|\bthen\b)/gi;
+    let match;
+    let boundary = current;
+    while ((match = separator.exec(between))) boundary = previous + match.index + match[0].length;
+    boundaries.push(boundary);
+  }
+  boundaries.push(source.length);
+  return lines.map((_, index) => source.slice(boundaries[index], boundaries[index + 1]).trim());
+}
 
 /**
  * Reads an instruction and returns what should happen next.
@@ -79,7 +176,10 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     };
   }
 
-  const intent = await intentService.readInstruction(text, {
+  // A continuation may supply the already-read, server-held intent. Reusing
+  // it is what makes a follow-up continue the same grouped request instead of
+  // asking the model to reconstruct every line from the original prose.
+  const intent = options.parsedIntent || await intentService.readInstruction(text, {
     provider: options.provider,
     context: options.context || instructionContext(db, ctx.workspaceId),
   });
@@ -88,6 +188,20 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     return { kind: 'unsupported', message: intent.unsupportedReason };
   }
   if (intent.clarifyingQuestion && intent.lines.length === 0) {
+    // A model can notice that an identity is incomplete without knowing which
+    // catalogue dimension is actually unresolved. Ground generic identity
+    // questions against real SKUs before showing them to the person.
+    if (/\b(product|item|variant|version|which one)\b/i.test(intent.clarifyingQuestion)) {
+      const grounded = resolver.clarifySkuFromInstruction(db, ctx.workspaceId, text);
+      if (grounded && !grounded.ok && grounded.reason === 'ambiguous') {
+        return {
+          kind: 'question',
+          question: grounded.message,
+          clarification: grounded.clarification || null,
+          choices: grounded.clarification ? grounded.clarification.choices : null,
+        };
+      }
+    }
     return { kind: 'question', question: intent.clarifyingQuestion };
   }
 
@@ -121,9 +235,21 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     if (blocked && blocked.actionType === 'unsupported') {
       return { kind: 'unsupported', message: intent.unsupportedReason || 'Foundry cannot do that yet.' };
     }
+    const modelQuestion = intent.clarifyingQuestion || '';
+    if (/\b(product|item|variant|version|which one)\b/i.test(modelQuestion)) {
+      const grounded = resolver.clarifySkuFromInstruction(db, ctx.workspaceId, text);
+      if (grounded && !grounded.ok && grounded.reason === 'ambiguous') {
+        return {
+          kind: 'question',
+          question: grounded.message,
+          clarification: grounded.clarification || null,
+          choices: grounded.clarification ? grounded.clarification.choices : null,
+        };
+      }
+    }
     return {
       kind: 'question',
-      question: intent.clarifyingQuestion || 'Could you say a little more about what you want Foundry to do?',
+      question: modelQuestion || 'Could you say a little more about what you want Foundry to do?',
     };
   }
 
@@ -140,7 +266,12 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     if (!result.ok) {
       return result.unsupported
         ? { kind: 'unsupported', message: result.unsupported }
-        : { kind: 'question', question: result.question };
+        : {
+            kind: 'question',
+            question: result.question,
+            clarification: result.clarification || null,
+            choices: result.choices || (result.clarification && result.clarification.choices) || null,
+          };
     }
     return { kind: 'purchase_order', order: result.order, assumptions: result.assumptions };
   }
@@ -152,9 +283,23 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
 
   return inTransaction(db, () => {
     const built = [];
-    for (const line of usable) {
-      const result = proposals.build(db, ctx, line);
+    const missingReasons = [];
+    const slices = instructionSlices(text, usable);
+    for (let index = 0; index < usable.length; index += 1) {
+      const line = usable[index];
+      const result = proposals.build(db, ctx, line, {
+        // Lines expanded from one all-locations answer still belong to the
+        // same original clause. A mechanical two-line split has no second
+        // piece of prose, so keep the original identity evidence for each
+        // clone instead of turning an exact SKU code back into ambiguity.
+        instruction: line._sourceInstruction || slices[index],
+        groundIdentity: true,
+      });
       if (!result.ok) {
+        if (result.needsReason) {
+          missingReasons.push({ index, context: result.reasonContext || null });
+          continue;
+        }
         if (result.missingLocation && line.actionType === 'transfer') {
           return {
             kind: 'missing_location',
@@ -165,14 +310,80 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
             question: result.question,
           };
         }
+        if (line.actionType === 'create_item'
+            && result.clarification
+            && result.clarification.dimension === 'destination_location') {
+          return {
+            kind: 'question',
+            question: result.question,
+            clarification: result.clarification,
+            choices: result.choices || result.clarification.choices || null,
+            continuation: {
+              kind: 'create_item_receiving_location',
+              originalInstruction: text,
+              parsedIntent: intent,
+              lineIndex: index,
+            },
+          };
+        }
+        const locationQuestion = locationClarification(result, line.actionType);
+        if (locationQuestion) {
+          return {
+            kind: 'question',
+            question: result.question,
+            clarification: { ...result.clarification, choices: locationQuestion.choices },
+            choices: locationQuestion.choices,
+            continuation: {
+              kind: 'location_selection',
+              originalInstruction: text,
+              parsedIntent: intent,
+              lineIndex: index,
+              field: locationQuestion.field,
+              locations: locationQuestion.individual.map((choice) => String(choice.value)),
+            },
+          };
+        }
         // A refusal the engine can explain travels with its explanation. The
         // caller needs the numbers to say what is wrong and what to do next.
+        if (result.noChange && line._applyAcrossLocations) continue;
         if (result.unsupported) {
           return { kind: 'unsupported', message: result.unsupported, blocked: result.blocked || null };
         }
-        return { kind: 'question', question: result.question, needsReason: Boolean(result.needsReason) };
+        return {
+          kind: 'question',
+          question: result.question,
+          needsReason: Boolean(result.needsReason),
+          clarification: result.clarification || null,
+          choices: result.choices || (result.clarification && result.clarification.choices) || null,
+        };
       }
       built.push(result.proposal);
+    }
+
+    if (built.length === 0 && usable.some((line) => line._applyAcrossLocations)) {
+      return { kind: 'unsupported', message: 'Every selected location already has that count. Nothing needs changing.' };
+    }
+
+    if (missingReasons.length) {
+      const grouped = missingReasons.length > 1;
+      const allOpening = missingReasons.every(({ context }) => context && context.current === 0);
+      const question = grouped
+        ? allOpening
+          ? `You're setting starting inventory from zero across ${missingReasons.length} stock positions. What is the reason for these opening balances?`
+          : `You're correcting counts across ${missingReasons.length} stock positions. What is the reason for these changes?`
+        : `Why is the count changing from ${missingReasons[0].context.current} to ${missingReasons[0].context.target}? Foundry needs the reason on record.`;
+      return {
+        kind: 'question',
+        question,
+        needsReason: true,
+        clarification: { dimension: 'reason', choices: [] },
+        continuation: {
+          kind: 'adjustment_reason',
+          originalInstruction: text,
+          parsedIntent: intent,
+          lineIndexes: missingReasons.map(({ index }) => index),
+        },
+      };
     }
 
     // Two counts for the same shelf in one instruction contradict each other.
@@ -203,12 +414,110 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
         sourceType: options.sourceType || 'USER_REQUEST',
         sourceAttentionId: options.sourceAttentionId || null,
         instruction: text,
+        notes: options.reasonNote || null,
       });
       return { kind: 'proposal', proposal: stored };
     }
 
-    const plan = createPlan(db, ctx, built, { instruction: text });
+    const plan = createPlan(db, ctx, built, { instruction: text, notes: options.reasonNote || null });
     return { kind: 'plan', plan };
+  });
+}
+
+/** Translate a person's free-text audit explanation into the existing reason taxonomy. */
+function adjustmentReasonFromAnswer(answer) {
+  const text = String(answer || '').trim();
+  if (!text) return null;
+  if (/\b(physical\s+count|recount|counted|stocktake)\b/i.test(text)) return 'physical_count';
+  if (/\b(damage|damaged|broken|scrap(?:ped)?)\b/i.test(text)) return 'damage';
+  if (/\b(loss|lost|missing|stolen|theft)\b/i.test(text)) return 'loss';
+  if (/\b(found|discovered|unexpected\s+stock)\b/i.test(text)) return 'found';
+  if (/\b(opening|starting|start\s+from\s+scratch|initial|beginning|correction|correcting|error|wrong)\b/i.test(text)) {
+    return 'correction';
+  }
+  return 'other';
+}
+
+/** Resume a stored clarification without reinterpreting or losing its lines. */
+async function continueInterpretation(db, ctx, membership, continuation, answer, options = {}) {
+  if (!continuation || !continuation.parsedIntent || !Array.isArray(continuation.parsedIntent.lines)) {
+    throw new ValidationError('That clarification is no longer available. Please send the instruction again.');
+  }
+  if (continuation.kind === 'create_item_receiving_location') {
+    const locationName = String(answer || '').trim();
+    if (!locationName) {
+      return {
+        kind: 'question',
+        question: 'Where should the new stock be received?',
+        continuation,
+      };
+    }
+    const parsedIntent = {
+      ...continuation.parsedIntent,
+      lines: continuation.parsedIntent.lines.map((line, index) =>
+        index === continuation.lineIndex ? { ...line, destinationLocation: locationName } : { ...line }
+      ),
+    };
+    return interpret(db, ctx, membership, continuation.originalInstruction, {
+      ...options,
+      parsedIntent,
+    });
+  }
+  if (continuation.kind === 'location_selection') {
+    const selected = String(answer || '').trim();
+    const allowed = Array.isArray(continuation.locations) ? continuation.locations : [];
+    if (!selected || (selected !== ALL_LOCATIONS && !allowed.includes(selected))) {
+      return {
+        kind: 'question',
+        question: 'Which location should Foundry use?',
+        choices: [
+          ...allowed.map((location) => ({ label: location, value: location })),
+          ...(allowed.length > 1 ? [{ label: allowed.length === 2 ? 'Both locations' : 'All locations', value: ALL_LOCATIONS }] : []),
+        ],
+        continuation,
+      };
+    }
+    const parsedIntent = {
+      ...continuation.parsedIntent,
+      lines: continuation.parsedIntent.lines.flatMap((line, index) => {
+        if (index !== continuation.lineIndex) return [{ ...line }];
+        const locations = selected === ALL_LOCATIONS ? allowed : [selected];
+        return locations.map((location) => ({
+          ...line,
+          [continuation.field]: location,
+          _applyAcrossLocations: selected === ALL_LOCATIONS,
+          _sourceInstruction: continuation.originalInstruction,
+        }));
+      }),
+    };
+    return interpret(db, ctx, membership, continuation.originalInstruction, {
+      ...options,
+      parsedIntent,
+    });
+  }
+  if (continuation.kind !== 'adjustment_reason') {
+    throw new ValidationError('That clarification is no longer available. Please send the instruction again.');
+  }
+  const reasonCode = adjustmentReasonFromAnswer(answer);
+  if (!reasonCode) {
+    return {
+      kind: 'question',
+      question: 'What is the reason for these count changes?',
+      needsReason: true,
+      continuation,
+    };
+  }
+  const selected = new Set(continuation.lineIndexes || []);
+  const parsedIntent = {
+    ...continuation.parsedIntent,
+    lines: continuation.parsedIntent.lines.map((line, index) =>
+      selected.has(index) ? { ...line, reasonCode } : { ...line }
+    ),
+  };
+  return interpret(db, ctx, membership, continuation.originalInstruction, {
+    ...options,
+    parsedIntent,
+    reasonNote: String(answer).trim(),
   });
 }
 
@@ -231,6 +540,7 @@ function createPlan(db, ctx, built, meta = {}) {
       lineNumber: index + 1,
       sourceType: meta.sourceType || 'USER_REQUEST',
       instruction: meta.instruction || null,
+      notes: meta.notes || null,
     })
   );
 
@@ -550,7 +860,10 @@ function proposeCompensation(db, ctx, membership, proposalId) {
 module.exports = {
   AGREEMENT,
   interpret,
+  continueInterpretation,
+  adjustmentReasonFromAnswer,
   instructionContext,
+  instructionSlices,
   createPlan,
   getPlan,
   setPlanStatus,

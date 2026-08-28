@@ -24,6 +24,7 @@ const policyService = require('../../src/purchasing/policy-service');
 const position = require('../../src/purchasing/position');
 const poService = require('../../src/purchasing/po-service');
 const receiving = require('../../src/purchasing/receiving-service');
+const purchaseIntent = require('../../src/purchasing/purchase-intent');
 const permissions = require('../../src/actions/permissions');
 const engine = require('../../src/domain/inventory-engine');
 const repo = require('../../src/domain/repository');
@@ -101,6 +102,19 @@ test('a supplier is created and belongs to one inventory', () => {
   const other = seedAnotherWorkspace(env.db, env.workspace.accountId);
   assert.equal(suppliers.listSuppliers(env.db, other.workspaceId).length, 0);
   assert.throws(() => suppliers.getSupplier(env.db, other.workspaceId, supplier.id), /not in this inventory/);
+});
+
+test('supplier ambiguity identifies the supplier dimension and offers the real records', () => {
+  const env = setup();
+  suppliers.createSupplier(env.db, env.ctx, env.membership, { name: 'North Supply' });
+  suppliers.createSupplier(env.db, env.ctx, env.membership, { name: 'South Supply' });
+
+  const result = purchaseIntent.resolveSupplier(env.db, env.workspace.workspaceId, 'Supply');
+  assert.equal(result.ok, false);
+  assert.equal(result.clarification.dimension, 'supplier');
+  assert.deepEqual(result.clarification.choices.map((choice) => choice.value), [
+    'North Supply', 'South Supply',
+  ]);
 });
 
 test('each supplier keeps its own product-code wording and remembers old invoice labels', () => {
@@ -351,6 +365,31 @@ test('a configured policy replaces the derived figures', () => {
   assert.equal(line.quantityPurchaseUnits, 8);
   assert.equal(line.quantityUnits, 96);
   assert.match(line.evidence.find((e) => e.label === 'Reorder point').note, /configured/);
+});
+
+test('a configured reorder level never turns insufficient history into zero daily usage', () => {
+  const env = setup();
+  const item = makeQuantityItem(env.db, env.ctx);
+  const supplier = suppliers.createSupplier(env.db, env.ctx, env.membership, { name: 'Clothing Supply' });
+  suppliers.linkItem(env.db, env.ctx, env.membership, {
+    supplierId: supplier.id, skuId: item.skuId, purchaseUnit: 'unit', unitsPerPurchaseUnit: 1,
+  });
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 83 });
+  // One large issue is a real quantity, but not enough observations across
+  // time to support a daily-rate claim.
+  engine.issue(env.db, env.ctx, {
+    skuId: item.skuId, locationId: env.workspace.main.id, quantity: 50, reasonCode: 'sold',
+  });
+  policies.setPolicy(env.db, env.ctx, env.membership, item.skuId, {
+    reorderPoint: 50, targetStock: 60, safetyStock: 10,
+  });
+
+  const line = replenishment.evaluateOne(env.db, env.workspace.workspaceId, item.skuId);
+  assert.equal(line.recommend, true);
+  assert.equal(line.issuedInWindow, 50);
+  assert.equal(line.quantityUnits, 27);
+  assert.match(line.explanation, /not enough reliable history/i);
+  assert.doesNotMatch(line.explanation, /usage of 0|0 a day|stock is running down/i);
 });
 
 test('a policy cannot set a target below its own reorder point', () => {
@@ -815,6 +854,7 @@ test('purchasing cannot reach across inventories', () => {
 
 const attention = require('../../src/attention/attention-engine');
 const reevaluate = require('../../src/attention/reevaluate');
+const { addLocalDays } = require('../../src/lib/calendar');
 
 const findings = (env, category) =>
   attention.listAttention(env.db, env.workspace.workspaceId).filter((item) => item.category === category);
@@ -877,7 +917,7 @@ test('an overdue order becomes a finding, and an undated one never does', () => 
 
   const late = poService.createOrder(env.db, env.ctx, env.membership, {
     supplierId: supplier.id,
-    expectedDate: new Date(Date.now() - 4 * DAY).toISOString().slice(0, 10),
+    expectedDate: addLocalDays(Date.now(), -4),
     lines: [{ skuId: item.skuId, quantityPurchaseUnits: 5 }],       // 60 units
   });
   poService.approve(env.db, env.ctx, env.membership, late.id);

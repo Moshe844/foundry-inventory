@@ -30,6 +30,7 @@ const permissions = require('../actions/permissions');
 const engine = require('../domain/inventory-engine');
 const repo = require('../domain/repository');
 const poService = require('./po-service');
+const managerEvents = require('../manager/events');
 
 const RECEIPT_NOTE = 'Received against purchase order';
 
@@ -232,7 +233,7 @@ function receive(db, ctx, membership, poId, input = {}) {
   const now = nowIso();
   const receiptId = newId('porc');
 
-  return inTransaction(db, () => {
+  const received = inTransaction(db, () => {
     // Claiming the key inside the same transaction as the movements is what
     // makes "received twice" impossible rather than merely unlikely.
     try {
@@ -336,6 +337,25 @@ function receive(db, ctx, membership, poId, input = {}) {
       result,
     };
   });
+  if (!received.replayed) {
+    const current = received.order;
+    managerEvents.publish(db, ctx.workspaceId,
+      current.status === poService.STATUS.RECEIVED
+        ? managerEvents.TYPES.PURCHASE_ORDER_COMPLETED
+        : managerEvents.TYPES.PURCHASE_ORDER_PARTIALLY_RECEIVED,
+      {
+        purchaseOrderId: current.id,
+        poNumber: current.poNumber,
+        skuIds: current.lines.map((line) => line.skuId),
+        outstandingUnits: current.outstandingUnits,
+        receiptId: received.receipt.id,
+      }, {
+        source: 'purchasing',
+        sourceRecordType: 'purchase_order_receipt',
+        sourceRecordId: received.receipt.id,
+      });
+  }
+  return received;
 }
 
 function hydrateReceipt(db, workspaceId, receiptId) {

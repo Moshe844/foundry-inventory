@@ -103,7 +103,7 @@ function assess(db, workspaceId, options = {}) {
       canPropose: proposals.length,
       needHistory: blocked.length,
       alreadySet: configured.length,
-      withoutSupplier: [...proposals, ...blocked].filter((entry) => !entry.hasSupplier).length,
+      withoutSupplier: [...proposals, ...blocked, ...configured].filter((entry) => !entry.hasSupplier).length,
       suppliers: supplierService.listSuppliers(db, workspaceId).length,
     },
   };

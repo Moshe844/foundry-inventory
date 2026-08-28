@@ -1,0 +1,25 @@
+<div class="breadcrumb"><a href="/sales">Sales</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= customer.name %></span></div>
+<div class="page-head"><div class="titles"><h1><%= customer.name %></h1><p>Customer details needed to manage inventory commitments and delivery.</p></div><a class="btn btn--primary" href="/sales/new">New sales order</a></div>
+
+<div class="grid grid--2">
+  <form class="card form-card" method="post" action="/sales/customers/<%= customer.id %>">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="card-head"><h2>Customer details</h2></div>
+    <div class="form-grid">
+      <label class="field"><span>Name</span><input name="name" value="<%= customer.name %>" required></label>
+      <label class="field"><span>Company</span><input name="company" value="<%= customer.company || '' %>"></label>
+      <label class="field"><span>Email</span><input type="email" name="email" value="<%= customer.email || '' %>"></label>
+      <label class="field"><span>Phone</span><input name="phone" value="<%= customer.phone || '' %>"></label>
+      <label class="field field--full"><span>Shipping or delivery information</span><textarea name="shippingAddress"><%= customer.shipping_address || '' %></textarea></label>
+      <label class="field field--full"><span>Notes</span><textarea name="notes"><%= customer.notes || '' %></textarea></label>
+    </div>
+    <div class="form-actions"><button class="btn btn--primary" type="submit">Save customer</button></div>
+  </form>
+
+  <div class="card">
+    <div class="card-head"><h2>Sales-order history</h2><span class="muted"><%= customer.orders.length %> order<%= customer.orders.length === 1 ? '' : 's' %></span></div>
+    <% if (!customer.orders.length) { %><div class="empty"><p>No sales orders yet.</p></div><% } else { %>
+      <div class="list-rows"><% customer.orders.forEach(function(order){ %><a class="list-row" href="/sales/orders/<%= order.id %>"><span><strong><%= order.order_number %></strong><small><%= order.order_date %><%= order.needed_by ? ' · needed by ' + order.needed_by : '' %></small></span><span><span class="badge <%= order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= order.status.replace(/_/g,' ').toLowerCase() %></span> <%- helpers.icon('chevron', { size: 13 }) %></span></a><% }) %></div>
+    <% } %>
+  </div>
+</div>

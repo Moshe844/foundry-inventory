@@ -10,6 +10,7 @@
  */
 
 const express = require('express');
+const crypto = require('node:crypto');
 const config = require('../../config');
 const actionService = require('../../actions/action-service');
 const proposals = require('../../actions/proposal-service');
@@ -18,6 +19,7 @@ const presenter = require('../../actions/presenter');
 const permissions = require('../../actions/permissions');
 const attention = require('../../attention/attention-engine');
 const physicalEvents = require('../../manager/physical-events');
+const operatingGuidance = require('../../manager/guidance');
 const importPlans = require('../../imports/plan-service');
 const { requireAuth, asyncRoute } = require('../middleware');
 const repo = require('../../domain/repository');
@@ -41,20 +43,7 @@ function membershipOf(req) {
  * things the reader could actually send.
  */
 function exampleInstructions(db, workspaceId) {
-  const item = db
-    .prepare('SELECT name FROM items WHERE workspace_id = ? AND is_active = 1 ORDER BY created_at LIMIT 1')
-    .get(workspaceId);
-  const places = repo.listLocations(db, workspaceId).map((l) => l.name);
-  if (!item || !places.length) return [];
-
-  const here = places[0];
-  const examples = [
-    `Receive 20 ${item.name} into ${here}`,
-    `We sold 3 ${item.name}`,
-  ];
-  if (places.length > 1) examples.push(`Move 5 ${item.name} from ${here} to ${places[1]}`);
-  examples.push(`I counted ${item.name} at ${here}`);
-  return examples;
+  return operatingGuidance.examples(operatingGuidance.facts(db, workspaceId));
 }
 
 router.get(
@@ -63,7 +52,17 @@ router.get(
     // Read once and cleared: a question already answered should not reappear on
     // the next visit to this page.
     const handed = req.session.pendingActionQuestion || null;
-    if (handed) delete req.session.pendingActionQuestion;
+    // A structured continuation remains until its answer is posted. Keeping
+    // the server-side packet beside the rendered button makes the handoff
+    // resilient even when the session store does not persist an intermediate
+    // redirect mutation as a separate key.
+    if (handed && !handed.continuation) delete req.session.pendingActionQuestion;
+    if (handed && handed.continuationId && handed.continuation) {
+      req.session.pendingActionContinuation = {
+        id: handed.continuationId,
+        value: handed.continuation,
+      };
+    }
 
     const open = proposals.listOpen(req.db, req.ctx.workspaceId, { limit: 25 });
     const recent = req.db
@@ -100,6 +99,9 @@ router.get(
       // copy of a job now done.
       physicalEventId: (handed && handed.physicalEventId) || null,
       choices: (handed && handed.choices) || null,
+      continuationId: (handed && handed.continuationId) || null,
+      questionTone: (handed && handed.tone) || null,
+      answerAction: (handed && handed.answerAction) || '/actions/ask',
     });
   })
 );
@@ -132,9 +134,52 @@ router.post(
       : trimOrNull(req.body.instruction) || '';
     let result;
     try {
-      result = await actionService.interpret(req.db, req.ctx, membershipOf(req), instruction, {
-        provider: req.app.locals.aiProvider || undefined,
-      });
+      const continuationId = trimOrNull(req.body.continuationId);
+      const handedQuestion = req.session.pendingActionQuestion;
+      const pendingContinuation = req.session.pendingActionContinuation
+        || (handedQuestion && handedQuestion.continuationId === continuationId && handedQuestion.continuation
+          ? { id: handedQuestion.continuationId, value: handedQuestion.continuation }
+          : null);
+      if (answer && continuationId && pendingContinuation && pendingContinuation.id === continuationId) {
+        delete req.session.pendingActionContinuation;
+        delete req.session.pendingActionQuestion;
+        result = await actionService.continueInterpretation(
+          req.db,
+          req.ctx,
+          membershipOf(req),
+          pendingContinuation.value,
+          answer,
+          { provider: req.app.locals.aiProvider || undefined }
+        );
+      } else if (answer === '__all_locations__' && original) {
+        // Session stores are allowed to rotate or lose an intermediate key
+        // across the manager -> actions redirect. Never feed the internal
+        // sentinel back into the language reader. Re-ground the original
+        // request, require it to produce the same structured location
+        // continuation, and only then apply the all-locations answer.
+        const grounded = await actionService.interpret(req.db, req.ctx, membershipOf(req), original, {
+          provider: req.app.locals.aiProvider || undefined,
+        });
+        if (grounded.kind === 'question' && grounded.continuation) {
+          result = await actionService.continueInterpretation(
+            req.db,
+            req.ctx,
+            membershipOf(req),
+            grounded.continuation,
+            answer,
+            { provider: req.app.locals.aiProvider || undefined }
+          );
+        } else {
+          result = {
+            kind: 'question',
+            question: 'The available locations changed. Please send the instruction again so Foundry can show the current choices.',
+          };
+        }
+      } else {
+        result = await actionService.interpret(req.db, req.ctx, membershipOf(req), instruction, {
+          provider: req.app.locals.aiProvider || undefined,
+        });
+      }
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);
@@ -171,6 +216,11 @@ router.post(
       return res.redirect(303, '/actions/location-required');
     }
 
+    let continuationId = null;
+    if (result.kind === 'question' && result.continuation) {
+      continuationId = crypto.randomUUID();
+      req.session.pendingActionContinuation = { id: continuationId, value: result.continuation };
+    }
     const open = proposals.listOpen(req.db, req.ctx.workspaceId, { limit: 25 });
     return res.page('actions/list', {
       title: 'Foundry actions',
@@ -186,6 +236,9 @@ router.post(
       blocked: (result.kind === 'unsupported' && result.blocked) || null,
       physicalEventId: trimOrNull(req.body.physicalEventId) || null,
       choices: result.choices || null,
+      continuationId,
+      questionTone: null,
+      answerAction: '/actions/ask',
     });
   })
 );

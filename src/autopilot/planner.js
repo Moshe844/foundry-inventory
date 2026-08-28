@@ -65,9 +65,11 @@ function locationDemand(sku) {
       locationId: location.locationId,
       locationName: location.locationName,
       onHand: location.onHand,
+      committed: Number(location.committed || 0),
+      available: Number.isFinite(Number(location.available)) ? Number(location.available) : location.onHand,
       issued,
       ratePerDay: round(rate, 3),
-      daysOfCover: rate > 0 ? round(location.onHand / rate, 1) : null,
+      daysOfCover: rate > 0 ? round((Number.isFinite(Number(location.available)) ? Number(location.available) : location.onHand) / rate, 1) : null,
     };
   });
 }
@@ -99,6 +101,8 @@ function planBalanceTransfer(db, workspaceId, sku, options = {}) {
   // The customer's stated numbers where they have stated any, Foundry's
   // otherwise. Never inferred — see autopilot/preferences.
   const settings = options.settings || preferences.balanceSettings(db, workspaceId, BALANCE);
+  const statedLocationRules = require('../purchasing/policy-service').locationPolicies(db, workspaceId, sku.skuId);
+  const ruleByLocation = new Map(statedLocationRules.map((rule) => [rule.locationId, rule]));
 
   // Item 23: not enough history is a real answer, and saying it beats going
   // quiet. `decline` carries the reason so the operator can be told why this
@@ -126,8 +130,16 @@ function planBalanceTransfer(db, workspaceId, sku, options = {}) {
   const locations = locationDemand(sku).filter((location) => !location.locationArchived);
   if (locations.length < 2) return null;
 
-  // At risk: running down, with less cover than a delivery would take.
-  const atRisk = locations
+  // A stated location threshold wins over a derived days-of-cover threshold.
+  // It is still only a trigger/target: authority, source safety, evidence and
+  // verification remain exactly the same deterministic gates below.
+  const explicitRisk = locations
+    .filter((location) => {
+      const rule = ruleByLocation.get(location.locationId);
+      return rule && Number.isFinite(Number(rule.minimum)) && location.available < Number(rule.minimum);
+    })
+    .sort((a, b) => a.onHand - b.onHand)[0];
+  const atRisk = explicitRisk || locations
     .filter((location) => location.ratePerDay > 0 && location.daysOfCover !== null)
     .filter((location) => location.daysOfCover < settings.riskDays)
     .sort((a, b) => a.daysOfCover - b.daysOfCover)[0];
@@ -140,21 +152,30 @@ function planBalanceTransfer(db, workspaceId, sku, options = {}) {
   }
 
   const source = locations
-    .filter((location) => location.locationId !== atRisk.locationId && location.onHand > 0)
+    .filter((location) => location.locationId !== atRisk.locationId && location.available > 0)
     .map((location) => {
       // What it can give while keeping its own safety cover.
-      const keep = location.ratePerDay > 0 ? Math.ceil(location.ratePerDay * settings.sourceSafetyDays) : 0;
-      return { ...location, keep, canSpare: Math.max(0, location.onHand - keep) };
+      const statedMinimum = Number(ruleByLocation.get(location.locationId)?.minimum) || 0;
+      const keep = Math.max(statedMinimum,
+        location.ratePerDay > 0 ? Math.ceil(location.ratePerDay * settings.sourceSafetyDays) : 0);
+      return { ...location, keep, canSpare: Math.max(0, location.available - keep) };
     })
     .filter((location) => location.canSpare >= BALANCE.minQuantity)
     .sort((a, b) => b.canSpare - a.canSpare)[0];
   if (!source) return null;
 
   // Bring the destination up to a sensible cover, within what the source can
-  // spare and whatever ceiling the policy imposes.
+  // spare. `maximumQuantity` is only for callers revalidating an already-sized
+  // action; authority limits must never resize a newly discovered need. The
+  // policy engine has to see the full required quantity so it can refuse work
+  // outside the approved boundary and put that exception in Needs you.
+  const rawTarget = ruleByLocation.get(atRisk.locationId)?.target;
+  const statedTarget = rawTarget === null || rawTarget === undefined ? null : Number(rawTarget);
   const wanted = Math.max(
     BALANCE.minQuantity,
-    Math.ceil(atRisk.ratePerDay * settings.targetDays) - atRisk.onHand
+    (statedTarget !== null && Number.isFinite(statedTarget) && statedTarget >= 0
+      ? statedTarget
+      : Math.ceil(atRisk.ratePerDay * settings.targetDays)) - atRisk.available
   );
   let quantity = Math.min(wanted, source.canSpare);
   if (maximum) quantity = Math.min(quantity, maximum);
@@ -174,7 +195,9 @@ function planBalanceTransfer(db, workspaceId, sku, options = {}) {
     conditions: {
       [policyService.CONDITIONS.DESTINATION_STOCKOUT_RISK]: {
         passed: true,
-        detail: `${atRisk.locationName} has ${atRisk.onHand} left and issued ${atRisk.issued} in ${sku.measured.windowDays} days — about ${atRisk.daysOfCover} days of cover.`,
+        detail: explicitRisk
+          ? `${atRisk.locationName} has ${atRisk.onHand}, below the owner-set location threshold of ${ruleByLocation.get(atRisk.locationId).minimum}.`
+          : `${atRisk.locationName} has ${atRisk.onHand} left and issued ${atRisk.issued} in ${sku.measured.windowDays} days — about ${atRisk.daysOfCover} days of cover.`,
       },
       [policyService.CONDITIONS.SOURCE_ABOVE_SAFETY]: {
         passed: source.onHand - quantity >= source.keep,
@@ -210,15 +233,13 @@ function plan(db, workspaceId, options = {}) {
   const now = options.now || Date.now();
   // Whether Foundry may act on its own decides which work reaches a person.
   const state = modes.ensure(db, workspaceId);
-  const skus = signalEngine.skuSignals(db, workspaceId, { now }).filter((sku) => sku.isActive);
+  const scopedSkuIds = options.scope && Array.isArray(options.scope.skuIds)
+    ? options.scope.skuIds.filter(Boolean) : null;
+  const skus = signalEngine.skuSignals(db, workspaceId, {
+    now,
+    ...(scopedSkuIds && scopedSkuIds.length ? { skuIds: scopedSkuIds } : {}),
+  }).filter((sku) => sku.isActive);
   const incoming = position.onOrderBySku(db, workspaceId, { now });
-
-  // The tightest ceiling any approved transfer policy imposes, so a plan is
-  // never larger than anything could authorise.
-  const transferPolicies = policyService.activeFor(db, workspaceId, 'transfer');
-  const ceiling = transferPolicies.length
-    ? Math.min(...transferPolicies.map((policy) => policy.maximumQuantity || Infinity))
-    : null;
 
   const open = new Set(
     workItems
@@ -226,18 +247,6 @@ function plan(db, workspaceId, options = {}) {
         status: [workItems.STATUS.PLANNED, workItems.STATUS.WAITING_FOR_APPROVAL, workItems.STATUS.AUTHORIZED, workItems.STATUS.EXECUTING],
         category: 'balance_transfer',
         limit: 200,
-      })
-      // A piece of work sized before the ceiling existed — or before it was
-      // lowered — can never be carried out, and left in the way it would block
-      // this shortage for the rest of the day. Nothing has happened to it yet,
-      // so it is re-planned rather than treated as in hand.
-      .filter((item) => {
-        if (!Number.isFinite(ceiling)) return true;
-        const stale =
-          item.executionStatus === workItems.STATUS.WAITING_FOR_APPROVAL &&
-          !item.approvedAt &&
-          Number((item.recommendedAction || {}).quantity) > ceiling;
-        return !stale;
       })
       .map((item) => item.affectedEntities.skuId)
       .filter(Boolean)
@@ -289,7 +298,12 @@ function plan(db, workspaceId, options = {}) {
         policy.allowedActionTypes.includes('approve_purchase_order')
         && (!policy.supplierScope.length || policy.supplierScope.includes(plan.purchase.supplierId)));
 
-  const userFacing = replenishmentPlans.actionable.filter((plan) => !handledByPolicy(plan));
+  // "No supplier" is setup missing, not an action to approve. The attention
+  // item points straight to supplier setup; a work item here would offer an
+  // approval that cannot move or order anything.
+  const userFacing = replenishmentPlans.actionable
+    .filter((plan) => !plan.blocked)
+    .filter((plan) => !handledByPolicy(plan));
   const governedMoves = replenishmentPlans.governedSkuIds;
   const governedOrders = new Set(userFacing.map((plan) => plan.skuId));
 
@@ -303,7 +317,6 @@ function plan(db, workspaceId, options = {}) {
     if (governedMoves.has(sku.skuId)) continue;   // the plan speaks for this one
 
     const proposal = planBalanceTransfer(db, workspaceId, sku, {
-      maximumQuantity: ceiling && Number.isFinite(ceiling) ? ceiling : null,
       incoming: incoming.get(sku.skuId) || { onOrder: 0 },
       hasOpenTransfer: open.has(sku.skuId),
       settings,
@@ -344,7 +357,9 @@ function plan(db, workspaceId, options = {}) {
   // no packing-list feed exists to check it against — but leaving a delivery to
   // be noticed is exactly the routine work this is meant to take off them.
   const receiving = [
-    ...position.arrivingSoon(db, workspaceId, { days: 1, now }).map((po) => ({ po, late: false })),
+    // Upcoming deliveries belong on the horizon. They become human work only
+    // on their expected date; before then there is no physical arrival to book.
+    ...position.arrivingSoon(db, workspaceId, { days: 0, now }).map((po) => ({ po, late: false })),
     ...position.lateOrders(db, workspaceId, { now }).map((po) => ({ po, late: true })),
   ]
     // A late order is already in the list once; do not raise it twice.

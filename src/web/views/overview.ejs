@@ -12,6 +12,12 @@
   </div>
 </div>
 
+<% if (typeof guidance !== 'undefined' && guidance) { %>
+  <%- include('partials/operating-guidance', { guidance: guidance }) %>
+<% } %>
+
+<% var guidanceInProgress = typeof guidance !== 'undefined' && guidance && guidance.checklistActive; %>
+
 <% var isEmpty_ = typeof isEmpty !== 'undefined' && isEmpty; %>
 <% if (isEmpty_) { %>
   <section class="brief">
@@ -31,7 +37,7 @@
 <% } %>
 
 <% var brief_ = typeof brief !== 'undefined' ? brief : null; %>
-<% if (brief_ && !isEmpty_) { %>
+<% if (brief_ && !isEmpty_ && !guidanceInProgress) { %>
   <section class="brief">
     <div class="brief-head">
       <span class="foundry-panel-icon" style="width:30px; height:30px;"><%- helpers.icon('foundry', { size: 16 }) %></span>

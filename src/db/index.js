@@ -13,6 +13,8 @@ const PURCHASING_SCHEMA_PATH = path.join(__dirname, 'schema-purchasing.sql');
 const ONBOARDING_SCHEMA_PATH = path.join(__dirname, 'schema-onboarding.sql');
 const AUTOPILOT_SCHEMA_PATH = path.join(__dirname, 'schema-autopilot.sql');
 const MANAGER_SCHEMA_PATH = path.join(__dirname, 'schema-manager.sql');
+const SALES_SCHEMA_PATH = path.join(__dirname, 'schema-sales.sql');
+const CONNECTIONS_SCHEMA_PATH = path.join(__dirname, 'schema-connections.sql');
 
 /**
  * Opens (and initialises) a SQLite database.
@@ -56,6 +58,34 @@ const ADDED_COLUMNS = [
   { table: 'suppliers', column: 'item_code_label', definition: "TEXT NOT NULL DEFAULT 'Supplier code'" },
   { table: 'suppliers', column: 'item_code_aliases', definition: "TEXT NOT NULL DEFAULT '[]'" },
   { table: 'setup_documents', column: 'supplier_code_label', definition: "TEXT NOT NULL DEFAULT 'Supplier code'" },
+  { table: 'setup_documents', column: 'scope_confirmed_at', definition: 'TEXT' },
+  { table: 'import_plans', column: 'scope_confirmed_at', definition: 'TEXT' },
+  { table: 'work_plans', column: 'trigger_event_id', definition: 'TEXT' },
+  { table: 'work_items', column: 'trigger_event_id', definition: 'TEXT' },
+  { table: 'operating_instruction_proposals', column: 'source', definition: "TEXT NOT NULL DEFAULT 'owner_instruction'" },
+  { table: 'sales_orders', column: 'currency', definition: "TEXT NOT NULL DEFAULT 'USD'" },
+  { table: 'sales_orders', column: 'discount_minor', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'sales_orders', column: 'tax_minor', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'sales_order_lines', column: 'unit_price_minor', definition: 'INTEGER' },
+  { table: 'sales_order_lines', column: 'price_source_id', definition: 'TEXT' },
+  { table: 'workspace_connectors', column: 'provider_type', definition: "TEXT NOT NULL DEFAULT 'reference_webhook'" },
+  { table: 'workspace_connectors', column: 'provides', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  { table: 'workspace_connectors', column: 'config', definition: "TEXT NOT NULL DEFAULT '{}'" },
+  { table: 'workspace_connectors', column: 'last_activity_at', definition: 'TEXT' },
+  { table: 'workspace_connectors', column: 'expected_interval_minutes', definition: 'INTEGER NOT NULL DEFAULT 360' },
+  { table: 'workspace_connectors', column: 'paused_at', definition: 'TEXT' },
+  { table: 'workspace_connectors', column: 'setup_status', definition: "TEXT NOT NULL DEFAULT 'CONNECTED'" },
+  { table: 'workspace_connectors', column: 'authorized_by_user_id', definition: 'TEXT' },
+  { table: 'workspace_connectors', column: 'provider_account_id', definition: 'TEXT' },
+  { table: 'workspace_connectors', column: 'provider_account_name', definition: 'TEXT' },
+  { table: 'connector_feed_events', column: 'external_version', definition: 'TEXT' },
+  { table: 'connector_feed_events', column: 'payload_hash', definition: 'TEXT' },
+  { table: 'connector_feed_events', column: 'normalized_payload', definition: "TEXT NOT NULL DEFAULT '{}'" },
+  { table: 'connector_feed_events', column: 'attempt_count', definition: 'INTEGER NOT NULL DEFAULT 1' },
+  { table: 'connector_feed_events', column: 'action_type', definition: 'TEXT' },
+  { table: 'connector_feed_events', column: 'action_record_id', definition: 'TEXT' },
+  { table: 'connector_feed_events', column: 'aggregate_key', definition: 'TEXT' },
+  { table: 'connector_feed_events', column: 'last_attempt_at', definition: 'TEXT' },
 ];
 
 function addMissingColumns(db) {
@@ -301,6 +331,7 @@ function migrate(db) {
   // SUPERSEDED — work a later, better decision has taken over — is a state the
   // enumerated list did not have.
   relaxColumnCheck(db, 'work_items', 'execution_status');
+  relaxColumnCheck(db, 'connector_feed_events', 'status');
 
   db.exec(fs.readFileSync(ATTENTION_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(ACTIONS_SCHEMA_PATH, 'utf8'));
@@ -309,9 +340,14 @@ function migrate(db) {
   db.exec(fs.readFileSync(ONBOARDING_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(AUTOPILOT_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(MANAGER_SCHEMA_PATH, 'utf8'));
+  db.exec(fs.readFileSync(SALES_SCHEMA_PATH, 'utf8'));
+  // The connection/feed tables are created by onboarding on a fresh database,
+  // so a second additive pass keeps fresh and upgraded databases identical.
+  addMissingColumns(db);
+  db.exec(fs.readFileSync(CONNECTIONS_SCHEMA_PATH, 'utf8'));
   dropLegacyUserLogin(db);
   db.prepare(
-    `INSERT INTO schema_meta (key, value) VALUES ('version', '11')
+    `INSERT INTO schema_meta (key, value) VALUES ('version', '15')
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   ).run();
 }

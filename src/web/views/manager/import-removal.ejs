@@ -1,0 +1,75 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> Foundry</a>
+    <h1><%= proposal.status === 'COMPLETED' ? 'Imported products removed' : 'Choose the newly added products to remove' %></h1>
+    <div class="page-sub"><%= proposal.snapshot.source.sourceName %> · imported <%= new Date(proposal.snapshot.source.completedAt).toLocaleString() %></div>
+  </div>
+</div>
+
+<% if (proposal.status === 'COMPLETED') { %>
+  <section class="card section">
+    <div class="card-head"><h2>Completed</h2><span class="badge badge--ok">Verified</span></div>
+    <div class="card-body">
+      <p class="lede"><strong><%= proposal.result.productsRemoved %> product<%= proposal.result.productsRemoved === 1 ? '' : 's' %></strong> added by <strong><%= proposal.result.sourceName %></strong> are no longer active.</p>
+      <p><%= proposal.result.unitsRemoved %> unit<%= proposal.result.unitsRemoved === 1 ? '' : 's' %> of stock were corrected to zero through the ledger.</p>
+      <p class="muted">Products that existed before this import were not touched. The import and any correction movements remain as audit history.</p>
+    </div>
+    <div class="card-foot"><a class="btn btn--primary" href="/inventory">See active inventory</a><a class="btn" href="/activity">See the audit trail</a></div>
+  </section>
+<% } else if (proposal.status === 'CANCELLED') { %>
+  <div class="notice section"><span>This removal was cancelled. Nothing changed.</span></div>
+<% } else { %>
+  <div class="notice notice--warn section">
+    <%- helpers.icon('alert', { size: 18 }) %>
+    <span><strong>Nothing has been removed yet.</strong> Foundry traced these records to the latest completed import. Select any combination, or remove all of them at once.</span>
+  </div>
+
+  <form method="post" action="/import-removals/<%= proposal.id %>/approve" class="card section" data-selection-group data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="integrityHash" value="<%= proposal.integrityHash %>">
+    <div class="card-head">
+      <h2>Products created by <%= proposal.snapshot.source.sourceName %></h2>
+      <span class="spacer"></span>
+      <span class="badge badge--danger"><%= proposal.snapshot.productCount %> available</span>
+    </div>
+    <div class="card-body">
+      <div class="selection-toolbar">
+        <strong data-selection-count>0 selected</strong>
+        <span class="spacer"></span>
+        <button class="btn btn--sm" type="button" data-select-all>Select all</button>
+        <button class="btn btn--sm btn--ghost" type="button" data-clear-selection>Clear</button>
+      </div>
+
+      <div class="selection-list">
+        <% proposal.snapshot.items.forEach(function (item) { %>
+          <label class="selection-row">
+            <input type="checkbox" name="itemIds" value="<%= item.id %>" data-selection-item>
+            <span class="selection-row__main">
+              <strong><%= item.name %></strong>
+              <small><%= item.baseCode || item.variants.map(function (variant) { return variant.code; }).join(', ') %></small>
+            </span>
+            <span class="selection-row__meta"><strong><%= item.onHand %></strong> on hand</span>
+          </label>
+        <% }) %>
+      </div>
+
+      <h3 class="sub-head">What removal does</h3>
+      <ul class="plain-list">
+        <li>Archives only the products selected above.</li>
+        <li>If a selected product has stock, records a correction to zero before archiving it.</li>
+        <li>Never removes products that existed before this import.</li>
+        <li>Keeps the original import and audit history.</li>
+      </ul>
+    </div>
+    <div class="card-foot">
+      <button class="btn btn--danger" type="submit" name="selectionMode" value="selected" data-remove-selected disabled>Remove selected</button>
+      <button class="btn btn--danger btn--ghost" type="submit" name="selectionMode" value="all">Remove all <%= proposal.snapshot.productCount %></button>
+      <a class="btn" href="/">Not now</a>
+    </div>
+  </form>
+
+  <form method="post" action="/import-removals/<%= proposal.id %>/cancel" class="section">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="btn btn--ghost" type="submit">Cancel this removal review</button>
+  </form>
+<% } %>

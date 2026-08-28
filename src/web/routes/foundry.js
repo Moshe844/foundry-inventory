@@ -6,6 +6,7 @@ const understandingService = require('../../foundry/understanding-service');
 const planBuilder = require('../../foundry/plan-builder');
 const firstItemService = require('../../foundry/first-item-service');
 const documentIntake = require('../../foundry/document-intake');
+const scopeSafety = require('../../imports/scope-safety');
 const planApplier = require('../../foundry/plan-applier');
 const onboardingPaths = require('../../onboarding/paths');
 const assistant = require('../../foundry/assistant-service');
@@ -187,12 +188,17 @@ router.get(
       req.flash('error', 'That proposal is no longer available. Describe your inventory again.');
       return res.redirect(303, '/foundry');
     }
+    const setupDocument = documentIntake.getByUnderstanding(req.db, req.ctx.workspaceId, stored.id);
     return res.page('foundry/proposal', {
       title: "Here's how I'd organize your inventory",
       nav: 'foundry',
       understandingId: stored.id,
       understanding: stored.understanding,
-      setupDocument: documentIntake.getByUnderstanding(req.db, req.ctx.workspaceId, stored.id),
+      setupDocument,
+      scopeWarning: setupDocument
+        ? scopeSafety.fromDocument(req.db, req.ctx.workspaceId, setupDocument.interpretation)
+        : { needsConfirmation: false },
+      alreadyConfigured: planApplier.isConfigured(req.db, req.ctx.workspaceId),
       recommendations: understandingService.listRecommendations(req.db, req.ctx.workspaceId, stored.id),
       existingLocations: repo.listLocations(req.db, req.ctx.workspaceId),
     });
@@ -208,6 +214,18 @@ router.post(
     if (existingDocument && existingDocument.status === 'APPLIED' && existingDocument.appliedPlanId) {
       return res.redirect(303, `/foundry/ready/${existingDocument.appliedPlanId}`);
     }
+    if (existingDocument) {
+      const scopeWarning = scopeSafety.fromDocument(req.db, req.ctx.workspaceId, existingDocument.interpretation);
+      if (scopeWarning.needsConfirmation && !existingDocument.scopeConfirmedAt) {
+        if (req.body.scopeDecision === 'confirm') {
+          documentIntake.confirmScope(req.db, req.ctx, req.params.id);
+          req.flash('success', `Confirmed: continue reviewing this file for ${scopeWarning.workspaceName}. Nothing has been added yet.`);
+          return res.redirect(303, `/foundry/proposal/${req.params.id}`);
+        }
+        req.flash('warning', `Confirm that this file belongs in ${scopeWarning.workspaceName} before continuing.`);
+        return res.redirect(303, `/foundry/proposal/${req.params.id}`);
+      }
+    }
     const answers = {};
     for (const [key, value] of Object.entries(req.body)) {
       if (!key.startsWith('answer_')) continue;
@@ -218,6 +236,7 @@ router.post(
     }
 
     try {
+      const alreadyConfigured = planApplier.isConfigured(req.db, req.ctx.workspaceId);
       const planId = inTransaction(req.db, () => {
         if (existingDocument) {
           documentIntake.setSupplierCodeLabel(req.db, req.ctx, req.params.id, req.body.supplierCodeLabel);
@@ -227,7 +246,9 @@ router.post(
           answers,
           acceptedRecommendationIds: toArray(req.body.acceptRecommendation),
         });
-        planApplier.applyPlan(req.db, req.ctx, built.planId);
+        // A later supplier invoice adds evidenced records to the operation; it
+        // must not replace the inventory model the owner already configured.
+        if (!alreadyConfigured) planApplier.applyPlan(req.db, req.ctx, built.planId);
         documentIntake.apply(req.db, req.ctx, req.user, req.params.id, built.planId);
         return built.planId;
       });
@@ -254,6 +275,7 @@ router.get(
       plan: stored.plan,
       summary: stored.applied_summary ? JSON.parse(stored.applied_summary) : null,
       setupDocument: documentIntake.getByPlan(req.db, req.ctx.workspaceId, stored.id),
+      addedToExisting: Boolean(documentIntake.getByPlan(req.db, req.ctx.workspaceId, stored.id) && !stored.applied_summary),
       decisions: planBuilder.listDecisions(req.db, req.ctx.workspaceId, stored.id),
       acceptedRecommendations: understandingService.listAcceptedRecommendations(
         req.db,

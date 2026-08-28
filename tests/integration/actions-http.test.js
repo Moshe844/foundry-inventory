@@ -97,6 +97,18 @@ const balance = (env, locationId) =>
 
 // --- natural language --------------------------------------------------------
 
+test('the actions-page Tell Foundry box uses the same general manager route as Home', async () => {
+  const env = setup({ provider: fakeProvider(intentResponse()) });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const page = await agent.get('/actions');
+  assert.equal(page.status, 200);
+  assert.match(page.text, /<form[^>]+action="\/foundry\/tell"[^>]+data-ask-form/);
+  assert.match(page.text, /id="action-instruction"[\s\S]*?name="message"/);
+  env.db.close();
+});
+
 test('a written instruction becomes a preview, not a movement', async () => {
   const env = setup({ provider: fakeProvider(intentResponse()) });
   const agent = request.agent(env.app);
@@ -524,19 +536,19 @@ test('a question can be answered without retyping the instruction', async () => 
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
 
-  const asked = await post(agent, '/actions/ask', { instruction: 'take some off Downtown' });
+  const asked = await post(agent, '/actions/ask', { instruction: 'take some Navy 4 off Downtown' });
   const page = plain(asked.text);
   assert.match(page, /Did those units leave/);
   // The question comes with somewhere to answer it.
   assert.match(asked.text, /name="answer"/);
-  assert.match(asked.text, /name="original" value="take some off Downtown"/);
+  assert.match(asked.text, /name="original" value="take some Navy 4 off Downtown"/);
 
   const answered = await agent
     .post('/actions/ask')
     .type('form')
     .send({
       _csrf: csrfFrom(asked.text),
-      original: 'take some off Downtown',
+      original: 'take some Navy 4 off Downtown',
       answer: 'they were sold',
     });
   assert.equal(answered.status, 303, 'the answer produced a proposal');
@@ -547,7 +559,274 @@ test('a question can be answered without retyping the instruction', async () => 
     env.workspace.workspaceId,
     answered.headers.location.split('/').pop()
   );
-  assert.match(proposal.originalInstruction, /take some off Downtown — they were sold/);
+  assert.match(proposal.originalInstruction, /take some Navy 4 off Downtown — they were sold/);
+});
+
+test('Tell Foundry keeps the quantity when one sentence adds a new product and records its receipt', async () => {
+  const parsed = intentResponse({
+    actionType: 'create_item',
+    item: '',
+    variant: '',
+    sourceText: "a new item, it's called white_socks size 6, quantity: 35, code AE_345",
+    sourceLocation: '',
+    destinationLocation: '',
+    quantity: 35,
+    productName: 'white_socks',
+    productCode: 'AE_345',
+    variantAxes: 'Size: 6',
+  });
+  const env = setup({ provider: fakeProvider(parsed) });
+  env.db.prepare('UPDATE locations SET is_active = 0 WHERE id = ? AND workspace_id = ?')
+    .run(env.workspace.store.id, env.workspace.workspaceId);
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const instruction = "i just received a new item, it's called white_socks size 6, quantity: 35, code AE_345, please add to inventory";
+  const asked = await post(agent, '/actions/ask', { instruction });
+  assert.equal(asked.status, 303);
+  assert.match(asked.headers.location, /^\/actions\/act_/);
+
+  const previewPage = await agent.get(asked.headers.location);
+  const preview = plain(previewPage.text);
+  assert.match(preview, /Foundry is ready to add a product and receive its stock/);
+  assert.match(preview, /white_socks/);
+  assert.match(preview, /Size: 6/);
+  assert.match(preview, /AE_345/);
+  assert.match(preview, /Main Warehouse\s+stock arrives here\s+0\s+35/);
+  assert.match(preview, /Total on hand\s+this changes how much you have\s+0\s+35/);
+  assert.match(preview, /Approve add and receive/);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE base_code = ?').get('AE_345').n, 0);
+
+  const approved = await agent.post(asked.headers.location + '/approve').type('form').send({
+    _csrf: csrfFrom(previewPage.text),
+  });
+  assert.equal(approved.status, 303);
+  await agent.get(approved.headers.location);
+
+  const item = env.db.prepare('SELECT id FROM items WHERE workspace_id = ? AND base_code = ?')
+    .get(env.workspace.workspaceId, 'AE_345');
+  const [sku] = repo.listSkusForItem(env.db, env.workspace.workspaceId, item.id);
+  assert.equal(sku.variant_label, '6');
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, sku.id, env.workspace.main.id), 35);
+  assert.equal(
+    env.db.prepare("SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ? AND sku_id = ? AND operation = 'receive'")
+      .get(env.workspace.workspaceId, sku.id).n,
+    1
+  );
+});
+
+test('twelve opening balances use one grouped reason and resume the same atomic preview', async () => {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Opening Inventory Business' });
+  const item = makeVariantItem(store.db, workspace.ctx, {
+    name: 'T-shirt',
+    baseCode: 'TEE-OPENING',
+    options: [
+      { name: 'Colour', values: 'Black, White, Navy' },
+      { name: 'Size', values: 'Small, Medium, Large, XL' },
+    ],
+  });
+  const targets = [50, 40, 30, 20, 45, 35, 25, 15, 42, 32, 22, 12];
+  const clauses = item.skus.map((sku, index) => `${sku.variant_label} ${targets[index]}`);
+  const original = `Main Warehouse has ${clauses.join('; ')}.`;
+  const lines = item.skus.map((sku, index) => ({
+    ...intentResponse().lines[0],
+    actionType: 'adjust',
+    item: 'T-shirt',
+    variant: sku.variant_label,
+    sourceText: clauses[index],
+    sourceLocation: 'Main Warehouse',
+    destinationLocation: '',
+    quantity: -1,
+    adjustmentTarget: targets[index],
+    reasonCode: '',
+  }));
+  const provider = fakeProvider({ lines, clarifyingQuestion: '', unsupportedReason: '' });
+  const app = createApp({
+    db: store.db,
+    env: 'test',
+    sessionSecret: 'grouped-opening-continuation-test',
+    aiProvider: provider,
+  });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const asked = await post(agent, '/actions/ask', { instruction: original });
+  assert.equal(asked.status, 200);
+  assert.match(
+    plain(asked.text),
+    /You're setting starting inventory from zero across 12 stock positions\. What is the reason for these opening balances\?/
+  );
+  const continuationId = /name="continuationId" value="([^"]+)"/.exec(asked.text)?.[1];
+  assert.ok(continuationId, 'the reply is tied to the server-held grouped request');
+  assert.equal(provider.calls.length, 1);
+  assert.equal(
+    store.db.prepare('SELECT COUNT(*) AS n FROM action_proposals').get().n,
+    0,
+    'asking for a reason prepares no partial preview'
+  );
+  for (const sku of item.skus) {
+    assert.equal(repo.getBalance(store.db, workspace.workspaceId, sku.id, workspace.main.id), 0);
+  }
+
+  const answered = await agent.post('/actions/ask').type('form').send({
+    _csrf: csrfFrom(asked.text),
+    original,
+    answer: 'starting inventory',
+    continuationId,
+  });
+  assert.equal(answered.status, 303);
+  assert.match(answered.headers.location, /^\/actions\/plan\/apl_/);
+  assert.equal(provider.calls.length, 1, 'the answer resumes parsed lines without another model call');
+
+  const previewResponse = await agent.get(answered.headers.location);
+  const preview = plain(previewResponse.text);
+  assert.match(preview, /Foundry is ready to make 12 changes/);
+  assert.match(preview, /Approve all 12/);
+  assert.equal(
+    store.db.prepare('SELECT COUNT(*) AS n FROM action_proposals WHERE plan_id IS NOT NULL').get().n,
+    12,
+    'one plan owns all twelve changes'
+  );
+  for (const sku of item.skus) {
+    assert.equal(repo.getBalance(store.db, workspace.workspaceId, sku.id, workspace.main.id), 0);
+  }
+
+  const approved = await agent.post(`${answered.headers.location}/approve`).type('form').send({
+    _csrf: csrfFrom(previewResponse.text),
+    acknowledged: 'on',
+  });
+  assert.equal(approved.status, 303);
+  await agent.get(approved.headers.location);
+
+  for (let index = 0; index < item.skus.length; index += 1) {
+    assert.equal(
+      repo.getBalance(store.db, workspace.workspaceId, item.skus[index].id, workspace.main.id),
+      targets[index],
+      item.skus[index].variant_label
+    );
+  }
+  const completed = plain((await agent.get(answered.headers.location)).text);
+  assert.match(completed, /All done/);
+  assert.match(completed, /12 changes were carried out together/);
+  const recorded = store.db
+    .prepare('SELECT reason_code, notes FROM action_proposals WHERE plan_id IS NOT NULL ORDER BY line_number')
+    .all();
+  assert.deepEqual(new Set(recorded.map((row) => row.reason_code)), new Set(['correction']));
+  assert.deepEqual(new Set(recorded.map((row) => row.notes)), new Set(['starting inventory']));
+});
+
+test('variant clarification names the unresolved axis, offers real records, and continues the request', async () => {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'T-shirt Business' });
+  const item = makeVariantItem(store.db, workspace.ctx, {
+    name: 'Black T-shirt',
+    baseCode: 'TEE',
+    options: [
+      { name: 'Colour', values: 'Black, White' },
+      { name: 'Size', values: 'Small, Medium, Large' },
+    ],
+  });
+  for (const sku of item.skus.filter((row) => /Small/.test(row.variant_label))) {
+    engine.receive(store.db, workspace.ctx, {
+      skuId: sku.id, locationId: workspace.main.id, quantity: 20,
+    });
+  }
+  // Reproduce the live failure: the reader filled the catalogue's canonical
+  // product name even though the person did not say Black.
+  const first = intentResponse({ item: 'Black T-shirt', variant: 'Small' });
+  const second = intentResponse({ item: 'Black T-shirt', variant: 'Black Small' });
+  const app = createApp({
+    db: store.db,
+    env: 'test',
+    sessionSecret: 'variant-clarification-test',
+    aiProvider: fakeProvider([first, second]),
+  });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const original = 'Move 5 Small T-shirts from Main Warehouse to Downtown Store.';
+  const asked = await post(agent, '/actions/ask', { instruction: original });
+  assert.match(plain(asked.text), /Which colour of Small T-shirt do you mean\?/);
+  assert.match(asked.text, /value="Black \/ Small"/);
+  assert.match(asked.text, /value="White \/ Small"/);
+  assert.match(asked.text, new RegExp(`name="original" value="${original.replace('.', '\\.')}"`));
+
+  const answered = await agent.post('/actions/ask').type('form').send({
+    _csrf: csrfFrom(asked.text),
+    original,
+    answer: 'Black / Small',
+  });
+  assert.equal(answered.status, 303);
+  assert.match(answered.headers.location, /^\/actions\/act_/);
+  const proposal = proposals.get(store.db, workspace.workspaceId, answered.headers.location.split('/').pop());
+  const selected = item.skus.find((sku) => sku.id === proposal.skuId);
+  assert.equal(selected.variant_label, 'Black / Small');
+  assert.equal(proposal.originalInstruction, `${original} — Black / Small`);
+});
+
+test('an imported split-variant catalogue keeps supplied product words and asks only for size', async () => {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Imported Clothing Store' });
+  const bySize = new Map();
+  for (const colour of ['Black', 'White']) {
+    for (const size of ['Small', 'Medium', 'Large']) {
+      const item = makeVariantItem(store.db, workspace.ctx, {
+        name: `Classic Cotton T-Shirt - ${colour}`,
+        options: [{ name: 'Size', values: size }],
+      });
+      const sku = item.skus[0];
+      if (colour === 'Black') {
+        bySize.set(size, sku);
+        engine.receive(store.db, workspace.ctx, {
+          skuId: sku.id, locationId: workspace.main.id, quantity: 30,
+        });
+      }
+    }
+  }
+  makeVariantItem(store.db, workspace.ctx, {
+    name: 'Straight Jeans - Blue',
+    options: [{ name: 'Waist', values: '28, 30, 32' }],
+  });
+
+  const needsIdentity = { lines: [], clarifyingQuestion: 'Which product do you mean?', unsupportedReason: '' };
+  const resolved = intentResponse({
+    actionType: 'issue',
+    item: 'Classic Cotton T-Shirt - Black',
+    variant: 'Large',
+    quantity: 10,
+    sourceLocation: '',
+    destinationLocation: '',
+    reasonCode: 'sold',
+  });
+  const app = createApp({
+    db: store.db,
+    env: 'test',
+    sessionSecret: 'split-variant-clarification-test',
+    aiProvider: fakeProvider([needsIdentity, resolved]),
+  });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const original = 'I sold 10 Classic Cotton T-Shirt - Black';
+  const asked = await post(agent, '/actions/ask', { instruction: original });
+  const page = plain(asked.text);
+  assert.match(page, /Which size of Classic Cotton T-Shirt - Black do you mean\?/);
+  assert.match(asked.text, /class="act-choice-grid"/);
+  for (const size of ['Small', 'Medium', 'Large']) {
+    assert.match(asked.text, new RegExp(`name="answer" value="${size}"`));
+  }
+  assert.doesNotMatch(page, /Classic Cotton T-Shirt - White/);
+  assert.doesNotMatch(page, /Straight Jeans/);
+
+  const answered = await agent.post('/actions/ask').type('form').send({
+    _csrf: csrfFrom(asked.text), original, answer: 'Large',
+  });
+  assert.equal(answered.status, 303);
+  assert.match(answered.headers.location, /^\/actions\/act_/);
+  const proposal = proposals.get(store.db, workspace.workspaceId, answered.headers.location.split('/').pop());
+  assert.equal(proposal.skuId, bySize.get('Large').id);
+  assert.equal(proposal.originalInstruction, `${original} — Large`);
 });
 
 /**

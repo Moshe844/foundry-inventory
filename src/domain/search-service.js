@@ -42,6 +42,8 @@ const TYPE_LABEL = {
   location: 'Location',
   supplier: 'Supplier',
   purchase_order: 'Purchase order',
+  customer: 'Customer',
+  sales_order: 'Sales order',
 };
 
 /** How strongly a result answers the query. Higher comes first. */
@@ -271,6 +273,54 @@ function search(db, workspaceId, rawTerm, { limit = 8 } = {}) {
         distinguishing: row.po_number,
         haystack: row.supplier_name || '',
       }
+    );
+  }
+
+  // --- customers ------------------------------------------------------------
+  const customerLike = likeClause("(c.name || ' ' || COALESCE(c.company, '') || ' ' || COALESCE(c.email, ''))", term, words);
+  for (const row of db
+    .prepare(
+      `SELECT c.id, c.name, c.company, c.email,
+              (SELECT COUNT(*) FROM sales_orders so WHERE so.customer_id = c.id) AS order_count
+         FROM customers c
+        WHERE c.workspace_id = ? AND ${customerLike.sql}
+        LIMIT 50`
+    )
+    .all(workspaceId, ...customerLike.params)) {
+    consider(
+      {
+        type: 'customer', id: row.id, title: row.name,
+        subtitle: `Customer${row.company ? ` · ${row.company}` : ''}`,
+        meta: `${row.order_count} sales order${row.order_count === 1 ? '' : 's'}`,
+        href: `/sales/customers/${row.id}`,
+      },
+      { identifiers: [row.name, row.email], title: row.name, distinguishing: row.name,
+        haystack: `${row.company || ''} ${row.email || ''}` }
+    );
+  }
+
+  // --- sales orders ---------------------------------------------------------
+  const salesOrderLike = likeClause("(so.order_number || ' ' || c.name || ' ' || COALESCE(c.company, '') || ' ' || COALESCE(so.reference, ''))", term, words);
+  for (const row of db
+    .prepare(
+      `SELECT so.id, so.order_number, so.status, so.needed_by, c.name AS customer_name,
+              COALESCE((SELECT SUM(sol.quantity_ordered) FROM sales_order_lines sol
+                         WHERE sol.sales_order_id = so.id), 0) AS units
+         FROM sales_orders so JOIN customers c ON c.id = so.customer_id
+        WHERE so.workspace_id = ? AND ${salesOrderLike.sql}
+        LIMIT 50`
+    )
+    .all(workspaceId, ...salesOrderLike.params)) {
+    consider(
+      {
+        type: 'sales_order', id: row.id, title: row.order_number,
+        subtitle: `Sales order · ${row.customer_name}`,
+        meta: `${String(row.status || '').toLowerCase().replace(/_/g, ' ')} · ${row.units} unit(s)`
+          + (row.needed_by ? ` · needed by ${row.needed_by}` : ''),
+        href: `/sales/orders/${row.id}`,
+      },
+      { identifiers: [row.order_number], title: row.order_number, distinguishing: row.order_number,
+        haystack: row.customer_name }
     );
   }
 

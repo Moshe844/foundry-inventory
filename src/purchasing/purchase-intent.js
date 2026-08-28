@@ -40,12 +40,27 @@ function resolveSupplier(db, workspaceId, text) {
       ok: false,
       reason: 'ambiguous',
       message: `“${query}” could be ${contains.map((s) => s.name).join(' or ')}. Which supplier?`,
+      clarification: {
+        dimension: 'supplier',
+        choices: contains.map((supplier) => ({ label: supplier.name, value: supplier.name })),
+      },
     };
   }
 
   const close = resolver.closestMatch(query, all, (s) => s.name);
   if (close.ok) {
     return { ok: true, value: close.value, note: `You wrote “${query}” — Foundry took that as ${close.value.name}.` };
+  }
+  if (close.reason === 'ambiguous') {
+    return {
+      ok: false,
+      reason: 'ambiguous',
+      message: `“${query}” is close to ${close.candidates.map((s) => s.name).join(' and ')}. Which supplier?`,
+      clarification: {
+        dimension: 'supplier',
+        choices: close.candidates.map((supplier) => ({ label: supplier.name, value: supplier.name })),
+      },
+    };
   }
   return {
     ok: false,
@@ -62,8 +77,17 @@ function resolveSupplier(db, workspaceId, text) {
 function build(db, ctx, membership, line, options = {}) {
   permissions.assertCan(membership, permissions.CREATE_PO, 'prepare purchase orders');
 
-  const sku = resolver.resolveSku(db, ctx.workspaceId, line.item, line.variant);
-  if (!sku.ok) return { ok: false, question: sku.message };
+  const sku = resolver.resolveSku(db, ctx.workspaceId, line.item, line.variant, {
+    instruction: options.instruction,
+  });
+  if (!sku.ok) {
+    return {
+      ok: false,
+      question: sku.message,
+      clarification: sku.clarification || null,
+      choices: sku.clarification ? sku.clarification.choices : null,
+    };
+  }
 
   const assumptions = [];
   if (sku.note) assumptions.push(sku.note);
@@ -76,7 +100,12 @@ function build(db, ctx, membership, line, options = {}) {
     if (!found.ok) {
       return found.reason === 'none_exist'
         ? { ok: false, unsupported: `${found.message} Add one before ordering.` }
-        : { ok: false, question: found.message };
+        : {
+            ok: false,
+            question: found.message,
+            clarification: found.clarification || null,
+            choices: found.clarification ? found.clarification.choices : null,
+          };
     }
     supplier = found.value;
     if (found.note) assumptions.push(found.note);
@@ -142,6 +171,7 @@ function build(db, ctx, membership, line, options = {}) {
           recommendation && recommendation.reason === 'covered_by_incoming'
             ? `${recommendation.explanation} How many would you like to order anyway?`
             : 'How many would you like to order?',
+        clarification: { dimension: 'quantity', choices: [] },
       };
     }
     purchaseUnits = recommendation.quantityPurchaseUnits;
@@ -149,7 +179,11 @@ function build(db, ctx, membership, line, options = {}) {
   }
 
   if (!Number.isFinite(purchaseUnits) || purchaseUnits <= 0) {
-    return { ok: false, question: `How many ${supplierItem.purchase_unit}s would you like to order?` };
+    return {
+      ok: false,
+      question: `How many ${supplierItem.purchase_unit}s would you like to order?`,
+      clarification: { dimension: 'quantity', choices: [] },
+    };
   }
 
   const order = poService.createOrder(db, ctx, membership, {

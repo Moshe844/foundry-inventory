@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS import_plans (
   workspace_id         TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   created_by_user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   approved_by_user_id  TEXT REFERENCES users(id) ON DELETE RESTRICT,
+  scope_confirmed_at   TEXT,
 
   source_name          TEXT NOT NULL,
   source_kind          TEXT NOT NULL CHECK (source_kind IN ('xlsx', 'csv', 'paste')),
@@ -126,3 +127,24 @@ CREATE TABLE IF NOT EXISTS import_verifications (
   created_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_import_verifications_plan ON import_verifications(import_id);
+
+-- A controlled request to remove some or all products created by one import.
+-- The import rows are the provenance: existing products touched by that file
+-- are never candidates, and approval acts only on IDs shown in the snapshot.
+CREATE TABLE IF NOT EXISTS import_removal_proposals (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  import_plan_id        TEXT NOT NULL REFERENCES import_plans(id) ON DELETE CASCADE,
+  requested_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  approved_by_user_id   TEXT REFERENCES users(id) ON DELETE RESTRICT,
+  instruction           TEXT NOT NULL,
+  snapshot              TEXT NOT NULL DEFAULT '{}',
+  integrity_hash        TEXT NOT NULL,
+  status                TEXT NOT NULL DEFAULT 'PENDING'
+                          CHECK (status IN ('PENDING','COMPLETED','CANCELLED')),
+  result                TEXT NOT NULL DEFAULT '{}',
+  created_at            TEXT NOT NULL,
+  completed_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_import_removals_workspace
+  ON import_removal_proposals(workspace_id, created_at DESC);

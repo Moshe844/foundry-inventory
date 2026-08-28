@@ -117,7 +117,22 @@ function verify(db, workspaceId, proposal, { before, after, result }) {
         .get(workspaceId, item.id).n;
       const expectedSkus = (proposal.expectedAfterState && proposal.expectedAfterState.variants) || 1;
       checks.push(check('Variants created', expectedSkus, skus));
+      if (proposal.settings.initialStock) {
+        checks.push(
+          check('Initial stock received', proposal.quantity, after.total ?? 0),
+          check('Stock at receiving location', proposal.quantity, after.destinationOnHand ?? 0)
+        );
+      }
     }
+  }
+
+  if (proposal.actionType === 'archive_item') {
+    const row = proposal.settings.archiveScope === 'item'
+      ? db.prepare('SELECT is_active FROM items WHERE id = ? AND workspace_id = ?')
+          .get(proposal.itemId, workspaceId)
+      : db.prepare('SELECT is_active FROM skus WHERE id = ? AND workspace_id = ?')
+          .get(proposal.skuId, workspaceId);
+    checks.push(check('Catalogue record archived', false, Boolean(row && row.is_active)));
   }
 
   if (proposal.actionType === 'add_location') {

@@ -11,10 +11,19 @@ const presenter = require('../../attention/presenter');
 const briefService = require('../../attention/brief-service');
 const { purchasingBrief } = require('../../purchasing/brief-lines');
 const autopilotPresenter = require('../../autopilot/presenter');
+const guidance = require('../../manager/guidance');
 const permissions = require('../../actions/permissions');
 const { requireAuth, asyncRoute } = require('../middleware');
 
 const router = express.Router();
+
+function homeSignature(db, workspaceId) {
+  const tables = ['domain_events', 'work_items', 'attention_items', 'inventory_investigations', 'purchase_orders', 'sales_orders', 'sales_order_events', 'movements'];
+  return tables.map((table) => {
+    const row = db.prepare(`SELECT COALESCE(MAX(rowid), 0) AS last, COUNT(*) AS total FROM ${table} WHERE workspace_id = ?`).get(workspaceId);
+    return `${table}:${row.last}:${row.total}`;
+  }).join('|');
+}
 
 /**
  * The Overview answers one question first: what needs my attention right now?
@@ -50,10 +59,12 @@ router.get(
     const foundryConfigured = Boolean(configuration && configuration.configuredAt);
     if (!wantsClassic && foundryConfigured) {
       const home = autopilotPresenter.operatorHome(req.db, req.ctx.workspaceId);
+      home.guidance = guidance.build(req.db, req.ctx.workspaceId);
       return res.page('operator-home', {
         title: 'Foundry',
         nav: 'home',
         home,
+        homeSignature: homeSignature(req.db, req.ctx.workspaceId),
         brief,
         stats,
         terminology,
@@ -78,7 +89,27 @@ router.get(
       // thing waiting, which leaves a new customer with two screens
       // contradicting each other and no way to tell which is lying.
       operatingDecisions: readiness.decisions(req.db, req.ctx.workspaceId),
+      guidance: guidance.build(req.db, req.ctx.workspaceId),
       isEmpty: stats.itemCount === 0 && stats.locationCount === 0,
+    });
+  })
+);
+
+router.get('/api/home-state', requireAuth, asyncRoute(async (req, res) => {
+  res.json({ signature: homeSignature(req.db, req.ctx.workspaceId) });
+}));
+
+/** A compact, task-based guide; contextual guidance remains on Home. */
+router.get(
+  '/guide',
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const current = guidance.build(req.db, req.ctx.workspaceId);
+    return res.page('guide', {
+      title: 'How to use Foundry',
+      nav: 'guide',
+      guidance: current,
+      topics: guidance.guideTopics(req.db, req.ctx.workspaceId),
     });
   })
 );

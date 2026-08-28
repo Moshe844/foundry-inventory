@@ -116,8 +116,9 @@ function execute(db, ctx, membership, proposalId, options = {}) {
 
   // Attention re-evaluation happens after the movement has committed, never
   // inside it: interpretation must not be able to roll back inventory work.
-  if (claimed.status === 'SUCCEEDED' && proposal.skuId) {
-    reevaluate.afterMovement(db, ctx.workspaceId, [proposal.skuId], `action:${proposal.actionType}`);
+  const affectedSkuIds = proposal.skuId ? [proposal.skuId] : (claimed.affectedSkuIds || []);
+  if (claimed.status === 'SUCCEEDED' && affectedSkuIds.length) {
+    reevaluate.afterMovement(db, ctx.workspaceId, affectedSkuIds, `action:${proposal.actionType}`);
   }
   return claimed;
 }
@@ -199,6 +200,7 @@ function runOnce(db, ctx, proposal, idempotencyKey) {
       verified: verdict.verified,
       verification: verdict,
       movementIds: result.movementIds || [],
+      affectedSkuIds: result.skuIds || [],
       proposal: proposals.get(db, ctx.workspaceId, proposal.proposalId),
     };
   });
@@ -267,7 +269,37 @@ function perform(db, ctx, proposal) {
 
   if (proposal.actionType === 'create_item') {
     const created = itemService.createItem(db, engineCtx, catalog.toCreateInput(proposal.settings));
-    return { movementIds: [], groupIds: [], itemId: created.itemId };
+    const initial = proposal.settings && proposal.settings.initialStock;
+    if (!initial) {
+      return { movementIds: [], groupIds: [], itemId: created.itemId, skuIds: created.skuIds };
+    }
+    if (created.skuIds.length !== 1) {
+      throw new ValidationError('Initial stock can only be received when the new product resolves to one exact variant.');
+    }
+    const received = engine.receive(db, engineCtx, {
+      skuId: created.skuIds[0],
+      locationId: initial.locationId,
+      quantity: proposal.settings.trackingMode === 'serial' ? undefined : initial.quantity,
+      serials: proposal.settings.trackingMode === 'serial' ? initial.serials : undefined,
+      lotCode: proposal.settings.trackingMode === 'lot' ? initial.lotCode : undefined,
+      reference,
+      notes: `Initial stock recorded while adding ${proposal.settings.name}.`,
+    });
+    return {
+      movementIds: received.movementIds || [],
+      groupIds: received.groupId ? [received.groupId] : [],
+      itemId: created.itemId,
+      skuIds: created.skuIds,
+    };
+  }
+
+  if (proposal.actionType === 'archive_item') {
+    if (proposal.settings.archiveScope === 'item') {
+      itemService.setItemActive(db, engineCtx, proposal.itemId, false);
+    } else {
+      itemService.setSkuActive(db, engineCtx, proposal.skuId, false);
+    }
+    return { movementIds: [], groupIds: [], skuIds: [proposal.skuId] };
   }
 
   if (proposal.actionType === 'add_location') {

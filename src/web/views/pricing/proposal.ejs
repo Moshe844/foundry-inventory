@@ -1,0 +1,8 @@
+<div class="breadcrumb"><a href="/inventory/<%= proposal.item_id %>"><%= proposal.item_name %></a> <%- helpers.icon('chevron', { size: 13 }) %> <span>Review price</span></div>
+<div class="page-head"><div class="titles"><h1>Review the selling price</h1><p>Nothing changes until you approve.</p></div><span class="badge badge--warn"><%= proposal.status.toLowerCase() %></span></div>
+<div class="card form-card">
+  <h2><%= proposal.displayName %></h2><p class="muted"><%= proposal.code %></p>
+  <div class="stats-row"><div class="stat"><strong><%= proposal.currentFormatted %></strong><span>Current selling price</span></div><div class="stat"><strong><%= proposal.proposedFormatted %></strong><span>New selling price</span></div></div>
+  <div class="notice"><strong>What this affects</strong><p>New sales-order lines will copy this price. Existing sales-order lines keep their original price.</p></div>
+  <% if (proposal.status === 'PENDING') { %><div class="form-actions"><form method="post" action="/pricing/proposals/<%= proposal.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= proposal.integrity_hash %>"><button class="btn btn--primary" type="submit">Approve price</button></form><form method="post" action="/pricing/proposals/<%= proposal.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost" type="submit">Not now</button></form></div><% } %>
+</div>

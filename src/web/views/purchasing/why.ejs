@@ -111,7 +111,7 @@
   </div>
 <% } %>
 
-<div class="card section">
+<div class="card section" id="reorder-settings">
   <div class="card-head">
     <h2>Reorder settings</h2>
     <span class="spacer"></span>
@@ -120,6 +120,15 @@
     </span>
   </div>
   <div class="card-body">
+    <% if (rulePreview && rulePreview.kind === 'reorder') { %>
+      <div class="notice notice--info">
+        <div>
+          <strong>Foundry understood this rule for <%= rulePreview.displayName %>:</strong>
+          reorder at <strong><%= rulePreview.reorderPoint %></strong> and bring the inventory position back to <strong><%= rulePreview.targetStock %></strong>.
+          Nothing changes until you save it below.
+        </div>
+      </div>
+    <% } %>
     <% if (!policy.isSet && proposal && proposal.canPropose) { %>
       <p class="muted">
         Foundry has no settings for this line and works the figures out from usage each time.
@@ -137,13 +146,13 @@
           <label class="field">
             <span class="field-label">Reorder point</span>
             <input class="input" type="number" min="0" name="reorderPoint"
-                   value="<%= policy.reorderPoint === null ? '' : policy.reorderPoint %>"
+                   value="<%= rulePreview && rulePreview.kind === 'reorder' ? rulePreview.reorderPoint : policy.reorderPoint === null ? '' : policy.reorderPoint %>"
                    placeholder="<%= line.reorderPoint === undefined ? '' : line.reorderPoint %>">
           </label>
           <label class="field">
             <span class="field-label">Order up to</span>
             <input class="input" type="number" min="0" name="targetStock"
-                   value="<%= policy.targetStock === null ? '' : policy.targetStock %>"
+                   value="<%= rulePreview && rulePreview.kind === 'reorder' ? rulePreview.targetStock : policy.targetStock === null ? '' : policy.targetStock %>"
                    placeholder="<%= line.target === undefined ? '' : line.target %>">
           </label>
           <label class="field">
@@ -173,6 +182,39 @@
           <button class="btn btn--ghost btn--sm" type="submit">Discard my settings for this line</button>
         </form>
       <% } %>
+    <% } %>
+  </div>
+</div>
+
+<div class="card section" id="location-minimums">
+  <div class="card-head"><h2>Location minimums</h2><span class="spacer"></span><span class="badge badge--muted">Advanced</span></div>
+  <div class="card-body">
+    <p class="muted">A location minimum is a hard keep-back level. Foundry will not transfer this variant below it.</p>
+    <% if (rulePreview && rulePreview.kind === 'location_minimum') { %>
+      <div class="notice notice--info"><div>
+        <strong>Foundry understood:</strong> keep at least <strong><%= rulePreview.minimum %></strong> of
+        <%= rulePreview.displayName %> at <strong><%= rulePreview.locationName %></strong>.
+        Nothing changes until you save it below.
+      </div></div>
+    <% } %>
+    <% if (permissions.replenishment) { %>
+      <form method="post" action="/purchasing/location-minimums/<%= line.skuId %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="grid grid--2">
+          <label class="field"><span class="field-label">Location</span>
+            <select class="input" name="locationId" required>
+              <% locations.forEach(function (location) { %><option value="<%= location.id %>" <%= rulePreview && rulePreview.locationId === location.id ? 'selected' : '' %>><%= location.name %></option><% }) %>
+            </select>
+          </label>
+          <label class="field"><span class="field-label">Always keep at least</span>
+            <input class="input" type="number" min="0" name="minimum" value="<%= rulePreview && rulePreview.kind === 'location_minimum' ? rulePreview.minimum : '' %>" placeholder="0">
+          </label>
+        </div>
+        <button class="btn btn--primary" type="submit">Save location minimum</button>
+      </form>
+    <% } %>
+    <% if (locationPolicies.length) { %>
+      <ul class="plain-list"><% locationPolicies.forEach(function (entry) { %><li><strong><%= entry.locationName %>:</strong> keep at least <%= entry.minimum %></li><% }) %></ul>
     <% } %>
   </div>
 </div>

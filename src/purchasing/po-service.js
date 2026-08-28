@@ -23,6 +23,9 @@ const { ValidationError, NotFoundError } = require('../domain/errors');
 const permissions = require('../actions/permissions');
 const repo = require('../domain/repository');
 const supplierService = require('./supplier-service');
+const { addLocalDays } = require('../lib/calendar');
+const managerEvents = require('../manager/events');
+const supplierCommunications = require('./supplier-communications');
 
 const STATUS = {
   DRAFT: 'DRAFT',
@@ -272,13 +275,13 @@ function resolveExpectedDate(db, workspaceId, supplier, lines, input, now) {
   if (leadTimes.length) {
     const longest = Math.max(...leadTimes);
     return {
-      expectedDate: new Date(now + longest * DAY_MS).toISOString().slice(0, 10),
+      expectedDate: addLocalDays(now, longest),
       source: 'supplier_item',
     };
   }
   if (supplier.defaultLeadTimeDays) {
     return {
-      expectedDate: new Date(now + supplier.defaultLeadTimeDays * DAY_MS).toISOString().slice(0, 10),
+      expectedDate: addLocalDays(now, supplier.defaultLeadTimeDays),
       source: 'supplier_default',
     };
   }
@@ -418,7 +421,9 @@ function createOrder(db, ctx, membership, input) {
       subtotal: order.subtotal,
     }, ctx.actorId);
 
-    return get(db, ctx.workspaceId, id);
+    const prepared = get(db, ctx.workspaceId, id);
+    supplierCommunications.prepareForOrder(db, ctx.workspaceId, prepared);
+    return prepared;
   });
 }
 
@@ -514,7 +519,19 @@ function approve(db, ctx, membership, poId, { expectedHash = null, markOrdered =
     poId, ctx.workspaceId, STATUS.DRAFT, STATUS.AWAITING_APPROVAL
   );
   recordEvent(db, ctx.workspaceId, poId, 'approved', { subtotal: before.subtotal, status }, ctx.actorId);
-  return get(db, ctx.workspaceId, poId);
+  const approved = get(db, ctx.workspaceId, poId);
+  if (markOrdered) supplierCommunications.queueForOrder(db, ctx.workspaceId, approved.id);
+  managerEvents.publish(db, ctx.workspaceId, managerEvents.TYPES.PURCHASE_ORDER_PLACED, {
+    purchaseOrderId: approved.id,
+    poNumber: approved.poNumber,
+    skuIds: approved.lines.map((line) => line.skuId),
+    outstandingUnits: approved.outstandingUnits,
+  }, {
+    source: 'purchasing',
+    sourceRecordType: 'purchase_order',
+    sourceRecordId: `${approved.id}:${approved.updatedAt}`,
+  });
+  return approved;
 }
 
 /**
@@ -548,7 +565,16 @@ function cancel(db, ctx, membership, poId, { reason = null } = {}) {
     cancelledUnits: order.outstandingUnits,
   }, ctx.actorId);
 
-  return get(db, ctx.workspaceId, poId);
+  const cancelled = get(db, ctx.workspaceId, poId);
+  managerEvents.publish(db, ctx.workspaceId, managerEvents.TYPES.PURCHASE_ORDER_CANCELLED, {
+    purchaseOrderId: cancelled.id,
+    skuIds: cancelled.lines.map((line) => line.skuId),
+  }, {
+    source: 'purchasing',
+    sourceRecordType: 'purchase_order',
+    sourceRecordId: `${cancelled.id}:${cancelled.updatedAt}`,
+  });
+  return cancelled;
 }
 
 /** Removes a draft entirely. Only ever a draft. */

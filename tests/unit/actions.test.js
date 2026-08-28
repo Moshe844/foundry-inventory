@@ -25,6 +25,8 @@ const resolver = require('../../src/actions/resolver');
 const presenter = require('../../src/actions/presenter');
 const permissions = require('../../src/actions/permissions');
 const policy = require('../../src/actions/policy');
+const queryPlanner = require('../../src/attention/query-planner');
+const queryService = require('../../src/attention/query-service');
 const {
   makeDatabase, cleanupAll, seedWorkspace, seedAnotherWorkspace,
   makeQuantityItem, makeVariantItem, makeSerialItem, makeLotItem, lotsFor, unitsFor,
@@ -32,6 +34,81 @@ const {
 const scenarios = require('../helpers/scenarios');
 
 test.after(cleanupAll);
+
+test('opening-inventory explanations map to the existing audited correction reason', () => {
+  for (const answer of ['starting inventory', 'starting from scratch', 'opening inventory', 'initial balances']) {
+    assert.equal(actionService.adjustmentReasonFromAnswer(answer), 'correction', answer);
+  }
+});
+
+test('a location question offers one atomic all-locations choice', async () => {
+  const env = setup();
+  makeQuantityItem(env.db, env.ctx, { name: 'Display Hook', baseCode: 'HOOK-1' });
+  const line = intent({
+    actionType: 'adjust', item: '', variant: '', quantity: -1,
+    sourceLocation: '', destinationLocation: '', adjustmentTarget: 5, reasonCode: 'found',
+  });
+  const first = await actionService.interpret(
+    env.db, env.ctx, env.membership, 'Set HOOK-1 to 5',
+    { parsedIntent: { lines: [intentService.normaliseLine(line)], clarifyingQuestion: '', unsupportedReason: '' } }
+  );
+  assert.equal(first.kind, 'question');
+  assert.ok(first.choices, JSON.stringify(first));
+  assert.deepEqual(first.choices.map((choice) => choice.label), [
+    'Downtown Store', 'Main Warehouse', 'Both locations',
+  ]);
+
+  const resumed = await actionService.continueInterpretation(
+    env.db, env.ctx, env.membership, first.continuation, '__all_locations__'
+  );
+  assert.equal(resumed.kind, 'plan');
+  assert.equal(resumed.plan.lines.length, 2);
+  assert.deepEqual(
+    resumed.plan.lines.map((proposal) => proposal.expectedBeforeState.sourceLocationName).sort(),
+    ['Downtown Store', 'Main Warehouse']
+  );
+});
+
+test('removing a zero-stock SKU archives the catalogue record instead of correcting its count', () => {
+  const env = setup();
+  const item = makeQuantityItem(env.db, env.ctx, { name: 'Sample Badge', baseCode: 'BADGE-1' });
+  const built = proposals.build(env.db, env.ctx, intent({
+    actionType: 'archive_item', item: 'BADGE-1', variant: '', quantity: -1,
+    sourceLocation: '', destinationLocation: '', adjustmentTarget: -1,
+  }), { instruction: 'Remove BADGE-1 from my inventory; it was added by mistake.', groundIdentity: true });
+  assert.ok(built.ok, built.question || built.unsupported);
+  assert.equal(built.proposal.actionType, 'archive_item');
+  assert.equal(built.proposal.expectedBeforeState.total, 0);
+  const result = run(env, proposals.persist(env.db, env.ctx, built.proposal, {
+    instruction: 'Remove BADGE-1 from my inventory; it was added by mistake.',
+  }));
+  assert.equal(result.verified, true, JSON.stringify(result.verification.problems));
+  assert.equal(env.db.prepare('SELECT is_active FROM items WHERE id = ?').get(item.itemId).is_active, 0);
+});
+
+test('catalogue archive refuses a record that still has physical stock', () => {
+  const env = setup();
+  const item = makeQuantityItem(env.db, env.ctx, { name: 'Sample Badge', baseCode: 'BADGE-1' });
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 2 });
+  const built = proposals.build(env.db, env.ctx, intent({
+    actionType: 'archive_item', item: 'BADGE-1', variant: '', quantity: -1,
+    sourceLocation: '', destinationLocation: '', adjustmentTarget: -1,
+  }), { instruction: 'Remove BADGE-1', groundIdentity: true });
+  assert.equal(built.ok, false);
+  assert.match(built.unsupported, /still has 2 on hand/);
+});
+
+test('ordinary inventory-count questions use a grounded catalogue summary', async () => {
+  const env = setup();
+  const item = makeQuantityItem(env.db, env.ctx, { name: 'Sample Badge', baseCode: 'BADGE-1' });
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 7 });
+  const plan = await queryPlanner.plan('How many items are in my inventory?');
+  assert.equal(plan.intent, 'inventory_summary');
+  const result = queryService.execute(env.db, env.workspace.workspaceId, plan);
+  assert.match(result.answer, /1 active product/);
+  assert.match(result.answer, /7 units on hand/);
+  assert.equal(result.supported, true);
+});
 
 function setup(overrides = {}) {
   const { db } = makeDatabase();
@@ -108,6 +185,63 @@ test('a receive proposal adds to the destination and to the total', () => {
   assert.equal(view.pastVerb, 'received');
   assert.deepEqual(view.rows.map((r) => [r.label, r.before, r.after]), [['Downtown Store', 4, 104]]);
   assert.deepEqual(view.total, { before: 52, after: 152 });
+});
+
+test('an exact SKU code misread as a lot still resolves the quantity variant', () => {
+  const env = setup();
+  const item = makeVariantItem(env.db, env.ctx, {
+    name: 'Straight Jeans - Blue',
+    baseCode: 'JN-BLU',
+    options: [{ name: 'Size', values: '28, 30' }],
+  });
+  const size28 = item.byLabel('28');
+  engine.receive(env.db, env.ctx, {
+    skuId: size28.id,
+    locationId: env.workspace.main.id,
+    quantity: 16,
+  });
+
+  const built = proposals.build(env.db, env.ctx, intent({
+    actionType: 'issue',
+    item: 'Straight Jeans - Blue Quantity Variants',
+    variant: '',
+    lotCode: size28.code,
+    sourceLocation: 'Main Warehouse',
+    destinationLocation: '',
+    quantity: 1,
+    reasonCode: 'sold',
+  }), { instruction: `I sold 1 Straight Jeans - Blue Quantity Variants ${size28.code}` });
+
+  assert.equal(built.ok, true, built.question || built.unsupported);
+  assert.equal(built.proposal.skuId, size28.id);
+  assert.equal(built.proposal.lotId, undefined);
+  assert.equal(built.proposal.expectedBeforeState.sourceOnHand, 16);
+  assert.equal(built.proposal.expectedAfterState.sourceOnHand, 15);
+});
+
+test('an exact imported item code misread as a lot resolves its only variant', () => {
+  const env = setup();
+  const item = makeVariantItem(env.db, env.ctx, {
+    name: 'Straight Jeans - Blue',
+    baseCode: 'JN-BLU-28',
+    options: [{ name: 'Size', values: '28' }],
+  });
+  const size28 = item.byLabel('28');
+  engine.receive(env.db, env.ctx, {
+    skuId: size28.id,
+    locationId: env.workspace.main.id,
+    quantity: 16,
+  });
+
+  const built = proposals.build(env.db, env.ctx, intent({
+    actionType: 'issue', item: 'Straight Jeans - Blue Quantity Variants', variant: '',
+    lotCode: 'JN-BLU-28', sourceLocation: 'Main Warehouse', destinationLocation: '',
+    quantity: 1, reasonCode: 'sold',
+  }), { instruction: 'I sold 1 Straight Jeans - Blue Quantity Variants JN-BLU-28' });
+
+  assert.equal(built.ok, true, built.question || built.unsupported);
+  assert.equal(built.proposal.skuId, size28.id);
+  assert.equal(built.proposal.lotId, undefined);
 });
 
 // --- execution and verification ----------------------------------------------
@@ -197,6 +331,7 @@ test('Foundry never invents a reason for a correction', () => {
   assert.equal(built.ok, false);
   assert.equal(built.needsReason, true);
   assert.match(built.question, /Why is the count changing from 48 to 37/);
+  assert.equal(built.clarification.dimension, 'reason');
 });
 
 // --- serialized and lot ------------------------------------------------------
@@ -987,6 +1122,11 @@ test('stock in two places asks which, and says what is in each', () => {
   assert.match(built.question, /Main Warehouse \(3\)/);
   assert.match(built.question, /Downtown Store \(9\)/);
   assert.match(built.question, /Which should it come out of/);
+  assert.equal(built.clarification.dimension, 'source_location');
+  assert.deepEqual(
+    built.choices.map((choice) => choice.value),
+    ['Downtown Store', 'Main Warehouse']
+  );
 });
 
 test('a correction can start from nothing, because finding stock is real', () => {
@@ -1044,7 +1184,8 @@ test('a variant named on its own is enough to find the product', () => {
   // Still ambiguous where it genuinely is.
   const vague = proposals.build(env.db, env.ctx, intent({ item: '', variant: 'Navy' }));
   assert.equal(vague.ok, false);
-  assert.match(vague.question, /Navy \/ 4, Navy \/ 5/);
+  assert.match(vague.question, /Which size of Navy Children's Sweater do you mean/);
+  assert.deepEqual(vague.choices.map((choice) => choice.label), ['Navy / 4', 'Navy / 5']);
 });
 
 // --- spelling ----------------------------------------------------------------
@@ -1442,6 +1583,8 @@ test('with two locations it still asks, because there is a choice to make', () =
 
   assert.equal(built.ok, false);
   assert.match(built.question, /Which/i);
+  assert.equal(built.clarification.dimension, 'location');
+  assert.deepEqual(built.choices.map((choice) => choice.value), ['Downtown Store', 'Main Warehouse']);
 });
 
 test('a transfer is still refused rather than silently sent to the only location', () => {
@@ -1469,16 +1612,18 @@ test('with one product, "receive 20" does not ask which product', () => {
   assert.equal(found.value.item_name, 'Only Thing');
 });
 
-test('one product in six versions is still a real question', () => {
-  // Naming one of six t-shirts is a choice, not an inference. Resolving to the
+test('one product in several versions is still a real question', () => {
+  // Naming one of several versions is a choice, not an inference. Resolving to the
   // first row would be a guess wearing the costume of an answer.
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db);
-  makeVariantItem(db, workspace.ctx);
+  const item = makeVariantItem(db, workspace.ctx);
 
   const asked = resolver.resolveSku(db, workspace.workspaceId, '', '');
   assert.equal(asked.ok, false);
-  assert.match(asked.message, /Which product/i);
+  assert.match(asked.message, /Which Children's Sweater do you mean/i);
+  assert.equal(asked.clarification.dimension, 'variant');
+  assert.equal(asked.clarification.choices.length, item.skus.length);
 });
 
 test('two products are still a real question', () => {
@@ -1520,6 +1665,11 @@ const OPENING_COUNTS = [
   ['Downtown Store', 'White Medium', 9], ['Downtown Store', 'White Large', 7],
 ];
 
+const OPENING_INSTRUCTION =
+  'Main Warehouse has 50 Black Small, 40 Black Medium, 30 Black Large, 45 White Small, '
+  + '35 White Medium and 25 White Large. Downtown Store has 10 Black Small, 8 Black Medium, '
+  + '6 Black Large, 12 White Small, 9 White Medium and 7 White Large. Physical count.';
+
 /** A complete wire line, so the schema is exercised exactly as the model fills it. */
 const wireLine = (over = {}) => ({
   actionType: 'adjust', item: '', variant: '', lotCode: '', serials: [],
@@ -1540,9 +1690,7 @@ test('every position in a multi-location instruction survives into the plan', as
   const env = apparel();
   const result = await actionService.interpret(
     env.db, env.ctx, env.membership,
-    'Main Warehouse has 50 Black Small, 40 Black Medium, 30 Black Large, 45 White Small, '
-      + '35 White Medium and 25 White Large. Downtown Store has 10 Black Small, 8 Black Medium, '
-      + '6 Black Large, 12 White Small, 9 White Medium and 7 White Large. Physical count.',
+    OPENING_INSTRUCTION,
     { provider: providerReturning({ lines: countLines(), clarifyingQuestion: '', unsupportedReason: '' }) }
   );
 
@@ -1564,7 +1712,8 @@ test('a plan that cannot be built whole is not quietly built in part', async () 
     sourceLocation: 'Main Warehouse', adjustmentTarget: 5, reasonCode: 'physical_count',
   }));
   const result = await actionService.interpret(
-    env.db, env.ctx, env.membership, 'twelve counts plus one for a product that does not exist',
+    env.db, env.ctx, env.membership,
+    `${OPENING_INSTRUCTION} Hooded Sweatshirt Black Small at Main Warehouse is 5.`,
     { provider: providerReturning({ lines, clarifyingQuestion: '', unsupportedReason: '' }) }
   );
 
@@ -1590,7 +1739,7 @@ test('lines beyond what Foundry will read at once are reported, never truncated'
 test('a twelve-line opening count runs whole, and lands every quantity', async () => {
   const env = apparel();
   const result = await actionService.interpret(
-    env.db, env.ctx, env.membership, 'opening counts for both locations',
+    env.db, env.ctx, env.membership, OPENING_INSTRUCTION,
     { provider: providerReturning({ lines: countLines(), clarifyingQuestion: '', unsupportedReason: '' }) }
   );
   assert.equal(result.kind, 'plan');
@@ -1622,7 +1771,7 @@ test('a twelve-line opening count runs whole, and lands every quantity', async (
 test('stock moving underneath a running plan is still caught', async () => {
   const env = apparel();
   const result = await actionService.interpret(
-    env.db, env.ctx, env.membership, 'opening counts for both locations',
+    env.db, env.ctx, env.membership, OPENING_INSTRUCTION,
     { provider: providerReturning({ lines: countLines(), clarifyingQuestion: '', unsupportedReason: '' }) }
   );
   execution.approvePlan(env.db, env.ctx, env.membership, result.plan.planId);
@@ -1684,6 +1833,7 @@ function tees() {
   });
   for (const sku of item.skus) {
     engine.receive(base.db, base.ctx, { skuId: sku.id, locationId: base.workspace.main.id, quantity: 20 });
+    engine.receive(base.db, base.ctx, { skuId: sku.id, locationId: base.workspace.store.id, quantity: 20 });
   }
   return { ...base, item };
 }
@@ -1763,6 +1913,98 @@ test('several variants in one instruction each resolve on their own', async () =
   assert.deepEqual(labels, ['Black / Small', 'White / Medium']);
 });
 
+const soldVariantLine = (variant, quantity = 2, sourceText = '') => wireLine({
+  actionType: 'issue',
+  // Deliberately the catalogue's canonical name on every line. This is the
+  // model shape that exposed the bug: it must not make Black user-supplied.
+  item: 'Black T-shirt',
+  variant,
+  sourceText,
+  quantity,
+  sourceLocation: 'Downtown Store',
+  destinationLocation: '',
+  reasonCode: 'sold',
+});
+
+async function interpretedSoldLabels(env, instruction, lines) {
+  const result = await actionService.interpret(
+    env.db, env.ctx, env.membership, instruction,
+    { provider: providerReturning({ lines, clarifyingQuestion: '', unsupportedReason: '' }) }
+  );
+  assert.equal(result.kind, 'plan', result.question || result.message || JSON.stringify(result));
+  return result.plan.lines.map((line) => env.item.skus.find((sku) => sku.id === line.skuId).variant_label);
+}
+
+test('each clause keeps its own colour and size across multi-action permutations', async () => {
+  const cases = [
+    {
+      instruction: 'We sold 2 Black Large and 2 White Small at Downtown Store.',
+      lines: [soldVariantLine('Large'), soldVariantLine('Small')],
+      expected: ['Black / Large', 'White / Small'],
+    },
+    {
+      instruction: 'We sold 2 White Medium and 2 Black Small at Downtown Store.',
+      lines: [soldVariantLine('Medium'), soldVariantLine('Small')],
+      expected: ['White / Medium', 'Black / Small'],
+    },
+    {
+      instruction: 'We sold 2 Large Black and 2 Small White at Downtown Store.',
+      lines: [soldVariantLine('Large'), soldVariantLine('Small')],
+      expected: ['Black / Large', 'White / Small'],
+    },
+    {
+      instruction: 'We sold 2 Black Large, 2 White Small, and 2 Black Medium at Downtown Store.',
+      lines: [soldVariantLine('Large'), soldVariantLine('Small'), soldVariantLine('Medium')],
+      expected: ['Black / Large', 'White / Small', 'Black / Medium'],
+    },
+  ];
+
+  for (const example of cases) {
+    const env = tees();
+    assert.deepEqual(
+      await interpretedSoldLabels(env, example.instruction, example.lines),
+      example.expected,
+      example.instruction
+    );
+  }
+});
+
+test('multi-actions with no numeric anchors are still isolated by clause', async () => {
+  const env = tees();
+  const labels = await interpretedSoldLabels(
+    env,
+    'Sell Black Large and White Small at Downtown Store.',
+    [
+      soldVariantLine('Large', -1),
+      soldVariantLine('Small', -1),
+    ]
+  );
+  assert.deepEqual(labels, ['Black / Large', 'White / Small']);
+});
+
+test('only the genuinely ambiguous clause asks, without borrowing another clause\'s axes', async () => {
+  const env = tees();
+  const result = await actionService.interpret(
+    env.db,
+    env.ctx,
+    env.membership,
+    'We sold 2 Black Large and 2 Small at Downtown Store.',
+    {
+      provider: providerReturning({
+        lines: [soldVariantLine('Large'), soldVariantLine('Small')],
+        clarifyingQuestion: '',
+        unsupportedReason: '',
+      }),
+    }
+  );
+
+  assert.equal(result.kind, 'question');
+  assert.equal(result.question, 'Which colour of Small T-shirt do you mean?');
+  assert.equal(result.clarification.dimension, 'variant:colour');
+  assert.deepEqual(result.choices.map((choice) => choice.label), ['Black / Small', 'White / Small']);
+  assert.doesNotMatch(result.question, /Large/i, 'the resolved first clause must not contaminate the question');
+});
+
 test('a version that genuinely is ambiguous is still asked about', () => {
   const env = tees();
   // "Small" alone really does leave two colours. Foundry must still ask, and
@@ -1771,8 +2013,113 @@ test('a version that genuinely is ambiguous is still asked about', () => {
     actionType: 'transfer', item: 'T-shirt', variant: 'Small', quantity: 5,
   }));
   assert.equal(built.ok, false);
-  assert.match(built.question, /Black \/ Small/);
-  assert.match(built.question, /White \/ Small/);
+  assert.equal(built.question, 'Which colour of Small T-shirt do you mean?');
+  assert.equal(built.clarification.dimension, 'variant:colour');
+  assert.deepEqual(built.choices.map((choice) => choice.label), ['Black / Small', 'White / Small']);
+});
+
+test('catalogue-filled product words cannot masquerade as option values the person supplied', () => {
+  const env = tees();
+  const built = proposals.build(env.db, env.ctx, intent({
+    // The reader filled the one catalogue product's canonical name. Black is
+    // not in the original request and therefore cannot settle Colour.
+    actionType: 'transfer', item: 'Black T-shirt', variant: 'Small', quantity: 5,
+    sourceLocation: 'Main Warehouse', destinationLocation: 'Downtown Store',
+  }), {
+    instruction: 'Move 5 Small T-shirts from Main Warehouse to Downtown Store.',
+  });
+
+  assert.equal(built.ok, false);
+  assert.equal(built.question, 'Which colour of Small T-shirt do you mean?');
+  assert.equal(built.clarification.dimension, 'variant:colour');
+  assert.deepEqual(built.choices.map((choice) => choice.value), ['Black / Small', 'White / Small']);
+});
+
+test('variant rows split into duplicate item records still clarify only the unresolved axis', () => {
+  const env = setup({ workspaceName: 'Imported apparel catalogue' });
+  for (const colour of ['Black', 'White']) {
+    for (const size of ['Small', 'Medium', 'Large']) {
+      makeVariantItem(env.db, env.ctx, {
+        name: `Classic Cotton T-Shirt - ${colour}`,
+        options: [{ name: 'Size', values: size }],
+      });
+    }
+  }
+  makeVariantItem(env.db, env.ctx, {
+    name: 'Straight Jeans - Blue',
+    options: [{ name: 'Waist', values: '28, 30, 32' }],
+  });
+
+  const asked = resolver.clarifySkuFromInstruction(
+    env.db,
+    env.workspace.workspaceId,
+    'I sold 10 Classic Cotton T-Shirt - Black'
+  );
+
+  assert.equal(asked.ok, false);
+  assert.equal(asked.message, 'Which size of Classic Cotton T-Shirt - Black do you mean?');
+  assert.equal(asked.clarification.dimension, 'variant:size');
+  assert.deepEqual(
+    new Set(asked.clarification.choices.map((choice) => choice.label)),
+    new Set(['Small', 'Medium', 'Large'])
+  );
+  assert.ok(asked.candidates.every((candidate) => candidate.item_name.endsWith('Black')));
+});
+
+test('a supplied family attribute narrows split imported item rows before asking for the remaining axis', () => {
+  const env = setup({ workspaceName: 'Split imported apparel' });
+  for (const colour of ['Black', 'White']) {
+    for (const size of ['Small', 'Medium', 'Large']) {
+      makeVariantItem(env.db, env.ctx, {
+        name: `Classic Cotton T-Shirt - ${colour}`,
+        options: [{ name: 'Size', values: size }],
+      });
+    }
+  }
+
+  // Reproduce the live reader shape: it separates White into the variant
+  // field even though this import encoded colour in the item name.
+  const built = proposals.build(env.db, env.ctx, intent({
+    actionType: 'issue',
+    item: 'Classic Cotton T-Shirt',
+    variant: 'White',
+    quantity: 15,
+    sourceLocation: 'Main Warehouse',
+    destinationLocation: '',
+    reasonCode: 'sold',
+  }), {
+    instruction: 'I sold 15 Classic Cotton T-Shirt - White',
+    groundIdentity: true,
+  });
+
+  assert.equal(built.ok, false);
+  assert.equal(built.question, 'Which size of Classic Cotton T-Shirt - White do you mean?');
+  assert.equal(built.clarification.dimension, 'variant:size');
+  assert.deepEqual(
+    new Set(built.choices.map((choice) => choice.label)),
+    new Set(['Small', 'Medium', 'Large'])
+  );
+});
+
+test('clarification names whatever catalogue axis is actually unresolved', () => {
+  const env = setup({ workspaceName: 'Industrial catalogue' });
+  makeVariantItem(env.db, env.ctx, {
+    name: 'Safety Glove',
+    options: [
+      { name: 'Material', values: 'Nitrile, Latex' },
+      { name: 'Grade', values: 'A, B' },
+    ],
+  });
+
+  const asked = resolver.clarifySkuFromInstruction(
+    env.db,
+    env.workspace.workspaceId,
+    'We used 3 Nitrile Safety Glove'
+  );
+
+  assert.equal(asked.message, 'Which grade of Nitrile Safety Glove do you mean?');
+  assert.equal(asked.clarification.dimension, 'variant:grade');
+  assert.deepEqual(asked.clarification.choices.map((choice) => choice.label), ['Nitrile / A', 'Nitrile / B']);
 });
 
 test('ordinary words around a location name do not defeat it', () => {

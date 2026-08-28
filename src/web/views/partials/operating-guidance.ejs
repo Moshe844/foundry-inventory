@@ -1,0 +1,47 @@
+<% if (guidance && guidance.checklistActive) {
+  var completedSteps = guidance.steps.filter(function (step) { return step.complete; }).length;
+%>
+<section class="operating-guide operating-guide--checklist" aria-labelledby="getting-started-title">
+  <header class="operating-guide__head">
+    <div>
+      <span class="operator-lane__eyebrow">Getting started</span>
+      <h2 id="getting-started-title">The shortest path to a working inventory</h2>
+      <p>Foundry checks these off from your real records. You do not need to maintain this list.</p>
+    </div>
+    <span class="badge badge--muted"><%= completedSteps %> of <%= guidance.steps.length %> complete</span>
+  </header>
+  <ol class="operating-checklist">
+    <% guidance.steps.forEach(function (step, index) { %>
+      <li class="operating-step <%= step.complete ? 'is-complete' : step.current ? 'is-current' : '' %>">
+        <span class="operating-step__number"><%= step.complete ? '✓' : index + 1 %></span>
+        <div class="operating-step__copy">
+          <div><strong><%= step.title %></strong><% if (step.optional && !step.complete) { %><span class="badge badge--muted">When relevant</span><% } %></div>
+          <p><%= step.detail %></p>
+        </div>
+        <% if (step.complete) { %>
+          <span class="operating-step__done">Complete</span>
+        <% } else { %>
+          <a class="btn <%= step.current ? 'btn--primary' : '' %> btn--sm" href="<%= step.href %>"><%= step.action %></a>
+        <% } %>
+      </li>
+    <% }) %>
+  </ol>
+</section>
+<% } else if (guidance && guidance.next) { %>
+<section class="operating-guide operating-guide--next <%= guidance.next.kind === 'needs-you' ? 'has-need' : '' %>" aria-labelledby="next-best-title">
+  <header class="operating-guide__head">
+    <div>
+      <span class="operator-lane__eyebrow"><%= guidance.next.eyebrow %></span>
+      <h2 id="next-best-title"><%= guidance.next.title %></h2>
+    </div>
+  </header>
+  <dl class="operating-next-answers">
+    <div><dt>What happened?</dt><dd><%= guidance.next.what %></dd></div>
+    <div><dt>Why?</dt><dd><%= guidance.next.why %></dd></div>
+    <div><dt>Do this now</dt><dd><%= guidance.next.recommendation %></dd></div>
+  </dl>
+  <% if (guidance.next.href && guidance.next.action) { %>
+    <a class="btn btn--primary" href="<%= guidance.next.href %>"><%= guidance.next.action %></a>
+  <% } %>
+</section>
+<% } %>

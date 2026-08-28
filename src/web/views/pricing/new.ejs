@@ -1,0 +1,8 @@
+<div class="breadcrumb"><a href="/inventory/<%= sku.item_id %>"><%= sku.item_name %></a> <%- helpers.icon('chevron', { size: 13 }) %> <span>Selling price</span></div>
+<div class="page-head"><div class="titles"><h1>Set the customer selling price</h1><p><%= sku.display_name %> · <%= sku.code %></p></div></div>
+<form class="card form-card" method="post" action="/pricing/proposals">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="skuId" value="<%= sku.id %>">
+  <div class="notice"><strong>Current selling price: <%= current.formatted %></strong><% if (purchaseCost) { %><p>Last supplier cost: <%= purchaseCost.formatted %> from <%= purchaseCost.supplier_name %>. Foundry keeps cost and selling price separate.</p><% } %></div>
+  <div class="form-grid"><label class="field"><span>Selling price per <%= sku.unit_label || 'unit' %></span><input name="amount" inputmode="decimal" placeholder="12.00" required></label><label class="field"><span>Currency</span><select name="currency"><option value="USD" <%= current.currency === 'USD' ? 'selected' : '' %>>USD</option><option value="GBP" <%= current.currency === 'GBP' ? 'selected' : '' %>>GBP</option><option value="EUR" <%= current.currency === 'EUR' ? 'selected' : '' %>>EUR</option><option value="CAD" <%= current.currency === 'CAD' ? 'selected' : '' %>>CAD</option></select></label></div>
+  <div class="form-actions"><button class="btn btn--primary" type="submit">Review price change</button><a class="btn btn--ghost" href="/inventory/<%= sku.item_id %>">Cancel</a></div>
+</form>

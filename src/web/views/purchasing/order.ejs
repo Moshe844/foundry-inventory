@@ -11,6 +11,27 @@
   </div>
 </div>
 
+<% if (communications && communications.length) { var communication = communications[0]; %>
+  <div class="card section">
+    <div class="card-head">
+      <div><h2>Supplier message</h2><p class="muted">Prepared from this order; delivery transport stays separate and pluggable.</p></div>
+      <span class="spacer"></span>
+      <span class="badge <%= communication.status === 'SENT' ? 'badge--ok' : communication.status === 'FAILED' ? 'badge--danger' : 'badge--muted' %>"><%= communication.status.toLowerCase() %></span>
+    </div>
+    <div class="card-body grid">
+      <% if (communication.status === 'PREPARED') { %>
+        <div class="notice"><span>Prepared, not queued or sent. Approving the order records the commitment in Foundry.</span></div>
+      <% } else if (communication.status === 'QUEUED') { %>
+        <div class="notice notice--warn"><span>Queued inside Foundry, but no external communication transport is connected. Foundry has not told the supplier.</span></div>
+      <% } else if (communication.status === 'SENT') { %>
+        <div class="notice" style="background:var(--ok-bg); border-color:#bbf7d0; color:#14532d;"><span>Sent and confirmed by <%= communication.transport %><%= communication.externalMessageId ? ' · ' + communication.externalMessageId : '' %>.</span></div>
+      <% } %>
+      <dl class="kv"><dt>To</dt><dd><%= communication.recipient || 'No supplier email on file' %></dd><dt>Subject</dt><dd><%= communication.subject %></dd></dl>
+      <details><summary>Preview message</summary><pre style="white-space:pre-wrap; font-family:inherit;"><%= communication.body %></pre></details>
+    </div>
+  </div>
+<% } %>
+
 <% if (order.status === 'CANCELLED') { %>
   <div class="notice notice--warn section">
     This order was cancelled<%= order.cancelReason ? ': ' + order.cancelReason : '.' %>
@@ -88,8 +109,12 @@
             could never not produce; they go to the form that asks instead. %>
         <% var needsArrivalDetail = (order.lines || []).some(function (line) {
              return line.outstandingUnits > 0 && (line.trackingMode === 'lot' || line.trackingMode === 'serial');
-           }); %>
-        <% if (needsArrivalDetail) { %>
+           });
+           var futureExpected = typeof expectedInFuture !== 'undefined' && expectedInFuture; %>
+        <% if (futureExpected) { %>
+          <a class="btn btn--primary" href="/purchasing/orders/<%= order.id %>/receive">Report an early delivery</a>
+          <span class="muted" style="font-size:12px;">Expected <%= order.expectedDate %>. Nothing is booked in until you report that it arrived.</span>
+        <% } else if (needsArrivalDetail) { %>
           <a class="btn btn--primary" href="/purchasing/orders/<%= order.id %>/receive">Book in the delivery</a>
           <span class="muted" style="font-size:12px;">Foundry needs the batch or serial numbers that arrived — it cannot know those.</span>
         <% } else { %>

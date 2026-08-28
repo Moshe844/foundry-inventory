@@ -28,15 +28,15 @@ const MODES = {
 };
 
 const MODE_LABEL = {
-  OBSERVE: 'Watching',
-  SUPERVISED: 'Supervised',
-  POLICY_AUTOMATED: 'Autopilot',
+  OBSERVE: 'Watch only',
+  SUPERVISED: 'Ask me first',
+  POLICY_AUTOMATED: 'Handle routine work',
 };
 
 const MODE_BLURB = {
-  OBSERVE: 'Foundry watches and explains. It changes nothing.',
-  SUPERVISED: 'Foundry plans and prepares the work, and carries out what you approve.',
-  POLICY_AUTOMATED: 'Foundry also carries out routine work your policies allow, and tells you what it did.',
+  OBSERVE: 'Foundry watches and explains, but prepares or changes nothing.',
+  SUPERVISED: 'Foundry watches, recommends what to do, and carries out only what you approve.',
+  POLICY_AUTOMATED: 'Foundry handles safe routine work inside limits you approved and asks about everything else.',
 };
 
 /** Sensible starting limits. Deliberately conservative. */

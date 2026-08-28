@@ -11,12 +11,15 @@
 
 const express = require('express');
 const planService = require('../../imports/plan-service');
+const scopeSafety = require('../../imports/scope-safety');
 const executor = require('../../imports/executor');
 const verification = require('../../imports/verification');
 const presenter = require('../../imports/presenter');
 const permissions = require('../../actions/permissions');
 const fields = require('../../imports/fields');
 const config = require('../../config');
+const managerEvents = require('../../manager/events');
+const reactions = require('../../manager/reactions');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 const { ValidationError } = require('../../domain/errors');
@@ -30,6 +33,17 @@ function locationsFor(db, workspaceId) {
   return db
     .prepare('SELECT id, name FROM locations WHERE workspace_id = ? AND is_active = 1 ORDER BY name')
     .all(workspaceId);
+}
+
+function reactToImport(req, planId, executionId) {
+  const skuIds = req.db.prepare(
+    "SELECT DISTINCT sku_id FROM import_rows WHERE workspace_id = ? AND import_id = ? AND status = 'IMPORTED' AND sku_id IS NOT NULL"
+  ).all(req.ctx.workspaceId, planId).map((row) => row.sku_id);
+  return reactions.publishAndReact(
+    req.db, req.ctx.workspaceId, managerEvents.TYPES.IMPORT_COMPLETED,
+    { importId: planId, executionId, skuIds },
+    { sourceRecordType: 'import_execution', sourceRecordId: executionId }
+  );
 }
 
 /** Where an import starts: a file, or something pasted out of a spreadsheet. */
@@ -84,11 +98,13 @@ router.get(
     });
     const allRows = planService.rowsFor(req.db, plan.id, { limit: 100000 });
     const run = executor.latestExecution(req.db, req.ctx.workspaceId, plan.id);
+    const scopeWarning = scopeSafety.fromImportRows(req.db, req.ctx.workspaceId, allRows);
 
     res.page('imports/preview', {
       title: `Import ${plan.sourceName}`,
       nav: 'imports',
       plan,
+      scopeWarning,
       rows,
       counts: planService.countsFor(req.db, plan.id),
       page,
@@ -113,6 +129,22 @@ router.get(
           : null,
       canOperate: permissions.can(req.user, permissions.OPERATE),
     });
+  })
+);
+
+/** Confirm the destination inventory without approving or importing any row. */
+router.post(
+  '/imports/:id/confirm-scope',
+  asyncRoute(async (req, res) => {
+    const plan = planService.get(req.db, req.ctx.workspaceId, req.params.id);
+    const rows = planService.rowsFor(req.db, plan.id, { limit: 100000 });
+    const warning = scopeSafety.fromImportRows(req.db, req.ctx.workspaceId, rows);
+    if (warning.needsConfirmation && !plan.scopeConfirmedAt) {
+      req.db.prepare(`UPDATE import_plans SET scope_confirmed_at = ?
+        WHERE id = ? AND workspace_id = ?`).run(new Date().toISOString(), plan.id, req.ctx.workspaceId);
+      req.flash('success', `Confirmed: continue reviewing this file for ${warning.workspaceName}. Nothing has been imported yet.`);
+    }
+    return res.redirect(`/imports/${plan.id}`);
   })
 );
 
@@ -172,6 +204,13 @@ router.post(
 router.post(
   '/imports/:id/approve',
   asyncRoute(async (req, res) => {
+    const existing = planService.get(req.db, req.ctx.workspaceId, req.params.id);
+    const rows = planService.rowsFor(req.db, existing.id, { limit: 100000 });
+    const warning = scopeSafety.fromImportRows(req.db, req.ctx.workspaceId, rows);
+    if (warning.needsConfirmation && !existing.scopeConfirmedAt) {
+      req.flash('warning', `Confirm that this file belongs in ${warning.workspaceName} before approving it.`);
+      return res.redirect(`/imports/${existing.id}`);
+    }
     const plan = planService.approve(req.db, req.ctx, req.user, req.params.id, {
       expectedHash: trimOrNull(req.body.integrityHash),
     });
@@ -194,6 +233,7 @@ router.post(
     });
     if (!run.replayed && run.status !== 'CANCELLED') {
       verification.verify(req.db, req.ctx.workspaceId, plan.id, run.executionId);
+      reactToImport(req, plan.id, run.executionId);
     }
     return res.redirect(`/imports/${plan.id}`);
   })
@@ -205,6 +245,7 @@ router.post(
     const run = executor.resume(req.db, req.ctx, req.user, req.params.id);
     if (!run.replayed && run.status !== 'CANCELLED') {
       verification.verify(req.db, req.ctx.workspaceId, req.params.id, run.executionId);
+      reactToImport(req, req.params.id, run.executionId);
     }
     return res.redirect(`/imports/${req.params.id}`);
   })

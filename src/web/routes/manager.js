@@ -1,25 +1,36 @@
 'use strict';
 
 const express = require('express');
+const crypto = require('node:crypto');
 const intentRouter = require('../../manager/intent-router');
 const managerContext = require('../../manager/context');
 const investigations = require('../../manager/investigations');
 const physicalEvents = require('../../manager/physical-events');
 const documentEvents = require('../../manager/document-events');
+const documentIntake = require('../../foundry/document-intake');
+const documentRemovals = require('../../manager/document-removals');
+const importRemovals = require('../../manager/import-removals');
+const catalogCodeChanges = require('../../manager/catalog-code-changes');
 const managerReadiness = require('../../manager/readiness');
 const actionService = require('../../actions/action-service');
 const proposals = require('../../actions/proposal-service');
 const actionPresenter = require('../../actions/presenter');
 const importPlans = require('../../imports/plan-service');
 const workItems = require('../../autopilot/work-items');
-const policyAuthor = require('../../autopilot/policy-author');
+const operatingInstructions = require('../../manager/operating-instructions');
 const managerRunner = require('../../autopilot/runner');
 const supplierCodeMappings = require('../../purchasing/supplier-code-mappings');
-const { requireAuth, asyncRoute } = require('../middleware');
+const managerEvents = require('../../manager/events');
+const reactions = require('../../manager/reactions');
+const salesIntent = require('../../sales/sales-intent');
+const permissions = require('../../actions/permissions');
+const priceChanges = require('../../pricing/price-changes');
+const connectionTell = require('../../connections/tell');
+const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 
 const router = express.Router();
-router.use(['/foundry/tell', '/needs-you', '/investigations'], requireAuth);
+router.use(['/foundry/tell', '/needs-you', '/investigations', '/document-removals', '/import-removals', '/catalog-code-changes'], requireAuth);
 
 function actionRedirect(result) {
   if (result.kind === 'proposal' || result.kind === 'existing') return `/actions/${result.proposal.proposalId}`;
@@ -29,10 +40,21 @@ function actionRedirect(result) {
 
 router.post('/foundry/tell', asyncRoute(async (req, res) => {
   const attached = (req.files || []).find((entry) => entry.field === 'file' && entry.size > 0);
-  const message = trimOrNull(req.body.message) || (attached ? `Import ${attached.filename}` : '');
+  // A clarification answer must continue the original manager request. The
+  // action surface carries these two fields back rather than making someone
+  // retype the sentence; recombining them here lets the manager classify the
+  // completed thought again instead of forcing every answer through the stock
+  // movement parser.
+  const original = trimOrNull(req.body.original) || '';
+  const answer = trimOrNull(req.body.answer) || '';
+  const message = answer
+    ? `${original}${original ? ' — Clarification: ' : ''}${answer}`
+    : trimOrNull(req.body.message) || (attached ? `Import ${attached.filename}` : '');
   const tabular = attached && /\.(csv|tsv|xlsx|xls|txt)$/i.test(attached.filename || '');
   const operationalDocument = attached && /\.(pdf|docx|xlsx|xls|csv|tsv|txt)$/i.test(attached.filename || '');
   const receivingHint = /arriv|deliver|shipment|packing|receive|received|supplier invoice/i.test(message);
+  const pricingUpdateHint = /\b(?:price|prices|pricing|selling\s+price|retail\s+price)\b/i.test(message)
+    && /\b(?:apply|change|set|update|use)\b/i.test(message);
   if (operationalDocument && (!tabular || receivingHint)) {
     const understood = await documentEvents.understand(req.db, req.ctx, attached, {
       provider: req.app.locals.aiProvider || undefined,
@@ -44,6 +66,28 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       matchReasons: understood.match.reasons,
       documentNumber: understood.interpretation.documentNumber,
     } : { candidates: understood.match.candidates, documentNumber: understood.interpretation.documentNumber };
+    // An invoice or stock report with real line-item evidence is not an
+    // "unknown physical event" merely because no earlier PO exists. It may be
+    // the first supplier invoice or an owner adding a new line of inventory.
+    // Preserve the exact interpretation and show the ordinary document review;
+    // nothing is created or received until the owner approves that preview.
+    const canBecomeInventory = !understood.match.matched
+      && ['invoice', 'stock_report'].includes(understood.interpretation.documentType)
+      && understood.interpretation.lines.length > 0;
+    if (canBecomeInventory) {
+      const prepared = documentIntake.prepareFromInterpretation(
+        req.db, req.ctx, req.user, attached, understood.interpretation, understood.extractedText
+      );
+      // A previous version filed this same document as an unresolved physical
+      // event. Once the document has a concrete review, that generic exception
+      // is stale and must not remain actionable beside the real preview.
+      req.db.prepare(`UPDATE physical_events SET status = 'COMPLETED', updated_at = datetime('now')
+        WHERE workspace_id = ? AND status = 'NEEDS_HUMAN'
+          AND attachment_name = ? AND attachment_content = ?`)
+        .run(req.ctx.workspaceId, attached.filename, attached.buffer);
+      req.flash('success', `Foundry read ${attached.filename}. Review every product, variant, quantity, supplier and destination before anything changes.`);
+      return res.redirect(303, `/foundry/proposal/${prepared.understandingId}`);
+    }
     const event = physicalEvents.record(req.db, req.ctx, {
       eventType: 'shipment_arrived', statedAs: trimOrNull(req.body.message) || `Uploaded ${attached.filename}.`,
       details: { interpretation: understood.interpretation }, matchedEntities: matched,
@@ -61,8 +105,11 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   if (tabular) {
     const { plan } = await importPlans.analyse(req.db, req.ctx, req.user, {
       buffer: attached.buffer, filename: attached.filename,
+      operationScope: pricingUpdateHint ? 'selling_price_update' : null,
     });
-    req.flash('success', `Foundry read ${attached.filename}. Review the exact changes before anything is applied.`);
+    req.flash('success', pricingUpdateHint
+      ? `Foundry read ${attached.filename} as a pricing update. Review the exact existing variants and prices; this cannot create products or change stock.`
+      : `Foundry read ${attached.filename}. Review the exact changes before anything is applied.`);
     return res.redirect(303, `/imports/${plan.id}`);
   }
   if (attached) {
@@ -79,6 +126,44 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     return res.redirect(303, '/needs-you');
   }
 
+  if (priceChanges.matchesInstruction(message)) {
+    try {
+      if (priceChanges.matchesBulkInstruction(message)) {
+        const batch = await priceChanges.interpretMany(req.db, req.ctx, message, {
+          provider: req.app.locals.aiProvider || undefined,
+        });
+        req.session.pendingPriceBatch = batch.map((proposal) => proposal.id);
+        req.flash('success', `Foundry understood ${batch.length} selling-price changes. Review the complete list before anything changes.`);
+        return res.redirect(303, '/pricing/proposals/batch');
+      }
+      const proposal = await priceChanges.interpret(req.db, req.ctx, message, {
+        provider: req.app.locals.aiProvider || undefined,
+      });
+      req.flash('success', 'Foundry understood the selling-price change. Review it before anything changes.');
+      return res.redirect(303, `/pricing/proposals/${proposal.id}`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+      return res.redirect(303, '/#tell-foundry');
+    }
+  }
+
+  // "Newly added products" is a provenance request, not an ambiguous product
+  // name. Resolve it from the most recent completed import before asking the
+  // general language router, whose catalogue candidates cannot know which
+  // records were created together.
+  if (importRemovals.matchesInstruction(message)) {
+    try {
+      const proposal = importRemovals.create(req.db, req.ctx, req.user, message);
+      req.flash('warning', `Foundry traced the newly added products to ${proposal.snapshot.source.sourceName}. Choose any combination or remove all; nothing changes until you approve.`);
+      return res.redirect(303, `/import-removals/${proposal.id}`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warning', err.message);
+      return res.redirect(303, '/#tell-foundry');
+    }
+  }
+
   const intent = await intentRouter.classify(req.db, req.ctx, message, {
     provider: req.app.locals.aiProvider || undefined,
   });
@@ -89,20 +174,106 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   // to your regular supplier?" where the grounded answer was "no supplier is on
   // file for Trail Ration Pack". Whenever there is a handler that can resolve
   // or ask from real data, it gets the chance first.
-  if (intent.clarifyingQuestion && intent.intentClass === 'UNKNOWN') {
-    req.flash('info', intent.clarifyingQuestion);
-    return res.redirect(303, '/#tell-foundry');
-  }
-  if (['QUESTION', 'EXPLANATION'].includes(intent.intentClass)) {
+  if (intent.handler === 'connection_management' && /^\s*(?:why|what|which|when|where|how)\b/i.test(message)) {
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'ask');
     return res.redirect(303, `/ask?q=${encodeURIComponent(message)}`);
   }
-  if (intent.intentClass === 'IMPORT') {
+  if (intent.handler === 'connection_management' || connectionTell.matches(message)) {
+    try {
+      const result = connectionTell.apply(req.db, req.ctx, req.user, message);
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'connection_management', result.connection.id);
+      req.flash('success', result.message);
+      return res.redirect(303, `/settings/connections/${result.connection.id}`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'connection_management', null, 'NEEDS_CLARIFICATION');
+      req.flash('warn', err.message);
+      return res.redirect(303, '/settings/connections');
+    }
+  }
+  if (intent.clarifyingQuestion && intent.intentClass === 'UNKNOWN') {
+    req.session.pendingActionQuestion = {
+      question: intent.clarifyingQuestion,
+      instruction: message,
+      choices: null,
+      tone: 'warning',
+      answerAction: '/foundry/tell',
+    };
+    intentRouter.markRouted(req.db, req.ctx, intent.id, 'manager_clarification', null, 'NEEDS_CLARIFICATION');
+    return res.redirect(303, '/actions');
+  }
+  if (intent.handler === 'sales_order' || intent.intentClass === 'SALES_ORDER') {
+    try {
+      const parsed = await salesIntent.interpret(req.db, req.ctx, message, {
+        provider: req.app.locals.aiProvider || undefined,
+      });
+      if (parsed.operation === 'list_waiting') {
+        permissions.assertCan(req.user, permissions.VIEW_SALES, 'view sales orders');
+      } else if (parsed.operation === 'fulfill' || parsed.operation === 'cancel_line' || parsed.operation === 'cancel_order') {
+        permissions.assertCan(req.user, permissions.FULFILL_SALES, 'fulfill or cancel sales orders');
+      } else permissions.assertCan(req.user, permissions.MANAGE_SALES, 'create or change sales orders');
+      const result = salesIntent.apply(req.db, req.ctx, parsed, {
+        idempotencyKey: `tell-sales:${intent.id}`,
+      });
+      if (result.kind === 'list') {
+        intentRouter.markRouted(req.db, req.ctx, intent.id, 'sales_orders');
+        return res.redirect(303, '/sales?status=BACKORDERED');
+      }
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'sales_order', result.order.id);
+      managerContext.remember(req.db, req.ctx, { entities: { salesOrderId: result.order.id } });
+      req.flash(result.order.totals.backordered ? 'warn' : 'success',
+        `${result.order.order_number} is ${result.order.status.toLowerCase().replace(/_/g, ' ')}. `
+        + `${result.order.totals.allocated} committed, ${result.order.totals.backordered} waiting for stock, `
+        + `${result.order.totals.fulfilled} fulfilled.`);
+      return res.redirect(303, `/sales/orders/${result.order.id}`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'sales_order', null, 'NEEDS_CLARIFICATION');
+      req.flash('warn', err.message);
+      return res.redirect(303, '/#tell-foundry');
+    }
+  }
+  if (intent.handler === 'ask' || ['QUESTION', 'EXPLANATION'].includes(intent.intentClass)) {
+    intentRouter.markRouted(req.db, req.ctx, intent.id, 'ask');
+    return res.redirect(303, `/ask?q=${encodeURIComponent(message)}`);
+  }
+  // Rolling back a document has a much wider scope than archiving one named
+  // product. Require explicit document/import wording at this boundary even if
+  // the language planner selected the broader capability.
+  if (documentRemovals.matchesInstruction(message)) {
+    try {
+      const proposal = documentRemovals.create(req.db, req.ctx, req.user, message);
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'document_removal', proposal.id);
+      req.flash('warning', `Foundry found the earlier file and prepared the exact products it created. Nothing has been removed yet.`);
+      return res.redirect(303, `/document-removals/${proposal.id}`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'document_removal', null, 'NEEDS_CLARIFICATION');
+      req.flash('warning', err.message);
+      return res.redirect(303, '/#tell-foundry');
+    }
+  }
+  if (intent.handler === 'catalog_code_change' || catalogCodeChanges.matchesInstruction(message)) {
+    try {
+      const proposal = catalogCodeChanges.create(req.db, req.ctx, req.user, message, {
+        operation: intent.parameters,
+      });
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'catalog_code_change', proposal.id);
+      req.flash('info', `Foundry prepared every matching internal code from ${proposal.operation.from} to ${proposal.operation.to}. Nothing has changed yet.`);
+      return res.redirect(303, `/catalog-code-changes/${proposal.id}`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'catalog_code_change', null, 'NEEDS_CLARIFICATION');
+      req.flash('warning', err.message);
+      return res.redirect(303, '/#tell-foundry');
+    }
+  }
+  if (intent.handler === 'attachment_required' || intent.intentClass === 'IMPORT') {
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'attachment_required', null, 'NEEDS_CLARIFICATION');
     req.flash('info', 'Attach the spreadsheet, PDF or document you want Foundry to read.');
     return res.redirect(303, '/#tell-foundry');
   }
-  if (intent.intentClass === 'PURCHASING_REQUEST') {
+  if (intent.handler === 'purchasing' || intent.intentClass === 'PURCHASING_REQUEST') {
     // Naming a product wins over a remembered order.
     //
     // The classifier is given durable context so short follow-ups like "approve
@@ -156,7 +327,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       : `${result.planned} piece${result.planned === 1 ? '' : 's'} of inventory work prepared; ${result.awaiting} need your decision.`);
     return res.redirect(303, '/');
   }
-  if (intent.intentClass === 'CONFIGURATION_CHANGE') {
+  if (intent.handler === 'supplier_code_mapping' || intent.intentClass === 'CONFIGURATION_CHANGE') {
     const mappingInstruction = supplierCodeMappings.parseInstruction(message);
     if (mappingInstruction.matched) {
       try {
@@ -175,7 +346,8 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       }
     }
   }
-  if (['INVENTORY_ACTION', 'CATALOG_CHANGE', 'CONFIGURATION_CHANGE'].includes(intent.intentClass)) {
+  if (intent.handler === 'inventory_action'
+      || ['INVENTORY_ACTION', 'CATALOG_CHANGE', 'CONFIGURATION_CHANGE'].includes(intent.intentClass)) {
     const result = await actionService.interpret(req.db, req.ctx, req.user, message, {
       provider: req.app.locals.aiProvider || undefined,
     });
@@ -198,7 +370,22 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     // A question goes where it can be answered. Only a flat refusal — something
     // Foundry cannot do at all — belongs in a message you dismiss.
     if (result.kind === 'question' && result.question) {
-      req.session.pendingActionQuestion = { question: result.question, instruction: message, choices: result.choices || null };
+      let continuationId = null;
+      if (result.continuation) {
+        continuationId = crypto.randomUUID();
+        req.session.pendingActionContinuation = { id: continuationId, value: result.continuation };
+      }
+      req.session.pendingActionQuestion = {
+        question: result.question,
+        instruction: message,
+        choices: result.choices || null,
+        continuationId,
+        // Kept server-side with the handed question. The actions GET restores
+        // it into the one-use continuation slot immediately before rendering,
+        // so a redirect/session save cannot separate the button from the
+        // parsed request it is meant to continue.
+        continuation: result.continuation || null,
+      };
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
       return res.redirect(303, '/actions');
     }
@@ -218,7 +405,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     req.flash('error', result.message || 'Foundry needs more detail.');
     return res.redirect(303, '/#tell-foundry');
   }
-  if (intent.intentClass === 'PHYSICAL_EVENT') {
+  if (intent.handler === 'physical_event' || intent.intentClass === 'PHYSICAL_EVENT') {
     const event = await physicalEvents.recordNatural(req.db, req.ctx, message, {
       provider: req.app.locals.aiProvider || undefined,
     });
@@ -298,7 +485,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     req.flash('info', outcome.message);
     return res.redirect(303, outcome.redirectTo);
   }
-  if (intent.intentClass === 'INVESTIGATION_REQUEST') {
+  if (intent.handler === 'investigation' || intent.intentClass === 'INVESTIGATION_REQUEST') {
     const created = investigations.create(req.db, req.ctx.workspaceId, {
       trigger: 'operator_request', affectedEntities: managerContext.get(req.db, req.ctx.workspaceId, req.ctx.actorId).lastEntities,
       observedDifference: { statedAs: message }, confidence: 'low',
@@ -313,7 +500,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   // Somebody asking Foundry to stop gets Foundry stopped, now, not a form.
   // Pausing takes no inventory action, is reversible in one click, and is the
   // only reading of "stop" that is safe to be wrong about.
-  if (intent.intentClass === 'STOP') {
+  if (intent.handler === 'autopilot_pause' || intent.intentClass === 'STOP') {
     const state = autopilotModes.get(req.db, req.ctx.workspaceId);
     if (state.paused) {
       req.flash('info', 'Foundry is already paused. Nothing runs automatically until you resume it.');
@@ -324,22 +511,34 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'autopilot_pause');
     return res.redirect(303, '/autopilot');
   }
-  if (intent.intentClass === 'POLICY_CHANGE') {
-    const reviewEverything = /handle\s+everything|everything\s+you\s+(?:safely\s+)?can/i.test(message);
-    const drafted = reviewEverything ? null : await policyAuthor.draft(req.db, req.ctx.workspaceId, message, {
-      provider: req.app.locals.aiProvider || undefined,
-    });
-    if (drafted) req.session.policyDraft = drafted;
-    if (reviewEverything) req.session.policyReviewAll = true;
-    intentRouter.markRouted(req.db, req.ctx, intent.id, 'policy_settings');
-    req.flash('info', reviewEverything
-      ? 'Unlimited authority is never created. Foundry opened the bounded transfer and purchasing policies it can safely support.'
-      : drafted.understood
-        ? 'Foundry prepared exact authority boundaries. Review and write the policy; it remains inactive until separately approved.'
-        : drafted.unsupportedReason);
-    return res.redirect(303, '/autopilot');
+  if (intent.handler === 'operating_instruction'
+      || ['POLICY_CHANGE', 'OPERATING_INSTRUCTION'].includes(intent.intentClass)) {
+    // “Everything” is not a bounded instruction. It can only open the guided
+    // review; it can never be translated into broad authority or approved in
+    // one step.
+    if (/handle\s+everything|everything\s+you\s+(?:safely\s+)?can/i.test(message)) {
+      req.session.policyReviewAll = true;
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'policy_settings');
+      req.flash('info', 'Unlimited authority is never created. Foundry opened the bounded transfer and purchasing policies it can safely support.');
+      return res.redirect(303, '/autopilot');
+    }
+    try {
+      const proposal = await operatingInstructions.interpret(req.db, req.ctx, req.user, message, {
+        provider: req.app.locals.aiProvider || undefined,
+      });
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'operating_instruction', proposal.id);
+      req.flash('info', proposal.questions.length
+        ? 'Foundry understood the kind of rule, but needs one exact answer before it can be approved.'
+        : 'Foundry translated that into the same structured settings used everywhere else. Nothing has changed yet.');
+      return res.redirect(303, `/operating-instructions/${proposal.id}`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'operating_instruction', null, 'NEEDS_CLARIFICATION');
+      req.flash('warn', err.message);
+      return res.redirect(303, '/#tell-foundry');
+    }
   }
-  req.flash('info', 'Foundry could not safely route that yet. Say what happened or what outcome you want.');
+  req.flash('warn', 'Foundry could not safely route that yet. Say what happened or what outcome you want.');
   return res.redirect(303, '/#tell-foundry');
 }));
 
@@ -370,6 +569,148 @@ function mentionsKnownProduct(db, workspaceId, message) {
 const autopilotPresenter = require('../../autopilot/presenter');
 const needsYouInbox = require('../../manager/needs-you-inbox');
 const autopilotModes = require('../../autopilot/modes');
+
+router.get('/operating-instructions/:id', asyncRoute(async (req, res) => {
+  const proposal = operatingInstructions.get(req.db, req.ctx.workspaceId, req.params.id);
+  return res.page('manager/operating-instruction', {
+    title: 'Review what Foundry should remember', nav: 'settings', proposal,
+    clarification: operatingInstructions.clarificationFor(proposal),
+    descriptions: proposal.resolvedChanges.map(operatingInstructions.describe),
+  });
+}));
+
+router.get('/document-removals/:id', asyncRoute(async (req, res) => {
+  const proposal = documentRemovals.get(req.db, req.ctx.workspaceId, req.params.id);
+  return res.page('manager/document-removal', {
+    title: proposal.status === 'COMPLETED' ? 'Imported products removed' : 'Review products to remove',
+    nav: 'inventory', proposal,
+  });
+}));
+
+router.get('/import-removals/:id', asyncRoute(async (req, res) => {
+  const proposal = importRemovals.get(req.db, req.ctx.workspaceId, req.params.id);
+  return res.page('manager/import-removal', {
+    title: proposal.status === 'COMPLETED' ? 'Imported products removed' : 'Choose imported products to remove',
+    nav: 'inventory', proposal,
+  });
+}));
+
+router.post('/import-removals/:id/approve', requireOwner, asyncRoute(async (req, res) => {
+  try {
+    const pending = importRemovals.get(req.db, req.ctx.workspaceId, req.params.id);
+    const itemIds = req.body.selectionMode === 'all'
+      ? pending.snapshot.items.map((item) => item.id)
+      : req.body.itemIds;
+    const proposal = importRemovals.approve(
+      req.db, req.ctx, req.user, req.params.id, trimOrNull(req.body.integrityHash), itemIds
+    );
+    req.flash('success', `Removed ${proposal.result.productsRemoved} product${proposal.result.productsRemoved === 1 ? '' : 's'} added by ${proposal.result.sourceName}. Earlier inventory was not affected.`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('error', err.message);
+  }
+  return res.redirect(303, `/import-removals/${req.params.id}`);
+}));
+
+router.post('/import-removals/:id/cancel', asyncRoute(async (req, res) => {
+  importRemovals.cancel(req.db, req.ctx.workspaceId, req.params.id);
+  req.flash('success', 'Cancelled. No products or stock were changed.');
+  return res.redirect(303, '/');
+}));
+
+router.post('/document-removals/:id/approve', requireOwner, asyncRoute(async (req, res) => {
+  try {
+    const pending = documentRemovals.get(req.db, req.ctx.workspaceId, req.params.id);
+    const itemIds = req.body.selectionMode === 'all'
+      ? pending.snapshot.items.map((item) => item.id)
+      : req.body.itemIds;
+    const proposal = documentRemovals.approve(
+      req.db, req.ctx, req.user, req.params.id, trimOrNull(req.body.integrityHash), itemIds
+    );
+    req.flash('success', `Removed ${proposal.result.productsRemoved} product${proposal.result.productsRemoved === 1 ? '' : 's'} added by ${proposal.result.sourceName}. The audit history remains.`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('error', err.message);
+  }
+  return res.redirect(303, `/document-removals/${req.params.id}`);
+}));
+
+router.post('/document-removals/:id/cancel', asyncRoute(async (req, res) => {
+  documentRemovals.cancel(req.db, req.ctx.workspaceId, req.params.id);
+  req.flash('success', 'Cancelled. No products or stock were changed.');
+  return res.redirect(303, '/');
+}));
+
+router.get('/catalog-code-changes/:id', asyncRoute(async (req, res) => {
+  const proposal = catalogCodeChanges.get(req.db, req.ctx.workspaceId, req.params.id);
+  return res.page('manager/catalog-code-change', {
+    title: proposal.status === 'COMPLETED' ? 'Catalogue codes changed' : 'Review catalogue code changes',
+    nav: 'inventory', proposal,
+  });
+}));
+
+router.post('/catalog-code-changes/:id/approve', requireOwner, asyncRoute(async (req, res) => {
+  try {
+    const proposal = catalogCodeChanges.approve(
+      req.db, req.ctx, req.user, req.params.id, trimOrNull(req.body.integrityHash)
+    );
+    req.flash('success', `Changed ${proposal.result.productCount} product code${proposal.result.productCount === 1 ? '' : 's'} and ${proposal.result.skuCount} SKU${proposal.result.skuCount === 1 ? '' : 's'}.`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('error', err.message);
+  }
+  return res.redirect(303, `/catalog-code-changes/${req.params.id}`);
+}));
+
+router.post('/catalog-code-changes/:id/cancel', asyncRoute(async (req, res) => {
+  catalogCodeChanges.cancel(req.db, req.ctx.workspaceId, req.params.id);
+  req.flash('success', 'Cancelled. No catalogue codes were changed.');
+  return res.redirect(303, '/');
+}));
+
+router.post('/operating-instructions/:id/approve', asyncRoute(async (req, res) => {
+  try {
+    const proposal = operatingInstructions.approve(req.db, req.ctx, req.user, req.params.id, req.body.integrityHash);
+    req.flash('success', `Remembered. ${proposal.resolvedChanges.length === 1 ? 'This rule is' : 'These rules are'} now active and future events will use them.`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('error', err.message);
+  }
+  return res.redirect(303, `/operating-instructions/${req.params.id}`);
+}));
+
+router.post('/operating-instructions/:id/cancel', asyncRoute(async (req, res) => {
+  operatingInstructions.cancel(req.db, req.ctx, req.params.id);
+  req.flash('success', 'Left unchanged. Foundry did not remember that instruction.');
+  return res.redirect(303, '/');
+}));
+
+router.post('/operating-instructions/:id/answer', asyncRoute(async (req, res) => {
+  try {
+    const proposal = await operatingInstructions.answer(req.db, req.ctx, req.user, req.params.id, req.body.answer, {
+      provider: req.app.locals.aiProvider || undefined,
+    });
+    req.flash('info', proposal.questions.length
+      ? 'Foundry continued the same instruction and needs one more exact detail.'
+      : 'Foundry continued the same instruction. Review the complete rule before approving it.');
+    return res.redirect(303, `/operating-instructions/${proposal.id}`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('error', err.message);
+    return res.redirect(303, `/operating-instructions/${req.params.id}`);
+  }
+}));
+
+router.post('/operating-instructions/:id/remove', asyncRoute(async (req, res) => {
+  try {
+    operatingInstructions.remove(req.db, req.ctx, req.user, req.params.id);
+    req.flash('success', 'Rule removed. Foundry will no longer follow it.');
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('error', err.message);
+  }
+  return res.redirect(303, '/settings#learned-instructions');
+}));
 
 /**
  * Finishing one thing Foundry could not record.
@@ -518,6 +859,12 @@ router.post('/investigations/:id/resolve', asyncRoute(async (req, res) => {
   const wantsCorrection = req.body.correct === '1';
 
   investigations.resolve(req.db, req.ctx, req.params.id, note);
+  reactions.publishAndReact(req.db, req.ctx.workspaceId, managerEvents.TYPES.COUNT_CONFIRMED, {
+    investigationId: req.params.id,
+    skuId: entities.skuId || null,
+    locationId: entities.locationId || null,
+    observed: Number.isFinite(observed) ? observed : null,
+  }, { sourceRecordType: 'investigation', sourceRecordId: `${req.params.id}:resolved` });
 
   if (wantsCorrection && entities.skuId && entities.locationId && Number.isFinite(observed)) {
     const location = req.db

@@ -100,7 +100,7 @@ test('a workspace starts supervised, and says what that means', () => {
   assert.equal(state.mode, 'SUPERVISED');
   assert.equal(state.canAct, true);
   assert.equal(state.canAutomate, false, 'supervised prepares work; it does not act on its own');
-  assert.match(state.modeBlurb, /carries out what you approve/);
+  assert.match(state.modeBlurb, /carries out only what you approve/);
 });
 
 test('gaining authority needs an owner; giving it up does not', () => {

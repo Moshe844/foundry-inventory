@@ -1,0 +1,65 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> Foundry</a>
+    <h1><%= proposal.status === 'COMPLETED' ? 'Catalogue codes changed' : 'Review every code change' %></h1>
+    <div class="page-sub">Internal catalogue codes · supplier codes stay unchanged</div>
+  </div>
+</div>
+
+<% if (proposal.status === 'COMPLETED') { %>
+  <section class="card section">
+    <div class="card-head"><h2>Completed</h2><span class="badge badge--ok">Verified</span></div>
+    <div class="card-body">
+      <p class="lede">Changed <strong><%= proposal.result.productCount %> product code<%= proposal.result.productCount === 1 ? '' : 's' %></strong> and <strong><%= proposal.result.skuCount %> SKU<%= proposal.result.skuCount === 1 ? '' : 's' %></strong> from <strong><%= proposal.result.from %></strong> to <strong><%= proposal.result.to %></strong>.</p>
+      <p class="muted">Supplier/vendor codes were not changed.</p>
+    </div>
+    <div class="card-foot"><a class="btn btn--primary" href="/inventory">See inventory</a></div>
+  </section>
+<% } else if (proposal.status === 'CANCELLED') { %>
+  <div class="notice section"><span>This change was cancelled. No codes changed.</span></div>
+<% } else { %>
+  <div class="notice notice--warn section">
+    <%- helpers.icon('alert', { size: 18 }) %>
+    <span><strong>Nothing has changed yet.</strong> Foundry checked the proposed codes for duplicates. Approving applies this exact list atomically.</span>
+  </div>
+
+  <section class="card section">
+    <div class="card-head">
+      <h2>Replace code prefix <%= proposal.operation.from %> with <%= proposal.operation.to %></h2>
+      <span class="badge badge--muted"><%= proposal.snapshot.productCount %> product<%= proposal.snapshot.productCount === 1 ? '' : 's' %></span>
+    </div>
+    <div class="card-body">
+      <p class="lede">Foundry matched the real catalogue and will change only the internal codes shown below.</p>
+      <table class="table">
+        <thead><tr><th>Product</th><th>Product code</th><th>SKU / variant codes</th></tr></thead>
+        <tbody>
+          <% proposal.snapshot.items.forEach(function (item) { %>
+            <tr>
+              <td><strong><%= item.name %></strong></td>
+              <td><code><%= item.oldBaseCode || '—' %></code> → <code><%= item.newBaseCode || '—' %></code></td>
+              <td>
+                <% if (item.skus.length) { %>
+                  <% item.skus.forEach(function (sku) { %>
+                    <div><% if (sku.variantLabel) { %><span class="muted"><%= sku.variantLabel %>:</span> <% } %><code><%= sku.oldCode %></code> → <code><%= sku.newCode %></code></div>
+                  <% }) %>
+                <% } else { %><span class="muted">No SKU code matches this prefix.</span><% } %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+      <p class="muted" style="margin-top:14px;">Stock quantities, movements, suppliers, purchase orders and supplier-specific codes are unchanged.</p>
+    </div>
+    <div class="card-foot">
+      <form method="post" action="/catalog-code-changes/<%= proposal.id %>/approve" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="integrityHash" value="<%= proposal.integrityHash %>">
+        <button class="btn btn--primary" type="submit">Apply these <%= proposal.snapshot.productCount %> product changes</button>
+      </form>
+      <form method="post" action="/catalog-code-changes/<%= proposal.id %>/cancel">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn" type="submit">Keep current codes</button>
+      </form>
+    </div>
+  </section>
+<% } %>

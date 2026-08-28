@@ -1,0 +1,109 @@
+<header class="page-head">
+  <div class="titles">
+    <div class="breadcrumbs"><a href="/settings/connections">Connections</a><span>›</span><span><%= connection.display_name %></span></div>
+    <h1><%= connection.display_name %></h1>
+    <p class="page-sub"><%= provider.name %><%= connection.provider_account_name ? ' · ' + connection.provider_account_name : '' %> · <%= connection.provides.join(', ') %></p>
+  </div>
+  <span class="badge <%= connection.publicStatus === 'Connected' ? 'badge--ok' : connection.publicStatus === 'Needs attention' ? 'badge--warn' : 'badge--muted' %>"><%= connection.publicStatus %></span>
+</header>
+
+<div class="stats-row section">
+  <div class="stat"><strong><%= connection.productsMapped %></strong><span>products mapped</span></div>
+  <div class="stat"><strong><%= connection.locationsMapped %></strong><span>locations mapped</span></div>
+  <div class="stat"><strong><%= connection.itemsNeedingMapping %></strong><span>need mapping</span></div>
+  <div class="stat"><strong><%= connection.last_activity_at ? helpers.timeAgo(connection.last_activity_at) : 'None yet' %></strong><span>last event received</span></div>
+</div>
+
+<% if (token) { %>
+  <div class="notice notice--warn section"><div><strong>Copy this token now. Foundry will not show it again.</strong><input class="input mono" value="<%= token %>" readonly onclick="this.select()"></div></div>
+<% } %>
+
+<div class="grid grid--sidebar">
+  <main class="grid">
+    <% if (canBootstrapShopify) { %>
+      <section class="card"><div class="card-head"><div><h2>Use this Shopify store as a new Foundry inventory</h2><p class="muted">For an empty inventory only. Foundry imports active tracked products, variants, selling prices, locations, and current on-hand quantities once. It does not replay old sales.</p></div></div><div class="card-body"><form method="post" action="/settings/connections/<%= connection.id %>/bootstrap-shopify" data-confirm="Import this Shopify store's current catalogue and opening stock into this empty Foundry inventory?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Import Shopify store into Foundry</button></form></div></section>
+    <% } else if (connection.provider_type === 'shopify' && connection.config.catalogBootstrap) { %>
+      <section class="notice notice--success"><strong>Shopify store setup is complete.</strong> <%= connection.config.catalogBootstrap.items %> products, <%= connection.config.catalogBootstrap.skus %> variants, <%= connection.config.catalogBootstrap.locations %> locations, and <%= connection.config.catalogBootstrap.openingUnits %> opening units were imported once. Future Shopify activity arrives automatically.</section>
+    <% } %>
+    <% var unmapped = externalRecords.filter(function(row) { return row.mapping_status === 'UNMAPPED' && row.selected; }); %>
+    <% var unmappedProducts = unmapped.filter(function(row) { return row.entity_type === 'sku'; }); %>
+    <% if (unmapped.length) { %>
+      <section class="card" data-selection-group><div class="card-head"><div><h2>Finish matching <%= unmapped.length %> record<%= unmapped.length === 1 ? '' : 's' %></h2><p class="muted">Map each uncertain record once. Foundry remembers it for every future event.</p></div></div><div class="card-body grid">
+        <% if (unmappedProducts.length > 1) { %><form id="bulk-product-import" method="post" action="/settings/connections/<%= connection.id %>/create-products-map" class="form-actions"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm" type="button" data-select-all>Select all products</button><button class="btn btn--sm" type="button" data-clear-selection>Clear</button><span class="muted" data-selection-count>0 selected</span><button class="btn btn--primary btn--sm" type="submit" data-remove-selected disabled>Add selected to Foundry</button></form><% } %>
+        <% unmapped.forEach(function(record) { var choices = record.entity_type === 'sku' ? skus : locations; %><div class="list-row" style="align-items:flex-start"><% if (record.entity_type === 'sku' && unmappedProducts.length > 1) { %><input type="checkbox" name="externalIds" value="<%= record.external_id %>" form="bulk-product-import" data-selection-item aria-label="Select <%= record.display_name %>"><% } %><div style="flex:1"><strong><%= record.display_name %></strong><p class="muted"><%= record.entity_type === 'sku' ? 'External SKU ' + (record.code || record.external_id) : 'External location' %></p>
+          <% if (choices.length) { %><form method="post" action="/settings/connections/<%= connection.id %>/map" class="form-actions" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="entityType" value="<%= record.entity_type %>"><input type="hidden" name="externalId" value="<%= record.external_id %>"><select class="select" name="foundryRecordId" required><option value="">Choose the matching Foundry record</option><% if (record.entity_type === 'sku') { skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %><%= sku.variant_label ? ' / ' + sku.variant_label : '' %> · <%= sku.code %></option><% }) } else { locations.forEach(function(location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) } %></select><button class="btn btn--primary btn--sm" type="submit">Save match</button></form><% } %>
+          <% if (record.entity_type === 'sku') { %><div class="notice" style="margin-top:10px"><div><strong><%= choices.length ? 'Not already in Foundry?' : 'This product is new to Foundry.' %></strong><p>Foundry already has the name, SKU, price, and tracked stock supplied by <%= provider.name %>. Create and match it without typing everything again.</p><form method="post" action="/settings/connections/<%= connection.id %>/create-product-map" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="externalId" value="<%= record.external_id %>"><button class="btn btn--primary btn--sm" type="submit">Create product in Foundry and finish</button></form></div></div>
+          <% } else if (!choices.length) { %><div class="notice" style="margin-top:10px"><div><strong>Foundry does not have a location yet.</strong><p>Create this <%= provider.name %> location here and Foundry will match it automatically.</p><form method="post" action="/settings/connections/<%= connection.id %>/create-location-map" class="form-actions" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="externalId" value="<%= record.external_id %>"><label class="field"><span class="label">Foundry location name</span><input class="input" name="name" value="<%= record.display_name %>" required></label><label class="field"><span class="label">Location type</span><select class="select" name="kind" required><% helpers.LOCATION_KINDS.forEach(function(kind) { %><option value="<%= kind.id %>" <%= kind.id === 'store' ? 'selected' : '' %>><%= kind.label %></option><% }) %></select></label><button class="btn btn--primary btn--sm" type="submit">Create location and finish</button></form></div></div><% } %>
+          <form method="post" action="/settings/connections/<%= connection.id %>/ignore" style="margin-top:8px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="entityType" value="<%= record.entity_type %>"><input type="hidden" name="externalId" value="<%= record.external_id %>"><button class="btn btn--sm" type="submit">Ignore this external record</button></form>
+        </div><span class="badge badge--warn">Needs your match</span></div><% }) %>
+      </div></section>
+    <% } %>
+
+    <% var providerLocations = externalRecords.filter(function(row) { return row.entity_type === 'location'; }); %>
+    <% if (providerLocations.length) { %><section class="card"><div class="card-head"><div><h2>Provider locations</h2><p class="muted">Choose where Foundry should accept activity from this connection.</p></div></div><div class="card-body"><form method="post" action="/settings/connections/<%= connection.id %>/locations" class="grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><div class="choice-grid"><% providerLocations.forEach(function(location) { %><label class="choice"><input type="checkbox" name="externalLocationIds" value="<%= location.external_id %>" <%= location.selected ? 'checked' : '' %>><span><strong><%= location.display_name %></strong><small><%= location.mapping_status === 'MAPPED' ? 'Mapped' : 'Still needs a Foundry match' %></small></span></label><% }) %></div><div class="form-actions"><button class="btn" type="submit">Save locations</button></div></form></div></section><% } %>
+
+
+    <% var visibleIssues = issues.filter(function(issue) { return issue.status === 'OPEN' && !unmapped.some(function(record) { return issue.issue_type === 'UNKNOWN_' + record.entity_type.toUpperCase() && issue.fingerprint.endsWith(':' + record.external_id); }); }); %>
+    <% if (visibleIssues.length) { %>
+      <section class="card">
+        <div class="card-head"><div><h2>Needs attention</h2><p class="muted">One clear problem, one safe resolution.</p></div></div>
+        <div class="card-body grid">
+          <% visibleIssues.forEach(function(issue) { %>
+            <div class="list-row" style="align-items:flex-start"><div><strong><%= issue.title %></strong><p><%= issue.detail %></p><p class="muted"><%= issue.resolution_hint %></p>
+              <% if (connection.provider_type === 'reference_webhook' && /^UNKNOWN_(SKU|LOCATION|CUSTOMER|SALES_ORDER|SUPPLIER)$/.test(issue.issue_type)) { var entity = issue.issue_type.slice(8).toLowerCase(); var externalId = issue.fingerprint.split(':').slice(-1)[0]; %>
+                <form method="post" action="/settings/connections/<%= connection.id %>/map" class="form-actions" style="margin-top:10px">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="entityType" value="<%= entity %>"><input type="hidden" name="externalId" value="<%= externalId %>">
+                  <select class="select" name="foundryRecordId" required>
+                    <option value="">Choose the matching Foundry record</option>
+                    <% if (entity === 'sku') { skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %><%= sku.variant_label ? ' / ' + sku.variant_label : '' %> · <%= sku.code %></option><% }) } %>
+                    <% if (entity === 'location') { locations.forEach(function(location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) } %>
+                    <% if (entity === 'customer') { customers.forEach(function(customer) { %><option value="<%= customer.id %>"><%= customer.name %></option><% }) } %>
+                    <% if (entity === 'supplier') { suppliers.forEach(function(supplier) { %><option value="<%= supplier.id %>"><%= supplier.name %></option><% }) } %>
+                  </select><button class="btn btn--primary btn--sm" type="submit">Save mapping and retry</button>
+                </form>
+              <% } %>
+            </div><span class="badge badge--warn"><%= issue.issue_type.replaceAll('_', ' ').toLowerCase() %></span></div>
+          <% }) %>
+        </div>
+      </section>
+    <% } %>
+
+    <% if (connection.provider_type === 'supplier_email') { %>
+      <section class="card"><div class="card-head"><div><h2>Trusted supplier senders</h2><p class="muted">Only configured senders become trusted evidence. No email changes inventory in Mission 11.</p></div></div><div class="card-body grid">
+        <% emailRules.forEach(function(rule) { %><div class="list-row"><div><strong><%= rule.sender_pattern %></strong><p><%= rule.supplier_name || 'No supplier associated' %></p></div><span class="badge badge--ok">Allowed</span></div><% }) %>
+        <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/<%= connection.id %>/email-rules" class="form-actions"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input class="input" name="senderPattern" placeholder="orders@supplier.com or @supplier.com" required><select class="select" name="supplierId"><option value="">No supplier association</option><% suppliers.forEach(function(s) { %><option value="<%= s.id %>"><%= s.name %></option><% }) %></select><button class="btn" type="submit">Allow sender</button></form><% } %>
+      </div></section>
+      <section class="card"><div class="card-head"><h2>Captured messages</h2></div><div class="card-body grid"><% if (!messages.length) { %><p class="muted">No messages received.</p><% } messages.forEach(function(message) { %><div class="list-row"><div><strong><%= message.subject || '(no subject)' %></strong><p><%= message.sender %> · <%= message.classification.replaceAll('_', ' ') %> · <%= message.attachment_count %> attachment<%= message.attachment_count === 1 ? '' : 's' %></p></div><span class="badge <%= message.trust_status === 'TRUSTED' ? 'badge--ok' : 'badge--warn' %>"><%= message.trust_status === 'TRUSTED' ? 'Trusted evidence' : 'Untrusted' %></span></div><% }) %></div></section>
+    <% } %>
+
+    <section class="card"><div class="card-head"><div><h2>Recent activity received</h2><p class="muted">Understandable status here; exact payloads remain available in diagnostics.</p></div></div><div class="card-body grid">
+      <% if (!events.length) { %><p class="muted">Waiting for first activity.</p><% } events.forEach(function(event) { %><div class="list-row"><div><strong><%= event.event_type %></strong><p>External event <%= event.external_event_id %> · received <%= helpers.timeAgo(event.received_at) %><%= event.action_type ? ' · Foundry action ' + event.action_type : '' %></p><% if (event.error_message) { %><p class="is-warn"><%= event.error_message %></p><% } %></div><span class="badge <%= event.status === 'COMPLETED' ? 'badge--ok' : event.status === 'NEEDS_MAPPING' ? 'badge--warn' : 'badge--muted' %>"><%= event.status.replaceAll('_', ' ') %></span></div><% }) %>
+    </div></section>
+
+    <% if (reconciliations.length) { %><section class="card"><div class="card-head"><h2>Reconciliation</h2></div><div class="card-body grid"><% reconciliations.forEach(function(row) { %><div class="list-row"><div><strong><%= row.status === 'MATCHED' ? 'External history matches' : 'Mismatch found' %></strong><p><%= row.period_start || 'All recorded time' %><%= row.period_end ? ' to ' + row.period_end : '' %></p></div><span class="badge <%= row.status === 'MATCHED' ? 'badge--ok' : 'badge--warn' %>"><%= row.status %></span></div><% }) %></div></section><% } %>
+  </main>
+
+  <aside class="grid">
+    <% if (connection.provider_type === 'reference_webhook' || connection.provider_type === 'supplier_email') { %><section class="card"><div class="card-head"><h2><%= connection.provider_type === 'reference_webhook' ? 'Custom business system API' : 'Send events' %></h2></div><div class="card-body grid"><label class="field"><span class="label">Event endpoint</span><input class="input mono" value="<%= origin %>/api/v1/events" readonly onclick="this.select()"></label><p class="hint">Use <code>Authorization: Bearer YOUR_TOKEN</code>. Replaying one external event ID never repeats its Foundry action.</p><% if (connection.provider_type === 'reference_webhook') { %><label class="field"><span class="label">Machine-readable contract</span><input class="input mono" value="<%= origin %>/api/v1/events/schema" readonly onclick="this.select()"></label><p class="hint">Supported events: sale, customer order, order snapshot/change/cancellation, fulfillment, return, receipt, transfer, adjustment, product update, and location update. Send <code>aggregateId</code> plus <code>version</code> for ordering protection.</p><details><summary>Example sale event</summary><pre class="mono" style="white-space:pre-wrap">{
+  "eventId": "sale-10482-line-1",
+  "type": "sale.completed",
+  "version": "1",
+  "aggregateId": "order-10482",
+  "occurredAt": "2026-08-28T14:30:00Z",
+  "data": {
+    "externalSku": "sku-123",
+    "skuCode": "ABC-123",
+    "externalLocationId": "store-1",
+    "locationName": "Main Store",
+    "quantity": 1
+  }
+}</pre></details><% } %><% if (connection.provider_type === 'supplier_email') { %><label class="field"><span class="label">Email endpoint</span><input class="input mono" value="<%= origin %>/api/v1/email/messages" readonly onclick="this.select()"></label><% } %></div></section><% } else { %>
+      <section class="card"><div class="card-head"><h2>Automatic provider sync</h2></div><div class="card-body grid"><p>Events arrive automatically from <%= provider.name %>. You do not need an API command or Check now.</p><p class="hint">Initial setup imports product and location identities only. It does not replay historical sales into current stock.</p><% if (currentUser.role === 'owner' && connection.status === 'connected') { %><div class="form-actions"><form method="post" action="/settings/connections/<%= connection.id %>/sync"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Refresh products and locations</button></form><form method="post" action="/settings/connections/<%= connection.id %>/reconcile"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Compare recent provider history</button></form></div><p class="hint">History comparison is read-only. A mismatch creates a clear issue; it never rewrites stock.</p><% } %></div></section>
+    <% } %>
+    <section class="card"><div class="card-head"><h2>Connection control</h2></div><div class="card-body form-actions"><% if (currentUser.role === 'owner') { %>
+      <% if (connection.status === 'disconnected' && connection.provider_type === 'reference_webhook') { %><form method="post" action="/settings/connections/<%= connection.id %>/rotate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Reconnect with new token</button></form><% } else if (connection.status === 'disconnected' && ['shopify','square','clover','woocommerce'].includes(connection.provider_type)) { %><form method="post" action="/settings/connections/connect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= connection.provider_type %>"><input type="hidden" name="connectorId" value="<%= connection.id %>"><% if (connection.provider_type === 'shopify') { %><input type="hidden" name="shop" value="<%= connection.config.shop || '' %>"><% } %><% if (connection.provider_type === 'woocommerce') { %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl || '' %>"><% } %><button class="btn btn--primary" type="submit">Reconnect <%= provider.name %></button></form><% } else if (connection.paused_at) { %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Resume trusting events</button></form><% } else if (connection.status !== 'disconnected') { %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Pause ingestion</button></form><% } %>
+      <% if (connection.status !== 'disconnected') { %><% if (connection.provider_type === 'reference_webhook') { %><form method="post" action="/settings/connections/<%= connection.id %>/rotate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Rotate token</button></form><% } %><form method="post" action="/settings/connections/<%= connection.id %>/disconnect" data-confirm="Disconnect this source? Mappings and audit history will be kept."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--danger" type="submit">Disconnect</button></form><% } %>
+    <% } %></div></section>
+    <details class="card"><summary class="card-head"><h2>Advanced diagnostics</h2></summary><div class="card-body"><p class="mono">Connection <%= connection.id %></p><p>Provider: <%= connection.provider_type %></p><% if (connection.provider_type === 'clover') { %><p>Webhook URL: <span class="mono"><%= origin %>/api/v1/connections/clover/webhooks</span></p><% } %><p>Setup: <%= connection.setup_status %></p><p>Mappings: <%= mappings.length %></p><p>Last event: <%= connection.last_activity_at || 'none' %></p><p>Last successful sync: <%= connection.last_synced_at || 'none' %></p><p>Last sync problem: <%= connection.last_error || 'none' %></p><% syncRuns.forEach(function(run) { %><p><%= run.sync_kind %> · <%= run.status %> · <%= run.started_at %><%= run.error_message ? ' · ' + run.error_message : '' %></p><% }) %></div></details>
+  </aside>
+</div>

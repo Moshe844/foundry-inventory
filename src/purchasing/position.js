@@ -25,6 +25,7 @@
  */
 
 const OPEN_STATUSES = ['APPROVED', 'ORDERED', 'PARTIALLY_RECEIVED'];
+const { localDateKey, addLocalDays, daysBetween } = require('../lib/calendar');
 
 const openStatusList = OPEN_STATUSES.map(() => '?').join(',');
 
@@ -79,7 +80,7 @@ function onOrderBySku(db, workspaceId, { skuIds = null, now = Date.now() } = {})
       if (!entry.nextExpectedDate || row.expected_date < entry.nextExpectedDate) {
         entry.nextExpectedDate = row.expected_date;
       }
-      if (Date.parse(`${row.expected_date}T23:59:59Z`) < now) entry.overdueUnits += outstanding;
+      if (row.expected_date < localDateKey(now)) entry.overdueUnits += outstanding;
     }
   }
 
@@ -107,11 +108,17 @@ function positionForSku(db, workspaceId, skuId) {
     .prepare('SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ? AND sku_id = ?')
     .get(workspaceId, skuId).n;
   const incoming = onOrderForSku(db, workspaceId, skuId);
+  const committed = require('../sales/sales-order-service').committedByPosition(db, workspaceId, { skuIds: [skuId] })
+    .reduce((total, row) => total + Number(row.committed || 0), 0);
+  const available = onHand - committed;
   return {
     skuId,
     onHand,
+    committed,
+    available,
     onOrder: incoming.onOrder,
-    position: onHand + incoming.onOrder,
+    position: available + incoming.onOrder,
+    physicalPosition: onHand + incoming.onOrder,
     nextExpectedDate: incoming.nextExpectedDate,
     overdueUnits: incoming.overdueUnits,
     orders: incoming.orders,
@@ -178,20 +185,20 @@ function openOrders(db, workspaceId, { supplierId = null } = {}) {
  * against a date Foundry invented would be an accusation it cannot support.
  */
 function lateOrders(db, workspaceId, { now = Date.now(), graceDays = 0 } = {}) {
-  const cutoff = new Date(now - graceDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const cutoff = addLocalDays(now, -graceDays);
   return openOrders(db, workspaceId)
     .filter((po) => po.expected_date && po.expected_date < cutoff && po.outstanding_units > 0)
     .filter((po) => po.expected_date_source && po.expected_date_source !== 'unknown')
     .map((po) => ({
       ...po,
-      daysLate: Math.floor((now - Date.parse(`${po.expected_date}T00:00:00Z`)) / (24 * 60 * 60 * 1000)),
+      daysLate: daysBetween(po.expected_date, localDateKey(now)),
     }));
 }
 
 /** Orders expected to arrive between today and `days` from now. */
 function arrivingSoon(db, workspaceId, { days = 7, now = Date.now() } = {}) {
-  const today = new Date(now).toISOString().slice(0, 10);
-  const until = new Date(now + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const today = localDateKey(now);
+  const until = addLocalDays(now, days);
   return openOrders(db, workspaceId).filter(
     (po) => po.expected_date && po.expected_date >= today && po.expected_date <= until && po.outstanding_units > 0
   );

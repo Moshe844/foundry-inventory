@@ -37,6 +37,15 @@ const planner = require('./planner');
 const signalEngine = require('../signals/signal-engine');
 const replenishmentPlan = require('../purchasing/replenishment-plan');
 const workItems = require('./work-items');
+const managerGuards = require('../manager/guards');
+
+const policySnapshot = (verdict) => ({
+  decision: verdict.decision,
+  reason: verdict.reason,
+  checks: verdict.checks,
+  policyId: verdict.policy ? verdict.policy.id : null,
+  policyVersion: verdict.policy ? verdict.policy.version : null,
+});
 
 function notify(db, workspaceId, { kind, severity = 'info', title, body = '', workItemId = null, link = null }) {
   db.prepare(
@@ -79,12 +88,26 @@ function planWork(db, ctx, membership, options = {}) {
 
   const planId = newId('wplan');
   db.prepare(
-    `INSERT INTO work_plans (id, workspace_id, trigger, idempotency_key, mode, status, started_at)
-     VALUES (?, ?, ?, ?, ?, 'PLANNING', ?)`
-  ).run(planId, workspaceId, options.trigger || 'scheduled', key, state.mode, nowIso());
+    `INSERT INTO work_plans (id, workspace_id, trigger, trigger_event_id, idempotency_key, mode, status, started_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'PLANNING', ?)`
+  ).run(planId, workspaceId, options.trigger || 'scheduled', options.triggerEventId || null, key, state.mode, nowIso());
 
-  const proposed = planner.plan(db, workspaceId, { now });
+  const proposed = planner.plan(db, workspaceId, { now, scope: options.scope });
   const created = [];
+
+  // Older versions created an approval for a plan whose only conclusion was
+  // "no supplier". Approval could do nothing. Retire those records; the real
+  // exception remains as a direct Add supplier action in Needs you.
+  for (const stale of workItems.list(db, workspaceId, {
+    status: workItems.STATUS.WAITING_FOR_APPROVAL,
+    category: 'replenishment_plan',
+    limit: 200,
+  })) {
+    if ((stale.recommendedAction || {}).blocked !== 'no_supplier') continue;
+    workItems.transition(db, workspaceId, stale.id, workItems.STATUS.SUPERSEDED, {
+      detail: { reason: 'Supplier setup is required before there is a replenishment action to approve.' },
+    });
+  }
 
   // --- one replenishment decision per stock need -----------------------------
   //
@@ -100,6 +123,7 @@ function planWork(db, ctx, membership, options = {}) {
 
     const { item, created: isNew } = workItems.upsert(db, workspaceId, {
       workPlanId: planId,
+      triggerEventId: options.triggerEventId || null,
       category: 'replenishment_plan',
       source: 'replenishment',
       sourceEvidence: (plan.evidence || []).slice(0, 12),
@@ -141,7 +165,7 @@ function planWork(db, ctx, membership, options = {}) {
       urgency: plan.onHandTotal === 0 ? 'immediate' : 'normal',
       confidence: 'high',
       reason: plan.explanation,
-      idempotencyKey: `replenishment_plan:${plan.skuId}`,
+      idempotencyKey: replenishmentSituationKey(db, workspaceId, plan),
     });
 
     // Every run, not only the run that created the plan. Older work can appear
@@ -162,6 +186,10 @@ function planWork(db, ctx, membership, options = {}) {
     }
   }
 
+  // Reconsider existing work before creating any lower-level actions. A
+  // receipt, correction or changed rule may have removed the shortage.
+  retireStaleWork(db, workspaceId, proposed, options.scope);
+
   // --- transfers ------------------------------------------------------------
   for (const transfer of proposed.transfers) {
     const verdict = policyEngine.evaluate(db, workspaceId, {
@@ -176,6 +204,7 @@ function planWork(db, ctx, membership, options = {}) {
 
     const { item, created: isNew } = workItems.upsert(db, workspaceId, {
       workPlanId: planId,
+      triggerEventId: options.triggerEventId || null,
       category: 'balance_transfer',
       source: 'balance_signal',
       sourceEvidence: transfer.evidence,
@@ -200,7 +229,7 @@ function planWork(db, ctx, membership, options = {}) {
       urgency: 'soon',
       confidence: 'high',
       policyId: verdict.policy ? verdict.policy.id : null,
-      policyEvaluation: { decision: verdict.decision, reason: verdict.reason, checks: verdict.checks },
+      policyEvaluation: policySnapshot(verdict),
       approvalRequirement: verdict.decision === 'authorized' ? 'NONE' : 'REQUIRED',
       executionStatus:
         verdict.decision === 'authorized' ? workItems.STATUS.AUTHORIZED : workItems.STATUS.WAITING_FOR_APPROVAL,
@@ -227,7 +256,7 @@ function planWork(db, ctx, membership, options = {}) {
     if (!isNew && item.needsPerson && !item.approvedAt && (item.recommendedAction || {}).quantity !== transfer.quantity) {
       current = workItems.resize(db, workspaceId, item.id, {
         recommendedAction: { ...item.recommendedAction, quantity: transfer.quantity },
-        policyEvaluation: { decision: verdict.decision, reason: verdict.reason, checks: verdict.checks },
+        policyEvaluation: policySnapshot(verdict),
         approvalRequirement: verdict.decision === 'authorized' ? 'NONE' : 'REQUIRED',
         executionStatus:
           verdict.decision === 'authorized' ? workItems.STATUS.AUTHORIZED : workItems.STATUS.WAITING_FOR_APPROVAL,
@@ -285,11 +314,33 @@ function planWork(db, ctx, membership, options = {}) {
       toLocationId: action.toLocationId,
       conditions: replanned ? replanned.conditions : {},
     }, { now });
+    policyService.recordEvaluation(db, workspaceId, {
+      policyId: verdict.policy ? verdict.policy.id : null,
+      workItemId: waiting.id,
+      decision: verdict.decision,
+      reason: verdict.reason,
+      checks: verdict.checks,
+      policyVersion: verdict.policy ? verdict.policy.version : null,
+    });
+    const snapshot = policySnapshot(verdict);
+    if (
+      waiting.policyId !== snapshot.policyId ||
+      waiting.policyEvaluation.decision !== snapshot.decision ||
+      waiting.policyEvaluation.reason !== snapshot.reason ||
+      waiting.policyEvaluation.policyVersion !== snapshot.policyVersion
+    ) {
+      workItems.recordAuthoritySnapshot(db, workspaceId, waiting.id, {
+        policyId: snapshot.policyId,
+        policyEvaluation: snapshot,
+        sourceEvidence: replanned ? replanned.evidence : waiting.sourceEvidence,
+        triggerEventId: options.triggerEventId || null,
+      });
+    }
     if (verdict.decision !== 'authorized') continue;
 
     workItems.resize(db, workspaceId, waiting.id, {
       recommendedAction: action,
-      policyEvaluation: { decision: verdict.decision, reason: verdict.reason, checks: verdict.checks },
+      policyEvaluation: policySnapshot(verdict),
       approvalRequirement: 'NONE',
       executionStatus: workItems.STATUS.AUTHORIZED,
       policyId: verdict.policy ? verdict.policy.id : null,
@@ -301,6 +352,7 @@ function planWork(db, ctx, membership, options = {}) {
   for (const group of proposed.purchases) {
     const { item, created: isNew } = workItems.upsert(db, workspaceId, {
       workPlanId: planId,
+      triggerEventId: options.triggerEventId || null,
       category: 'purchase_preparation',
       source: 'replenishment',
       sourceEvidence: group.lines.flatMap((line) => line.evidence || []).slice(0, 12),
@@ -335,6 +387,7 @@ function planWork(db, ctx, membership, options = {}) {
   for (const delivery of proposed.receiving) {
     const { item, created: isNew } = workItems.upsert(db, workspaceId, {
       workPlanId: planId,
+      triggerEventId: options.triggerEventId || null,
       category: 'receiving_followup',
       source: 'purchase_order',
       sourceEvidence: [
@@ -380,6 +433,7 @@ function planWork(db, ctx, membership, options = {}) {
   for (const conflict of proposed.conflicts) {
     const { item, created: isNew } = workItems.upsert(db, workspaceId, {
       workPlanId: planId,
+      triggerEventId: options.triggerEventId || null,
       category: 'discrepancy_review',
       source: 'policy_conflict',
       sourceEvidence: conflict.floors.map((floor) => ({
@@ -463,6 +517,64 @@ function planWork(db, ctx, membership, options = {}) {
  * this function's business, and a transfer that has already moved stock is a
  * fact the next plan will read from the ledger anyway.
  */
+function replenishmentSituationKey(db, workspaceId, plan) {
+  const latest = db.prepare(
+    'SELECT id FROM movements WHERE workspace_id = ? AND sku_id = ? ORDER BY rowid DESC LIMIT 1'
+  ).get(workspaceId, plan.skuId);
+  const moves = (plan.transfers || []).map((move) =>
+    `${move.fromLocationId}>${move.toLocationId}:${move.quantity}`).sort().join(',');
+  const purchase = plan.purchase
+    ? `${plan.purchase.supplierId}:${plan.purchase.quantityUnits}` : 'none';
+  return `replenishment_plan:${plan.skuId}:${latest ? latest.id : 'opening'}:` +
+    `${plan.networkPosition}:${plan.reorderPoint}:${plan.target}:${moves}:${purchase}`;
+}
+
+/** Retire current actions whose underlying business situation disappeared. */
+function retireStaleWork(db, workspaceId, proposed, scope) {
+  const scoped = scope && Array.isArray(scope.skuIds) && scope.skuIds.length
+    ? new Set(scope.skuIds) : null;
+  const activePlans = new Set((proposed.replenishmentPlans || []).map((plan) => plan.skuId));
+  const activeTransfers = new Set((proposed.transfers || []).map((move) =>
+    `${move.skuId}:${move.fromLocationId}:${move.toLocationId}`));
+  const activeDeliveries = new Set((proposed.receiving || []).map((entry) => entry.purchaseOrderId));
+  const statuses = [
+    workItems.STATUS.PLANNED,
+    workItems.STATUS.WAITING_FOR_APPROVAL,
+    workItems.STATUS.AUTHORIZED,
+  ];
+
+  for (const item of workItems.list(db, workspaceId, { status: statuses, limit: 500 })) {
+    const action = item.recommendedAction || {};
+    const entities = item.affectedEntities || {};
+    const skuId = action.skuId || entities.skuId || null;
+    if (scoped && skuId && !scoped.has(skuId)) continue;
+
+    let stale = false;
+    if (item.category === 'replenishment_plan' && skuId) stale = !activePlans.has(skuId);
+    if (item.category === 'balance_transfer' && skuId) {
+      stale = !activeTransfers.has(`${skuId}:${action.fromLocationId}:${action.toLocationId}`);
+    }
+    if (item.category === 'receiving_followup') {
+      const poId = action.purchaseOrderId || entities.purchaseOrderId;
+      stale = Boolean(poId) && !activeDeliveries.has(poId);
+    }
+    if (item.category === 'purchase_approval') {
+      const poId = item.purchaseOrderId || action.purchaseOrderId || entities.purchaseOrderId;
+      const po = poId ? poService.find(db, workspaceId, poId) : null;
+      stale = !po || ![poService.STATUS.DRAFT, poService.STATUS.AWAITING_APPROVAL].includes(po.status);
+    }
+    if (!stale) continue;
+    workItems.transition(db, workspaceId, item.id, workItems.STATUS.SUPERSEDED, {
+      verificationStatus: 'NOT_APPLICABLE',
+      outcome: {
+        ...(item.outcome || {}),
+        supersededBecause: 'The underlying inventory situation changed, so this action is no longer current.',
+      },
+      detail: { reason: 'state_changed', trigger: 'continuous_reassessment' },
+    });
+  }
+}
+
 function supersedeOlderWork(db, workspaceId, skuId, planItem) {
   const superseded = [];
   // Matching by sku alone missed the one that mattered most. A purchase
@@ -486,7 +598,7 @@ function supersedeOlderWork(db, workspaceId, skuId, planItem) {
     return orderCoversSku(entry.purchaseOrderId || action.purchaseOrderId || entities.purchaseOrderId);
   };
 
-  for (const category of ['balance_transfer', 'purchase_preparation', 'purchase_approval']) {
+  for (const category of ['replenishment_plan', 'balance_transfer', 'purchase_preparation', 'purchase_approval']) {
     for (const entry of workItems.list(db, workspaceId, { category, limit: 200 })) {
       if (entry.id === planItem.id) continue;
       if (entry.isTerminal) continue;
@@ -729,7 +841,7 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
   return { executed: true, verified, item: completed, before, after, checks, purchaseOrderId };
 }
 
-function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
+function executeWorkItemInternal(db, ctx, membership, workItemId, options = {}) {
   const workspaceId = ctx.workspaceId;
   const item = workItems.get(db, workspaceId, workItemId);
 
@@ -750,7 +862,7 @@ function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
 
   if (item.category === 'replenishment_plan') return executeReplenishmentPlan(db, ctx, membership, item);
 
-  if (item.category === 'purchase_preparation') return preparePurchase(db, ctx, membership, item);
+  if (item.category === 'purchase_preparation') return preparePurchase(db, ctx, membership, item, options);
 
   if (item.category === 'purchase_approval') {
     const orderId = item.purchaseOrderId || (item.recommendedAction || {}).purchaseOrderId;
@@ -814,19 +926,29 @@ function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
   }, { now: options.now || Date.now() });
 
   const preApproved = item.approvalRequirement === 'REQUIRED' && item.approvedAt;
+  policyService.recordEvaluation(db, workspaceId, {
+    policyId: verdict.policy ? verdict.policy.id : null,
+    workItemId: item.id,
+    decision: verdict.decision,
+    reason: verdict.reason,
+    checks: verdict.checks,
+    policyVersion: verdict.policy ? verdict.policy.version : null,
+  });
   if (verdict.decision !== 'authorized' && !preApproved) {
-    policyService.recordEvaluation(db, workspaceId, {
-      policyId: verdict.policy ? verdict.policy.id : null,
-      workItemId: item.id,
-      decision: verdict.decision,
-      reason: verdict.reason,
-      checks: verdict.checks,
-    });
     workItems.transition(db, workspaceId, item.id, workItems.STATUS.CANCELLED, {
       errorMessage: verdict.reason,
       detail: { revalidation: verdict.decision },
     });
     return { executed: false, item: workItems.get(db, workspaceId, item.id), because: verdict.reason };
+  }
+
+  if (!preApproved) {
+    workItems.recordAuthoritySnapshot(db, workspaceId, item.id, {
+      policyId: verdict.policy ? verdict.policy.id : null,
+      policyEvaluation: policySnapshot(verdict),
+      sourceEvidence: replanned ? replanned.evidence : item.sourceEvidence,
+      triggerEventId: options.triggerEventId || null,
+    });
   }
 
   // --- execute --------------------------------------------------------------
@@ -909,7 +1031,12 @@ function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
 
   const completed = workItems.transition(db, workspaceId, item.id, workItems.STATUS.COMPLETED, {
     verificationStatus: 'VERIFIED',
-    outcome: { before, after, checks, quantity: action.quantity },
+      outcome: {
+        before, after, checks, quantity: action.quantity,
+        triggerEventId: options.triggerEventId || item.triggerEventId || null,
+        policyId: verdict.policy ? verdict.policy.id : null,
+        policyVersion: verdict.policy ? verdict.policy.version : null,
+      },
   });
 
   notify(db, workspaceId, {
@@ -930,10 +1057,21 @@ function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
   return { executed: true, verified: true, item: completed, before, after, checks };
 }
 
+function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
+  const workspaceId = ctx.workspaceId;
+  const alreadyManaging = managerGuards.activeWorkspaces.has(workspaceId);
+  if (!alreadyManaging) managerGuards.activeWorkspaces.add(workspaceId);
+  try {
+    return executeWorkItemInternal(db, ctx, membership, workItemId, options);
+  } finally {
+    if (!alreadyManaging) managerGuards.activeWorkspaces.delete(workspaceId);
+  }
+}
+
 /**
  * Prepares a draft purchase order. Never sends one.
  */
-function preparePurchase(db, ctx, membership, item) {
+function preparePurchase(db, ctx, membership, item, options = {}) {
   const action = item.recommendedAction;
   workItems.transition(db, ctx.workspaceId, item.id, workItems.STATUS.EXECUTING, { countAttempt: true });
 
@@ -973,12 +1111,27 @@ function preparePurchase(db, ctx, membership, item) {
     const permittedIncrease = verdict.policy && Number(verdict.policy.thresholds.maxUnitPriceChangePercent);
     const priceException = Number.isFinite(permittedIncrease) && maxIncrease > permittedIncrease;
     let finalOrder = order;
+    policyService.recordEvaluation(db, ctx.workspaceId, {
+      policyId: verdict.policy ? verdict.policy.id : null,
+      workItemId: item.id,
+      decision: verdict.decision,
+      reason: verdict.reason,
+      checks: verdict.checks,
+      policyVersion: verdict.policy ? verdict.policy.version : null,
+    });
+    workItems.recordAuthoritySnapshot(db, ctx.workspaceId, item.id, {
+      policyId: verdict.policy ? verdict.policy.id : null,
+      policyEvaluation: policySnapshot(verdict),
+      sourceEvidence: item.sourceEvidence,
+      triggerEventId: options.triggerEventId || null,
+    });
     if (verdict.decision === 'authorized' && !priceException) {
       finalOrder = poService.approve(db, ctx, membership, order.id, {
         expectedHash: order.integrityHash, markOrdered: true,
       });
     } else {
       workItems.upsert(db, ctx.workspaceId, {
+        triggerEventId: options.triggerEventId || item.triggerEventId || null,
         category: 'purchase_approval', source: priceException ? 'price_exception' : 'purchase_policy',
         purchaseOrderId: order.id,
         sourceEvidence: priceEvidence,
@@ -993,6 +1146,8 @@ function preparePurchase(db, ctx, membership, item) {
             ? `A known unit price rose ${maxIncrease}%, above the ${permittedIncrease}% policy limit.`
             : verdict.reason,
           checks: verdict.checks,
+          policyId: verdict.policy ? verdict.policy.id : null,
+          policyVersion: verdict.policy ? verdict.policy.version : null,
         },
         approvalRequirement: 'REQUIRED', executionStatus: workItems.STATUS.WAITING_FOR_APPROVAL,
         idempotencyKey: `purchase_approval:${order.id}`,
@@ -1004,7 +1159,10 @@ function preparePurchase(db, ctx, membership, item) {
       verificationStatus: 'VERIFIED',
       outcome: { poNumber: order.poNumber, subtotal: order.subtotal, lines: order.lines.length,
         autoApproved: finalOrder.status === poService.STATUS.ORDERED, value: order.subtotal,
-        policyId: verdict.policy ? verdict.policy.id : null, priceEvidence },
+        policyId: verdict.policy ? verdict.policy.id : null,
+        policyVersion: verdict.policy ? verdict.policy.version : null,
+        triggerEventId: options.triggerEventId || item.triggerEventId || null,
+        priceEvidence },
     });
 
     notify(db, ctx.workspaceId, {
@@ -1046,10 +1204,12 @@ function approveWorkItem(db, ctx, membership, workItemId) {
   if (item.executionStatus !== workItems.STATUS.WAITING_FOR_APPROVAL) {
     throw new ValidationError('That work is not waiting for approval.');
   }
-  return workItems.transition(db, ctx.workspaceId, workItemId, workItems.STATUS.AUTHORIZED, {
+  const approved = workItems.transition(db, ctx.workspaceId, workItemId, workItems.STATUS.AUTHORIZED, {
     approvedByUserId: ctx.actorId,
     approvedAt: nowIso(),
   });
+  require('../manager/operating-instructions').suggestFromRepeatedApproval(db, ctx, approved);
+  return approved;
 }
 
 function cancelWorkItem(db, ctx, membership, workItemId, reason) {
@@ -1112,31 +1272,37 @@ function recover(db, ctx, membership) {
  */
 function run(db, ctx, membership, options = {}) {
   const workspaceId = ctx.workspaceId;
-  const recovered = recover(db, ctx, membership);
-  const planned = planWork(db, ctx, membership, options);
+  const alreadyManaging = managerGuards.activeWorkspaces.has(workspaceId);
+  if (!alreadyManaging) managerGuards.activeWorkspaces.add(workspaceId);
+  try {
+    const recovered = recover(db, ctx, membership);
+    const planned = planWork(db, ctx, membership, options);
 
-  const executed = [];
-  const state = modes.get(db, workspaceId);
-  if (state.canAct) {
-    for (const item of workItems.list(db, workspaceId, { status: workItems.STATUS.AUTHORIZED, limit: 25 })) {
-      try {
-        executed.push(executeWorkItem(db, ctx, membership, item.id, options));
-      } catch (error) {
-        executed.push({ executed: false, error: error.message, workItemId: item.id });
+    const executed = [];
+    const state = modes.get(db, workspaceId);
+    if (state.canAct) {
+      for (const item of workItems.list(db, workspaceId, { status: workItems.STATUS.AUTHORIZED, limit: 25 })) {
+        try {
+          executed.push(executeWorkItem(db, ctx, membership, item.id, options));
+        } catch (error) {
+          executed.push({ executed: false, error: error.message, workItemId: item.id });
+        }
       }
     }
-  }
 
-  return {
-    recovered: recovered.length,
-    planId: planned.planId,
-    replayed: planned.replayed === true,
-    planned: (planned.created || []).length,
-    executed: executed.filter((entry) => entry.executed).length,
-    awaiting: workItems.awaitingApproval(db, workspaceId).length,
-    nothingToDo: planned.nothingToDo === true && executed.length === 0,
-    results: executed,
-  };
+    return {
+      recovered: recovered.length,
+      planId: planned.planId,
+      replayed: planned.replayed === true,
+      planned: (planned.created || []).length,
+      executed: executed.filter((entry) => entry.executed).length,
+      awaiting: workItems.awaitingApproval(db, workspaceId).length,
+      nothingToDo: planned.nothingToDo === true && executed.length === 0,
+      results: executed,
+    };
+  } finally {
+    if (!alreadyManaging) managerGuards.activeWorkspaces.delete(workspaceId);
+  }
 }
 
 module.exports = {

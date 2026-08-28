@@ -60,8 +60,14 @@ function step(key, detail, value) {
  * refusal rather than a preference: stock below it is not available to move,
  * even when another location is empty.
  */
-function reserveFloors(db, workspaceId) {
+function reserveFloors(db, workspaceId, skuId = null) {
   const floors = new Map();
+  if (skuId) {
+    for (const policy of policyService.locationPolicies(db, workspaceId, skuId)) {
+      const value = Number(policy.minimum) || 0;
+      if (value > 0) floors.set(policy.locationId, value);
+    }
+  }
   let active = [];
   try {
     active = autopilotPolicies.list(db, workspaceId, { activeOnly: true }) || [];
@@ -102,6 +108,8 @@ function locationNeeds(sku, target, floors) {
       locationId: loc.locationId,
       locationName: loc.locationName,
       onHand: loc.onHand,
+      committed: Number(loc.committed || 0),
+      available: Number.isFinite(Number(loc.available)) ? Number(loc.available) : loc.onHand,
       outboundInWindow: loc.outboundInWindow,
       dailyUse: round(dailyUse, 3),
       demandShare: totalOutbound > 0 ? round(loc.outboundInWindow / totalOutbound, 3) : 0,
@@ -123,7 +131,7 @@ function planTransfers(needs, unitLabel) {
   const spare = new Map();
   const donors = [];
   for (const loc of needs) {
-    const available = Math.max(0, loc.onHand - loc.need);
+    const available = Math.max(0, loc.available - loc.need);
     if (available <= 0) continue;
     spare.set(loc.locationId, available);
     donors.push({ ...loc, spare: available });
@@ -131,7 +139,7 @@ function planTransfers(needs, unitLabel) {
   donors.sort((a, b) => b.spare - a.spare);
 
   const short = needs
-    .map((loc) => ({ ...loc, deficit: Math.max(0, loc.need - loc.onHand) }))
+    .map((loc) => ({ ...loc, deficit: Math.max(0, loc.need - loc.available) }))
     .filter((loc) => loc.deficit > 0)
     .sort((a, b) => b.deficit - a.deficit);
 
@@ -158,8 +166,8 @@ function planTransfers(needs, unitLabel) {
         toLocationName: target.locationName,
         quantity,
         why:
-          `${target.locationName} needs ${target.need} and holds ${target.onHand}. ` +
-          `${donor.locationName} holds ${donor.onHand} against a need of ${donor.need}` +
+          `${target.locationName} needs ${target.need} and has ${target.available} available. ` +
+          `${donor.locationName} has ${donor.available} available against a need of ${donor.need}` +
           `${donor.reserveFloor ? ` (including a reserve of ${donor.reserveFloor})` : ''}, ` +
           `so ${donor.spare} ${unitLabel}(s) there are spare.`,
       });
@@ -212,7 +220,7 @@ function buildPlan(db, workspaceId, sku, options = {}) {
   const now = options.now || Date.now();
   const policy = options.policy || policyService.effectivePolicy(db, workspaceId, sku.skuId);
   const incoming = options.incoming || position.onOrderForSku(db, workspaceId, sku.skuId);
-  const floors = options.reserveFloors || reserveFloors(db, workspaceId);
+  const floors = options.reserveFloors || reserveFloors(db, workspaceId, sku.skuId);
   const unitLabel = sku.unitLabel || 'unit';
 
   // The purchasing engine already turns evidence and policy into a reorder
@@ -224,8 +232,10 @@ function buildPlan(db, workspaceId, sku, options = {}) {
 
   const steps = [];
   const onHandTotal = sku.measured.onHand;
+  const committed = Number(sku.measured.committed || 0);
+  const availableTotal = Number.isFinite(Number(sku.measured.available)) ? Number(sku.measured.available) : onHandTotal;
   const onOrder = incoming.onOrder;
-  const networkPosition = onHandTotal + onOrder;
+  const networkPosition = availableTotal + onOrder;
 
   steps.push(
     step(
@@ -265,6 +275,8 @@ function buildPlan(db, workspaceId, sku, options = {}) {
       headline: buy.headline,
       explanation: buy.explanation,
       onHandTotal,
+      committed,
+      availableTotal,
       onOrder,
       networkPosition,
       reorderPoint: null,
@@ -294,7 +306,9 @@ function buildPlan(db, workspaceId, sku, options = {}) {
   steps.push(
     step(
       'position',
-      `Position across every location is ${onHandTotal} on hand + ${onOrder} on order = ${networkPosition}.`,
+      committed > 0
+        ? `Available position is ${onHandTotal} on hand − ${committed} committed + ${onOrder} on order = ${networkPosition}.`
+        : `Position across every location is ${onHandTotal} on hand + ${onOrder} on order = ${networkPosition}.`,
       networkPosition
     )
   );
@@ -444,6 +458,8 @@ function buildPlan(db, workspaceId, sku, options = {}) {
     headline,
     explanation,
     onHandTotal,
+    committed,
+    availableTotal,
     onOrder,
     networkPosition,
     reorderPoint,
@@ -638,11 +654,16 @@ function recommendationFor(plan) {
  * the plan, and "the plan said nothing is needed" is still the plan speaking.
  */
 function planWorkspace(db, workspaceId, signals, options = {}) {
-  const floors = reserveFloors(db, workspaceId);
   const plans = [];
   for (const sku of signals.skus) {
     if (!sku.isActive) continue;
-    plans.push(buildPlan(db, workspaceId, sku, { ...options, reserveFloors: floors }));
+    // Location minimums may be specific to this exact variant. Reusing one
+    // workspace-level map here silently discarded those rules during Check
+    // now, even though the single-line planner honoured them.
+    plans.push(buildPlan(db, workspaceId, sku, {
+      ...options,
+      reserveFloors: reserveFloors(db, workspaceId, sku.skuId),
+    }));
   }
   // Only lines whose reorder point the customer actually configured.
   //

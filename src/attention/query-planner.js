@@ -46,6 +46,8 @@ You choose one intent and fill in its parameters. You do not answer the question
 — Foundry queries its own records and answers from what it finds.
 
 Intents:
+- inventory_summary: how many active products, tracked variants, units and
+  locations the inventory contains, or a general inventory overview.
 - stock_level: how much of something there is, in total.
 - stock_by_location: where something is held, broken down by place.
 - movement_history: what happened to something recently.
@@ -64,6 +66,17 @@ Intents:
 - late_orders: purchase orders past their expected arrival date.
 - last_cost: what they last paid for something.
 - suppliers_for_item: who sells something, or which supplier to use for it.
+- selling_price: the current customer selling price of a product or variant.
+- sales_summary: how many customer sales orders are open, committed,
+  backordered/waiting for stock or fulfilled.
+- connection_summary: which external connections are connected, disconnected,
+  stale, or need attention.
+- connection_last_event: the last activity or event received from a named
+  external connection. Put the connection name in entityQuery.
+- connection_mapping_issues: products or locations from a named connection that
+  still need a Foundry mapping. Put the provider or connection in entityQuery.
+- connection_diagnostics: why a named connection's activity is missing or not
+  showing. Put the provider or connection in entityQuery.
 - foundry_activity: what Foundry itself has been doing — "what did you do",
   "what have you handled today", "what did you get done", "what did you
   create from that invoice", or "what did setup create".
@@ -90,8 +103,7 @@ Rules:
   about buying, incoming stock, lead times, what something cost and who sells
   it all have real answers. Use the purchasing intents for those.
 - Choose 'unsupported' only for things Foundry genuinely cannot do at all:
-  selling prices, profit, invoices, payments, accounting, customer orders,
-  forecasting beyond current usage, or contacting a supplier or customer by any
+  profit, payments, accounting, forecasting beyond current usage, or contacting a supplier or customer by any
   means — Foundry drafts purchase orders but never sends or chases them. Put one plain sentence in
   unsupportedReason saying what it cannot do.
 - unsupportedReason must be '' for every other intent.`;
@@ -107,6 +119,26 @@ Question: ${question}`;
 /** Turns a question into a validated plan. Never returns unbounded free text. */
 async function plan(question, options = {}) {
   const clean = requireText(question, 'Question', { max: MAX_QUESTION });
+  if (/\b(?:how many|number of|count of|total)\s+(?:active\s+)?(?:items?|products?|skus?|variants?)\b.*\b(?:inventory|catalog(?:ue)?)\b/i.test(clean)
+      || /\b(?:inventory|catalog(?:ue)?)\s+(?:summary|overview)\b/i.test(clean)
+      || /\bwhat(?:'s| is)\s+in\s+(?:my|our|the)\s+inventory\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'inventory_summary' });
+  }
+  if (/\b(?:what|which)\s+connections?\b.*\b(?:attention|connected|status|problem)|\bconnections?\s+(?:need|needs|status)/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'connection_summary' });
+  }
+  if (/\b(?:last|latest|most recent)\s+(?:event|activity)\b.*\b(?:connection|pos|feed|email)|\bwhat\s+was\s+the\s+last\s+event\b/i.test(clean)) {
+    const entityQuery = clean.replace(/\b(?:what|was|the|last|latest|most|recent|event|activity|received|from|connection)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    return queryService.normalisePlan({ intent: 'connection_last_event', entityQuery });
+  }
+  if (/\b(?:which|what)\b.*\b(?:products?|skus?|locations?)\b.*\b(?:unmapped|not\s+mapped|need(?:s|ing)?\s+(?:a\s+)?match)|\b(?:unmapped|mapping\s+issues?)\b/i.test(clean)) {
+    const entityQuery = clean.replace(/\b(?:which|what|products?|skus?|locations?|are|is|aren'?t|isn'?t|not|unmapped|mapped|mapping|issues?|need|needs|a|match)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    return queryService.normalisePlan({ intent: 'connection_mapping_issues', entityQuery });
+  }
+  if (/\bwhy\b.*\b(?:shopify|square|woocommerce|pos|sales?|orders?|connection|events?)\b.*\b(?:not|didn'?t|aren'?t|missing|show(?:ing)?|arriv(?:e|ing))\b/i.test(clean)) {
+    const entityQuery = clean.replace(/\b(?:why|are|is|did|do|does|aren'?t|isn'?t|didn'?t|doesn'?t|not|today'?s?|sales?|orders?|events?|show|showing|arrive|arriving|missing|from|the|my)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    return queryService.normalisePlan({ intent: 'connection_diagnostics', entityQuery });
+  }
   if (!options.provider && !config.ai.configured) {
     throw new ValidationError('Ask Foundry needs an AI provider configured before it can read questions.');
   }

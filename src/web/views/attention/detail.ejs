@@ -1,3 +1,8 @@
+<% const livePlan = locals.plan; %>
+<% const preparedOnly = Boolean(livePlan && livePlan.prepared && livePlan.prepared.orders.length && !livePlan.purchase && livePlan.transfers.length === 0); %>
+<% const preparedOrder = preparedOnly ? livePlan.prepared.orders[0] : null; %>
+<% const preparedNumbers = preparedOnly ? livePlan.prepared.orders.map(function(order) { return order.poNumber; }).join(', ') : ''; %>
+
 <div class="page-head">
   <div class="titles">
     <a class="back-link" href="/attention"><%- helpers.icon('chevron', { size: 14 }) %> Needs attention</a>
@@ -5,14 +10,14 @@
     <div class="page-sub"><%= item.conciseSummary %></div>
   </div>
   <div class="page-actions">
-    <% if (item.status === 'OPEN') { %>
+    <% if (!preparedOnly && item.status === 'OPEN') { %>
       <form method="post" action="/attention/<%= item.attentionId %>/acknowledge">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="returnTo" value="/attention/<%= item.attentionId %>">
         <button class="btn btn--primary" type="submit">I'm on it</button>
       </form>
     <% } %>
-    <% if (item.status === 'OPEN' || item.status === 'ACKNOWLEDGED') { %>
+    <% if (!preparedOnly && (item.status === 'OPEN' || item.status === 'ACKNOWLEDGED')) { %>
       <form class="dismiss-form" method="post" action="/attention/<%= item.attentionId %>/dismiss">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="returnTo" value="/attention/<%= item.attentionId %>">
@@ -29,8 +34,13 @@
 </div>
 
 <div class="badge-row">
-  <span class="badge badge--<%= item.severityTone %>"><%= item.severityLabel %></span>
-  <span class="badge badge--muted"><%= item.categoryLabel %></span>
+  <% if (preparedOnly) { %>
+    <span class="badge badge--warn">Needs approval</span>
+    <span class="badge badge--muted">Draft purchase order</span>
+  <% } else { %>
+    <span class="badge badge--<%= item.severityTone %>"><%= item.severityLabel %></span>
+    <span class="badge badge--muted"><%= item.categoryLabel %></span>
+  <% } %>
   <% item.relatedLabels.forEach(function (label) { %>
     <span class="badge badge--muted">also <%= label.toLowerCase() %></span>
   <% }) %>
@@ -39,8 +49,35 @@
   <% if (item.status === 'DISMISSED') { %><span class="badge badge--muted">Hidden until <%= helpers.shortDate(item.dismissedUntil) %></span><% } %>
 </div>
 
-<div class="grid grid--sidebar section">
+<div class="grid <%= preparedOnly ? '' : 'grid--sidebar' %> section">
   <div class="grid">
+    <% if (preparedOnly) { %>
+      <div class="card">
+        <div class="card-head">
+          <h2><%= livePlan.prepared.units %> <%= livePlan.unitLabel %>(s) are ready to order</h2>
+          <span class="spacer"></span><span class="badge badge--warn">Draft</span>
+        </div>
+        <div class="card-body">
+          <p class="lede">
+            Foundry prepared <strong><%= preparedNumbers %></strong> for the <%= livePlan.prepared.units %>
+            <%= livePlan.unitLabel %>(s) needed. It is only a draft: the supplier has not received it,
+            and these units are not on order yet.
+          </p>
+          <table class="table table--tight" style="margin:16px 0;">
+            <tbody>
+              <tr><td>On hand now</td><td class="right num"><strong><%= livePlan.onHandTotal %></strong></td></tr>
+              <tr><td>Prepared in <%= preparedNumbers %></td><td class="right num"><strong><%= livePlan.prepared.units %></strong></td></tr>
+              <tr><td>On order now</td><td class="right num"><strong><%= livePlan.onOrder %></strong></td></tr>
+              <tr><td>On hand after the full order arrives</td><td class="right num"><strong><%= livePlan.onHandTotal + livePlan.prepared.units %></strong></td></tr>
+            </tbody>
+          </table>
+          <a class="btn btn--primary" href="/purchasing/orders/<%= preparedOrder.poId %>">Review and place <%= preparedOrder.poNumber %></a>
+          <p class="muted" style="font-size:12px; margin-top:8px;">
+            On the next page, choose <strong>Approve and mark as ordered</strong>. Nothing is sent or counted as incoming before you approve it.
+          </p>
+        </div>
+      </div>
+    <% } else { %>
     <div class="card">
       <div class="card-head"><h2>What Foundry found</h2></div>
       <div class="card-body">
@@ -49,7 +86,7 @@
         <%# The whole replenishment answer, in the order it was worked out. It is
             rendered here rather than summarised because approving a plan you
             cannot check is not approval. %>
-        <% const plan = locals.plan; %>
+        <% const plan = livePlan; %>
         <% if (plan) { %>
           <div class="rep-plan">
             <div class="rep-plan-head">
@@ -134,8 +171,10 @@
             <% if (plan.after) { %>
               <p class="rep-plan-after">
                 Afterwards: <strong><%= plan.after.onHandAfterMoves %></strong> on hand across every location<%
-                  %><% if (plan.purchase) { %>, rising to <strong><%= plan.after.onHandAfterDelivery %></strong>
-                  when the order arrives — the order-up-to level of <%= plan.target %><% } %>.
+                  %><% if (plan.purchase && plan.after.onHandAfterDelivery === plan.target) { %>, reaching the
+                  order-up-to level of <strong><%= plan.target %></strong> when the order arrives<% } else if (plan.purchase) { %>.
+                  The order-up-to target is <strong><%= plan.target %></strong>; whole <%= plan.purchase.purchaseUnit %> quantities
+                  mean the projected on-hand quantity after arrival is <strong><%= plan.after.onHandAfterDelivery %></strong><% } %>.
               </p>
             <% } %>
           </div>
@@ -177,6 +216,12 @@
               <p class="muted" style="font-size:12px; margin-top:8px;">
                 It opens as a draft order you approve. Nothing is ordered until you say so.
               </p>
+            <% } else if (item.category === 'stock_protection_boundary' && item.subjects && item.subjects.length) { %>
+              <a class="btn btn--primary btn--sm" href="<%= item.subjects[0].href %>">Review stock and ordering</a>
+              <p class="muted" style="font-size:12px; margin-top:8px;">
+                This opens the exact product and its current stock. From there you can record a receipt,
+                set replenishment, or change the protection rule in Settings.
+              </p>
             <% } else { %>
               <%# True as written: the one thing Foundry does unattended is balancing
                   its own locations under an approved policy, and that is never this
@@ -197,13 +242,21 @@
         <% } %>
       </div>
     </div>
+    <% } %>
 
-    <div class="card">
-      <div class="card-head">
+    <% if (preparedOnly) { %>
+      <details class="card advanced-settings">
+        <summary class="card-head">
+          <div><h2>Calculation and evidence</h2><p class="muted">Why Foundry prepared this quantity.</p></div>
+        </summary>
+    <% } else { %>
+      <div class="card">
+        <div class="card-head">
         <h2>The evidence</h2>
         <span class="spacer"></span>
         <span class="muted" style="font-size:12px;">Straight from your movement history</span>
-      </div>
+        </div>
+    <% } %>
       <div class="table-wrap">
         <table class="table">
           <tbody>
@@ -238,7 +291,7 @@
           These are calculated from the measured figures above, not counted. <%= item.confidenceNote %>
         </div>
       <% } %>
-    </div>
+    <% if (preparedOnly) { %></details><% } else { %></div><% } %>
 
     <% if (item.movements.length) { %>
       <div class="card">
@@ -268,6 +321,7 @@
     <% } %>
   </div>
 
+  <% if (!preparedOnly) { %>
   <div class="grid">
     <div class="card">
       <div class="card-head"><h2>Was this useful?</h2></div>
@@ -338,4 +392,5 @@
       </div>
     <% } %>
   </div>
+  <% } %>
 </div>

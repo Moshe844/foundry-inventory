@@ -62,13 +62,13 @@
 <% if (findings.length) { %>
   <div class="item-attention">
     <% findings.forEach(function (finding) { %>
-      <a class="item-attention-row item-attention-row--<%= finding.severityTone %>" href="/attention/<%= finding.attentionId %>">
+      <a class="item-attention-row item-attention-row--<%= finding.severityTone %>" href="<%= finding.actionHref || '/attention/' + finding.attentionId %>">
         <span class="badge badge--<%= finding.severityTone %>"><%= finding.categoryLabel %></span>
         <span class="item-attention-text">
           <strong><%= finding.title %></strong>
           <span><%= finding.conciseSummary %></span>
         </span>
-        <span class="item-attention-go">Why this? <%- helpers.icon('chevron', { size: 13 }) %></span>
+        <span class="item-attention-go"><%= finding.actionLabel || 'Why this?' %> <%- helpers.icon('chevron', { size: 13 }) %></span>
       </a>
     <% }) %>
   </div>
@@ -78,6 +78,18 @@
   <div class="item-total">
     <span class="value num"><%= helpers.qty(total) %></span>
     <span class="label"><%= helpers.plural(total, item.unit_label) %> on hand</span>
+  </div>
+  <div class="item-total">
+    <span class="availability-value num"><%= helpers.qty(committed || 0) %></span>
+    <span class="label">committed to customer orders</span>
+  </div>
+  <div class="item-total">
+    <span class="availability-value num"><%= helpers.qty(available) %></span>
+    <span class="label"><%= helpers.plural(available, item.unit_label) %> available</span>
+  </div>
+  <div class="item-total">
+    <span class="availability-value num"><%= helpers.qty(onOrder || 0) %></span>
+    <span class="label">on order from suppliers</span>
   </div>
   <% if (canAct) { %>
     <%# Receive, Issue, Transfer and Adjust are warehouse words. A shop owner
@@ -121,9 +133,22 @@
           <button class="btn btn--ghost btn--sm" type="button" data-modal-open="modal-variant"><%- helpers.icon('plus', { size: 14 }) %> Add</button>
         </div>
         <div class="table-wrap">
-          <table class="table table--stack">
+          <table class="table table--stack inventory-variant-table">
             <thead>
-              <tr><th>Variant</th><th>Code</th><th>Where</th><th class="right">On hand</th></tr>
+              <tr>
+                <th>Variant</th>
+                <th>Variant/SKU code</th>
+                <th>Where</th>
+                <th class="stock-metrics-heading">
+                  <span class="stock-metrics-grid">
+                    <span>On hand</span>
+                    <span>Committed</span>
+                    <span>Available</span>
+                    <span>On order</span>
+                    <span class="visually-hidden">Actions</span>
+                  </span>
+                </th>
+              </tr>
             </thead>
             <tbody>
               <% skus.forEach(function (sku) { %>
@@ -141,16 +166,35 @@
                       <% }) %>
                     <% } %>
                   </td>
-                  <td class="right cell-end" data-label="On hand">
-                    <strong class="num"><%= helpers.qty(sku.total) %></strong>
+                  <td class="cell-end stock-metrics-cell">
+                    <span class="stock-metrics-grid">
+                      <span class="stock-metric"><span class="stock-metric-label">On hand</span><strong class="num"><%= helpers.qty(sku.total) %></strong></span>
+                      <span class="stock-metric"><span class="stock-metric-label">Committed</span><span class="num"><%= helpers.qty(sku.committed || 0) %></span></span>
+                      <span class="stock-metric"><span class="stock-metric-label">Available</span><span class="num"><%= helpers.qty(sku.available) %></span></span>
+                      <span class="stock-metric"><span class="stock-metric-label">On order</span><span class="num"><%= helpers.qty(sku.onOrder || 0) %></span></span>
                     <% if (canAct) { %>
                       <button class="btn btn--ghost btn--sm" type="button" data-modal-open="modal-receive" data-preset-sku="<%= sku.id %>" title="Receive this variant"><%- helpers.icon('plus', { size: 14 }) %></button>
                     <% } %>
+                    </span>
                   </td>
                 </tr>
               <% }) %>
             </tbody>
           </table>
+        </div>
+      </div>
+    <% } %>
+
+    <% if ((commitments || []).length) { %>
+      <div class="card">
+        <div class="card-head"><h2>Committed to customer orders</h2></div>
+        <div class="list-rows">
+          <% commitments.forEach(function (entry) { %>
+            <a class="list-row" href="/sales/orders/<%= entry.sales_order_id %>">
+              <span><strong><%= entry.order_number %> · <%= entry.customer_name %></strong><small><%= entry.displayName %> · <%= entry.location_name %></small></span>
+              <strong><%= entry.quantity %></strong>
+            </a>
+          <% }) %>
         </div>
       </div>
     <% } %>
@@ -292,6 +336,18 @@
   </div>
 
   <div class="grid">
+    <div class="card item-reorder">
+      <div class="card-head"><div><span class="item-reorder__kicker">Sales</span><h2>Pricing</h2></div></div>
+      <div class="item-reorder__lines">
+        <% skus.forEach(function (sku) { %><a class="item-reorder__line" href="/pricing/new?skuId=<%= sku.id %>">
+          <div class="item-reorder__name"><strong><%= sku.variant_label || item.name %></strong><span><%= sku.purchaseCost ? 'Last supplier cost ' + sku.purchaseCost.formatted : 'No supplier cost recorded' %></span></div>
+          <span class="item-reorder__policy"><small>Selling price</small><strong><%= sku.sellingPrice.formatted %></strong></span>
+          <span class="item-reorder__go"><%= sku.sellingPrice.isSet ? 'Change' : 'Set price' %> <%- helpers.icon('chevron', { size: 14 }) %></span>
+        </a><% }) %>
+      </div>
+      <div class="card-foot">Selling price is charged to customers. Supplier cost is kept separately for purchasing and margin reporting.</div>
+    </div>
+
     <div class="card item-reorder" id="reorder-settings">
       <div class="card-head">
         <div>

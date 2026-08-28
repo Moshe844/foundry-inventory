@@ -12,12 +12,45 @@ const attention = require('../../attention/attention-engine');
 const presenter = require('../../attention/presenter');
 const purchasingPolicy = require('../../purchasing/policy-service');
 const supplierService = require('../../purchasing/supplier-service');
+const replenishmentPlan = require('../../purchasing/replenishment-plan');
+const signalEngine = require('../../signals/signal-engine');
 const permissions = require('../../actions/permissions');
+const salesOrders = require('../../sales/sales-order-service');
+const purchasingPosition = require('../../purchasing/position');
+const prices = require('../../pricing/price-service');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { toArray, trimOrNull } = require('../../lib/util');
 
 const router = express.Router();
 router.use('/inventory', requireAuth);
+
+function currentReplenishmentPlan(db, workspaceId, finding) {
+  if (finding.category !== 'replenishment_needed' && !finding.relatedCategories.includes('replenishment_needed')) return null;
+  const skuId = (finding.affectedEntityIds || [])[0];
+  if (!skuId) return null;
+  try {
+    const sku = signalEngine.skuSignals(db, workspaceId, { skuIds: [skuId] })[0];
+    return sku ? replenishmentPlan.buildPlan(db, workspaceId, sku) : null;
+  } catch {
+    return null;
+  }
+}
+
+function presentItemFindings(db, workspaceId, findings) {
+  return presenter.presentAll(db, workspaceId, findings).map((shown, index) => {
+    const plan = currentReplenishmentPlan(db, workspaceId, findings[index]);
+    if (!plan?.prepared?.orders?.length || plan.purchase || plan.transfers.length) return shown;
+    const order = plan.prepared.orders[0];
+    const numbers = plan.prepared.orders.map((entry) => entry.poNumber).join(', ');
+    return {
+      ...shown,
+      title: `${plan.displayName}: ${plan.prepared.units} ${plan.unitLabel}(s) ready to order`,
+      conciseSummary: `${plan.onHandTotal} on hand. ${numbers} is still a draft; nothing has been ordered yet.`,
+      actionHref: `/purchasing/orders/${order.poId}`,
+      actionLabel: plan.prepared.orders.length === 1 ? `Review ${order.poNumber}` : 'Review orders',
+    };
+  });
+}
 
 /**
  * The console authorises exactly like everything else.
@@ -158,6 +191,24 @@ router.get(
   '/inventory/:id',
   asyncRoute(async (req, res) => {
     const detail = itemService.getItemDetail(req.db, req.ctx.workspaceId, req.params.id);
+    const commitments = [];
+    for (const sku of detail.skus) {
+      const position = salesOrders.availabilityForSku(req.db, req.ctx.workspaceId, sku.id);
+      sku.committed = position.committed;
+      sku.available = position.available;
+      sku.onOrder = purchasingPosition.onOrderForSku(req.db, req.ctx.workspaceId, sku.id).onOrder;
+      sku.sellingPrice = prices.currentForSku(req.db, req.ctx.workspaceId, sku.id);
+      sku.purchaseCost = prices.purchaseCostForSku(req.db, req.ctx.workspaceId, sku.id);
+      const byLocation = new Map(position.positions.map((row) => [row.location_id, row]));
+      sku.perLocation = sku.perLocation.map((row) => ({ ...row,
+        committed: byLocation.get(row.locationId)?.committed || 0,
+        available: byLocation.get(row.locationId)?.available ?? row.onHand }));
+      commitments.push(...salesOrders.commitmentsForSku(req.db, req.ctx.workspaceId, sku.id)
+        .map((entry) => ({ ...entry, skuId: sku.id, displayName: sku.variant_label || detail.item.name })));
+    }
+    detail.committed = detail.skus.reduce((sum, sku) => sum + sku.committed, 0);
+    detail.available = detail.total - detail.committed;
+    detail.onOrder = detail.skus.reduce((sum, sku) => sum + Number(sku.onOrder || 0), 0);
     // What Foundry has noticed about this record, on the record itself.
     const findings = attention.listAttentionForItem(req.db, req.ctx.workspaceId, req.params.id);
     const purchasingLines = detail.skus.map((sku) => ({
@@ -171,8 +222,9 @@ router.get(
       title: detail.item.name,
       nav: 'inventory',
       ...detail,
-      attention: presenter.presentAll(req.db, req.ctx.workspaceId, findings),
+      attention: presentItemFindings(req.db, req.ctx.workspaceId, findings),
       purchasingLines,
+      commitments,
     });
   })
 );

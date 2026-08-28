@@ -15,6 +15,7 @@ const parser = require('../../src/imports/parser');
 const xlsxReader = require('../../src/imports/xlsx-reader');
 const catalog = require('../../src/imports/catalog-service');
 const proposals = require('../../src/actions/proposal-service');
+const actionService = require('../../src/actions/action-service');
 const execution = require('../../src/actions/execution-service');
 const presenter = require('../../src/actions/presenter');
 const permissions = require('../../src/actions/permissions');
@@ -261,6 +262,121 @@ test('creating a product needs approval, and nothing exists before it', () => {
     skus.map((s) => s.variant_label).filter((l) => l.startsWith('Navy')),
     ['Navy / 6', 'Navy / 7', 'Navy / 8', 'Navy / 9', 'Navy / 10', 'Navy / 11', 'Navy / 12']
   );
+});
+
+test('adding a received product preserves its stated variant, quantity and location as one atomic action', () => {
+  const env = setup();
+  const proposal = createProposal(env, {
+    productName: 'white_socks',
+    productCode: 'AE_345',
+    variantAxes: 'Size: 6',
+    quantity: 35,
+    destinationLocation: 'Main Warehouse',
+  });
+
+  assert.equal(proposal.quantity, 35);
+  assert.equal(proposal.destinationLocationId, env.workspace.main.id);
+  assert.equal(proposal.settings.initialStock.quantity, 35);
+  assert.equal(proposal.safetyLevel, 'MUTATION');
+  assert.equal(
+    env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(env.workspace.workspaceId).n,
+    0,
+    'preview changes nothing'
+  );
+
+  const view = presenter.present(env.db, env.workspace.workspaceId, proposal);
+  assert.equal(view.title, 'Foundry is ready to add a product and receive its stock');
+  assert.match(view.subjectName, /white_socks \/ Size: 6 · AE_345/);
+  assert.deepEqual(view.rows.map((row) => [row.label, row.before, row.after]), [['Main Warehouse', 0, 35]]);
+  assert.deepEqual(view.total, { before: 0, after: 35 });
+  assert.match(view.oneLine, /receive 35 at Main Warehouse/);
+
+  execution.approve(env.db, env.ctx, env.membership, proposal.proposalId);
+  const result = execution.execute(env.db, env.ctx, env.membership, proposal.proposalId);
+  assert.equal(result.verified, true, JSON.stringify(result.verification.problems));
+
+  const item = env.db
+    .prepare('SELECT id FROM items WHERE workspace_id = ? AND base_code = ?')
+    .get(env.workspace.workspaceId, 'AE_345');
+  assert.ok(item);
+  const [sku] = repo.listSkusForItem(env.db, env.workspace.workspaceId, item.id);
+  assert.equal(sku.variant_label, '6');
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, sku.id, env.workspace.main.id), 35);
+  assert.equal(repo.getSkuTotal(env.db, env.workspace.workspaceId, sku.id), 35);
+  assert.equal(
+    env.db.prepare("SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ? AND operation = 'receive'")
+      .get(env.workspace.workspaceId).n,
+    1,
+    'the opening receipt is in the same immutable ledger as every other receipt'
+  );
+});
+
+test('a received new product asks for the actual location instead of dropping its quantity', () => {
+  const env = setup();
+  const built = proposals.build(env.db, env.ctx, {
+    actionType: 'create_item',
+    serials: [],
+    productName: 'white_socks',
+    productCode: 'AE_345',
+    variantAxes: 'Size: 6',
+    quantity: 35,
+    destinationLocation: '',
+  });
+
+  assert.equal(built.ok, false);
+  assert.match(built.question, /Where should the 35 white_socks \/ 6 be received/);
+  assert.deepEqual(built.choices.map((choice) => choice.value), ['Downtown Store', 'Main Warehouse']);
+  assert.equal(
+    env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(env.workspace.workspaceId).n,
+    0
+  );
+});
+
+test('answering the receiving-location question resumes the same create request with its quantity intact', async () => {
+  const env = setup();
+  const parsedIntent = {
+    lines: [{
+      actionType: 'create_item',
+      item: '', variant: '', sourceText: 'new white_socks size 6, quantity 35',
+      lotCode: '', serials: [], sourceLocation: '', destinationLocation: '',
+      quantity: 35, adjustmentTarget: -1, reasonCode: '',
+      productName: 'white_socks', productCode: 'AE_345', variantAxes: 'Size: 6', unitLabel: '',
+    }],
+    clarifyingQuestion: '',
+    unsupportedReason: '',
+  };
+  const original = "I received a new item called white_socks size 6, quantity 35, code AE_345";
+  const question = await actionService.interpret(
+    env.db, env.ctx, env.membership, original, { parsedIntent }
+  );
+  assert.equal(question.kind, 'question');
+  assert.equal(question.continuation.kind, 'create_item_receiving_location');
+
+  const resumed = await actionService.continueInterpretation(
+    env.db, env.ctx, env.membership, question.continuation, 'Main Warehouse'
+  );
+  assert.equal(resumed.kind, 'proposal');
+  assert.equal(resumed.proposal.quantity, 35);
+  assert.equal(resumed.proposal.destinationLocationId, env.workspace.main.id);
+  assert.equal(resumed.proposal.settings.axes[0].values[0], '6');
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 0, 'answering only prepares the same action');
+});
+
+test('initial stock is never guessed across several new variants', () => {
+  const env = setup();
+  const built = proposals.build(env.db, env.ctx, {
+    actionType: 'create_item',
+    serials: [],
+    productName: 'Crew Socks',
+    productCode: 'SOCK',
+    variantAxes: 'Size: 6, 7',
+    quantity: 35,
+    destinationLocation: 'Main Warehouse',
+  });
+
+  assert.equal(built.ok, false);
+  assert.match(built.question, /Which variant should receive the 35/);
 });
 
 test('a retried creation does not create the product twice', () => {

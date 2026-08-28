@@ -11,16 +11,37 @@
   var docValue = docLines.reduce(function (sum, line) { return sum + (line.unitCost == null ? 0 : line.quantity * line.unitCost); }, 0);
   var docStyles = new Set(docLines.map(function (line) { return [line.styleName, line.color].filter(Boolean).join(' / ').toLowerCase(); })).size;
   var docCodeLabel = setupDocument ? setupDocument.supplierCodeLabel : 'Supplier code';
+  var addingToExisting = Boolean(doc && alreadyConfigured);
 %>
 
 <div class="foundry-hero foundry-hero--tight">
   <span class="foundry-mark"><%- helpers.icon('foundry', { size: 22 }) %></span>
-  <h1>Here's how I'd organize your inventory</h1>
+  <h1><%= addingToExisting ? "Here's what Foundry read from your file" : "Here's how I'd organize your inventory" %></h1>
   <p class="foundry-quote">“<%= u.businessDescription %>”</p>
 </div>
 
 <form method="post" action="/foundry/proposal/<%= understandingId %>/configure">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+  <% if (doc && scopeWarning && scopeWarning.needsConfirmation && !setupDocument.scopeConfirmedAt) { %>
+    <dialog class="modal scope-warning" open data-scope-warning aria-labelledby="scope-warning-title">
+      <div class="modal-head"><h2 id="scope-warning-title">This file looks different from <%= scopeWarning.workspaceName %></h2></div>
+      <div class="modal-body">
+        <p><%= scopeWarning.message %></p>
+        <div class="scope-warning__compare">
+          <div><span>Already here</span><strong><%= scopeWarning.currentExamples.join(', ') %></strong></div>
+          <div><span>In this file</span><strong><%= scopeWarning.incomingExamples.join(', ') %></strong></div>
+        </div>
+        <p class="muted">Foundry has read the file, but nothing has been added. Continue only if these records belong in the inventory currently open.</p>
+      </div>
+      <div class="modal-foot">
+        <a class="btn" href="/">Cancel</a>
+        <button class="btn btn--primary" type="submit" name="scopeDecision" value="confirm" formnovalidate>Continue with <%= scopeWarning.workspaceName %></button>
+      </div>
+    </dialog>
+  <% } else if (doc && scopeWarning && scopeWarning.needsConfirmation && setupDocument.scopeConfirmedAt) { %>
+    <div class="notice notice--warn section"><%- helpers.icon('alert', { size: 16 }) %><span>You confirmed that this file belongs in <strong><%= scopeWarning.workspaceName %></strong>. Nothing changes until you approve the exact records below.</span></div>
+  <% } %>
 
   <% if (doc) { %>
     <section class="card section setup-document-preview">
@@ -243,7 +264,7 @@
     <div>
       <strong>Ready when you are.</strong>
       <% if (doc) { %>
-        <span class="muted">This approval creates the shown structure and records <%= docUnits %> <%= docUnitText %> from <%= setupDocument.sourceName %> as received inventory.</span>
+        <span class="muted"><%= addingToExisting ? 'This approval adds the shown products and supplier records, then records ' : 'This approval creates the shown structure and records ' %><%= docUnits %> <%= docUnitText %> from <%= setupDocument.sourceName %> as received inventory.</span>
       <% } else { %>
       <span class="muted">Foundry sets up structure only — no products, stock or serial numbers are invented.</span>
       <% } %>
@@ -251,7 +272,7 @@
     <div class="btn-row">
       <a class="btn" href="/foundry">Start over</a>
       <% if (currentUser.role === 'owner') { %>
-        <button class="btn btn--primary btn--lg" type="submit"><%= doc ? 'Configure and add ' + docUnits + ' ' + docUnitText : 'Configure my inventory' %></button>
+        <button class="btn btn--primary btn--lg" type="submit"><%= doc ? (addingToExisting ? 'Add ' : 'Configure and add ') + docUnits + ' ' + docUnitText : 'Configure my inventory' %></button>
       <% } else { %>
         <span class="muted">Only an owner can apply this.</span>
       <% } %>

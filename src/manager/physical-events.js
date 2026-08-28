@@ -6,6 +6,8 @@ const investigations = require('./investigations');
 const { createProviderForTier } = require('../ai/provider');
 const { validate } = require('../foundry/validator');
 const { toWireSchema } = require('../foundry/schema-tools');
+const managerEvents = require('./events');
+const reactions = require('./reactions');
 
 function record(db, ctx, input) {
   const statedAs = requireText(input.statedAs, 'What happened', { max: 1200 });
@@ -50,6 +52,15 @@ function record(db, ctx, input) {
     input.attachmentName || null, input.attachmentMime || null, input.attachmentBuffer || null,
     JSON.stringify(matched), status === 'ROUTED' ? 'high' : 'low',
     status, investigationId, now, now);
+  if (type === 'physical_count' && input.skuId && input.locationId) {
+    reactions.publishAndReact(db, ctx.workspaceId, managerEvents.TYPES.COUNT_REPORTED, {
+      physicalEventId: id,
+      investigationId,
+      skuId: input.skuId,
+      locationId: input.locationId,
+      countedQuantity: input.countedQuantity,
+    }, { sourceRecordType: 'physical_event', sourceRecordId: id });
+  }
   return get(db, ctx.workspaceId, id);
 }
 

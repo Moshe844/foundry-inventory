@@ -1,4 +1,4 @@
-<div class="ledger">
+<div class="<%= typeof ledgerClass !== 'undefined' ? ledgerClass : 'ledger' %>">
   <% groups.forEach(function (entry) { %>
     <%
       var pieces = entry.sentence.split(entry.displayName);

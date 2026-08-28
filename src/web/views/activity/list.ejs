@@ -31,6 +31,21 @@
          placeholder="Search this activity" aria-label="Search activity">
 </form>
 
+<form class="filters" method="get" action="/activity">
+  <input type="hidden" name="stream" value="<%= stream %>">
+  <select class="select" name="operation" aria-label="Operation" data-auto-submit>
+    <option value="">All operations</option>
+    <% helpers.OPERATIONS.forEach(function (operation) { %><option value="<%= operation.id %>" <%= filters.operation === operation.id ? 'selected' : '' %>><%= operation.label %></option><% }) %>
+  </select>
+  <select class="select" name="item" aria-label="Item" data-auto-submit><option value="">All items</option><% items.forEach(function (row) { %><option value="<%= row.id %>" <%= filters.itemId === row.id ? 'selected' : '' %>><%= row.name %></option><% }) %></select>
+  <select class="select" name="location" aria-label="Location" data-auto-submit><option value="">All locations</option><% locations.forEach(function (location) { %><option value="<%= location.id %>" <%= filters.locationId === location.id ? 'selected' : '' %>><%= location.name %></option><% }) %></select>
+  <select class="select" name="user" aria-label="Person" data-auto-submit><option value="">Anyone</option><% users.forEach(function (user) { %><option value="<%= user.id %>" <%= filters.actorId === user.id ? 'selected' : '' %>><%= user.name %></option><% }) %></select>
+  <input class="input" type="date" name="from" value="<%= filters.dateFrom %>" aria-label="From date">
+  <input class="input" type="date" name="to" value="<%= filters.dateTo %>" aria-label="To date">
+  <button class="btn btn--sm" type="submit">Apply</button>
+  <% if (filters.operation || filters.itemId || filters.locationId || filters.actorId || filters.dateFrom || filters.dateTo) { %><a class="btn btn--ghost btn--sm" href="/activity">Clear</a><% } %>
+</form>
+
 <div class="card section">
   <div class="card-head">
     <h2><%= streamLabels[stream] %></h2>
@@ -45,7 +60,7 @@
         <p>When stock moves, an order is placed or a difference is found, it appears here.</p>
       </div>
     <% } else { %>
-      <ol class="act-log">
+      <ol class="act-log ledger">
         <% log.events.forEach(function (event) { %>
           <li class="act-log__row act-log__row--<%= event.stream %>">
             <div class="act-log__body">
@@ -63,48 +78,16 @@
       <% if (stream === 'all' && log.quietChecks) { %>
         <p class="muted" style="font-size:12.5px; margin-top:12px;">
           <%= log.quietChecks %> routine check<%= log.quietChecks === 1 ? '' : 's' %> found nothing and
-          <a href="/activity?stream=system">are kept out of the way</a>.
+          <a href="/activity?stream=system"><%= log.quietChecks === 1 ? 'is' : 'are' %> kept out of the way</a>.
         </p>
       <% } %>
     <% } %>
   </div>
 </div>
 
+<% if ((stream === 'all' || stream === 'inventory') && !query) { %>
 <details class="section">
-  <summary class="muted" style="cursor:pointer; font-size:13px;">The raw movement ledger, with filters</summary>
-
-<form class="filters" method="get" action="/activity">
-  <select class="select" name="operation" aria-label="Operation" data-auto-submit>
-    <option value="">All operations</option>
-    <% helpers.OPERATIONS.forEach(function (operation) { %>
-      <option value="<%= operation.id %>" <%= filters.operation === operation.id ? 'selected' : '' %>><%= operation.label %></option>
-    <% }) %>
-  </select>
-  <select class="select" name="item" aria-label="Item" data-auto-submit>
-    <option value="">All items</option>
-    <% items.forEach(function (row) { %>
-      <option value="<%= row.id %>" <%= filters.itemId === row.id ? 'selected' : '' %>><%= row.name %></option>
-    <% }) %>
-  </select>
-  <select class="select" name="location" aria-label="Location" data-auto-submit>
-    <option value="">All locations</option>
-    <% locations.forEach(function (location) { %>
-      <option value="<%= location.id %>" <%= filters.locationId === location.id ? 'selected' : '' %>><%= location.name %></option>
-    <% }) %>
-  </select>
-  <select class="select" name="user" aria-label="Person" data-auto-submit>
-    <option value="">Anyone</option>
-    <% users.forEach(function (user) { %>
-      <option value="<%= user.id %>" <%= filters.actorId === user.id ? 'selected' : '' %>><%= user.name %></option>
-    <% }) %>
-  </select>
-  <input class="input" type="date" name="from" value="<%= filters.dateFrom %>" aria-label="From date">
-  <input class="input" type="date" name="to" value="<%= filters.dateTo %>" aria-label="To date">
-  <button class="btn btn--sm" type="submit">Apply</button>
-  <% if (filters.operation || filters.itemId || filters.locationId || filters.actorId || filters.dateFrom || filters.dateTo) { %>
-    <a class="btn btn--ghost btn--sm" href="/activity">Clear</a>
-  <% } %>
-</form>
+  <summary class="muted" style="cursor:pointer; font-size:13px;">Raw movement details</summary>
 
 <div class="card">
   <div class="card-head">
@@ -120,7 +103,7 @@
       <a class="btn" href="/activity">Clear filters</a>
     </div>
   <% } else { %>
-    <%- include('../partials/ledger', { groups: groups, helpers: helpers }) %>
+    <%- include('../partials/ledger', { groups: groups, helpers: helpers, ledgerClass: 'raw-movement-ledger' }) %>
     <% if (page > 1 || hasMore) { %>
       <div class="card-foot" style="display:flex; gap:8px; align-items:center;">
         <span class="muted">Page <%= page %></span>
@@ -137,3 +120,4 @@
   <% } %>
 </div>
 </details>
+<% } %>

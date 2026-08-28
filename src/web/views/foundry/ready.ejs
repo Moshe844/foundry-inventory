@@ -9,8 +9,8 @@
 
 <div class="foundry-hero foundry-hero--tight">
   <span class="foundry-mark foundry-mark--done"><%- helpers.icon('check', { size: 24 }) %></span>
-  <h1>Your inventory is ready</h1>
-  <p>Foundry configured the inventory engine. Everything below is live now.</p>
+  <h1><%= addedToExisting ? 'The file is now recorded' : 'Your inventory is ready' %></h1>
+  <p><%= addedToExisting ? 'Foundry added exactly what you approved. Your existing inventory setup was not changed.' : 'Foundry configured the inventory engine. Everything below is live now.' %></p>
 </div>
 
 <% if (imported) { %>
@@ -37,6 +37,10 @@
     </div>
   </div>
 <% } %>
+
+<% if (addedToExisting) { %>
+  <p class="btn-row"><a class="btn" href="/">Return to Foundry</a><a class="btn btn--primary" href="/inventory">See live inventory</a></p>
+<% } else { %>
 
 <div class="card ready-card">
   <div class="card-body">
@@ -212,4 +216,5 @@
       </ul>
     </div>
   </div>
+<% } %>
 <% } %>

@@ -1,0 +1,44 @@
+<div class="breadcrumb"><a href="/sales">Sales</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
+<div class="page-head"><div class="titles"><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Ordered <%= order.order_date %><%= order.needed_by ? ' · needed by ' + order.needed_by : '' %></p></div><span class="badge <%= order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= order.status === 'BACKORDERED' ? 'waiting for stock' : order.status.replace(/_/g,' ').toLowerCase() %></span></div>
+
+<div class="stats-row">
+  <div class="stat"><strong><%= order.totals.ordered %></strong><span>Units ordered</span></div>
+  <div class="stat"><strong><%= order.totals.allocated %></strong><span>committed to this customer</span></div>
+  <div class="stat"><strong><%= order.totals.backordered %></strong><span><%= order.status === 'DRAFT' ? 'Not reserved yet' : 'Waiting for stock' %></span></div>
+  <div class="stat"><strong><%= order.totals.fulfilled %></strong><span>fulfilled (shipped)</span></div>
+</div>
+
+<% if (order.status === 'DRAFT') { %><div class="notice"><strong>Nothing is committed yet.</strong> Confirm the order when the customer has committed to it. Physical on-hand will remain unchanged.</div><% } %>
+<% if (order.status !== 'DRAFT' && order.totals.backordered) { %><div class="notice notice--warn sales-outcome">
+  <strong><%= order.totals.backordered %> unit<%= order.totals.backordered === 1 ? '' : 's' %> cannot be reserved yet.</strong>
+  <p>The customer order is confirmed, but Foundry found only <%= order.totals.allocated %> unit<%= order.totals.allocated === 1 ? '' : 's' %> available to reserve. <strong>No on-hand stock changed and nothing was shipped.</strong></p>
+  <p>Foundry automatically checked stock at other locations, incoming supplier orders and replenishment. If a decision or missing setup is required, it is in <a href="/needs-you">Needs you</a>.</p>
+</div><% } %>
+
+<div class="card">
+  <div class="card-head"><h2>Order lines</h2></div>
+  <div class="table-wrap"><table class="table table--stack sales-table"><thead><tr><th>Product</th><th>Ordered</th><th>Unit price</th><th>Line total</th><th>Reserved</th><th>Waiting</th><th>Shipped</th><th>Reserved at</th></tr></thead><tbody>
+    <% order.lines.forEach(function(line){ %><tr><td class="cell-main"><strong><%= line.displayName %></strong><small><%= line.code %></small></td><td><%= line.quantity_ordered %></td><td><%= line.unit_price_minor === null ? 'Price not set' : helpers.money(line.unit_price_minor, order.currency) %></td><td><%= line.lineTotalMinor === null ? '—' : helpers.money(line.lineTotalMinor, order.currency) %></td><td><%= line.allocated %></td><td><%= line.backordered %></td><td><%= line.quantity_fulfilled %></td><td><% if (!line.allocations.length) { %>—<% } else { line.allocations.forEach(function(a){ %><span class="pill"><%= a.location_name %> <strong><%= a.quantity %></strong></span><% }) } %></td></tr><% }) %>
+  </tbody></table></div>
+  <div class="sales-total-block">
+    <div><span>Subtotal</span><strong><%= helpers.money(order.pricing.subtotalMinor, order.currency) %></strong></div>
+    <% if (order.pricing.discountMinor) { %><div><span>Discount</span><strong>−<%= helpers.money(order.pricing.discountMinor, order.currency) %></strong></div><% } %>
+    <% if (order.pricing.taxMinor) { %><div><span>Tax</span><strong><%= helpers.money(order.pricing.taxMinor, order.currency) %></strong></div><% } %>
+    <div class="sales-total"><span>Order total</span><strong><%= helpers.money(order.pricing.totalMinor, order.currency) %></strong></div>
+  </div>
+  <% if (order.pricing.missingPriceLines) { %><div class="notice notice--warn"><strong><%= order.pricing.missingPriceLines %> line<%= order.pricing.missingPriceLines === 1 ? '' : 's' %> has no selling price.</strong> The total is incomplete. Set the inventory price, then add the line again or create a new draft.</div><% } %>
+</div>
+
+<% if (!['FULFILLED','CANCELLED'].includes(order.status)) { %>
+<div class="grid grid--2" style="margin-top:16px;">
+  <% if (order.status === 'DRAFT') { %><form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/confirm"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h2>Confirm customer demand</h2><p>Foundry will reserve available stock without changing on hand, then manage any shortage.</p><button class="btn btn--primary" type="submit">Confirm and reserve stock</button></form><% } else if (order.totals.allocated > 0) { %>
+  <form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/fulfill"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="web-fulfill:<%= order.id %>:<%= order.version %>"><h2>Record what shipped</h2><p>This is when physical stock actually leaves. On-hand and reserved quantities decrease together.</p>
+    <% order.lines.forEach(function(line){ line.allocations.forEach(function(a){ %><div class="form-row"><input type="hidden" name="lineId" value="<%= line.id %>"><input type="hidden" name="locationId" value="<%= a.location_id %>"><label class="field"><span><%= line.displayName %> from <%= a.location_name %> (max <%= a.quantity %>)</span><input type="number" name="quantity" min="0" max="<%= a.quantity %>" value="<%= a.quantity %>"></label></div><% }) }) %>
+    <button class="btn btn--primary" type="submit">Record shipment</button></form><% } %>
+  <form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/lines"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="web-line:<%= order.id %>:<%= order.version %>"><h2>Add to this order</h2><p>Add more customer demand. Foundry will recalculate what can be reserved.</p><label class="field"><span>Product</span><select name="skuId" required><option value="">Choose</option><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %></option><% }) %></select></label><label class="field"><span>Quantity</span><input type="number" name="quantity" min="1" required></label><button class="btn" type="submit">Add and recalculate</button></form>
+  <form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h2>Cancel remaining order</h2><p>Unshipped reservations are released immediately. Stock already shipped remains in the inventory history.</p><label class="field"><span>Reason <small>optional</small></span><input name="reason"></label><button class="btn btn--danger" type="submit">Cancel remaining order</button></form>
+</div>
+<% } %>
+
+<% var eventLabels = { CREATED: 'Order created', CONFIRMED: 'Customer order confirmed and stock checked', CHANGED: 'Order changed and reservations recalculated', ALLOCATION_CHANGED: 'Stock reservation updated automatically', PARTIALLY_FULFILLED: 'Part of the order shipped', FULFILLED: 'Order shipped in full', CANCELLED: 'Remaining order cancelled' }; %>
+<div class="card order-activity" style="margin-top:16px;"><div class="card-head"><h2>Order activity</h2></div><div class="list-rows"><% order.events.slice().reverse().forEach(function(event){ %><div class="list-row"><span><strong><%= eventLabels[event.event_type] || event.event_type.replace(/_/g,' ').toLowerCase() %></strong><small><%= event.actor_name || 'Foundry' %> · <%= helpers.dateTime(event.created_at) %></small></span></div><% }) %></div></div>

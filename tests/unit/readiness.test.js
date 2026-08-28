@@ -63,6 +63,19 @@ test('after the first real sale it is learning, and stops asking to be told', ()
   assert.equal(state.observingCount, 1);
   assert.equal(state.positionsWithOutbound[0].issued, 4);
   assert.equal(state.positionsWithOutbound[0].ready, false);
+  assert.equal(
+    state.evidenceRequirement,
+    'For each stock position, Foundry needs at least 7 observed days, 2 outbound observations, and 3 units recorded leaving.'
+  );
+  assert.deepEqual(state.positionsWithOutbound[0].missing, {
+    outboundEvents: 1,
+    outboundQuantity: 0,
+    observedDays: 0,
+  });
+  assert.equal(
+    state.positionsWithOutbound[0].missingSummary,
+    'Cotton Tee still needs 1 more outbound observation.'
+  );
 
   // The safety threshold is untouched: still not enough to act on.
   assert.equal(state.canAssessDemand, false);

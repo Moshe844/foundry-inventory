@@ -21,6 +21,7 @@ const replenishment = require('../../src/purchasing/replenishment');
 const policyService = require('../../src/purchasing/policy-service');
 const position = require('../../src/purchasing/position');
 const repo = require('../../src/domain/repository');
+const { localDateKey, addLocalDays } = require('../../src/lib/calendar');
 const { createApp } = require('../../src/app');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, makeVariantItem, csrfFrom, plain, signIn } = require('../helpers');
 
@@ -362,7 +363,7 @@ test('the overview brief mentions purchasing when there is purchasing to mention
   // An overdue order is mentioned too.
   const order = poService.createOrder(env.db, env.workspace.ctx, env.membership, {
     supplierId: env.supplier.id,
-    expectedDate: new Date(Date.now() - 3 * DAY).toISOString().slice(0, 10),
+    expectedDate: addLocalDays(Date.now(), -3),
     lines: [{ skuId: env.item.skuId, quantityPurchaseUnits: 2 }],
   });
   poService.approve(env.db, env.workspace.ctx, env.membership, order.id);
@@ -381,6 +382,7 @@ test('a delivery that matches the order is booked in with one click', async () =
   const order = poService.createOrder(env.db, env.workspace.ctx, env.membership, {
     supplierId: env.supplier.id,
     destinationLocationId: env.workspace.main.id,
+    expectedDate: localDateKey(),
     lines: [{ skuId: env.item.skuId, quantityPurchaseUnits: 5 }],
   });
   poService.approve(env.db, env.workspace.ctx, env.membership, order.id);

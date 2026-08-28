@@ -18,6 +18,7 @@
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const salesOrders = require('../sales/sales-order-service');
 
 /** How much history a usage claim needs before it is worth making. */
 const EVIDENCE_FLOOR = {
@@ -62,6 +63,11 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
 
   if (skus.length === 0) return [];
 
+  const committedRows = salesOrders.committedByPosition(db, workspaceId, { skuIds: skus.map((sku) => sku.id) });
+  const committedByPosition = new Map(committedRows.map((row) => [
+    `${row.sku_id}:${row.location_id}`, Number(row.committed),
+  ]));
+
   const windowStart = daysAgoIso(windowDays, now);
   const priorStart = daysAgoIso(windowDays * 2, now);
 
@@ -77,6 +83,9 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
       .all(workspaceId, sku.id);
 
     const onHand = balances.reduce((sum, row) => sum + row.on_hand, 0);
+    const committed = balances.reduce((sum, row) =>
+      sum + (committedByPosition.get(`${sku.id}:${row.location_id}`) || 0), 0);
+    const available = onHand - committed;
 
     // Consumption is what actually leaves the workspace. A transfer moves
     // stock between our own locations, so it is depletion *at a location* but
@@ -113,7 +122,7 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
     const usageWindowDays = hasUsageEvidence ? Math.max(observedDays, 1) : null;
     const averageDailyUsage = hasUsageEvidence ? round(flow.issued / usageWindowDays, 3) : null;
     const daysOfStockRemaining =
-      averageDailyUsage && averageDailyUsage > 0 ? round(onHand / averageDailyUsage, 1) : null;
+      averageDailyUsage && averageDailyUsage > 0 ? round(available / averageDailyUsage, 1) : null;
 
     const perLocation = balances
       .map((row) => {
@@ -136,6 +145,8 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
           locationKind: row.location_kind,
           locationArchived: !row.location_active,
           onHand: row.on_hand,
+          committed: committedByPosition.get(`${sku.id}:${row.location_id}`) || 0,
+          available: row.on_hand - (committedByPosition.get(`${sku.id}:${row.location_id}`) || 0),
           outboundInWindow: locFlow.outbound,
           issuedInWindow: locFlow.issued,
           inboundInWindow: locFlow.inbound,
@@ -160,6 +171,8 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
 
       measured: {
         onHand,
+        committed,
+        available,
         locationsHoldingStock: perLocation.filter((l) => l.onHand > 0).length,
         issuedInWindow: flow.issued,
         issuedInPriorWindow: flow.issuedPrior,

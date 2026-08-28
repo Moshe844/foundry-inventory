@@ -26,6 +26,7 @@ const itemService = require('../domain/item-service');
 const engine = require('../domain/inventory-engine');
 const entitlements = require('../entitlements/service');
 const planService = require('./plan-service');
+const prices = require('../pricing/price-service');
 
 const BATCH_SIZE = 50;
 const IMPORT_NOTE = 'Initial inventory import';
@@ -258,6 +259,10 @@ function importGroup(db, ctx, plan, group, executionId) {
   let itemId = group.existingItemId;
   let created = null;
 
+  if (!itemId && plan.transformations.operationScope === 'selling_price_update') {
+    throw new ValidationError('A pricing-update sheet may only update existing SKU codes. It cannot create products.');
+  }
+
   if (!itemId) {
     created = inTransaction(db, () =>
       itemService.createItem(db, ctx, {
@@ -279,7 +284,17 @@ function importGroup(db, ctx, plan, group, executionId) {
   for (const row of group.rows) {
     const parsed = row.parsed || {};
     try {
-      const sku = findSku(db, ctx.workspaceId, itemId, parsed.variants);
+      const sku = parsed.existingSkuId
+        ? db.prepare(`SELECT * FROM skus WHERE id = ? AND workspace_id = ? AND item_id = ? AND is_active = 1`)
+          .get(parsed.existingSkuId, ctx.workspaceId, itemId)
+        : findSku(db, ctx.workspaceId, itemId, parsed.variants);
+      if (plan.transformations.operationScope === 'selling_price_update' && !parsed.existingSkuId) {
+        throw new ValidationError('This pricing row does not match exactly one existing SKU code. No product was created.');
+      }
+      if (plan.transformations.operationScope === 'selling_price_update'
+        && (parsed.sellingPriceMinor === null || parsed.sellingPriceMinor === undefined)) {
+        throw new ValidationError('This pricing row has no valid selling price. Nothing was changed.');
+      }
       if (!sku) {
         throw new ValidationError(
           parsed.variants && parsed.variants.length
@@ -288,8 +303,16 @@ function importGroup(db, ctx, plan, group, executionId) {
         );
       }
 
-      const quantity = parsed.quantity || 0;
+      const quantity = plan.transformations.operationScope === 'selling_price_update'
+        ? 0
+        : parsed.quantity || 0;
       let movement = null;
+
+      if (parsed.sellingPriceMinor !== null && parsed.sellingPriceMinor !== undefined) {
+        prices.setPrice(db, ctx, { skuId: sku.id, amountMinor: parsed.sellingPriceMinor,
+          currency: parsed.currency || 'USD', source: 'approved_import',
+          sourceDetail: { importId: plan.id, rowNumber: row.rowNumber } });
+      }
 
       if (quantity > 0 || (item.tracking_mode === 'serial' && parsed.serial)) {
         if (!parsed.locationId) throw new ValidationError('No location for this stock.');

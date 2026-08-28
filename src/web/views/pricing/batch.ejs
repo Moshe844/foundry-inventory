@@ -1,0 +1,35 @@
+<div class="breadcrumb"><a href="/inventory">Inventory</a> <%- helpers.icon('chevron', { size: 13 }) %> <span>Review prices</span></div>
+<div class="page-head">
+  <div class="titles"><h1>Review <%= proposals.length %> selling prices</h1><p>Nothing changes until you approve the complete list.</p></div>
+  <span class="badge badge--warn">Pending</span>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="table table--stack">
+      <thead><tr><th>Product or variant</th><th>Code</th><th class="right">Current price</th><th class="right">New price</th></tr></thead>
+      <tbody>
+        <% proposals.forEach(function (proposal) { %>
+          <tr>
+            <td class="cell-main" data-label="Product"><strong><%= proposal.displayName %></strong></td>
+            <td class="mono" data-label="Code"><%= proposal.code %></td>
+            <td class="right" data-label="Current price"><%= proposal.currentFormatted %></td>
+            <td class="right cell-end" data-label="New price"><strong><%= proposal.proposedFormatted %></strong></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+  <div class="notice"><strong>What this affects</strong><p>New sales-order lines will copy these prices. Existing sales-order lines keep the prices already promised to their customers.</p></div>
+  <div class="form-actions">
+    <form method="post" action="/pricing/proposals/batch/approve">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <% proposals.forEach(function (proposal) { %><input type="hidden" name="approval[<%= proposal.id %>]" value="<%= proposal.integrity_hash %>"><% }) %>
+      <button class="btn btn--primary" type="submit">Approve all <%= proposals.length %> prices</button>
+    </form>
+    <form method="post" action="/pricing/proposals/batch/cancel">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn btn--ghost" type="submit">Not now</button>
+    </form>
+  </div>
+</div>

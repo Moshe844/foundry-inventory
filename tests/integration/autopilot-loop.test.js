@@ -25,6 +25,7 @@ const authService = require('../../src/domain/auth-service');
 const itemService = require('../../src/domain/item-service');
 const inventory = require('../../src/domain/inventory-engine');
 const repo = require('../../src/domain/repository');
+const { localDateKey } = require('../../src/lib/calendar');
 const { makeDatabase, cleanupAll, seedWorkspace } = require('../helpers');
 
 test.after(cleanupAll);
@@ -65,7 +66,7 @@ function tights({ allStockAtBrooklyn = false } = {}) {
 
   // Opening stock, then a month of trading that only Brooklyn did.
   inventory.receive(db, workspace.ctx, {
-    skuId: black5.id, locationId: brooklyn.id, quantity: allStockAtBrooklyn ? 94 : 29,
+    skuId: black5.id, locationId: brooklyn.id, quantity: allStockAtBrooklyn ? 91 : 26,
   });
   if (!allStockAtBrooklyn) {
     inventory.receive(db, workspace.ctx, { skuId: black5.id, locationId: jersey.id, quantity: 65 });
@@ -78,8 +79,10 @@ function tights({ allStockAtBrooklyn = false } = {}) {
     const when = new Date(Date.now() - daysAgo * DAY).toISOString();
     for (const id of result.movementIds) backdate.run(when, id);
   };
-  // Brooklyn: 21 sold over the month. New Jersey: 4.
-  for (const [quantity, daysAgo] of [[5, 28], [4, 22], [3, 16], [4, 10], [5, 4]]) {
+  // Brooklyn: 18 sold over the month. New Jersey: 4. The real evaluator's
+  // 30-day target is therefore 20, making the move exactly 12 from a balance
+  // of eight — independent of any policy ceiling.
+  for (const [quantity, daysAgo] of [[4, 28], [4, 22], [3, 16], [3, 10], [4, 4]]) {
     issue(black5.id, brooklyn.id, quantity, daysAgo);
   }
   if (!allStockAtBrooklyn) issue(black5.id, jersey.id, 4, 12);
@@ -122,10 +125,10 @@ test('the balancing signal finds the shortage and sizes the move from real deman
   assert.ok(proposal, 'Brooklyn is running down and New Jersey is not — that is a transfer');
   assert.equal(proposal.toLocationId, env.brooklyn.id);
   assert.equal(proposal.fromLocationId, env.jersey.id);
-  assert.equal(proposal.quantity, 12, 'capped by the policy ceiling');
+  assert.equal(proposal.quantity, 12, 'sized from dated location demand');
   assert.equal(proposal.conditions.destination_stockout_risk.passed, true);
   assert.equal(proposal.conditions.source_above_safety.passed, true);
-  assert.match(proposal.conditions.destination_stockout_risk.detail, /8 left and issued 21/);
+  assert.match(proposal.conditions.destination_stockout_risk.detail, /8 left and issued 18/);
 });
 
 test('a product nobody is buying is left alone', () => {
@@ -508,21 +511,24 @@ test('a healthy inventory produces no work at all', () => {
 // All three of these were only visible end to end: each is a place where the
 // pieces are individually correct and the sequence is not.
 
-test('a plan made before the policy existed is re-sized, not left blocking the day', () => {
+test('a plan outside a later policy boundary keeps its true size and waits', () => {
   const env = tights();
 
   // The loop runs first — nothing authorises anything, so it prepares whatever
   // the numbers justify, unbounded by a ceiling that does not exist yet.
   runner.planWork(env.db, env.ctx, env.membership, { trigger: 'first' });
   const [before] = workItems.list(env.db, env.workspace.workspaceId, { category: 'balance_transfer' });
-  assert.ok(before.recommendedAction.quantity > 12, 'sized with no ceiling to respect');
+  assert.equal(before.recommendedAction.quantity, 12, 'sized from demand before authority is considered');
 
-  // Now the owner writes and approves a policy capping it at twelve.
-  balancing(env);
+  // Now the owner writes and approves a policy allowing only five. The need
+  // must not be rewritten as a five-unit move just to fit that authority.
+  balancing(env, { maximumQuantity: 5 });
   runner.planWork(env.db, env.ctx, env.membership, { trigger: 'second' });
 
   const after = workItems.get(env.db, env.workspace.workspaceId, before.id);
-  assert.equal(after.recommendedAction.quantity, 12, 'brought within what the policy could authorise');
+  assert.equal(after.recommendedAction.quantity, 12, 'the full operational need remains visible');
+  assert.equal(after.executionStatus, 'WAITING_FOR_APPROVAL');
+  assert.match(after.policyEvaluation.reason, /at most 5 units.*this is 12/i);
   assert.equal(
     workItems.list(env.db, env.workspace.workspaceId, { category: 'balance_transfer' }).length,
     1,
@@ -607,7 +613,7 @@ test('a delivery due today becomes work, and Foundry never books it in itself', 
   const order = poService.createOrder(env.db, env.ctx, env.membership, {
     supplierId: supplier.id,
     destinationLocationId: env.brooklyn.id,
-    expectedDate: new Date().toISOString().slice(0, 10),
+    expectedDate: localDateKey(Date.now()),
     lines: [{ skuId: env.black5.id, quantityPurchaseUnits: 24 }],
   });
   poService.approve(env.db, env.ctx, env.membership, order.id);

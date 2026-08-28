@@ -81,6 +81,7 @@ const THRESHOLDS = {
 
 const ALL_CATEGORIES = [
   'replenishment_needed',
+  'stock_protection_boundary',
   'low_stock',
   'stockout_risk',
   'location_imbalance',
@@ -103,7 +104,7 @@ function relevantCategories(context) {
   // Replenishment is always relevant: it gates itself on a reorder point being
   // configured, which is a stronger and more honest test than any guess here.
   const relevant = new Set([
-    'replenishment_needed', 'low_stock', 'stockout_risk', 'unusual_adjustment',
+    'replenishment_needed', 'stock_protection_boundary', 'low_stock', 'stockout_risk', 'unusual_adjustment',
     'stale_inventory', 'data_integrity',
   ]);
 
@@ -132,12 +133,12 @@ function relevantCategories(context) {
  * Categories that describe the same underlying situation for one SKU and should
  * be told as a single story rather than three separate alarms.
  */
-const GROUPABLE = ['replenishment_needed', 'stockout_risk', 'low_stock', 'location_imbalance', 'stale_inventory'];
+const GROUPABLE = ['replenishment_needed', 'stock_protection_boundary', 'stockout_risk', 'low_stock', 'location_imbalance', 'stale_inventory'];
 
 /** When several groupable signals collide, this is the one that leads. */
 // A worked replenishment plan leads over every symptom of the same shortage:
 // it already accounts for what they each noticed, and with better arithmetic.
-const GROUP_PRECEDENCE = ['replenishment_needed', 'low_stock', 'stockout_risk', 'location_imbalance', 'stale_inventory'];
+const GROUP_PRECEDENCE = ['replenishment_needed', 'stock_protection_boundary', 'low_stock', 'stockout_risk', 'location_imbalance', 'stale_inventory'];
 
 const SEVERITY_WEIGHT = { critical: 100, important: 60, watch: 25 };
 const CONFIDENCE_WEIGHT = { high: 1, medium: 0.85, low: 0.6 };

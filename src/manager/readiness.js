@@ -11,6 +11,27 @@
 
 const signalEngine = require('../signals/signal-engine');
 
+const plural = (value, singular, pluralForm = `${singular}s`) =>
+  `${value} ${Number(value) === 1 ? singular : pluralForm}`;
+
+function evidenceGap(entry) {
+  const floor = signalEngine.EVIDENCE_FLOOR;
+  const measured = entry.measured;
+  const missing = {
+    outboundEvents: Math.max(0, floor.minOutboundEvents - measured.issueEventsInWindow),
+    outboundQuantity: Math.max(0, floor.minOutboundQuantity - measured.issuedInWindow),
+    observedDays: Math.max(0, Math.ceil((floor.minObservedDays - measured.observedDays) * 10) / 10),
+  };
+  const parts = [];
+  if (missing.observedDays) parts.push(`${plural(missing.observedDays, 'more observed day')}`);
+  if (missing.outboundEvents) parts.push(`${plural(missing.outboundEvents, 'more outbound observation')}`);
+  if (missing.outboundQuantity) parts.push(`${plural(missing.outboundQuantity, 'more unit')} leaving`);
+  return {
+    missing,
+    summary: parts.length ? `${entry.displayName} still needs ${parts.join(', ')}.` : null,
+  };
+}
+
 function assess(db, workspaceId, { now = Date.now() } = {}) {
   const inventorySignals = signalEngine.skuSignals(db, workspaceId, { now })
     .filter((entry) => entry.isActive);
@@ -35,14 +56,19 @@ function assess(db, workspaceId, { now = Date.now() } = {}) {
         ? 'learning'
         : 'none';
 
-  const position = (entry) => ({
-    skuId: entry.skuId,
-    displayName: entry.displayName,
-    issued: entry.measured.issuedInWindow,
-    outboundEvents: entry.measured.issueEventsInWindow,
-    observedDays: entry.measured.observedDays,
-    ready: entry.estimated.hasUsageEvidence,
-  });
+  const position = (entry) => {
+    const gap = evidenceGap(entry);
+    return {
+      skuId: entry.skuId,
+      displayName: entry.displayName,
+      issued: entry.measured.issuedInWindow,
+      outboundEvents: entry.measured.issueEventsInWindow,
+      observedDays: entry.measured.observedDays,
+      ready: entry.estimated.hasUsageEvidence,
+      missing: gap.missing,
+      missingSummary: gap.summary,
+    };
+  };
   const locationCount = db
     .prepare('SELECT COUNT(*) AS n FROM locations WHERE workspace_id = ? AND is_active = 1')
     .get(workspaceId).n;
@@ -69,10 +95,20 @@ function assess(db, workspaceId, { now = Date.now() } = {}) {
   if (demandStage === 'learning') {
     notes.push(
       `It has seen ${withOutbound.length} of ${inventorySignals.length} ` +
-      `${inventorySignals.length === 1 ? 'product' : 'products'} selling, but not for long enough ` +
+      `${inventorySignals.length === 1 ? 'stock position' : 'stock positions'} selling, but not for long enough ` +
       'to say when you will run out.'
     );
   }
+
+  const floor = signalEngine.EVIDENCE_FLOOR;
+  const evidenceRequirement =
+    `For each stock position, Foundry needs at least ${plural(floor.minObservedDays, 'observed day')}, ` +
+    `${plural(floor.minOutboundEvents, 'outbound observation')}, and ` +
+    `${plural(floor.minOutboundQuantity, 'unit')} recorded leaving.`;
+  const evidenceGaps = inventorySignals
+    .filter((entry) => !entry.estimated.hasUsageEvidence)
+    .map(position)
+    .filter((entry) => entry.missingSummary);
   if (locationCount < 2) {
     notes.push('You have one location, so there is nowhere for Foundry to move stock to.');
   }
@@ -85,13 +121,15 @@ function assess(db, workspaceId, { now = Date.now() } = {}) {
     demandStage,
     usageReady,
     observingCount: withOutbound.length,
-    // Which products Foundry has actually watched move, and which it has not.
+    // Which stock positions Foundry has actually watched move, and which it has not.
     positionsWithOutbound: withOutbound.map(position),
     positionsWithoutOutbound: withoutOutbound.map(position),
     skuCount: inventorySignals.length,
     connectedSources,
     locationCount,
     supplierCount,
+    evidenceRequirement,
+    evidenceGaps,
     notes,
   };
 }
@@ -111,7 +149,7 @@ function decisions(db, workspaceId, options = {}) {
       id: 'outbound-source',
       title: 'Tell Foundry when you sell something',
       because:
-        `Foundry knows how many of your ${state.skuCount} product${state.skuCount === 1 ? '' : 's'} you have, ` +
+        `Foundry knows the quantities in your ${state.skuCount} stock position${state.skuCount === 1 ? '' : 's'}, ` +
         'but not how fast they go. Until it sees stock leaving, it cannot tell you what is running low ' +
         'or what to reorder — and it will not guess. Record a sale, or a delivery going out, and it starts learning.',
       // Why Foundry cannot get this for itself. It lived as copy in the Needs
@@ -121,6 +159,7 @@ function decisions(db, workspaceId, options = {}) {
         'Foundry cannot silently observe another system or invent demand, and it will not raise a ' +
         'low-stock alert it cannot stand behind. Record sales, usage, or stock leaving and it can ' +
         'begin learning immediately.',
+      recommendation: 'Record the next real sale or usage when it happens. Do not create activity just to teach Foundry.',
       missing: 'One outbound movement — a sale, or stock going out — so Foundry can measure demand.',
       action: 'Record a sale',
       link: '/#tell-foundry',

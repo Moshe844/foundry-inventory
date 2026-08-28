@@ -1,0 +1,22 @@
+<div class="breadcrumb"><a href="/sales">Sales</a> <%- helpers.icon('chevron', { size: 13 }) %> <span>New order</span></div>
+<div class="page-head"><div class="titles"><h1>Create a sales order</h1><p>This records demand. It does not reduce physical stock.</p></div></div>
+<form class="card form-card" method="post" action="/sales/orders">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="form-grid">
+    <label class="field"><span>Existing customer</span><select name="customerId"><option value="">Create a new customer</option><% customers.forEach(function(c){ %><option value="<%= c.id %>"><%= c.name %></option><% }) %></select></label>
+    <label class="field"><span>New customer name</span><input name="customerName" placeholder="ABC School"></label>
+    <label class="field"><span>Order number <small>optional</small></span><input name="orderNumber" placeholder="Foundry will assign one"></label>
+    <label class="field"><span>Order date</span><input type="date" name="orderDate" value="<%= new Date().toISOString().slice(0,10) %>"></label>
+    <label class="field"><span>Needed by <small>optional</small></span><input type="date" name="neededBy"></label>
+    <label class="field"><span>Fulfillment location <small>optional</small></span><select name="fulfillmentLocationId"><option value="">Let Foundry allocate across locations</option><% locations.forEach(function(l){ %><option value="<%= l.id %>"><%= l.name %></option><% }) %></select></label>
+    <label class="field"><span>Product or variant</span><select name="skuId" required><option value="">Choose</option><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %> · <%= s.price.formatted %></option><% }) %></select><small>The current inventory selling price is copied onto the order.</small></label>
+    <label class="field"><span>Quantity</span><input type="number" name="quantity" min="1" step="1" required></label>
+    <label class="field"><span>Discount amount <small>optional</small></span><input name="discount" inputmode="decimal" placeholder="0.00"></label>
+    <label class="field"><span>Tax amount <small>optional</small></span><input name="tax" inputmode="decimal" placeholder="0.00"></label>
+    <input type="hidden" name="currency" value="USD">
+    <label class="field field--full"><span>Reference <small>optional</small></span><input name="reference"></label>
+    <label class="field field--full"><span>Notes <small>optional</small></span><textarea name="notes"></textarea></label>
+  </div>
+  <div class="notice"><strong>Prices are snapshotted.</strong> A later inventory price change will not alter this customer order. Tax and discount are exact amounts, not percentages.</div>
+  <div class="form-actions"><button class="btn btn--primary" type="submit">Create draft order</button><a class="btn btn--ghost" href="/sales">Cancel</a></div>
+</form>

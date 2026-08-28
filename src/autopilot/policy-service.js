@@ -34,6 +34,11 @@ const repo = require('../domain/repository');
  */
 const AUTOMATABLE_ACTIONS = ['transfer', 'approve_purchase_order'];
 
+// A presentation marker, not a second kind of authority. Policies created by
+// the simple "Handle routine work" setup are ordinary automation_policies and
+// are evaluated by policy-engine.js exactly like policies written in Custom.
+const ROUTINE_SETUP = 'handle_routine_work';
+
 /** Named conditions a policy can require. Each maps to a real measurement. */
 const CONDITIONS = {
   DESTINATION_STOCKOUT_RISK: 'destination_stockout_risk',
@@ -319,6 +324,128 @@ function activeFor(db, workspaceId, actionType) {
   );
 }
 
+function isRoutineSetupPolicy(policy, capability = null) {
+  return policy.scope?.managedBy === ROUTINE_SETUP
+    && (!capability || policy.scope.capability === capability);
+}
+
+/**
+ * The compact setup reads from the same versioned policies as Custom. This is
+ * only a view model: it does not grant authority or infer checked boxes.
+ */
+function routineSetup(db, workspaceId) {
+  const policies = list(db, workspaceId);
+  const active = policies.filter((policy) => policy.isActive);
+  const guided = active.filter((policy) => isRoutineSetupPolicy(policy));
+  const transfer = guided.find((policy) => isRoutineSetupPolicy(policy, 'transfers')) || null;
+  const purchasing = guided.find((policy) => isRoutineSetupPolicy(policy, 'purchasing')) || null;
+
+  return {
+    transfer: {
+      enabled: Boolean(transfer),
+      maximumQuantity: transfer?.maximumQuantity || 5,
+      policyId: transfer?.id || null,
+    },
+    purchasing: {
+      enabled: Boolean(purchasing),
+      maximumValue: purchasing?.maximumValue || 500,
+      supplierIds: purchasing?.supplierScope || [],
+      policyId: purchasing?.id || null,
+    },
+    otherActivePolicies: active.filter((policy) => !isRoutineSetupPolicy(policy)),
+    hasGuidedAuthority: guided.length > 0,
+  };
+}
+
+const selected = (value) => value === true || value === '1' || value === 'on' || value === 'true';
+const array = (value) => Array.isArray(value) ? value.filter(Boolean) : value ? [value] : [];
+
+/**
+ * Create or replace the policies controlled by the simple setup. The explicit
+ * checkboxes and Start/Save submission are the approval; policies are still
+ * versioned and retain the exact hash/evidence trail used everywhere else.
+ */
+function configureRoutine(db, ctx, membership, input) {
+  permissions.assertCan(membership, permissions.ADMIN, 'decide what Foundry may handle automatically');
+
+  const enableTransfers = selected(input.enableTransfers);
+  const enablePurchasing = selected(input.enablePurchasing);
+  const before = routineSetup(db, ctx.workspaceId);
+  if (!enableTransfers && !enablePurchasing && !before.hasGuidedAuthority) {
+    throw new ValidationError('Choose at least one routine task for Foundry to handle. Nothing is enabled automatically.');
+  }
+
+  const locations = repo.listLocations(db, ctx.workspaceId).filter((location) => location.is_active);
+  const supplierIds = array(input.supplierScope);
+  const definitions = {};
+
+  if (enableTransfers) {
+    if (locations.length < 2) {
+      throw new ValidationError('Add a second active location before authorising automatic transfers.');
+    }
+    definitions.transfers = validate(db, ctx.workspaceId, {
+      name: 'Routine stock transfers',
+      description: 'Approved in the guided Handle routine work setup.',
+      allowedActionTypes: ['transfer'],
+      scope: { managedBy: ROUTINE_SETUP, capability: 'transfers' },
+      locationScope: locations.map((location) => location.id),
+      conditions: [
+        CONDITIONS.DESTINATION_STOCKOUT_RISK,
+        CONDITIONS.SOURCE_ABOVE_SAFETY,
+        CONDITIONS.NO_CONFLICTING_TRANSFER,
+        CONDITIONS.SUFFICIENT_HISTORY,
+      ],
+      maximumQuantity: input.maximumQuantity,
+    });
+  }
+
+  if (enablePurchasing) {
+    definitions.purchasing = validate(db, ctx.workspaceId, {
+      name: 'Routine supplier reordering',
+      description: 'Approved in the guided Handle routine work setup.',
+      allowedActionTypes: ['approve_purchase_order'],
+      scope: { managedBy: ROUTINE_SETUP, capability: 'purchasing' },
+      supplierScope: supplierIds,
+      conditions: [
+        CONDITIONS.REPLENISHMENT_EVIDENCE,
+        CONDITIONS.MOQ_ORDER_MULTIPLE_COMPLIANT,
+        CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND,
+        CONDITIONS.PRICE_WITHIN_POLICY,
+      ],
+      thresholds: { maxUnitPriceChangePercent: 0 },
+      maximumValue: input.maximumValue,
+    });
+  }
+
+  return inTransaction(db, () => {
+    const all = list(db, ctx.workspaceId);
+    const save = (capability, definition, enabled) => {
+      const matching = all.filter((policy) => isRoutineSetupPolicy(policy, capability));
+      const active = matching.filter((policy) => policy.isActive);
+      if (!enabled) {
+        active.forEach((policy) => disable(db, ctx, membership, policy.id, 'Changed in Handle routine work setup'));
+        return null;
+      }
+
+      const previous = active[0] || matching[0] || null;
+      const proposed = previous
+        ? revise(db, ctx, membership, previous.id, definition)
+        : propose(db, ctx, membership, definition);
+      const approved = approve(db, ctx, membership, proposed.id, { expectedHash: proposed.integrityHash });
+      // Defensive cleanup for old duplicate guided policies. The newest
+      // version above is the sole authority represented by this checkbox.
+      active.slice(previous && active[0]?.id === previous.id ? 1 : 0)
+        .filter((policy) => policy.id !== approved.id)
+        .forEach((policy) => disable(db, ctx, membership, policy.id, 'Replaced by guided routine setup'));
+      return approved;
+    };
+
+    save('transfers', definitions.transfers, enableTransfers);
+    save('purchasing', definitions.purchasing, enablePurchasing);
+    return routineSetup(db, ctx.workspaceId);
+  });
+}
+
 /** Records what a policy decided, so it can be shown later as evidence. */
 function recordEvaluation(db, workspaceId, evaluation) {
   const id = newId('pev');
@@ -359,6 +486,7 @@ function describe(policy) {
 
 module.exports = {
   AUTOMATABLE_ACTIONS,
+  ROUTINE_SETUP,
   CONDITIONS,
   CONDITION_LABEL,
   stableStringify,
@@ -372,6 +500,9 @@ module.exports = {
   get,
   list,
   activeFor,
+  isRoutineSetupPolicy,
+  routineSetup,
+  configureRoutine,
   recordEvaluation,
   describe,
 };

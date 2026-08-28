@@ -1,0 +1,35 @@
+<div class="page-head">
+  <div class="titles">
+    <span class="setup-eyebrow">Task guide</span>
+    <h1>How do I use Foundry?</h1>
+    <div class="page-sub">Start with the job you are trying to do. You can usually say it directly in Tell Foundry.</div>
+  </div>
+  <div class="page-actions"><a class="btn btn--primary" href="/#tell-foundry">Tell Foundry</a></div>
+</div>
+
+<%
+  var currentStep = guidance.checklistActive
+    ? guidance.steps.find(function (step) { return step.current; })
+    : null;
+  var currentTitle = currentStep ? currentStep.title : guidance.next.title;
+  var currentDetail = currentStep ? currentStep.detail : guidance.next.recommendation;
+  var currentHref = currentStep ? currentStep.href : guidance.next.href;
+  var currentAction = currentStep ? currentStep.action : guidance.next.action;
+%>
+<section class="guide-now">
+  <div><span class="operator-lane__eyebrow">Based on this inventory</span><h2><%= currentTitle %></h2><p><%= currentDetail %></p></div>
+  <% if (currentHref && currentAction) { %><a class="btn btn--primary" href="<%= currentHref %>"><%= currentAction %></a><% } %>
+</section>
+
+<div class="task-guide section">
+  <% topics.forEach(function (topic, index) { %>
+    <details class="task-guide__topic" <%= index === 0 && guidance.checklistActive ? 'open' : '' %>>
+      <summary><span><%= topic.title %></span><span class="task-guide__show">Open</span></summary>
+      <div class="task-guide__body">
+        <p><%= topic.path %></p>
+        <p class="task-guide__tell"><strong>Tell Foundry:</strong> <%= topic.tell %></p>
+        <a class="btn btn--sm" href="<%= topic.href %>"><%= topic.action %></a>
+      </div>
+    </details>
+  <% }) %>
+</div>

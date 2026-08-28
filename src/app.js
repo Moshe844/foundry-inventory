@@ -27,7 +27,12 @@ const onboardingRoutes = require('./web/routes/onboarding');
 const autopilotRoutes = require('./web/routes/autopilot');
 const purchasingRoutes = require('./web/routes/purchasing');
 const managerRoutes = require('./web/routes/manager');
+const salesRoutes = require('./web/routes/sales');
+const pricingRoutes = require('./web/routes/pricing');
+const connectionRoutes = require('./web/routes/connections');
 const { createFeedApi } = require('./web/routes/feed-api');
+const { createConnectionsApi } = require('./web/routes/connections-api');
+const { createProviderWebhooks } = require('./web/routes/provider-webhooks');
 
 /**
  * Builds the Express application around an already-open database handle.
@@ -56,12 +61,14 @@ function createApp(options = {}) {
   // as an ordinary form: same CSRF check, same flash messages, same everything.
   app.use(multipart({ limit: 32 * 1024 * 1024 }));
   app.use(express.urlencoded({ extended: true, limit: '256kb' }));
-  app.use(express.json({ limit: '256kb' }));
+  app.use(express.json({ limit: '256kb', verify(req, res, buffer) { req.rawBody = Buffer.from(buffer); } }));
 
   // External systems authenticate with a scoped bearer token, never a browser
   // session. Mount this before cookie sessions and CSRF so unattended feeds do
   // not depend on a person being signed in.
   app.use('/api/v1/feed', createFeedApi(db));
+  app.use('/api/v1/connections', createProviderWebhooks(db));
+  app.use('/api/v1', createConnectionsApi(db));
 
   const store = createSessionStore(db);
   app.locals.sessionStore = store;
@@ -101,6 +108,9 @@ function createApp(options = {}) {
 
   app.use(authRoutes);
   app.use(managerRoutes);
+  app.use(salesRoutes);
+  app.use(pricingRoutes);
+  app.use(connectionRoutes);
   app.use(foundryRoutes);
   app.use(workspaceRoutes);
   app.use(actionRoutes);

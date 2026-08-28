@@ -18,11 +18,13 @@ const request = require('supertest');
 
 const authService = require('../../src/domain/auth-service');
 const policyService = require('../../src/autopilot/policy-service');
+const policyEngine = require('../../src/autopilot/policy-engine');
 const preferences = require('../../src/autopilot/preferences');
 const modes = require('../../src/autopilot/modes');
 const runner = require('../../src/autopilot/runner');
 const engine = require('../../src/domain/inventory-engine');
 const reevaluate = require('../../src/attention/reevaluate');
+const supplierService = require('../../src/purchasing/supplier-service');
 const { createApp } = require('../../src/app');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, csrfFrom, plain, signIn } = require('../helpers');
 
@@ -65,14 +67,14 @@ test('the primary home is Foundry managing work, not an inventory dashboard', as
   // The home page is organised around Foundry's work — what it needs from you,
   // what it is holding, what it did — rather than around stock counters.
   assert.match(page, /Foundry is managing Autopilot Co/);
-  assert.match(page, /Tell Foundry anything/);
+  assert.match(page, /Report what happened, ask a question, change a rule/);
   assert.match(page, /I need you for/);
   // The handling lane appears when there is something in it. An empty one
   // saying "Nothing in progress. There is no routine work in progress." is
   // three sentences reporting that nothing happened.
   assert.doesNotMatch(page, /There is no routine work in progress/);
   assert.match(page, /What did Foundry do\?/);
-  assert.match(page, /Open the traditional overview/);
+  assert.match(page, /View inventory summary/);
   assert.match(page, /Tell Foundry when you sell something/);
   assert.match(page, /1 real check/);
   assert.match(page, /Checked inventory after stock arrived/);
@@ -133,21 +135,155 @@ test('an active product reaching zero appears automatically in Foundry needs you
   // been told what it sells and must not still be asking.
   assert.match(page, /I need you for 1 thing/i);
   assert.doesNotMatch(page, /Tell Foundry when you sell something/i);
-  assert.match(page, /started learning how your inventory moves/i);
+  assert.match(page, /still learning demand for 1 tracked variant/i);
 });
 
 test('the settings page shows what Foundry may do and how you want it run', async () => {
   const env = setup();
   const agent = await ownerAgent(env);
 
-  const page = plain((await agent.get('/autopilot')).text);
+  const response = await agent.get('/autopilot');
+  const page = plain(response.text);
 
-  assert.match(page, /Autopilot needs both/, 'the two gates are stated on the page itself');
+  assert.match(page, /Ask me first/, 'the safe default is stated on the page itself');
+  assert.match(page, /Handle routine work/, 'bounded automatic work is stated on the page itself');
+  assert.match(page, /Custom.*Advanced policies, preferences and hard limits/, 'power controls remain available');
   assert.match(page, /Nothing\. Foundry prepares work and waits for you on all of it\./);
   assert.match(page, /Tell Foundry what it may handle/, 'the plain-language route in');
   assert.match(page, /How you want this inventory run/);
   assert.match(page, /never works these out from watching you/);
   assert.match(page, /Days of stock to aim for/);
+  assert.match(response.text, /<details class="card section advanced-settings" id="advanced-authority"\s*>/,
+    'advanced controls are collapsed by default');
+
+  modes.setMode(env.db, env.ctx, env.membership, 'OBSERVE');
+  const watching = await agent.get('/autopilot');
+  assert.match(watching.text, /<details class="card section advanced-settings" id="advanced-authority"\s*>/,
+    'watch-only mode still requires an explicit Show click');
+
+  const opened = await agent.get('/autopilot?advanced=1');
+  assert.match(opened.text, /id="advanced-authority"\s+open>/,
+    'an explicit advanced route opens the controls');
+});
+
+test('Handle routine work authorises a bounded transfer without opening Custom', async () => {
+  const env = setup();
+  const agent = await ownerAgent(env);
+
+  assert.equal((await post(agent, '/autopilot/mode', { mode: 'POLICY_AUTOMATED' })).status, 303);
+  const setupPage = await agent.get('/autopilot');
+  const setupText = plain(setupPage.text);
+  assert.match(setupText, /Foundry may automatically:/);
+  assert.match(setupText, /Move stock between my locations/);
+  assert.match(setupText, /Automatic transfers: never more than/);
+  assert.match(setupText, /Start handling routine work/);
+  assert.match(setupText, /Nothing is enabled yet/);
+  assert.doesNotMatch(setupText, /Open Custom to set them/);
+  assert.match(setupPage.text, /id="advanced-authority"\s*>/,
+    'Custom stays collapsed while the owner uses the simple setup');
+
+  assert.equal((await post(agent, '/autopilot/routine-authority', {
+    enableTransfers: '1',
+    maximumQuantity: '5',
+  })).status, 303);
+
+  const active = policyService.activeFor(env.db, env.workspace.workspaceId, 'transfer');
+  assert.equal(active.length, 1);
+  assert.equal(active[0].maximumQuantity, 5);
+  assert.equal(active[0].scope.managedBy, policyService.ROUTINE_SETUP);
+  assert.equal(active[0].scope.capability, 'transfers');
+  assert.deepEqual(new Set(active[0].locationScope), new Set([env.workspace.main.id, env.workspace.store.id]));
+  assert.deepEqual(new Set(active[0].conditions), new Set([
+    policyService.CONDITIONS.DESTINATION_STOCKOUT_RISK,
+    policyService.CONDITIONS.SOURCE_ABOVE_SAFETY,
+    policyService.CONDITIONS.NO_CONFLICTING_TRANSFER,
+    policyService.CONDITIONS.SUFFICIENT_HISTORY,
+  ]));
+
+  const conditions = Object.fromEntries(active[0].conditions.map((condition) => [condition, true]));
+  const permitted = policyEngine.evaluate(env.db, env.workspace.workspaceId, {
+    actionType: 'transfer',
+    skuId: 'sku-guided-authority-test',
+    quantity: 5,
+    fromLocationId: env.workspace.main.id,
+    toLocationId: env.workspace.store.id,
+    conditions,
+  });
+  assert.equal(permitted.decision, 'authorized', 'the normal policy evaluator uses the guided policy');
+  assert.equal(permitted.policy.id, active[0].id);
+
+  const tooLarge = policyEngine.evaluate(env.db, env.workspace.workspaceId, {
+    actionType: 'transfer',
+    skuId: 'sku-guided-authority-test-2',
+    quantity: 6,
+    fromLocationId: env.workspace.main.id,
+    toLocationId: env.workspace.store.id,
+    conditions,
+  });
+  assert.equal(tooLarge.decision, 'refused');
+  assert.match(tooLarge.reason, /at most 5 units/);
+
+  const savedPage = await agent.get('/autopilot');
+  const savedText = plain(savedPage.text);
+  assert.match(savedText, /Currently approved: transfers of no more than 5 units at a time/);
+  assert.match(savedText, /Everything outside these limits comes to you first/);
+  assert.match(savedText, /Save routine-work limits/);
+  assert.match(savedPage.text, /id="advanced-authority"\s*>/,
+    'saving simple authority does not open Custom');
+});
+
+test('the guided routine setup versions changes and can remove its authority', async () => {
+  const env = setup();
+  const agent = await ownerAgent(env);
+  modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+
+  await post(agent, '/autopilot/routine-authority', { enableTransfers: '1', maximumQuantity: '5' });
+  const first = policyService.activeFor(env.db, env.workspace.workspaceId, 'transfer')[0];
+  await post(agent, '/autopilot/routine-authority', { enableTransfers: '1', maximumQuantity: '3' });
+  const second = policyService.activeFor(env.db, env.workspace.workspaceId, 'transfer')[0];
+  assert.notEqual(second.id, first.id);
+  assert.equal(second.version, first.version + 1);
+  assert.equal(second.supersedesPolicyId, first.id);
+  assert.equal(second.maximumQuantity, 3);
+  assert.equal(policyService.get(env.db, env.workspace.workspaceId, first.id).isActive, false);
+
+  await post(agent, '/autopilot/routine-authority', {});
+  assert.equal(policyService.activeFor(env.db, env.workspace.workspaceId, 'transfer').length, 0);
+  assert.match(plain((await agent.get('/autopilot')).text), /Nothing is enabled yet/);
+});
+
+test('guided purchasing requires an explicit limit and selected supplier in the shared policy engine', async () => {
+  const env = setup();
+  const supplier = supplierService.createSupplier(env.db, env.ctx, env.membership, {
+    name: 'Approved Supply Co',
+    defaultLeadTimeDays: 7,
+  });
+  const agent = await ownerAgent(env);
+  modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+
+  const page = plain((await agent.get('/autopilot')).text);
+  assert.match(page, /Approve routine purchase orders/);
+  assert.match(page, /does not email, upload or transmit the PO to the supplier/);
+  assert.match(page, /Automatic purchases: never more than/);
+  assert.match(page, /Approved Supply Co/);
+
+  await post(agent, '/autopilot/routine-authority', {
+    enablePurchasing: '1', maximumValue: '500', supplierScope: supplier.id,
+  });
+  const [policy] = policyService.activeFor(env.db, env.workspace.workspaceId, 'approve_purchase_order');
+  assert.equal(policy.maximumValue, 500);
+  assert.deepEqual(policy.supplierScope, [supplier.id]);
+  assert.equal(policy.scope.managedBy, policyService.ROUTINE_SETUP);
+  assert.deepEqual(new Set(policy.conditions), new Set([
+    policyService.CONDITIONS.REPLENISHMENT_EVIDENCE,
+    policyService.CONDITIONS.MOQ_ORDER_MULTIPLE_COMPLIANT,
+    policyService.CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND,
+    policyService.CONDITIONS.PRICE_WITHIN_POLICY,
+  ]));
+
+  const saved = plain((await agent.get('/autopilot')).text);
+  assert.match(saved, /purchase orders of no more than \$500 may be approved and recorded as ordered in Foundry for 1 selected supplier/);
+  assert.match(saved, /Everything outside these limits comes to you first/);
 });
 
 test('a preference set on the page is stored, attributed and applied', async () => {

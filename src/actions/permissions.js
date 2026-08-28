@@ -29,6 +29,9 @@ const APPROVE_PO = 'APPROVE_PO';
 const RECEIVE_PO = 'RECEIVE_PO';
 const MANAGE_SUPPLIERS = 'MANAGE_SUPPLIERS';
 const MANAGE_REPLENISHMENT = 'MANAGE_REPLENISHMENT';
+const VIEW_SALES = 'VIEW_SALES';
+const MANAGE_SALES = 'MANAGE_SALES';
+const FULFILL_SALES = 'FULFILL_SALES';
 
 const PURCHASING = [
   VIEW_PURCHASING,
@@ -39,11 +42,12 @@ const PURCHASING = [
   MANAGE_REPLENISHMENT,
 ];
 
-const ALL = [VIEW, OPERATE, ADJUST, ADMIN, ...PURCHASING];
+const SALES = [VIEW_SALES, MANAGE_SALES, FULFILL_SALES];
+const ALL = [VIEW, OPERATE, ADJUST, ADMIN, ...PURCHASING, ...SALES];
 
 /** What each role can do before any explicit grant. */
 const ROLE_DEFAULTS = {
-  owner: [VIEW, OPERATE, ADJUST, ADMIN, ...PURCHASING],
+  owner: [VIEW, OPERATE, ADJUST, ADMIN, ...PURCHASING, ...SALES],
   // Staff can see what is on order and book in what arrives — both are part of
   // handling stock. Committing to a purchase, changing suppliers and changing
   // replenishment settings are not, and are withheld until granted explicitly.
@@ -61,6 +65,9 @@ const LABELS = {
   RECEIVE_PO: 'Book in deliveries',
   MANAGE_SUPPLIERS: 'Add and edit suppliers',
   MANAGE_REPLENISHMENT: 'Set reorder policies',
+  VIEW_SALES: 'See customers and sales orders',
+  MANAGE_SALES: 'Create and confirm sales orders',
+  FULFILL_SALES: 'Fulfill and cancel sales orders',
 };
 
 /**
@@ -112,10 +119,16 @@ const ACTION_PERMISSION = {
   transfer: OPERATE,
   adjust: ADJUST,
   create_item: OPERATE,
+  archive_item: OPERATE,
   add_location: ADMIN,
   rename_terminology: ADMIN,
   purchase: CREATE_PO,
   receive_shipment: RECEIVE_PO,
+  // Sales-order inventory work follows the existing day-to-day stock role.
+  // Fine-grained Sales grants remain available without silently changing every
+  // staff membership created before Mission 10.
+  sales_order: OPERATE,
+  fulfill_sales_order: OPERATE,
 };
 
 function permissionForAction(actionType) {
@@ -128,10 +141,13 @@ const VERB = {
   transfer: 'transfer stock',
   adjust: 'correct counts',
   create_item: 'add products',
+  archive_item: 'archive products',
   add_location: 'change settings',
   rename_terminology: 'change settings',
   purchase: 'prepare purchase orders',
   receive_shipment: 'book in deliveries',
+  sales_order: 'create or confirm sales orders',
+  fulfill_sales_order: 'fulfill or cancel sales orders',
 };
 
 function assertCanPerform(membership, actionType) {
@@ -156,6 +172,10 @@ module.exports = {
   RECEIVE_PO,
   MANAGE_SUPPLIERS,
   MANAGE_REPLENISHMENT,
+  VIEW_SALES,
+  MANAGE_SALES,
+  FULFILL_SALES,
+  SALES,
   PURCHASING,
   impliedBy,
   ALL,

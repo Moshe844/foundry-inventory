@@ -110,13 +110,13 @@
             <% }) %>
             <div class="act-row act-row--total">
               <span class="act-place">
-                <%= action.lotScoped && action.lotName ? action.lotName + ' in total' : 'Total on hand' %>
-                <small><%= action.totalChanges ? 'this changes how much you have' : 'unchanged — stock only moves' %></small>
+                <%= action.actionType === 'archive_item' ? 'Catalogue status' : action.lotScoped && action.lotName ? action.lotName + ' in total' : 'Total on hand' %>
+                <small><%= action.actionType === 'archive_item' ? 'stock remains unchanged' : action.totalChanges ? 'this changes how much you have' : 'unchanged — stock only moves' %></small>
               </span>
               <span class="act-move">
-                <span class="num"><%= action.total.before %></span>
+                <span class="<%= action.actionType === 'archive_item' ? '' : 'num' %>"><%= action.actionType === 'archive_item' ? 'Active' : action.total.before %></span>
                 <%- helpers.icon('chevron', { size: 13 }) %>
-                <span class="num act-after"><%= action.total.after %></span>
+                <span class="<%= action.actionType === 'archive_item' ? '' : 'num' %> act-after"><%= action.actionType === 'archive_item' ? 'Archived' : action.total.after %></span>
               </span>
             </div>
             <% if (action.productTotal) { %>
@@ -194,7 +194,7 @@
               <% } %>
               <div class="btn-row">
                 <button class="btn btn--primary" type="submit">
-                  <%= action.actionType === 'adjust' ? 'Approve the correction' : 'Approve ' + action.verb %>
+                  <%= action.actionType === 'adjust' ? 'Approve the correction' : action.actionType === 'archive_item' ? 'Approve archive' : 'Approve ' + action.verb %>
                 </button>
                 <a class="btn" href="/actions">Not now</a>
               </div>

@@ -99,8 +99,22 @@ function found(value) {
 function none(message) {
   return { ok: false, reason: 'not_found', message, candidates: [] };
 }
-function ambiguous(message, candidates) {
-  return { ok: false, reason: 'ambiguous', message, candidates };
+function ambiguous(message, candidates, clarification = null) {
+  return { ok: false, reason: 'ambiguous', message, candidates, clarification };
+}
+
+const words = (text) => String(text || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+const comparableWord = (word) => (word.length > 3 && word.endsWith('s') ? word.slice(0, -1) : word);
+
+/** Structured choices that can be carried through the UI and appended to the original request. */
+function choiceClarification(dimension, candidates, labelOf, valueOf = labelOf) {
+  return {
+    dimension,
+    choices: candidates.slice(0, 20).map((candidate) => ({
+      label: labelOf(candidate),
+      value: valueOf(candidate),
+    })),
+  };
 }
 
 /** Locations, by name. */
@@ -114,6 +128,13 @@ function resolveLocation(db, workspaceId, text, { role = 'location' } = {}) {
     // shortcut: they are refused earlier for having nowhere to move to.
     const places = repo.listLocations(db, workspaceId);
     if (places.length === 1) return found(places[0]);
+    if (places.length > 1) {
+      return ambiguous(
+        `Which ${role}?`,
+        places,
+        choiceClarification(role.replace(/\s+/g, '_'), places, (place) => place.name)
+      );
+    }
     return none(`Which ${role}?`);
   }
 
@@ -137,7 +158,8 @@ function resolveLocation(db, workspaceId, text, { role = 'location' } = {}) {
   if (matches.length > 1) {
     return ambiguous(
       `“${query}” could mean ${matches.map((m) => m.name).join(' or ')}. Which did you mean?`,
-      matches
+      matches,
+      choiceClarification(role.replace(/\s+/g, '_'), matches, (place) => place.name)
     );
   }
 
@@ -153,7 +175,8 @@ function resolveLocation(db, workspaceId, text, { role = 'location' } = {}) {
   if (close.reason === 'ambiguous') {
     return ambiguous(
       `“${query}” is close to ${close.candidates.map((c) => c.name).join(' and ')}. Which did you mean?`,
-      close.candidates
+      close.candidates,
+      choiceClarification(role.replace(/\s+/g, '_'), close.candidates, (place) => place.name)
     );
   }
   return none(
@@ -178,6 +201,189 @@ const SIZE_WORDS = {
   xxlarge: 'xxl',
 };
 
+function skuOptionRows(db, skuIds) {
+  if (!skuIds.length) return [];
+  return db
+    .prepare(
+      `SELECT v.sku_id, o.name, o.position, v.value
+         FROM sku_option_values v JOIN item_options o ON o.id = v.option_id
+        WHERE v.sku_id IN (${skuIds.map(() => '?').join(', ')})
+        ORDER BY o.position`
+    )
+    .all(...skuIds);
+}
+
+function instructionMentionsValue(instruction, value) {
+  const said = new Set(words(instruction));
+  const valueWords = words(value);
+  if (valueWords.length && valueWords.every((word) => said.has(word))) return true;
+  if (valueWords.length === 1 && valueWords[0].length <= 3) {
+    return Object.entries(SIZE_WORDS).some(([written, short]) => short === valueWords[0] && said.has(written));
+  }
+  return false;
+}
+
+/**
+ * Keep only option values that the person actually wrote in this action's
+ * verified source slice. A parser-provided product name is never provenance:
+ * only the person's own clause may settle an axis.
+ */
+function narrowSkuRowsByInstruction(db, candidates, instruction) {
+  let narrowed = candidates;
+  const options = skuOptionRows(db, candidates.map((row) => row.id));
+  const axes = [...new Set(options.map((row) => row.name))];
+  for (const axis of axes) {
+    const values = [...new Set(options.filter((row) => row.name === axis).map((row) => row.value))];
+    const named = values.filter((value) => instructionMentionsValue(instruction, value));
+    if (named.length !== 1) continue;
+    const allowed = new Set(options
+      .filter((row) => row.name === axis && row.value === named[0])
+      .map((row) => row.sku_id));
+    narrowed = narrowed.filter((row) => allowed.has(row.id));
+  }
+  return narrowed;
+}
+
+/**
+ * Narrow attributes that an imported catalogue encoded in the item name.
+ *
+ * Foundry supports both common catalogue shapes:
+ *
+ *   one item + Colour/Size option rows
+ *   Classic Cotton T-Shirt - White + one Size option per imported row
+ *
+ * The first shape is handled by narrowSkuRowsByInstruction. In the second,
+ * White is not an option value at all, so looking only at option rows puts the
+ * Black products back into a request that explicitly said White. Treat item
+ * names with the same normalized wording as one family, find the words that
+ * distinguish those families, and keep a family only when one of those words
+ * was actually present in both the parsed identity and the person's clause.
+ * If the reader did not supply identity fields (a generic model question), the
+ * original clause remains the fallback evidence. A tie is never broken.
+ */
+function narrowSkuRowsByItemFamily(candidates, instruction, suppliedIdentity = '') {
+  const grouped = new Map();
+  for (const row of candidates) {
+    const family = String(row.item_name || '').trim().toLowerCase();
+    if (!grouped.has(family)) grouped.set(family, []);
+    grouped.get(family).push(row);
+  }
+  const groups = [...grouped.values()];
+  if (groups.length <= 1) return candidates;
+
+  const groupTokens = groups.map((group) =>
+    new Set(words(group[0].item_name).map(comparableWord))
+  );
+  const common = new Set([...groupTokens[0]].filter((token) =>
+    groupTokens.every((tokens) => tokens.has(token))
+  ));
+  const distinctive = groupTokens.map((tokens) =>
+    new Set([...tokens].filter((token) => !common.has(token)))
+  );
+  const said = new Set(words(instruction).map(comparableWord));
+  const supplied = new Set(
+    words(suppliedIdentity).map(comparableWord).filter((token) => said.has(token))
+  );
+
+  const choose = (evidence) => {
+    const scored = groups.map((group, index) => ({
+      group,
+      score: [...distinctive[index]].filter((token) => evidence.has(token)).length,
+    })).sort((a, b) => b.score - a.score);
+    return scored[0].score > 0 && (!scored[1] || scored[0].score > scored[1].score)
+      ? scored[0].group
+      : null;
+  };
+
+  // Parsed identity that is also verbatim in the request is the strongest
+  // evidence. The full clause is used only when the reader returned no useful
+  // identity at all, preserving the grounded generic-question path.
+  return choose(supplied) || choose(said) || candidates;
+}
+
+/**
+ * Describes the exact remaining SKU ambiguity from catalogue axes.
+ *
+ * Shared values are already resolved (for example Size = Small); axes whose
+ * values differ are what the person still needs to choose (Colour). The UI
+ * receives the real SKU labels as answer values, never a generic product ask.
+ */
+function skuAmbiguity(db, rows) {
+  const optionRows = skuOptionRows(db, rows.map((row) => row.id));
+  const bySku = new Map(rows.map((row) => [row.id, new Map()]));
+  for (const option of optionRows) bySku.get(option.sku_id)?.set(option.name, option.value);
+  const axes = [...new Map(optionRows.map((row) => [row.name, row.position])).entries()]
+    .sort((a, b) => a[1] - b[1])
+    .map(([name]) => name);
+  const shared = [];
+  const unresolved = [];
+  for (const axis of axes) {
+    const values = [...new Set(rows.map((row) => bySku.get(row.id)?.get(axis)).filter(Boolean))];
+    if (values.length === 1) shared.push(values[0]);
+    else if (values.length > 1) unresolved.push({ axis, values });
+  }
+
+  const itemNames = [...new Set(rows.map((row) => row.item_name))];
+  if (itemNames.length > 1) {
+    return ambiguous(
+      'Which product do you mean?',
+      rows,
+      choiceClarification('product', rows,
+        (row) => `${row.item_name}${row.variant_label ? ` — ${row.variant_label}` : ''}`,
+        (row) => `${row.item_name}${row.variant_label ? ` ${row.variant_label}` : ''}`)
+    );
+  }
+
+  // A product name can itself contain an option value ("Black T-shirt"). If
+  // Colour is unresolved, leaving Black in the noun makes the question claim
+  // a choice the person has not made. Strip only values on unresolved axes.
+  const unresolvedWords = new Set(unresolved.flatMap((entry) => entry.values.flatMap(words)));
+  const baseName = String(itemNames[0] || 'product')
+    .split(/\s+/)
+    .filter((part) => !unresolvedWords.has(String(part).toLowerCase().replace(/[^a-z0-9]/g, '')))
+    .join(' ') || String(itemNames[0] || 'product');
+  const subject = [...shared, baseName].join(' ').trim();
+  const dimension = unresolved.length === 1
+    ? `variant:${unresolved[0].axis.toLowerCase()}`
+    : 'variant';
+  const question = unresolved.length === 1
+    ? `Which ${unresolved[0].axis.toLowerCase()} of ${subject} do you mean?`
+    : `Which ${subject} do you mean?`;
+  return ambiguous(
+    question,
+    rows,
+    choiceClarification(dimension, rows,
+      (row) => row.variant_label || row.code,
+      (row) => row.variant_label || row.code)
+  );
+}
+
+/**
+ * Uses the original sentence only to narrow real catalogue records. This is a
+ * safety net for a reader that returned an empty item/variant field: it cannot
+ * invent a record, and it still refuses whenever more than one remains.
+ */
+function clarifySkuFromInstruction(db, workspaceId, instruction) {
+  const rows = db
+    .prepare(
+      `SELECT s.*, i.name AS item_name, i.tracking_mode, i.unit_label, i.has_variants
+         FROM skus s JOIN items i ON i.id = s.item_id
+        WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
+        ORDER BY i.name, s.position`
+    )
+    .all(workspaceId);
+  if (!rows.length) return null;
+
+  // Imports do not all model variants the same way. One catalogue may hold
+  // one product with six SKUs; another may contain separate item rows for each
+  // colour and size. Resolve both representations through the same two-stage
+  // identity narrowing before deciding what is genuinely still ambiguous.
+  let candidates = narrowSkuRowsByItemFamily(rows, instruction);
+  candidates = narrowSkuRowsByInstruction(db, candidates, instruction);
+  if (candidates.length === 1) return found(candidates[0]);
+  return skuAmbiguity(db, candidates);
+}
+
 /**
  * SKUs, by product wording plus optional variant wording.
  *
@@ -185,25 +391,46 @@ const SIZE_WORDS = {
  * has several, and naming only the product is genuinely ambiguous — which is a
  * question, not something to resolve to the first row.
  */
-function resolveSku(db, workspaceId, itemText, variantText) {
+function resolveSku(db, workspaceId, itemText, variantText, options = {}) {
   // "Move 15 Navy 4 to the store" names no product at all — "Navy 4" is the
   // whole identifier. Searching on the variant wording when that is all there
   // is beats refusing to look, and the narrowing below still applies.
   const query = String(itemText || '').trim() || String(variantText || '').trim();
   if (!query) {
+    const grounded = options.instruction
+      ? clarifySkuFromInstruction(db, workspaceId, options.instruction)
+      : null;
+    if (grounded) return grounded;
     // Nothing named at all. An inventory with a single product has already
     // answered "which product?", exactly as a single location answers "which
     // location?". A variant range is deliberately excluded: naming one of six
     // t-shirts is a real choice, and picking the first row would be a guess
     // dressed up as an answer.
-    const only = db
+    const products = db
       .prepare(
-        `SELECT s.*, i.name AS item_name, i.tracking_mode, i.unit_label, i.has_variants
-           FROM skus s JOIN items i ON i.id = s.item_id
-          WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1 LIMIT 2`
+        `SELECT i.id, i.name FROM items i
+          WHERE i.workspace_id = ? AND i.is_active = 1 ORDER BY i.name LIMIT 21`
       )
       .all(workspaceId);
-    if (only.length === 1) return found(only[0]);
+    if (products.length === 1) {
+      const only = db
+        .prepare(
+          `SELECT s.*, i.name AS item_name, i.tracking_mode, i.unit_label, i.has_variants
+             FROM skus s JOIN items i ON i.id = s.item_id
+            WHERE s.workspace_id = ? AND s.item_id = ? AND s.is_active = 1 AND i.is_active = 1
+            ORDER BY s.position`
+        )
+        .all(workspaceId, products[0].id);
+      if (only.length === 1) return found(only[0]);
+      if (only.length > 1) return skuAmbiguity(db, only);
+    }
+    if (products.length > 1) {
+      return ambiguous(
+        'Which product do you mean?',
+        products,
+        choiceClarification('product', products, (product) => product.name)
+      );
+    }
     return none('Which product?');
   }
 
@@ -242,7 +469,8 @@ function resolveSku(db, workspaceId, itemText, variantText) {
     if (close.reason === 'ambiguous') {
       return ambiguous(
         `“${query}” is close to ${close.candidates.map((c) => c.name).join(' and ')}. Which did you mean?`,
-        close.candidates
+        close.candidates,
+        choiceClarification('product', close.candidates, (item) => item.name)
       );
     }
     return none(`There is nothing called “${query}” in this inventory.`);
@@ -299,7 +527,21 @@ function resolveSku(db, workspaceId, itemText, variantText) {
   };
 
   const variant = String(variantText || '').trim();
-  if (variant) {
+  if ((options.groundIdentity || options.instruction) && rows.length > 1) {
+    // The reader may fill the catalogue's canonical product name even when the
+    // person used a generic noun. A product called "Black T-shirt" must not
+    // make Black look user-supplied when the request only said "Small
+    // T-shirts". Only option values present in the original request may narrow
+    // a variant axis.
+    let grounded = narrowSkuRowsByItemFamily(
+      rows,
+      options.instruction || '',
+      `${itemText || ''} ${variantText || ''}`
+    );
+    grounded = narrowSkuRowsByInstruction(db, grounded, options.instruction || '');
+    if (grounded.length === 1) return found(grounded[0]);
+    if (grounded.length && grounded.length < rows.length) rows = grounded;
+  } else if (variant) {
     const narrowed = narrowBy(rows, variant);
     if (narrowed.length === 1) return found(narrowed[0]);
     if (narrowed.length === 0) {
@@ -331,18 +573,47 @@ function resolveSku(db, workspaceId, itemText, variantText) {
   } else if (rows.length > 1) {
     // No separate variant wording, but the name they used may itself name one —
     // "move 15 Navy 4" has no product in it at all. Narrowing on the same words
-    // is only kept when it resolves things; otherwise the ambiguity is real.
+    // is also kept when it resolves one axis but leaves another genuinely open.
+    // "Black T-shirt" should ask which size among the Black records, not put
+    // White back into the candidate list merely because size is still missing.
     const narrowed = narrowBy(rows, query);
     if (narrowed.length === 1) return found(narrowed[0]);
+    if (narrowed.length && narrowed.length < rows.length) rows = narrowed;
   }
 
   if (rows.length === 1) return found(rows[0]);
 
-  const labels = rows.map((r) => r.variant_label || r.code).filter(Boolean);
-  return ambiguous(
-    `“${query}” comes in ${labels.length} versions: ${labels.join(', ')}. Which one?`,
-    rows
-  );
+  return skuAmbiguity(db, rows);
+}
+
+/**
+ * An exact catalogue identifier is stronger evidence than the field a language
+ * model happened to put it in. This is intentionally separate from fuzzy name
+ * matching: callers use it to recover a SKU code that was mistaken for a lot
+ * or serial number without guessing from similar-looking identifiers.
+ */
+function resolveExactSkuCode(db, workspaceId, code) {
+  const query = String(code || '').trim();
+  if (!query) return null;
+  return db
+    .prepare(
+      `SELECT s.*, i.name AS item_name, i.tracking_mode, i.unit_label, i.has_variants
+         FROM skus s JOIN items i ON i.id = s.item_id
+        WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
+          AND s.code = ? COLLATE NOCASE`
+    )
+    .get(workspaceId, query) || null;
+}
+
+function hasExactItemCode(db, workspaceId, code) {
+  const query = String(code || '').trim();
+  if (!query) return false;
+  return Boolean(db
+    .prepare(
+      `SELECT 1 FROM items
+        WHERE workspace_id = ? AND is_active = 1 AND base_code = ? COLLATE NOCASE`
+    )
+    .get(workspaceId, query));
 }
 
 /** A lot, by code, optionally constrained to a SKU. */
@@ -363,7 +634,10 @@ function resolveLot(db, workspaceId, code, skuId) {
   if (rows.length === 0) return none(`There is no lot “${query}” in this inventory.`);
   return ambiguous(
     `Lot “${query}” exists on ${rows.length} products. Which product did you mean?`,
-    rows
+    rows,
+    choiceClarification('product', rows,
+      (row) => `${row.item_name} — lot ${row.code}`,
+      (row) => `${row.item_name} lot ${row.code}`)
   );
 }
 
@@ -396,7 +670,12 @@ function resolveSerialUnit(db, workspaceId, serial) {
         : `There is no unit ${query} in this inventory.`
     );
   }
-  return ambiguous(`More than one unit is recorded as ${query}.`, rows);
+  return ambiguous(
+    `More than one unit is recorded as ${query}. Which unit do you mean?`,
+    rows,
+    choiceClarification('serial_unit', rows, (row) => `${row.serial} — ${row.item_name}`,
+      (row) => row.serial)
+  );
 }
 
 /** Several serials at once; every one must resolve. */
@@ -495,6 +774,9 @@ module.exports = {
   optionText,
   resolveLocation,
   resolveSku,
+  resolveExactSkuCode,
+  hasExactItemCode,
+  clarifySkuFromInstruction,
   resolveLot,
   resolveSerialUnit,
   resolveSerialUnits,

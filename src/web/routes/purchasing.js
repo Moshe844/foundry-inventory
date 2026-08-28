@@ -17,6 +17,7 @@
 const express = require('express');
 const config = require('../../config');
 const supplierService = require('../../purchasing/supplier-service');
+const supplierCommunications = require('../../purchasing/supplier-communications');
 const supplierCodeMappings = require('../../purchasing/supplier-code-mappings');
 const policyService = require('../../purchasing/policy-service');
 const setupService = require('../../purchasing/setup-service');
@@ -27,10 +28,12 @@ const receiving = require('../../purchasing/receiving-service');
 const physicalEvents = require('../../manager/physical-events');
 const permissions = require('../../actions/permissions');
 const repo = require('../../domain/repository');
-const reevaluate = require('../../attention/reevaluate');
+const managerEvents = require('../../manager/events');
+const reactions = require('../../manager/reactions');
 const autopilotPresenter = require('../../autopilot/presenter');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { unitCount } = require('../../lib/units');
+const { localDateKey } = require('../../lib/calendar');
 const { trimOrNull } = require('../../lib/util');
 const { ValidationError } = require('../../domain/errors');
 
@@ -55,6 +58,10 @@ const can = (req) => ({
   suppliers: permissions.can(req.user, permissions.MANAGE_SUPPLIERS),
   replenishment: permissions.can(req.user, permissions.MANAGE_REPLENISHMENT),
 });
+
+function react(req, type, payload, options = {}) {
+  return reactions.publishAndReact(req.db, req.ctx.workspaceId, type, payload, options);
+}
 
 // ---------------------------------------------------------------------------
 // What should I order?
@@ -94,12 +101,18 @@ router.get(
       req.flash('error', 'That product is not in this inventory.');
       return res.redirect('/purchasing');
     }
+    const pendingRule = req.session.pendingInventoryRule;
+    const rulePreview = pendingRule && pendingRule.skuId === req.params.skuId ? pendingRule : null;
+    if (rulePreview) delete req.session.pendingInventoryRule;
     return res.page('purchasing/why', {
       title: `Why ${line.displayName}`,
       nav: 'purchasing',
       line,
       policy: policyService.effectivePolicy(req.db, req.ctx.workspaceId, req.params.skuId),
       proposal: policyService.proposePolicy(req.db, req.ctx.workspaceId, req.params.skuId),
+      rulePreview,
+      locationPolicies: policyService.locationPolicies(req.db, req.ctx.workspaceId, req.params.skuId),
+      locations: locations(req.db, req.ctx.workspaceId),
       history: poService.costHistory(req.db, req.ctx.workspaceId, req.params.skuId, { limit: 6 }),
       permissions: can(req),
     });
@@ -165,6 +178,9 @@ router.post(
         lastUnitCost: req.body.lastUnitCost,
         isPreferred: true,
       });
+      react(req, managerEvents.TYPES.SUPPLIER_UPDATED, {
+        supplierId, skuIds: [req.params.skuId], change: 'product_linked',
+      });
 
       // Recalculated immediately, so the answer to "what now?" is the number
       // rather than another screen.
@@ -228,6 +244,9 @@ router.post(
       // like something the person asked for.
       const had = policyService.effectivePolicy(req.db, req.ctx.workspaceId, req.params.skuId);
       policyService.clearPolicy(req.db, req.ctx, req.user, req.params.skuId);
+      react(req, managerEvents.TYPES.REORDER_POLICY_UPDATED, {
+        skuId: req.params.skuId, change: 'cleared',
+      });
       req.flash(
         'success',
         had && had.isSet
@@ -236,10 +255,36 @@ router.post(
           : 'Foundry will work this line out from usage again.'
       );
     } else {
-      policyService.setPolicy(req.db, req.ctx, req.user, req.params.skuId, req.body);
+      const saved = policyService.setPolicy(req.db, req.ctx, req.user, req.params.skuId, req.body);
+      react(req, managerEvents.TYPES.REORDER_POLICY_UPDATED, {
+        skuId: req.params.skuId, policyId: saved.id, updatedAt: saved.updatedAt,
+      });
       req.flash('success', 'Saved.');
     }
     return res.redirect(`/purchasing/why/${req.params.skuId}`);
+  })
+);
+
+router.post(
+  '/purchasing/location-minimums/:skuId',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.MANAGE_REPLENISHMENT, 'set location minimums');
+    try {
+      const result = policyService.setLocationMinimum(
+        req.db, req.ctx, req.user, req.params.skuId, trimOrNull(req.body.locationId), req.body.minimum
+      );
+      react(req, managerEvents.TYPES.REORDER_POLICY_UPDATED, {
+        skuId: req.params.skuId, locationId: result.locationId, change: 'location_minimum',
+      });
+      const location = repo.requireLocation(req.db, req.ctx.workspaceId, result.locationId);
+      req.flash('success', result.minimum === null
+        ? `Removed the keep-back level at ${location.name}.`
+        : `Foundry will keep at least ${result.minimum} at ${location.name} when planning transfers.`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+    }
+    return res.redirect(303, `/purchasing/why/${req.params.skuId}#location-minimums`);
   })
 );
 
@@ -317,6 +362,8 @@ router.get(
       receipts: receiving.receiptsFor(req.db, req.ctx.workspaceId, order.id),
       locations: locations(req.db, req.ctx.workspaceId),
       permissions: can(req),
+      expectedInFuture: Boolean(order.expectedDate && order.expectedDate > localDateKey()),
+      communications: supplierCommunications.forOrder(req.db, req.ctx.workspaceId, order.id),
     });
   })
 );
@@ -344,7 +391,12 @@ router.post(
     req.flash('success', `${order.poNumber} is approved and marked as ordered.`);
     // Incoming stock changes what needs attention, so the layer is told at once
     // rather than waiting for the next sweep to notice.
-    reevaluate.refresh(req.db, req.ctx.workspaceId, 'purchase-order-approved');
+    react(req, managerEvents.TYPES.PURCHASE_ORDER_PLACED, {
+      purchaseOrderId: order.id,
+      poNumber: order.poNumber,
+      skuIds: order.lines.map((line) => line.skuId),
+      outstandingUnits: order.outstandingUnits,
+    }, { sourceRecordType: 'purchase_order', sourceRecordId: `${order.id}:${order.updatedAt}` });
     return res.redirect(`/purchasing/orders/${order.id}`);
   })
 );
@@ -355,7 +407,9 @@ router.post(
     guard(req, permissions.APPROVE_PO, 'cancel purchase orders');
     const order = poService.cancel(req.db, req.ctx, req.user, req.params.id, { reason: req.body.reason });
     req.flash('success', `${order.poNumber} was cancelled. Anything already received stays received.`);
-    reevaluate.refresh(req.db, req.ctx.workspaceId, 'purchase-order-cancelled');
+    react(req, managerEvents.TYPES.PURCHASE_ORDER_CANCELLED, {
+      purchaseOrderId: order.id, skuIds: order.lines.map((line) => line.skuId),
+    }, { sourceRecordType: 'purchase_order', sourceRecordId: `${order.id}:${order.updatedAt}` });
     return res.redirect(`/purchasing/orders/${order.id}`);
   })
 );
@@ -440,6 +494,19 @@ router.post(
         // A double-clicked button is one delivery, not two.
         idempotencyKey: `po-receipt-all:${order.id}:${lines.reduce((n, l) => n + l.outstandingUnits, 0)}`,
       });
+      const current = poService.get(req.db, req.ctx.workspaceId, order.id);
+      react(req,
+        current.status === poService.STATUS.RECEIVED
+          ? managerEvents.TYPES.PURCHASE_ORDER_COMPLETED
+          : managerEvents.TYPES.PURCHASE_ORDER_PARTIALLY_RECEIVED,
+        {
+          purchaseOrderId: current.id,
+          poNumber: current.poNumber,
+          skuIds: current.lines.map((line) => line.skuId),
+          outstandingUnits: current.outstandingUnits,
+        },
+        { sourceRecordType: 'purchase_order_receipt', sourceRecordId: result.receipt.id }
+      );
       const units = (result.result || {}).unitsReceived || 0;
       req.flash(
         'success',
@@ -535,7 +602,19 @@ router.post(
           ? 'That delivery was already booked in.'
           : `${done.result.unitsReceived} unit(s) received against ${order.poNumber}.`
       );
-      reevaluate.refresh(req.db, req.ctx.workspaceId, 'purchase-order-received');
+      const current = poService.get(req.db, req.ctx.workspaceId, order.id);
+      react(req,
+        current.status === poService.STATUS.RECEIVED
+          ? managerEvents.TYPES.PURCHASE_ORDER_COMPLETED
+          : managerEvents.TYPES.PURCHASE_ORDER_PARTIALLY_RECEIVED,
+        {
+          purchaseOrderId: current.id,
+          poNumber: current.poNumber,
+          skuIds: current.lines.map((line) => line.skuId),
+          outstandingUnits: current.outstandingUnits,
+        },
+        { sourceRecordType: 'purchase_order_receipt', sourceRecordId: done.receipt.id }
+      );
       return res.redirect(`/purchasing/orders/${order.id}`);
     } catch (error) {
       // An over-receipt is not a failure — it is a question. The form comes
@@ -581,6 +660,7 @@ router.post(
   asyncRoute(async (req, res) => {
     guard(req, permissions.MANAGE_SUPPLIERS, 'manage suppliers');
     const supplier = supplierService.createSupplier(req.db, req.ctx, req.user, req.body);
+    react(req, managerEvents.TYPES.SUPPLIER_UPDATED, { supplierId: supplier.id, change: 'created' });
     req.flash('success', `${supplier.name} added.`);
     return res.redirect(`/suppliers/${supplier.id}`);
   })
@@ -617,6 +697,7 @@ router.post(
   asyncRoute(async (req, res) => {
     guard(req, permissions.MANAGE_SUPPLIERS, 'manage suppliers');
     supplierService.updateSupplier(req.db, req.ctx, req.user, req.params.id, req.body);
+    react(req, managerEvents.TYPES.SUPPLIER_UPDATED, { supplierId: req.params.id, change: 'terms_updated' });
     req.flash('success', 'Saved.');
     return res.redirect(`/suppliers/${req.params.id}`);
   })
@@ -626,7 +707,10 @@ router.post(
   '/suppliers/:id/items',
   asyncRoute(async (req, res) => {
     guard(req, permissions.MANAGE_SUPPLIERS, 'manage suppliers');
-    supplierService.linkItem(req.db, req.ctx, req.user, { ...req.body, supplierId: req.params.id });
+    const linked = supplierService.linkItem(req.db, req.ctx, req.user, { ...req.body, supplierId: req.params.id });
+    react(req, managerEvents.TYPES.SUPPLIER_UPDATED, {
+      supplierId: req.params.id, skuIds: [req.body.skuId].filter(Boolean), change: 'product_linked',
+    });
     req.flash('success', 'Product linked to this supplier.');
     return res.redirect(`/suppliers/${req.params.id}`);
   })
@@ -637,6 +721,7 @@ router.post(
   asyncRoute(async (req, res) => {
     guard(req, permissions.MANAGE_SUPPLIERS, 'manage suppliers');
     supplierService.unlinkItem(req.db, req.ctx, req.user, req.params.supplierItemId);
+    react(req, managerEvents.TYPES.SUPPLIER_UPDATED, { supplierId: req.params.id, change: 'product_unlinked' });
     req.flash('success', 'Removed from this supplier.');
     return res.redirect(`/suppliers/${req.params.id}`);
   })
@@ -723,6 +808,7 @@ router.post(
     const skuIds = Array.isArray(raw) ? raw : raw ? [raw] : [];
     try {
       const result = setupService.applyPolicies(req.db, req.ctx, req.user, skuIds);
+      react(req, managerEvents.TYPES.REORDER_POLICY_UPDATED, { skuIds, change: 'bulk_setup' });
       req.flash('success', `Reorder points set for ${result.count} line(s), derived from what actually sold.`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -761,6 +847,9 @@ router.post(
         leadTimeDays: req.body.leadTimeDays,
         lastUnitCost: req.body.lastUnitCost,
         isPreferred: true,
+      });
+      react(req, managerEvents.TYPES.SUPPLIER_UPDATED, {
+        supplierId, skuIds, change: 'bulk_product_link',
       });
       req.flash('success', `${result.supplier.name} now supplies ${result.linked} product(s).`);
     } catch (err) {

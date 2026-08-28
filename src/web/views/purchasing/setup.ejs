@@ -14,10 +14,10 @@
     <div class="act-ledger">
       <%# Four counters headed "Lines ..." told a first-time reader nothing they
           could act on. Same numbers, said as facts about their products. %>
-      <div class="act-row"><span class="act-place">Products Foundry could suggest a reorder level for</span><span class="act-move"><span class="num"><%= assessment.summary.canPropose %></span></span></div>
-      <div class="act-row"><span class="act-place">Products it has not seen sell yet</span><span class="act-move"><span class="num"><%= assessment.summary.needHistory %></span></span></div>
-      <div class="act-row"><span class="act-place">Products already set up</span><span class="act-move"><span class="num"><%= assessment.summary.alreadySet %></span></span></div>
-      <div class="act-row"><span class="act-place">Products with nobody to buy them from</span><span class="act-move"><span class="num"><%= assessment.summary.withoutSupplier %></span></span></div>
+      <div class="act-row"><span class="act-place">Variants Foundry could suggest a reorder level for</span><span class="act-move"><span class="num"><%= assessment.summary.canPropose %></span></span></div>
+      <div class="act-row"><span class="act-place">Variants it has not seen sell yet</span><span class="act-move"><span class="num"><%= assessment.summary.needHistory %></span></span></div>
+      <div class="act-row"><span class="act-place">Variants already set up</span><span class="act-move"><span class="num"><%= assessment.summary.alreadySet %></span></span></div>
+      <div class="act-row"><span class="act-place">Variants with nobody to buy them from</span><span class="act-move"><span class="num"><%= assessment.summary.withoutSupplier %></span></span></div>
     </div>
     <% if (!assessment.summary.lines) { %>
       <p class="lede">There are no products here yet. Add them, or bring your data in, and Foundry can set purchasing up from what sells.</p>
@@ -37,7 +37,7 @@
       <table class="table table--tight">
         <thead>
           <tr>
-            <th></th><th>Product</th><th class="num">On hand</th><th class="num">Sold recently</th>
+            <th></th><th>Variant</th><th class="num">On hand</th><th class="num">Sold recently</th>
             <th class="num">Reorder at</th><th class="num">Order up to</th><th>Supplier</th>
           </tr>
         </thead>
@@ -115,12 +115,12 @@
         </label>
       </div>
 
-      <h3 class="sub-head">Which products do they supply?</h3>
+      <h3 class="sub-head">Which variants do they supply?</h3>
       <div class="table-scroll">
         <table class="table table--tight">
-          <thead><tr><th></th><th>Product</th><th>Supplier today</th></tr></thead>
+          <thead><tr><th></th><th>Variant</th><th>Supplier today</th></tr></thead>
           <tbody>
-            <% assessment.proposals.concat(assessment.blocked).forEach(function (line) { %>
+            <% assessment.proposals.concat(assessment.blocked, assessment.configured).forEach(function (line) { %>
               <tr>
                 <td><input type="checkbox" name="skuIds" value="<%= line.skuId %>" <%= line.hasSupplier ? '' : 'checked' %>></td>
                 <td><%= line.displayName %></td>
@@ -147,7 +147,7 @@
         sold a few times — you do not have to come back and do anything.
       </p>
       <table class="table table--tight">
-        <thead><tr><th>Product</th><th class="num">On hand</th><th>Sold recently</th></tr></thead>
+        <thead><tr><th>Variant</th><th class="num">On hand</th><th>Sold recently</th></tr></thead>
         <tbody>
           <% assessment.blocked.forEach(function (line) { %>
             <tr>

@@ -1,0 +1,81 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> Foundry</a>
+    <h1><%= proposal.status === 'COMPLETED' ? 'Products removed from active inventory' : 'Remove products added by this file?' %></h1>
+    <div class="page-sub"><%= proposal.snapshot.document.sourceName %></div>
+  </div>
+</div>
+
+<% if (proposal.status === 'COMPLETED') { %>
+  <form method="post" action="/document-removals/<%= proposal.id %>/approve" class="card section" data-selection-group data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="integrityHash" value="<%= proposal.integrityHash %>">
+    <div class="card-head"><h2>Completed</h2><span class="badge badge--ok">Verified</span></div>
+    <div class="card-body">
+      <p class="lede"><strong><%= proposal.result.productsRemoved %> product<%= proposal.result.productsRemoved === 1 ? '' : 's' %></strong> and <strong><%= proposal.result.variantsRemoved %> variant<%= proposal.result.variantsRemoved === 1 ? '' : 's' %></strong> are no longer active.</p>
+      <p><%= proposal.result.unitsRemoved %> unit<%= proposal.result.unitsRemoved === 1 ? '' : 's' %> of remaining stock were corrected to zero through the inventory ledger.</p>
+      <p class="muted">The original file, received purchase order and correction movements remain in Activity as audit evidence. No earlier products were affected.</p>
+    </div>
+    <div class="card-foot"><a class="btn btn--primary" href="/inventory">See active inventory</a><a class="btn" href="/activity">See the audit trail</a></div>
+  </section>
+<% } else if (proposal.status === 'CANCELLED') { %>
+  <div class="notice section"><span>This removal was cancelled. Nothing changed.</span></div>
+<% } else { %>
+  <div class="notice notice--warn section">
+    <%- helpers.icon('alert', { size: 18 }) %>
+    <span><strong>Nothing has been removed yet.</strong> Check the products and current quantities below. Only an owner can approve this.</span>
+  </div>
+
+  <section class="card section">
+    <div class="card-head">
+      <h2>Foundry traced these products to <%= proposal.snapshot.document.sourceName %></h2>
+      <span class="badge badge--danger"><%= proposal.snapshot.productCount %> product<%= proposal.snapshot.productCount === 1 ? '' : 's' %></span>
+    </div>
+    <div class="card-body">
+      <div class="document-facts">
+        <div><span>Products</span><strong><%= proposal.snapshot.productCount %></strong></div>
+        <div><span>Variants</span><strong><%= proposal.snapshot.variantCount %></strong></div>
+        <div><span>Current stock</span><strong><%= proposal.snapshot.onHand %></strong></div>
+        <div><span>File applied</span><strong><%= proposal.snapshot.document.appliedAt ? new Date(proposal.snapshot.document.appliedAt).toLocaleString() : 'Earlier' %></strong></div>
+      </div>
+
+      <div class="selection-toolbar" style="margin-top:18px;">
+        <strong data-selection-count>0 selected</strong>
+        <span class="spacer"></span>
+        <button class="btn btn--sm" type="button" data-select-all>Select all</button>
+        <button class="btn btn--sm btn--ghost" type="button" data-clear-selection>Clear</button>
+      </div>
+      <table class="table">
+        <thead><tr><th aria-label="Select"></th><th>Product</th><th>Variants</th><th class="num">Current stock to remove</th></tr></thead>
+        <tbody>
+          <% proposal.snapshot.items.forEach(function (item) { %>
+            <tr>
+              <td><input type="checkbox" name="itemIds" value="<%= item.id %>" data-selection-item aria-label="Select <%= item.name %>"></td>
+              <td><strong><%= item.name %></strong></td>
+              <td><%= item.variants.map(function (variant) { return variant.variant_label || variant.code; }).join(', ') %></td>
+              <td class="num"><strong><%= item.onHand %></strong></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+
+      <h3 class="sub-head">What approval will do</h3>
+      <ul class="plain-list">
+        <li>Correct the current stock on these products to zero through the inventory ledger.</li>
+        <li>Archive these products so they disappear from active inventory and future Foundry work.</li>
+        <li>Clear or supersede Needs You work that only concerns these products.</li>
+        <li>Keep the original upload, purchase order and all movements as audit history.</li>
+      </ul>
+      <p class="muted">This does not delete the inventory itself, its locations, or products that existed before this file.</p>
+    </div>
+    <div class="card-foot">
+      <button class="btn btn--danger" type="submit" name="selectionMode" value="selected" data-remove-selected disabled>Remove selected</button>
+      <button class="btn btn--danger btn--ghost" type="submit" name="selectionMode" value="all">Remove all <%= proposal.snapshot.productCount %></button>
+      <a class="btn" href="/">Not now</a>
+    </div>
+  </form>
+  <form method="post" action="/document-removals/<%= proposal.id %>/cancel" class="section">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="btn btn--ghost" type="submit">Cancel this removal review</button>
+  </form>
+<% } %>

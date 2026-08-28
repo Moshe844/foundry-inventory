@@ -14,6 +14,7 @@ const crypto = require('node:crypto');
 
 const { inTransaction } = require('../db');
 const repo = require('../domain/repository');
+const operatingGuards = require('../domain/operating-guards');
 const resolver = require('./resolver');
 const catalog = require('../imports/catalog-service');
 const policy = require('./policy');
@@ -73,10 +74,10 @@ function build(db, ctx, intent, options = {}) {
   };
 
   if (policy.CONFIGURATION_ACTIONS.includes(actionType)) {
-    const configured = buildConfiguration(db, ctx, intent, draft);
+    const configured = buildConfiguration(db, ctx, intent, draft, options);
     if (!configured.ok) return configured;
   } else {
-    const resolved = resolveSubject(db, workspaceId, intent, draft);
+    const resolved = resolveSubject(db, workspaceId, intent, draft, options);
     if (!resolved.ok) return resolved;
     const shaped = shapeOperation(db, workspaceId, intent, draft);
     if (!shaped.ok) return shaped;
@@ -98,7 +99,7 @@ function build(db, ctx, intent, options = {}) {
   return { ok: true, proposal: draft };
 }
 
-function buildConfiguration(db, ctx, intent, draft) {
+function buildConfiguration(db, ctx, intent, draft, options = {}) {
   if (draft.actionType === 'create_item') {
     const planned = catalog.planItem(db, ctx.workspaceId, {
       name: intent.productName || intent.item,
@@ -128,8 +129,147 @@ function buildConfiguration(db, ctx, intent, draft) {
     draft.assumptions.push(...planned.plan.assumptions);
     // A resemblance is shown, never acted on.
     for (const conflict of planned.plan.conflicts) draft.assumptions.push(conflict.message);
-    draft.expectedBeforeState = { variants: 0 };
-    draft.expectedAfterState = { variants: planned.plan.variantCount };
+    draft.expectedBeforeState = { variants: 0, total: 0 };
+    draft.expectedAfterState = { variants: planned.plan.variantCount, total: 0 };
+
+    // Creating a catalogue record and recording stock that has just arrived is
+    // one business event when the person states both in the same instruction.
+    // Keeping the receipt on this proposal is important: the SKU does not exist
+    // yet, so a separate receive proposal could neither resolve nor preview it
+    // truthfully. Execution still goes through the inventory engine and the
+    // surrounding transaction makes the two controlled operations atomic.
+    const quantity = Number(intent.quantity);
+    const hasInitialStock = Number.isInteger(quantity) && quantity > 0;
+    if (!hasInitialStock) return { ok: true };
+
+    if (planned.plan.variantCount !== 1) {
+      return {
+        ok: false,
+        question:
+          `You are adding ${planned.plan.name} with ${planned.plan.variantCount} variants. `
+          + `Which variant should receive the ${quantity} ${planned.plan.unitLabel}(s)?`,
+        clarification: { dimension: 'variant', choices: [] },
+      };
+    }
+
+    const serials = Array.isArray(intent.serials) ? intent.serials.filter(Boolean) : [];
+    const lotCode = String(intent.lotCode || '').trim();
+    if (planned.plan.trackingMode === 'serial' && serials.length !== quantity) {
+      return {
+        ok: false,
+        question:
+          `${planned.plan.name} is tracked by serial number. `
+          + `Provide the ${quantity} serial number${quantity === 1 ? '' : 's'} for the units received.`,
+        clarification: { dimension: 'serials', choices: [] },
+      };
+    }
+    if (planned.plan.trackingMode === 'lot' && !lotCode) {
+      return {
+        ok: false,
+        question: `What lot or batch code should be recorded for the ${quantity} ${planned.plan.name} received?`,
+        clarification: { dimension: 'lot', choices: [] },
+      };
+    }
+
+    const namedLocation = String(intent.destinationLocation || intent.sourceLocation || '').trim();
+    const resolvedLocation = resolver.resolveLocation(db, ctx.workspaceId, namedLocation, { role: 'receiving location' });
+    if (!resolvedLocation.ok) {
+      const choices = resolvedLocation.clarification && resolvedLocation.clarification.choices;
+      return {
+        ok: false,
+        question:
+          `Where should the ${quantity} ${planned.plan.name}${planned.plan.variantCount === 1 && planned.plan.axes.length
+            ? ` / ${planned.plan.axes.map((axis) => axis.values[0]).join(' / ')}` : ''} be received?`,
+        clarification: {
+          dimension: 'destination_location',
+          choices: Array.isArray(choices) ? choices : [],
+        },
+        choices: Array.isArray(choices) ? choices : [],
+      };
+    }
+    if (resolvedLocation.note) draft.assumptions.push(resolvedLocation.note);
+
+    const location = resolvedLocation.value;
+    draft.quantity = quantity;
+    draft.destinationLocationId = location.id;
+    draft.settings.initialStock = {
+      quantity,
+      locationId: location.id,
+      locationName: location.name,
+      lotCode: lotCode || null,
+      serials,
+    };
+    draft.expectedBeforeState = {
+      variants: 0,
+      total: 0,
+      destinationLocationId: location.id,
+      destinationLocationName: location.name,
+      destinationOnHand: 0,
+    };
+    draft.expectedAfterState = {
+      variants: planned.plan.variantCount,
+      total: quantity,
+      destinationLocationId: location.id,
+      destinationLocationName: location.name,
+      destinationOnHand: quantity,
+    };
+    return { ok: true };
+  }
+
+  if (draft.actionType === 'archive_item') {
+    const named = String(intent.item || intent.productName || '').trim();
+    const variant = String(intent.variant || '').trim();
+    const exactItem = !variant && named
+      ? db.prepare(
+          `SELECT * FROM items WHERE workspace_id = ? AND is_active = 1
+            AND (name = ? COLLATE NOCASE OR base_code = ? COLLATE NOCASE)`
+        ).get(ctx.workspaceId, named, named)
+      : null;
+
+    let sku;
+    let scope = 'item';
+    if (exactItem) {
+      sku = db.prepare(
+        `SELECT s.*, i.name AS item_name, i.tracking_mode, i.unit_label, i.has_variants
+           FROM skus s JOIN items i ON i.id = s.item_id
+          WHERE s.workspace_id = ? AND s.item_id = ? AND s.is_active = 1
+          ORDER BY s.position LIMIT 1`
+      ).get(ctx.workspaceId, exactItem.id);
+    } else {
+      const resolved = resolver.resolveSku(db, ctx.workspaceId, named, variant, {
+        instruction: options.instruction,
+        groundIdentity: options.groundIdentity,
+      });
+      if (!resolved.ok) return unresolved(resolved);
+      sku = resolved.value;
+      const siblings = db.prepare(
+        'SELECT COUNT(*) AS n FROM skus WHERE workspace_id = ? AND item_id = ? AND is_active = 1'
+      ).get(ctx.workspaceId, sku.item_id).n;
+      scope = siblings > 1 ? 'sku' : 'item';
+    }
+    if (!sku) return { ok: false, question: null, unsupported: 'That product is not active in this inventory.' };
+
+    const itemId = exactItem ? exactItem.id : sku.item_id;
+    const total = scope === 'item'
+      ? repo.getItemTotal(db, ctx.workspaceId, itemId)
+      : db.prepare(
+          'SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ? AND sku_id = ?'
+        ).get(ctx.workspaceId, sku.id).n;
+    if (total !== 0) {
+      const display = [sku.item_name, scope === 'sku' ? sku.variant_label : null].filter(Boolean).join(' / ');
+      return {
+        ok: false,
+        question: null,
+        unsupported: `${display} still has ${total} on hand. Move or issue that stock before removing it from the catalogue.`,
+      };
+    }
+
+    draft.itemId = itemId;
+    draft.skuId = sku.id;
+    draft.subject = { kind: 'sku', sku };
+    draft.settings = { archiveScope: scope };
+    draft.expectedBeforeState = { total: 0, active: true };
+    draft.expectedAfterState = { total: 0, active: false };
     return { ok: true };
   }
 
@@ -163,6 +303,16 @@ function buildConfiguration(db, ctx, intent, draft) {
 function noteFrom(draft, result) {
   if (result && result.note) draft.assumptions.push(result.note);
   return result;
+}
+
+function unresolved(result, fallback = null) {
+  const clarification = result && result.clarification ? result.clarification : fallback;
+  return {
+    ok: false,
+    question: result && result.message ? result.message : null,
+    clarification: clarification || null,
+    choices: clarification && Array.isArray(clarification.choices) ? clarification.choices : null,
+  };
 }
 
 /**
@@ -235,7 +385,11 @@ function resolveLotAtSource(db, workspaceId, draft, location, verb) {
         ? ` ${expired.map((lot) => lot.code).join(', ')} ${expired.length === 1 ? 'has' : 'have'} already expired.`
         : '') +
       suggestion,
-    choices: lots.map((lot) => lot.code),
+    clarification: {
+      dimension: 'lot',
+      choices: lots.map((lot) => ({ label: `${lot.code} — ${lot.quantity} available`, value: lot.code })),
+    },
+    choices: lots.map((lot) => ({ label: `${lot.code} — ${lot.quantity} available`, value: lot.code })),
   };
 }
 
@@ -261,7 +415,43 @@ function openNewLot(draft, lotCode, failure) {
   return { ok: true };
 }
 
-function resolveSubject(db, workspaceId, intent, draft) {
+/**
+ * Recover an exact SKU identifier when the language reader mistakes the code
+ * for a lot or serial number. A real physical identity still wins: an existing
+ * lot/serial is never reinterpreted, and explicit "lot", "batch" or "serial"
+ * wording remains specialised identity evidence (including a new lot receipt).
+ */
+function recoverMisclassifiedSkuIdentifier(db, workspaceId, intent, instruction) {
+  const wording = `${intent.sourceText || ''} ${instruction || ''}`;
+  if (intent.lotCode) {
+    const sku = resolver.resolveExactSkuCode(db, workspaceId, intent.lotCode);
+    const itemCode = resolver.hasExactItemCode(db, workspaceId, intent.lotCode);
+    const actualLot = resolver.resolveLot(db, workspaceId, intent.lotCode);
+    const explicitlyLot = /\b(?:lot|batch)\b/i.test(wording);
+    if ((sku || itemCode) && !actualLot.ok && !explicitlyLot) {
+      return sku
+        ? { ...intent, resolvedSkuId: sku.id, lotCode: '' }
+        : { ...intent, item: intent.lotCode, variant: intent.variant || '', lotCode: '' };
+    }
+  }
+
+  if (Array.isArray(intent.serials) && intent.serials.length === 1) {
+    const code = intent.serials[0];
+    const sku = resolver.resolveExactSkuCode(db, workspaceId, code);
+    const itemCode = resolver.hasExactItemCode(db, workspaceId, code);
+    const actualSerial = resolver.resolveSerialUnit(db, workspaceId, code);
+    const explicitlySerial = /\b(?:serial|serial number)\b/i.test(wording);
+    if ((sku || itemCode) && !actualSerial.ok && !explicitlySerial) {
+      return sku
+        ? { ...intent, resolvedSkuId: sku.id, serials: [] }
+        : { ...intent, item: code, variant: intent.variant || '', serials: [] };
+    }
+  }
+  return intent;
+}
+
+function resolveSubject(db, workspaceId, intent, draft, options = {}) {
+  intent = recoverMisclassifiedSkuIdentifier(db, workspaceId, intent, options.instruction);
   // An internal caller — a Mission 3 finding, or recalculating an existing
   // proposal — already knows the exact SKU. It is still re-checked against this
   // workspace, so an id from anywhere else simply is not found.
@@ -289,7 +479,7 @@ function resolveSubject(db, workspaceId, intent, draft) {
     }
     if (Array.isArray(intent.serials) && intent.serials.length) {
       const units = resolver.resolveSerialUnits(db, workspaceId, intent.serials);
-      if (!units.ok) return { ok: false, question: units.message };
+      if (!units.ok) return unresolved(units);
       draft.serialUnitIds = units.value.map((u) => u.id);
       draft.subject = { kind: 'serial', units: units.value };
     }
@@ -298,7 +488,7 @@ function resolveSubject(db, workspaceId, intent, draft) {
 
   if (Array.isArray(intent.serials) && intent.serials.length > 0) {
     const units = resolver.resolveSerialUnits(db, workspaceId, intent.serials);
-    if (!units.ok) return { ok: false, question: units.message };
+    if (!units.ok) return unresolved(units);
     draft.serialUnitIds = units.value.map((u) => u.id);
     draft.skuId = units.value[0].sku_id;
     draft.itemId = units.value[0].item_id;
@@ -308,7 +498,12 @@ function resolveSubject(db, workspaceId, intent, draft) {
 
   if (intent.lotCode) {
     // A named lot is never satisfied by generic stock of the same product.
-    const skuHint = intent.item ? resolver.resolveSku(db, workspaceId, intent.item, intent.variant) : null;
+    const skuHint = intent.item
+      ? resolver.resolveSku(db, workspaceId, intent.item, intent.variant, {
+          instruction: options.instruction,
+          groundIdentity: options.groundIdentity,
+        })
+      : null;
     const lot = resolver.resolveLot(db, workspaceId, intent.lotCode, skuHint && skuHint.ok ? skuHint.value.id : null);
     if (!lot.ok) {
       // A receive names the batch it is creating, so an unknown code is the
@@ -323,7 +518,7 @@ function resolveSubject(db, workspaceId, intent, draft) {
         if (!opened.ok) return opened;
         return { ok: true };
       }
-      return { ok: false, question: lot.message };
+      return unresolved(lot);
     }
     draft.lotId = lot.value.id;
     draft.skuId = lot.value.sku_id;
@@ -333,8 +528,13 @@ function resolveSubject(db, workspaceId, intent, draft) {
     return { ok: true };
   }
 
-  const sku = noteFrom(draft, resolver.resolveSku(db, workspaceId, intent.item, intent.variant));
-  if (!sku.ok) return { ok: false, question: sku.message };
+  const sku = noteFrom(draft, resolver.resolveSku(
+    db, workspaceId, intent.item, intent.variant, {
+      instruction: options.instruction,
+      groundIdentity: options.groundIdentity,
+    }
+  ));
+  if (!sku.ok) return unresolved(sku);
   draft.skuId = sku.value.id;
   draft.itemId = sku.value.item_id;
   draft.subject = { kind: 'sku', sku: sku.value };
@@ -372,6 +572,17 @@ function resolveSubject(db, workspaceId, intent, draft) {
         question:
           `${sku.value.item_name} is tracked by individual unit. Which one? ` +
           `${listed}${units.length > 8 ? ', and others' : ''}.`,
+        clarification: {
+          dimension: 'serial_unit',
+          choices: units.slice(0, 8).map((unit) => ({
+            label: `${unit.serial}${unit.location_name ? ` — ${unit.location_name}` : ''}`,
+            value: unit.serial,
+          })),
+        },
+        choices: units.slice(0, 8).map((unit) => ({
+          label: `${unit.serial}${unit.location_name ? ` — ${unit.location_name}` : ''}`,
+          value: unit.serial,
+        })),
       };
     }
   }
@@ -529,18 +740,24 @@ function shapeOperation(db, workspaceId, intent, draft) {
     return {
       ok: false,
       message: `${subjectName(draft)} is at ${where}. Which should it come out of?`,
+      clarification: {
+        dimension: 'source_location',
+        choices: inferred.rows.map((row) => ({ label: `${row.name} — ${row.onHand} on hand`, value: row.name })),
+      },
     };
   };
 
   if (actionType === 'receive') {
     const into = noteFrom(draft, resolver.resolveLocation(db, workspaceId, intent.destinationLocation, { role: 'location' }));
-    if (!into.ok) return { ok: false, question: into.message };
+    if (!into.ok) return unresolved(into);
     draft.destinationLocationId = into.value.id;
 
     if (draft.serialUnitIds.length) {
       return { ok: false, question: null, unsupported: 'Receiving new serial numbers is done from the item page.' };
     }
-    if (!quantity || quantity <= 0) return { ok: false, question: 'How many are you receiving?' };
+    if (!quantity || quantity <= 0) {
+      return { ok: false, question: 'How many are you receiving?', clarification: { dimension: 'quantity', choices: [] } };
+    }
     draft.quantity = quantity;
     draft.reasonCode = null;
     draft.availableAtSource = resolver.balanceAt(db, workspaceId, draft.skuId, into.value.id);
@@ -558,12 +775,12 @@ function shapeOperation(db, workspaceId, intent, draft) {
     if (!from.ok) {
       return from.empty
         ? { ok: false, question: null, unsupported: `${from.message} Receive some before issuing any.` }
-        : { ok: false, question: from.message };
+        : unresolved(from);
     }
     draft.sourceLocationId = from.value.id;
 
     const issueLot = resolveLotAtSource(db, workspaceId, draft, from.value, 'goes');
-    if (!issueLot.ok) return { ok: false, question: issueLot.question };
+    if (!issueLot.ok) return { ...issueLot, ok: false };
 
     draft.availableAtSource = draft.lotId
       ? resolver.lotBalanceAt(db, workspaceId, draft.lotId, from.value.id)
@@ -581,6 +798,31 @@ function shapeOperation(db, workspaceId, intent, draft) {
         return { ok: false, question: null, unsupported: `There is none at ${from.value.name} to issue.` };
       }
       draft.quantity = inferred;
+    }
+    const guarded = operatingGuards.evaluateIssue(db, workspaceId, {
+      skuId: draft.skuId, locationId: from.value.id, quantity: draft.quantity,
+    });
+    if (guarded) {
+      return {
+        ok: false,
+        question: null,
+        unsupported: guarded.message,
+        blocked: {
+          reason: 'operating_guard',
+          ruleId: guarded.rule.id,
+          threshold: guarded.rule.threshold,
+          comparator: guarded.rule.comparator,
+          releaseCondition: guarded.rule.releaseCondition,
+          releaseThreshold: guarded.rule.releaseThreshold,
+          before: guarded.before,
+          after: guarded.after,
+          onOrder: guarded.onOrder,
+          subject: subjectName(draft),
+          skuId: draft.skuId,
+          locationId: from.value.id,
+          locationName: from.value.name,
+        },
+      };
     }
     draft.reasonCode = ISSUE_REASON_IDS.includes(intent.reasonCode) ? intent.reasonCode : 'sold';
     draft.expectedBeforeState = beforeState(db, workspaceId, draft, { source: from.value });
@@ -613,13 +855,12 @@ function shapeOperation(db, workspaceId, intent, draft) {
     if (!from.ok) {
       return from.empty
         ? { ok: false, question: null, unsupported: `${from.message} Receive some before moving any.` }
-        : { ok: false, question: from.message };
+        : unresolved(from);
     }
     const to = noteFrom(draft, resolver.resolveLocation(db, workspaceId, intent.destinationLocation, { role: 'destination' }));
     if (!to.ok) {
       return {
-        ok: false,
-        question: to.message,
+        ...unresolved(to),
         // A destination may legitimately be new. Preserve that fact so the
         // interface can offer a safe location preview instead of reducing the
         // result to a brief flash message that is easy to miss.
@@ -635,7 +876,7 @@ function shapeOperation(db, workspaceId, intent, draft) {
     draft.destinationLocationId = to.value.id;
 
     const moveLot = resolveLotAtSource(db, workspaceId, draft, from.value, 'moves');
-    if (!moveLot.ok) return { ok: false, question: moveLot.question };
+    if (!moveLot.ok) return { ...moveLot, ok: false };
 
     draft.availableAtSource = draft.lotId
       ? resolver.lotBalanceAt(db, workspaceId, draft.lotId, from.value.id)
@@ -678,14 +919,18 @@ function shapeOperation(db, workspaceId, intent, draft) {
       at = {
         ok: false,
         message: `Which location's count should change? ${locations.map((l) => l.name).join(', ')}.`,
+        clarification: {
+          dimension: 'location',
+          choices: locations.map((location) => ({ label: location.name, value: location.name })),
+        },
       };
     }
   }
-  if (!at.ok) return { ok: false, question: at.message };
+  if (!at.ok) return unresolved(at);
   draft.sourceLocationId = at.value.id;
 
   const countLot = resolveLotAtSource(db, workspaceId, draft, at.value, 'gets corrected');
-  if (!countLot.ok) return { ok: false, question: countLot.question };
+  if (!countLot.ok) return { ...countLot, ok: false };
 
   const current = draft.lotId
     ? resolver.lotBalanceAt(db, workspaceId, draft.lotId, at.value.id)
@@ -694,11 +939,20 @@ function shapeOperation(db, workspaceId, intent, draft) {
   let target = Number.isFinite(Number(intent.adjustmentTarget)) ? Math.trunc(Number(intent.adjustmentTarget)) : null;
   if (target === null && quantity !== null && intent.adjustmentIsDelta) target = current + quantity;
   if (target === null) {
-    return { ok: false, question: 'What should the count be after the correction?' };
+    return {
+      ok: false,
+      question: 'What should the count be after the correction?',
+      clarification: { dimension: 'quantity', choices: [] },
+    };
   }
   if (target < 0) return { ok: false, question: null, unsupported: 'A count cannot be negative.' };
   if (target === current) {
-    return { ok: false, question: null, unsupported: `The count here is already ${current}. Nothing to correct.` };
+    return {
+      ok: false,
+      question: null,
+      noChange: true,
+      unsupported: `The count here is already ${current}. Nothing to correct.`,
+    };
   }
 
   // A correction's reason carries audit meaning, so it is never invented.
@@ -707,6 +961,12 @@ function shapeOperation(db, workspaceId, intent, draft) {
       ok: false,
       question: `Why is the count changing from ${current} to ${target}? Foundry needs the reason on record.`,
       needsReason: true,
+      // The action service uses these resolved facts to describe a grouped
+      // correction truthfully. They are not accepted from the browser and do
+      // not mutate stock; they only prevent a twelve-line opening balance from
+      // being presented as though Foundry understood its first line alone.
+      reasonContext: { current, target },
+      clarification: { dimension: 'reason', choices: [] },
     };
   }
 
@@ -955,6 +1215,35 @@ function revalidate(db, ctx, proposal, options = {}) {
         .get(workspaceId, proposal.settings.name);
       if (clash) problems.push(`There is now already a location called “${proposal.settings.name}”.`);
     }
+    if (proposal.actionType === 'create_item') {
+      const conflict = catalog.findConflicts(db, workspaceId, {
+        name: proposal.settings.name,
+        code: proposal.settings.code,
+      }).find((entry) => entry.decisive);
+      if (conflict) problems.push(conflict.message);
+
+      if (proposal.settings.initialStock) {
+        const location = db
+          .prepare('SELECT is_active FROM locations WHERE id = ? AND workspace_id = ?')
+          .get(proposal.destinationLocationId, workspaceId);
+        if (!location) problems.push('The receiving location is no longer in this inventory.');
+        else if (!location.is_active) problems.push('The receiving location has been archived.');
+      }
+    }
+    if (proposal.actionType === 'archive_item') {
+      const scope = proposal.settings.archiveScope;
+      const row = scope === 'item'
+        ? db.prepare('SELECT is_active FROM items WHERE id = ? AND workspace_id = ?')
+            .get(proposal.itemId, workspaceId)
+        : db.prepare('SELECT is_active FROM skus WHERE id = ? AND workspace_id = ?')
+            .get(proposal.skuId, workspaceId);
+      if (!row) problems.push('That catalogue record is no longer in this inventory.');
+      else if (!row.is_active) problems.push('That catalogue record has already been archived.');
+      const total = scope === 'item'
+        ? repo.getItemTotal(db, workspaceId, proposal.itemId)
+        : resolver.skuTotal(db, workspaceId, proposal.skuId);
+      if (total !== 0) problems.push(`That catalogue record now has ${total} on hand.`);
+    }
     return { ok: problems.length === 0, problems, current: {} };
   }
 
@@ -1060,6 +1349,59 @@ function rebaseForPlan(proposal, applied) {
 }
 
 function currentState(db, workspaceId, proposal) {
+  if (proposal.actionType === 'archive_item') {
+    const scope = proposal.settings.archiveScope;
+    const row = scope === 'item'
+      ? db.prepare('SELECT is_active FROM items WHERE id = ? AND workspace_id = ?')
+          .get(proposal.itemId, workspaceId)
+      : db.prepare('SELECT is_active FROM skus WHERE id = ? AND workspace_id = ?')
+          .get(proposal.skuId, workspaceId);
+    return {
+      total: scope === 'item'
+        ? repo.getItemTotal(db, workspaceId, proposal.itemId)
+        : resolver.skuTotal(db, workspaceId, proposal.skuId),
+      active: Boolean(row && row.is_active),
+    };
+  }
+  if (proposal.actionType === 'create_item') {
+    const item = proposal.settings.code
+      ? db.prepare(
+          `SELECT id FROM items
+            WHERE workspace_id = ? AND base_code = ? COLLATE NOCASE AND is_active = 1`
+        ).get(workspaceId, proposal.settings.code)
+      : db.prepare(
+          `SELECT id FROM items
+            WHERE workspace_id = ? AND name = ? COLLATE NOCASE AND is_active = 1`
+        ).get(workspaceId, proposal.settings.name);
+    const state = {
+      total: item
+        ? db.prepare(
+            `SELECT COALESCE(SUM(b.on_hand), 0) AS n
+               FROM skus s LEFT JOIN balances b
+                 ON b.sku_id = s.id AND b.workspace_id = s.workspace_id
+              WHERE s.workspace_id = ? AND s.item_id = ? AND s.is_active = 1`
+          ).get(workspaceId, item.id).n
+        : 0,
+    };
+    if (proposal.destinationLocationId) {
+      const location = db
+        .prepare('SELECT name FROM locations WHERE id = ? AND workspace_id = ?')
+        .get(proposal.destinationLocationId, workspaceId);
+      state.destinationLocationId = proposal.destinationLocationId;
+      state.destinationLocationName = location ? location.name : null;
+      state.destinationOnHand = item
+        ? db.prepare(
+            `SELECT COALESCE(SUM(b.on_hand), 0) AS n
+               FROM skus s LEFT JOIN balances b
+                 ON b.sku_id = s.id AND b.workspace_id = s.workspace_id
+                AND b.location_id = ?
+              WHERE s.workspace_id = ? AND s.item_id = ? AND s.is_active = 1`
+          ).get(proposal.destinationLocationId, workspaceId, item.id).n
+        : 0;
+    }
+    return state;
+  }
+
   const state = {
     total: proposal.lotId
       ? resolver.lotTotal(db, workspaceId, proposal.lotId)

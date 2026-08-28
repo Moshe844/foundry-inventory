@@ -21,6 +21,7 @@ const receivingService = require('../purchasing/receiving-service');
 const { inTransaction } = require('../db');
 const { newId, nowIso, requireText } = require('../lib/util');
 const { ValidationError } = require('../domain/errors');
+const prices = require('../pricing/price-service');
 
 const MAX_TEXT = 24000;
 const SUPPORTED = ['.pdf', '.docx', '.xlsx', '.xls', '.csv', '.tsv', '.txt'];
@@ -31,7 +32,7 @@ const LINE_SCHEMA = {
   properties: {
     styleName: { type: 'string' }, color: { type: 'string' }, variantDimension: { type: 'string' }, size: { type: 'string' },
     supplierSku: { type: 'string' }, description: { type: 'string' },
-    quantity: { type: 'integer' }, unitCost: { type: 'number' },
+    quantity: { type: 'integer' }, unitCost: { type: 'number' }, sellingPrice: { type: 'number' },
   },
 };
 
@@ -54,7 +55,7 @@ const SYSTEM = `Read a business inventory source document into structured setup 
 
 Do not invent values. Use an empty string for missing text, -1 for missing unit cost, and 0 only when a line explicitly says zero quantity. Include only real inventory lines, never freight, tax, discounts, fees, totals, headings or notes.
 
-styleName is the reusable inventory product without its line-level variant value. Put colour in color when it is explicit. variantDimension is the business name for the value in size: for example Size, Model, Grade, Length, or Pack. The size field holds that value; leave both strings empty when there is no variant. Preserve supplier SKU exactly. quantity is the inventory units on that exact line. unitCost is per inventory unit.
+styleName is the reusable inventory product without its line-level variant value. Put colour in color when it is explicit. variantDimension is the business name for the value in size: for example Size, Model, Grade, Length, or Pack. The size field holds that value; leave both strings empty when there is no variant. Preserve supplier SKU exactly. quantity is the inventory units on that exact line. unitCost is supplier purchase cost per inventory unit. sellingPrice is the customer retail/list price only when the source explicitly labels it as retail, selling, list, MSRP or RRP; otherwise use -1. Never copy invoice unit cost into sellingPrice.
 
 unitLabel is the singular thing being counted, such as pair, bottle, machine, roll, or unit. Use the document's wording when it is present; otherwise use unit. Never assume an industry-specific unit from the file format.
 
@@ -139,6 +140,7 @@ function normalise(raw) {
     supplierSku: clean(line.supplierSku).slice(0, 120),
     description: clean(line.description).slice(0, 240), quantity: Math.max(0, Math.trunc(Number(line.quantity) || 0)),
     unitCost: Number(line.unitCost) >= 0 ? Math.round(Number(line.unitCost) * 10000) / 10000 : null,
+    sellingPrice: Number(line.sellingPrice) >= 0 ? Math.round(Number(line.sellingPrice) * 100) / 100 : null,
   })).filter((line) => line.styleName && line.quantity > 0);
   return {
     documentType: raw.documentType, businessDescription: clean(raw.businessDescription), unitLabel: clean(raw.unitLabel) || 'unit',
@@ -253,7 +255,7 @@ function saveDocumentUnderstanding(db, ctx, interpretation, sourceName) {
   });
 }
 
-async function prepare(db, ctx, membership, file, options = {}) {
+function prepareFromInterpretation(db, ctx, membership, file, interpretation, extractedText = '') {
   const hash = crypto.createHash('sha256').update(file.buffer).digest('hex');
   const existing = db.prepare('SELECT * FROM setup_documents WHERE workspace_id = ? AND content_hash = ?').get(ctx.workspaceId, hash);
   if (existing) {
@@ -262,15 +264,11 @@ async function prepare(db, ctx, membership, file, options = {}) {
     if (existing.status !== 'PREPARED' || (stored && stored.provider === 'document-evidence')) {
       return { document: hydrate(existing), understandingId: existing.understanding_id, replayed: true };
     }
-    const interpretation = JSON.parse(existing.interpretation);
-    const understandingId = saveDocumentUnderstanding(db, ctx, interpretation, existing.source_name);
+    const storedInterpretation = JSON.parse(existing.interpretation);
+    const understandingId = saveDocumentUnderstanding(db, ctx, storedInterpretation, existing.source_name);
     db.prepare('UPDATE setup_documents SET understanding_id = ? WHERE id = ?').run(understandingId, existing.id);
     return { document: getByUnderstanding(db, ctx.workspaceId, understandingId), understandingId, replayed: true };
   }
-  if (options.onStage) options.onStage('reading');
-  const text = await extractText(file);
-  const interpretation = await interpret(text, options);
-  if (options.onStage) options.onStage('advising');
   const understandingId = saveDocumentUnderstanding(db, ctx, interpretation, file.filename);
   const id = newId('sdoc');
   db.prepare(
@@ -279,8 +277,16 @@ async function prepare(db, ctx, membership, file, options = {}) {
         source_content, content_hash, extracted_text, interpretation, supplier_code_label, status, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PREPARED', ?)`
   ).run(id, ctx.workspaceId, ctx.actorId, understandingId, file.filename, file.mimeType || null,
-    file.buffer, hash, text, JSON.stringify(interpretation), interpretation.supplierCodeLabel, nowIso());
+    file.buffer, hash, extractedText, JSON.stringify(interpretation), interpretation.supplierCodeLabel, nowIso());
   return { document: getByUnderstanding(db, ctx.workspaceId, understandingId), understandingId, replayed: false };
+}
+
+async function prepare(db, ctx, membership, file, options = {}) {
+  if (options.onStage) options.onStage('reading');
+  const text = await extractText(file);
+  const interpretation = await interpret(text, options);
+  if (options.onStage) options.onStage('advising');
+  return prepareFromInterpretation(db, ctx, membership, file, interpretation, text);
 }
 
 function hydrate(row) {
@@ -290,6 +296,7 @@ function hydrate(row) {
     interpretation,
     detectedSupplierCodeLabel: interpretation.supplierCodeLabel || 'Product code',
     supplierCodeLabel: row.supplier_code_label || interpretation.supplierCodeLabel || 'Supplier code', status: row.status,
+    scopeConfirmedAt: row.scope_confirmed_at,
     appliedPlanId: row.applied_plan_id, purchaseOrderId: row.purchase_order_id,
     result: JSON.parse(row.result || '{}'), errorMessage: row.error_message };
 }
@@ -303,6 +310,13 @@ function setSupplierCodeLabel(db, ctx, understandingId, value) {
   db.prepare('UPDATE setup_documents SET supplier_code_label = ? WHERE id = ? AND workspace_id = ?')
     .run(label, row.id, ctx.workspaceId);
   return getByUnderstanding(db, ctx.workspaceId, understandingId);
+}
+
+function confirmScope(db, ctx, understandingId) {
+  const changed = db.prepare(`UPDATE setup_documents SET scope_confirmed_at = ?
+    WHERE workspace_id = ? AND understanding_id = ? AND status = 'PREPARED'`)
+    .run(nowIso(), ctx.workspaceId, understandingId);
+  return changed.changes ? getByUnderstanding(db, ctx.workspaceId, understandingId) : null;
 }
 
 function getByUnderstanding(db, workspaceId, understandingId) {
@@ -354,6 +368,7 @@ function apply(db, ctx, membership, understandingId, planId) {
     }
 
     const orderLines = [];
+    const createdItemIds = [];
     for (const group of groups.values()) {
       const sizes = [...new Set(group.lines.map((line) => line.size).filter(Boolean))];
       const variantDimension = group.lines.map((line) => line.variantDimension).find(Boolean) || 'Variant';
@@ -362,6 +377,7 @@ function apply(db, ctx, membership, understandingId, planId) {
         hasVariants: sizes.length > 0, options: sizes.length ? [{ name: variantDimension, values: sizes }] : [],
         description: `Created from ${row.source_name}`,
       });
+      createdItemIds.push(created.itemId);
       const skus = repo.listSkusForItem(db, ctx.workspaceId, created.itemId);
       for (const line of group.lines) {
         const sku = line.size ? skus.find((entry) => String(entry.variant_label).toLowerCase() === line.size.toLowerCase()) : skus[0];
@@ -371,6 +387,9 @@ function apply(db, ctx, membership, understandingId, planId) {
           supplierDescription: line.description, purchaseUnit: interpretation.unitLabel, unitsPerPurchaseUnit: 1,
           lastUnitCost: line.unitCost, isPreferred: true,
         });
+        if (line.sellingPrice !== null) prices.setPrice(db, ctx, { skuId: sku.id,
+          amountMinor: prices.fromMajorNumber(line.sellingPrice), currency: interpretation.currency,
+          source: 'approved_document', sourceDetail: { setupDocumentId: row.id, sourceName: row.source_name } });
         orderLines.push({ skuId: sku.id, quantityUnits: line.quantity, unitCost: line.unitCost,
           destinationLocationId: location.id, description: line.description, supplierSku: line.supplierSku });
       }
@@ -392,6 +411,7 @@ function apply(db, ctx, membership, understandingId, planId) {
     const result = { products: groups.size, variants: orderLines.length, units: received.result.unitsReceived,
       unitLabel: interpretation.unitLabel,
       supplier: supplier.name, location: location.name, poNumber: order.poNumber, purchaseOrderId: order.id,
+      createdItemIds,
       detectedSupplierCodeLabel: interpretation.supplierCodeLabel || 'Product code', itemCodeLabel };
     db.prepare(
       `UPDATE setup_documents SET status = 'APPLIED', applied_plan_id = ?, purchase_order_id = ?,
@@ -403,5 +423,5 @@ function apply(db, ctx, membership, understandingId, planId) {
 
 module.exports = { SUPPORTED, DOCUMENT_SCHEMA, SYSTEM, extractText, interpret, normalise,
   renderPdfPage, createOcrWorker,
-  understandingFromDocument, prepare,
-  hydrate, getByUnderstanding, getByPlan, setSupplierCodeLabel, apply };
+  understandingFromDocument, prepare, prepareFromInterpretation,
+  hydrate, getByUnderstanding, getByPlan, setSupplierCodeLabel, confirmScope, apply };

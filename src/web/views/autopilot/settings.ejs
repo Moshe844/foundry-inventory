@@ -1,38 +1,123 @@
 <div class="page-head">
   <div class="titles">
-    <h1>What Foundry does</h1>
-    <div class="page-sub">Managing its authority, the way you would an employee's.</div>
+    <h1>Automatic work</h1>
+    <div class="page-sub">Choose the simple default. Open Custom only when you want to tune the limits.</div>
   </div>
 </div>
 
 <div class="card section">
   <div class="card-head">
-    <h2><%= state.modeLabel %></h2>
+    <h2>How should Foundry work?</h2>
     <span class="spacer"></span>
     <% if (state.paused) { %><span class="badge badge--danger">Paused</span><% } %>
     <% if (state.suspended) { %><span class="badge badge--danger">Stopped itself</span><% } %>
   </div>
   <div class="card-body">
-    <p class="lede"><%= state.modeBlurb %></p>
+    <p class="lede"><strong>Currently: <%= state.modeLabel %>.</strong> <%= state.modeBlurb %></p>
     <% if (state.suspended) { %><p class="is-warn"><%= state.suspendedReason %></p><% } %>
 
     <form method="post" action="/autopilot/mode">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <div class="btn-row">
-        <% ['OBSERVE', 'SUPERVISED', 'POLICY_AUTOMATED'].forEach(function (mode) { %>
-          <button class="btn btn--sm <%= state.mode === mode ? 'btn--primary' : '' %>"
-                  type="submit" name="mode" value="<%= mode %>" <%= canOperate ? '' : 'disabled' %>>
-            <%= mode === 'OBSERVE' ? 'Just watch' : mode === 'SUPERVISED' ? 'Prepare my work' : 'Run it' %>
-          </button>
-        <% }) %>
+      <div class="grid grid--2">
+        <button class="authority-choice <%= state.mode === 'SUPERVISED' ? 'is-selected' : '' %>" type="submit" name="mode" value="SUPERVISED" <%= canOperate ? '' : 'disabled' %>>
+          <strong>Ask me first</strong>
+          <span>Foundry watches and recommends. It makes consequential changes only after you approve them.</span>
+        </button>
+        <button class="authority-choice <%= state.mode === 'POLICY_AUTOMATED' ? 'is-selected' : '' %>" type="submit" name="mode" value="POLICY_AUTOMATED" <%= canOperate ? '' : 'disabled' %>>
+          <strong>Handle routine work</strong>
+          <span>Foundry performs safe routine work inside limits you approved and asks about everything else.</span>
+        </button>
       </div>
     </form>
-    <p class="muted">
-      Autopilot needs both: a policy you approved, and this set to “Run it”. Approving a policy on its own
-      never starts anything.
-    </p>
+    <% if (state.mode === 'POLICY_AUTOMATED') { %>
+      <form method="post" action="/autopilot/routine-authority" class="routine-setup" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="routine-setup__head">
+          <div>
+            <h3>Foundry may automatically:</h3>
+            <p>Choose only the routine work you want Foundry to handle. Nothing is enabled unless you select it and save these limits.</p>
+          </div>
+          <% if (routine.hasGuidedAuthority) { %><span class="badge badge--ok">Limits approved</span><% } %>
+        </div>
+
+        <% if (routine.transfer.enabled || routine.purchasing.enabled) { %>
+          <div class="notice notice--success routine-current">
+            <strong>Currently approved:</strong>
+            <% if (routine.transfer.enabled) { %>
+              transfers of no more than <strong><%= routine.transfer.maximumQuantity %> units at a time</strong><%= routine.purchasing.enabled ? '; ' : '.' %>
+            <% } %>
+            <% if (routine.purchasing.enabled) { %>
+              purchase orders of no more than <strong>$<%= Number(routine.purchasing.maximumValue).toLocaleString('en-US') %></strong>
+              may be approved and recorded as ordered in Foundry for
+              <strong><%= routine.purchasing.supplierIds.length %> selected supplier<%= routine.purchasing.supplierIds.length === 1 ? '' : 's' %></strong>.
+            <% } %>
+            Everything outside these limits comes to you first.
+          </div>
+        <% } else { %>
+          <p class="routine-current muted"><strong>Nothing is enabled yet.</strong> Foundry will keep asking before it moves stock or places an order.</p>
+        <% } %>
+
+        <div class="routine-capabilities">
+          <section class="routine-capability <%= routine.transfer.enabled ? 'is-enabled' : '' %>">
+            <label class="routine-capability__choice" for="routine-transfers">
+              <input id="routine-transfers" type="checkbox" name="enableTransfers" value="1"
+                     <%= routine.transfer.enabled ? 'checked' : '' %> <%= locations.length > 1 && canAdmin ? '' : 'disabled' %>>
+              <span><strong>Move stock between my locations</strong><small>Only when one location risks running out, another can safely supply it, and the demand evidence is reliable.</small></span>
+            </label>
+            <% if (locations.length > 1) { %>
+              <label class="field routine-capability__limits">
+                <span class="field-label">Automatic transfers: never more than</span>
+                <span class="routine-limit"><input class="input" type="number" name="maximumQuantity" value="<%= routine.transfer.maximumQuantity %>" min="1" max="100000" required> <span>units at a time</span></span>
+              </label>
+            <% } else { %>
+              <p class="field-help routine-capability__limits">Add a second active location before Foundry can transfer stock.</p>
+            <% } %>
+          </section>
+
+          <section class="routine-capability <%= routine.purchasing.enabled ? 'is-enabled' : '' %>">
+            <label class="routine-capability__choice" for="routine-purchasing">
+              <input id="routine-purchasing" type="checkbox" name="enablePurchasing" value="1"
+                     <%= routine.purchasing.enabled ? 'checked' : '' %> <%= suppliers.length && canAdmin ? '' : 'disabled' %>>
+              <span><strong>Approve routine purchase orders</strong><small>Foundry may create the PO and record it as ordered when the replenishment evidence, supplier rules, price and limits all pass.</small></span>
+            </label>
+            <% if (suppliers.length) { %>
+              <div class="routine-capability__limits">
+                <label class="field">
+                  <span class="field-label">Automatic purchases: never more than</span>
+                  <span class="routine-limit"><span>$</span><input class="input" type="number" name="maximumValue" value="<%= routine.purchasing.maximumValue %>" min="0.01" step="0.01" required> <span>per order</span></span>
+                </label>
+                <fieldset class="field routine-suppliers">
+                  <legend class="field-label">Approved suppliers</legend>
+                  <% suppliers.forEach(function (supplier) { %>
+                    <label class="check"><input type="checkbox" name="supplierScope" value="<%= supplier.id %>" <%= routine.purchasing.supplierIds.includes(supplier.id) ? 'checked' : '' %>> <%= supplier.name %></label>
+                  <% }) %>
+                </fieldset>
+                <p class="field-help"><strong>No supplier connection is active.</strong> “Ordered” is recorded inside Foundry; this version does not email, upload or transmit the PO to the supplier.</p>
+              </div>
+            <% } else { %>
+              <p class="field-help routine-capability__limits">Add an active supplier before Foundry can reorder.</p>
+            <% } %>
+          </section>
+        </div>
+
+        <p class="routine-safety"><strong>Foundry will still ask you</strong> about counts, corrections, uncertain matches, work outside these limits, or anything that fails a safety check.</p>
+        <% if (routine.otherActivePolicies.length) { %>
+          <p class="notice notice--info"><strong><%= routine.otherActivePolicies.length %> additional Custom <%= routine.otherActivePolicies.length === 1 ? 'policy is' : 'policies are' %> active.</strong> Those approved limits also remain in force until you stop them under Custom.</p>
+        <% } %>
+        <button class="btn btn--primary" type="submit" <%= canAdmin ? '' : 'disabled' %>><%= routine.hasGuidedAuthority ? 'Save routine-work limits' : 'Start handling routine work' %></button>
+      </form>
+    <% } %>
   </div>
 </div>
+
+<details class="card section advanced-settings" id="advanced-authority" <%= advanced ? 'open' : '' %>>
+  <summary class="card-head"><span><strong>Custom</strong><span class="muted"> — Advanced policies, preferences and hard limits</span></span></summary>
+  <div class="card-body">
+    <div class="act-row">
+      <div><strong>Watch only</strong><p>Foundry explains what it sees but prepares or changes nothing.</p></div>
+      <form method="post" action="/autopilot/mode"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm <%= state.mode === 'OBSERVE' ? 'btn--primary' : '' %>" type="submit" name="mode" value="OBSERVE" <%= canOperate ? '' : 'disabled' %>>Use watch only</button></form>
+    </div>
+  </div>
 
 <div class="card section">
   <div class="card-head">
@@ -52,8 +137,8 @@
         <% if (state.paused) { %>
           These are approved, but Foundry is paused, so none of them are doing anything.
         <% } else { %>
-          These are approved, but Foundry is set to <strong><%= state.modeLabel.toLowerCase() %></strong> —
-          it still brings this work to you. Set it to “Run it” above for them to take effect.
+          These limits are approved, but Foundry is set to <strong><%= state.modeLabel.toLowerCase() %></strong> —
+          it still brings this work to you. Choose “Handle routine work” above for them to take effect.
         <% } %>
       </p>
     <% } %>
@@ -327,3 +412,5 @@
     <button class="btn" type="submit" <%= canOperate ? '' : 'disabled' %>>Save</button>
   </div>
 </form>
+
+</details>

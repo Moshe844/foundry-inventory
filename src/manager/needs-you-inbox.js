@@ -17,6 +17,7 @@
  *
  *   happened — what was done or observed, in their own words where possible
  *   why      — why Foundry stopped instead of carrying on
+ *   recommendation — the safest next step Foundry recommends
  *   missing  — the specific decision or fact it does not have
  *   action   — one thing to click, going straight to where it is resolved
  *
@@ -32,6 +33,7 @@ const actionPresenter = require('../actions/presenter');
 const proposals = require('../actions/proposal-service');
 const importPlans = require('../imports/plan-service');
 const autopilotPolicies = require('../autopilot/policy-service');
+const operatingInstructions = require('./operating-instructions');
 
 /**
  * What Foundry does not know about a reported event.
@@ -79,6 +81,9 @@ function fromPhysicalEvents(db, workspaceId) {
       why: counting
         ? 'Foundry will not change recorded stock from a count without you.'
         : 'Foundry will not guess an inventory change, so it stopped rather than record the wrong thing.',
+      recommendation: counting
+        ? 'Confirm the physical count before changing the inventory record.'
+        : 'Supply the missing fact so Foundry can prepare the exact inventory change.',
       missing: missingFromEvent(row),
       actionLabel: counting ? 'Settle this count' : 'Finish recording this',
       href: `/needs-you/event/${row.id}`,
@@ -91,14 +96,19 @@ function fromPhysicalEvents(db, workspaceId) {
 function fromInvestigations(db, workspaceId) {
   return investigations
     .list(db, workspaceId, { statuses: ['NEEDS_HUMAN', 'INCONCLUSIVE'], limit: 100 })
-    .map((entry) => ({
+    .map((entry) => {
+      const ageDays = Math.max(0, Math.floor((Date.now() - new Date(entry.createdAt).getTime()) / 86400000));
+      return ({
       id: `investigation:${entry.investigationId}`,
       kind: 'investigation',
       title: `${(entry.affectedEntities || {}).displayName || 'Stock'} does not match the records`,
       happened: entry.observedDifference && entry.observedDifference.statedAs
         ? `You told Foundry: “${entry.observedDifference.statedAs}”`
         : 'Foundry compared the count with its ledger and they disagree.',
-      why: 'Foundry cannot tell which figure is right, and will not overwrite the ledger on a guess.',
+      why: 'Foundry cannot tell which figure is right, and will not overwrite the ledger on a guess.' +
+        (ageDays >= 2 ? ` This discrepancy has been unresolved for ${ageDays} days.` : ''),
+      recommendation: entry.recommendedNextStep
+        || 'Recount the stock, then correct the record only if the physical count is confirmed.',
       // The specific next step Foundry worked out, not a generic invitation to
       // go and look: "Recount Filter Cartridge at Main Warehouse" is an
       // instruction, "look into this" is a shrug.
@@ -106,11 +116,12 @@ function fromInvestigations(db, workspaceId) {
         || (entry.unexplainedAmount === null
           ? 'Which figure is correct.'
           : `An explanation for ${entry.unexplainedAmount} unit(s), or a decision to correct the record.`),
-      actionLabel: 'Look into this',
+      actionLabel: 'Review the count',
       href: `/investigations/${entry.investigationId}`,
       at: entry.createdAt,
-      priority: 80,
-    }));
+      priority: ageDays >= 7 ? 95 : ageDays >= 2 ? 88 : 80,
+    });
+    });
 }
 
 function fromCorrections(db, workspaceId) {
@@ -123,6 +134,7 @@ function fromCorrections(db, workspaceId) {
       title: 'A change is prepared and waiting for you',
       happened: actionPresenter.oneLine(db, workspaceId, proposal),
       why: 'Foundry has worked out the exact change but will not apply it without approval.',
+      recommendation: 'Approve it only if the preview matches what actually happened.',
       missing: 'Your approval.',
       actionLabel: 'Review and approve',
       href: `/actions/${proposal.proposalId}`,
@@ -131,39 +143,30 @@ function fromCorrections(db, workspaceId) {
     }));
 }
 
-function fromWorkItems(db, workspaceId) {
-  return workItems.awaitingApproval(db, workspaceId).map((item) => {
+function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
+  const controlled = workItems.awaitingApproval(db, workspaceId)
+    .filter((item) => autopilotPresenter.isCurrentlyActionable(db, workspaceId, item, { now }))
+    .map((item) => {
     const action = item.recommendedAction || {};
     const named = (item.affectedEntities || {}).displayName;
-    const base = { id: `work:${item.id}`, at: item.createdAt, href: `/autopilot/work/${item.id}` };
+    const ageDays = Math.max(0, Math.floor((Date.now() - new Date(item.createdAt).getTime()) / 86400000));
+    const base = { id: `work:${item.id}`, at: item.createdAt, href: `/autopilot/work/${item.id}`, ageDays };
 
     // Checking in a delivery is not an approval, and describing it as one —
     // "Foundry will not move stock or commit money without you", above a button
     // called Review the plan — told somebody the opposite of what to do. It is
     // a box that has arrived, and the job is to count what is in it.
     if (item.category === 'receiving_followup') {
-      const po = action.poNumber || 'A delivery';
-      const from = action.supplierName ? ` from ${action.supplierName}` : '';
+      const state = autopilotPresenter.deliveryState(db, workspaceId, item, { now });
       return {
         ...base,
         kind: 'receiving',
-        title: `${po}${from} ${action.late ? 'is late' : 'is due'}`,
-        happened: (() => {
-          // Older items stored the date only as evidence, so it is read from
-          // there too rather than telling somebody Foundry is still waiting for
-          // a delivery the heading has just called late.
-          const evidence = (item.sourceEvidence || []).find((fact) => fact.label === 'Expected');
-          const due = action.expectedDate || (evidence && evidence.value) || null;
-          const outstanding = action.outstandingUnits
-            ? `, with ${action.outstandingUnits} unit(s) still outstanding.` : '.';
-          if (due && action.late) {
-            return `It was due on ${due}` +
-              `${action.daysLate ? `, ${action.daysLate} day(s) ago` : ''}${outstanding}`;
-          }
-          if (due) return `It is due on ${due}${outstanding}`;
-          return `Foundry is watching for it to arrive${outstanding}`;
-        })(),
+        title: state.title,
+        happened: state.late
+          ? `It was expected ${state.expected}; ${state.detail}`
+          : `It is expected today; ${state.detail}`,
         why: 'Foundry cannot see what is physically in the box, so it will not book a delivery in for you.',
+        recommendation: 'Count the delivery against the order and record only what actually arrived.',
         missing: 'How many actually arrived.',
         actionLabel: 'Book it in',
         // Straight to the order, where one button books the whole thing in.
@@ -183,9 +186,27 @@ function fromWorkItems(db, workspaceId) {
         why: exception
           ? 'Your rule caps how far a price may move, and this order is over it, so Foundry stopped.'
           : 'Foundry prepared it but will not place an order with a supplier by itself.',
+        recommendation: exception
+          ? 'Check the supplier price and approve only if the increase is acceptable.'
+          : 'Place the order if the supplier, price and quantity are correct.',
         missing: exception ? 'Whether to accept the new price.' : 'Your decision to place it.',
         actionLabel: 'Review the order',
         priority: 84,
+      };
+    }
+
+    if (item.category === 'replenishment_plan' && action.blocked === 'no_supplier') {
+      return {
+        ...base,
+        kind: 'setup',
+        title: `${named || 'This variant'} needs a supplier`,
+        happened: action.explanation || 'It is below its reorder point, but nobody is on file to supply it.',
+        why: 'Without a supplier, Foundry has no pack size, price or lead time and cannot prepare a truthful order.',
+        recommendation: 'Add the supplier and its purchasing terms. Foundry will then recalculate the one replenishment plan.',
+        missing: 'Who supplies this variant, its pack size, price and lead time.',
+        actionLabel: 'Add supplier',
+        href: action.skuId ? `/purchasing/supplier-for/${action.skuId}` : '/purchasing/setup',
+        priority: 86,
       };
     }
 
@@ -193,28 +214,66 @@ function fromWorkItems(db, workspaceId) {
       ...base,
       kind: 'decision',
       title: named ? `${named} needs a decision` : item.categoryLabel,
-      happened: action.explanation || (item.policyEvaluation || {}).reason || item.categoryLabel,
+      happened: item.category === 'replenishment_plan' && named
+        ? `${named} needs replenishing. ${action.explanation || (item.policyEvaluation || {}).reason || ''}`.trim()
+        : action.explanation || (item.policyEvaluation || {}).reason || item.categoryLabel,
       why: 'Foundry will not move stock or commit money without you.',
+      recommendation: 'Approve the single plan only if all of its proposed actions are correct.',
       missing: 'Your approval of the plan.',
       actionLabel: 'Review the plan',
-      priority: 85,
+      priority: ageDays >= 3 ? 92 : 85,
     };
   });
+
+  // A draft without a separate work item is still a real purchasing decision.
+  // Home already showed it; omitting it here made the Home total, sidebar badge
+  // and Check-now result disagree with the page named “Needs you”.
+  const drafts = autopilotPresenter.whatFoundryPrepared(db, workspaceId, { limit: 100 })
+    .filter((entry) => entry.kind === 'purchase')
+    .map((entry) => ({
+      id: `purchase:${entry.id}`,
+      kind: 'decision',
+      title: entry.title,
+      happened: entry.because,
+      why: 'Foundry prepared the order but will not place it with a supplier by itself.',
+      recommendation: 'Place the order if the supplier, price and quantity are correct.',
+      missing: 'Your decision to place it.',
+      actionLabel: entry.action,
+      href: entry.link,
+      at: null,
+      priority: entry.priority || 55,
+    }));
+
+  return [...controlled, ...drafts];
 }
 
 function fromFindings(db, workspaceId) {
-  return autopilotPresenter.whatNeedsYou(db, workspaceId).map((finding) => ({
+  return autopilotPresenter.whatNeedsYou(db, workspaceId).map((finding) => {
+    const isProtectedLimit = finding.category === 'stock_protection_boundary';
+    const approachingProtectedLimit = isProtectedLimit
+      && Number((finding.metrics || {}).onHand) > Number((finding.metrics || {}).threshold);
+    return ({
     id: `finding:${finding.id}`,
     kind: 'finding',
     title: finding.title,
     happened: finding.because || 'Foundry noticed this in your records.',
-    why: 'Foundry raised it because the numbers crossed a line you set, or a pattern it watches.',
-    missing: 'A look, and a decision about what to do.',
-    actionLabel: 'See what Foundry found',
+    why: isProtectedLimit
+      ? approachingProtectedLimit
+        ? 'The next outgoing unit would reach the blocked boundary you approved. Foundry cannot choose whether to order, receive stock, or change your rule.'
+        : 'This stock has reached or crossed the protection limit you approved. Foundry cannot choose whether to order, receive stock, or change your rule.'
+      : 'Foundry raised it because the numbers crossed a line you set, or a pattern it watches.',
+    recommendation: finding.recommendation || 'Open the finding and follow the action supported by the recorded evidence.',
+    missing: isProtectedLimit
+      ? 'Restore the stock, place the supplier order the rule requires, or change the limit if it is no longer right.'
+      : finding.action === 'Add supplier'
+      ? 'The supplier and purchasing terms for this variant.'
+      : 'A look, and a decision about what to do.',
+    actionLabel: isProtectedLimit ? 'Review stock limit' : finding.action === 'Add supplier' ? 'Add supplier' : 'Review finding',
     href: finding.link,
     at: null,
-    priority: finding.priority || 60,
-  }));
+    priority: isProtectedLimit ? Math.max(80, finding.priority || 0) : finding.priority || 60,
+    });
+  });
 }
 
 function fromReadiness(db, workspaceId) {
@@ -227,6 +286,8 @@ function fromReadiness(db, workspaceId) {
       title: entry.title,
       happened: entry.because || 'Foundry cannot do part of its job yet.',
       why: entry.why || 'Foundry needs something from you before it can work this out.',
+      recommendation: entry.recommendation
+        || 'Provide the operating input above so Foundry can manage this safely.',
       missing: entry.missing || entry.action || 'The information named above.',
       actionLabel: entry.actionLabel || entry.action || 'Sort this out',
       href: entry.link || entry.href || '/settings',
@@ -268,6 +329,9 @@ function fromImports(db, workspaceId) {
           ? `Foundry read ${rows} row(s) from it. Nothing has been created yet.`
           : 'Foundry read the file. Nothing has been created yet.',
         why: 'Foundry does not create products or stock from a file until somebody has looked at what it found.',
+        recommendation: problems
+          ? 'Review the rows Foundry could not place, then approve the corrected import.'
+          : 'Review the mapped rows, then approve the import if they are correct.',
         missing: plan.approvalStatus === 'APPROVED'
           ? 'One more press to actually bring the rows in. Nothing has been created yet.'
           : problems
@@ -299,12 +363,95 @@ function fromPolicies(db, workspaceId) {
       happened: policy.description
         || `Foundry has drafted a rule covering ${policy.allowedActionTypes.join(', ') || 'some work'}.`,
       why: 'Foundry will not act on its own authority until you have read the rule and agreed to it.',
+      recommendation: 'Approve the rule only if its limits match the authority you intend to give Foundry.',
       missing: 'Whether Foundry may do this without asking, and within what limits.',
       actionLabel: 'Read the rule',
       href: `/autopilot/policies/${policy.id}`,
       at: policy.createdAt,
       priority: 65,
     }));
+}
+
+function fromAutomationSuggestions(db, workspaceId) {
+  return operatingInstructions.list(db, workspaceId, { status: 'PENDING' })
+    .filter((proposal) => proposal.source === 'repeated_approval_suggestion')
+    .map((proposal) => ({
+      id: `automation-suggestion:${proposal.id}`,
+      kind: 'authority', title: proposal.summary,
+      happened: 'Foundry noticed that you approved the same kind of bounded routine work at least three times.',
+      why: 'Nothing has changed. Foundry needs explicit permission before it may stop asking about similar work.',
+      recommendation: 'Review the proposed scope and ceiling. Approve only if you want this to become lasting authority.',
+      missing: 'Your explicit decision about whether Foundry may handle this pattern automatically.',
+      actionLabel: 'Review suggestion', href: `/operating-instructions/${proposal.id}`,
+      at: proposal.createdAt, priority: 64,
+    }));
+}
+
+function fromSalesOrders(db, workspaceId) {
+  const salesOrders = require('../sales/sales-order-service');
+  const supplierService = require('../purchasing/supplier-service');
+  const position = require('../purchasing/position');
+  const today = new Date();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const entries = [];
+  for (const order of salesOrders.waitingForStock(db, workspaceId)) {
+    for (const line of order.lines.filter((entry) => entry.backordered > 0)) {
+      const incoming = position.onOrderForSku(db, workspaceId, line.sku_id);
+      const incomingInTime = order.needed_by && incoming.onOrder >= line.backordered && incoming.nextExpectedDate
+        && incoming.nextExpectedDate <= order.needed_by;
+      if (incomingInTime) continue;
+      const suppliers = supplierService.suppliersForSku(db, workspaceId, line.sku_id);
+      const leadDays = suppliers.map((entry) => Number(entry.effectiveLeadTimeDays))
+        .filter((value) => Number.isFinite(value) && value >= 0).sort((a, b) => a - b)[0];
+      const earliest = leadDays === undefined ? null
+        : new Date(today.getTime() + leadDays * dayMs).toISOString().slice(0, 10);
+      const dateMiss = Boolean(order.needed_by && (!earliest || earliest > order.needed_by));
+      entries.push({
+        id: `sales-order:${order.id}:${line.id}`,
+        kind: 'sales_order',
+        title: dateMiss
+          ? `${order.customer.name} needs ${line.backordered} ${line.unit_label}(s) by ${order.needed_by}; normal supply is too late`
+          : `${order.order_number} is waiting for ${line.backordered} ${line.displayName}`,
+        happened: `${line.quantity_ordered} ordered · ${line.allocated} committed · ${line.backordered} waiting for stock.`,
+        why: dateMiss
+          ? earliest
+            ? `The earliest supported supplier arrival is ${earliest}, after the customer needs it.`
+            : 'No supported supplier arrival date is available, so Foundry cannot promise the requested date.'
+          : 'Foundry cannot allocate stock that is not physically available or already committed elsewhere.',
+        recommendation: incoming.onOrder
+          ? `Review the ${incoming.onOrder} already on order and decide whether the customer date needs to change.`
+          : suppliers.length
+            ? 'Review replenishment and the customer date before making a promise.'
+            : 'Add a supplier or agree a different customer date.',
+        missing: 'A decision about the uncovered customer demand and any requested-date commitment.',
+        actionLabel: `Review ${order.order_number}`,
+        href: `/sales/orders/${order.id}`,
+        at: order.updated_at,
+        priority: dateMiss ? 92 : 82,
+      });
+    }
+  }
+  return entries;
+}
+
+function fromConnections(db, workspaceId) {
+  const rows = db.prepare(`SELECT ci.*, wc.display_name
+    FROM connection_issues ci JOIN workspace_connectors wc ON wc.id = ci.connector_id
+    WHERE ci.workspace_id = ? AND ci.status = 'OPEN' ORDER BY ci.updated_at DESC`).all(workspaceId);
+  return rows.map((row) => ({
+    id: `connection:${row.id}`,
+    title: row.title,
+    happened: row.detail,
+    why: row.issue_type === 'CONNECTION_STALE'
+      ? 'Foundry may be missing activity, so its view of demand and stock may be incomplete.'
+      : 'Foundry stopped before changing business records because the external evidence was not safe to apply.',
+    recommendation: row.resolution_hint,
+    missing: row.resolution_hint,
+    actionLabel: `Review ${row.display_name}`,
+    href: `/settings/connections/${row.connector_id}`,
+    at: row.updated_at,
+    priority: row.issue_type === 'CONNECTION_STALE' ? 86 : 90,
+  }));
 }
 
 /** Everything waiting, newest and most urgent first, as one list. */
@@ -320,9 +467,15 @@ function inbox(db, workspaceId) {
     ...safely(fromCorrections),
     ...safely(fromImports),
     ...safely(fromPolicies),
+    ...safely(fromAutomationSuggestions),
+    ...safely(fromSalesOrders),
+    ...safely(fromConnections),
     ...safely(fromFindings),
     ...safely(fromReadiness),
-  ].sort((a, b) => (b.priority - a.priority) || String(b.at || '').localeCompare(String(a.at || '')));
+  ].map((entry) => ({
+    ...entry,
+    importance: entry.priority >= 90 ? 'Urgent' : entry.priority >= 80 ? 'Important' : 'Needs You',
+  })).sort((a, b) => (b.priority - a.priority) || String(b.at || '').localeCompare(String(a.at || '')));
 }
 
 module.exports = {
@@ -333,6 +486,9 @@ module.exports = {
   fromCorrections,
   fromImports,
   fromPolicies,
+  fromAutomationSuggestions,
+  fromSalesOrders,
+  fromConnections,
   fromWorkItems,
   fromFindings,
   fromReadiness,

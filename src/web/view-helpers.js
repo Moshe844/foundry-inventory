@@ -20,6 +20,12 @@ function qty(value) {
   return numberFormat.format(n);
 }
 
+function money(amountMinor, currency = 'USD') {
+  if (amountMinor === null || amountMinor === undefined) return 'Price not set';
+  try { return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(amountMinor) / 100); }
+  catch { return `${currency} ${(Number(amountMinor) / 100).toFixed(2)}`; }
+}
+
 const { unitCount, unitLabel } = require('../lib/units');
 
 function plural(count, one, many) {
@@ -169,6 +175,7 @@ module.exports = {
   unitLabel,
   icon,
   qty,
+  money,
   plural,
   columnLabel,
   shortDate,

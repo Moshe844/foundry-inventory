@@ -45,6 +45,12 @@ function mappingRows(plan) {
 
 /** One sentence saying what this file is and what will happen to it. */
 function summary(plan) {
+  if ((plan.transformations || {}).operationScope === 'selling_price_update') {
+    const blocked = plan.recordsInvalid
+      ? ` ${plural(plan.recordsInvalid, 'row')} cannot be matched safely and will not run.`
+      : '';
+    return `Foundry read ${plan.sourceName} as a selling-price update with ${plural(plan.recordsDetected, 'row')}.${blocked}`;
+  }
   const parts = [
     `Foundry read ${plan.sourceName} as ${TYPE_LABEL[plan.detectedType] || 'data'}`,
     `${plural(plan.recordsDetected, 'row')} found`,
@@ -62,6 +68,7 @@ function summary(plan) {
  */
 function preview(db, workspaceId, plan, rows) {
   const usable = rows.filter((row) => ['VALID', 'NEEDS_REVIEW'].includes(row.status));
+  const priceUpdate = (plan.transformations || {}).operationScope === 'selling_price_update';
 
   const newProducts = new Map();
   const existingProducts = new Map();
@@ -98,7 +105,9 @@ function preview(db, workspaceId, plan, rows) {
     willImport: usable.length,
     willSkip: rows.filter((row) => row.status === 'INVALID').length,
     excluded: rows.filter((row) => row.status === 'EXCLUDED').length,
-    sentence: previewSentence({ products: newProducts.size, skus, existing: existingProducts.size, units, locations: locations.size }),
+    sentence: priceUpdate
+      ? `This will update selling prices for ${plural(usable.length, 'existing variant')}. It will create no products and change no stock quantities.`
+      : previewSentence({ products: newProducts.size, skus, existing: existingProducts.size, units, locations: locations.size }),
   };
 }
 
@@ -124,6 +133,19 @@ function previewSentence({ products, skus, existing, units, locations }) {
 /** The report afterwards, from the execution and the verification. */
 function report(plan, run, verification) {
   const result = run.result || {};
+  if ((plan.transformations || {}).operationScope === 'selling_price_update') {
+    return {
+      headline: result.rowsImported
+        ? `${plural(result.rowsImported, 'selling price')} updated. No products or stock quantities were changed.`
+        : 'No selling prices were updated.',
+      verified: verification ? verification.verified : false,
+      checks: verification ? verification.checks : [],
+      problems: verification ? verification.problems : [],
+      status: run.status,
+      partial: run.status === 'PARTIAL',
+      cancelled: run.status === 'CANCELLED',
+    };
+  }
   const clauses = [];
   if (result.itemsCreated) {
     clauses.push(

@@ -23,6 +23,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_manager_triggers_key
 CREATE INDEX IF NOT EXISTS idx_manager_triggers_pending
   ON manager_triggers(status, created_at);
 
+-- Mission 9: the durable business events that wake the manager.
+--
+-- This is deliberately not an inventory ledger. The immutable movement and PO
+-- records remain the truth; this table records that a committed fact needs a
+-- reaction, so a crash between the fact and the reaction can be recovered
+-- without repeating either one. One workspace plus one idempotency key is one
+-- event, however often a connector, browser, or worker retries it.
+CREATE TABLE IF NOT EXISTS domain_events (
+  id                 TEXT PRIMARY KEY,
+  workspace_id       TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  event_type         TEXT NOT NULL,
+  payload            TEXT NOT NULL DEFAULT '{}',
+  source             TEXT NOT NULL DEFAULT 'foundry',
+  source_record_type TEXT,
+  source_record_id   TEXT,
+  idempotency_key    TEXT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'PENDING'
+                       CHECK (status IN ('PENDING','PROCESSING','PROCESSED','FAILED')),
+  attempts           INTEGER NOT NULL DEFAULT 0,
+  result             TEXT NOT NULL DEFAULT '{}',
+  error_message      TEXT,
+  created_at         TEXT NOT NULL,
+  started_at         TEXT,
+  processed_at       TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_domain_events_key
+  ON domain_events(workspace_id, idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_domain_events_pending
+  ON domain_events(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_domain_events_workspace
+  ON domain_events(workspace_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS inventory_investigations (
   id                     TEXT PRIMARY KEY,
   workspace_id           TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -125,6 +157,89 @@ CREATE TABLE IF NOT EXISTS manager_intents (
 CREATE INDEX IF NOT EXISTS idx_manager_intents_context
   ON manager_intents(workspace_id, user_id, created_at DESC);
 
+-- A durable, reviewable interpretation of an owner's operating instruction.
+-- The model only fills the typed `changes` document. Real record ids are
+-- resolved by application code, and nothing is applied until the owner
+-- approves this exact snapshot.
+CREATE TABLE IF NOT EXISTS operating_instruction_proposals (
+  id                  TEXT PRIMARY KEY,
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  created_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  stated_as           TEXT NOT NULL,
+  source              TEXT NOT NULL DEFAULT 'owner_instruction',
+  summary             TEXT NOT NULL,
+  changes             TEXT NOT NULL DEFAULT '[]',
+  resolved_changes    TEXT NOT NULL DEFAULT '[]',
+  questions           TEXT NOT NULL DEFAULT '[]',
+  status              TEXT NOT NULL DEFAULT 'PENDING'
+                        CHECK (status IN ('PENDING','APPROVED','CANCELLED','SUPERSEDED','REMOVED')),
+  integrity_hash      TEXT NOT NULL,
+  applied_records     TEXT NOT NULL DEFAULT '[]',
+  approved_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  approved_at         TEXT,
+  removed_by_user_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  removed_at          TEXT,
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_operating_instructions_workspace
+  ON operating_instruction_proposals(workspace_id, status, created_at DESC);
+
+-- Deterministic stock-protection rules taught through either conversation or
+-- Settings. These are enforced by the inventory engine itself, so an issue
+-- cannot bypass them by arriving through a different screen or connector.
+CREATE TABLE IF NOT EXISTS operating_guards (
+  id                  TEXT PRIMARY KEY,
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  sku_id              TEXT NOT NULL REFERENCES skus(id) ON DELETE CASCADE,
+  location_id         TEXT REFERENCES locations(id) ON DELETE CASCADE,
+  action_type         TEXT NOT NULL CHECK (action_type IN ('issue')),
+  metric              TEXT NOT NULL CHECK (metric IN ('network_on_hand','location_on_hand')),
+  comparator          TEXT NOT NULL CHECK (comparator IN ('below','at_or_below')),
+  threshold           INTEGER NOT NULL CHECK (threshold >= 0),
+  release_condition   TEXT NOT NULL CHECK (release_condition IN ('on_order','stock_recovered','manual')),
+  release_threshold   INTEGER CHECK (release_threshold IS NULL OR release_threshold >= 0),
+  source              TEXT NOT NULL DEFAULT 'settings',
+  stated_as           TEXT,
+  is_active           INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
+  created_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_operating_guards_scope
+  ON operating_guards(workspace_id, sku_id, location_id, action_type, is_active);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_operating_guards_active_scope
+  ON operating_guards(workspace_id, sku_id, IFNULL(location_id, ''), action_type)
+  WHERE is_active = 1;
+
+-- Supplier communication is deliberately an outbox. Preparing or queuing a
+-- message is not the same as sending one. A future transport adapter may mark
+-- it SENT only after the external provider confirms delivery.
+CREATE TABLE IF NOT EXISTS supplier_communications (
+  id                  TEXT PRIMARY KEY,
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  supplier_id         TEXT NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+  purchase_order_id   TEXT REFERENCES purchase_orders(id) ON DELETE SET NULL,
+  channel             TEXT NOT NULL DEFAULT 'email',
+  recipient           TEXT,
+  subject             TEXT NOT NULL,
+  body                TEXT NOT NULL,
+  status              TEXT NOT NULL DEFAULT 'PREPARED'
+                        CHECK (status IN ('PREPARED','QUEUED','SENDING','SENT','FAILED','CANCELLED')),
+  transport           TEXT,
+  external_message_id TEXT,
+  idempotency_key     TEXT NOT NULL,
+  error_message       TEXT,
+  created_at          TEXT NOT NULL,
+  queued_at           TEXT,
+  sent_at             TEXT,
+  updated_at          TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_communications_key
+  ON supplier_communications(workspace_id, idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_supplier_communications_po
+  ON supplier_communications(workspace_id, purchase_order_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS manager_contexts (
   workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -168,6 +283,7 @@ CREATE TABLE IF NOT EXISTS setup_documents (
   extracted_text      TEXT NOT NULL,
   interpretation      TEXT NOT NULL DEFAULT '{}',
   supplier_code_label TEXT NOT NULL DEFAULT 'Supplier code',
+  scope_confirmed_at  TEXT,
   status              TEXT NOT NULL DEFAULT 'PREPARED'
                         CHECK (status IN ('PREPARED','APPLYING','APPLIED','FAILED')),
   applied_plan_id     TEXT REFERENCES foundry_plans(id) ON DELETE SET NULL,
@@ -181,3 +297,45 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_setup_documents_content
   ON setup_documents(workspace_id, content_hash);
 CREATE INDEX IF NOT EXISTS idx_setup_documents_understanding
   ON setup_documents(workspace_id, understanding_id);
+
+-- A request to undo records created by an earlier document. The proposal is
+-- durable because removing stock is consequential: the exact products and
+-- balances shown to the owner must be the ones acted on after approval.
+CREATE TABLE IF NOT EXISTS document_removal_proposals (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  setup_document_id     TEXT NOT NULL REFERENCES setup_documents(id) ON DELETE CASCADE,
+  requested_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  approved_by_user_id   TEXT REFERENCES users(id) ON DELETE RESTRICT,
+  instruction           TEXT NOT NULL,
+  snapshot              TEXT NOT NULL DEFAULT '{}',
+  integrity_hash        TEXT NOT NULL,
+  status                TEXT NOT NULL DEFAULT 'PENDING'
+                          CHECK (status IN ('PENDING','COMPLETED','CANCELLED')),
+  result                TEXT NOT NULL DEFAULT '{}',
+  created_at            TEXT NOT NULL,
+  completed_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_document_removals_workspace
+  ON document_removal_proposals(workspace_id, created_at DESC);
+
+-- Controlled catalogue code transformations prepared from Tell Foundry.
+-- External supplier codes are deliberately excluded: these are the owner's
+-- internal item/SKU identifiers, shown old -> new before one atomic approval.
+CREATE TABLE IF NOT EXISTS catalog_code_change_proposals (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  requested_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  approved_by_user_id   TEXT REFERENCES users(id) ON DELETE RESTRICT,
+  instruction           TEXT NOT NULL,
+  operation             TEXT NOT NULL DEFAULT '{}',
+  snapshot              TEXT NOT NULL DEFAULT '{}',
+  integrity_hash        TEXT NOT NULL,
+  status                TEXT NOT NULL DEFAULT 'PENDING'
+                          CHECK (status IN ('PENDING','COMPLETED','CANCELLED')),
+  result                TEXT NOT NULL DEFAULT '{}',
+  created_at            TEXT NOT NULL,
+  completed_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_catalog_code_changes_workspace
+  ON catalog_code_change_proposals(workspace_id, created_at DESC);

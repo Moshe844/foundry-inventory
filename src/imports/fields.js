@@ -27,6 +27,8 @@ const FIELDS = [
   { id: 'variant2', label: 'Variant (2)' },
   { id: 'variant3', label: 'Variant (3)' },
   { id: 'quantity', label: 'Quantity' },
+  { id: 'sellingPrice', label: 'Selling price' },
+  { id: 'currency', label: 'Currency' },
   { id: 'location', label: 'Location' },
   { id: 'serial', label: 'Serial number' },
   { id: 'lotCode', label: 'Lot or batch' },
@@ -55,6 +57,12 @@ const DETECTED_TYPES = [
  * even though both patterns match part of it.
  */
 const PATTERNS = {
+  sellingPrice: [
+    /\b(?:selling|sale|retail|customer|list)\s*price\b/,
+    /\b(?:msrp|rrp)\b/,
+    /^price(?:\s*each)?$/,
+  ],
+  currency: [/\b(?:currency|currency\s*code)\b/],
   code: [
     /\b(?:sku|upc|ean|gtin|mpn|barcode)\b/,
     /\b(?:item|product|part|catalog(?:ue)?|stock|material)\s*(?:code|no\.?|num(?:ber)?|id|#)\b/,
@@ -101,7 +109,7 @@ PATTERNS.variant3 = PATTERNS.variant1;
  * them looks like a bug and mapping them somewhere would be a lie.
  */
 const IGNORED_PATTERNS = [
-  { label: 'pricing', pattern: /\b(?:price|cost|msrp|retail|wholesale|margin|value|amount|total|currency|tax|vat)\b/ },
+  { label: 'supplier cost or calculated pricing', pattern: /\b(?:unit\s*cost|purchase\s*price|cost|wholesale|margin|value|amount|total|tax|vat)\b/ },
   { label: 'suppliers', pattern: /\b(?:supplier|vendor|manufacturer|brand|purchase\s*order|\bpo\b)\b/ },
   { label: 'categories', pattern: /\b(?:category|categories|class|group|department|dept|type|family|collection)\b/ },
   { label: 'reorder settings', pattern: /\b(?:reorder|min(?:imum)?\s*(?:qty|level|stock)|max(?:imum)?\s*(?:qty|level)|safety\s*stock|lead\s*time)\b/ },

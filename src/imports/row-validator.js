@@ -15,6 +15,7 @@
 
 const resolver = require('../actions/resolver');
 const fields = require('./fields');
+const prices = require('../pricing/price-service');
 
 const MAX_FUZZY_ROWS = 2000;
 
@@ -36,6 +37,10 @@ const PROBLEM = {
   EXISTING_PRODUCT: 'existing_product',
   POSSIBLE_DUPLICATE: 'possible_duplicate',
   INCONSISTENT_VARIANTS: 'inconsistent_variants',
+  BAD_PRICE: 'bad_price',
+  PRICE_REQUIRED: 'price_required',
+  AMBIGUOUS_EXISTING_CODE: 'ambiguous_existing_code',
+  PRICE_TARGET_NOT_FOUND: 'price_target_not_found',
 };
 
 /** Blocking problems stop a row; the rest annotate it. */
@@ -50,6 +55,9 @@ const BLOCKING = new Set([
   PROBLEM.SERIAL_EXISTS,
   PROBLEM.MISSING_SERIAL,
   PROBLEM.MISSING_LOT,
+  PROBLEM.AMBIGUOUS_EXISTING_CODE,
+  PROBLEM.PRICE_TARGET_NOT_FOUND,
+  PROBLEM.PRICE_REQUIRED,
 ]);
 
 /** Problems a person should see before approving, but which still import. */
@@ -58,6 +66,7 @@ const REVIEWABLE = new Set([
   PROBLEM.POSSIBLE_DUPLICATE,
   PROBLEM.CORRECTED_LOCATION,
   PROBLEM.DUPLICATE_CODE,
+  PROBLEM.BAD_PRICE,
 ]);
 
 // ---------------------------------------------------------------------------
@@ -177,9 +186,11 @@ function loadContext(db, workspaceId) {
 
   const byCode = new Map();
   const byName = new Map();
+  const byId = new Map();
   for (const item of items) {
     if (item.base_code) byCode.set(item.base_code.toLowerCase(), item);
     byName.set(item.name.toLowerCase(), item);
+    byId.set(item.id, item);
   }
 
   const skuByCode = new Map();
@@ -189,7 +200,10 @@ function loadContext(db, workspaceId) {
          WHERE s.workspace_id = ? AND s.is_active = 1`
     )
     .all(workspaceId)) {
-    skuByCode.set(String(sku.code).toLowerCase(), sku);
+    const key = String(sku.code).toLowerCase();
+    const matches = skuByCode.get(key) || [];
+    matches.push(sku);
+    skuByCode.set(key, matches);
   }
 
   const serials = new Set(
@@ -199,7 +213,7 @@ function loadContext(db, workspaceId) {
       .map((row) => String(row.serial).toLowerCase())
   );
 
-  return { items, byCode, byName, skuByCode, serials };
+  return { items, byId, byCode, byName, skuByCode, serials };
 }
 
 // ---------------------------------------------------------------------------
@@ -255,7 +269,8 @@ function validateRows(db, workspaceId, sheet, plan) {
   const axisValues = new Map();
   const out = [];
 
-  const needsQuantity = ['inventory', 'variant_inventory', 'receiving', 'lots', 'serials'].includes(
+  const priceUpdate = plan.operationScope === 'selling_price_update';
+  const needsQuantity = !priceUpdate && ['inventory', 'variant_inventory', 'receiving', 'lots', 'serials'].includes(
     plan.detectedType
   );
 
@@ -270,6 +285,22 @@ function validateRows(db, workspaceId, sheet, plan) {
     parsed.description = cell(row, mappings.description);
     parsed.unitLabel = cell(row, mappings.unitLabel);
     parsed.notes = cell(row, mappings.notes);
+    parsed.currency = (cell(row, mappings.currency) || 'USD').toUpperCase();
+    const rawPrice = cell(row, mappings.sellingPrice);
+    parsed.sellingPriceMinor = null;
+    if (rawPrice) {
+      try {
+        parsed.sellingPriceMinor = prices.toMinor(rawPrice, 'Selling price');
+        parsed.currency = prices.normaliseCurrency(parsed.currency);
+      } catch (error) {
+        problems.push({ code: PROBLEM.BAD_PRICE, message: priceUpdate
+          ? `${error.message} This pricing row will not run.`
+          : `${error.message} This row's stock can still import, but its selling price will be left blank.` });
+        if (priceUpdate) problems.push({ code: PROBLEM.PRICE_REQUIRED, message: 'A valid selling price is required for a pricing update.' });
+      }
+    } else if (priceUpdate) {
+      problems.push({ code: PROBLEM.PRICE_REQUIRED, message: 'No selling price was provided. This pricing row will not run.' });
+    }
 
     // Variant axes: the column header names the axis, the cell gives the value.
     parsed.variants = [];
@@ -288,7 +319,10 @@ function validateRows(db, workspaceId, sheet, plan) {
     }
 
     // Quantity.
-    const quantity = readQuantity(cell(row, mappings.quantity));
+    // A pricing instruction has explicitly scoped the file to prices. Even if
+    // the sheet also contains an on-hand column, those figures are evidence for
+    // matching/review only and can never become stock movements in this run.
+    const quantity = priceUpdate ? { ok: true, value: 0, missing: true } : readQuantity(cell(row, mappings.quantity));
     if (!quantity.ok) {
       const text = cell(row, mappings.quantity);
       problems.push({
@@ -412,15 +446,27 @@ function validateRows(db, workspaceId, sheet, plan) {
       }
     }
 
+    const exactSkus = code ? (context.skuByCode.get(code.toLowerCase()) || []) : [];
+    if (exactSkus.length > 1) {
+      problems.push({
+        code: PROBLEM.AMBIGUOUS_EXISTING_CODE,
+        message: `Code ${code} belongs to more than one active variant. Foundry will not guess which one to update.`,
+      });
+    }
+    const exactSku = exactSkus.length === 1 ? exactSkus[0] : null;
     const existing =
+      (exactSku && context.byId.get(exactSku.item_id)) ||
       (code && context.byCode.get(code.toLowerCase())) ||
       (name && context.byName.get(name.toLowerCase())) ||
       null;
     if (existing) {
       parsed.existingItemId = existing.id;
+      if (exactSku) parsed.existingSkuId = exactSku.id;
       problems.push({
         code: PROBLEM.EXISTING_PRODUCT,
-        message: `${existing.name} already exists — its stock is added to, never replaced.`,
+        message: exactSku && parsed.sellingPriceMinor !== null && !wantsStock
+          ? `${code} matches an existing variant — its selling price will be updated and no product will be created.`
+          : `${existing.name} already exists — its stock is added to, never replaced.`,
       });
     } else if (fuzzy && name) {
       // A resemblance is shown, never acted on. Merging two products because
@@ -435,6 +481,13 @@ function validateRows(db, workspaceId, sheet, plan) {
           itemId: near.id,
         });
       }
+    }
+
+    if (plan.operationScope === 'selling_price_update' && !exactSku) {
+      problems.push({
+        code: PROBLEM.PRICE_TARGET_NOT_FOUND,
+        message: `Pricing update stopped: ${code || name || 'this row'} does not match exactly one active SKU code. No product will be created.`,
+      });
     }
 
     const blocking = problems.filter((problem) => BLOCKING.has(problem.code));

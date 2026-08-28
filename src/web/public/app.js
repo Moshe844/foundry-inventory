@@ -7,6 +7,13 @@
 (function () {
   'use strict';
 
+  // Foundry has a long home page and many links return to a specific section
+  // on it. Browser scroll restoration can win the race against a fragment and
+  // leave the person at an unrelated position from a previous visit. Foundry
+  // owns that landing behaviour instead: full pages start at the top, while a
+  // fragment reveals the named section.
+  if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
+
   /* ------------------------------------------------------------ search -- */
 
   function initSearch() {
@@ -285,6 +292,79 @@
 
   /* ------------------------------------------------------- misc helpers -- */
 
+  function initNavigationLanding() {
+    let scheduledFrame = null;
+
+    const hashTarget = () => {
+      if (!window.location.hash) return null;
+      try {
+        return document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
+      } catch {
+        return null;
+      }
+    };
+
+    const land = () => {
+      if (scheduledFrame !== null) window.cancelAnimationFrame(scheduledFrame);
+      scheduledFrame = window.requestAnimationFrame(() => {
+        scheduledFrame = null;
+        const target = hashTarget();
+
+        // Modal fragments are handled by initModals. Moving the document
+        // behind an open dialog would be surprising and serves no purpose.
+        if (target && target.tagName === 'DIALOG') return;
+
+        if (target) {
+          // A response to Tell Foundry belongs beside the request box. The
+          // global message area is above a long home page; scrolling to the
+          // input used to hide the answer that had just arrived. Move that
+          // one rendered message stack into the command body before landing.
+          if (target.id === 'tell-foundry') {
+            const feedback = document.querySelector('[data-flash-stack]');
+            const body = target.querySelector('.operator-command__body');
+            const form = body && body.querySelector('.operator-command__form');
+            if (feedback && body && form && !target.contains(feedback)) body.insertBefore(feedback, form);
+          }
+          target.scrollIntoView({ block: 'start', inline: 'nearest' });
+
+          // "Tell Foundry" is an input destination, not merely a heading. Put
+          // the cursor where the person can immediately type, without letting
+          // focus undo the carefully offset scroll position.
+          const input = target.matches('input:not([type="hidden"]), textarea, select')
+            ? target
+            : target.id === 'tell-foundry' ? target.querySelector('[data-ask-input]') : null;
+          if (input && !input.disabled) input.focus({ preventScroll: true });
+          return;
+        }
+
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      });
+    };
+
+    // New documents and restored documents use the same truthful destination.
+    window.addEventListener('pageshow', land);
+    window.addEventListener('hashchange', land);
+
+    // Re-clicking the current fragment does not fire hashchange, so make that
+    // common case deterministic too.
+    document.addEventListener('click', (event) => {
+      const link = event.target.closest('a[href]');
+      if (!link) return;
+      let destination;
+      try {
+        destination = new URL(link.href, window.location.href);
+      } catch {
+        return;
+      }
+      const sameDocument = destination.origin === window.location.origin
+        && destination.pathname === window.location.pathname
+        && destination.search === window.location.search;
+      if (sameDocument && destination.hash) window.setTimeout(land, 0);
+    });
+
+    land();
+  }
+
   function initConfirms() {
     document.addEventListener('submit', (event) => {
       const form = event.target;
@@ -391,9 +471,15 @@
   /** Short Foundry calls (seconds) just need the button to look busy. */
   function initBusyButtons() {
     document.addEventListener('submit', (event) => {
-      const form = event.target.closest('[data-busy]');
-      if (!form) return;
-      const button = form.querySelector('button[type=submit]');
+      if (event.defaultPrevented) return;
+      const form = event.target.closest('form');
+      if (!form || form.hasAttribute('data-no-busy')) return;
+      // Use the control the person actually chose. Forms with two decisions
+      // must never make the first button look selected when the second one was
+      // clicked.
+      const button = event.submitter && event.submitter.matches('button[type=submit]')
+        ? event.submitter
+        : form.querySelector('button[type=submit]');
       if (button && !button.disabled) {
         button.classList.add('is-busy');
         button.setAttribute('aria-busy', 'true');
@@ -496,6 +582,83 @@
     sync();
   }
 
+  /** Make the compact Home attachment control tell the truth before submit. */
+  function initOperatorAttachment() {
+    document.querySelectorAll('[data-operator-command-form]').forEach((form) => {
+      const input = form.querySelector('[data-operator-attachment]');
+      const status = form.parentElement.querySelector('[data-operator-attachment-status]');
+      const name = status && status.querySelector('[data-operator-attachment-name]');
+      if (!input || !status || !name) return;
+
+      input.addEventListener('change', () => {
+        const file = input.files && input.files[0];
+        status.hidden = !file;
+        name.textContent = file ? file.name : '';
+        const label = input.closest('.operator-command__attach');
+        if (label) label.classList.toggle('is-chosen', Boolean(file));
+      });
+    });
+  }
+
+  // Home follows the manager rather than requiring a refresh. It deliberately
+  // waits while somebody is typing, so a new automatic result never steals a
+  // half-written Tell Foundry instruction.
+  function initLiveHome() {
+    const marker = document.querySelector('[data-live-home]');
+    if (!marker) return;
+    let signature = marker.dataset.signature || '';
+    const tick = () => {
+      if (document.hidden) return;
+      fetch('/api/home-state', { headers: { Accept: 'application/json' } })
+        .then((response) => response.ok ? response.json() : null)
+        .then((state) => {
+          if (!state || !state.signature || state.signature === signature) return;
+          const command = document.querySelector('#ask-question');
+          if (command && (command.value.trim() || document.activeElement === command)) {
+            return;
+          }
+          window.location.reload();
+        })
+        .catch(() => {});
+    };
+    window.setInterval(tick, 3000);
+  }
+
+  /** Turn server-rendered upload warnings into a real blocking modal. */
+  function initScopeWarnings() {
+    document.querySelectorAll('dialog[data-scope-warning]').forEach((dialog) => {
+      if (typeof dialog.showModal !== 'function') return;
+      if (dialog.open) dialog.close();
+      dialog.showModal();
+    });
+  }
+
+  /** Reusable multi-record picker: choose any subset, or select/clear all. */
+  function initSelectionGroups() {
+    document.querySelectorAll('[data-selection-group]').forEach((group) => {
+      const items = [...group.querySelectorAll('[data-selection-item]')];
+      const count = group.querySelector('[data-selection-count]');
+      const submit = group.querySelector('[data-remove-selected]');
+      const update = () => {
+        const selected = items.filter((item) => item.checked).length;
+        if (count) count.textContent = `${selected} selected`;
+        if (submit) submit.disabled = selected === 0;
+      };
+      items.forEach((item) => item.addEventListener('change', update));
+      const all = group.querySelector('[data-select-all]');
+      if (all) all.addEventListener('click', () => {
+        items.forEach((item) => { item.checked = true; });
+        update();
+      });
+      const clear = group.querySelector('[data-clear-selection]');
+      if (clear) clear.addEventListener('click', () => {
+        items.forEach((item) => { item.checked = false; });
+        update();
+      });
+      update();
+    });
+  }
+
   function escapeHtml(value) {
     return String(value).replace(/[&<>"']/g, (ch) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -503,6 +666,7 @@
   }
 
   document.addEventListener('DOMContentLoaded', () => {
+    initNavigationLanding();
     initSearch();
     initModals();
     initTabs();
@@ -513,8 +677,12 @@
     initThinking();
     initBusyButtons();
     initSetupSource();
+    initOperatorAttachment();
     initAskPending();
     initSwitcher();
     initVendorVocabulary();
+    initLiveHome();
+    initScopeWarnings();
+    initSelectionGroups();
   });
 })();

@@ -5,6 +5,8 @@ const authService = require('../../domain/auth-service');
 const engine = require('../../domain/inventory-engine');
 const entitlements = require('../../entitlements/service');
 const eventFeed = require('../../connectors/event-feed');
+const operatingInstructions = require('../../manager/operating-instructions');
+const operatingGuards = require('../../domain/operating-guards');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 
 const router = express.Router();
@@ -15,6 +17,15 @@ router.get(
   asyncRoute(async (req, res) => {
     const users = authService.listUsers(req.db, req.ctx.workspaceId);
     const integrity = engine.verifyIntegrity(req.db, req.ctx.workspaceId);
+    const learnedInstructions = operatingInstructions.list(req.db, req.ctx.workspaceId)
+      .filter((instruction) => ['APPROVED', 'REMOVED', 'SUPERSEDED'].includes(instruction.status));
+    const activeInstructionByRecordId = new Map();
+    for (const instruction of learnedInstructions) {
+      if (instruction.status !== 'APPROVED') continue;
+      for (const record of instruction.appliedRecords) {
+        if (record.id) activeInstructionByRecordId.set(record.id, instruction.id);
+      }
+    }
     const newFeedToken = req.session.newFeedToken || null;
     delete req.session.newFeedToken;
     res.page('settings', {
@@ -31,6 +42,13 @@ router.get(
         accountId: req.ctx.accountId,
         workspaceId: req.ctx.workspaceId,
       }),
+      learnedInstructions,
+      stockGuards: operatingGuards.list(req.db, req.ctx.workspaceId, { activeOnly: true })
+        .map((guard) => ({
+          ...guard,
+          boundary: operatingGuards.describeBoundary(guard),
+          instructionId: activeInstructionByRecordId.get(guard.id) || null,
+        })),
     });
   })
 );

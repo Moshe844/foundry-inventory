@@ -48,7 +48,7 @@ function tights(overrides = {}) {
   const skus = repo.listSkusForItem(db, workspace.workspaceId, created.itemId);
   const black5 = skus.find((sku) => sku.variant_label === 'Black / 5');
 
-  inventory.receive(db, workspace.ctx, { skuId: black5.id, locationId: workspace.main.id, quantity: 29 });
+  inventory.receive(db, workspace.ctx, { skuId: black5.id, locationId: workspace.main.id, quantity: 26 });
   inventory.receive(db, workspace.ctx, { skuId: black5.id, locationId: workspace.store.id, quantity: 65 });
 
   db.exec('DROP TRIGGER IF EXISTS movements_no_update');
@@ -57,7 +57,7 @@ function tights(overrides = {}) {
     const result = inventory.issue(db, workspace.ctx, { skuId: black5.id, locationId, quantity, reasonCode: 'sold' });
     for (const id of result.movementIds) backdate.run(new Date(Date.now() - daysAgo * DAY).toISOString(), id);
   };
-  for (const [q, d] of [[5, 28], [4, 22], [3, 16], [4, 10], [5, 4]]) issue(workspace.main.id, q, d);
+  for (const [q, d] of [[4, 28], [4, 22], [3, 16], [3, 10], [4, 4]]) issue(workspace.main.id, q, d);
   issue(workspace.store.id, 4, 12);
   db.exec(
     `CREATE TRIGGER IF NOT EXISTS movements_no_update BEFORE UPDATE ON movements

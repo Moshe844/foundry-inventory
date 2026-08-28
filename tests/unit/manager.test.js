@@ -4,6 +4,18 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('../helpers');
 const { fakeProvider } = require('../helpers/fake-provider');
+const documentRemovals = require('../../src/manager/document-removals');
+
+test('a SKU added by mistake is not mistaken for a whole-document rollback', () => {
+  assert.equal(
+    documentRemovals.matchesInstruction('Remove TSH-WHITE-LARGE from my inventory — it was added by mistake.'),
+    false
+  );
+  assert.equal(
+    documentRemovals.matchesInstruction('Remove the items added from the PDF I uploaded earlier.'),
+    true
+  );
+});
 const inventory = require('../../src/domain/inventory-engine');
 const investigations = require('../../src/manager/investigations');
 const triggers = require('../../src/manager/triggers');
@@ -255,6 +267,29 @@ test('a count that matches says so, and does not send anyone to Needs you', asyn
   assert.equal(env.db.prepare(
     'SELECT COUNT(*) AS n FROM adjustments WHERE workspace_id = ?'
   ).get(env.workspace.workspaceId).n, 0, 'and no adjustment was invented');
+  env.db.close();
+});
+
+test('ordinary past-tense inventory activity routes without relying on the model classifier', async () => {
+  const env = setup();
+  const unavailable = { complete: async () => { throw new Error('the manager classifier must not be needed'); } };
+  const examples = [
+    'I sold 1 Straight Jeans - Blue size 28 at Main Warehouse.',
+    'We received 10 filters at Main Warehouse.',
+    'We moved 3 filters from Main Warehouse to Downtown Store.',
+    'Transferred 2 filters from Main Warehouse to Downtown Store.',
+    'Customers bought 4 filters at Downtown Store.',
+    'Record a sale of 2 filters at Main Warehouse.',
+    'The shipment came in at Main Warehouse.',
+  ];
+
+  for (const sentence of examples) {
+    const classified = await intentRouter.classify(env.db, env.workspace.ctx, sentence, { provider: unavailable });
+    assert.equal(classified.intentClass, 'INVENTORY_ACTION', sentence);
+    assert.equal(classified.clarifyingQuestion, '', sentence);
+  }
+  // A description of past business practice is not a transaction to record.
+  assert.equal(intentRouter.fallbackClassify('I used to sell these in the old store.').intentClass, 'UNKNOWN');
   env.db.close();
 });
 

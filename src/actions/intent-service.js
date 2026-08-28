@@ -33,6 +33,7 @@ const ACTION_TYPES = [
   'add_location',
   'rename_terminology',
   'create_item',
+  'archive_item',
   // Mission 6: buying, and taking delivery of what was bought. Neither one
   // moves stock by itself — a purchase becomes a draft order to approve, and a
   // delivery opens the receiving screen for the orders it might be.
@@ -78,6 +79,11 @@ const LINE_SCHEMA = {
     item: { type: 'string' },
     // The version they named: a colour, a size, both. '' when none.
     variant: { type: 'string' },
+    // The shortest exact part of the original instruction that describes this
+    // line. It is provenance for multi-action requests, never an invented
+    // paraphrase. Older providers may omit it; deterministic alignment then
+    // supplies the slice or leaves the line deliberately ungrounded.
+    sourceText: { type: 'string' },
     // A lot or batch code, exactly as written. '' when none.
     lotCode: { type: 'string' },
     // Serial numbers, exactly as written.
@@ -135,7 +141,18 @@ Operations you may choose:
   productName and its code, if they gave one, in productCode. If it comes in
   variations, put them in variantAxes as "Axis: values | Axis: values", for
   example "Colour: Navy, Black | Size: 6 through 12". Copy ranges exactly as
-  written — do not enumerate them yourself.
+  written — do not enumerate them yourself. A single stated variation still
+  belongs in variantAxes: "white socks size 6" means productName "white socks"
+  and variantAxes "Size: 6". If the person says the new product was received,
+  arrived, has opening stock, or gives a starting quantity, preserve that
+  number in quantity and any stated receiving place in destinationLocation.
+  Never reduce a combined add-and-receive request to catalogue creation alone.
+- archive_item: remove, archive or deactivate an existing catalogue product or
+  variant. Use this for requests such as "remove SKU-10 from my inventory" or
+  "delete the item I added by mistake". This changes whether the catalogue
+  record is active; it is never a stock-count correction. Copy the named
+  product/code into item and any named variation into variant. Foundry will
+  refuse safely if the record still has stock on hand.
 - purchase: they want to BUY something from a supplier — "order 5 cases of
   navy 8 from ABC", "reorder the low stock shoes", "buy enough to cover the
   next month". Put the supplier in supplier if they named one, and the unit
@@ -155,6 +172,11 @@ Rules:
 - Never choose between issue and adjust when the sentence does not make it
   clear. Issuing says stock physically left; adjusting says the record was
   wrong. Getting that wrong falsifies their history. Choose 'clarify' and ask.
+- Once the operation itself is clear, do not choose 'clarify' merely because a
+  product, variant axis, location, supplier, quantity, batch, unit or reason is
+  incomplete. Return the operation with exactly the fields the person supplied
+  and leave the missing fields empty. Foundry resolves those fields against the
+  real workspace and asks a grounded question with the actual candidates.
 - quantity is how many to move. adjustmentTarget is what the count should READ
   afterwards. "Set it to 37" is adjustmentTarget 37, not quantity 37.
 - Use -1 for any number that was not given. Never invent one.
@@ -164,6 +186,12 @@ Rules:
   wrong, leave reasonCode '' — Foundry will ask.
 - Copy names, lot codes and serial numbers exactly as written. Do not correct
   spelling, expand abbreviations or tidy them up.
+- For every line, copy the shortest exact contiguous part of the instruction
+  that describes that one action into sourceText. Preserve every explicitly
+  supplied product and variant word in that clause. Never paraphrase it and
+  never copy the whole multi-action instruction into every line. For example,
+  "sold 2 red large and 3 blue small" has sourceText "2 red large" on the
+  first line and "3 blue small" on the second.
 - A serial number or lot code identifies one unit or batch, and usually sits
   right next to the product in the sentence. Separate them: "issue laptop
   DL-829193" is item "laptop" with serials ["DL-829193"], and "move 20 of lot
@@ -182,8 +210,7 @@ Rules:
   detail and put it in its proper field — "sold 85 House Blend 250g from the
   Roastery. — R-2603" is lotCode "R-2603", not part of the product name and not
   a second line. Never ask the same question back.
-- Choose 'unsupported' for anything needing purchasing, suppliers, purchase
-  orders, sales orders, reordering, barcodes, accounting or manufacturing, and
+- Choose 'unsupported' for anything needing accounting or manufacturing, and
   say in one line what Foundry cannot do.
 - You do not need to ask whether something is counted by quantity, by serial
   number or by lot. Foundry already knows how this business tracks stock and
@@ -231,6 +258,7 @@ function normaliseLine(raw) {
     actionType: ACTION_TYPES.includes(raw.actionType) ? raw.actionType : 'unsupported',
     item: String(raw.item || '').trim(),
     variant: String(raw.variant || '').trim(),
+    sourceText: String(raw.sourceText || '').trim(),
     lotCode: String(raw.lotCode || '').trim(),
     serials: Array.isArray(raw.serials) ? raw.serials.map((s) => String(s).trim()).filter(Boolean).slice(0, 25) : [],
     sourceLocation: String(raw.sourceLocation || '').trim(),

@@ -18,11 +18,17 @@ const policyAuthor = require('../../autopilot/policy-author');
 const preferences = require('../../autopilot/preferences');
 const permissions = require('../../actions/permissions');
 const repo = require('../../domain/repository');
+const managerEvents = require('../../manager/events');
+const reactions = require('../../manager/reactions');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 
 const router = express.Router();
 router.use('/autopilot', requireAuth);
+
+const react = (req, payload, options = {}) => reactions.publishAndReact(
+  req.db, req.ctx.workspaceId, managerEvents.TYPES.AUTHORITY_UPDATED, payload, options
+);
 
 /** How Foundry is set up, and everything it may do. */
 router.get(
@@ -35,12 +41,14 @@ router.get(
       state: modes.get(req.db, workspaceId),
       limits: modes.limits(req.db, workspaceId),
       policies: policyService.list(req.db, workspaceId),
+      routine: policyService.routineSetup(req.db, workspaceId),
       describe: policyService.describe,
       locations: repo.listLocations(req.db, workspaceId).filter((location) => location.is_active),
       suppliers: req.db.prepare("SELECT id, name FROM suppliers WHERE workspace_id = ? AND status = 'active' ORDER BY name").all(workspaceId),
       recent: workItems.list(req.db, workspaceId, { limit: 20 }),
       preferences: preferences.list(req.db, workspaceId),
       preferenceKeys: Object.values(preferences.KEYS),
+      advanced: req.query.advanced === '1' || Boolean(req.session.policyDraft),
       // A draft read from a sentence, carried through the redirect so the
       // customer reads the policy rather than their own words echoed back.
       drafted: req.session.policyDraft || null,
@@ -73,7 +81,7 @@ router.post(
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);
     }
-    return res.redirect(303, '/autopilot');
+    return res.redirect(303, '/autopilot?advanced=1');
   })
 );
 
@@ -96,12 +104,13 @@ router.post(
           statedAs: req.body[`${definition.key}__saidAs`] || null,
         });
       }
+      react(req, { change: 'operating_preferences' });
       req.flash('success', 'Saved how you want this inventory run.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);
     }
-    return res.redirect(303, '/autopilot');
+    return res.redirect(303, '/autopilot?advanced=1');
   })
 );
 
@@ -116,13 +125,17 @@ router.get(
       groups: {
         automatic: items.filter((item) => item.executionStatus === 'COMPLETED' && item.isAutomatic),
         prepared: items.filter((item) => item.executionStatus === 'COMPLETED' && !item.isAutomatic),
-        needsYou: items.filter((item) => item.needsPerson),
+        needsYou: items.filter((item) => presenter.isCurrentlyActionable(req.db, req.ctx.workspaceId, item)),
         blocked: items.filter((item) => ['FAILED', 'BLOCKED'].includes(item.executionStatus)),
       },
       evaluations: presenter.recentEvaluations(req.db, req.ctx.workspaceId, { limit: 50 }),
       // Bound to who owns each order, so history does not offer an approval the
       // replenishment plan has taken over.
-      describe: ((owned) => (item) => presenter.describeCompleted(item, owned))(
+      describe: ((owned) => (item) => presenter.describeCompleted(
+        item,
+        owned,
+        presenter.currentOrderForWork(req.db, req.ctx.workspaceId, item)
+      ))(
         new Set(presenter.ordersOwnedByAPlan(req.db, req.ctx.workspaceId).keys())
       ),
     });
@@ -134,15 +147,22 @@ router.get(
   '/autopilot/work/:id',
   asyncRoute(async (req, res) => {
     const explanation = presenter.explain(req.db, req.ctx.workspaceId, req.params.id);
+    if (explanation.item.category === 'replenishment_plan'
+        && (explanation.item.recommendedAction || {}).blocked === 'no_supplier') {
+      req.flash('info', 'Add the supplier first. Foundry will then recalculate the exact replenishment plan; there is nothing to approve yet.');
+      return res.redirect(303, `/purchasing/supplier-for/${explanation.item.recommendedAction.skuId}`);
+    }
     res.page('autopilot/work', {
       // Named, so the browser tab and the heading say which product is being
       // decided rather than only what kind of decision it is.
-      title: (explanation.item.affectedEntities || {}).displayName
-        ? `${explanation.item.affectedEntities.displayName} — ${explanation.item.categoryLabel.toLowerCase()}`
-        // An order has a number, and it is the thing the reader is looking for.
-        : (explanation.item.recommendedAction || {}).poNumber
-          ? `${explanation.item.recommendedAction.poNumber} — ${explanation.item.categoryLabel.toLowerCase()}`
-          : explanation.item.categoryLabel,
+      title: explanation.approvalCopy
+        ? explanation.approvalCopy.heading
+        : (explanation.item.affectedEntities || {}).displayName
+          ? `${explanation.item.affectedEntities.displayName} — ${explanation.item.categoryLabel.toLowerCase()}`
+          // An order has a number, and it is the thing the reader is looking for.
+          : (explanation.item.recommendedAction || {}).poNumber
+            ? `${explanation.item.recommendedAction.poNumber} — ${explanation.item.categoryLabel.toLowerCase()}`
+            : explanation.item.categoryLabel,
       nav: 'autopilot',
       ...explanation,
       canOperate: permissions.can(req.user, permissions.OPERATE),
@@ -156,6 +176,7 @@ router.post(
     try {
       runner.approveWorkItem(req.db, req.ctx, req.user, req.params.id);
       const result = runner.executeWorkItem(req.db, req.ctx, req.user, req.params.id);
+      reactions.drainWorkspace(req.db, req.ctx.workspaceId);
       req.flash(
         result.verified === false && result.executed ? 'error' : 'success',
         result.executed && result.verified !== false
@@ -185,11 +206,18 @@ router.post(
   asyncRoute(async (req, res) => {
     permissions.assertCan(req.user, permissions.OPERATE, 'run Foundry');
     const result = runner.run(req.db, req.ctx, req.user, { trigger: 'manual' });
+    reactions.drainWorkspace(req.db, req.ctx.workspaceId);
+    const currentNeeds = require('../../manager/needs-you-inbox').inbox(req.db, req.ctx.workspaceId).length;
+    const noNewWork = result.planned === 0 && result.executed === 0 && result.recovered === 0;
     req.flash(
       'success',
-      result.nothingToDo
-        ? 'Checked everything. Nothing needs doing.'
-        : `${result.planned} planned, ${result.executed} carried out, ${result.awaiting} waiting for you.`
+      noNewWork
+        ? `Check complete — no new work found. ` +
+          (currentNeeds
+            ? `${currentNeeds} existing ${currentNeeds === 1 ? 'item still needs' : 'items still need'} you.`
+            : 'Nothing is waiting in Needs you.')
+        : `Check complete — ${result.planned} planned, ${result.executed} carried out, ` +
+          `${currentNeeds} ${currentNeeds === 1 ? 'item needs' : 'items need'} you now.`
     );
     return res.redirect(303, '/');
   })
@@ -201,8 +229,42 @@ router.post(
   '/autopilot/mode',
   asyncRoute(async (req, res) => {
     try {
-      modes.setMode(req.db, req.ctx, req.user, trimOrNull(req.body.mode));
+      const state = modes.setMode(req.db, req.ctx, req.user, trimOrNull(req.body.mode));
+      react(req, { change: 'mode', mode: state.mode });
       req.flash('success', 'Changed what Foundry is allowed to do.');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+    }
+    return res.redirect(303, '/autopilot');
+  })
+);
+
+/**
+ * The short path to bounded routine authority. These controls write and
+ * approve the same versioned automation policies shown under Custom.
+ */
+router.post(
+  '/autopilot/routine-authority',
+  asyncRoute(async (req, res) => {
+    try {
+      const routine = policyService.configureRoutine(req.db, req.ctx, req.user, req.body);
+      react(req, { change: 'routine_authority', transfer: routine.transfer, purchasing: routine.purchasing });
+      const allowed = [];
+      if (routine.transfer.enabled) {
+        allowed.push(`move up to ${routine.transfer.maximumQuantity} units at a time between your active locations`);
+      }
+      if (routine.purchasing.enabled) {
+        allowed.push(
+          `approve supplier orders up to $${Number(routine.purchasing.maximumValue).toLocaleString('en-US')} from the suppliers you selected`
+        );
+      }
+      req.flash(
+        'success',
+        allowed.length
+          ? `Routine work is ready. Foundry may automatically ${allowed.join(' and ')}. Everything outside these limits comes to you first.`
+          : 'Routine authority removed. Foundry will ask before carrying out consequential work.'
+      );
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);
@@ -215,6 +277,7 @@ router.post(
   '/autopilot/pause',
   asyncRoute(async (req, res) => {
     modes.pause(req.db, req.ctx, req.user, trimOrNull(req.body.reason));
+    react(req, { change: 'paused', paused: true });
     req.flash('success', 'Foundry is paused. Nothing will happen automatically until you resume it.');
     return res.redirect(303, req.body.back || '/');
   })
@@ -227,6 +290,11 @@ router.post(
       const state = modes.get(req.db, req.ctx.workspaceId);
       if (state.suspended) modes.clearSuspension(req.db, req.ctx, req.user);
       modes.resume(req.db, req.ctx, req.user);
+      reactions.publishAndReact(
+        req.db, req.ctx.workspaceId, managerEvents.TYPES.FOUNDRY_RESUMED,
+        { change: 'resumed', paused: false },
+        { idempotencyKey: `${managerEvents.TYPES.FOUNDRY_RESUMED}:${Date.now()}` }
+      );
       req.flash('success', 'Foundry is running again.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -240,13 +308,14 @@ router.post(
   '/autopilot/limits',
   asyncRoute(async (req, res) => {
     try {
-      modes.setLimits(req.db, req.ctx, req.user, req.body);
+      const limits = modes.setLimits(req.db, req.ctx, req.user, req.body);
+      react(req, { change: 'hard_limits', limits });
       req.flash('success', 'Limits updated.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);
     }
-    return res.redirect(303, '/autopilot');
+    return res.redirect(303, '/autopilot?advanced=1');
   })
 );
 
@@ -288,7 +357,7 @@ router.post(
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);
-      return res.redirect(303, '/autopilot');
+      return res.redirect(303, '/autopilot?advanced=1');
     }
   })
 );
@@ -313,10 +382,11 @@ router.post(
   '/autopilot/policies/:id/approve',
   asyncRoute(async (req, res) => {
     try {
-      policyService.approve(req.db, req.ctx, req.user, req.params.id, {
+      const approved = policyService.approve(req.db, req.ctx, req.user, req.params.id, {
         expectedHash: trimOrNull(req.body.integrityHash),
       });
-      req.flash('success', 'Approved. Foundry may now do this on its own — switch it to Autopilot to let it.');
+      react(req, { change: 'policy_approved', policyId: approved.id, policyVersion: approved.version });
+      req.flash('success', 'Approved. Choose “Handle routine work” to let Foundry use this rule automatically.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);
@@ -330,11 +400,12 @@ router.post(
   '/autopilot/policies/:id/disable',
   asyncRoute(async (req, res) => {
     const policy = policyService.disable(req.db, req.ctx, req.user, req.params.id, trimOrNull(req.body.reason));
+    react(req, { change: 'policy_disabled', policyId: policy.id, policyVersion: policy.version });
     req.flash(
       'success',
       `${policy.name} is off. Nothing new will happen under it; what it already did stays in the history.`
     );
-    return res.redirect(303, '/autopilot');
+    return res.redirect(303, '/autopilot?advanced=1');
   })
 );
 

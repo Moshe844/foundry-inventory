@@ -119,9 +119,16 @@ router.get(
  */
 function withPlanWording(presented, plan) {
   if (!plan) return presented;
+  const preparedOnly = Boolean(plan.prepared?.orders?.length && !plan.purchase && plan.transfers.length === 0);
+  const numbers = preparedOnly ? plan.prepared.orders.map((order) => order.poNumber).join(', ') : '';
   return {
     ...presented,
-    title: plan.blocked === 'no_supplier' ? presented.title : `${plan.displayName}: ${plan.headline.toLowerCase()}`,
+    title: preparedOnly
+      ? `${plan.displayName}: ${plan.prepared.units} ${plan.unitLabel}(s) ready to order`
+      : plan.blocked === 'no_supplier' ? presented.title : `${plan.displayName}: ${plan.headline.toLowerCase()}`,
+    conciseSummary: preparedOnly
+      ? `${plan.onHandTotal} on hand. ${numbers} is a draft; nothing has been ordered yet.`
+      : presented.conciseSummary,
     narrativeTitle: null,
     explanation: plan.explanation,
     recommendation: replenishmentPlan.recommendationFor(plan),

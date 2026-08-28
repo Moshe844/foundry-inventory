@@ -254,6 +254,107 @@ function setItemActive(db, ctx, itemId, isActive) {
   return repo.requireItem(db, ctx.workspaceId, itemId);
 }
 
+/**
+ * Creates an exact, already-known set of variants without inventing the
+ * Cartesian product of their option values. Imports and provider bootstraps
+ * use this boundary; provider code still never writes catalogue tables.
+ */
+function createExactItem(db, ctx, input) {
+  return inTransaction(db, () => {
+    const variants = Array.isArray(input.variants) ? input.variants : [];
+    if (!variants.length) throw new ValidationError('Add at least one product variant.');
+    if (variants.length > MAX_VARIANTS) throw new ValidationError(`Keep one product under ${MAX_VARIANTS} variants.`);
+    entitlements.assertWithin(db, ctx, 'skus', { adding: variants.length });
+    const now = nowIso();
+    const name = requireText(input.name, 'Item name');
+    const trackingMode = requireOneOf(input.trackingMode || 'quantity', TRACKING_MODE_IDS, 'Tracking type');
+    const baseCode = trimOrNull(input.baseCode);
+    if (baseCode && db.prepare('SELECT 1 FROM items WHERE workspace_id = ? AND base_code = ? COLLATE NOCASE')
+      .get(ctx.workspaceId, baseCode)) {
+      throw new ValidationError(`Another item already uses the code ${baseCode}.`, { field: 'baseCode' });
+    }
+
+    const optionNames = [];
+    for (const variant of variants) {
+      for (const rawName of Object.keys(variant.options || {})) {
+        const optionName = requireText(rawName, 'Option name', { max: 80 });
+        if (!optionNames.some((existing) => existing.toLowerCase() === optionName.toLowerCase())) optionNames.push(optionName);
+      }
+    }
+    if (optionNames.length > MAX_OPTIONS) throw new ValidationError(`Use at most ${MAX_OPTIONS} option axes.`);
+    const hasVariants = variants.length > 1 || optionNames.length > 0 || variants.some((variant) => trimOrNull(variant.label));
+    const itemId = newId('item');
+    db.prepare(`INSERT INTO items (
+      id, workspace_id, name, base_code, description, unit_label, tracking_mode,
+      has_variants, allow_negative, is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)`)
+      .run(itemId, ctx.workspaceId, name, baseCode, trimOrNull(input.description),
+        trimOrNull(input.unitLabel) || 'unit', trackingMode, hasVariants ? 1 : 0, now, now);
+
+    const optionRows = optionNames.map((optionName, position) => {
+      const id = newId('opt');
+      db.prepare('INSERT INTO item_options (id, workspace_id, item_id, name, position) VALUES (?, ?, ?, ?, ?)')
+        .run(id, ctx.workspaceId, itemId, optionName, position);
+      return { id, name: optionName };
+    });
+    const taken = new Set();
+    const created = variants.map((variant, position) => {
+      const values = optionRows.map((option) => {
+        const matchingKey = Object.keys(variant.options || {}).find((key) => key.toLowerCase() === option.name.toLowerCase());
+        return matchingKey ? requireText(variant.options[matchingKey], option.name, { max: 80 }) : null;
+      });
+      const label = hasVariants
+        ? trimOrNull(variant.label) || values.filter(Boolean).join(' / ') || `Variant ${position + 1}`
+        : null;
+      const fallback = [baseCode || codeSlug(name), hasVariants ? codeSlug(label) : null].filter(Boolean).join('-');
+      const code = uniqueCode(db, ctx.workspaceId, trimOrNull(variant.code) || fallback, taken);
+      const skuId = newId('sku');
+      db.prepare(`INSERT INTO skus
+        (id, workspace_id, item_id, code, variant_label, is_default, position, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`)
+        .run(skuId, ctx.workspaceId, itemId, code, label, hasVariants ? 0 : 1, position, now);
+      optionRows.forEach((option, index) => {
+        if (values[index] !== null) db.prepare('INSERT INTO sku_option_values (sku_id, option_id, value) VALUES (?, ?, ?)')
+          .run(skuId, option.id, values[index]);
+      });
+      return { skuId, code, label, sourceKey: variant.sourceKey || null };
+    });
+    return { itemId, skus: created, skuIds: created.map((row) => row.skuId) };
+  });
+}
+
+/** Archive one variant without pretending that its zero balance is a count change. */
+function setSkuActive(db, ctx, skuId, isActive) {
+  const sku = db.prepare(
+    `SELECT s.*, i.name AS item_name FROM skus s JOIN items i ON i.id = s.item_id
+      WHERE s.id = ? AND s.workspace_id = ?`
+  ).get(skuId, ctx.workspaceId);
+  if (!sku) throw new ValidationError('That product or variant is not in this inventory.');
+  if (!isActive) {
+    const total = db.prepare(
+      'SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ? AND sku_id = ?'
+    ).get(ctx.workspaceId, skuId).n;
+    if (total !== 0) {
+      throw new InvariantError(
+        `${sku.item_name}${sku.variant_label ? ` / ${sku.variant_label}` : ''} still has ${total} on hand. `
+          + 'Move or issue the stock before archiving it.',
+        'sku_has_stock'
+      );
+    }
+  }
+  const now = nowIso();
+  db.prepare('UPDATE skus SET is_active = ?, updated_at = ? WHERE id = ? AND workspace_id = ?')
+    .run(isActive ? 1 : 0, now, skuId, ctx.workspaceId);
+  const active = db.prepare(
+    'SELECT COUNT(*) AS n FROM skus WHERE workspace_id = ? AND item_id = ? AND is_active = 1'
+  ).get(ctx.workspaceId, sku.item_id).n;
+  if (!isActive && active === 0) {
+    db.prepare('UPDATE items SET is_active = 0, updated_at = ? WHERE id = ? AND workspace_id = ?')
+      .run(now, sku.item_id, ctx.workspaceId);
+  }
+  return db.prepare('SELECT * FROM skus WHERE id = ? AND workspace_id = ?').get(skuId, ctx.workspaceId);
+}
+
 /** Full detail used by the item page: SKUs, per-location stock, lots, units. */
 function getItemDetail(db, workspaceId, itemId) {
   const item = repo.requireItem(db, workspaceId, itemId);
@@ -354,9 +455,11 @@ function getItemDetail(db, workspaceId, itemId) {
 
 module.exports = {
   createItem,
+  createExactItem,
   updateItem,
   addVariant,
   setItemActive,
+  setSkuActive,
   getItemDetail,
   parseOptions,
   codeSlug,

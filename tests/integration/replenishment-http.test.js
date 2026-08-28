@@ -23,6 +23,7 @@ const authService = require('../../src/domain/auth-service');
 const attention = require('../../src/attention/attention-engine');
 const policyService = require('../../src/purchasing/policy-service');
 const supplierService = require('../../src/purchasing/supplier-service');
+const poService = require('../../src/purchasing/po-service');
 const runner = require('../../src/autopilot/runner');
 const workItems = require('../../src/autopilot/work-items');
 const repo = require('../../src/domain/repository');
@@ -108,7 +109,7 @@ test('the plan shown for approval carries the reason, the working and the after-
   assert.match(text, /Position across every location is 48 on hand \+ 0 on order = 48/);
   assert.match(text, /Order up to 84 − position 48 = 36 needed/);
   // What the inventory will look like afterwards.
-  assert.match(text, /Afterwards: 48 on hand across every location, rising to 84/);
+  assert.match(text, /Afterwards: 48 on hand across every location, reaching the order-up-to level of 84/);
   env.db.close();
 });
 
@@ -166,6 +167,32 @@ test('a level crossed with no supplier says so instead of proposing a quantity',
   assert.match(text, /Add one for this line/i);
   // It must not invent a pack size, a cost or a lead time out of nothing.
   assert.doesNotMatch(text, /case\(s\) —/);
+
+  runner.planWork(env.db, env.workspace.ctx, env.membership, { trigger: 'test-no-supplier' });
+  assert.equal(workItems.list(env.db, env.workspace.workspaceId, {
+    status: workItems.STATUS.WAITING_FOR_APPROVAL, category: 'replenishment_plan',
+  }).length, 0, 'missing setup is not an approvable empty plan');
+  const needs = await env.agent.get('/needs-you');
+  assert.match(plain(needs.text), /Add a supplier for this line/i);
+  assert.match(needs.text, new RegExp(`/purchasing/supplier-for/${env.item.skuId}`));
+  env.db.close();
+});
+
+test('a location-minimum transfer leads with the location shortage, not an unrelated reorder level', async () => {
+  const env = await warehouseAndShop({
+    warehouseStock: 86, shopStock: 4, shopSales: 0,
+    levels: { reorderPoint: 60, targetStock: 80 },
+  });
+  policyService.setLocationMinimum(
+    env.db, env.workspace.ctx, env.membership, env.item.skuId,
+    env.workspace.store.id, 20
+  );
+  attention.evaluate(env.db, env.workspace.workspaceId, { trigger: 'location-minimum-copy' });
+
+  const needsYou = plain((await env.agent.get('/needs-you')).text).replace(/\s+/g, ' ');
+  assert.match(needsYou, /Downtown Store has 4 and needs 20/);
+  assert.match(needsYou, /90 total across all locations/);
+  assert.doesNotMatch(needsYou, /90 on hand · reorder at 60/);
   env.db.close();
 });
 
@@ -261,7 +288,8 @@ test('an order already prepared is not recommended a second time', async () => {
   assert.equal(env.db.prepare('SELECT COUNT(*) c FROM purchase_orders').get().c, 1);
 
   // The plan is rebuilt on view, so this is what a person would now read.
-  const again = plain((await env.agent.get(`/attention/${row.id}`)).text).replace(/\s+/g, ' ');
+  const againResponse = await env.agent.get(`/attention/${row.id}`);
+  const again = plain(againResponse.text).replace(/\s+/g, ' ');
   assert.match(again, /already prepared/i);
   assert.match(again, /waiting for approval/i);
   assert.doesNotMatch(again, /36 unit\(s\) from ABC Supply/, 'it must not offer the same order again');
@@ -274,6 +302,42 @@ test('an order already prepared is not recommended a second time', async () => {
     env.db.prepare('SELECT COUNT(*) c FROM purchase_orders').get().c, 1,
     'a second draft for stock already drafted is a duplicate order'
   );
+  env.db.close();
+});
+
+test('a prepared-only replenishment leads directly to the draft order approval', async () => {
+  const env = await warehouseAndShop({
+    warehouseStock: 33, shopStock: 1, shopSales: 0, levels: { reorderPoint: 50, targetStock: 60 },
+  });
+  const row = env.db
+    .prepare("SELECT id FROM attention_items WHERE category = 'replenishment_needed' AND status = 'OPEN'")
+    .get();
+  const detail = await env.agent.get(`/attention/${row.id}`);
+  const supplierId = env.db.prepare('SELECT id FROM suppliers LIMIT 1').get().id;
+  const prepared = await env.agent.post(`/purchasing/prepare/${supplierId}`).type('form')
+    .send({ _csrf: csrfFrom(detail.text) });
+  assert.match(prepared.headers.location, /purchasing\/orders\//);
+
+  const order = env.db.prepare('SELECT id, po_number FROM purchase_orders LIMIT 1').get();
+  const line = env.db.prepare('SELECT quantity_units FROM purchase_order_lines WHERE purchase_order_id = ?').get(order.id);
+  const againResponse = await env.agent.get(`/attention/${row.id}`);
+  const again = plain(againResponse.text).replace(/\s+/g, ' ');
+  assert.match(again, new RegExp(`${line.quantity_units} unit\\(s\\) are ready to order`, 'i'));
+  assert.match(again, /It is only a draft: the supplier has not received it/i);
+  assert.match(again, new RegExp(`Review and place ${order.po_number}`, 'i'));
+  assert.match(again, /Approve and mark as ordered/i);
+  assert.doesNotMatch(again, /No action/i);
+  assert.doesNotMatch(again, /I'm on it|Not a problem/i);
+  assert.match(againResponse.text, /<details class="card advanced-settings">/,
+    'the calculation stays available without overwhelming the next action');
+
+  const itemPage = plain((await env.agent.get(`/inventory/${env.item.itemId}`)).text).replace(/\s+/g, ' ');
+  assert.match(itemPage, new RegExp(`${line.quantity_units} unit\\(s\\) ready to order`, 'i'));
+  assert.match(itemPage, new RegExp(`${order.po_number} is still a draft; nothing has been ordered yet`, 'i'));
+  assert.match(itemPage, new RegExp(`Review ${order.po_number}`, 'i'));
+
+  const orderPage = plain((await env.agent.get(`/purchasing/orders/${order.id}`)).text).replace(/\s+/g, ' ');
+  assert.match(orderPage, /Approve and mark as ordered/);
   env.db.close();
 });
 
@@ -727,14 +791,16 @@ test('completed work does not claim an approval the plan now owns', async () => 
 
   const owned = new Set(autopilotPresenter.ordersOwnedByAPlan(env.db, env.workspace.workspaceId).keys());
   const card = autopilotPresenter.describeCompleted(
-    workItems.get(env.db, env.workspace.workspaceId, done.id), owned
+    workItems.get(env.db, env.workspace.workspaceId, done.id), owned,
+    poService.get(env.db, env.workspace.workspaceId, env.order.id)
   );
   assert.match(card.detail, /part of a replenishment plan, and is approved there/);
   assert.doesNotMatch(card.detail, /Waiting for you to approve it/);
 
   // And without a plan owning it, the ordinary wording is unchanged.
   const plain = autopilotPresenter.describeCompleted(
-    workItems.get(env.db, env.workspace.workspaceId, done.id), new Set()
+    workItems.get(env.db, env.workspace.workspaceId, done.id), new Set(),
+    poService.get(env.db, env.workspace.workspaceId, env.order.id)
   );
   assert.match(plain.detail, /Waiting for you to approve it/);
   env.db.close();
@@ -851,16 +917,16 @@ test('a fresh workspace reaches exactly one replenishment decision, and it expla
 
   // Opening it shows the whole calculation, not just the consequence.
   const page = plain((await agent.get(`/autopilot/work/${live[0].id}`)).text).replace(/\s+/g, ' ');
-  assert.match(page, /reorder point of 60/, 'what triggered it');
-  assert.match(page, /order-up-to level of 80/);
-  assert.match(page, /On hand 10, with nothing on order/, 'the position');
-  assert.match(page, /Downtown Store holds 10/, 'the location balances');
-  assert.match(page, /6 case\(s\)/, 'the purchase-unit arithmetic: 80 - 10 = 70, rounded up to whole cases of 12');
-  assert.match(page, /72 unit\(s\)/);
+  assert.match(page, /Your reorder point is 60/, 'what triggered it');
+  assert.match(page, /your target is 80/i);
+  assert.match(page, /You have 10 on hand and 0 already on order/, 'the position');
+  assert.match(page, /Downtown Store: 10 on hand/, 'the location balances');
+  assert.match(page, /6 cases/, 'the purchase-unit arithmetic: 80 - 10 = 70, rounded up to whole cases of 12');
+  assert.match(page, /72 units/);
   assert.match(page, /ABC Apparel/);
-  assert.match(page, /What approving this will do/, 'and exactly what the button does');
-  assert.match(page, /Prepare a draft order/);
-  assert.match(page, /Shortfall/, 'the shortfall is in the measurements');
+  assert.match(page, /What approval does/, 'and exactly what the button does');
+  assert.match(page, /create a draft purchase order/i);
+  assert.match(page, /Amount needed to reach target/, 'the shortfall is in the calculations');
 
   // Approving the plan is what produces the order.
   runner.approveWorkItem(store.db, workspace.ctx, membership, live[0].id);

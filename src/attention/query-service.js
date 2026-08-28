@@ -17,6 +17,7 @@ const attention = require('./attention-engine');
 const { round } = require('../signals/signal-engine');
 
 const INTENTS = [
+  'inventory_summary',
   'stock_level',
   'stock_by_location',
   'movement_history',
@@ -42,6 +43,12 @@ const INTENTS = [
   'late_orders',
   'last_cost',
   'suppliers_for_item',
+  'selling_price',
+  'sales_summary',
+  'connection_summary',
+  'connection_last_event',
+  'connection_mapping_issues',
+  'connection_diagnostics',
   // Mission 7. Foundry now does work of its own, so "what have you been doing"
   // is a real question with a real answer — read from the work records, never
   // from a model's recollection.
@@ -487,6 +494,158 @@ const EXECUTORS = {
   foundry_activity: foundryActivity,
   foundry_why: foundryWhy,
   stop_automation: stopAutomation,
+  inventory_summary(db, workspaceId) {
+    const products = db.prepare(
+      'SELECT COUNT(*) AS n FROM items WHERE workspace_id = ? AND is_active = 1'
+    ).get(workspaceId).n;
+    const variants = db.prepare(
+      `SELECT COUNT(*) AS n FROM skus s JOIN items i ON i.id = s.item_id
+        WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1`
+    ).get(workspaceId).n;
+    const units = db.prepare(
+      `SELECT COALESCE(SUM(b.on_hand), 0) AS n FROM balances b
+         JOIN skus s ON s.id = b.sku_id JOIN items i ON i.id = s.item_id
+        WHERE b.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1`
+    ).get(workspaceId).n;
+    const locations = db.prepare(
+      'SELECT COUNT(*) AS n FROM locations WHERE workspace_id = ? AND is_active = 1'
+    ).get(workspaceId).n;
+    const rows = [
+      { measure: 'Active products', value: products },
+      { measure: 'Tracked variants', value: variants },
+      { measure: 'Units on hand', value: units },
+      { measure: 'Active locations', value: locations },
+    ];
+    return {
+      rows,
+      answer:
+        `This inventory has ${products} active product${products === 1 ? '' : 's'}, `
+        + `${variants} tracked variant${variants === 1 ? '' : 's'}, and ${units} unit${units === 1 ? '' : 's'} `
+        + `on hand across ${locations} active location${locations === 1 ? '' : 's'}.`,
+      columns: ['measure', 'value'],
+    };
+  },
+  selling_price(db, workspaceId, plan) {
+    const prices = require('../pricing/price-service');
+    const skus = resolveSkus(db, workspaceId, plan.entityQuery, plan.limit);
+    if (!skus.length) return { rows: [], answer: notFound(plan) };
+    const rows = skus.map((sku) => {
+      const current = prices.currentForSku(db, workspaceId, sku.id);
+      return { label: label(sku), code: sku.code, price: current.formatted };
+    });
+    return {
+      rows,
+      answer: rows.length === 1
+        ? `${rows[0].label} is priced at ${rows[0].price}.`
+        : `Current selling prices for ${rows.length} stock lines.`,
+      columns: ['label', 'code', 'price'],
+    };
+  },
+  sales_summary(db, workspaceId) {
+    const orders = db.prepare(
+      `SELECT COUNT(*) AS openOrders FROM sales_orders
+        WHERE workspace_id = ? AND status NOT IN ('FULFILLED','CANCELLED')`
+    ).get(workspaceId).openOrders;
+    const totals = db.prepare(
+      `SELECT COALESCE(SUM(sol.quantity_ordered), 0) AS ordered,
+              COALESCE(SUM(sol.quantity_fulfilled), 0) AS fulfilled,
+              COALESCE(SUM((SELECT COALESCE(SUM(a.quantity), 0) FROM sales_order_allocations a
+                             WHERE a.sales_order_line_id = sol.id)), 0) AS committed
+         FROM sales_order_lines sol JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE sol.workspace_id = ? AND so.status NOT IN ('CANCELLED')`
+    ).get(workspaceId);
+    const waiting = Math.max(0, Number(totals.ordered) - Number(totals.fulfilled) - Number(totals.committed));
+    const rows = [
+      { measure: 'Open orders', value: orders },
+      { measure: 'Ordered units', value: totals.ordered },
+      { measure: 'Committed units', value: totals.committed },
+      { measure: 'Waiting for stock', value: waiting },
+      { measure: 'Fulfilled units', value: totals.fulfilled },
+    ];
+    return {
+      rows,
+      answer: `${orders} open sales order${orders === 1 ? '' : 's'}; ${totals.committed} units committed and ${waiting} waiting for stock.`,
+      columns: ['measure', 'value'],
+    };
+  },
+  connection_summary(db, workspaceId) {
+    const service = require('../connections/service');
+    const connections = service.refreshHealth(db, workspaceId);
+    const rows = connections.map((connection) => ({
+      connection: connection.display_name,
+      status: connection.publicStatus,
+      lastActivity: connection.last_activity_at || 'No activity received',
+      issues: connection.openIssues,
+      provides: connection.provides.join(', '),
+    }));
+    const attention = rows.filter((row) => row.status === 'Needs attention').length;
+    return { rows,
+      answer: rows.length
+        ? `${rows.length} connection${rows.length === 1 ? '' : 's'}: ${attention} need${attention === 1 ? 's' : ''} attention.`
+        : 'No external systems are connected yet.',
+      columns: ['connection', 'status', 'lastActivity', 'issues', 'provides'] };
+  },
+  connection_last_event(db, workspaceId, plan) {
+    const all = db.prepare('SELECT id, display_name FROM workspace_connectors WHERE workspace_id = ? ORDER BY updated_at DESC')
+      .all(workspaceId);
+    const terms = searchTerms(plan.entityQuery);
+    const selected = terms.length
+      ? all.find((row) => terms.every((term) => row.display_name.toLowerCase().includes(term)))
+      : all[0];
+    if (!selected) return { rows: [], answer: 'No matching connection is configured.' };
+    const event = db.prepare(`SELECT external_event_id, event_type, status, occurred_at, received_at, action_type, error_message
+      FROM connector_feed_events WHERE workspace_id = ? AND connector_id = ? ORDER BY received_at DESC, rowid DESC LIMIT 1`)
+      .get(workspaceId, selected.id);
+    if (!event) return { rows: [], answer: `${selected.display_name} has not delivered any events yet.` };
+    const rows = [{ connection: selected.display_name, eventId: event.external_event_id, type: event.event_type,
+      status: event.status, occurred: event.occurred_at || 'Not supplied', received: event.received_at,
+      foundryAction: event.action_type || 'None', problem: event.error_message || '' }];
+    return { rows,
+      answer: `The last event from ${selected.display_name} was ${event.event_type} (${event.external_event_id}), received ${event.received_at}. Its status is ${event.status}.`,
+      columns: ['connection', 'eventId', 'type', 'status', 'occurred', 'received', 'foundryAction', 'problem'] };
+  },
+  connection_mapping_issues(db, workspaceId, plan) {
+    const terms = searchTerms(plan.entityQuery);
+    const connections = db.prepare('SELECT id, display_name, provider_type FROM workspace_connectors WHERE workspace_id = ?')
+      .all(workspaceId);
+    const selected = terms.length ? connections.find((row) => {
+      const text = `${row.display_name} ${row.provider_type}`.toLowerCase();
+      return terms.every((term) => text.includes(term));
+    }) : connections[0];
+    if (!selected) return { rows: [], answer: 'No matching connection is configured.' };
+    const rows = db.prepare(`SELECT entity_type AS type, display_name AS externalRecord, code,
+      external_id AS externalId FROM connection_external_records WHERE workspace_id = ? AND connector_id = ?
+      AND selected = 1 AND mapping_status = 'UNMAPPED' ORDER BY entity_type, display_name COLLATE NOCASE`)
+      .all(workspaceId, selected.id);
+    return { rows, answer: rows.length
+      ? `${selected.display_name} has ${rows.length} product or location match${rows.length === 1 ? '' : 'es'} waiting for you.`
+      : `${selected.display_name} has no unresolved product or location mappings.`,
+    columns: ['type', 'externalRecord', 'code', 'externalId'] };
+  },
+  connection_diagnostics(db, workspaceId, plan) {
+    const service = require('../connections/service');
+    const all = service.refreshHealth(db, workspaceId);
+    const terms = searchTerms(plan.entityQuery);
+    const selected = terms.length ? all.find((row) => {
+      const text = `${row.display_name} ${row.provider_type}`.toLowerCase();
+      return terms.every((term) => text.includes(term));
+    }) : all[0];
+    if (!selected) return { rows: [], answer: 'No matching connection is configured.' };
+    const last = db.prepare(`SELECT event_type, status, received_at, error_message FROM connector_feed_events
+      WHERE workspace_id = ? AND connector_id = ? ORDER BY received_at DESC, rowid DESC LIMIT 1`)
+      .get(workspaceId, selected.id);
+    const rows = [{ connection: selected.display_name, status: selected.publicStatus,
+      lastEvent: last ? `${last.event_type} · ${last.status}` : 'No event received',
+      received: last?.received_at || '', mappingsNeeded: selected.itemsNeedingMapping,
+      problem: selected.last_error || last?.error_message || (selected.openIssues ? `${selected.openIssues} issue(s) need attention` : '') }];
+    const reason = selected.publicStatus === 'Connected' && last
+      ? `The connection is active; its last event arrived ${last.received_at}.`
+      : selected.publicStatus === 'Connected'
+        ? 'The connection is active, but it has not delivered an event yet.'
+        : `Its status is ${selected.publicStatus}${selected.last_error ? `: ${selected.last_error}` : '.'}`;
+    return { rows, answer: `${selected.display_name}: ${reason} ${selected.itemsNeedingMapping ? `${selected.itemsNeedingMapping} mapping${selected.itemsNeedingMapping === 1 ? '' : 's'} still need you.` : ''}`.trim(),
+      columns: ['connection', 'status', 'lastEvent', 'received', 'mappingsNeeded', 'problem'] };
+  },
   stock_level(db, workspaceId, plan) {
     const allSkus = resolveSkus(db, workspaceId, plan.entityQuery, 100000);
     if (allSkus.length === 0) return { rows: [], answer: notFound(plan) };

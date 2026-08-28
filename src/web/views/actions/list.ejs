@@ -10,13 +10,18 @@
 
 <div class="card section">
   <div class="card-body">
-    <form class="ask-form" method="post" action="/actions/ask" enctype="multipart/form-data" data-busy data-ask-form>
+    <%# This is a new, general Tell Foundry request. Send it through the same
+        manager entry point as Home so questions, pricing, purchasing, rules,
+        catalogue changes and stock actions all have the same capabilities.
+        The smaller reply forms below intentionally remain on /actions/ask:
+        they continue a structured stock-action clarification. %>
+    <form class="ask-form ask-form--command" method="post" action="/foundry/tell" enctype="multipart/form-data" data-busy data-ask-form>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input
         class="input ask-input"
         id="action-instruction"
         type="text"
-        name="instruction"
+        name="message"
         value="<%= instruction %>"
         placeholder="<%= (typeof examples !== 'undefined' && examples.length) ? examples[0] : 'Tell Foundry what happened' %>"
         maxlength="500"
@@ -56,22 +61,44 @@
     <% } %>
 
     <% if (question) { %>
-      <div class="act-question">
+      <div class="act-question <%= locals.questionTone === 'warning' ? 'act-question--warning' : '' %>">
         <span class="att-rec-icon"><%- helpers.icon('foundry', { size: 15 }) %></span>
         <div class="act-question-body">
           <p><%= question %></p>
           <% if (choices && choices.length) { %>
-            <div class="btn-row" style="margin-top:8px;">
+            <div class="act-choice-grid">
               <% choices.forEach(function (choice) { %>
-                <a class="btn btn--sm" href="/actions/<%= choice.proposalId %>"><%= choice.summary %></a>
+                <% if (choice.proposalId) { %>
+                  <a class="btn btn--sm" href="/actions/<%= choice.proposalId %>"><%= choice.summary %></a>
+                <% } else { %>
+                  <%# Candidate records answer the exact unresolved dimension.
+                      The original request travels with the selected value, so
+                      Foundry continues the same instruction instead of making
+                      the person start over. %>
+                  <form method="post" action="<%= locals.answerAction || '/actions/ask' %>" data-busy>
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <input type="hidden" name="original" value="<%= instruction %>">
+                    <input type="hidden" name="answer" value="<%= choice.value %>">
+                    <% if (locals.continuationId) { %>
+                      <input type="hidden" name="continuationId" value="<%= locals.continuationId %>">
+                    <% } %>
+                    <% if (locals.physicalEventId) { %>
+                      <input type="hidden" name="physicalEventId" value="<%= locals.physicalEventId %>">
+                    <% } %>
+                    <button class="btn btn--sm" type="submit"><%= choice.label %></button>
+                  </form>
+                <% } %>
               <% }) %>
             </div>
           <% } else { %>
             <%# A question with nowhere to answer is a dead end. Reply here and
                 Foundry re-reads the original instruction with the answer added. %>
-            <form class="act-reply" method="post" action="/actions/ask" data-busy>
+            <form class="act-reply" method="post" action="<%= locals.answerAction || '/actions/ask' %>" data-busy>
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <input type="hidden" name="original" value="<%= instruction %>">
+              <% if (locals.continuationId) { %>
+                <input type="hidden" name="continuationId" value="<%= locals.continuationId %>">
+              <% } %>
               <%# So answering the question also closes the Needs you item that
                   asked it, instead of leaving the same need listed twice. %>
               <% if (locals.physicalEventId) { %>
@@ -133,6 +160,25 @@
               <span class="muted">Take out only what is recorded there.</span>
             </li>
           </ul>
+        </div>
+      </div>
+    <% } else if (blocked && blocked.reason === 'operating_guard') { %>
+      <div class="act-question act-question--warning">
+        <span class="att-rec-icon"><%- helpers.icon('alert', { size: 15 }) %></span>
+        <div class="act-question-body">
+          <p><strong>Stock protection stopped this outgoing stock.</strong></p>
+          <p>
+            <strong><%= blocked.before %></strong> of <%= blocked.subject %> are recorded at
+            <%= blocked.locationName %>. This request would leave <strong><%= blocked.after %></strong>,
+            which the rule blocks because it would be
+            <strong><%= blocked.comparator === 'at_or_below' ? 'at or below' : 'below' %>
+              the configured limit of <%= blocked.threshold %></strong>.
+            <%= blocked.comparator === 'at_or_below'
+              ? `The lowest permitted balance is ${Number(blocked.threshold) + 1}.`
+              : `A balance of ${blocked.threshold} is allowed.` %>
+          </p>
+          <p style="margin-top:8px;"><%= unsupported %></p>
+          <p class="muted" style="font-size:12.5px; margin-top:8px;">Nothing has been changed.</p>
         </div>
       </div>
     <% } else if (unsupported) { %>

@@ -1,3 +1,4 @@
+<% const priceUpdate = (plan.transformations || {}).operationScope === 'selling_price_update'; %>
 <div class="page-head">
   <div class="titles">
     <a class="back-link" href="/imports"><%- helpers.icon('chevron', { size: 14 }) %> Bring data in</a>
@@ -5,6 +6,27 @@
     <div class="page-sub"><%= summary %></div>
   </div>
 </div>
+
+<% if (scopeWarning && scopeWarning.needsConfirmation && !plan.scopeConfirmedAt) { %>
+  <dialog class="modal scope-warning" open data-scope-warning aria-labelledby="scope-warning-title">
+    <div class="modal-head"><h2 id="scope-warning-title">This file looks different from <%= scopeWarning.workspaceName %></h2></div>
+    <div class="modal-body">
+      <p><%= scopeWarning.message %></p>
+      <div class="scope-warning__compare">
+        <div><span>Already here</span><strong><%= scopeWarning.currentExamples.join(', ') %></strong></div>
+        <div><span>In this file</span><strong><%= scopeWarning.incomingExamples.join(', ') %></strong></div>
+      </div>
+      <p class="muted">Foundry has read the file, but nothing has been imported. Continue only if these records belong in the inventory currently open.</p>
+    </div>
+    <form method="post" action="/imports/<%= plan.id %>/confirm-scope" class="modal-foot" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <a class="btn" href="/imports">Cancel</a>
+      <button class="btn btn--primary" type="submit">Continue with <%= scopeWarning.workspaceName %></button>
+    </form>
+  </dialog>
+<% } else if (scopeWarning && scopeWarning.needsConfirmation && plan.scopeConfirmedAt && !report) { %>
+  <div class="notice notice--warn section"><%- helpers.icon('alert', { size: 16 }) %><span>You confirmed that this file belongs in <strong><%= scopeWarning.workspaceName %></strong>. Nothing changes until you approve and import the exact rows below.</span></div>
+<% } %>
 
 <% if (report) { %>
   <%# ------------------------------------------------------------- it has run %>
@@ -108,15 +130,15 @@
           <% if (plan.approvalStatus === 'APPROVED') { %>
             <form method="post" action="/imports/<%= plan.id %>/run" data-busy>
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <button class="btn btn--primary" type="submit">Import it</button>
+              <button class="btn btn--primary" type="submit"><%= priceUpdate ? 'Update prices' : 'Import it' %></button>
             </form>
-            <span class="muted">Approved. Nothing has been created yet.</span>
+            <span class="muted"><%= priceUpdate ? 'Approved. No prices have changed yet.' : 'Approved. Nothing has been created yet.' %></span>
           <% } else { %>
             <form method="post" action="/imports/<%= plan.id %>/approve" data-busy>
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <input type="hidden" name="integrityHash" value="<%= plan.integrityHash %>">
               <button class="btn btn--primary" type="submit" <%= preview.willImport ? '' : 'disabled' %>>
-                Approve <%= preview.willImport %> rows
+                Approve <%= preview.willImport %> <%= priceUpdate ? 'price updates' : 'rows' %>
               </button>
             </form>
           <% } %>
@@ -161,15 +183,17 @@
         </tbody>
       </table>
 
-      <label class="field">
-        <span class="field-label">Rows with no location go to</span>
-        <select class="input" name="defaultLocationId">
-          <option value="">— nowhere; just create the products —</option>
-          <% locations.forEach(function (location) { %>
-            <option value="<%= location.id %>" <%= plan.defaultLocationId === location.id ? 'selected' : '' %>><%= location.name %></option>
-          <% }) %>
-        </select>
-      </label>
+      <% if (!priceUpdate) { %>
+        <label class="field">
+          <span class="field-label">Rows with no location go to</span>
+          <select class="input" name="defaultLocationId">
+            <option value="">— nowhere; just create the products —</option>
+            <% locations.forEach(function (location) { %>
+              <option value="<%= location.id %>" <%= plan.defaultLocationId === location.id ? 'selected' : '' %>><%= location.name %></option>
+            <% }) %>
+          </select>
+        </label>
+      <% } %>
 
       <% if (plan.conflicts.length) { %>
         <h3 class="sub-head">Locations Foundry does not recognise</h3>
@@ -233,7 +257,9 @@
     <table class="table table--tight">
       <thead>
         <tr>
-          <th>Row</th><th>Product</th><th>Version</th><th class="num">Qty</th><th>Location</th><th>Foundry's reading</th>
+          <th>Row</th><th>Product</th><th>Version</th>
+          <% if (priceUpdate) { %><th class="num">Selling price</th><% } else { %><th class="num">Qty</th><th>Location</th><% } %>
+          <th>Foundry's reading</th>
         </tr>
       </thead>
       <tbody>
@@ -242,8 +268,12 @@
             <td class="muted"><%= row.rowNumber %></td>
             <td><%= row.parsed.name || row.parsed.code || '—' %></td>
             <td class="muted"><%= (row.parsed.variants || []).map(function (v) { return v.value; }).join(' / ') || '—' %></td>
-            <td class="num"><%= row.parsed.quantity === null || row.parsed.quantity === undefined ? '—' : row.parsed.quantity %></td>
-            <td class="muted"><%= row.parsed.locationName || row.parsed.locationText || '—' %></td>
+            <% if (priceUpdate) { %>
+              <td class="num"><%= row.parsed.sellingPriceMinor === null || row.parsed.sellingPriceMinor === undefined ? '—' : (row.parsed.currency || 'USD') + ' ' + (row.parsed.sellingPriceMinor / 100).toFixed(2) %></td>
+            <% } else { %>
+              <td class="num"><%= row.parsed.quantity === null || row.parsed.quantity === undefined ? '—' : row.parsed.quantity %></td>
+              <td class="muted"><%= row.parsed.locationName || row.parsed.locationText || '—' %></td>
+            <% } %>
             <td>
               <span class="badge badge--<%= row.status === 'IMPORTED' ? 'ok' : row.status === 'INVALID' || row.status === 'FAILED' ? 'danger' : 'muted' %>">
                 <%= helpers.columnLabel(row.status.toLowerCase().replace('_', ' ')) %>

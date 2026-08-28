@@ -37,7 +37,7 @@ const THRESHOLDS = {
 /** How long an unapproved proposal stays good for. */
 const PROPOSAL_TTL_MS = 30 * 60 * 1000;
 
-const CONFIGURATION_ACTIONS = ['add_location', 'rename_terminology', 'create_item'];
+const CONFIGURATION_ACTIONS = ['add_location', 'rename_terminology', 'create_item', 'archive_item'];
 const MUTATION_ACTIONS = ['receive', 'issue', 'transfer', 'adjust'];
 
 function share(part, whole) {
@@ -56,7 +56,7 @@ function classify(input) {
   const warnings = [];
   const actionType = input.actionType;
 
-  if (CONFIGURATION_ACTIONS.includes(actionType)) {
+  if (CONFIGURATION_ACTIONS.includes(actionType) && !(actionType === 'create_item' && Number(input.quantity) > 0)) {
     return {
       safetyLevel: SAFETY.LOW,
       approvalRequirement: APPROVAL.CONFIRM,

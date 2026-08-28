@@ -15,6 +15,7 @@
 const { THRESHOLDS, DETECTION_RULE_VERSION } = require('./policy');
 const { round, daysBetween } = require('../signals/signal-engine');
 const replenishmentPlan = require('../purchasing/replenishment-plan');
+const operatingGuards = require('../domain/operating-guards');
 
 const fact = (label, value, kind = 'measured') => ({ label, value: String(value), kind });
 
@@ -624,6 +625,12 @@ function detectReplenishment(signals, options = {}) {
     }
 
     const recommendation = replenishmentPlan.recommendationFor(plan);
+    const shortLocations = plan.byLocation.filter((loc) => loc.onHand < loc.need);
+    const conciseSummary = plan.decision === 'transfer' && shortLocations.length
+      ? `${shortLocations.map((loc) => `${loc.locationName} has ${loc.onHand} and needs ${loc.need}`).join(' · ')} ` +
+        `· ${plan.onHandTotal} total across all locations`
+      : `${plan.onHandTotal} on hand${plan.onOrder ? ` · ${plan.onOrder} on order` : ''} ` +
+        `· reorder at ${plan.reorderPoint}`;
 
     out.push(
       candidate({
@@ -634,9 +641,7 @@ function detectReplenishment(signals, options = {}) {
         title: plan.blocked === 'no_supplier'
           ? `${plan.displayName} is below its reorder point, with no supplier`
           : `${plan.displayName}: ${plan.headline.toLowerCase()}`,
-        conciseSummary:
-          `${plan.onHandTotal} on hand${plan.onOrder ? ` · ${plan.onOrder} on order` : ''} ` +
-          `· reorder at ${plan.reorderPoint}`,
+        conciseSummary,
         explanation: plan.explanation,
         recommendation: plan.blocked === 'no_supplier'
           ? 'Add a supplier for this line and Foundry can work out the quantity.'
@@ -660,6 +665,100 @@ function detectReplenishment(signals, options = {}) {
         itemId: plan.itemId,
       })
     );
+  }
+  return out;
+}
+
+/**
+ * An owner-defined outgoing-stock floor has been reached.
+ *
+ * The guard in the inventory engine remains the enforcement boundary. This
+ * detector only makes that same structured rule visible before the next sale
+ * fails. It deliberately derives the warning point from the comparator:
+ * "do not leave fewer than 20" warns at 20, while "do not leave 20 or fewer"
+ * warns at 21 because the next single unit would cross the approved line.
+ */
+function detectStockProtectionBoundary(signals, options = {}) {
+  if (!options.db || !options.workspaceId) return [];
+  const rules = operatingGuards.list(options.db, options.workspaceId, { activeOnly: true });
+  const bySku = new Map(signals.skus.map((sku) => [sku.skuId, sku]));
+  const out = [];
+
+  for (const rule of rules) {
+    if (rule.actionType !== operatingGuards.ACTIONS.ISSUE) continue;
+    const sku = bySku.get(rule.skuId);
+    if (!sku || !sku.isActive) continue;
+
+    const location = rule.locationId
+      ? sku.perLocation.find((entry) => entry.locationId === rule.locationId)
+      : null;
+    const onHand = rule.locationId ? Number(location?.onHand || 0) : Number(sku.measured.onHand || 0);
+    const boundary = operatingGuards.describeBoundary(rule);
+    const allowedFloor = boundary.lowestPermitted;
+    if (onHand > allowedFloor) continue;
+
+    const incoming = incomingFor(signals, rule.skuId);
+    // This rule explicitly says that placing an order releases the stop. Once
+    // that has happened there is no current human decision, so the old Needs
+    // You item resolves instead of lingering beside the real order.
+    if (rule.releaseCondition === operatingGuards.RELEASES.ON_ORDER && incoming) continue;
+
+    const where = rule.locationId && (rule.locationName || location?.locationName)
+      ? ` at ${rule.locationName || location.locationName}`
+      : ' across this inventory';
+    const approachingInclusiveLimit = rule.comparator === operatingGuards.COMPARATORS.AT_OR_BELOW
+      && onHand === allowedFloor;
+    const relation = onHand < boundary.configuredLimit
+      ? 'below'
+      : onHand === boundary.configuredLimit
+        ? 'at'
+        : 'one unit from';
+    const title = `${sku.displayName} is ${relation} its protected stock limit`;
+    const release = rule.releaseCondition === operatingGuards.RELEASES.ON_ORDER
+      ? 'Place a supplier order before recording more outgoing stock.'
+      : rule.releaseCondition === operatingGuards.RELEASES.STOCK_RECOVERED
+        ? `Receive enough stock to restore at least ${rule.releaseThreshold} on hand.`
+        : 'Review this limit; only an owner can change or remove the rule.';
+
+    out.push(candidate({
+      category: 'stock_protection_boundary',
+      // This is an owner-defined warning boundary. The hard stop itself is
+      // enforced separately; the proactive customer-facing state is the
+      // orange Important tier rather than a blue FYI or an invented emergency.
+      severity: 'important',
+      confidence: 'high',
+      fingerprint: `stock_protection_boundary:${rule.id}`,
+      title,
+      conciseSummary: approachingInclusiveLimit
+        ? `${onHand} on hand${where} · the next outgoing unit would reach the configured limit of ${boundary.configuredLimit}`
+        : `${onHand} on hand${where} · configured protected limit ${boundary.configuredLimit}`,
+      explanation: approachingInclusiveLimit
+        ? `${onHand} ${sku.unitLabel || 'units'} are on hand${where}. The configured rule blocks any result `
+          + `${boundary.blockedWhen}, so ${boundary.lowestPermitted} is the lowest permitted balance. `
+          + 'Any further outgoing stock will be blocked.'
+        : `${onHand} ${sku.unitLabel || 'units'} are on hand${where}. The configured rule blocks any result `
+          + `${boundary.blockedWhen}. ${boundary.permittedExplanation}`,
+      recommendation: release,
+      affectedEntityType: 'sku',
+      affectedEntityIds: [rule.skuId],
+      affectedLocationIds: rule.locationId ? [rule.locationId] : [],
+      evidence: [
+        fact('On hand now', onHand),
+        fact('Configured protected limit', boundary.configuredLimit),
+        fact('Lowest permitted balance', boundary.lowestPermitted),
+        fact('Outstanding supplier stock', incoming ? incoming.onOrder : 0),
+        fact('Protection scope', rule.locationId ? (rule.locationName || location?.locationName || 'Selected location') : 'All locations'),
+      ],
+      metrics: {
+        onHand,
+        threshold: rule.threshold,
+        protectedMinimum: allowedFloor,
+        guardId: rule.id,
+        releaseCondition: rule.releaseCondition,
+      },
+      skuId: rule.skuId,
+      itemId: sku.itemId,
+    }));
   }
   return out;
 }
@@ -1006,6 +1105,7 @@ function detectSupplierPriceChanges(signals) {
 
 const DETECTORS = {
   replenishment_needed: detectReplenishment,
+  stock_protection_boundary: detectStockProtectionBoundary,
   low_stock: detectLowStock,
   stockout_risk: detectStockoutRisk,
   late_purchase_order: detectLatePurchaseOrders,
@@ -1022,6 +1122,7 @@ module.exports = {
   unitCount,
   DETECTORS,
   detectReplenishment,
+  detectStockProtectionBoundary,
   detectLowStock,
   detectStockoutRisk,
   detectLatePurchaseOrders,

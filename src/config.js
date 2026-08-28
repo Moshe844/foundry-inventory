@@ -41,6 +41,21 @@ function resolveSessionSecret() {
   return secret;
 }
 
+function resolveConnectionEncryptionKey() {
+  if (process.env.FOUNDRY_CONNECTION_ENCRYPTION_KEY) {
+    return crypto.createHash('sha256').update(process.env.FOUNDRY_CONNECTION_ENCRYPTION_KEY).digest();
+  }
+  ensureDataDir();
+  const secretPath = path.join(dataDir, 'connection-encryption-key');
+  if (fs.existsSync(secretPath)) {
+    const existing = fs.readFileSync(secretPath);
+    if (existing.length === 32) return existing;
+  }
+  const key = crypto.randomBytes(32);
+  fs.writeFileSync(secretPath, key, { mode: 0o600 });
+  return key;
+}
+
 const config = {
   rootDir,
   dataDir,
@@ -53,6 +68,36 @@ const config = {
     return resolveSessionSecret();
   },
   ensureDataDir,
+  get connectionEncryptionKey() {
+    return resolveConnectionEncryptionKey();
+  },
+
+  connections: {
+    get publicOrigin() { return process.env.FOUNDRY_PUBLIC_URL || null; },
+    shopify: {
+      get clientId() { return process.env.SHOPIFY_CLIENT_ID || null; },
+      get clientSecret() { return process.env.SHOPIFY_CLIENT_SECRET || null; },
+      get configured() { return Boolean(this.clientId && this.clientSecret); },
+    },
+    square: {
+      get applicationId() { return process.env.SQUARE_APPLICATION_ID || null; },
+      get applicationSecret() { return process.env.SQUARE_APPLICATION_SECRET || null; },
+      get sandboxAccessToken() { return process.env.SQUARE_SANDBOX_ACCESS_TOKEN || null; },
+      get environment() { return process.env.SQUARE_ENVIRONMENT === 'sandbox' ? 'sandbox' : 'production'; },
+      get webhookSignatureKey() { return process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || null; },
+      get configured() {
+        return Boolean(this.applicationId && (this.applicationSecret
+          || (this.environment === 'sandbox' && this.sandboxAccessToken)));
+      },
+    },
+    clover: {
+      get clientId() { return process.env.CLOVER_CLIENT_ID || null; },
+      get clientSecret() { return process.env.CLOVER_CLIENT_SECRET || null; },
+      get webhookAuthCode() { return process.env.CLOVER_WEBHOOK_AUTH_CODE || null; },
+      get environment() { return process.env.CLOVER_ENVIRONMENT === 'sandbox' ? 'sandbox' : 'production'; },
+      get configured() { return Boolean(this.clientId && this.clientSecret && this.webhookAuthCode); },
+    },
+  },
 
   /**
    * When Foundry looks at the inventory by itself.

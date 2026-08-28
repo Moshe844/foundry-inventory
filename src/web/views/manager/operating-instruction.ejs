@@ -1,0 +1,102 @@
+<div class="page-head">
+  <div class="titles">
+    <div class="eyebrow">Tell Foundry · lasting instruction</div>
+    <h1>Review what Foundry should remember</h1>
+    <div class="page-sub">This writes to the same stock, supplier and automatic-work settings you can inspect later. Nothing changes until you approve.</div>
+  </div>
+  <span class="badge <%= proposal.status === 'APPROVED' ? 'badge--ok' : proposal.status === 'PENDING' ? 'badge--warn' : 'badge--muted' %>"><%= proposal.status === 'APPROVED' ? 'Active' : proposal.status.toLowerCase() %></span>
+</div>
+
+<div class="grid grid--sidebar">
+  <section class="card">
+    <div class="card-head"><h2>What you said</h2></div>
+    <div class="card-body"><p style="font-size:17px; line-height:1.55; margin:0;">“<%= proposal.statedAs %>”</p></div>
+  </section>
+
+  <aside class="card">
+    <div class="card-head"><h2>What happens now</h2></div>
+    <div class="card-body grid">
+      <% if (proposal.status === 'PENDING' && proposal.questions.length === 0) { %>
+        <p class="muted" style="margin:0;">Approve once to teach Foundry. Future activity is reevaluated automatically; you do not need to repeat this instruction or press Check now.</p>
+        <form method="post" action="/operating-instructions/<%= proposal.id %>/approve" data-loading-text="Remembering rule…">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="integrityHash" value="<%= proposal.integrityHash %>">
+          <button class="btn btn--primary btn--block" type="submit">Approve and remember</button>
+        </form>
+        <form method="post" action="/operating-instructions/<%= proposal.id %>/cancel">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--ghost btn--block" type="submit">Leave unchanged</button>
+        </form>
+      <% } else if (proposal.status === 'APPROVED') { %>
+        <div class="notice" style="background:var(--ok-bg); border-color:#bbf7d0; color:#14532d;">
+          <span>Remembered and active. Settings shows the same underlying records.</span>
+        </div>
+        <a class="btn btn--block" href="/settings#learned-instructions">Inspect or remove it</a>
+      <% } else if (proposal.questions.length) { %>
+        <p class="muted" style="margin:0;">Foundry did not guess. Your answer continues this same instruction:</p>
+        <div>
+          <div class="label"><%= clarification ? clarification.question : proposal.questions[0] %></div>
+          <% if (clarification && clarification.choices.length) { %>
+            <div class="act-choice-grid">
+              <% clarification.choices.forEach(function(choice) { %>
+                <form method="post" action="/operating-instructions/<%= proposal.id %>/answer" data-loading-text="Continuing rule…">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button class="btn" type="submit" name="answer" value="<%= choice.value %>"><%= choice.label %></button>
+                </form>
+              <% }) %>
+            </div>
+            <details style="margin-top:10px;">
+              <summary class="muted">Describe a different condition</summary>
+              <form method="post" action="/operating-instructions/<%= proposal.id %>/answer" data-loading-text="Continuing rule…" style="margin-top:10px;">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input class="input" name="answer" required autocomplete="off" placeholder="Describe when the block should end">
+                <button class="btn btn--primary btn--block" type="submit" style="margin-top:10px;">Continue this rule</button>
+              </form>
+            </details>
+          <% } else { %>
+            <form method="post" action="/operating-instructions/<%= proposal.id %>/answer" data-loading-text="Continuing rule…">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input class="input" id="instruction-answer" name="answer" required autocomplete="off" autofocus placeholder="Type the missing detail">
+              <button class="btn btn--primary btn--block" type="submit" style="margin-top:10px;">Continue this rule</button>
+            </form>
+          <% } %>
+        </div>
+      <% } else { %>
+        <p class="muted" style="margin:0;">This proposal is no longer active. It changed nothing.</p>
+      <% } %>
+    </div>
+  </aside>
+</div>
+
+<section class="card" style="margin-top:16px;">
+  <div class="card-head">
+    <div><h2>Exactly what Foundry understood</h2><p class="muted"><%= proposal.summary %></p></div>
+  </div>
+  <div class="card-body grid">
+    <% if (proposal.questions.length) { %>
+      <div class="notice notice--warn">
+        <div><strong>One detail is still missing</strong><% proposal.questions.forEach(function(question) { %><p><%= question %></p><% }) %></div>
+      </div>
+    <% } %>
+    <% descriptions.forEach(function(description, index) { var change = proposal.resolvedChanges[index]; %>
+      <div class="list-row" style="align-items:flex-start;">
+        <div>
+          <strong><%= description %></strong>
+          <p>
+            <%= {
+              replenishment: 'Stock management settings', location_stock: 'Location stock settings',
+              supplier_assignment: 'Product supplier settings', supplier_terms: 'Supplier purchasing terms',
+              transfer_authority: 'Versioned automatic-transfer policy', purchase_authority: 'Versioned automatic-purchasing policy',
+              operating_preference: 'Operating preferences', hard_limits: 'Automatic-work hard limits',
+              stock_protection: 'Stock protection settings'
+            }[change.domain] || 'Operating settings' %>
+          </p>
+        </div>
+        <span class="badge"><%= change.operation === 'remove' ? 'Remove' : 'Set' %></span>
+      </div>
+    <% }) %>
+    <div class="notice">
+      <span>Safety is unchanged: inventory still moves only through the inventory engine; automatic work still requires matching approved authority, evidence, limits and successful verification; Pause still stops automatic execution.</span>
+    </div>
+  </div>
+</section>

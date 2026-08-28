@@ -72,8 +72,13 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
   const candidates = options.suppliers || supplierService.suppliersForSku(db, workspaceId, sku.skuId);
 
   const onHand = sku.measured.onHand;
+  const committed = Number(sku.measured.committed || 0);
+  const available = Number.isFinite(Number(sku.measured.available)) ? Number(sku.measured.available) : onHand;
   const onOrder = incoming.onOrder;
-  const inventoryPosition = onHand + onOrder;
+  const inventoryPosition = available + onOrder;
+  const availableWords = committed > 0
+    ? `${available} available (${onHand} on hand − ${committed} committed)`
+    : `${onHand} on hand`;
 
   const usage = sku.estimated.hasUsageEvidence ? sku.estimated.averageDailyUsage : null;
   const usageWindow = sku.measured.windowDays;
@@ -101,6 +106,8 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
     displayName: sku.displayName,
     unitLabel: sku.unitLabel,
     onHand,
+    committed,
+    available,
     onOrder,
     position: inventoryPosition,
     incoming,
@@ -204,8 +211,8 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
     step: 'position',
     detail:
       onOrder > 0
-        ? `Position is ${onHand} on hand + ${onOrder} already on order = ${inventoryPosition}.`
-        : `Position is ${onHand} on hand, with nothing on order.`,
+        ? `Available position is ${availableWords} + ${onOrder} already on order = ${inventoryPosition}.`
+        : `Available position is ${availableWords}, with nothing on order.`,
     value: inventoryPosition,
   });
 
@@ -221,10 +228,10 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
       headline: 'No additional order',
       explanation:
         onOrder > 0
-          ? `${onHand} on hand and ${onOrder} already on order comes to ${inventoryPosition}, ` +
+          ? `${availableWords} and ${onOrder} already on order comes to ${inventoryPosition}, ` +
             `above the reorder point of ${reorderPoint}. Incoming stock currently covers the expected requirement` +
             `${coverDays ? `, about ${coverDays} days at recent usage` : ''}.`
-          : `${onHand} on hand is above the reorder point of ${reorderPoint}` +
+          : `${availableWords} is above the reorder point of ${reorderPoint}` +
             `${coverDays ? `, about ${coverDays} days at recent usage` : ''}.`,
       evidence: evidenceFor(base, { reorderPoint, target, safetyStock, usagePerDay }),
       calculation: steps,
@@ -329,7 +336,7 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
 
   const unitCost = supplierItem.lastUnitCost;
   const estimatedCost = unitCost !== null && unitCost !== undefined ? round(unitCost * finalUnits, 2) : null;
-  const daysUntilOut = usagePerDay > 0 ? round(onHand / usagePerDay, 1) : null;
+  const daysUntilOut = usagePerDay > 0 ? round(available / usagePerDay, 1) : null;
   const arrivesInTime =
     daysUntilOut === null || incoming.nextExpectedDate === null ? null : daysUntilOut > leadTimeDays;
 
@@ -352,10 +359,13 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
         ? `Order ${finalUnits} ${sku.unitLabel}(s)`
         : `Order ${finalUnits} ${sku.unitLabel}(s) — ${finalPurchaseUnits} ${supplierItem.purchaseUnit}(s)`,
     explanation:
-      `${onHand} on hand${onOrder ? ` and ${onOrder} on order` : ''} is at or below the reorder point of ` +
-      `${reorderPoint}. At recent usage of ${round(usagePerDay, 2)} a day, ` +
-      `${daysUntilOut !== null ? `stock lasts about ${daysUntilOut} days` : 'stock is running down'}, ` +
-      `and a delivery takes ${leadTimeDays} days${leadTimeAssumed ? ' (assumed — no lead time on file)' : ''}.`,
+      `${availableWords}${onOrder ? ` and ${onOrder} on order` : ''} is at or below the reorder point of ` +
+      `${reorderPoint}. ` +
+      (usagePerDay > 0
+        ? `Recent measured usage is ${round(usagePerDay, 2)} a day, so stock lasts about ${daysUntilOut} days. `
+        : 'There is not enough reliable history to calculate a daily usage rate, so this recommendation uses your configured stock levels. ') +
+      `The planning lead time is ${leadTimeDays} days` +
+      `${leadTimeAssumed ? ' (temporarily assumed — no supplier lead time is configured)' : ''}.`,
     urgency: daysUntilOut !== null && daysUntilOut < leadTimeDays ? 'may_run_out_first' : 'normal',
     arrivesInTime,
     evidence: evidenceFor(base, {
@@ -378,8 +388,10 @@ function evidenceFor(base, extra) {
   const supplierItem = extra.supplierItem || (base.supplier ? base.supplier : null);
   const rows = [
     fact('On hand', base.onHand),
+    fact('Committed to customer orders', base.committed || 0),
+    fact('Available', base.available),
     fact('On order', base.onOrder, base.incoming.nextExpectedDate ? `next expected ${base.incoming.nextExpectedDate}` : null),
-    fact('Inventory position', base.position, 'on hand + on order'),
+    fact('Inventory position', base.position, 'available + on order (on hand − committed + on order)'),
     fact(
       `Issued in last ${base.usageWindowDays} days`,
       base.issuedInWindow,

@@ -136,7 +136,7 @@ function buildWorkspace(databasePath) {
     const skus = repo.listSkusForItem(db, workspaceId, item.itemId);
     const black5 = skus.find((sku) => sku.variant_label === 'Black / 5');
 
-    engine.receive(db, ctx, { skuId: black5.id, locationId: brooklyn.id, quantity: 29 });
+    engine.receive(db, ctx, { skuId: black5.id, locationId: brooklyn.id, quantity: 26 });
     engine.receive(db, ctx, { skuId: black5.id, locationId: jersey.id, quantity: 65 });
 
     db.exec('DROP TRIGGER IF EXISTS movements_no_update');
@@ -145,8 +145,9 @@ function buildWorkspace(databasePath) {
       const result = engine.issue(db, ctx, { skuId: black5.id, locationId, quantity, reasonCode: 'sold' });
       for (const id of result.movementIds) backdate.run(new Date(Date.now() - daysAgo * DAY).toISOString(), id);
     };
-    // Brooklyn sells 21 over the month; New Jersey sells 4. Brooklyn ends on 8.
-    for (const [quantity, daysAgo] of [[5, 28], [4, 22], [3, 16], [4, 10], [5, 4]]) issue(brooklyn.id, quantity, daysAgo);
+    // Brooklyn sells 18 over the month; New Jersey sells 4. Brooklyn ends on
+    // eight and the real 30-day evaluator recommends exactly twelve.
+    for (const [quantity, daysAgo] of [[4, 28], [4, 22], [3, 16], [3, 10], [4, 4]]) issue(brooklyn.id, quantity, daysAgo);
     issue(jersey.id, 4, 12);
     db.exec(
       `CREATE TRIGGER IF NOT EXISTS movements_no_update BEFORE UPDATE ON movements
@@ -203,8 +204,8 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
   await t.test('0. the home page is what Foundry is doing, not a table of counts', async () => {
     await signIn(page);
     const text = await page.locator('body').innerText();
-    assert.match(text, /Foundry handled this/i);
-    assert.match(text, /What's happening next/);
+    assert.match(text, /What did Foundry do\?/i);
+    assert.match(text, /What happens next\?/i);
     await shot(page, 'operator-home');
   });
 
@@ -222,8 +223,9 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
 
   await t.test('2. writing the balancing policy', async () => {
     await page.goto(`${BASE}/autopilot`);
-    await page.fill('input[name="maximumQuantity"]', '12');
-    await page.click('form[action="/autopilot/policies"] button[type=submit]');
+    await page.click('#advanced-authority > summary');
+    await page.fill('#advanced-authority form[action="/autopilot/policies"] input[name="maximumQuantity"]', '12');
+    await page.click('#advanced-authority form[action="/autopilot/policies"] button[type=submit]');
     await page.waitForURL(/\/autopilot/);
     await shot(page, 'policy-written');
 
@@ -260,17 +262,13 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     await shot(page, 'why-this-transfer');
   });
 
-  await t.test('5. handing over authority, and the transfer actually happens', async () => {
+  await t.test('5. handing over authority immediately reconsiders and carries out eligible work', async () => {
+    const before = { brooklyn: balance(databasePath, state, state.brooklyn), jersey: balance(databasePath, state, state.jersey) };
+
     await page.goto(`${BASE}/autopilot`);
     await page.click('button[name="mode"][value="POLICY_AUTOMATED"]');
     await page.waitForURL(/\/autopilot/);
     await shot(page, 'mode-run-it');
-
-    const before = { brooklyn: balance(databasePath, state, state.brooklyn), jersey: balance(databasePath, state, state.jersey) };
-
-    await page.goto(`${BASE}/`);
-    await page.click('form[action="/autopilot/run"] button[type=submit]');
-    await page.waitForURL(`${BASE}/`);
 
     assert.equal(balance(databasePath, state, state.brooklyn), before.brooklyn + 12, 'twelve arrived in Brooklyn');
     assert.equal(balance(databasePath, state, state.jersey), before.jersey - 12, 'twelve left New Jersey');
@@ -280,6 +278,7 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
       'the total did not change — nothing was created'
     );
 
+    await page.goto(`${BASE}/`);
     const text = await page.locator('body').innerText();
     assert.match(text, /Moved 12 Kids Tights/);
     assert.doesNotMatch(text, /not verified/);
@@ -323,14 +322,14 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     await page.goto(`${BASE}/`);
     const home = await page.locator('body').innerText();
     assert.match(home, /I need you for 1 thing/i);
-    assert.match(home, /Count discrepancy: Kids Tights \/ Black \/ 5/i);
+    assert.match(home, /Kids Tights \/ Black \/ 5 does not match the records/i);
     assert.equal(inspect(databasePath, (db) => db.prepare('SELECT COUNT(*) n FROM adjustments WHERE workspace_id = ?').get(state.workspaceId).n), 0,
       'investigation never silently changes the ledger');
     await page.click('a[href^="/investigations/"]');
     const detail = await page.locator('body').innerText();
-    assert.match(detail, /Expected/);
-    assert.match(detail, /Observed/);
-    assert.match(detail, /Still unexplained/);
+    assert.match(detail, /Recorded/);
+    assert.match(detail, /Counted/);
+    assert.match(detail, /Difference/);
     assert.match(detail, /will not invent/i);
     await shot(page, 'physical-discrepancy-investigated');
   });

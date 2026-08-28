@@ -92,6 +92,7 @@ function hydrate(row) {
     id: row.id,
     workspaceId: row.workspace_id,
     workPlanId: row.work_plan_id,
+    triggerEventId: row.trigger_event_id || null,
     category: row.category,
     categoryLabel: CATEGORY_LABEL[row.category] || row.category,
     source: row.source,
@@ -113,6 +114,7 @@ function hydrate(row) {
     outcome: json(row.outcome, {}),
     errorMessage: row.error_message,
     attempts: row.attempts,
+    approvedByUserId: row.approved_by_user_id,
     approvedAt: row.approved_at,
     createdAt: row.created_at,
     dueAt: row.due_at,
@@ -140,13 +142,14 @@ function upsert(db, workspaceId, input) {
   const now = nowIso();
   db.prepare(
     `INSERT INTO work_items (
-       id, workspace_id, work_plan_id, category, source, source_evidence, affected_entities,
+       id, workspace_id, work_plan_id, trigger_event_id, category, source, source_evidence, affected_entities,
        recommended_action, priority, urgency, confidence, policy_id, policy_evaluation,
        approval_requirement, execution_status, verification_status, purchase_order_id,
        idempotency_key, due_at, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    id, workspaceId, input.workPlanId || null, input.category, input.source || 'autopilot',
+    id, workspaceId, input.workPlanId || null, input.triggerEventId || null,
+    input.category, input.source || 'autopilot',
     JSON.stringify(input.sourceEvidence || []), JSON.stringify(input.affectedEntities || {}),
     JSON.stringify(input.recommendedAction || {}), Number(input.priority) || 0,
     input.urgency || 'normal', input.confidence || 'medium',
@@ -204,6 +207,35 @@ function resize(db, workspaceId, workItemId, input) {
     from: (existing.recommendedAction || {}).quantity,
     to: (input.recommendedAction || {}).quantity,
     reason: input.reason || 'the rules changed',
+  });
+  return get(db, workspaceId, workItemId);
+}
+
+/**
+ * Stores the exact authority decision and measured facts consulted immediately
+ * before an automatic action. Policies are immutable, but keeping the version
+ * on the work itself makes the audit record self-contained even if a later
+ * policy replaces it.
+ */
+function recordAuthoritySnapshot(db, workspaceId, workItemId, input) {
+  get(db, workspaceId, workItemId);
+  db.prepare(
+    `UPDATE work_items
+        SET policy_id = ?, policy_evaluation = ?, source_evidence = ?
+      WHERE workspace_id = ? AND id = ?`
+  ).run(
+    input.policyId || null,
+    JSON.stringify(input.policyEvaluation || {}),
+    JSON.stringify(input.sourceEvidence || []),
+    workspaceId,
+    workItemId
+  );
+  recordEvent(db, workspaceId, workItemId, 'authority_rechecked', {
+    policyId: input.policyId || null,
+    policyVersion: (input.policyEvaluation || {}).policyVersion || null,
+    decision: (input.policyEvaluation || {}).decision || null,
+    evidenceCount: (input.sourceEvidence || []).length,
+    triggerEventId: input.triggerEventId || null,
   });
   return get(db, workspaceId, workItemId);
 }
@@ -277,7 +309,7 @@ function transition(db, workspaceId, workItemId, status, extra = {}) {
             attempts = attempts + ?,
             approved_by_user_id = COALESCE(?, approved_by_user_id),
             approved_at = COALESCE(?, approved_at),
-            completed_at = CASE WHEN ? IN ('COMPLETED','FAILED','CANCELLED') THEN ? ELSE completed_at END
+            completed_at = CASE WHEN ? IN ('COMPLETED','FAILED','CANCELLED','SUPERSEDED') THEN ? ELSE completed_at END
       WHERE id = ? AND workspace_id = ?`
   ).run(
     status,
@@ -342,6 +374,7 @@ module.exports = {
   hydrate,
   upsert,
   resize,
+  recordAuthoritySnapshot,
   get,
   find,
   list,

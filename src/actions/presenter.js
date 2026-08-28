@@ -18,6 +18,7 @@ const ACTION_LABEL = {
   transfer: 'transfer',
   adjust: 'correct the count for',
   create_item: 'add',
+  archive_item: 'archive',
   add_location: 'add a location',
   rename_terminology: 'change some wording',
 };
@@ -28,6 +29,7 @@ const ACTION_PAST_LABEL = {
   transfer: 'transferred',
   adjust: 'corrected the count for',
   create_item: 'added',
+  archive_item: 'archived',
   add_location: 'added the location',
   rename_terminology: 'changed the wording for',
 };
@@ -38,6 +40,7 @@ const ACTION_TITLE = {
   transfer: 'Foundry is ready to transfer',
   adjust: 'Foundry is ready to correct a count',
   create_item: 'Foundry is ready to add a product',
+  archive_item: 'Foundry is ready to archive a product',
   add_location: 'Foundry is ready to add a location',
   rename_terminology: 'Foundry is ready to change some wording',
 };
@@ -86,9 +89,12 @@ function subjectOf(db, workspaceId, proposal) {
     }
     if (proposal.actionType === 'create_item') {
       const axes = proposal.settings.axes || [];
+      const axisDetail = axes.length && axes.every((axis) => axis.values.length === 1)
+        ? axes.map((axis) => `${axis.name}: ${axis.values[0]}`).join(' · ')
+        : null;
       return {
         name: proposal.settings.name,
-        detail: proposal.settings.code || null,
+        detail: [axisDetail, proposal.settings.code].filter(Boolean).join(' · ') || null,
         axes,
         variantCount: (proposal.expectedAfterState && proposal.expectedAfterState.variants) || 1,
         trackingMode: proposal.settings.trackingMode,
@@ -105,6 +111,10 @@ function subjectOf(db, workspaceId, proposal) {
     )
     .get(proposal.skuId, workspaceId);
   if (!sku) return { name: 'unknown product', detail: null };
+
+  if (proposal.actionType === 'archive_item' && proposal.settings.archiveScope === 'item') {
+    return { name: sku.item_name, countedName: sku.item_name, detail: null, unitLabel: sku.unit_label, code: null };
+  }
 
   const lot = proposal.lotId
     ? db.prepare('SELECT code FROM lots WHERE id = ? AND workspace_id = ?').get(proposal.lotId, workspaceId)
@@ -140,10 +150,15 @@ function oneLine(db, workspaceId, proposal) {
       return `Correct ${name} at ${before.sourceLocationName || 'a location'} to ${proposal.adjustmentTarget}`;
     case 'create_item': {
       const count = (proposal.expectedAfterState && proposal.expectedAfterState.variants) || 1;
+      if (proposal.settings.initialStock) {
+        return `Add ${name} and receive ${proposal.quantity} at ${before.destinationLocationName}`;
+      }
       return count > 1
         ? `Add ${proposal.settings.name} with ${count} variants`
         : `Add the product ${proposal.settings.name}`;
     }
+    case 'archive_item':
+      return `Archive ${name} from the active catalogue`;
     case 'add_location':
       return `Add the location “${proposal.settings.name}”`;
     case 'rename_terminology':
@@ -190,17 +205,19 @@ function present(db, workspaceId, proposal, options = {}) {
   const lotScoped = Boolean(proposal.lotId);
   const lotName = lotScoped && subject.detail ? subject.detail : null;
 
-  const total = {
+  const total = proposal.actionType === 'archive_item'
+    ? { before: before.total ?? 0, after: before.total ?? 0 }
+    : {
     before: before.total ?? 0,
     after:
       proposal.actionType === 'transfer'
         ? before.total ?? 0
-        : proposal.actionType === 'receive'
+        : proposal.actionType === 'receive' || (proposal.actionType === 'create_item' && proposal.settings.initialStock)
           ? (before.total ?? 0) + (proposal.quantity || 0)
           : proposal.actionType === 'issue'
             ? (before.total ?? 0) - (proposal.quantity || 0)
             : (before.total ?? 0) + (proposal.adjustmentTarget - (before.sourceOnHand ?? 0)),
-  };
+      };
 
   if (lotScoped && lotName) {
     for (const row of rows) row.label = `${row.label} · ${lotName}`;
@@ -221,16 +238,22 @@ function present(db, workspaceId, proposal, options = {}) {
     lotScoped,
     lotName,
     productTotal,
-    title: ACTION_TITLE[proposal.actionType] || 'Foundry is ready',
-    verb: ACTION_LABEL[proposal.actionType] || proposal.actionType,
-    pastVerb: ACTION_PAST_LABEL[proposal.actionType] || `${proposal.actionType}d`,
+    title: proposal.actionType === 'create_item' && proposal.settings.initialStock
+      ? 'Foundry is ready to add a product and receive its stock'
+      : ACTION_TITLE[proposal.actionType] || 'Foundry is ready',
+    verb: proposal.actionType === 'create_item' && proposal.settings.initialStock
+      ? 'add and receive'
+      : ACTION_LABEL[proposal.actionType] || proposal.actionType,
+    pastVerb: proposal.actionType === 'create_item' && proposal.settings.initialStock
+      ? 'added and received'
+      : ACTION_PAST_LABEL[proposal.actionType] || `${proposal.actionType}d`,
     subject,
     subjectName: [subject.name, subject.detail].filter(Boolean).join(' / '),
     rows,
     total,
     totalChanges: total.before !== total.after,
     reasonLabel: proposal.reasonCode ? REASON_LABEL[proposal.reasonCode] || proposal.reasonCode : null,
-    isMutation: policy.MUTATION_ACTIONS.includes(proposal.actionType),
+    isMutation: policy.MUTATION_ACTIONS.includes(proposal.actionType) || Boolean(proposal.settings.initialStock),
     needsWarningConfirm: proposal.approvalRequirement === policy.APPROVAL.CONFIRM_WITH_WARNING,
     oneLine: oneLine(db, workspaceId, proposal),
     // Quantity may only be revised on the operations where it is meaningful.

@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS work_plans (
   id                 TEXT PRIMARY KEY,
   workspace_id       TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   trigger            TEXT NOT NULL,
+  trigger_event_id   TEXT,
   idempotency_key    TEXT NOT NULL,
   mode               TEXT NOT NULL,
   status             TEXT NOT NULL DEFAULT 'PLANNING'
@@ -173,6 +174,7 @@ CREATE TABLE IF NOT EXISTS work_items (
   id                    TEXT PRIMARY KEY,
   workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   work_plan_id          TEXT REFERENCES work_plans(id) ON DELETE SET NULL,
+  trigger_event_id      TEXT,
 
   -- The supported category vocabulary lives in work-items.js. Keeping a second
   -- enum here made every new manager capability a destructive table migration.
