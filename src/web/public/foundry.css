@@ -1322,3 +1322,24 @@ tbody tr:hover td { background: var(--surface-2); }
   }
   .table--stack tbody td.num { text-align: left; }
 }
+
+/* ============================================================== Purchasing */
+
+.supplier-order { margin-bottom: var(--space-4); }
+.supplier-order .panel-head h3 { font-size: var(--text-md); }
+.supplier-order:last-of-type { margin-bottom: 0; }
+
+.is-warn { color: var(--warn); }
+
+/* Secondary destinations at the foot of a page. Places to go, not actions to
+   take, so they are links in a row rather than four buttons of equal weight. */
+.page-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--text-sm);
+}
+.page-links a { color: var(--muted); text-decoration: none; }
+.page-links a:hover { color: var(--accent-ink); text-decoration: underline; }

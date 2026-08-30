@@ -74,7 +74,7 @@ router.get(
     const plan = replenishment.evaluateWorkspace(req.db, req.ctx.workspaceId);
 
     res.page('purchasing/plan', {
-      title: 'What to order',
+      title: 'Purchasing',
       nav: 'purchasing',
       plan,
       open: position.openOrders(req.db, req.ctx.workspaceId),
@@ -101,6 +101,9 @@ router.get(
       req.flash('error', 'That product is not in this inventory.');
       return res.redirect('/purchasing');
     }
+    const currentSku = repo.requireSku(req.db, req.ctx.workspaceId, req.params.skuId);
+    const itemSkus = repo.listSkusForItem(req.db, req.ctx.workspaceId, currentSku.item_id)
+      .filter((sku) => sku.is_active);
     const pendingRule = req.session.pendingInventoryRule;
     const rulePreview = pendingRule && pendingRule.skuId === req.params.skuId ? pendingRule : null;
     if (rulePreview) delete req.session.pendingInventoryRule;
@@ -114,6 +117,7 @@ router.get(
       locationPolicies: policyService.locationPolicies(req.db, req.ctx.workspaceId, req.params.skuId),
       locations: locations(req.db, req.ctx.workspaceId),
       history: poService.costHistory(req.db, req.ctx.workspaceId, req.params.skuId, { limit: 6 }),
+      itemSkus,
       permissions: can(req),
     });
   })
@@ -143,10 +147,15 @@ router.get(
       req.flash('error', 'That product is not in this inventory.');
       return res.redirect('/purchasing');
     }
+    const currentSku = repo.requireSku(req.db, req.ctx.workspaceId, req.params.skuId);
+    const itemSkus = repo.listSkusForItem(req.db, req.ctx.workspaceId, currentSku.item_id)
+      .filter((sku) => sku.is_active);
     return res.page('purchasing/supplier-for', {
       title: `Who do you buy ${line.displayName} from?`,
       nav: 'purchasing',
       line,
+      itemName: currentSku.item_name,
+      itemSkus,
       suppliers: supplierService.listSuppliers(req.db, req.ctx.workspaceId),
       canManageSuppliers: permissions.can(req.user, permissions.MANAGE_SUPPLIERS),
     });
@@ -168,9 +177,15 @@ router.post(
       }
       // The same linking the setup screen performs, so there is one way a
       // supplier gets attached to a product rather than two that can diverge.
+      const currentSku = repo.requireSku(req.db, req.ctx.workspaceId, req.params.skuId);
+      const itemSkus = repo.listSkusForItem(req.db, req.ctx.workspaceId, currentSku.item_id)
+        .filter((sku) => sku.is_active);
+      const skuIds = req.body.applyToItem === '1'
+        ? itemSkus.map((sku) => sku.id)
+        : [req.params.skuId];
       const result = setupService.linkSupplierToMany(req.db, req.ctx, req.user, {
         supplierId,
-        skuIds: [req.params.skuId],
+        skuIds,
         purchaseUnit: req.body.purchaseUnit,
         unitsPerPurchaseUnit: req.body.unitsPerPurchaseUnit,
         minimumOrderQuantity: req.body.minimumOrderQuantity,
@@ -179,7 +194,7 @@ router.post(
         isPreferred: true,
       });
       react(req, managerEvents.TYPES.SUPPLIER_UPDATED, {
-        supplierId, skuIds: [req.params.skuId], change: 'product_linked',
+        supplierId, skuIds, change: 'product_linked',
       });
 
       // Recalculated immediately, so the answer to "what now?" is the number
@@ -189,7 +204,9 @@ router.post(
         'success',
         line && line.recommend
           ? `${result.supplier.name} now supplies ${line.displayName}. ${line.headline} — review it below.`
-          : `${result.supplier.name} now supplies that product.`
+          : skuIds.length > 1
+            ? `${result.supplier.name} now supplies all ${skuIds.length} variants of ${currentSku.item_name}.`
+            : `${result.supplier.name} now supplies that product.`
       );
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -255,11 +272,26 @@ router.post(
           : 'Foundry will work this line out from usage again.'
       );
     } else {
-      const saved = policyService.setPolicy(req.db, req.ctx, req.user, req.params.skuId, req.body);
-      react(req, managerEvents.TYPES.REORDER_POLICY_UPDATED, {
-        skuId: req.params.skuId, policyId: saved.id, updatedAt: saved.updatedAt,
-      });
-      req.flash('success', 'Saved.');
+      const currentSku = repo.requireSku(req.db, req.ctx.workspaceId, req.params.skuId);
+      const itemSkus = repo.listSkusForItem(req.db, req.ctx.workspaceId, currentSku.item_id)
+        .filter((sku) => sku.is_active);
+      const skuIds = req.body.applyToItem === '1'
+        ? itemSkus.map((sku) => sku.id)
+        : [req.params.skuId];
+      const savedPolicies = [];
+      for (const skuId of skuIds) {
+        const saved = policyService.setPolicy(req.db, req.ctx, req.user, skuId, req.body);
+        savedPolicies.push(saved);
+        react(req, managerEvents.TYPES.REORDER_POLICY_UPDATED, {
+          skuId, policyId: saved.id, updatedAt: saved.updatedAt,
+        });
+      }
+      req.flash(
+        'success',
+        skuIds.length > 1
+          ? `Saved these reorder settings for all ${skuIds.length} variants of ${currentSku.item_name}.`
+          : 'Saved reorder settings.'
+      );
     }
     return res.redirect(`/purchasing/why/${req.params.skuId}`);
   })
@@ -364,6 +396,7 @@ router.get(
       permissions: can(req),
       expectedInFuture: Boolean(order.expectedDate && order.expectedDate > localDateKey()),
       communications: supplierCommunications.forOrder(req.db, req.ctx.workspaceId, order.id),
+      supplierDocuments: require('../../purchasing/supplier-evidence').forOrder(req.db, req.ctx.workspaceId, order.id),
     });
   })
 );
@@ -388,6 +421,8 @@ router.post(
     const order = poService.approve(req.db, req.ctx, req.user, req.params.id, {
       expectedHash: trimOrNull(req.body.integrityHash),
     });
+    try { await supplierCommunications.dispatchAutomaticForOrder(req.db, req.ctx.workspaceId, order.id); }
+    catch (error) { req.flash('error', `The order was approved, but the supplier message was not sent: ${error.message}`); }
     req.flash('success', `${order.poNumber} is approved and marked as ordered.`);
     // Incoming stock changes what needs attention, so the layer is told at once
     // rather than waiting for the next sweep to notice.
@@ -677,6 +712,17 @@ router.get(
       supplier,
       items: supplierService.itemsForSupplier(req.db, req.ctx.workspaceId, supplier.id, { includeInactive: true }),
       orders: poService.list(req.db, req.ctx.workspaceId, { supplierId: supplier.id, limit: 10 }),
+      mailboxConnections: req.db.prepare(`SELECT id, display_name, provider_type, status, last_synced_at
+        FROM workspace_connectors WHERE workspace_id = ? AND provider_type IN ('gmail','microsoft365','supplier_email')
+        ORDER BY display_name COLLATE NOCASE`).all(req.ctx.workspaceId),
+      senderRules: req.db.prepare(`SELECT r.*, wc.display_name AS connection_name FROM connection_email_rules r
+        JOIN workspace_connectors wc ON wc.id = r.connector_id
+        WHERE r.workspace_id = ? AND r.supplier_id = ? AND r.is_active = 1 ORDER BY r.sender_pattern COLLATE NOCASE`)
+        .all(req.ctx.workspaceId, supplier.id),
+      priceHistory: req.db.prepare(`SELECT h.*, s.code AS sku_code, i.name AS item_name
+        FROM supplier_price_history h JOIN skus s ON s.id = h.sku_id JOIN items i ON i.id = s.item_id
+        WHERE h.workspace_id = ? AND h.supplier_id = ? ORDER BY h.observed_at DESC LIMIT 20`)
+        .all(req.ctx.workspaceId, supplier.id),
       codeMappings: supplierCodeMappings.listForSupplier(req.db, req.ctx.workspaceId, supplier.id),
       catalogue: req.db
         .prepare(
@@ -700,6 +746,48 @@ router.post(
     react(req, managerEvents.TYPES.SUPPLIER_UPDATED, { supplierId: req.params.id, change: 'terms_updated' });
     req.flash('success', 'Saved.');
     return res.redirect(`/suppliers/${req.params.id}`);
+  })
+);
+
+router.post(
+  '/suppliers/:id/senders',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.MANAGE_SUPPLIERS, 'manage suppliers');
+    const supplier = supplierService.getSupplier(req.db, req.ctx.workspaceId, req.params.id);
+    const connectorId = req.body.connectorId || supplier.watchedConnectorId;
+    if (!connectorId) {
+      req.flash('error', 'Connect Gmail or Microsoft 365 first, then choose that mailbox here.');
+      return res.redirect(303, `/suppliers/${supplier.id}`);
+    }
+    require('../../connections/service').addEmailRule(req.db, req.ctx, connectorId, {
+      senderPattern: req.body.senderPattern, supplierId: supplier.id, documentMode: 'supplier_documents',
+    });
+    supplierService.updateSupplier(req.db, req.ctx, req.user, supplier.id, { watchedConnectorId: connectorId });
+    req.flash('success', `Foundry will treat messages from ${req.body.senderPattern} as trusted evidence for ${supplier.name}.`);
+    return res.redirect(303, `/suppliers/${supplier.id}`);
+  })
+);
+
+router.post(
+  '/purchasing/orders/:id/send',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.APPROVE_PO, 'send purchase orders');
+    const order = poService.get(req.db, req.ctx.workspaceId, req.params.id);
+    if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)) {
+      throw new ValidationError('Approve this purchase order before sending it to the supplier.');
+    }
+    if (['CANCELLED', 'RECEIVED'].includes(order.status)) {
+      throw new ValidationError(`A ${order.status.toLowerCase()} purchase order cannot be sent.`);
+    }
+    const communication = supplierCommunications.forOrder(req.db, req.ctx.workspaceId, order.id)[0];
+    if (!communication) throw new ValidationError('This purchase order has no prepared supplier message.');
+    try {
+      await supplierCommunications.sendThroughMailbox(req.db, req.ctx.workspaceId, communication.id, req.ctx.actorId);
+      req.flash('success', `${order.poNumber} was sent to ${order.supplierName}.`);
+    } catch (error) {
+      req.flash('error', error.message);
+    }
+    return res.redirect(303, `/purchasing/orders/${order.id}`);
   })
 );
 

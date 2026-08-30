@@ -84,10 +84,10 @@ test('the plan page shows what to order, with the reasoning a click away', async
   const page = await agent.get('/purchasing');
   assert.equal(page.status, 200);
   const text = plain(page.text);
-  assert.match(text, /Foundry prepared today's replenishment/);
+  assert.match(text, /What to order/);
   assert.match(text, /ABC Footwear/);
   assert.match(text, /Navy Oxford/);
-  assert.match(text, /reorder point/);
+  assert.match(text, /Reorder at/);
 
   const why = await agent.get(`/purchasing/why/${env.item.skuId}`);
   assert.equal(why.status, 200);
@@ -165,7 +165,7 @@ test('preparing, approving and receiving an order, end to end', async () => {
 
   // Asking again now recommends nothing for this line.
   const again = plain((await agent.get('/purchasing')).text);
-  assert.match(again, /Nothing needs ordering/);
+  assert.match(again, /Nothing is below its reorder point/);
 
   // Receive part of it.
   const receivePage = await agent.get(`${orderPath}/receive`);
@@ -456,8 +456,14 @@ test('a line blocked for want of a supplier leads to setting one up, and then be
   const plan = await agent.get('/purchasing');
   const planText = plain(plan.text);
   assert.match(planText, /no supplier on file/i);
-  assert.match(planText, /Add the supplier for Black T-shirt/i,
+  // The blocked line is stated as the decision it is: the product is named in
+  // the heading and the action names what is missing, rather than the product
+  // name being repeated inside the button.
+  assert.match(planText, /Black T-shirt needs ordering/i);
+  assert.match(planText, /Add the supplier/i,
     'the thing that is missing has to be the thing you can click');
+  assert.match(plan.text, new RegExp(`/purchasing/supplier-for/${env.item.skuId}`),
+    'and it goes straight to setting one up for this product');
 
   // 2. The primary action goes to supplier setup for this product — not back to
   //    the arithmetic, which is where it used to go.
@@ -471,7 +477,8 @@ test('a line blocked for want of a supplier leads to setting one up, and then be
   // Reaching it from the numbers page works too.
   const why = plain((await agent.get(`/purchasing/why/${env.item.skuId}`)).text);
   assert.match(why, /Foundry cannot order this yet/i);
-  assert.match(why, /Add the supplier for Black T-shirt/i);
+  assert.match(why, /Black T-shirt.*Add the supplier/i,
+    'the blocked product and its next action remain visible even when the numbers page returns to the plan');
 
   // 3. Creating and linking the supplier, in one step, from here.
   const saved = await agent.post(`/purchasing/supplier-for/${env.item.skuId}`).type('form').send({
@@ -597,6 +604,46 @@ test('reorder levels set by hand survive attaching a supplier and drive the reco
   assert.equal(workspacePlan.recommendations.length, 1);
   assert.equal(workspacePlan.recommendations[0].skuId, env.small.id);
   assert.equal(workspacePlan.blocked.length, 5, 'the other five stay honest about having no history');
+  env.db.close();
+});
+
+test('one clear setup action can apply supplier and reorder settings to every product variant', async () => {
+  const env = sixVariantsNoHistory();
+  const { agent } = await owner(env);
+
+  const supplierPage = await agent.get(`/purchasing/supplier-for/${env.small.id}`);
+  assert.match(plain(supplierPage.text), /Use this supplier for all 6 Black T-shirt variants/i);
+  await agent.post(`/purchasing/supplier-for/${env.small.id}`).type('form').send({
+    _csrf: csrfFrom(supplierPage.text),
+    newSupplierName: 'ABC Apparel',
+    purchaseUnit: 'case',
+    unitsPerPurchaseUnit: 12,
+    leadTimeDays: 7,
+    lastUnitCost: 6.5,
+    applyToItem: '1',
+  });
+
+  const linked = env.db.prepare(
+    'SELECT COUNT(*) AS n FROM supplier_items WHERE workspace_id = ? AND is_active = 1'
+  ).get(env.workspace.workspaceId);
+  assert.equal(linked.n, 6, 'the user should not repeat supplier setup for each variant');
+
+  const whyPage = await agent.get(`/purchasing/why/${env.small.id}`);
+  assert.match(plain(whyPage.text), /Use these settings for all 6 Black T-shirt variants/i);
+  await agent.post(`/purchasing/policies/${env.small.id}`).type('form').send({
+    _csrf: csrfFrom(whyPage.text),
+    reorderPoint: 20,
+    targetStock: 50,
+    safetyStock: 5,
+    applyToItem: '1',
+  });
+
+  const policies = env.db.prepare(
+    `SELECT COUNT(*) AS n FROM reorder_policies
+      WHERE workspace_id = ? AND location_id IS NULL
+        AND reorder_point = 20 AND target_stock = 50 AND safety_stock = 5`
+  ).get(env.workspace.workspaceId);
+  assert.equal(policies.n, 6, 'the user should not repeat the same reorder rule for every variant');
   env.db.close();
 });
 

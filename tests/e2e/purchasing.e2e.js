@@ -254,7 +254,7 @@ test(
       await shot(page, 'what-to-order');
 
       const text = await page.locator('body').innerText();
-      assert.match(text, /Foundry prepared today's replenishment/);
+      assert.match(text, /What to order/);
       assert.match(text, /ABC Footwear/);
       assert.match(text, /Navy Oxford/);
     });
@@ -310,7 +310,7 @@ test(
 
       await page.goto(`${BASE}/purchasing`);
       const text = await page.locator('body').innerText();
-      assert.match(text, /Nothing needs ordering/);
+      assert.match(text, /Nothing is below its reorder point/);
       await shot(page, 'nothing-more-to-order');
     });
 
@@ -467,7 +467,7 @@ test(
       await shot(page, 'nothing-to-order');
 
       const text = await page.locator('body').innerText();
-      assert.match(text, /Nothing needs ordering/);
+      assert.match(text, /Nothing is below its reorder point/);
       assert.match(text, /Incoming stock currently covers the expected requirement/);
       assert.doesNotMatch(text, /Review ABC Footwear order/);
     });
@@ -487,7 +487,7 @@ test(
     await t.test('3. asking repeatedly never creates demand', async () => {
       for (let i = 0; i < 3; i += 1) {
         await page.goto(`${BASE}/purchasing`);
-        assert.match(await page.locator('body').innerText(), /Nothing needs ordering/);
+        assert.match(await page.locator('body').innerText(), /Nothing is below its reorder point/);
       }
       const orders = inspect(databasePath, (db) =>
         db.prepare('SELECT COUNT(*) AS n FROM purchase_orders WHERE workspace_id = ?').get(state.workspaceId).n

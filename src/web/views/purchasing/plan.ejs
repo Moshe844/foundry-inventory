@@ -1,279 +1,271 @@
-<div class="page-head">
-  <div class="titles">
-    <h1>What to order</h1>
-    <div class="page-sub">
-      What you are running low on, based on what you have, what is already on its way, and how fast it
-      has been selling. Nothing is ordered until you say so.
-    </div>
-
-<%# Say what is actually missing.
-    This was worded as "Foundry does not know who you buy from" but shown
-    whenever no reorder points had been set — so it went on claiming to know no
-    suppliers immediately after somebody had just added one. %>
-<% if (setup && setup.lines && !setup.alreadySet) { %>
-  <div class="card section card--warn">
-    <div class="card-body">
-      <% if (!setup.suppliers) { %>
-        <p class="lede">Foundry does not know who you buy from yet.</p>
-        <p class="muted">
-          Once it knows your supplier and how long they take to deliver, it can tell you what to order
-          and write the order for you to check. It takes a minute and you only do it once.
-        </p>
-      <% } else if (setup.withoutSupplier) { %>
-        <p class="lede">
-          <%= setup.withoutSupplier %>
-          <%= setup.withoutSupplier === 1 ? 'product has' : 'products have' %> nobody to buy from yet.
-        </p>
-        <p class="muted">
-          Foundry can work out what those need, but not who to order them from. The ones that are
-          short say so on the line itself, and take you straight to it.
-        </p>
-      <% } else { %>
-        <p class="lede">Foundry is working these out from what they have been selling.</p>
-        <p class="muted">
-          You have not set your own reorder levels, so Foundry uses the ones it derives from usage
-          and says so. Set them yourself whenever you want to be exact.
-        </p>
-      <% } %>
-      <div class="btn-row"><a class="btn btn--primary" href="/purchasing/setup">Set up purchasing</a></div>
-    </div>
-  </div>
-<% } %>
-
-  </div>
-</div>
-
-<% if (late.length || arriving.length) { %>
-  <div class="grid grid--2 section">
-    <% if (late.length) { %>
-      <div class="card card--warn">
-        <div class="card-head"><h2>Past their expected date</h2></div>
-        <div class="card-body">
-          <ul class="plain-list">
-            <% late.forEach(function (po) { %>
-              <li>
-                <a href="/purchasing/orders/<%= po.id %>"><%= po.po_number %></a> ·
-                <%= po.supplier_name %> · <%= po.daysLate %> day<%= po.daysLate === 1 ? '' : 's' %> late ·
-                <%= po.outstanding_units %> outstanding
-              </li>
-            <% }) %>
-          </ul>
-        </div>
-      </div>
-    <% } %>
-    <% if (arriving.length) { %>
-      <div class="card">
-        <div class="card-head"><h2>Arriving this week</h2></div>
-        <div class="card-body">
-          <ul class="plain-list">
-            <% arriving.forEach(function (po) { %>
-              <li>
-                <a href="/purchasing/orders/<%= po.id %>"><%= po.po_number %></a> ·
-                <%= po.supplier_name %> · expected <%= po.expected_date %> ·
-                <%= po.outstanding_units %> unit<%= po.outstanding_units === 1 ? '' : 's' %>
-              </li>
-            <% }) %>
-          </ul>
-        </div>
-      </div>
-    <% } %>
-  </div>
-<% } %>
-
 <%
-  // Something below its reorder point that Foundry cannot act on is still
-  // something below its reorder point. Heading the page "Nothing needs
-  // ordering / All covered" over the top of it is false, and it buries the one
-  // line the customer came here to find.
-  // Two very different kinds of blocked. A line whose shortfall Foundry worked
-  // out and cannot act on because no supplier is attached genuinely needs
-  // ordering. A line with no usage history is one Foundry cannot judge at all —
-  // announcing that it "needs ordering" would be inventing the very demand
-  // figure it is refusing to guess.
+  /*
+   * Purchasing, as one process rather than six cards of equal weight.
+   *
+   * The page had "Past their expected date", "Arriving this week" and "Open
+   * orders" as three separate sections — three views of the same purchase
+   * orders, so an order that was late appeared twice and the reader had to
+   * work out that it was one order, not two. They are one list now, ordered by
+   * when each is due, with the late ones marked.
+   *
+   * The setup warning was rendered inside the page heading's own container,
+   * which put a bordered card inside the block that holds the title.
+   *
+   * And the actions at the bottom were four buttons of identical weight —
+   * All orders, Suppliers, New order, Book in a delivery — so nothing on the
+   * page said which one mattered. What matters is the decision at the top;
+   * those four are places to go, and now look like it.
+   */
   var short = plan.blocked.filter(function (line) { return line.reason === 'no_supplier'; });
   var unknown = plan.blocked.filter(function (line) { return line.reason !== 'no_supplier'; });
   var stuck = short.length > 0;
+  var hasPlan = plan.recommendations.length > 0;
+
+  // One list of what is on its way. `late` and `arriving` are both slices of
+  // `open`, so the lateness is carried onto the row rather than into its own
+  // section.
+  var lateById = {};
+  late.forEach(function (po) { lateById[po.id] = po.daysLate; });
+  var onTheWay = open.slice().sort(function (a, b) {
+    return String(a.expected_date || '9999').localeCompare(String(b.expected_date || '9999'));
+  });
 %>
-<% if (plan.recommendations.length === 0) { %>
-  <div class="card section <%= stuck ? 'card--warn' : '' %>">
-    <div class="card-head">
-      <h2><%= stuck
-        ? (short.length === 1 ? 'One product needs ordering, and Foundry cannot do it for you' : short.length + ' products need ordering, and Foundry cannot do them for you')
-        : (plan.covered.length && unknown.length
-            ? (plan.covered.length === 1 ? 'One product is fine. Foundry cannot judge the rest yet' : plan.covered.length + ' products are fine. Foundry cannot judge the rest yet')
-            : unknown.length ? 'Foundry cannot tell yet' : 'Nothing needs ordering') %></h2>
-      <span class="spacer"></span>
-      <span class="badge badge--<%= stuck ? 'danger' : unknown.length ? 'muted' : 'ok' %>"><%= stuck ? 'Needs you' : unknown.length ? 'Not enough history' : 'All covered' %></span>
-    </div>
-    <div class="card-body">
-      <% if (stuck) { %>
-        <p class="lede">
-          Foundry worked out what these need, but something is missing before it can prepare an order.
-          Nothing has been ordered.
-        </p>
-        <ul class="plain-list">
-          <% short.forEach(function (line) { %>
-            <li>
-              <%# The product name goes to the thing that is blocking it, not to
-                  the arithmetic — which is the one part that is not missing. %>
-              <a href="<%= line.reason === 'no_supplier'
-                    ? '/purchasing/supplier-for/' + line.skuId
-                    : '/purchasing/why/' + line.skuId %>"><strong><%= line.displayName %></strong></a>
-              — <%= line.headline %>
-              <% if (line.reason === 'no_supplier') { %>
-                <div class="muted">
-                  <a class="btn btn--sm btn--primary" href="/purchasing/supplier-for/<%= line.skuId %>">
-                    Add the supplier for <%= line.displayName %>
-                  </a>
-                  <a class="btn btn--sm btn--ghost" href="/purchasing/why/<%= line.skuId %>">See the numbers</a>
-                </div>
-              <% } %>
-            </li>
-          <% }) %>
-        </ul>
+
+<div class="page-head">
+  <div>
+    <h1>Purchasing</h1>
+    <p class="page-sub">
+      What you are running low on, based on what you have, what is already on its way, and how fast it
+      has been selling. Nothing is ordered until you say so.
+    </p>
+  </div>
+</div>
+
+<% if (setup && setup.lines && !setup.alreadySet) { %>
+  <div class="flash flash--warn section" role="status">
+    <%- helpers.icon('alert', { size: 18 }) %>
+    <div>
+      <% if (!setup.suppliers) { %>
+        <strong>Foundry does not know who you buy from yet.</strong>
+        <p>Once it knows your supplier and how long they take to deliver, it can tell you what to
+          order and write the order for you to check. It takes a minute and you only do it once.</p>
+      <% } else if (setup.withoutSupplier) { %>
+        <strong>
+          <%= setup.withoutSupplier %>
+          <%= setup.withoutSupplier === 1 ? 'product has' : 'products have' %> nobody to buy from yet.
+        </strong>
+        <p>Foundry can work out what those need, but not who to order them from. The ones that are
+          short say so on the line itself.</p>
       <% } else { %>
-        <% if (unknown.length) { %>
-          <%# A line that was assessed and found fine has to be visible, or
-              somebody who just set one up and tested it sees only a paragraph
-              about the lines they did not touch and concludes nothing worked. %>
-          <% if (plan.covered.length) { %>
-            <p class="lede">
-              Foundry checked
-              <%= plan.covered.length === 1 ? 'one product' : plan.covered.length + ' products' %>
-              against how fast <%= plan.covered.length === 1 ? 'it sells' : 'they sell' %> and what is
-              already on the way — <%= plan.covered.length === 1 ? 'it is' : 'they are' %> fine for now.
-            </p>
-          <% } %>
-          <p class="lede">
-            It has not seen
-            <%= unknown.length === 1 ? 'the other one' : 'the other ' + unknown.length %> selling yet, so it
-            cannot say whether <%= unknown.length === 1 ? 'it needs' : 'they need' %> ordering — and it will
-            not guess. Record a sale, or tell it the level to reorder at, and it can start.
-          </p>
-        <% } else { %>
-          <p class="lede">
-            Foundry checked every line against its usage and what is already on order, and none of them
-            are below their reorder point.
-          </p>
-        <% } %>
+        <strong>Foundry is working these out from what they have been selling.</strong>
+        <p>You have not set your own reorder levels, so Foundry uses the ones it derives from usage
+          and says so. Set them yourself whenever you want to be exact.</p>
       <% } %>
-      <% if (plan.covered.length) { %>
-        <h3 class="sub-head">Checked and not needed yet</h3>
-        <table class="table table--tight">
-          <thead><tr><th>Product</th><th class="num">On hand</th><th class="num">On order</th><th>Why not</th></tr></thead>
-          <tbody>
-            <% plan.covered.slice(0, 10).forEach(function (line) { %>
+      <p><a class="btn btn--sm" href="/purchasing/setup">Set up purchasing</a></p>
+    </div>
+  </div>
+<% } %>
+
+<%# ------------------------------------------------------------ What to order %>
+<section class="section">
+  <div class="section-head">
+    <h2>What to order</h2>
+    <% if (hasPlan) { %>
+      <span class="section-more"><%= plan.recommendations.length %> line<%= plan.recommendations.length === 1 ? '' : 's' %>
+        across <%= plan.bySupplier.length %> supplier<%= plan.bySupplier.length === 1 ? '' : 's' %></span>
+    <% } %>
+  </div>
+
+  <% if (hasPlan) { %>
+    <% plan.bySupplier.forEach(function (group) { %>
+      <div class="panel supplier-order">
+        <div class="panel-head">
+          <div>
+            <h3><%= group.supplierName %></h3>
+            <span class="t-xs t-muted">
+              <%= group.lines.length %> item<%= group.lines.length === 1 ? '' : 's' %><%
+                %><% if (group.estimatedTotal) { %> · <%= group.estimatedTotal.toFixed(2) %><% if (group.hasUnpricedLines) { %>+<% } %><% } %>
+            </span>
+          </div>
+          <% if (permissions.create) { %>
+            <form method="post" action="/purchasing/prepare/<%= group.supplierId %>" data-busy>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn--primary" type="submit">Prepare <%= group.supplierName %> order</button>
+            </form>
+          <% } %>
+        </div>
+        <div class="table-wrap">
+          <table class="table table--stack">
+            <thead>
               <tr>
-                <td><a href="/purchasing/why/<%= line.skuId %>"><%= line.displayName %></a></td>
-                <td class="num"><%= line.onHand %></td>
-                <td class="num"><%= line.onOrder %></td>
-                <td class="muted"><%= line.explanation %></td>
+                <th>Product</th>
+                <th class="num">On hand</th>
+                <th class="num">On order</th>
+                <th class="num">Reorder at</th>
+                <th class="num">Order</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% group.lines.forEach(function (line) { %>
+                <tr>
+                  <td class="cell-main">
+                    <a class="cell-title" href="/purchasing/why/<%= line.skuId %>"><%= line.displayName %></a>
+                    <% if (line.urgency === 'may_run_out_first') { %>
+                      <span class="cell-sub is-warn">May run out before a delivery arrives</span>
+                    <% } %>
+                  </td>
+                  <td class="num" data-label="On hand"><%= line.onHand %></td>
+                  <td class="num" data-label="On order"><%= line.onOrder %></td>
+                  <td class="num t-muted" data-label="Reorder at"><%= line.reorderPoint %></td>
+                  <td class="num cell-end" data-label="Order">
+                    <strong><%= line.quantityUnits %></strong>
+                    <% if (line.quantityPurchaseUnits !== line.quantityUnits) { %>
+                      <span class="cell-sub"><%= line.quantityPurchaseUnits %> <%= line.purchaseUnit %></span>
+                    <% } %>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <% }) %>
+
+  <% } else if (stuck) { %>
+    <div class="inbox">
+      <% short.forEach(function (line) { %>
+        <article class="need need--important">
+          <div class="need__main">
+            <h3 class="need__title"><%= line.displayName %> needs ordering</h3>
+            <p class="need__happened"><%= line.headline %></p>
+            <dl class="need__detail">
+              <div>
+                <dt>Why Foundry stopped</dt>
+                <dd>It worked out what this needs, but has nobody to order it from. Nothing has been ordered.</dd>
+              </div>
+            </dl>
+          </div>
+          <div class="need__decide">
+            <p class="need__ask"><span>Your decision</span>Who supplies this, and on what terms.</p>
+            <a class="btn btn--primary" href="/purchasing/supplier-for/<%= line.skuId %>">Add the supplier</a>
+            <a class="btn btn--ghost btn--sm" href="/purchasing/why/<%= line.skuId %>">See the numbers</a>
+          </div>
+        </article>
+      <% }) %>
+    </div>
+
+  <% } else { %>
+    <div class="quiet-note">
+      <span class="dot dot--ok" aria-hidden="true"></span>
+      <% if (unknown.length && plan.covered.length) { %>
+        <%= plan.covered.length === 1 ? 'One product was checked and is' : plan.covered.length + ' products were checked and are' %>
+        fine for now. Foundry has not seen the other <%= unknown.length === 1 ? 'one' : unknown.length %> selling yet.
+      <% } else if (unknown.length) { %>
+        Foundry has not seen these selling yet, so it cannot say whether they need ordering — and it will not guess.
+      <% } else { %>
+        Everything was checked against how fast it sells and what is already on the way. Nothing is below its reorder point.
+      <% } %>
+    </div>
+  <% } %>
+</section>
+
+<%# ------------------------------------------------------------- On the way %>
+<section class="section">
+  <div class="section-head">
+    <h2>On the way</h2>
+    <a class="section-more" href="/purchasing/orders">All orders</a>
+  </div>
+  <% if (!onTheWay.length) { %>
+    <div class="quiet-note">Nothing is on order at the moment.</div>
+  <% } else { %>
+    <div class="panel">
+      <div class="table-wrap">
+        <table class="table table--stack">
+          <thead>
+            <tr>
+              <th>Order</th><th>Supplier</th><th>Expected</th>
+              <th class="num">Still to come</th><th>Stage</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% onTheWay.forEach(function (po) { %>
+              <% var daysLate = lateById[po.id]; %>
+              <tr>
+                <td class="cell-main">
+                  <a class="cell-title" href="/purchasing/orders/<%= po.id %>"><%= po.po_number %></a>
+                </td>
+                <td data-label="Supplier"><%= po.supplier_name %></td>
+                <td data-label="Expected" class="<%= daysLate ? 'is-warn' : 't-muted' %>">
+                  <%= po.expected_date || 'No date' %>
+                  <% if (daysLate) { %>
+                    <span class="cell-sub is-warn"><%= daysLate %> day<%= daysLate === 1 ? '' : 's' %> late</span>
+                  <% } %>
+                </td>
+                <td class="num" data-label="Still to come"><strong><%= po.outstanding_units %></strong></td>
+                <td data-label="Stage">
+                  <span class="badge badge--<%= daysLate ? 'warn' : 'info' %>"><%= daysLate ? 'Late' : helpers.columnLabel(po.status.toLowerCase().replace('_', ' ')) %></span>
+                </td>
               </tr>
             <% }) %>
           </tbody>
         </table>
-      <% } %>
-      <% if (unknown.length && stuck) { %>
-        <h3 class="sub-head">Foundry cannot assess these yet</h3>
-        <ul class="plain-list">
-          <% unknown.slice(0, 8).forEach(function (line) { %>
-            <li><strong><%= line.displayName %></strong> — <%= line.headline %></li>
-          <% }) %>
-        </ul>
-      <% } %>
+      </div>
     </div>
-  </div>
-<% } else { %>
+  <% } %>
+</section>
 
-  <div class="card section">
-    <div class="card-head">
-      <h2>Foundry prepared today's replenishment</h2>
-      <span class="spacer"></span>
-      <span class="badge badge--muted"><%= plan.recommendations.length %> line<%= plan.recommendations.length === 1 ? '' : 's' %></span>
-    </div>
-    <div class="card-body">
-      <p class="lede">
-        <%= plan.recommendations.length %> line<%= plan.recommendations.length === 1 ? '' : 's' %>
-        <%= plan.recommendations.length === 1 ? 'is' : 'are' %> at or below the reorder point,
-        across <%= plan.bySupplier.length %> supplier<%= plan.bySupplier.length === 1 ? '' : 's' %>.
-      </p>
-
-      <% plan.bySupplier.forEach(function (group) { %>
-        <div class="act-ledger">
-          <div class="act-row act-row--total">
-            <span class="act-place"><strong><%= group.supplierName %></strong></span>
-            <span class="act-move">
-              <%= group.lines.length %> item<%= group.lines.length === 1 ? '' : 's' %>
-              <% if (group.estimatedTotal) { %>
-                · <span class="num"><%= group.estimatedTotal.toFixed(2) %></span><% if (group.hasUnpricedLines) { %>+<% } %>
-              <% } %>
-            </span>
+<%# --------------------------------------------- What Foundry checked and left %>
+<% if (plan.covered.length || unknown.length) { %>
+  <section class="section">
+    <details class="disclose">
+      <summary>
+        <span>
+          <% if (plan.covered.length) { %>
+            <%= plan.covered.length %> product<%= plan.covered.length === 1 ? '' : 's' %> checked and not needed yet<%
+              %><% if (unknown.length) { %>, <%= unknown.length %> Foundry cannot judge yet<% } %>
+          <% } else { %>
+            <%= unknown.length %> product<%= unknown.length === 1 ? '' : 's' %> Foundry cannot judge yet
+          <% } %>
+        </span>
+        <span class="disclose__cue">Show</span>
+      </summary>
+      <div class="disclose__body">
+        <% if (plan.covered.length) { %>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>Product</th><th class="num">On hand</th><th class="num">On order</th><th>Why not</th></tr></thead>
+              <tbody>
+                <% plan.covered.slice(0, 10).forEach(function (line) { %>
+                  <tr>
+                    <td><a href="/purchasing/why/<%= line.skuId %>"><%= line.displayName %></a></td>
+                    <td class="num"><%= line.onHand %></td>
+                    <td class="num"><%= line.onOrder %></td>
+                    <td class="t-muted"><%= line.explanation %></td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
           </div>
-          <% group.lines.forEach(function (line) { %>
-            <div class="act-row">
-              <span class="act-place">
-                <a href="/purchasing/why/<%= line.skuId %>"><%= line.displayName %></a>
-                <div class="muted">
-                  on hand <%= line.onHand %> · on order <%= line.onOrder %> ·
-                  reorder point <%= line.reorderPoint %>
-                  <% if (line.urgency === 'may_run_out_first') { %>
-                    · <span class="is-warn">may run out before a delivery arrives</span>
-                  <% } %>
-                </div>
-              </span>
-              <span class="act-move">
-                <span class="num"><%= line.quantityUnits %></span>
-                <% if (line.quantityPurchaseUnits !== line.quantityUnits) { %>
-                  <span class="muted">(<%= line.quantityPurchaseUnits %> <%= line.purchaseUnit %>)</span>
-                <% } %>
-              </span>
-            </div>
-          <% }) %>
-        </div>
-        <% if (permissions.create) { %>
-          <form method="post" action="/purchasing/prepare/<%= group.supplierId %>" data-busy>
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <button class="btn btn--primary" type="submit">Review <%= group.supplierName %> order</button>
-          </form>
         <% } %>
-      <% }) %>
-    </div>
-  </div>
+        <% if (unknown.length) { %>
+          <p class="t-muted" style="margin-top:12px;">
+            Foundry has not seen these leaving yet, so it will not guess a demand figure for them.
+            Record a sale, or set the level to reorder at, and it can start.
+          </p>
+          <ul class="plain-list">
+            <% unknown.slice(0, 8).forEach(function (line) { %>
+              <li><strong><%= line.displayName %></strong> — <%= line.headline %></li>
+            <% }) %>
+          </ul>
+        <% } %>
+      </div>
+    </details>
+  </section>
 <% } %>
 
-<div class="card section">
-  <div class="card-head">
-    <h2>Open orders</h2>
-    <span class="spacer"></span>
-    <div class="btn-row">
-      <a class="btn btn--sm" href="/purchasing/orders">All orders</a>
-      <a class="btn btn--sm" href="/suppliers">Suppliers</a>
-      <% if (permissions.create) { %>
-        <a class="btn btn--sm" href="/purchasing/orders/new">New order</a>
-      <% } %>
-      <% if (permissions.receive) { %>
-        <a class="btn btn--sm" href="/purchasing/receive">Book in a delivery</a>
-      <% } %>
-    </div>
-  </div>
-  <% if (open.length === 0) { %>
-    <div class="card-body"><p class="muted">Nothing is on order at the moment.</p></div>
-  <% } else { %>
-    <table class="table table--tight">
-      <thead>
-        <tr><th>Order</th><th>Supplier</th><th>Status</th><th>Expected</th><th class="num">Outstanding</th></tr>
-      </thead>
-      <tbody>
-        <% open.forEach(function (po) { %>
-          <tr>
-            <td><a href="/purchasing/orders/<%= po.id %>"><%= po.po_number %></a></td>
-            <td><%= po.supplier_name %></td>
-            <td><span class="badge badge--muted"><%= helpers.columnLabel(po.status.toLowerCase().replace('_', ' ')) %></span></td>
-            <td class="muted"><%= po.expected_date || '—' %></td>
-            <td class="num"><%= po.outstanding_units %></td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  <% } %>
-</div>
+<nav class="page-links" aria-label="Purchasing pages">
+  <a href="/suppliers">Suppliers</a>
+  <a href="/purchasing/orders">All purchase orders</a>
+  <% if (permissions.create) { %><a href="/purchasing/orders/new">Write an order yourself</a><% } %>
+  <% if (permissions.receive) { %><a href="/purchasing/receive">Book in a delivery</a><% } %>
+</nav>
