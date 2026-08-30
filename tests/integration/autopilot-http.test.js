@@ -64,20 +64,30 @@ test('the primary home is Foundry managing work, not an inventory dashboard', as
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
 
-  // The home page is organised around Foundry's work — what it needs from you,
-  // what it is holding, what it did — rather than around stock counters.
-  assert.match(page, /Foundry is managing Autopilot Co/);
-  assert.match(page, /Report what happened, ask a question, change a rule/);
-  assert.match(page, /I need you for/);
+  // Home answers three questions in order: how is the business doing, what
+  // needs me, what has Foundry handled. It opens with a verdict a person could
+  // say out loud rather than with stock counters.
+  assert.match(page, /Good (morning|afternoon|evening), /, 'a briefing, addressed to somebody');
+  assert.match(page, /thing needs you|Everything is under control/, 'and one plain verdict');
+  assert.match(page, /Needs your attention/);
+  assert.match(page, /Foundry handled/);
   // The handling lane appears when there is something in it. An empty one
   // saying "Nothing in progress. There is no routine work in progress." is
   // three sentences reporting that nothing happened.
   assert.doesNotMatch(page, /There is no routine work in progress/);
-  assert.match(page, /What did Foundry do\?/);
-  assert.match(page, /View inventory summary/);
+  // Counters are context underneath the answer, not the answer.
+  assert.match(page, /Inventory pulse/);
+  assert.ok(
+    page.indexOf('Needs your attention') < page.indexOf('Inventory pulse'),
+    'what needs a person comes before how much stock there is'
+  );
   assert.match(page, /Tell Foundry when you sell something/);
-  assert.match(page, /1 real check/);
-  assert.match(page, /Checked inventory after stock arrived/);
+  // "1 real check" and "Checked inventory after stock arrived" are Foundry's
+  // own bookkeeping: a routine evaluation that changed nothing. Home says what
+  // Foundry handled, and when it handled nothing it says so in a sentence
+  // rather than listing its own checks. The evaluation is still recorded — the
+  // history test below reads it straight off /autopilot/history.
+  assert.match(page, /No new work found|Nothing yet today/);
 });
 
 test('Needs you exposes the missing operating input instead of silently showing an empty queue', async () => {
@@ -133,9 +143,13 @@ test('an active product reaching zero appears automatically in Foundry needs you
   // The stockout is the only thing waiting. This inventory has a real sale
   // behind it — that is how the filter reached zero — so Foundry has already
   // been told what it sells and must not still be asking.
-  assert.match(page, /I need you for 1 thing/i);
+  assert.match(page, /1 thing needs you/i);
   assert.doesNotMatch(page, /Tell Foundry when you sell something/i);
-  assert.match(page, /still learning demand for 1 tracked variant/i);
+  // "Foundry is still learning demand for 1 tracked variant" was true and
+  // unreadable. The plain sentence stays on the page; the thresholds behind it
+  // are one disclosure away rather than in the headline.
+  assert.match(page, /Still learning what sells/i);
+  assert.doesNotMatch(page, /tracked variant/i, 'not in Foundry\'s own vocabulary');
 });
 
 test('the settings page shows what Foundry may do and how you want it run', async () => {

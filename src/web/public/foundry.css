@@ -1,0 +1,935 @@
+/* =========================================================================
+   Foundry design system
+
+   One vocabulary for the whole product. The application had grown a stylesheet
+   per mission — 381 distinct block classes and a "product clarity" patch layer
+   loaded on top to correct the layer beneath it — so the same idea looked
+   different depending on which month the screen was built in.
+
+   This file is the single source of truth for how Foundry looks. It redefines
+   the tokens the older stylesheet already consumes, so every existing screen
+   moves with it rather than splitting into an old half and a new half, and it
+   adds the components the redesigned screens are built from.
+
+   Order matters: this loads after app.css and is meant to win.
+
+   Contents
+     1. Tokens        colour, type, space, radius, elevation, motion
+     2. Foundations   page rhythm, headings, focus, scrollbars
+     3. Primitives    button, input, badge, table, panel, alert
+     4. Patterns      page header, inbox item, timeline, lifecycle, stat strip
+     5. Shell         sidebar, topbar, mobile bar
+     6. States        empty, loading, error
+     7. Responsive    laptop, tablet, phone
+   ========================================================================= */
+
+/* ---------------------------------------------------------------- 1. Tokens */
+
+:root {
+  /* Ink. Four weights, not seven — every extra grey is a decision nobody can
+     make consistently at three in the afternoon. */
+  --ink:        #101828;
+  --ink-soft:   #344054;
+  --muted:      #667085;
+  --muted-soft: #98a2b3;
+
+  /* Ground. The page is barely tinted and surfaces are white, so a raised
+     surface reads as raised without needing a border and a shadow. */
+  --bg:         #f7f8fa;
+  --surface:    #ffffff;
+  --surface-2:  #fafbfc;
+  --surface-3:  #f2f4f7;
+  --line:       #e4e7ec;
+  --line-soft:  #f0f2f5;
+  --line-strong:#d0d5dd;
+
+  /* Foundry's own colour. Used for Foundry acting, and for the primary action
+     on a screen — never decoratively, because when everything is teal the teal
+     stops meaning anything. */
+  --accent:      #0f766e;
+  --accent-dark: #0c5f58;
+  --accent-soft: #f0fdfa;
+  --accent-line: #99f6e4;
+  --accent-ink:  #115e56;
+
+  /* Status. One vocabulary: good / attention / problem / neutral / in-flight.
+     Every badge, alert, dot and row tint in the product comes from these. */
+  --ok:        #067647;
+  --ok-bg:     #ecfdf3;
+  --ok-line:   #abefc6;
+  --warn:      #b54708;
+  --warn-bg:   #fffaeb;
+  --warn-line: #fedf89;
+  --danger:    #b42318;
+  --danger-bg: #fef3f2;
+  --danger-line:#fecdca;
+  --info:      #175cd3;
+  --info-bg:   #eff8ff;
+  --info-line: #b2ddff;
+
+  /* Type scale. A fifth-based ramp; nothing on screen may sit between steps. */
+  --text-2xs: 11px;
+  --text-xs:  12px;
+  --text-sm:  13px;
+  --text-md:  14px;
+  --text-lg:  16px;
+  --text-xl:  20px;
+  --text-2xl: 25px;
+  --text-3xl: 31px;
+
+  --leading-tight: 1.2;
+  --leading-snug:  1.35;
+  --leading-normal:1.55;
+
+  --weight-normal: 450;
+  --weight-medium: 550;
+  --weight-semi:   620;
+  --weight-bold:   700;
+
+  /* Space. A 4px base. Layout uses these and nothing else. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius:    10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-pill: 999px;
+
+  /* Elevation. Shadows say "this floats above the page", so only things that
+     genuinely float get one: menus, dialogs, the drawer. Panels use a line. */
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .05);
+  --shadow:    0 1px 3px rgba(16, 24, 40, .08), 0 1px 2px rgba(16, 24, 40, .04);
+  --shadow-md: 0 4px 8px -2px rgba(16, 24, 40, .10), 0 2px 4px -2px rgba(16, 24, 40, .06);
+  --shadow-lg: 0 12px 16px -4px rgba(16, 24, 40, .08), 0 4px 6px -2px rgba(16, 24, 40, .03);
+  --shadow-xl: 0 20px 24px -4px rgba(16, 24, 40, .10), 0 8px 8px -4px rgba(16, 24, 40, .04);
+
+  --ring: 0 0 0 3px rgba(15, 118, 110, .18);
+
+  --sidebar-w: 244px;
+  --content-max: 1180px;
+
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --ease: cubic-bezier(.2, 0, 0, 1);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --fast: 120ms;
+  --normal: 200ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* ----------------------------------------------------------- 2. Foundations */
+
+body {
+  font-family: var(--font);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Numbers in an inventory system are compared down a column far more often
+   than they are read in a sentence, so they line up by default. */
+
+h1, h2, h3, h4 {
+  line-height: var(--leading-tight);
+  letter-spacing: -.011em;
+  color: var(--ink);
+  font-weight: var(--weight-semi);
+  margin: 0;
+}
+h1 { font-size: var(--text-2xl); letter-spacing: -.019em; }
+h2 { font-size: var(--text-xl); letter-spacing: -.014em; }
+h3 { font-size: var(--text-lg); }
+h4 { font-size: var(--text-md); }
+
+p { margin: 0 0 var(--space-3); }
+p:last-child { margin-bottom: 0; }
+
+a { color: var(--accent-ink); text-underline-offset: 2px; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* Content column. Screens breathe by whitespace rather than by another box. */
+.content {
+  max-width: var(--content-max);
+  padding: var(--space-8) var(--space-8) var(--space-16);
+}
+
+/* Sections are separated by space, not by a border and a card each. */
+.section { margin-bottom: var(--space-8); }
+.section:last-child { margin-bottom: 0; }
+
+/* ------------------------------------------------------------ 3. Primitives */
+
+/* Buttons — one hierarchy, used everywhere.
+     primary   the single most likely action on the screen
+     secondary a real alternative
+     ghost     navigation and dismissal
+     danger    destroys or cannot be undone
+   A screen with two primaries has not decided what it is for. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: 38px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
+              box-shadow var(--fast) var(--ease), transform var(--fast) var(--ease);
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink-soft);
+  box-shadow: var(--shadow-sm);
+  text-decoration: none;
+}
+.btn:hover { background: var(--surface-3); color: var(--ink); text-decoration: none; }
+.btn:active { transform: translateY(.5px); }
+.btn:focus-visible { outline: none; box-shadow: var(--shadow-sm), var(--ring); }
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn--primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: #fff; }
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-soft);
+  box-shadow: none;
+}
+.btn--ghost:hover { background: var(--surface-3); }
+
+.btn--danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn--danger:hover { background: #912018; border-color: #912018; color: #fff; }
+
+.btn--sm { height: 32px; padding: 0 var(--space-3); font-size: var(--text-xs); }
+.btn--lg { height: 44px; padding: 0 var(--space-5); font-size: var(--text-md); }
+.btn--block { width: 100%; }
+.btn[disabled], .btn[aria-disabled="true"] {
+  opacity: .5; cursor: not-allowed; pointer-events: none;
+}
+
+.btn-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+
+/* Inputs */
+.input, .field input, .field select, .field textarea, input[type="text"], input[type="email"],
+input[type="password"], input[type="search"], input[type="number"], input[type="date"], select, textarea {
+  width: 100%;
+  min-height: 38px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-family: inherit;
+  font-size: var(--text-md);
+  color: var(--ink);
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.input:focus, .field input:focus, .field select:focus, .field textarea:focus,
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+.input::placeholder, input::placeholder, textarea::placeholder { color: var(--muted-soft); }
+
+.field { display: block; margin-bottom: var(--space-4); }
+.field > label, .field-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  color: var(--ink-soft);
+}
+.field-hint, .hint {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  line-height: var(--leading-snug);
+}
+
+/* Badges — status only, never decoration. Five meanings, no more. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line);
+  background: var(--surface-3);
+  color: var(--ink-soft);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semi);
+  line-height: 18px;
+  letter-spacing: .005em;
+  white-space: nowrap;
+}
+.badge--ok, .badge--success { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok); }
+.badge--warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
+.badge--danger { background: var(--danger-bg); border-color: var(--danger-line); color: var(--danger); }
+.badge--info { background: var(--info-bg); border-color: var(--info-line); color: var(--info); }
+.badge--muted { background: var(--surface-3); border-color: var(--line); color: var(--muted); }
+
+/* A status dot, for when a badge would be too loud in a dense row. */
+.dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--muted-soft); flex: none;
+}
+.dot--ok { background: var(--ok); }
+.dot--warn { background: var(--warn); }
+.dot--danger { background: var(--danger); }
+.dot--info { background: var(--info); }
+
+/* Panels. A panel is a surface with a hairline — no shadow, because it does not
+   float. Most of the old .card usage becomes this. */
+.card, .panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+}
+.card-head, .panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--line-soft);
+}
+.card-head h2, .card-head h3, .panel-head h2, .panel-head h3 { font-size: var(--text-md); font-weight: var(--weight-semi); }
+.card-body, .panel-body { padding: var(--space-5); }
+.card-body--tight { padding: var(--space-4); }
+.card-foot, .panel-foot {
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--line-soft);
+  background: var(--surface-2);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+/* Tables. One table pattern in the product. Dense, quiet lines, numbers right
+   aligned, the whole row clickable when the row represents a record. */
+table, .table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+thead th {
+  padding: var(--space-2) var(--space-4);
+  text-align: left;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semi);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+tbody td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-soft);
+  vertical-align: middle;
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: var(--surface-2); }
+.num, td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.t-strong { color: var(--ink); font-weight: var(--weight-semi); }
+.t-muted { color: var(--muted); }
+.t-xs { font-size: var(--text-xs); }
+
+/* A table that scrolls sideways does it inside its own frame, never by making
+   the page scroll. */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* Alerts. Same five meanings as badges. */
+.flash, .alert {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+  box-shadow: none;
+}
+.flash--success { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok); }
+.flash--warn    { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
+.flash--error   { background: var(--danger-bg); border-color: var(--danger-line); color: var(--danger); }
+.flash--info    { background: var(--info-bg); border-color: var(--info-line); color: var(--info); }
+.flash-stack { display: grid; gap: var(--space-2); margin-bottom: var(--space-5); }
+
+/* -------------------------------------------------------------- 4. Patterns */
+
+/* Page header. Every screen starts the same way: what this is, one line of
+   why it exists, and at most one primary action. */
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin-bottom: var(--space-6);
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.page-head h1 { margin-bottom: var(--space-1); }
+.page-sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  max-width: 62ch;
+  line-height: var(--leading-snug);
+}
+.page-actions { display: flex; gap: var(--space-2); flex: none; }
+
+.eyebrow {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+  margin-bottom: var(--space-2);
+}
+
+/* Section heading inside a page — typography, not another card. */
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.section-head h2 {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semi);
+  color: var(--ink);
+}
+.section-head .section-more {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--muted);
+}
+.section-head .section-more:hover { color: var(--accent-ink); }
+
+/* Stat strip. Numbers with room around them, no box each. */
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.stat-strip > * {
+  padding: var(--space-4) var(--space-5);
+  border-right: 1px solid var(--line-soft);
+}
+.stat-strip > *:last-child { border-right: 0; }
+.stat-value {
+  display: block;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semi);
+  letter-spacing: -.02em;
+  line-height: 1.1;
+  color: var(--ink);
+}
+.stat-label {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-weight: var(--weight-medium);
+}
+.stat-value--ok { color: var(--ok); }
+.stat-value--warn { color: var(--warn); }
+.stat-value--danger { color: var(--danger); }
+
+/* The inbox item — the Needs You pattern, used nowhere else and everywhere it
+   applies. Answers happened / why / recommended / decision, then one action. */
+.inbox { display: grid; gap: var(--space-3); }
+.inbox-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-5);
+  align-items: center;
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.inbox-item:hover { border-color: var(--line-strong); box-shadow: var(--shadow-sm); }
+.inbox-item--urgent { border-left: 3px solid var(--danger); }
+.inbox-item--important { border-left: 3px solid var(--warn); }
+.inbox-item__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semi);
+  color: var(--ink);
+  margin: var(--space-1) 0 var(--space-2);
+}
+.inbox-item__because {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  line-height: var(--leading-snug);
+  margin: 0;
+}
+.inbox-item__do { display: flex; flex-direction: column; gap: var(--space-2); align-items: stretch; }
+
+/* Timeline — the Activity pattern. */
+.timeline { display: grid; gap: 0; }
+.timeline-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--line-soft);
+  align-items: baseline;
+}
+.timeline-item:last-child { border-bottom: 0; }
+.timeline-when {
+  font-size: var(--text-xs);
+  color: var(--muted-soft);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.timeline-what { font-size: var(--text-sm); color: var(--ink); }
+.timeline-who { font-size: var(--text-xs); color: var(--muted); white-space: nowrap; }
+
+/* Lifecycle — the purchasing progression, shown as one line rather than as
+   four different words on four different screens. */
+.lifecycle { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.lifecycle-step {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font-size: var(--text-xs); font-weight: var(--weight-medium); color: var(--muted-soft);
+}
+.lifecycle-step.is-done { color: var(--muted); }
+.lifecycle-step.is-current { color: var(--accent-ink); font-weight: var(--weight-semi); }
+.lifecycle-sep { color: var(--line-strong); }
+
+/* ----------------------------------------------------------------- 5. Shell */
+
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  padding: var(--space-4) var(--space-3);
+}
+.nav { display: grid; gap: 1px; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--ink-soft);
+  text-decoration: none;
+  min-height: 36px;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+.nav-item:hover { background: var(--surface-3); color: var(--ink); text-decoration: none; }
+.nav-item.is-active { background: var(--accent-soft); color: var(--accent-ink); font-weight: var(--weight-semi); }
+.nav-item svg { flex: none; opacity: .8; }
+.nav-item.is-active svg { opacity: 1; }
+.nav-count {
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--danger);
+  color: #fff;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.nav-group-label {
+  margin: var(--space-4) var(--space-3) var(--space-1);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+}
+.nav-group-label:first-child { margin-top: 0; }
+
+.topbar {
+  height: 60px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  padding: 0 var(--space-8);
+  gap: var(--space-4);
+}
+
+/* --------------------------------------------------------------- 6. States */
+
+/* Empty state — one pattern. What this is for, and the one thing to do. */
+.empty, .empty-state {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: var(--space-3);
+  padding: var(--space-12) var(--space-6);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  background: none;
+  border: 0;
+}
+.empty-state__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius);
+  background: var(--surface-3);
+  color: var(--muted);
+}
+.empty-state__title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semi);
+  color: var(--ink);
+}
+.empty-state__body { max-width: 46ch; line-height: var(--leading-snug); }
+
+/* Loading — a skeleton of the shape that is coming, never a spinner on a
+   blank page, because a spinner tells you to wait without telling you what for. */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-3) 25%, var(--line-soft) 37%, var(--surface-3) 63%);
+  background-size: 400% 100%;
+  animation: skeleton 1.4s ease infinite;
+  border-radius: var(--radius-xs);
+}
+@keyframes skeleton { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+.skeleton-line { height: 12px; margin-bottom: var(--space-2); }
+.skeleton-line:last-child { margin-bottom: 0; width: 60%; }
+
+/* ------------------------------------------------------------ 7. Responsive */
+
+@media (max-width: 1180px) {
+  .content { padding: var(--space-6) var(--space-6) var(--space-16); }
+  .topbar { padding: 0 var(--space-6); }
+}
+
+@media (max-width: 900px) {
+  .page-head { flex-direction: column; gap: var(--space-4); }
+  .page-actions { width: 100%; }
+  .stat-strip { grid-template-columns: repeat(2, 1fr); }
+  .stat-strip > * { border-bottom: 1px solid var(--line-soft); }
+}
+
+@media (max-width: 720px) {
+  :root { --text-2xl: 22px; --text-3xl: 26px; }
+  .content { padding: var(--space-5) var(--space-4) var(--space-16); }
+  .topbar { padding: 0 var(--space-4); height: 56px; }
+  .card-body, .panel-body { padding: var(--space-4); }
+  .card-head, .panel-head { padding: var(--space-3) var(--space-4); }
+
+  /* Inbox items stack: the decision goes under the explanation, and the
+     action becomes full width so it can be hit with a thumb. */
+  .inbox-item { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
+  .inbox-item__do .btn { width: 100%; }
+
+  /* Touch targets. 44px is the floor for anything a finger has to find. */
+  .btn { min-height: 42px; }
+  .btn--sm { min-height: 38px; }
+  .nav-item { min-height: 44px; }
+
+  .timeline-item { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+  .timeline-who { display: none; }
+}
+
+/* --------------------------------------------------- Shell additions (nav) */
+
+/* Secondary destinations sit below a hairline rather than under a heading.
+   The gap does the grouping that three uppercase labels used to do. */
+.nav-divider {
+  height: 1px;
+  margin: var(--space-3) var(--space-3);
+  background: var(--line);
+}
+
+/* The sidebar's own subtitle markup is gone from the layout, but other views
+   still render it; keep it from reappearing as a second line of grey. */
+.nav-item__copy { display: contents; }
+.nav-item__copy small { display: none; }
+
+.topbar-help {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.topbar-help:hover { background: var(--surface-3); color: var(--ink); text-decoration: none; }
+
+/* Tell Foundry on a phone is the raised centre of the bar — the one thing you
+   reach for rather than a place you navigate to. */
+.mobilenav-tell { color: var(--accent-ink); }
+.mobilenav-tell svg { color: var(--accent); }
+
+/* ------------------------------------------------------ Home: the briefing */
+
+/* The verdict is the largest thing on the page because it is the sentence the
+   page exists to say. Everything else on Home is context for it. */
+.briefing {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding: 0 0 var(--space-6);
+  margin-bottom: var(--space-8);
+  border-bottom: 1px solid var(--line);
+}
+.briefing__greeting {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--muted);
+}
+.briefing__verdict {
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-semi);
+  letter-spacing: -.022em;
+  line-height: 1.15;
+  margin: 0 0 var(--space-2);
+}
+.briefing--attention .briefing__verdict { color: var(--ink); }
+.briefing--paused .briefing__verdict { color: var(--warn); }
+.briefing__sub { margin: 0; color: var(--muted); font-size: var(--text-md); max-width: 56ch; }
+
+.briefing__state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex: none;
+  padding-top: var(--space-1);
+}
+.briefing__pulse {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  color: var(--ok);
+}
+.briefing__pulse.is-paused { color: var(--warn); }
+.briefing__checked { font-size: var(--text-xs); color: var(--muted-soft); }
+
+/* Tell Foundry — one field, always in the same place, the width of the page.
+   It is the product's main verb, so it gets the room a main verb deserves. */
+.tell__form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.tell__form:focus-within { border-color: var(--accent); box-shadow: var(--ring); }
+.tell__mark {
+  display: grid; place-items: center;
+  width: 34px; height: 34px; flex: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.tell__input {
+  flex: 1 1 auto;
+  min-height: 34px;
+  border: 0 !important;
+  background: none;
+  box-shadow: none !important;
+  font-size: var(--text-md);
+  padding: 0 var(--space-1);
+}
+.tell__input:focus { outline: none; }
+.tell__attach {
+  display: grid; place-items: center;
+  width: 34px; height: 34px; flex: none;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+  margin: 0;
+}
+.tell__attach:hover { background: var(--surface-3); color: var(--ink); }
+.tell__attach input[type="file"] { display: none; }
+.tell__send { flex: none; height: 34px; }
+.tell__status {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--text-xs); color: var(--ok);
+}
+.tell__examples {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.tell__examples a {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  text-decoration: none;
+}
+.tell__examples a:hover { border-color: var(--line-strong); color: var(--ink); background: var(--surface-2); }
+
+/* A quiet note is what an empty section says. One line, no box, no icon block
+   — an empty section should take up as little room as it deserves. */
+.quiet-note {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.section-foot { margin-top: var(--space-3); font-size: var(--text-sm); }
+
+.timeline--panel { padding: 0 var(--space-5); }
+.timeline--panel .timeline-item:first-child { padding-top: var(--space-4); }
+.timeline--panel .timeline-item.is-overdue .timeline-when { color: var(--warn); font-weight: var(--weight-semi); }
+
+/* Progressive disclosure. The summary is the plain sentence; the cue is the
+   only part that looks like a control. */
+.disclose {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--line-soft);
+  padding-top: var(--space-3);
+}
+.disclose > summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.disclose > summary::-webkit-details-marker { display: none; }
+.disclose__cue {
+  flex: none;
+  font-weight: var(--weight-semi);
+  color: var(--accent-ink);
+}
+.disclose[open] .disclose__cue::after { content: ' ▾'; }
+.disclose__body {
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+.disclose__body .plain-list { margin: var(--space-2) 0 0; padding-left: var(--space-5); }
+.disclose__body .plain-list li { margin-bottom: var(--space-1); }
+
+@media (max-width: 720px) {
+  .briefing { flex-direction: column; gap: var(--space-4); }
+  .briefing__state { align-items: flex-start; flex-direction: row; align-items: center; }
+  .briefing__verdict { font-size: var(--text-2xl); }
+  .tell__examples { flex-wrap: nowrap; overflow-x: auto; padding-bottom: var(--space-1); }
+  .tell__examples a { white-space: nowrap; }
+}
+
+/* Guide reference grid — plain columns, no card per paragraph. */
+.guide-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-5) var(--space-8);
+}
+.guide-grid h3 { font-size: var(--text-sm); margin-bottom: var(--space-1); }
+.guide-grid p { font-size: var(--text-sm); color: var(--muted); line-height: var(--leading-snug); }
+
+/* The old stylesheet uppercased every section heading, which turned "Needs your
+   attention" into a label rather than a sentence and made all sections look
+   equally important. Headings are sentences again. */
+.section-head h2, .section-head h3 {
+  text-transform: none;
+  letter-spacing: -.006em;
+  font-size: var(--text-md);
+  color: var(--ink);
+}
+
+/* --------------------------------------------------- Guidance and checklist */
+
+/* The eyebrows and answer labels here were uppercase, which on a page that
+   already shouts its section headings made the guidance read as the loudest
+   thing on screen. Labels are labels again. */
+.operating-guide__head .operator-lane__eyebrow,
+.operating-next-answers dt {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  color: var(--muted);
+}
+.operating-guide {
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-8);
+}
+.operating-guide__head h2 { font-size: var(--text-lg); margin-top: var(--space-1); }
+.operating-next-answers { display: grid; gap: var(--space-3); margin: var(--space-4) 0; }
+.operating-next-answers dd { margin: var(--space-1) 0 0; font-size: var(--text-sm); color: var(--ink-soft); }
+.operating-checklist { margin: var(--space-4) 0 0; padding: 0; list-style: none; display: grid; gap: var(--space-1); }
+.operating-step { display: flex; gap: var(--space-3); padding: var(--space-3); border-radius: var(--radius); }
+.operating-step.is-current { background: var(--accent-soft); }
+.operating-step__number {
+  display: grid; place-items: center; flex: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--surface-3); color: var(--muted);
+  font-size: var(--text-xs); font-weight: var(--weight-semi);
+}
+.operating-step.is-complete .operating-step__number { background: var(--ok-bg); color: var(--ok); }
+.operating-step.is-current .operating-step__number { background: var(--accent); color: #fff; }
+.operating-step__copy strong { font-size: var(--text-sm); }
+.operating-step__copy p { margin: var(--space-1) 0 0; font-size: var(--text-sm); color: var(--muted); }

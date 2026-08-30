@@ -33,3 +33,39 @@
     </details>
   <% }) %>
 </div>
+
+<%
+  /*
+   * These six paragraphs and the authority legend used to sit on Home, inside a
+   * collapsed panel underneath the greeting. They are a reference — the sort of
+   * thing you go looking for once and rarely again — so they belong on the page
+   * somebody opens when they are looking for help, not on the page they open
+   * every morning to see whether anything is wrong.
+   */
+%>
+<section class="section">
+  <div class="section-head"><h2>What Foundry can do today</h2></div>
+  <div class="guide-grid">
+    <div><h3>Inventory</h3><p>Receive stock, record usage, move inventory between locations, correct counts through controlled adjustments, locate items and explain recorded balances.</p></div>
+    <div><h3>Purchasing</h3><p>Work out what to reorder, work with suppliers and purchase orders, and receive inventory against those orders.</p></div>
+    <div><h3>Sales</h3><p>Take customer orders, commit stock to them, and manage shortages by moving or ordering more.</p></div>
+    <div><h3>Questions</h3><p>Ask what needs attention, what changed, why something happened, where inventory is, and what Foundry has done.</p></div>
+    <div><h3>Files</h3><p>Attach spreadsheets and documents. Imports show you exactly what will be created before anything becomes inventory truth.</p></div>
+    <div><h3>Exceptions</h3><p>Anything Foundry cannot settle itself — a missing number, a difference it cannot explain, or work beyond what you have allowed — waits in Needs you.</p></div>
+  </div>
+
+  <details class="disclose">
+    <summary>
+      <span>How sure is Foundry when it tells you something?</span>
+      <span class="disclose__cue">Explain</span>
+    </summary>
+    <div class="disclose__body">
+      <ul class="plain-list">
+        <li><strong>Foundry knows</strong> — a claim backed by what is recorded.</li>
+        <li><strong>Foundry recommends</strong> — it suggests an action; nothing has happened yet.</li>
+        <li><strong>Foundry can do</strong> — the action exists and can be carried out safely when you approve it.</li>
+        <li><strong>Foundry may do automatically</strong> — you approved a specific rule, within limits you set.</li>
+      </ul>
+    </div>
+  </details>
+</section>

@@ -172,8 +172,23 @@ test('the next action reuses the real Needs you decision and links to the exact 
 
   const agent = await ownerAgent(env);
   const home = plain((await agent.get('/')).text);
-  assert.match(home, /What happened\?/);
-  assert.match(home, /Why\?/);
-  assert.match(home, /Do this now/);
+
+  // Home shows that decision once. Because guidance builds its next-best action
+  // by reusing the top Needs you item, rendering both put the same title, the
+  // same paragraph and the same button on the page twice, centimetres apart.
   assert.match(home, /Canvas Tote/);
+  assert.equal(
+    (home.match(/Canvas Tote does not match the records/g) || []).length, 1,
+    'the same decision is not stated twice on one page'
+  );
+  assert.doesNotMatch(home, /Do this now/,
+    'the four-question treatment belongs on Needs you, not doubled onto Home');
+
+  // And it still goes to the exact count, not to a list to search through.
+  assert.match((await agent.get('/')).text, new RegExp(`/investigations/${event.investigationId}`));
+
+  // The full contract is on Needs you, where the decision is actually made.
+  const needsYou = plain((await agent.get('/needs-you')).text);
+  assert.match(needsYou, /What happened\?/);
+  assert.match(needsYou, /Canvas Tote/);
 });

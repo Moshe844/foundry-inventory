@@ -335,7 +335,7 @@ test('Home confirms a selected attachment and a file-only Tell Foundry request r
   const home = await env.agent.get('/');
   assert.match(home.text, /data-operator-attachment/);
   assert.match(home.text, /data-operator-attachment-status/);
-  assert.match(plain(home.text), /Attach file/);
+  assert.match(plain(home.text), /Attach a file/);
 
   const csv = [
     'Item Name,SKU,Warehouse,Qty On Hand',
