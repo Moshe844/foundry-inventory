@@ -82,9 +82,13 @@
           // label they will read a thousand times. Needs you sits directly
           // under Home because those two are the whole daily loop.
           var navItems = [
-            { key: 'home', href: '/', icon: 'foundry', label: 'Home' },
+            // "/" renders one of two views depending on whether Foundry has been
+            // configured, and the plainer one calls itself 'overview'. That key
+            // belongs to Home, which is the page it is: attaching it to
+            // Inventory lit the wrong entry for every unconfigured workspace.
+            { key: 'home', href: '/', icon: 'foundry', label: 'Home', also: ['overview'] },
             { key: 'attention', href: '/needs-you', icon: 'attention', label: 'Needs you', count: attentionCount },
-            { key: 'inventory', href: '/inventory', icon: 'inventory', label: 'Inventory', also: ['overview'] },
+            { key: 'inventory', href: '/inventory', icon: 'inventory', label: 'Inventory' },
             { key: 'sales', href: '/sales', icon: 'sales', label: 'Sales' },
             { key: 'purchasing', href: '/purchasing', icon: 'purchasing', label: 'Purchasing' },
             { key: 'activity', href: '/activity', icon: 'activity', label: 'Activity' },

@@ -187,8 +187,12 @@ test('the next action reuses the real Needs you decision and links to the exact 
   // And it still goes to the exact count, not to a list to search through.
   assert.match((await agent.get('/')).text, new RegExp(`/investigations/${event.investigationId}`));
 
-  // The full contract is on Needs you, where the decision is actually made.
+  // The full contract is on Needs you, where the decision is actually made:
+  // what happened, why Foundry stopped, what it suggests, and what is being
+  // asked of the reader — each answered once, beside one specific action.
   const needsYou = plain((await agent.get('/needs-you')).text);
-  assert.match(needsYou, /What happened\?/);
   assert.match(needsYou, /Canvas Tote/);
+  assert.match(needsYou, /Why Foundry stopped/i);
+  assert.match(needsYou, /Your decision/i);
+  assert.match(needsYou, /Resolve the difference/, 'the action names the decision, not "Review"');
 });

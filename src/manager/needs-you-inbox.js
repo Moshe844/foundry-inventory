@@ -116,7 +116,7 @@ function fromInvestigations(db, workspaceId) {
         || (entry.unexplainedAmount === null
           ? 'Which figure is correct.'
           : `An explanation for ${entry.unexplainedAmount} unit(s), or a decision to correct the record.`),
-      actionLabel: 'Review the count',
+      actionLabel: 'Resolve the difference',
       href: `/investigations/${entry.investigationId}`,
       at: entry.createdAt,
       priority: ageDays >= 7 ? 95 : ageDays >= 2 ? 88 : 80,
@@ -136,7 +136,7 @@ function fromCorrections(db, workspaceId) {
       why: 'Foundry has worked out the exact change but will not apply it without approval.',
       recommendation: 'Approve it only if the preview matches what actually happened.',
       missing: 'Your approval.',
-      actionLabel: 'Review and approve',
+      actionLabel: 'Approve the change',
       href: `/actions/${proposal.proposalId}`,
       at: proposal.createdAt,
       priority: 70,
@@ -190,7 +190,7 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
           ? 'Check the supplier price and approve only if the increase is acceptable.'
           : 'Place the order if the supplier, price and quantity are correct.',
         missing: exception ? 'Whether to accept the new price.' : 'Your decision to place it.',
-        actionLabel: 'Review the order',
+        actionLabel: exception ? 'Approve the new price' : 'Place the order',
         priority: 84,
       };
     }
@@ -220,7 +220,7 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
       why: 'Foundry will not move stock or commit money without you.',
       recommendation: 'Approve the single plan only if all of its proposed actions are correct.',
       missing: 'Your approval of the plan.',
-      actionLabel: 'Review the plan',
+      actionLabel: 'Approve the plan',
       priority: ageDays >= 3 ? 92 : 85,
     };
   });
@@ -268,7 +268,7 @@ function fromFindings(db, workspaceId) {
       : finding.action === 'Add supplier'
       ? 'The supplier and purchasing terms for this variant.'
       : 'A look, and a decision about what to do.',
-    actionLabel: isProtectedLimit ? 'Review stock limit' : finding.action === 'Add supplier' ? 'Add supplier' : 'Review finding',
+    actionLabel: isProtectedLimit ? 'Decide on the limit' : finding.action === 'Add supplier' ? 'Add supplier' : 'Resolve this',
     href: finding.link,
     at: null,
     priority: isProtectedLimit ? Math.max(80, finding.priority || 0) : finding.priority || 60,
@@ -337,7 +337,7 @@ function fromImports(db, workspaceId) {
           : problems
             ? `A decision on ${problems} row(s) it could not place, then your approval.`
             : 'Your approval to bring these rows in.',
-        actionLabel: plan.approvalStatus === 'APPROVED' ? 'Bring it in' : 'Review the file',
+        actionLabel: plan.approvalStatus === 'APPROVED' ? 'Bring it in' : 'Approve the import',
         href: `/imports/${plan.id}`,
         at: plan.createdAt,
         priority: 75,
@@ -382,7 +382,7 @@ function fromAutomationSuggestions(db, workspaceId) {
       why: 'Nothing has changed. Foundry needs explicit permission before it may stop asking about similar work.',
       recommendation: 'Review the proposed scope and ceiling. Approve only if you want this to become lasting authority.',
       missing: 'Your explicit decision about whether Foundry may handle this pattern automatically.',
-      actionLabel: 'Review suggestion', href: `/operating-instructions/${proposal.id}`,
+      actionLabel: 'Decide on this rule', href: `/operating-instructions/${proposal.id}`,
       at: proposal.createdAt, priority: 64,
     }));
 }
@@ -424,7 +424,7 @@ function fromSalesOrders(db, workspaceId) {
             ? 'Review replenishment and the customer date before making a promise.'
             : 'Add a supplier or agree a different customer date.',
         missing: 'A decision about the uncovered customer demand and any requested-date commitment.',
-        actionLabel: `Review ${order.order_number}`,
+        actionLabel: `Cover ${order.order_number}`,
         href: `/sales/orders/${order.id}`,
         at: order.updated_at,
         priority: dateMiss ? 92 : 82,
@@ -447,7 +447,7 @@ function fromConnections(db, workspaceId) {
       : 'Foundry stopped before changing business records because the external evidence was not safe to apply.',
     recommendation: row.resolution_hint,
     missing: row.resolution_hint,
-    actionLabel: `Review ${row.display_name}`,
+    actionLabel: `Fix ${row.display_name}`,
     href: `/settings/connections/${row.connector_id}`,
     at: row.updated_at,
     priority: row.issue_type === 'CONNECTION_STALE' ? 86 : 90,

@@ -1,57 +1,121 @@
 <%
-  // One list, not one section per internal mechanism. Every entry answers the
-  // same four questions, so the page can be read straight down without knowing
-  // what a physical event or a work item is.
+  /*
+   * Needs you is the one screen where a person makes decisions, so it is built
+   * as an inbox and not as a report.
+   *
+   * Every entry arrives having already answered the same questions — the
+   * inbox builder refuses to show one that cannot — so the work here is making
+   * those answers scannable rather than making the reader parse four labelled
+   * paragraphs per item. The title and what happened carry the item; why
+   * Foundry stopped and what it suggests sit underneath in a quieter register;
+   * the decision being asked for is stated last, immediately beside the button
+   * that makes it.
+   *
+   * Two things this page used to do to itself. It printed the recommendation
+   * and the decision as separate answers even when the source had filled both
+   * from the same string, so several items said the same sentence twice. And
+   * every item wore an importance badge, including the third tier whose label
+   * is the words "Needs You" — repeating the heading of the page it is on.
+   */
   var items = locals.inbox || [];
-  var totalLabel = items.length === 1 ? '1 thing needs you' : items.length + ' things need you';
+  var mode = locals.show || 'all';
+
+  var urgent = items.filter(function (entry) { return entry.importance === 'Urgent'; });
+  var important = items.filter(function (entry) { return entry.importance === 'Important'; });
+
+  var shown = mode === 'urgent' ? urgent : mode === 'important' ? important : items;
+
+  var filters = [
+    { key: 'all', label: 'Everything', count: items.length, href: '/needs-you' },
+    { key: 'urgent', label: 'Urgent', count: urgent.length, href: '/needs-you?show=urgent' },
+    { key: 'important', label: 'Important', count: important.length, href: '/needs-you?show=important' },
+  ];
+
+  var headline = items.length === 0
+    ? 'Nothing is waiting'
+    : items.length === 1 ? '1 decision is waiting' : items.length + ' decisions are waiting';
 %>
 
-<header class="needs-you-hero">
+<div class="page-head">
   <div>
-    <div class="eyebrow">Only the things Foundry cannot settle itself</div>
     <h1>Needs you</h1>
-    <p>Everything else, Foundry is getting on with.</p>
+    <p class="page-sub">
+      Only the things Foundry cannot settle by itself — a number it cannot know, a difference it
+      cannot explain, or permission it does not have. Everything else it is getting on with.
+    </p>
   </div>
-  <div class="needs-you-total <%= items.length ? 'has-work' : 'is-clear' %>">
-    <span><%- helpers.icon(items.length ? 'attention' : 'check', { size: 18 }) %></span>
-    <strong><%= items.length ? totalLabel : 'Nothing is waiting' %></strong>
-  </div>
-</header>
+</div>
 
 <% if (!items.length) { %>
-  <div class="card section">
-    <div class="card-body">
-      <div class="needs-empty">
-        <span class="needs-empty__icon"><%- helpers.icon('check', { size: 17 }) %></span>
-        <div>
-          <strong>Nothing is waiting</strong>
-          <p>
-            You do not need to watch Foundry all day. When it needs something from you — a number it
-            cannot know, a difference it cannot explain, or permission it does not have — it waits
-            here and says why.
-          </p>
-        </div>
-      </div>
-    </div>
+  <div class="empty-state">
+    <span class="empty-state__icon"><%- helpers.icon('check', { size: 20 }) %></span>
+    <p class="empty-state__title">Nothing is waiting</p>
+    <p class="empty-state__body">
+      You do not need to watch Foundry all day. When it needs something from you, it waits here
+      and says why.
+    </p>
+    <a class="btn" href="/">Back to Home</a>
   </div>
 <% } else { %>
-  <div class="needs-inbox section">
-    <% items.forEach(function (entry) { %>
-      <article class="needs-item">
-        <div class="needs-item__body">
-          <span class="badge <%= entry.importance === 'Urgent' ? 'badge--danger' : entry.importance === 'Important' ? 'badge--warn' : 'badge--muted' %>"><%= entry.importance %></span>
-          <h2><%= entry.title %></h2>
-          <dl class="needs-item__answers">
-            <div><dt>What happened?</dt><dd><%= entry.happened %></dd></div>
-            <div><dt>Why does Foundry need me?</dt><dd><%= entry.why %></dd></div>
-            <div><dt>What does Foundry recommend?</dt><dd><%= entry.recommendation || entry.missing %></dd></div>
-            <div><dt>What do I do now?</dt><dd><%= entry.missing %></dd></div>
-          </dl>
+
+  <div class="inbox-bar">
+    <span class="inbox-bar__count"><%= headline %></span>
+    <%# Filters are links, so they work before any script has run and each slice
+        of the inbox has an address somebody can return to. %>
+    <div class="segmented" role="group" aria-label="Filter by importance">
+      <% filters.forEach(function (filter) { %>
+        <% if (filter.count || filter.key === 'all') { %>
+          <a class="segmented__item <%= mode === filter.key ? 'is-on' : '' %>"
+             href="<%= filter.href %>"
+             <%= mode === filter.key ? 'aria-current="true"' : '' %>><%= filter.label %>
+            <span class="segmented__count"><%= filter.count %></span>
+          </a>
+        <% } %>
+      <% }) %>
+    </div>
+  </div>
+
+  <% if (!shown.length) { %>
+    <div class="quiet-note">Nothing in this group right now. <a href="/needs-you">See everything</a>.</div>
+  <% } %>
+
+  <div class="inbox">
+    <% shown.forEach(function (entry) { %>
+      <%
+        // The source fills both fields from one string often enough that the
+        // page has to notice. Saying it once is the whole fix.
+        var recommendation = entry.recommendation || '';
+        var decision = entry.missing || '';
+        var sameAnswer = recommendation && decision
+          && recommendation.trim().toLowerCase() === decision.trim().toLowerCase();
+      %>
+      <article class="need <%= entry.importance === 'Urgent' ? 'need--urgent' : entry.importance === 'Important' ? 'need--important' : '' %>">
+        <div class="need__main">
+          <% if (entry.importance === 'Urgent' || entry.importance === 'Important') { %>
+            <span class="badge <%= entry.importance === 'Urgent' ? 'badge--danger' : 'badge--warn' %>"><%= entry.importance %></span>
+          <% } %>
+          <h2 class="need__title"><%= entry.title %></h2>
+          <% if (entry.happened) { %><p class="need__happened"><%= entry.happened %></p><% } %>
+
+          <% if (entry.why || recommendation) { %>
+            <dl class="need__detail">
+              <% if (entry.why) { %>
+                <div><dt>Why Foundry stopped</dt><dd><%= entry.why %></dd></div>
+              <% } %>
+              <% if (recommendation && !sameAnswer) { %>
+                <div><dt>Foundry suggests</dt><dd><%= recommendation %></dd></div>
+              <% } %>
+            </dl>
+          <% } %>
         </div>
-        <div class="needs-item__do">
-          <a class="btn btn--primary btn--sm" href="<%= entry.href %>"><%= entry.actionLabel %></a>
+
+        <div class="need__decide">
+          <% if (decision) { %>
+            <p class="need__ask"><span>Your decision</span><%= decision %></p>
+          <% } %>
+          <a class="btn btn--primary" href="<%= entry.href %>"><%= entry.actionLabel %></a>
         </div>
       </article>
-    <% }); %>
+    <% }) %>
   </div>
 <% } %>

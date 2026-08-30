@@ -670,8 +670,8 @@ tbody tr:hover td { background: var(--surface-2); }
   .inbox-item__do .btn { width: 100%; }
 
   /* Touch targets. 44px is the floor for anything a finger has to find. */
-  .btn { min-height: 42px; }
-  .btn--sm { min-height: 38px; }
+  .btn { min-height: 44px; }
+  .btn--sm { min-height: 40px; }
   .nav-item { min-height: 44px; }
 
   .timeline-item { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
@@ -933,3 +933,132 @@ tbody tr:hover td { background: var(--surface-2); }
 .operating-step.is-current .operating-step__number { background: var(--accent); color: #fff; }
 .operating-step__copy strong { font-size: var(--text-sm); }
 .operating-step__copy p { margin: var(--space-1) 0 0; font-size: var(--text-sm); color: var(--muted); }
+
+/* =============================================================== Needs you */
+
+.inbox-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+.inbox-bar__count { font-size: var(--text-sm); font-weight: var(--weight-semi); color: var(--ink-soft); }
+
+/* Segmented control — the one filter pattern in the product. Links, so each
+   slice has an address and none of it depends on script having loaded. */
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  gap: 2px;
+}
+.segmented__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semi);
+  color: var(--muted);
+  text-decoration: none;
+  min-height: 28px;
+}
+.segmented__item:hover { color: var(--ink); text-decoration: none; }
+.segmented__item.is-on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.segmented__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-soft);
+  font-weight: var(--weight-medium);
+}
+.segmented__item.is-on .segmented__count { color: var(--muted); }
+
+/* One decision. The title and what happened carry it; why and the suggestion
+   sit underneath in a quieter register; the decision being asked for is stated
+   immediately beside the button that makes it. */
+.need {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 268px);
+  gap: var(--space-6);
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.need:hover { border-color: var(--line-strong); box-shadow: var(--shadow-sm); }
+.need--urgent { border-left: 3px solid var(--danger); }
+.need--important { border-left: 3px solid var(--warn); }
+
+.need__title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semi);
+  letter-spacing: -.012em;
+  margin: var(--space-2) 0 var(--space-2);
+}
+.need .badge + .need__title { margin-top: var(--space-2); }
+.need__happened {
+  margin: 0;
+  font-size: var(--text-md);
+  color: var(--ink-soft);
+  line-height: var(--leading-snug);
+}
+
+/* The supporting answers. Deliberately smaller than what happened — they are
+   the reasoning, and somebody who already knows why can skip past them. */
+.need__detail {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line-soft);
+}
+.need__detail dt {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+  margin-bottom: 2px;
+}
+.need__detail dd {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  line-height: var(--leading-snug);
+}
+
+.need__decide {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  padding-left: var(--space-6);
+  border-left: 1px solid var(--line-soft);
+}
+.need__ask { margin: 0; font-size: var(--text-sm); color: var(--ink-soft); line-height: var(--leading-snug); }
+.need__ask span {
+  display: block;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+  margin-bottom: var(--space-1);
+}
+.need__decide .btn { width: 100%; }
+
+@media (max-width: 900px) {
+  /* The decision column becomes the bottom of the card rather than a squeezed
+     sidebar — on a phone the button is the thing a thumb goes for. */
+  .need { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+  .need__decide {
+    padding-left: 0;
+    border-left: 0;
+    border-top: 1px solid var(--line-soft);
+    padding-top: var(--space-4);
+  }
+}

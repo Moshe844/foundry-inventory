@@ -54,7 +54,7 @@ test('Needs you is one consolidated, authenticated exception queue', async () =>
   const page = await env.agent.get('/needs-you');
   assert.equal(page.status, 200);
   const text = plain(page.text);
-  assert.match(text, /things Foundry cannot settle itself/i);
+  assert.match(text, /cannot settle by itself/i);
   // The queue is one list now rather than a section per internal mechanism, so
   // the contract is what is asserted: an empty inbox says so once, plainly, and
   // does not name physical events, investigations or work items at a customer.
@@ -677,7 +677,9 @@ test('confirming a count prepares the correction, and Needs you stays actionable
   const midway = plain((await env.agent.get('/needs-you')).text);
   assert.match(midway, /A change is prepared and waiting for you/,
     'the prepared correction is still an item, with what it is and what it needs');
-  assert.match(midway, /Review and approve/, 'and one obvious action');
+  // Labels name the decision now: "Review and approve" told somebody to look,
+  // not what they were being asked to do.
+  assert.match(midway, /Approve the change/, 'and one obvious, specific action');
   assert.doesNotMatch(midway, /Nothing is waiting/,
     'the ledger is known to be wrong, so Needs you must not report all clear');
 

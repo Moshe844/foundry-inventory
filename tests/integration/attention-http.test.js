@@ -462,7 +462,7 @@ test('the overview does not claim all clear while Needs you holds something', as
   const needsYou = plain((await agent.get('/needs-you')).text);
   const overview = plain((await agent.get('/overview')).text);
 
-  assert.match(needsYou, /1 thing needs you/);
+  assert.match(needsYou, /1 decision is waiting/);
   assert.doesNotMatch(overview, /All clear/, 'the other screen says something is waiting');
   assert.match(overview, /waiting for you/);
   assert.match(overview, /Needs you/);

@@ -809,6 +809,10 @@ router.get('/needs-you', asyncRoute(async (req, res) => {
     // still passed for anything else reading this page, but the page itself
     // renders the inbox.
     inbox: needsYouInbox.inbox(req.db, req.ctx.workspaceId),
+    // Which slice of the inbox is on screen. Filtering happens in the view over
+    // the list it already has, so the filter is a link rather than something
+    // that only works once JavaScript has loaded.
+    show: ['urgent', 'important'].includes(String(req.query.show || '')) ? String(req.query.show) : 'all',
     investigations: openInvestigations, waiting, physical,
     // The same findings the home page counts under "what needs me". They were
     // missing here, so home said one decision was waiting and the page it sent

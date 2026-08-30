@@ -36,7 +36,7 @@ router.get('/settings/connections', (req, res, next) => {
   const rows = connections.refreshHealth(req.db, req.ctx.workspaceId);
   const token = req.session.newConnectionToken || null;
   delete req.session.newConnectionToken;
-  res.page('connections/index', { title: 'Connections', nav: 'settings', connections: rows,
+  res.page('connections/index', { title: 'Connections', nav: 'connections', connections: rows,
     providerCatalog: providers.catalog(), newConnectionToken: token });
 }));
 
@@ -120,7 +120,7 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
   const provider = providers.get(connection.provider_type)?.metadata() || providers.generic;
   const view = connection.provider_type === 'square' && provider.sandboxMode
     ? 'connections/detail-square-sandbox' : 'connections/detail';
-  res.page(view, { title: connection.display_name, nav: 'settings', connection, token,
+  res.page(view, { title: connection.display_name, nav: 'connections', connection, token,
     issues, events, mappings, reconciliations, messages, emailRules, externalRecords, syncRuns, canBootstrapShopify,
     provider,
     skus: dbSkus(req.db, req.ctx.workspaceId), locations: repo.listLocations(req.db, req.ctx.workspaceId),
