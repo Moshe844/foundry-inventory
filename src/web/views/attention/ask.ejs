@@ -55,11 +55,43 @@
       <% if (result.isAction) { %>
         <span class="badge badge--muted">This is a change, not a question</span>
       <% } else if (!result.supported) { %>
-        <span class="badge badge--muted">Outside what Foundry does</span>
+        <span class="badge badge--muted">Not something Foundry can answer</span>
       <% } %>
     </div>
     <div class="card-body">
       <p class="lede" style="white-space:pre-line"><%= result.answer %></p>
+
+      <%
+        /*
+         * A question Foundry will not answer must still leave somebody with
+         * somewhere to go.
+         *
+         * "What can you do?" is the most reasonable thing a new customer can
+         * type, and it came back as "Outside what Foundry does" over a sentence
+         * explaining that Foundry answers questions about records rather than
+         * describing its own capabilities — which is a refusal to answer the
+         * one question whose answer the product already has, written down, on
+         * the guide page. The reader was left on a dead end with no examples,
+         * because the example chips only show before a question is asked.
+         *
+         * So an unsupported answer now carries the way forward with it.
+         */
+      %>
+      <% if (!result.supported && !result.isAction) { %>
+        <div class="dead-end">
+          <p class="dead-end__title">Here is what you can ask</p>
+          <div class="dead-end__examples">
+            <% examples.slice(0, 4).forEach(function (example) { %>
+              <a class="chip" href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
+            <% }) %>
+          </div>
+          <p class="dead-end__more">
+            Or read <a href="/guide">what Foundry can do today</a> — inventory, purchasing, sales,
+            files and exceptions, with the shortest path for each.
+          </p>
+        </div>
+      <% } %>
+
       <% if (result.handoff) { %>
         <p style="margin-top:12px;">
           <a class="btn btn--primary" href="<%= result.handoff.href %>"><%= result.handoff.label %></a>
@@ -114,7 +146,24 @@
       </div>
     <% } %>
 
-    <div class="card-foot muted" style="font-size:12px;">
+    <%
+      /*
+       * How Foundry read the question is worth being able to check — it is how
+       * somebody catches an answer that is confidently about the wrong thing.
+       * It is also Foundry's own vocabulary, so it belongs one click down
+       * rather than as the last thing on the page.
+       *
+       * And when Foundry did not run a query at all, "Foundry read this as
+       * 'unsupported'. 0 rows from your records." is three facts about nothing.
+       */
+    %>
+    <% if (result.supported || result.isAction) { %>
+    <details class="disclose card-foot">
+      <summary>
+        <span>How Foundry read this</span>
+        <span class="disclose__cue">Show</span>
+      </summary>
+      <div class="disclose__body">
       Foundry read this as “<%= result.plan.intent.replace(/_/g, ' ') %>”<%
         %><% if (result.plan.entityQuery) { %> for “<%= result.plan.entityQuery %>”<% } %><%
         %><% if (result.plan.locationQuery) { %> at “<%= result.plan.locationQuery %>”<% } %><%
@@ -132,6 +181,8 @@
         <%= result.rowCount %> <%= helpers.plural(result.rowCount, 'row') %> from your records.
         Foundry looks things up; changes are approved on the actions page.
       <% } %>
-    </div>
+      </div>
+    </details>
+    <% } %>
   </div>
 <% } %>

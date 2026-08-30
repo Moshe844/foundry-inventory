@@ -178,7 +178,7 @@ test(
       // the Mission 2 experience, unchanged.
       await Promise.all([
         page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Starting fresh")'),
+        page.click('button:has-text("Enter it in Foundry")'),
       ]);
 
       await page.fill(
@@ -414,7 +414,8 @@ test(
       await shot(page, 'ask-unsupported');
 
       const body = await page.locator('body').innerText();
-      assert.match(body, /Outside what Foundry does/);
+      assert.match(body, /Not something Foundry can answer/);
+      assert.match(body, /Here is what you can ask/, "a refusal still points somewhere");
       assert.ok(!/\bI (?:ordered|switched|moved)\b/i.test(body), 'no invented action');
     });
 

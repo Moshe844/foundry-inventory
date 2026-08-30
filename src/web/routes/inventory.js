@@ -109,10 +109,58 @@ router.get(
     };
     const result = inventoryQuery.listItems(req.db, req.ctx.workspaceId, filters);
     const locations = repo.listLocations(req.db, req.ctx.workspaceId);
+
+    /*
+     * What a person actually needs to read off this list.
+     *
+     * The table showed on hand and how it is tracked, so the two numbers that
+     * decide anything — how much is genuinely free to sell, and how much is
+     * already on its way — were not on the page. Somebody looking at "19 on
+     * hand" could not tell whether all nineteen were promised to a customer.
+     *
+     * Composed here from the read-only helpers that already exist, so this adds
+     * no query and no rule of its own: committedByPosition is what Sales has
+     * already promised, onOrderBySku is what Purchasing has already placed.
+     */
+    const skuIdsByItem = new Map();
+    for (const item of result.items) {
+      const skus = repo.listSkusForItem(req.db, req.ctx.workspaceId, item.id) || [];
+      skuIdsByItem.set(item.id, skus.map((sku) => sku.id));
+    }
+    const allSkuIds = [...skuIdsByItem.values()].flat();
+
+    const committedBySku = new Map();
+    const onOrderBySku = new Map();
+    if (allSkuIds.length) {
+      for (const row of salesOrders.committedByPosition(req.db, req.ctx.workspaceId, { skuIds: allSkuIds })) {
+        // Committed is per position; the list is per product, so it sums.
+        committedBySku.set(row.sku_id, (committedBySku.get(row.sku_id) || 0) + (row.committed || 0));
+      }
+      // A Map of skuId to an entry, not a plain object of numbers.
+      const onOrder = purchasingPosition.onOrderBySku(req.db, req.ctx.workspaceId, { skuIds: allSkuIds });
+      for (const [skuId, entry] of onOrder) {
+        onOrderBySku.set(skuId, Number(entry && entry.onOrder) || 0);
+      }
+    }
+
+    const items = result.items.map((item) => {
+      const skuIds = skuIdsByItem.get(item.id) || [];
+      const committed = skuIds.reduce((total, id) => total + (committedBySku.get(id) || 0), 0);
+      const onOrder = skuIds.reduce((total, id) => total + (onOrderBySku.get(id) || 0), 0);
+      return {
+        ...item,
+        committed,
+        onOrder,
+        // Never below zero: a promise beyond what is held is a shortfall to
+        // explain elsewhere, not a negative number to print in a column.
+        available: Math.max(0, (item.on_hand || 0) - committed),
+      };
+    });
+
     res.page('inventory/list', {
       title: 'Inventory',
       nav: 'inventory',
-      items: result.items,
+      items,
       hasMore: result.hasMore,
       page,
       filters,

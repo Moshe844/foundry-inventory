@@ -1,47 +1,117 @@
+<%
+  /*
+   * One purchase order lifecycle, shown as one progression.
+   *
+   * The filters were six buttons in the same shape as the page's own actions,
+   * with the selected one wearing the primary style — so the current filter
+   * looked like the thing to click, next to "New order", which actually was.
+   * They are a segmented control now: one control, one selected state, nothing
+   * competing with a real action.
+   *
+   * The statuses were the stored enum run through a formatter, so the page said
+   * "Partially received" and left the reader to work out where that sits
+   * between ordered and done. Each row now says where it is in the lifecycle
+   * and, when something is still outstanding, how much is still to come — which
+   * is the number somebody is actually looking for when they open this page.
+   */
+  var STAGES = {
+    DRAFT: { label: 'Prepared', tone: 'muted', step: 1 },
+    ORDERED: { label: 'Ordered', tone: 'info', step: 2 },
+    PARTIALLY_RECEIVED: { label: 'Part received', tone: 'warn', step: 3 },
+    RECEIVED: { label: 'Received', tone: 'ok', step: 4 },
+    CANCELLED: { label: 'Cancelled', tone: 'muted', step: 0 },
+  };
+  var FILTERS = ['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'];
+%>
+
 <div class="page-head">
-  <div class="titles">
+  <div>
     <a class="back-link" href="/purchasing"><%- helpers.icon('chevron', { size: 14 }) %> What to order</a>
     <h1>Purchase orders</h1>
-    <div class="page-sub">Everything ordered, arriving, received or cancelled.</div>
+    <p class="page-sub">Everything prepared, ordered, arriving or received.</p>
+  </div>
+  <% if (permissions.create) { %>
+    <div class="page-actions"><a class="btn btn--primary" href="/purchasing/orders/new">New order</a></div>
+  <% } %>
+</div>
+
+<div class="inbox-bar">
+  <span class="inbox-bar__count"><%= orders.length %> order<%= orders.length === 1 ? '' : 's' %></span>
+  <div class="segmented" role="group" aria-label="Filter by stage">
+    <a class="segmented__item <%= status ? '' : 'is-on' %>" href="/purchasing/orders">All</a>
+    <% FILTERS.forEach(function (value) { %>
+      <a class="segmented__item <%= status === value ? 'is-on' : '' %>"
+         href="/purchasing/orders?status=<%= value %>"
+         <%= status === value ? 'aria-current="true"' : '' %>><%= STAGES[value].label %></a>
+    <% }) %>
   </div>
 </div>
 
-<div class="card section">
-  <div class="card-head">
-    <h2><%= orders.length %> order<%= orders.length === 1 ? '' : 's' %></h2>
-    <span class="spacer"></span>
-    <div class="btn-row">
-      <a class="btn btn--sm <%= status ? '' : 'btn--primary' %>" href="/purchasing/orders">All</a>
-      <% ['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'].forEach(function (value) { %>
-        <a class="btn btn--sm <%= status === value ? 'btn--primary' : '' %>" href="/purchasing/orders?status=<%= value %>">
-          <%= helpers.columnLabel(value.toLowerCase().replace('_', ' ')) %>
-        </a>
-      <% }) %>
-      <% if (permissions.create) { %><a class="btn btn--sm" href="/purchasing/orders/new">New order</a><% } %>
+<% if (orders.length === 0) { %>
+  <div class="empty-state">
+    <span class="empty-state__icon"><%- helpers.icon('purchasing', { size: 20 }) %></span>
+    <p class="empty-state__title"><%= status ? 'Nothing at this stage' : 'No purchase orders yet' %></p>
+    <p class="empty-state__body">
+      <% if (status) { %>
+        No order is <%= STAGES[status].label.toLowerCase() %> right now.
+      <% } else { %>
+        Foundry prepares orders once it knows who supplies a product and how fast it sells.
+        You can also write one yourself.
+      <% } %>
+    </p>
+    <% if (status) { %>
+      <a class="btn" href="/purchasing/orders">See all orders</a>
+    <% } else if (permissions.create) { %>
+      <a class="btn btn--primary" href="/purchasing/orders/new">Create a purchase order</a>
+    <% } %>
+  </div>
+<% } else { %>
+  <div class="panel">
+    <div class="table-wrap">
+      <table class="table table--stack">
+        <thead>
+          <tr>
+            <th>Order</th>
+            <th>Supplier</th>
+            <th>Stage</th>
+            <th>Expected</th>
+            <th class="num">Ordered</th>
+            <th class="num">Still to come</th>
+            <th class="num">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% orders.forEach(function (po) { %>
+            <%
+              var stage = STAGES[po.status] || { label: po.status, tone: 'muted', step: 0 };
+              var outstanding = Math.max(0, (po.orderedUnits || 0) - (po.receivedUnits || 0));
+              var settled = po.status === 'RECEIVED' || po.status === 'CANCELLED';
+            %>
+            <tr>
+              <td class="cell-main">
+                <a class="cell-title" href="/purchasing/orders/<%= po.id %>"><%= po.poNumber %></a>
+                <% if (po.source === 'foundry_recommendation') { %>
+                  <span class="cell-sub">Prepared by Foundry</span>
+                <% } %>
+              </td>
+              <td data-label="Supplier"><%= po.supplierName %></td>
+              <td data-label="Stage"><span class="badge badge--<%= stage.tone %>"><%= stage.label %></span></td>
+              <td data-label="Expected" class="t-muted"><%= po.expectedDate || '—' %></td>
+              <td class="num" data-label="Ordered"><%= po.orderedUnits %></td>
+              <td class="num" data-label="Still to come">
+                <% if (settled) { %>
+                  <span class="t-muted">—</span>
+                <% } else if (outstanding) { %>
+                  <strong><%= outstanding %></strong>
+                <% } else { %>
+                  <span class="t-muted">0</span>
+                <% } %>
+              </td>
+              <td class="num cell-end" data-label="Total"><%= po.hasCosts ? po.subtotal.toFixed(2) : '—' %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
     </div>
   </div>
-  <% if (orders.length === 0) { %>
-    <div class="card-body"><p class="muted">Nothing here yet.</p></div>
-  <% } else { %>
-    <table class="table table--tight">
-      <thead>
-        <tr><th>Order</th><th>Supplier</th><th>Status</th><th>Expected</th><th class="num">Units</th><th class="num">Total</th></tr>
-      </thead>
-      <tbody>
-        <% orders.forEach(function (po) { %>
-          <tr>
-            <td><a href="/purchasing/orders/<%= po.id %>"><%= po.poNumber %></a>
-              <% if (po.source === 'foundry_recommendation') { %><span class="badge badge--muted">prepared by Foundry</span><% } %>
-            </td>
-            <td><%= po.supplierName %></td>
-            <td><span class="badge badge--<%= po.status === 'RECEIVED' ? 'ok' : po.status === 'CANCELLED' ? 'danger' : 'muted' %>">
-              <%= helpers.columnLabel(po.status.toLowerCase().replace('_', ' ')) %></span></td>
-            <td class="muted"><%= po.expectedDate || '—' %></td>
-            <td class="num"><%= po.receivedUnits %>/<%= po.orderedUnits %></td>
-            <td class="num"><%= po.hasCosts ? po.subtotal.toFixed(2) : '—' %></td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  <% } %>
-</div>
+<% } %>

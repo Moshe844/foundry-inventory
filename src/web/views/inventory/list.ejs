@@ -45,41 +45,75 @@
         <a class="btn" href="/inventory">Clear filters</a>
       <% } else { %>
         <h3>No items yet</h3>
-        <p>Add the first thing you keep track of. Foundry will ask how it should be counted.</p>
-        <a class="btn btn--primary" href="/inventory/new">Add an item</a>
+        <p>Tell Foundry what you sell so it can create the products, variants and stock locations with you.</p>
+        <a class="btn btn--primary" href="/onboarding">Tell Foundry what you sell</a>
+        <p class="hint">Or <a href="/inventory/new">add one item by hand</a>.</p>
       <% } %>
     </div>
   <% } else { %>
     <div class="table-wrap">
       <table class="table table--stack">
+        <%
+          /*
+           * The columns are the ones a decision is made from.
+           *
+           * "Tracking" — quantity, serial or lot — was a column of its own with
+           * a badge on every row, which is Foundry's internal model shown to
+           * somebody who only wants to know what they have. It matters when a
+           * product carries serials or lots, so it appears on those rows and is
+           * silent on the rest.
+           *
+           * What was missing mattered more: how much is free to sell, and how
+           * much is already coming. Someone reading "19 on hand" had no way to
+           * tell whether all nineteen were already promised.
+           */
+        %>
         <thead>
           <tr>
-            <th>Item</th>
-            <th>Tracking</th>
-            <th class="right">Locations</th>
-            <th class="right"><%= filters.locationId ? 'At location' : 'On hand' %></th>
+            <th>Product</th>
+            <th>Status</th>
+            <th class="num"><%= filters.locationId ? 'At location' : 'On hand' %></th>
+            <th class="num">Committed</th>
+            <th class="num">Available</th>
+            <th class="num">On order</th>
           </tr>
         </thead>
         <tbody>
           <% items.forEach(function (item) { %>
+            <%
+              // One status word per row, in the order that matters: out of
+              // stock beats everything, then nothing free to sell, then coming.
+              var status = !item.is_active ? { label: 'Archived', tone: 'muted' }
+                : item.on_hand === 0 ? { label: 'Out of stock', tone: 'danger' }
+                : item.available === 0 ? { label: 'All committed', tone: 'warn' }
+                : { label: 'In stock', tone: 'ok' };
+              var tracking = helpers.TRACKING_MODES[item.tracking_mode];
+              var tracksUnits = item.tracking_mode !== 'quantity';
+            %>
             <tr>
               <td class="cell-main">
                 <a class="cell-title" href="/inventory/<%= item.id %>"><%= item.name %></a>
-                <span class="cell-sub mono"><%= item.base_code || item.first_sku_code %><% if (item.has_variants) { %> · <%= item.sku_count %> variants<% } %></span>
+                <span class="cell-sub">
+                  <span class="mono"><%= item.base_code || item.first_sku_code %></span><%
+                    %><% if (item.has_variants && item.sku_count > 1) { %> · <%= item.sku_count %> variants<% } %><%
+                    %><% if (tracksUnits) { %> · <%= tracking.label %><% } %>
+                </span>
               </td>
-              <td data-label="Tracking">
-                <span class="<%= helpers.trackingBadgeClass(item.tracking_mode) %>"><%= helpers.TRACKING_MODES[item.tracking_mode].label %></span>
-                <% if (item.has_variants) { %><span class="badge badge--variant">Variants</span><% } %>
-                <% if (!item.is_active) { %><span class="badge badge--muted">Archived</span><% } %>
+              <td data-label="Status">
+                <span class="badge badge--<%= status.tone %>"><%= status.label %></span>
               </td>
-              <td class="right" data-label="Locations"><span class="num"><%= item.location_count %></span></td>
-              <td class="right cell-end" data-label="On hand">
-                <strong class="num"><%= helpers.qty(item.on_hand) %></strong>
-                <%# A product with nothing in it is the commonest state right after
-                    setup, and "empty" on its own is a dead end. Say what would
-                    change it and link straight there. %>
-                <% if (item.on_hand === 0) { %>
-                  <a class="badge badge--muted" href="/inventory/<%= item.id %>#modal-receive">Receive stock</a>
+              <td class="num" data-label="On hand"><strong><%= helpers.qty(item.on_hand) %></strong></td>
+              <td class="num t-muted" data-label="Committed"><%= item.committed ? helpers.qty(item.committed) : '—' %></td>
+              <td class="num" data-label="Available"><%= helpers.qty(item.available) %></td>
+              <td class="num cell-end" data-label="On order">
+                <% if (item.onOrder) { %>
+                  <%= helpers.qty(item.onOrder) %>
+                <% } else if (item.on_hand === 0) { %>
+                  <%# Nothing here and nothing coming is the commonest state right
+                      after setup, and a dash is a dead end. Say what changes it. %>
+                  <a class="t-xs" href="/inventory/<%= item.id %>#modal-receive">Receive stock</a>
+                <% } else { %>
+                  <span class="t-muted">—</span>
                 <% } %>
               </td>
             </tr>

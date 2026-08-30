@@ -248,7 +248,11 @@ test('Ask Foundry says what it cannot do rather than guessing', async () => {
 
   const page = plain((await agent.get('/ask').query({ q: 'What is our margin on these?' })).text);
   assert.match(page, /does not know what you paid/);
-  assert.match(page, /Outside what Foundry does/);
+  assert.match(page, /Not something Foundry can answer/);
+  // A refusal must still leave somewhere to go: the examples chips only showed
+  // before a question was asked, so a refused question was a dead end.
+  assert.match(page, /Here is what you can ask/);
+  assert.match(page, /what Foundry can do today/);
 });
 
 test('every attention route needs a signed-in session', async () => {
@@ -437,11 +441,7 @@ test('a configured but quiet inventory still says all clear', async () => {
   assert.ok(!page.includes('There is nothing in this inventory yet'));
 });
 
-test('the overview does not claim all clear while Needs you holds something', async () => {
-  // Found crawling a new account: /overview said "All clear" and /needs-you said
-  // "1 thing needs you" about the same inventory on the same afternoon. Nothing
-  // wrong with the stock is not the same as nothing needing a person, and a new
-  // customer has no way to tell which screen is lying.
+test('learning demand stays contextual and does not become a fake Needs you decision', async () => {
   const store = makeDatabase();
   const workspace = seedWorkspace(store.db);
   store.db.prepare(
@@ -462,8 +462,8 @@ test('the overview does not claim all clear while Needs you holds something', as
   const needsYou = plain((await agent.get('/needs-you')).text);
   const overview = plain((await agent.get('/overview')).text);
 
-  assert.match(needsYou, /1 decision is waiting/);
-  assert.doesNotMatch(overview, /All clear/, 'the other screen says something is waiting');
-  assert.match(overview, /waiting for you/);
-  assert.match(overview, /Needs you/);
+  assert.match(needsYou, /Nothing is waiting/);
+  assert.match(overview, /All clear/);
+  assert.doesNotMatch(needsYou, /Tell Foundry when you sell something/,
+    'normal learning guidance belongs on Home, not in the decision inbox');
 });
