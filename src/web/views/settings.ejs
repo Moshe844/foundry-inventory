@@ -5,30 +5,56 @@
   </div>
 </div>
 
-<div class="grid grid--sidebar">
-  <div class="grid">
-    <div class="card">
-      <div class="card-head"><h2>How Foundry manages this inventory</h2></div>
-      <div class="card-body grid">
-        <a class="list-row" href="/purchasing/setup"><div><strong>Stock management</strong><p>Foundry managed · adjust reorder points, targets, safety stock and suppliers.</p></div><span>Adjust rules</span></a>
-        <a class="list-row" href="/autopilot"><div><strong>Automatic work</strong><p>Choose whether Foundry asks first or handles routine work inside your limits.</p></div><span>Choose</span></a>
-        <a class="list-row" href="/locations"><div><strong>Locations</strong><p>Where inventory is stored and moved.</p></div><span>Open</span></a>
-        <a class="list-row" href="/imports"><div><strong>Imports</strong><p>Bring in spreadsheets and review exact changes.</p></div><span>Open</span></a>
-        <a class="list-row" href="/foundry"><div><strong>Inventory configuration</strong><p>Terminology and tracking setup.</p></div><span>Open</span></a>
-        <a class="list-row" href="/autopilot/history"><div><strong>System & audit</strong><p>Advanced record of what Foundry checked, decided and carried out.</p></div><span>Open</span></a>
-        <a class="list-row" href="/settings/connections"><div><strong>Connections</strong><p>Keep Foundry informed automatically from systems outside Foundry.</p></div><span>Manage</span></a>
+<%
+  /*
+   * Settings, grouped the way a person would group them.
+   *
+   * One list held seven destinations of every kind at once: how stock is
+   * managed, where it is kept, how spreadsheets come in, and "System & audit —
+   * advanced record of what Foundry checked, decided and carried out", which is
+   * a debugging tool sitting between Locations and Connections. Alongside it, a
+   * right-hand column carried Inventory integrity and Your account, so related
+   * settings sat in two columns by accident of when they were written — People
+   * in one place and the button that adds a person in another.
+   *
+   * Now: how Foundry works, then the operation, then this inventory, then the
+   * people on it, and everything technical behind one Advanced heading. One
+   * column, because none of it is a sidebar.
+   */
+%>
+<div class="settings">
+    <section class="section">
+      <div class="section-head"><h2>How Foundry manages this inventory</h2></div>
+      <div class="panel">
+        <a class="list-row" href="/purchasing/setup"><div><strong>Stock management</strong><p>Reorder points, targets, safety stock and suppliers.</p></div><span>Adjust rules</span></a>
+        <a class="list-row" href="/autopilot"><div><strong>Automatic work</strong><p>Whether Foundry asks first, or handles routine work inside your limits.</p></div><span>Choose</span></a>
+        <a class="list-row" href="/foundry"><div><strong>Inventory configuration</strong><p>What you call things, and how they are tracked.</p></div><span>Open</span></a>
       </div>
-    </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><h2>Your operation</h2></div>
+      <div class="panel">
+        <a class="list-row" href="/locations"><div><strong>Locations</strong><p>Where inventory is stored and moved.</p></div><span>Open</span></a>
+        <a class="list-row" href="/suppliers"><div><strong>Suppliers</strong><p>Who you buy from, and on what terms.</p></div><span>Open</span></a>
+        <a class="list-row" href="/settings/connections"><div><strong>Connections</strong><p>Keep Foundry informed automatically from the systems where you sell.</p></div><span>Manage</span></a>
+        <a class="list-row" href="/imports"><div><strong>Imports</strong><p>Bring in spreadsheets and review the exact changes first.</p></div><span>Open</span></a>
+      </div>
+    </section>
 
     <% if (stockGuards.length) { %>
       <div class="card" id="stock-protection">
-        <div class="card-head"><div><h2>Stock protection</h2><p class="muted">Hard stops enforced wherever outgoing stock is recorded.</p></div><span class="spacer"></span><span class="badge"><%= stockGuards.length %> active</span></div>
+        <div class="card-head"><div><h2>Stock protection & alerts</h2><p class="muted">Warnings and optional hard stops for low stock.</p></div><span class="spacer"></span><span class="badge"><%= stockGuards.length %> active</span></div>
         <div class="card-body grid">
           <% stockGuards.forEach(function(rule) { %>
             <div class="list-row">
               <div>
                 <strong><%= rule.itemName %><%= rule.variantLabel ? ' / ' + rule.variantLabel : '' %><%= rule.locationName ? ' at ' + rule.locationName : '' %></strong>
-                <p>Block a sale or issue that would leave stock <%= rule.boundary.blockedWhen %>. <%= rule.boundary.permittedExplanation %> <%= rule.releaseCondition === 'on_order' ? 'Resume after a supplier order is placed.' : rule.releaseCondition === 'stock_recovered' ? 'Resume after on-hand stock recovers to ' + rule.releaseThreshold + '.' : 'An owner must release it.' %></p>
+                <% if (rule.enforcementMode === 'warn') { %>
+                  <p>Warn when on-hand stock is <%= rule.boundary.blockedWhen %>. Outgoing stock remains allowed.</p>
+                <% } else { %>
+                  <p>Block a sale or issue that would leave stock <%= rule.boundary.blockedWhen %>. <%= rule.boundary.permittedExplanation %> <%= rule.releaseCondition === 'on_order' ? 'Resume after a supplier order is placed.' : rule.releaseCondition === 'stock_recovered' ? 'Resume after on-hand stock recovers to ' + rule.releaseThreshold + '.' : 'An owner must release it.' %></p>
+                <% } %>
               </div>
               <% if (rule.instructionId) { %>
                 <a class="btn btn--sm" href="/operating-instructions/<%= rule.instructionId %>">Manage</a>
@@ -211,9 +237,30 @@
         Owners manage locations, people and settings. Staff do the day-to-day inventory work.
       </div>
     </div>
-  </div>
 
-  <div class="grid">
+    <div class="card">
+      <div class="card-head"><h2>Your account</h2></div>
+      <div class="card-body">
+        <dl class="kv">
+          <dt>Name</dt><dd><%= currentUser.name %></dd>
+          <dt>Email</dt><dd><%= currentUser.email %></dd>
+          <dt>Role</dt><dd><%= helpers.roleLabel(currentUser.role) %></dd>
+        </dl>
+      </div>
+    </div>
+
+    <%# Everything below is for auditing and debugging. It is real and it is
+        kept, but it is not what somebody opens Settings to change. %>
+    <div class="section-head" style="margin-top:32px;"><h2>Advanced</h2></div>
+    <p class="page-sub" style="margin-bottom:16px;">
+      The record behind Foundry's decisions, and the checks it runs on its own data.
+    </p>
+
+    <a class="list-row panel" href="/autopilot/history">
+      <div><strong>System &amp; audit</strong><p>What Foundry checked, decided and carried out.</p></div>
+      <span>Open</span>
+    </a>
+
     <div class="card">
       <div class="card-head"><h2>Inventory integrity</h2></div>
       <div class="card-body">
@@ -238,18 +285,6 @@
         </p>
       </div>
     </div>
-
-    <div class="card">
-      <div class="card-head"><h2>Your account</h2></div>
-      <div class="card-body">
-        <dl class="kv">
-          <dt>Name</dt><dd><%= currentUser.name %></dd>
-          <dt>Email</dt><dd><%= currentUser.email %></dd>
-          <dt>Role</dt><dd><%= helpers.roleLabel(currentUser.role) %></dd>
-        </dl>
-      </div>
-    </div>
-  </div>
 </div>
 
 <% if (currentUser.role === 'owner') { %>

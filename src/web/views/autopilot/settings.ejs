@@ -176,6 +176,29 @@
     Foundry can safely prepare work and investigate without authority. Automatic transfers and routine purchase-order approval each need their own limits below. Counts, ambiguous identities and destructive changes always remain human decisions.
   </div>
 <% } %>
+<%
+  /*
+   * Everything below this line is the advanced half.
+   *
+   * The customer-facing choice is two options — ask me first, or handle routine
+   * work inside limits I approve — and it is answered at the top of this page.
+   * What followed was eight more cards of equal weight: writing policies in
+   * prose, the compiled policy for review, balancing rules, replenishment
+   * approval rules, hard limits and running preferences. Each is real and some
+   * owner wants every one of them, but presented as siblings of the choice they
+   * make the choice look unfinished — as though picking one of two options had
+   * left eight more things to fill in before Foundry would do anything.
+   *
+   * One heading is enough to say these are for people who want the exact rules.
+   */
+%>
+<div class="section-head" style="margin-top:40px;">
+  <h2>Advanced controls</h2>
+</div>
+<p class="page-sub" style="margin-bottom:20px;">
+  Exact policies, hard limits and preferences. The choice above works without any of this.
+</p>
+
 <form method="post" action="/autopilot/policies/read" class="card section" data-busy>
   <div class="card-head"><h2>Tell Foundry what it may handle</h2></div>
   <div class="card-body">
