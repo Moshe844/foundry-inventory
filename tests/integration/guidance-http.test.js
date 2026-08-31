@@ -13,6 +13,7 @@ const suppliers = require('../../src/purchasing/supplier-service');
 const modes = require('../../src/autopilot/modes');
 const guidance = require('../../src/manager/guidance');
 const physicalEvents = require('../../src/manager/physical-events');
+const connectionService = require('../../src/connections/service');
 const { createApp } = require('../../src/app');
 const { makeDatabase, cleanupAll, seedWorkspace, plain, signIn } = require('../helpers');
 const { configure } = require('../helpers/scenarios');
@@ -33,18 +34,53 @@ async function ownerAgent(env) {
   return agent;
 }
 
-test('a fresh inventory explains the first real step and deep-links to it', async () => {
+test('a fresh inventory asks for the real source instead of assuming manual entry', async () => {
   const env = setup();
   const agent = await ownerAgent(env);
   const response = await agent.get('/');
   const page = plain(response.text);
 
-  assert.match(page, /Getting started/);
-  assert.match(page, /The shortest path to a working inventory/);
-  assert.match(page, /Set up products and locations/);
+  assert.match(page, /Do this next/);
+  assert.match(page, /Do this next/);
+  assert.match(page, /Choose where Foundry should get your inventory/);
+  assert.match(page, /manual entry, file upload, approved email attachments, a connected POS\/ERP, or several sources/);
   assert.match(response.text, /href="\/onboarding"/);
-  assert.match(page, /Foundry checks these off from your real records/);
+  assert.match(page, /Setup progress/);
   assert.doesNotMatch(page, /Learn more/);
+});
+
+test('a completed source review outranks generic manual setup on Home', () => {
+  const env = setup();
+  const connection = connectionService.create(env.db, env.ctx, env.membership, {
+    providerType: 'supplier_email', displayName: 'Inventory mailbox',
+  }).connection;
+  const now = new Date().toISOString();
+  env.db.prepare(`INSERT INTO foundry_understandings
+    (id, workspace_id, source_description, provider, model, payload, confidence, actor_user_id, created_at)
+    VALUES ('under_source', ?, 'email attachment', 'test', 'test', '{}', 'high', ?, ?)`)
+    .run(env.workspace.workspaceId, env.ctx.actorId, now);
+  env.db.prepare(`INSERT INTO setup_documents
+    (id, workspace_id, uploaded_by_user_id, understanding_id, source_name, source_mime,
+     source_content, content_hash, extracted_text, interpretation, status, created_at)
+    VALUES ('doc_source', ?, ?, 'under_source', 'inventory.pdf', 'application/pdf', X'01',
+      'source-hash', 'inventory rows', '{}', 'PREPARED', ?)`)
+    .run(env.workspace.workspaceId, env.ctx.actorId, now);
+  env.db.prepare(`INSERT INTO connection_email_messages
+    (id, workspace_id, connector_id, external_message_id, sender, recipients, received_at,
+     trust_status, classification, processing_status, created_at)
+    VALUES ('msg_source', ?, ?, 'external-source', 'records@example.test', '[]', ?,
+      'TRUSTED', 'inventory_document', 'AWAITING_INVENTORY_REVIEW', ?)`)
+    .run(env.workspace.workspaceId, connection.id, now, now);
+  env.db.prepare(`INSERT INTO connection_email_attachments
+    (id, workspace_id, message_id, filename, content_hash, content, setup_document_id, created_at)
+    VALUES ('att_source', ?, 'msg_source', 'inventory.pdf', 'attachment-hash', X'01', 'doc_source', ?)`)
+    .run(env.workspace.workspaceId, now);
+
+  const state = guidance.build(env.db, env.workspace.workspaceId);
+  assert.equal(state.next.kind, 'import');
+  assert.match(state.next.title, /inventory\.pdf is ready for inventory review/);
+  assert.equal(state.next.href, '/foundry/proposal/under_source');
+  assert.doesNotMatch(state.next.title, /Add your first product|Choose where Foundry/);
 });
 
 test('the operating checklist completes from real records and becomes a next-best action', async () => {
@@ -59,6 +95,7 @@ test('the operating checklist completes from real records and becomes a next-bes
   assert.equal(state.steps.find((step) => step.id === 'structure').complete, true);
   assert.equal(state.steps.find((step) => step.id === 'opening').complete, false);
   assert.match(state.examples[0], /opening inventory for Black T-shirt/);
+  assert.equal(state.next.href, `/foundry/quantities/${item.itemId}`);
 
   engine.adjust(env.db, env.ctx, {
     skuId: sku.id, locationId: env.workspace.main.id, countedQty: 20,
@@ -66,23 +103,23 @@ test('the operating checklist completes from real records and becomes a next-bes
   });
   state = guidance.build(env.db, env.workspace.workspaceId);
   assert.equal(state.steps.find((step) => step.id === 'opening').complete, true);
-  assert.equal(state.steps.find((step) => step.id === 'activity').complete, false,
-    'opening stock itself is not treated as normal demand activity');
-  assert.match(state.examples[0], /We sold 1 Black T-shirt/);
+  assert.equal(state.steps.find((step) => step.id === 'supplier').complete, false);
+  // "ABC Apparel supplies Black T-shirt in cases of 12" was suggested here, and
+  // Foundry answers that sentence with "Foundry cannot store supplier catalogue
+  // details like pricing, pack size or lead time". Suggesting a sentence the
+  // product refuses teaches somebody that Tell Foundry does not work.
+  assert.match(state.examples[0], /Help me add a supplier for Black T-shirt/);
+  for (const example of state.examples) {
+    assert.doesNotMatch(example, /supplies .* in cases of/,
+      'no example promises something this box will refuse');
+  }
 
   engine.issue(env.db, env.ctx, {
     skuId: sku.id, locationId: env.workspace.main.id, quantity: 1, reasonCode: 'sold',
   });
   state = guidance.build(env.db, env.workspace.workspaceId);
-  assert.equal(state.checklistActive, false);
-  assert.match(state.next.title, /Set low-stock and replenishment rules for Black T-shirt/);
-  assert.equal(state.next.href, `/purchasing/why/${sku.id}?guide=1#reorder-settings`);
-
-  reorderPolicies.setPolicy(env.db, env.ctx, env.membership, sku.id, {
-    reorderPoint: 5, targetStock: 20, safetyStock: 2,
-  });
-  state = guidance.build(env.db, env.workspace.workspaceId);
-  assert.match(state.next.title, /Add a supplier for Black T-shirt/);
+  assert.equal(state.checklistActive, true);
+  assert.match(state.next.title, /Add who supplies Black T-shirt/);
   assert.equal(state.next.href, `/purchasing/supplier-for/${sku.id}`);
 
   const supplier = suppliers.createSupplier(env.db, env.ctx, env.membership, {
@@ -93,18 +130,33 @@ test('the operating checklist completes from real records and becomes a next-bes
     unitsPerPurchaseUnit: 1, lastUnitCost: 4, isPreferred: true,
   });
   state = guidance.build(env.db, env.workspace.workspaceId);
-  assert.match(state.next.title, /Choose how Foundry should handle routine work/);
+  assert.match(state.next.title, /Decide when to reorder Black T-shirt/);
+  assert.equal(state.next.href, `/purchasing/why/${sku.id}?guide=1#reorder-settings`);
+
+  reorderPolicies.setPolicy(env.db, env.ctx, env.membership, sku.id, {
+    reorderPoint: 5, targetStock: 20, safetyStock: 2,
+  });
+  state = guidance.build(env.db, env.workspace.workspaceId);
+  assert.match(state.next.title, /Choose what Foundry may handle without asking you/);
   assert.equal(state.next.href, '/autopilot');
+
+  // Background checks update the autopilot timestamp. That is not a human
+  // authority decision and must not silently complete this setup step.
+  env.db.prepare(
+    'UPDATE workspace_autopilot SET updated_at = ?, last_evaluated_at = ? WHERE workspace_id = ?'
+  ).run(new Date().toISOString(), new Date().toISOString(), env.workspace.workspaceId);
+  state = guidance.build(env.db, env.workspace.workspaceId);
+  assert.match(state.next.title, /Choose what Foundry may handle without asking you/);
 
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
   state = guidance.build(env.db, env.workspace.workspaceId);
   assert.equal(state.next.kind, 'clear');
-  assert.match(state.next.title, /Everything is in order/);
+  assert.match(state.next.title, /Foundry is managing inventory/);
 
   const agent = await ownerAgent(env);
   const home = plain((await agent.get('/')).text);
-  assert.match(home, /What should I do next\?/);
-  assert.match(home, /Everything is in order\. Nothing needs you right now\./);
+  assert.match(home, /Do this next/);
+  assert.match(home, /Foundry is managing inventory/);
 });
 
 test('the permanent task guide uses this inventory in examples and points to real task screens', async () => {
@@ -158,6 +210,17 @@ test('the next action reuses the real Needs you decision and links to the exact 
   engine.issue(env.db, env.ctx, {
     skuId: sku.id, locationId: env.workspace.main.id, quantity: 1, reasonCode: 'sold',
   });
+  const supplier = suppliers.createSupplier(env.db, env.ctx, env.membership, {
+    name: 'Tote Supply', defaultLeadTimeDays: 5,
+  });
+  suppliers.linkItem(env.db, env.ctx, env.membership, {
+    supplierId: supplier.id, skuId: sku.id, purchaseUnit: 'unit',
+    unitsPerPurchaseUnit: 1, lastUnitCost: 4, isPreferred: true,
+  });
+  reorderPolicies.setPolicy(env.db, env.ctx, env.membership, sku.id, {
+    reorderPoint: 5, targetStock: 20, safetyStock: 2,
+  });
+  modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
 
   const event = await physicalEvents.recordNatural(
     env.db, env.ctx, 'I counted 17 Canvas Tote at Main Warehouse'
@@ -195,4 +258,60 @@ test('the next action reuses the real Needs you decision and links to the exact 
   assert.match(needsYou, /Why Foundry stopped/i);
   assert.match(needsYou, /Your decision/i);
   assert.match(needsYou, /Resolve the difference/, 'the action names the decision, not "Review"');
+});
+
+test('Needs you guidance names the real waiting decision even while setup is incomplete', async () => {
+  const env = setup();
+  configure(env.db, env.workspace.workspaceId);
+  const item = itemService.createItem(env.db, env.ctx, {
+    name: 'Canvas Tote', baseCode: 'TOTE-ACTIVE-SETUP', trackingMode: 'quantity',
+  });
+  const sku = repo.listSkusForItem(env.db, env.workspace.workspaceId, item.itemId)[0];
+  engine.receive(env.db, env.ctx, {
+    skuId: sku.id, locationId: env.workspace.main.id, quantity: 20,
+    reasonCode: 'opening_inventory', notes: 'Opening inventory',
+  });
+  const event = await physicalEvents.recordNatural(
+    env.db, env.ctx, 'I counted 17 Canvas Tote at Main Warehouse'
+  );
+  const state = guidance.build(env.db, env.workspace.workspaceId);
+  assert.equal(state.checklistActive, true, 'supplier and replenishment setup are still incomplete');
+  assert.notEqual(state.next.kind, 'needs-you', 'Home may still lead the setup sequence');
+
+  const agent = await ownerAgent(env);
+  const page = plain((await agent.get('/needs-you')).text);
+  assert.match(page, /Do now:.*Canvas Tote does not match the records/i);
+  assert.doesNotMatch(page, /Do now:\s*Nothing needs a decision from you/i);
+  assert.match((await agent.get('/needs-you')).text, new RegExp(`/investigations/${event.investigationId}`));
+  env.db.close();
+});
+
+/**
+ * Setup must not send somebody back through the door they just came out of.
+ *
+ * Found by walking the new-owner scenario. Foundry read the business, agreed
+ * the tracking model, created both locations and said "Your inventory is ready
+ * — everything below is live now". Home then said "Do this next: choose where
+ * Foundry should get your inventory", pointing at the screen just left, over a
+ * progress bar reading 0 of 5.
+ *
+ * The step was genuinely incomplete — there were no products yet — but the one
+ * thing missing was the one thing it did not say.
+ */
+test('a configured inventory is asked for its first product, not for a source again', async () => {
+  const env = setup();
+  configure(env.db, env.workspace.workspaceId);
+  const agent = await ownerAgent(env);
+  const page = plain((await agent.get('/')).text);
+
+  assert.match(page, /Add the first thing you sell/,
+    'the missing thing is a product, and it says so');
+  assert.doesNotMatch(page, /Choose where Foundry should get your inventory/,
+    'that question was answered by configuring the inventory');
+  assert.match((await agent.get('/')).text, /href="\/inventory\/new"/,
+    'and it goes where products are added');
+
+  // The checklist says which half of the step is done rather than reading as
+  // if nothing had happened.
+  assert.match(page, /location(s)? ready\. No products yet\./);
 });

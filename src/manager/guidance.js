@@ -31,6 +31,9 @@ function facts(db, workspaceId) {
   const movements = db.prepare(
     `SELECT operation, notes, reason_code FROM movements WHERE workspace_id = ? ORDER BY seq`
   ).all(workspaceId);
+  const onHand = db.prepare(
+    'SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ?'
+  ).get(workspaceId).n;
   const issueCount = movements.filter((row) => row.operation === 'issue').length;
   const transferCount = movements.filter((row) => row.operation === 'transfer').length;
   const normalReceipts = movements.filter((row) => row.operation === 'receive'
@@ -45,14 +48,14 @@ function facts(db, workspaceId) {
     'SELECT COUNT(*) AS n FROM reorder_policies WHERE workspace_id = ? AND reorder_point IS NOT NULL'
   ).get(workspaceId).n;
   const missingSupplier = db.prepare(
-    `SELECT rp.sku_id, i.name, s.variant_label
-       FROM reorder_policies rp
-       JOIN skus s ON s.id = rp.sku_id
+    `SELECT s.id AS sku_id, i.name, s.variant_label
+       FROM skus s
        JOIN items i ON i.id = s.item_id
-      WHERE rp.workspace_id = ? AND rp.reorder_point IS NOT NULL
+      WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
+        AND i.tracking_mode != 'serial'
         AND NOT EXISTS (
           SELECT 1 FROM supplier_items si
-           WHERE si.workspace_id = rp.workspace_id AND si.sku_id = rp.sku_id AND si.is_active = 1
+           WHERE si.workspace_id = s.workspace_id AND si.sku_id = s.id AND si.is_active = 1
         )
       ORDER BY i.name, s.position LIMIT 1`
   ).get(workspaceId) || null;
@@ -84,19 +87,41 @@ function facts(db, workspaceId) {
     'SELECT path, status FROM workspace_onboarding WHERE workspace_id = ?'
   ).get(workspaceId) || null;
   const autopilot = db.prepare(
-    'SELECT mode, created_at, updated_at FROM workspace_autopilot WHERE workspace_id = ?'
+    'SELECT mode FROM workspace_autopilot WHERE workspace_id = ?'
   ).get(workspaceId) || null;
   const activePolicies = db.prepare(
     `SELECT COUNT(*) AS n FROM automation_policies
       WHERE workspace_id = ? AND enabled = 1 AND approved_at IS NOT NULL AND disabled_at IS NULL`
   ).get(workspaceId).n;
+  const authorityDecisionCount = db.prepare(
+    "SELECT COUNT(*) AS n FROM domain_events WHERE workspace_id = ? AND event_type = 'authority.updated'"
+  ).get(workspaceId).n;
+  const connectionCount = db.prepare(
+    "SELECT COUNT(*) AS n FROM workspace_connectors WHERE workspace_id = ? AND status = 'connected'"
+  ).get(workspaceId).n;
+  const sellingConnectionCount = db.prepare(
+    "SELECT COUNT(*) AS n FROM workspace_connectors WHERE workspace_id = ? AND status = 'connected' AND provider_type IN ('shopify','square','clover','woocommerce','reference_webhook')"
+  ).get(workspaceId).n;
+  const salesOrderCount = db.prepare(
+    'SELECT COUNT(*) AS n FROM sales_orders WHERE workspace_id = ?'
+  ).get(workspaceId).n;
+  const missingPrice = db.prepare(
+    `SELECT i.id AS item_id, i.name, s.id AS sku_id, s.variant_label
+       FROM skus s JOIN items i ON i.id = s.item_id
+      WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
+        AND (SELECT sp.amount_minor FROM sku_prices sp
+              WHERE sp.workspace_id = s.workspace_id AND sp.sku_id = s.id
+              ORDER BY sp.created_at DESC, sp.rowid DESC LIMIT 1) IS NULL
+      ORDER BY i.name, s.position LIMIT 1`
+  ).get(workspaceId) || null;
 
   const uniqueItems = new Set(items.map((row) => row.id));
   const inventoryModel = json(configuration && configuration.inventory_model, {});
   const purchasingRelevant = items.some((row) => row.tracking_mode && row.tracking_mode !== 'serial')
     || supplierCount > 0 || reorderCount > 0;
   const authorityReviewed = activePolicies > 0
-    || Boolean(autopilot && (autopilot.mode !== 'SUPERVISED' || autopilot.updated_at !== autopilot.created_at));
+    || authorityDecisionCount > 0
+    || Boolean(autopilot && autopilot.mode !== 'SUPERVISED');
 
   return {
     configured: Boolean(configuration && configuration.configured_at),
@@ -105,6 +130,7 @@ function facts(db, workspaceId) {
     skuCount: items.filter((row) => row.sku_id).length,
     first,
     locations,
+    onHand,
     movementCount: movements.length,
     issueCount,
     normalActivityCount: issueCount + transferCount + normalReceipts,
@@ -119,6 +145,10 @@ function facts(db, workspaceId) {
     purchasingRelevant,
     authorityReviewed,
     activePolicies,
+    connectionCount,
+    sellingConnectionCount,
+    salesOrderCount,
+    missingPrice,
   };
 }
 
@@ -126,10 +156,29 @@ const displayName = (record) => record
   ? `${record.name}${record.variant_label ? ` — ${record.variant_label}` : ''}`
   : 'a product';
 
+/*
+ * The next step in getting set up, in the order things actually happen.
+ *
+ * "No items yet" was tested before anything else, so a workspace that had just
+ * been through the whole descriptive setup — Foundry read the business, agreed
+ * the tracking model, created the locations and said "Your inventory is ready,
+ * everything below is live now" — was met on its own home page by "Do this
+ * next: choose where Foundry should get your inventory", pointing back at the
+ * screen it had just come from. The one thing missing was a product, and that
+ * was the one thing it did not say.
+ *
+ * Choosing a source is only the next step for a workspace that has not made
+ * that choice yet. Once it has, the next step is the first product.
+ */
 function setupAction(state) {
-  if (!state.configured) return { href: '/onboarding', action: 'Set up this inventory' };
+  // Having locations is not evidence the source question was answered — a
+  // workspace can be seeded or migrated with locations and never have been
+  // asked. An agreed configuration is that evidence.
+  const started = state.configured;
+  if (!started) return { href: '/onboarding', action: 'Choose an inventory source' };
   if (!state.locations.length) return { href: '/locations', action: 'Add a location' };
-  if (!state.itemCount) return { href: '/inventory/new', action: 'Add a product' };
+  if (!state.itemCount) return { href: '/inventory/new', action: 'Add your first product' };
+  if (!state.configured) return { href: '/onboarding', action: 'Continue inventory setup' };
   return { href: '/inventory', action: 'View inventory setup' };
 }
 
@@ -138,7 +187,7 @@ function replenishmentAction(state) {
     return {
       href: `/purchasing/supplier-for/${state.missingSupplier.sku_id}`,
       action: 'Add its supplier',
-      detail: `${displayName(state.missingSupplier)} has a reorder rule but no supplier to order from.`,
+      detail: `Tell Foundry who supplies ${displayName(state.missingSupplier)} and how they sell it.`,
     };
   }
   const record = state.missingReorder || state.first;
@@ -157,9 +206,9 @@ function examples(state) {
   const location = state.locations[0] && state.locations[0].name;
   if (!state.itemCount) {
     return [
-      'I want to add my products',
-      'Help me set up inventory from this file',
-      'We are starting from scratch',
+      'My product list is in a file',
+      'My suppliers email inventory documents',
+      'My products are in another selling or inventory system',
     ];
   }
   if (!state.movementCount) {
@@ -169,11 +218,30 @@ function examples(state) {
       `We received 10 ${item}${location ? ` at ${location}` : ''}`,
     ];
   }
-  if (!state.issueCount) {
+  if (state.missingSupplier) {
+    /*
+     * "ABC Apparel supplies Copper Elbow 15mm in cases of 12" was the first
+     * suggestion here, and Foundry answers that sentence with "Foundry cannot
+     * store supplier catalogue details like pricing, pack size or lead time".
+     * It can — there is a form for exactly those fields — but not through this
+     * box, which prepares stock movements. Offering a sentence the product then
+     * refuses is worse than offering nothing: it teaches somebody that Tell
+     * Foundry does not work.
+     *
+     * These are things this box does handle, and the supplier's own terms are
+     * one click away in "Do this next" directly above.
+     */
     return [
-      `We sold 1 ${item}${location ? ` at ${location}` : ''}`,
+      `Help me add a supplier for ${item}`,
       `We received 10 ${item}${location ? ` at ${location}` : ''}`,
-      `I counted ${item}${location ? ` at ${location}` : ''}`,
+      `How many ${item} do we have?`,
+    ];
+  }
+  if (state.missingReorder) {
+    return [
+      `Reorder ${item} at 20 and bring it back to 50`,
+      `When is ${item} considered low?`,
+      `We sold 1 ${item}${location ? ` at ${location}` : ''}`,
     ];
   }
   if (state.partialOrder) {
@@ -183,11 +251,11 @@ function examples(state) {
       `I counted ${item}${location ? ` at ${location}` : ''}`,
     ];
   }
-  if (state.missingSupplier) {
+  if (state.sellingConnectionCount) {
     return [
-      `Help me add a supplier for ${displayName(state.missingSupplier)}`,
-      `Set replenishment rules for ${item}`,
-      `We sold 1 ${item}${location ? ` at ${location}` : ''}`,
+      "Did today's connected sales come through?",
+      `We received 10 ${item}${location ? ` at ${location}` : ''}`,
+      `I counted ${item}${location ? ` at ${location}` : ''}`,
     ];
   }
   return [
@@ -205,54 +273,52 @@ function buildChecklist(state) {
   // configuration flow merely because it has no workspace_configuration row.
   const setup = state.itemCount > 0 && state.locations.length > 0;
   const opening = setup && state.movementCount > 0;
-  const firstActivity = opening && state.normalActivityCount > 0;
-  const purchasing = !state.purchasingRelevant
-    || (state.reorderCount > 0 && state.supplierItemCount > 0);
+  const supplier = opening && state.supplierItemCount > 0;
+  const replenishmentReady = supplier && state.reorderCount > 0;
   const authority = state.authorityReviewed;
   const setupCta = setupAction(state);
   const replenishment = replenishmentAction(state);
-  const saleExample = state.first
-    ? `We sold 1 ${displayName(state.first)}${state.locations[0] ? ` at ${state.locations[0].name}` : ''}`
-    : 'We sold an item';
-
   const steps = [
     {
-      id: 'structure', title: state.locations.length ? 'Set up products and locations' : 'Start with a location', complete: setup,
+      id: 'structure', title: 'Bring in products and stock locations', complete: setup,
       detail: setup
         ? `${state.itemCount} product${state.itemCount === 1 ? '' : 's'} across ${state.locations.length} location${state.locations.length === 1 ? '' : 's'}.`
-        : 'Foundry needs to know what you track and where stock can be held.',
+        : state.locations.length
+          // Half-done reads as not-started unless the step says which half.
+          ? `${state.locations.length} location${state.locations.length === 1 ? '' : 's'} ready. No products yet.`
+          : 'Choose the real source: enter it here, upload documents, use approved email attachments, connect another system, or combine sources.',
       ...setupCta,
     },
     {
       id: 'opening', title: 'Enter opening inventory', complete: opening,
       detail: opening
         ? 'Opening stock is recorded in the ledger.'
-        : 'Tell Foundry what is on hand now, or attach the file that already contains it.',
-      href: `/actions?q=${encodeURIComponent('I want to enter opening inventory')}`,
-      action: 'Confirm current stock',
+        : 'Confirm current stock by entering what is on hand now, or attach the file that already contains it.',
+      href: state.first ? `/foundry/quantities/${state.first.id}` : '/foundry/quantities',
+      action: 'Add opening inventory',
     },
     {
-      id: 'activity', title: 'Record your first sale or receipt', complete: firstActivity,
-      detail: firstActivity
-        ? 'Foundry has started observing normal stock movement.'
-        : 'Record real activity as it happens so Foundry can learn demand and keep the ledger current.',
-      href: `/actions?q=${encodeURIComponent(saleExample)}`,
-      action: 'Record an activity',
+      id: 'supplier', title: 'Add who you buy from', complete: supplier,
+      detail: supplier
+        ? 'At least one product is linked to a supplier.'
+        : 'Add a supplier so Foundry knows who can replenish your stock.',
+      href: replenishment.href,
+      action: state.missingSupplier ? 'Add supplier' : 'Set up purchasing',
+    },
+    {
+      id: 'replenishment', title: 'Decide when Foundry should reorder', complete: replenishmentReady,
+      detail: replenishmentReady
+        ? 'A low-stock point and target stock level are saved.'
+        : 'Set the simple low-stock point and the quantity you want restored.',
+      href: replenishment.href, action: 'Set when to reorder',
     },
   ];
-  if (state.purchasingRelevant) {
-    steps.push({
-      id: 'replenishment', title: 'Configure replenishment and suppliers', complete: purchasing,
-      detail: purchasing ? 'Foundry has a reorder rule and a supplier relationship it can use.' : replenishment.detail,
-      href: replenishment.href, action: replenishment.action, optional: true,
-    });
-  }
   steps.push({
     id: 'authority', title: 'Choose how much routine work Foundry may handle', complete: authority,
     detail: authority
       ? activeAuthorityCopy(state)
       : 'Keep Ask me first, or explicitly approve narrow limits for routine transfers and purchasing.',
-    href: '/autopilot', action: 'Choose automatic-work limits', optional: true,
+    href: '/autopilot', action: 'Choose automatic work',
   });
 
   let foundCurrent = false;
@@ -262,7 +328,7 @@ function buildChecklist(state) {
       foundCurrent = true;
     }
   }
-  return { steps, active: !setup || !opening || !firstActivity };
+  return { steps, active: !setup || !opening || !supplier || !replenishmentReady || !authority };
 }
 
 function activeAuthorityCopy(state) {
@@ -274,10 +340,92 @@ function activeAuthorityCopy(state) {
 
 function nextBestAction(db, workspaceId, state) {
   const inbox = needsYouInbox.inbox(db, workspaceId);
+  // A source the owner already chose outranks a generic manual-setup prompt.
+  // This is especially important for unattended mailbox checks: Foundry can
+  // finish reading a file while the browser is closed, and Home must expose
+  // the resulting review instead of pretending that nothing happened.
+  const sourceTask = inbox.find((entry) => entry.kind === 'import'
+    || entry.kind === 'connection');
+  if (sourceTask) {
+    return {
+      kind: sourceTask.kind, eyebrow: 'Do this next', title: sourceTask.title,
+      what: sourceTask.happened, why: sourceTask.why, recommendation: sourceTask.recommendation,
+      action: sourceTask.actionLabel, href: sourceTask.href,
+    };
+  }
+  if (!state.itemCount || !state.locations.length) {
+    const action = setupAction(state);
+    const missingLocation = !state.locations.length;
+    // A workspace that has already agreed a setup with Foundry is not choosing
+    // a source any more; it is waiting for its first product. Saying otherwise
+    // sent somebody back through a flow they had just finished.
+    const chosen = state.configured;
+    const stage = missingLocation ? 'location' : chosen ? 'product' : 'source';
+    const COPY = {
+      location: {
+        title: 'Add the first place you keep stock.',
+        what: 'This inventory does not have a warehouse, store or other stock location yet.',
+        why: 'Every quantity must belong to a real place.',
+        recommendation: 'Add the warehouse, store or other place where stock currently lives.',
+      },
+      product: {
+        title: 'Add the first thing you sell.',
+        what: `Foundry has agreed how this inventory works and set up ${state.locations.length === 1 ? 'its location' : 'its locations'}, but there are no products in it yet.`,
+        why: 'Foundry can only count, watch and reorder things it has a record of.',
+        recommendation: 'Add one by hand, tell Foundry what you stock, or attach the file that lists it.',
+      },
+      source: {
+        title: 'Choose where Foundry should get your inventory.',
+        what: 'Foundry knows something about the business, but it has not received real product records yet.',
+        why: 'A general description such as “I sell clothing” does not contain product names, variants, or quantities.',
+        recommendation: 'Choose manual entry, file upload, approved email attachments, a connected POS/ERP, or several sources.',
+      },
+    };
+    return { kind: 'setup', eyebrow: 'Do this next', ...COPY[stage], ...action };
+  }
+  if (!state.movementCount) {
+    return {
+      kind: 'setup', eyebrow: 'Do this next', title: 'Tell Foundry how much you have now.',
+      what: 'Your products are ready, but no opening quantities have been recorded.',
+      why: 'Until the starting amount is known, later sales and receipts cannot produce a truthful balance.',
+      recommendation: 'Enter current quantities or attach the inventory file that contains them.',
+      action: 'Add opening inventory', href: state.first ? `/foundry/quantities/${state.first.id}` : '/foundry/quantities',
+    };
+  }
+  if (state.missingSupplier) {
+    return {
+      kind: 'supplier', eyebrow: 'Do this next',
+      title: `Add who supplies ${displayName(state.missingSupplier)}.`,
+      what: 'Foundry knows the product and its current quantity, but not where replacement stock comes from.',
+      why: 'A supplier relationship is needed before Foundry can prepare an honest replenishment order.',
+      recommendation: 'Add the supplier, pack size, lead time and current cost if known.',
+      action: 'Add supplier', href: `/purchasing/supplier-for/${state.missingSupplier.sku_id}`,
+    };
+  }
+  if (state.missingReorder) {
+    return {
+      kind: 'replenishment', eyebrow: 'Do this next',
+      title: `Decide when to reorder ${displayName(state.missingReorder)}.`,
+      what: 'Foundry knows who supplies this product, but not when you consider it low.',
+      why: 'Foundry will never invent your low-stock point or target quantity.',
+      recommendation: 'Set the quantity that means “low” and the quantity you want restored.',
+      action: 'Set when to reorder',
+      href: `/purchasing/why/${state.missingReorder.sku_id}?guide=1#reorder-settings`,
+    };
+  }
+  if (!state.authorityReviewed) {
+    return {
+      kind: 'authority', eyebrow: 'Do this next', title: 'Choose what Foundry may handle without asking you.',
+      what: 'Inventory and replenishment are ready. Foundry is still using the safe “ask first” default.',
+      why: 'Automatic authority is never inferred from your activity.',
+      recommendation: 'Keep Ask me first, or approve narrow limits for routine purchasing and transfers.',
+      action: 'Choose automatic work', href: '/autopilot',
+    };
+  }
   if (inbox.length) {
     const item = inbox[0];
     return {
-      kind: 'needs-you', eyebrow: 'What should I do next?', title: item.title,
+      kind: 'needs-you', eyebrow: 'Do this next', title: item.title,
       what: item.happened, why: item.why, recommendation: item.recommendation,
       action: item.actionLabel, href: item.href,
     };
@@ -292,38 +440,8 @@ function nextBestAction(db, workspaceId, state) {
       action: 'Open the purchase order', href: `/purchasing/orders/${state.partialOrder.id}`,
     };
   }
-  if (state.missingSupplier) {
-    return {
-      kind: 'supplier', eyebrow: 'What should I do next?',
-      title: `Add a supplier for ${displayName(state.missingSupplier)}.`,
-      what: 'A reorder rule exists, but this variant is not linked to an active supplier.',
-      why: 'Without a supplier, Foundry cannot know the pack size, price or lead time and cannot prepare a truthful order.',
-      recommendation: 'Add the supplier and purchasing terms for this exact variant.',
-      action: 'Add its supplier', href: `/purchasing/supplier-for/${state.missingSupplier.sku_id}`,
-    };
-  }
-  if (state.missingReorder) {
-    return {
-      kind: 'replenishment', eyebrow: 'What should I do next?',
-      title: `Set low-stock and replenishment rules for ${displayName(state.missingReorder)}.`,
-      what: 'Foundry is recording this variant, but no reorder point is set.',
-      why: 'Without the rule, Foundry will not invent when you consider it low or how far to replenish it.',
-      recommendation: 'Set the reorder point, order-up-to level and supplier for this variant.',
-      action: 'Set replenishment rules',
-      href: `/purchasing/why/${state.missingReorder.sku_id}?guide=1#reorder-settings`,
-    };
-  }
-  if (!state.authorityReviewed) {
-    return {
-      kind: 'authority', eyebrow: 'What should I do next?', title: 'Choose how Foundry should handle routine work.',
-      what: 'Foundry is currently using the safe default and asks before consequential changes.',
-      why: 'Automatic authority is never inferred from your activity.',
-      recommendation: 'Keep Ask me first, or explicitly approve narrow transfer and purchasing limits.',
-      action: 'Choose automatic-work limits', href: '/autopilot',
-    };
-  }
   return {
-    kind: 'clear', eyebrow: 'What should I do next?', title: 'Everything is in order. Nothing needs you right now.',
+    kind: 'clear', eyebrow: 'Do this next', title: 'You’re set up. Foundry is managing inventory.',
     what: 'Foundry has no unresolved decision or physical fact waiting.',
     why: 'Recorded inventory, purchasing and exception state are currently consistent.',
     recommendation: 'Keep telling Foundry about normal sales, receipts, transfers and counts.',
@@ -334,13 +452,61 @@ function nextBestAction(db, workspaceId, state) {
 function build(db, workspaceId) {
   const state = facts(db, workspaceId);
   const checklist = buildChecklist(state);
+  const inbox = needsYouInbox.inbox(db, workspaceId);
   return {
     state,
     checklistActive: checklist.active,
     steps: checklist.steps,
-    next: checklist.active ? null : nextBestAction(db, workspaceId, state),
+    next: nextBestAction(db, workspaceId, state),
     examples: examples(state),
+    firstNeedsYou: inbox[0] || null,
+    needsYouCount: inbox.length,
   };
+}
+
+const screenDescriptions = {
+  inventory: 'See what you have, receive stock, record usage, move inventory, count it, and control replenishment.',
+  locations: 'See every warehouse, store or other place where stock can be held.',
+  sales: 'See completed sales, customer commitments, reserved stock, shortages and fulfillment.',
+  purchasing: 'See what Foundry wants to buy, orders already placed, what is arriving, and what still needs receiving.',
+  connections: 'Connect where sales and inventory activity happen so Foundry learns about them automatically.',
+  attention: 'Make only the decisions Foundry cannot safely settle by itself.',
+  activity: 'See the meaningful inventory changes Foundry and your team have recorded.',
+  settings: 'Choose how this inventory works and what Foundry may handle automatically.',
+};
+
+function screenContext(guidance, nav) {
+  if (!guidance || !screenDescriptions[nav]) return null;
+  const state = guidance.state;
+  let next = guidance.next;
+  if (nav === 'sales') {
+    next = state.missingPrice
+      ? { title: `Set the selling price for ${displayName(state.missingPrice)}`, action: 'Set selling price',
+          href: `/inventory/${state.missingPrice.item_id}#selling-price` }
+      : state.sellingConnectionCount
+      ? { title: 'Record a customer commitment', action: 'New sales order', href: '/sales/new' }
+      : { title: 'Connect where sales happen', action: 'Choose a sales system', href: '/settings/connections#connection-group-selling' };
+  } else if (nav === 'connections') {
+    // "Connected systems run automatically" is a status, not a task. If
+    // something genuinely needs the owner, show that exact next action;
+    // otherwise do not manufacture a contradictory "Do now" instruction.
+    next = guidance.next.kind === 'clear'
+      ? null
+      : guidance.next;
+    if (!state.connectionCount && guidance.next.kind === 'setup') {
+      next = { title: 'Connect the system where your records live', action: 'Choose a connection', href: '#connection-group-selling' };
+    }
+  } else if (nav === 'attention') {
+    next = guidance.firstNeedsYou
+      ? { title: guidance.firstNeedsYou.title, action: guidance.firstNeedsYou.actionLabel,
+          href: guidance.firstNeedsYou.href }
+      : { title: 'Nothing needs a decision from you', action: null, href: null };
+  } else if (nav === 'activity') {
+    next = state.movementCount
+      ? { title: 'Keep recording what comes in, goes out, moves or gets counted', action: 'Tell Foundry', href: '/#tell-foundry' }
+      : guidance.next;
+  }
+  return { description: screenDescriptions[nav], next };
 }
 
 function guideTopics(db, workspaceId) {
@@ -367,4 +533,4 @@ function guideTopics(db, workspaceId) {
   ];
 }
 
-module.exports = { facts, build, guideTopics, examples, displayName };
+module.exports = { facts, build, guideTopics, examples, displayName, screenContext };

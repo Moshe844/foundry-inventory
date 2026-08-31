@@ -102,6 +102,9 @@ router.get(
       continuationId: (handed && handed.continuationId) || null,
       questionTone: (handed && handed.tone) || null,
       answerAction: (handed && handed.answerAction) || '/actions/ask',
+      workflow: (handed && handed.workflow) || null,
+      workflowKind: (handed && handed.workflowKind) || null,
+      workflowStep: (handed && handed.workflowStep) || null,
     });
   })
 );
@@ -232,6 +235,9 @@ router.post(
       instruction,
       examples: exampleInstructions(req.db, req.ctx.workspaceId),
       question: result.kind === 'question' ? result.question : null,
+      // The product name Foundry could not place, so the page can offer to
+      // create it rather than only offering a box to type an answer into.
+      notFound: result.kind === 'question' ? (result.notFound || null) : null,
       unsupported: result.kind === 'unsupported' ? result.message : null,
       blocked: (result.kind === 'unsupported' && result.blocked) || null,
       physicalEventId: trimOrNull(req.body.physicalEventId) || null,
@@ -239,6 +245,9 @@ router.post(
       continuationId,
       questionTone: null,
       answerAction: '/actions/ask',
+      workflow: null,
+      workflowKind: null,
+      workflowStep: null,
     });
   })
 );

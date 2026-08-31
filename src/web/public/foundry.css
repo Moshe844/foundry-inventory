@@ -1700,3 +1700,18 @@ a.list-row.panel { display: flex; margin-bottom: var(--space-4); }
 .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2) var(--space-5); margin: 0; }
 .kv dt { font-size: var(--text-sm); color: var(--muted); }
 .kv dd { margin: 0; font-size: var(--text-sm); color: var(--ink); }
+
+/* A question Foundry cannot answer, with the way forward attached. */
+.act-create {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+}
+.act-create p { margin: 0; }

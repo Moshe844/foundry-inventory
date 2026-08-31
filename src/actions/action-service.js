@@ -191,8 +191,13 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     // A model can notice that an identity is incomplete without knowing which
     // catalogue dimension is actually unresolved. Ground generic identity
     // questions against real SKUs before showing them to the person.
-    if (/\b(product|item|variant|version|which one)\b/i.test(intent.clarifyingQuestion)) {
+    if (/\b(product|item|variant|version|which|colour|color|size|grade|material)\b/i.test(intent.clarifyingQuestion)) {
       const grounded = resolver.clarifySkuFromInstruction(db, ctx.workspaceId, text);
+      if (grounded && !grounded.ok && grounded.reason === 'not_found') {
+        // The name it could not place comes with the question, so the screen
+        // can offer to create that product instead of stopping dead.
+        return { kind: 'question', question: grounded.message, notFound: grounded.subject || null };
+      }
       if (grounded && !grounded.ok && grounded.reason === 'ambiguous') {
         return {
           kind: 'question',
@@ -206,7 +211,19 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   }
 
   const usable = intent.lines.filter((line) => !['clarify', 'unsupported'].includes(line.actionType));
-  const blocked = intent.lines.find((line) => ['clarify', 'unsupported'].includes(line.actionType));
+  let blocked = intent.lines.find((line) => ['clarify', 'unsupported'].includes(line.actionType));
+  if (usable.length === 1 && blocked && !/\b(?:and|then)\b|[;,\n]/i.test(text)) {
+    const artifactFields = [
+      blocked.item, blocked.variant, blocked.lotCode, blocked.sourceLocation,
+      blocked.destinationLocation, blocked.productName, blocked.productCode,
+      blocked.supplier, blocked.purchaseUnit,
+    ];
+    const emptyArtifact = artifactFields.every((value) => !String(value || '').trim())
+      && (!Array.isArray(blocked.serials) || blocked.serials.length === 0)
+      && !(Number.isFinite(blocked.quantity) && blocked.quantity >= 0)
+      && !(Number.isFinite(blocked.adjustmentTarget) && blocked.adjustmentTarget >= 0);
+    if (emptyArtifact) blocked = null;
+  }
 
   // Part of an instruction is not a smaller instruction.
   //
@@ -236,8 +253,13 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
       return { kind: 'unsupported', message: intent.unsupportedReason || 'Foundry cannot do that yet.' };
     }
     const modelQuestion = intent.clarifyingQuestion || '';
-    if (/\b(product|item|variant|version|which one)\b/i.test(modelQuestion)) {
+    if (/\b(product|item|variant|version|which|colour|color|size|grade|material)\b/i.test(modelQuestion)) {
       const grounded = resolver.clarifySkuFromInstruction(db, ctx.workspaceId, text);
+      if (grounded && !grounded.ok && grounded.reason === 'not_found') {
+        // The name it could not place comes with the question, so the screen
+        // can offer to create that product instead of stopping dead.
+        return { kind: 'question', question: grounded.message, notFound: grounded.subject || null };
+      }
       if (grounded && !grounded.ok && grounded.reason === 'ambiguous') {
         return {
           kind: 'question',

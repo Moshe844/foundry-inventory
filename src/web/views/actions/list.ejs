@@ -38,7 +38,7 @@
         <%- helpers.icon('send', { size: 15 }) %> Continue
       </button>
     </form>
-    <div class="ask-pending" data-ask-pending hidden>Foundry is working out what that means…</div>
+    <div class="ask-pending" data-ask-pending role="status" aria-live="polite" hidden><span class="working-spinner" aria-hidden="true"></span> Foundry is working out what that means…</div>
 
     <% if (!aiConfigured) { %>
       <p class="muted" style="font-size:13px; margin-top:10px;">
@@ -79,6 +79,9 @@
                     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                     <input type="hidden" name="original" value="<%= instruction %>">
                     <input type="hidden" name="answer" value="<%= choice.value %>">
+                    <% if (locals.workflow) { %><input type="hidden" name="workflow" value="<%= locals.workflow %>"><% } %>
+                    <% if (locals.workflowStep) { %><input type="hidden" name="workflowStep" value="<%= locals.workflowStep %>"><% } %>
+                    <% if (choice.workflowKind || locals.workflowKind) { %><input type="hidden" name="workflowKind" value="<%= choice.workflowKind || locals.workflowKind %>"><% } %>
                     <% if (locals.continuationId) { %>
                       <input type="hidden" name="continuationId" value="<%= locals.continuationId %>">
                     <% } %>
@@ -91,11 +94,36 @@
               <% }) %>
             </div>
           <% } else { %>
+            <%
+              /*
+               * "There is nothing called X in this inventory" is not a question,
+               * and an answer box under it asks somebody to reply to something
+               * nobody said. Found walking the new-owner scenario: Home says
+               * "add the first thing you sell", the obvious sentence is typed,
+               * and Foundry stops on a product it has never heard of — which
+               * is exactly the moment to offer to create it.
+               *
+               * The answer box stays underneath, because the other reason to
+               * land here is a product that does exist under a different name.
+               */
+            %>
+            <% if (locals.notFound) { %>
+              <div class="act-create">
+                <p>Foundry has no record of <strong><%= locals.notFound %></strong> yet.</p>
+                <a class="btn btn--primary btn--sm" href="/inventory/new?name=<%= encodeURIComponent(locals.notFound) %>">
+                  Create <%= locals.notFound %>
+                </a>
+                <span class="t-xs t-muted">or, if you call it something else here, say which below.</span>
+              </div>
+            <% } %>
             <%# A question with nowhere to answer is a dead end. Reply here and
                 Foundry re-reads the original instruction with the answer added. %>
             <form class="act-reply" method="post" action="<%= locals.answerAction || '/actions/ask' %>" data-busy>
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <input type="hidden" name="original" value="<%= instruction %>">
+              <% if (locals.workflow) { %><input type="hidden" name="workflow" value="<%= locals.workflow %>"><% } %>
+              <% if (locals.workflowStep) { %><input type="hidden" name="workflowStep" value="<%= locals.workflowStep %>"><% } %>
+              <% if (locals.workflowKind) { %><input type="hidden" name="workflowKind" value="<%= locals.workflowKind %>"><% } %>
               <% if (locals.continuationId) { %>
                 <input type="hidden" name="continuationId" value="<%= locals.continuationId %>">
               <% } %>

@@ -96,8 +96,16 @@ function optionText(db, skuId) {
 function found(value) {
   return { ok: true, value, candidates: [value] };
 }
-function none(message) {
-  return { ok: false, reason: 'not_found', message, candidates: [] };
+/*
+ * Nothing in the catalogue matches.
+ *
+ * The name that failed to match travels with the message, because a screen that
+ * knows which words it did not recognise can offer to create that product.
+ * Without it the only thing the page could do was show an answer box for a
+ * question nobody had asked.
+ */
+function none(message, subject = null) {
+  return { ok: false, reason: 'not_found', message, subject, candidates: [] };
 }
 function ambiguous(message, candidates, clarification = null) {
   return { ok: false, reason: 'ambiguous', message, candidates, clarification };
@@ -374,12 +382,55 @@ function clarifySkuFromInstruction(db, workspaceId, instruction) {
     .all(workspaceId);
   if (!rows.length) return null;
 
+  // A variant value may be a very small token (for example size "5"). Do not
+  // let that token redirect an explicitly unknown noun such as "jetpacks" to
+  // an unrelated real product that happens to have a size 5. Variant-only
+  // shorthand ("move 5 Navy 4") remains valid because every meaningful word
+  // is then either an action/location word or a real option value.
+  const said = new Set(words(instruction).map(comparableWord));
+  const itemWords = new Set(rows.flatMap((row) => words(row.item_name).map(comparableWord)));
+  const optionWords = new Set(
+    skuOptionRows(db, rows.map((row) => row.id))
+      .flatMap((row) => words(row.value).map(comparableWord))
+  );
+  const locationWords = new Set(
+    db.prepare('SELECT name FROM locations WHERE workspace_id = ? AND is_active = 1')
+      .all(workspaceId)
+      .flatMap((row) => words(row.name).map(comparableWord))
+  );
+  const actionWords = new Set([
+    'a', 'actually', 'after', 'all', 'and', 'at', 'before', 'by', 'correct', 'count',
+    'did', 'downtown', 'for', 'from', 'has', 'have', 'in', 'into', 'inventory',
+    'issue', 'issued', 'left', 'main', 'move', 'moved', 'now', 'of', 'off', 'on',
+    'physical', 'receive', 'received', 'said', 'says', 'set', 'sold', 'some', 'stock',
+    'store', 'take', 'the', 'these', 'they', 'those', 'to', 'took', 'transfer', 'transferred', 'unit',
+    'units', 'used', 'warehouse', 'was', 'we', 'were', 'wrong',
+  ]);
+  const roleWords = new Set(
+    [...String(instruction || '').matchAll(/\b(?:from|to|into)\s+([^,;.]+)/gi)]
+      .flatMap((match) => words(match[1]).map(comparableWord))
+  );
+  const mentionsItem = [...said].some((token) => itemWords.has(token));
+  const unexplained = [...said].filter((token) =>
+    !/^\d+$/.test(token)
+    && !actionWords.has(token)
+    && !locationWords.has(token)
+    && !roleWords.has(token)
+    && !optionWords.has(token)
+  );
+  if (!mentionsItem && unexplained.length) {
+    return none(`There is nothing called “${unexplained.join(' ')}” in this inventory.`, unexplained.join(' '));
+  }
+
   // Imports do not all model variants the same way. One catalogue may hold
   // one product with six SKUs; another may contain separate item rows for each
   // colour and size. Resolve both representations through the same two-stage
   // identity narrowing before deciding what is genuinely still ambiguous.
   let candidates = narrowSkuRowsByItemFamily(rows, instruction);
   candidates = narrowSkuRowsByInstruction(db, candidates, instruction);
+  if (!candidates.length) {
+    return none(`There is nothing in this inventory matching “${String(instruction || '').trim()}”.`);
+  }
   if (candidates.length === 1) return found(candidates[0]);
   return skuAmbiguity(db, candidates);
 }
@@ -396,6 +447,17 @@ function resolveSku(db, workspaceId, itemText, variantText, options = {}) {
   // whole identifier. Searching on the variant wording when that is all there
   // is beats refusing to look, and the narrowing below still applies.
   const query = String(itemText || '').trim() || String(variantText || '').trim();
+  if (query && options.groundIdentity && options.instruction && String(itemText || '').trim()) {
+    const said = new Set(words(options.instruction).map(comparableWord));
+    const suppliedItemWord = words(itemText).map(comparableWord).some((token) => said.has(token));
+    if (!suppliedItemWord) {
+      // The reader may copy a convenient catalogue name into its structured
+      // answer even though the person said something else. Re-resolve from the
+      // actual sentence before that invented name can select a real SKU.
+      const grounded = clarifySkuFromInstruction(db, workspaceId, options.instruction);
+      if (grounded) return grounded;
+    }
+  }
   if (!query) {
     const grounded = options.instruction
       ? clarifySkuFromInstruction(db, workspaceId, options.instruction)
@@ -473,7 +535,7 @@ function resolveSku(db, workspaceId, itemText, variantText, options = {}) {
         choiceClarification('product', close.candidates, (item) => item.name)
       );
     }
-    return none(`There is nothing called “${query}” in this inventory.`);
+    return none(`There is nothing called “${query}” in this inventory.`, query);
   }
 
   // Narrow by the variant wording. Tokens are matched whole and include single
