@@ -1217,3 +1217,31 @@ test('a line that was checked and found fine is visible next to ones Foundry can
   // Both facts are true at once, and the page has to be able to say both.
   assert.notEqual(plan.covered.length, 0, 'so a page reading only blocked would hide the tested line');
 });
+
+/**
+ * Unit words the customer typed, pluralised the way English does it.
+ *
+ * Found walking the purchasing scenario. A shop that buys copper elbows by the
+ * box was asked, in the heading of the screen where it commits money, to
+ * "Create a draft order for 3 boxs (60 units)?". Purchase units are free text,
+ * and three separate places appended "s" to whatever arrived.
+ */
+test('a purchase unit is pluralised, not suffixed', () => {
+  const { pluralUnit } = require('../../src/lib/util');
+  assert.equal(pluralUnit('box'), 'boxes');
+  assert.equal(pluralUnit('batch'), 'batches');
+  assert.equal(pluralUnit('bunch'), 'bunches');
+  assert.equal(pluralUnit('case'), 'cases');
+  assert.equal(pluralUnit('pallet'), 'pallets');
+  assert.equal(pluralUnit('caddy'), 'caddies');
+  assert.equal(pluralUnit('tray'), 'trays');
+  // A singular word that happens to end in a sibilant is still pluralised.
+  assert.equal(pluralUnit('glass'), 'glasses');
+
+  // Already plural, and the "(s)" some forms carry, both survive unharmed.
+  assert.equal(pluralUnit('boxes'), 'boxes');
+  assert.equal(pluralUnit('cases'), 'cases');
+  assert.equal(pluralUnit('units'), 'units');
+  assert.equal(pluralUnit('unit(s)'), 'units');
+  assert.equal(pluralUnit(''), 'units');
+});

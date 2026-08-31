@@ -28,6 +28,7 @@
 const investigations = require('./investigations');
 const workItems = require('../autopilot/work-items');
 const autopilotPresenter = require('../autopilot/presenter');
+const attentionPresenter = require('../attention/presenter');
 const managerReadiness = require('./readiness');
 const actionPresenter = require('../actions/presenter');
 const proposals = require('../actions/proposal-service');
@@ -268,7 +269,15 @@ function fromFindings(db, workspaceId) {
       : finding.action === 'Add supplier'
       ? 'The supplier and purchasing terms for this variant.'
       : 'A look, and a decision about what to do.',
-    actionLabel: isProtectedLimit ? 'Decide on the limit' : finding.action === 'Add supplier' ? 'Add supplier' : 'Resolve this',
+    // The same label this finding carries on Home and on the item record. It
+    // had its own fallback here, so one out-of-stock finding read "Decide what
+    // to do" on the page that listed it and "Resolve this" in the queue that
+    // page linked to.
+    actionLabel: isProtectedLimit
+      ? 'Decide on the limit'
+      : finding.action === 'Add supplier'
+        ? 'Add supplier'
+        : attentionPresenter.actionLabelFor(finding.category),
     href: finding.link,
     at: null,
     priority: isProtectedLimit ? Math.max(80, finding.priority || 0) : finding.priority || 60,

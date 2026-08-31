@@ -635,7 +635,9 @@ router.post(
         'success',
         done.replayed
           ? 'That delivery was already booked in.'
-          : `${done.result.unitsReceived} unit(s) received against ${order.poNumber}.`
+          // "40 unit(s)" is the parenthetical plural the rest of the product
+          // avoids; the value is known here, so the word can simply be right.
+          : `${done.result.unitsReceived} ${done.result.unitsReceived === 1 ? 'unit' : 'units'} received against ${order.poNumber}.`
       );
       const current = poService.get(req.db, req.ctx.workspaceId, order.id);
       react(req,

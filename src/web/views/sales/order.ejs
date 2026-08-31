@@ -26,9 +26,22 @@
 %>
 <% if (order.status !== 'DRAFT' && order.totals.backordered) { %><div class="notice notice--warn sales-outcome">
   <strong><%= order.totals.backordered %> unit<%= order.totals.backordered === 1 ? '' : 's' %> still short.</strong>
+  <%
+    // Stock is allocated when an order is confirmed and not again, so a
+    // delivery can arrive against this very shortfall and the order still says
+    // the stock is not there. Sixty units in the store room and an order
+    // reading "the rest is not in stock yet" is a straightforward untruth.
+    var available = locals.shortButAvailable || 0;
+  %>
   <% if (shipped) { %>
     <p><%= shipped %> unit<%= shipped === 1 ? '' : 's' %> shipped and
-      <%= order.totals.allocated %> held for this customer. The rest is not in stock yet.</p>
+      <%= order.totals.allocated %> held for this customer.
+      <% if (available) { %>
+        <%= available %> <%= available === 1 ? 'is' : 'are' %> on the shelf now but not committed to
+        this order — Foundry does not commit stock to a confirmed order without you.
+      <% } else { %>
+        The rest is not in stock yet.
+      <% } %></p>
   <% } else { %>
     <p>The customer order is confirmed, but Foundry found only <%= order.totals.allocated %> unit<%= order.totals.allocated === 1 ? '' : 's' %> available to hold. <strong>No on-hand stock changed and nothing was shipped.</strong></p>
   <% } %>

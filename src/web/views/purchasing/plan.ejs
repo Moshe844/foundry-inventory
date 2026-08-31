@@ -161,7 +161,13 @@
         <%= plan.covered.length === 1 ? 'One product was checked and is' : plan.covered.length + ' products were checked and are' %>
         fine for now. Foundry has not seen the other <%= unknown.length === 1 ? 'one' : unknown.length %> selling yet.
       <% } else if (unknown.length) { %>
-        Foundry has not seen these selling yet, so it cannot say whether they need ordering — and it will not guess.
+        <%# "Has not seen these selling" is only one of the reasons Foundry
+            cannot judge a line, and it is the wrong one to state by default.
+            A product sold twice today has been seen selling; what it lacks is
+            days. Saying otherwise contradicts the line's own reason directly
+            underneath, and tells somebody to record a sale they just recorded. %>
+        Foundry does not have enough history for these yet, so it cannot say whether they need
+        ordering — and it will not guess. Each one says what it is waiting for.
       <% } else { %>
         Everything was checked against how fast it sells and what is already on the way. Nothing is below its reorder point.
       <% } %>
@@ -249,8 +255,8 @@
         <% } %>
         <% if (unknown.length) { %>
           <p class="t-muted" style="margin-top:12px;">
-            Foundry has not seen these leaving yet, so it will not guess a demand figure for them.
-            Record a sale, or set the level to reorder at, and it can start.
+            Foundry will not guess a demand figure it cannot stand behind. Keep recording what
+            goes out, or set the level to reorder at yourself, and it can act on these.
           </p>
           <ul class="plain-list">
             <% unknown.slice(0, 8).forEach(function (line) { %>

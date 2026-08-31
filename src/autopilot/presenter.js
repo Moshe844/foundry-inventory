@@ -18,6 +18,7 @@
  */
 
 const modes = require('./modes');
+const { pluralUnit } = require('../lib/util');
 const workItems = require('./work-items');
 const policyService = require('./policy-service');
 const position = require('../purchasing/position');
@@ -249,7 +250,21 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
         verified: true,
       } : null;
     }).filter(Boolean);
-  actions.push(...salesActions);
+  const supplierActions = db.prepare(`SELECT d.id, d.document_type, d.purchase_order_id,
+      d.processed_at, po.po_number, s.name AS supplier_name
+    FROM supplier_documents d
+    LEFT JOIN purchase_orders po ON po.id = d.purchase_order_id
+    LEFT JOIN suppliers s ON s.id = d.supplier_id
+    WHERE d.workspace_id = ? AND d.status = 'MATCHED' AND d.processed_at >= ?
+      AND json_array_length(d.discrepancies) = 0
+    ORDER BY d.processed_at DESC LIMIT 8`).all(workspaceId, from).map((row) => ({
+      id: row.id,
+      headline: `${row.supplier_name || 'Supplier'} ${String(row.document_type).replaceAll('_', ' ')} matched${row.po_number ? ` ${row.po_number}` : ''}`,
+      detail: 'Foundry compared it with the purchase order. No action needed.',
+      link: row.purchase_order_id ? `/purchasing/orders/${row.purchase_order_id}` : '/activity?stream=purchasing',
+      verified: true,
+    }));
+  actions.push(...salesActions, ...supplierActions);
   const transfers = completed.filter((item) => item.category === 'balance_transfer');
   const purchases = completed.filter((item) => item.category === 'purchase_preparation');
 
@@ -263,7 +278,7 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
     since: from,
     actions,
     counts: {
-      handled: completed.length + salesActions.length,
+      handled: completed.length + salesActions.length + supplierActions.length,
       transfers: transfers.length,
       unitsMoved: transfers.reduce((sum, item) => sum + ((item.recommendedAction || {}).quantity || 0), 0),
       purchasesPrepared: purchases.length,
@@ -276,14 +291,14 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
     lastEvaluation: [sweeps.last, evaluations[0] && evaluations[0].finishedAt].filter(Boolean).sort().pop() || null,
     // The honest headline. Zero is a perfectly good number.
     headline:
-      completed.length + salesActions.length === 0
+      completed.length + salesActions.length + supplierActions.length === 0
         ? prepared > 0
           ? `Checked ${plural(positionsWatched, 'stock position')} and prepared ` +
             `${plural(prepared, 'thing')} for you. Carried nothing out on its own.`
           : evaluations.length > 0 || sweeps.n > 0
             ? `Checked ${plural(positionsWatched, 'stock position')}. Nothing needed doing.`
             : 'Nothing yet today.'
-        : `Handled ${plural(completed.length + salesActions.length, 'task')}.`,
+        : `Handled ${plural(completed.length + salesActions.length + supplierActions.length, 'task')}.`,
   };
 }
 
@@ -322,7 +337,9 @@ const plan_unit = (action) => action.unitLabel || 'unit';
 const counted = (quantity, label = 'unit') => {
   const value = Number(quantity) || 0;
   const clean = String(label || 'unit').replace(/\(s\)$/i, '').trim() || 'unit';
-  const word = value === 1 || /s$/i.test(clean) ? clean : `${clean}s`;
+  // "box" + "s" is "boxs". A shop that buys by the box was asked to confirm an
+  // order for 3 boxs, in the heading of the screen where it commits money.
+  const word = value === 1 ? clean : pluralUnit(clean);
   return `${value} ${word}`;
 };
 
@@ -408,7 +425,7 @@ function pendingReplenishmentCopy(item, action, actions, breakdown) {
       ? `Target ${action.target} − current position ${action.networkPosition} = ${shortfall} to add.`
       : purchase && purchase.unitsPerPurchaseUnit > 1
         ? `Target ${action.target} − current position ${action.networkPosition} = ${shortfall} needed. ` +
-          `${supplierName || 'The supplier'} sells ${purchase.purchaseUnit}s of ${purchase.unitsPerPurchaseUnit}, ` +
+          `${supplierName || 'The supplier'} sells ${pluralUnit(purchase.purchaseUnit)} of ${purchase.unitsPerPurchaseUnit}, ` +
           `so Foundry rounds up to ${counted(purchase.quantityPurchaseUnits, purchase.purchaseUnit)} ` +
           `(${counted(purchase.quantityUnits, action.unitLabel)}).`
         : `Target ${action.target} − current position ${action.networkPosition} = ${shortfall} needed. ` +

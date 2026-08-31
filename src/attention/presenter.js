@@ -145,11 +145,22 @@ const CATEGORY_ACTION = {
   supplier_price_change: 'Decide on the price',
 };
 
+/**
+ * The button text for a finding of this kind, wherever it is shown.
+ *
+ * Exported because Needs you builds its entries from a different presenter and
+ * had its own fallback — so one out-of-stock finding said "Decide what to do"
+ * on Home and the item record, and "Resolve this" in the queue it links to.
+ */
+function actionLabelFor(category) {
+  return CATEGORY_ACTION[category] || 'See the evidence';
+}
+
 /** Decorates one item for display. */
 function present(db, workspaceId, item) {
   return {
     ...item,
-    actionLabel: CATEGORY_ACTION[item.category] || 'See the evidence',
+    actionLabel: actionLabelFor(item.category),
     severityLabel: (SEVERITY[item.severity] || {}).label || item.severity,
     severityTone: (SEVERITY[item.severity] || {}).tone || 'muted',
     categoryLabel: CATEGORY_LABEL[item.category] || item.category,
@@ -185,6 +196,7 @@ function groupBySeverity(items) {
 module.exports = {
   SEVERITY,
   CATEGORY_LABEL,
+  actionLabelFor,
   CONFIDENCE_NOTE,
   present,
   presentAll,

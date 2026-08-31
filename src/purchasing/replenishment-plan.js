@@ -38,6 +38,7 @@
  */
 
 const policyService = require('./policy-service');
+const { pluralUnit } = require('../lib/util');
 const position = require('./position');
 const autopilotPolicies = require('../autopilot/policy-service');
 const replenishment = require('./replenishment');
@@ -372,7 +373,7 @@ function buildPlan(db, workspaceId, sku, options = {}) {
         'purchase',
         `Order up to ${target} − position ${networkPosition} = ${buy.shortfall} needed. ` +
           `${purchase.supplierName} supplies these ` +
-          `${purchase.unitsPerPurchaseUnit === 1 ? 'singly' : `in ${purchase.purchaseUnit}s of ${purchase.unitsPerPurchaseUnit}`}, ` +
+          `${purchase.unitsPerPurchaseUnit === 1 ? 'singly' : `in ${pluralUnit(purchase.purchaseUnit)} of ${purchase.unitsPerPurchaseUnit}`}, ` +
           `so ${purchase.quantityPurchaseUnits} ${purchase.purchaseUnit}(s) = ${purchase.quantityUnits} ${unitLabel}(s).`,
         purchase.quantityUnits
       )
