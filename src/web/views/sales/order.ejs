@@ -37,8 +37,8 @@
     <p><%= shipped %> unit<%= shipped === 1 ? '' : 's' %> shipped and
       <%= order.totals.allocated %> held for this customer.
       <% if (available) { %>
-        <%= available %> <%= available === 1 ? 'is' : 'are' %> on the shelf now but not committed to
-        this order — Foundry does not commit stock to a confirmed order without you.
+        <%= available %> <%= available === 1 ? 'is' : 'are' %> on the shelf now and not committed to
+        anyone.
       <% } else { %>
         The rest is not in stock yet.
       <% } %></p>
@@ -62,6 +62,34 @@
   <% if (order.pricing.missingPriceLines) { %><div class="notice notice--warn"><strong>This draft cannot be confirmed yet.</strong> <%= order.pricing.missingPriceLines %> line<%= order.pricing.missingPriceLines === 1 ? '' : 's' %> has no selling price. <% order.lines.filter(function(line){ return line.unit_price_minor === null; }).forEach(function(line){ %><a href="/inventory/<%= line.item_id %>#selling-price">Set the price for <%= line.displayName %></a>. <% }) %></div><% } %>
 </div>
 
+<%
+  /*
+   * Stock arrived after the order was confirmed, and it can be committed here.
+   *
+   * Allocation ran once at confirmation and never again, so a delivery landing
+   * against the exact shortfall left the order unable to take it — and Needs
+   * you routed the reader to this page, where the only options were to add more
+   * demand or cancel. Foundry still does not commit it by itself: holding stock
+   * for one customer takes it from the next, so it is offered rather than done.
+   */
+%>
+<% if (!['FULFILLED','CANCELLED'].includes(order.status) && locals.shortButAvailable) { %>
+  <form class="card sales-action-card sales-action-card--commit" method="post" action="/sales/orders/<%= order.id %>/allocate">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="idempotencyKey" value="web-allocate:<%= order.id %>:<%= order.version %>">
+    <h2>Commit the stock that has arrived</h2>
+    <p>
+      <%= locals.shortButAvailable %>
+      <%= locals.shortButAvailable === 1 ? 'unit is' : 'units are' %> on the shelf and free.
+      Committing holds <%= locals.shortButAvailable === 1 ? 'it' : 'them' %> for
+      <%= order.customer.name %> — on-hand does not change, and nothing ships until you say so.
+    </p>
+    <button class="btn btn--primary" type="submit">
+      Commit <%= locals.shortButAvailable %> to this order
+    </button>
+  </form>
+<% } %>
+
 <% if (!['FULFILLED','CANCELLED'].includes(order.status)) { %>
 <div class="grid grid--2" style="margin-top:16px;">
   <% if (order.status === 'DRAFT' && !order.pricing.missingPriceLines) { %><form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/confirm"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h2>Confirm customer demand</h2><p>Foundry will reserve available stock without changing on hand, then manage any shortage.</p><button class="btn btn--primary" type="submit">Confirm and reserve stock</button></form><% } else if (order.status !== 'DRAFT' && order.totals.allocated > 0) { %>
@@ -73,5 +101,5 @@
 </div>
 <% } %>
 
-<% var eventLabels = { CREATED: 'Order created', CONFIRMED: 'Customer order confirmed and stock checked', CHANGED: 'Order changed and reservations recalculated', ALLOCATION_CHANGED: 'Stock reservation updated automatically', PARTIALLY_FULFILLED: 'Part of the order shipped', FULFILLED: 'Order shipped in full', CANCELLED: 'Remaining order cancelled' }; %>
+<% var eventLabels = { CREATED: 'Order created', CONFIRMED: 'Customer order confirmed and stock checked', CHANGED: 'Order changed and reservations recalculated', ALLOCATION_CHANGED: 'Stock reservation updated automatically', PARTIALLY_FULFILLED: 'Part of the order shipped', FULFILLED: 'Order shipped in full', ALLOCATED_FROM_STOCK: 'Stock that arrived was committed to this customer', CANCELLED: 'Remaining order cancelled' }; %>
 <div class="card order-activity" style="margin-top:16px;"><div class="card-head"><h2>Order activity</h2></div><div class="list-rows"><% order.events.slice().reverse().forEach(function(event){ %><div class="list-row"><span><strong><%= eventLabels[event.event_type] || event.event_type.replace(/_/g,' ').toLowerCase() %></strong><small><%= event.actor_name || 'Foundry' %> · <%= helpers.dateTime(event.created_at) %></small></span></div><% }) %></div></div>

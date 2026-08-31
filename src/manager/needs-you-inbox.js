@@ -442,6 +442,21 @@ function fromSalesOrders(db, workspaceId) {
       const earliest = committedArrival || (leadDays === undefined ? null
         : new Date(today.getTime() + leadDays * dayMs).toISOString().slice(0, 10));
       const dateMiss = Boolean(order.needed_by && (!earliest || earliest > order.needed_by));
+
+      /*
+       * Stock that has turned up since this order was confirmed.
+       *
+       * Allocation runs at confirmation and not again, so a delivery can land
+       * against this very shortfall while the entry goes on saying the stock is
+       * not there and recommending a supplier who already exists. When there is
+       * free stock, the decision is no longer "how will we cover this" but
+       * "shall I hold it for them", and that is what it should say.
+       */
+      const freeNow = Math.min(
+        Number(line.backordered),
+        Math.max(0, salesOrders.availabilityForSku(db, workspaceId, line.sku_id).available || 0)
+      );
+
       entries.push({
         id: `sales-order:${order.id}:${line.id}`,
         kind: 'sales_order',
@@ -455,14 +470,20 @@ function fromSalesOrders(db, workspaceId) {
               ? `${incoming.onOrder} incoming unit(s) are now expected ${earliest}, after the customer needs them.`
               : `The earliest supported supplier arrival is ${earliest}, after the customer needs it.`
             : 'No supported supplier arrival date is available, so Foundry cannot promise the requested date.'
-          : 'Foundry cannot allocate stock that is not physically available or already committed elsewhere.',
-        recommendation: incoming.onOrder
-          ? `Review the ${incoming.onOrder} already on order and decide whether the customer date needs to change.`
-          : suppliers.length
-            ? 'Review replenishment and the customer date before making a promise.'
-            : 'Add a supplier or agree a different customer date.',
-        missing: 'A decision about the uncovered customer demand and any requested-date commitment.',
-        actionLabel: `Cover ${order.order_number}`,
+          : freeNow
+            ? `${freeNow} ${freeNow === 1 ? 'unit is' : 'units are'} on the shelf and free. Foundry does not hold stock for one customer without you, because that takes it from the next one who asks.`
+            : 'Foundry cannot allocate stock that is not physically available or already committed elsewhere.',
+        recommendation: freeNow
+          ? `Commit the ${freeNow} that ${freeNow === 1 ? 'has' : 'have'} arrived, if this customer should have ${freeNow === 1 ? 'it' : 'them'}.`
+          : incoming.onOrder
+            ? `Review the ${incoming.onOrder} already on order and decide whether the customer date needs to change.`
+            : suppliers.length
+              ? 'Review replenishment and the customer date before making a promise.'
+              : 'Add a supplier or agree a different customer date.',
+        missing: freeNow
+          ? `Whether to hold the ${freeNow} now in stock for ${order.customer.name}.`
+          : 'A decision about the uncovered customer demand and any requested-date commitment.',
+        actionLabel: freeNow ? `Commit stock to ${order.order_number}` : `Cover ${order.order_number}`,
         href: `/sales/orders/${order.id}`,
         at: order.updated_at,
         priority: dateMiss ? 92 : 82,

@@ -1715,3 +1715,10 @@ a.list-row.panel { display: flex; margin-bottom: var(--space-4); }
   font-size: var(--text-sm);
 }
 .act-create p { margin: 0; }
+
+/* The one action that closes a shortfall, when there is stock to close it with. */
+.sales-action-card--commit {
+  margin-top: var(--space-4);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}

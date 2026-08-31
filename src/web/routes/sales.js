@@ -140,6 +140,35 @@ router.post('/sales/orders/:id/confirm', requirePermission(permissions.OPERATE, 
   res.redirect(303, `/sales/orders/${order.id}`);
 }));
 
+/*
+ * Commit stock that arrived after the order was confirmed.
+ *
+ * Deliberately a person's decision rather than something Foundry does on its
+ * own: holding stock for one customer takes it from the next one who asks.
+ */
+router.post('/sales/orders/:id/allocate', requirePermission(permissions.OPERATE, 'commit stock to sales orders'), asyncRoute(async (req, res) => {
+  let result;
+  try {
+    result = sales.allocateAvailable(req.db, req.ctx, req.params.id, {
+      idempotencyKey: trimOrNull(req.body.idempotencyKey) || undefined,
+    });
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+    return res.redirect(303, `/sales/orders/${req.params.id}`);
+  }
+  const order = result.order;
+  if (!result.committed) {
+    req.flash('warn', `Nothing free to commit to ${order.order_number} right now.`);
+  } else {
+    const still = order.totals.backordered;
+    req.flash('success', still
+      ? `${result.committed} ${result.committed === 1 ? 'unit' : 'units'} committed to ${order.order_number}. ${still} still short.`
+      : `${result.committed} ${result.committed === 1 ? 'unit' : 'units'} committed. ${order.order_number} is fully covered.`);
+  }
+  res.redirect(303, `/sales/orders/${order.id}`);
+}));
+
 router.post('/sales/orders/:id/lines', requirePermission(permissions.OPERATE, 'change sales orders'), asyncRoute(async (req, res) => {
   const unitPriceMinor = prices.toMinor(trimOrNull(req.body.unitPrice), 'Selling price');
   const order = sales.addLine(req.db, req.ctx, req.params.id, { skuId: req.body.skuId,

@@ -130,6 +130,13 @@ function createOrder(db, ctx, input) {
     const pricedLines = [...merged].map(([skuId, entry]) => ({ skuId, quantity: entry.quantity,
       price: entry.unitPriceMinor === null ? prices.currentForSku(db, ctx.workspaceId, skuId)
         : { isSet: true, amount_minor: entry.unitPriceMinor, id: null, currency: input.currency || 'USD' } }));
+    if (input.requirePrices && pricedLines.some((line) => !line.price.isSet)) {
+      const missing = pricedLines.filter((line) => !line.price.isSet)
+        .map((line) => prices.requireSku(db, ctx.workspaceId, line.skuId).display_name);
+      throw new ValidationError(`${missing.join(', ')} ${missing.length === 1 ? 'does' : 'do'} not have a selling price. Set a price or enter one for this order before creating it.`, {
+        reason: 'missing_sales_price', skuIds: pricedLines.filter((line) => !line.price.isSet).map((line) => line.skuId),
+      });
+    }
     const currencies = [...new Set(pricedLines.filter((line) => line.price.isSet).map((line) => line.price.currency))];
     if (currencies.length > 1) throw new ValidationError('This order contains selling prices in more than one currency. Use one currency per sales order.');
     const currency = prices.normaliseCurrency(input.currency || currencies[0] || 'USD');
@@ -241,6 +248,17 @@ function confirm(db, ctx, orderId, options = {}) {
   const outcome = inTransaction(db, () => {
     const order = requireOrderRow(db, ctx.workspaceId, orderId);
     if (order.status !== 'DRAFT') return { order: getOrder(db, ctx.workspaceId, orderId), event: null, replayed: true };
+    const missingPrices = db.prepare(`SELECT sol.sku_id, i.name AS item_name, s.variant_label
+      FROM sales_order_lines sol JOIN skus s ON s.id = sol.sku_id JOIN items i ON i.id = s.item_id
+      WHERE sol.sales_order_id = ? AND sol.workspace_id = ? AND sol.unit_price_minor IS NULL`)
+      .all(orderId, ctx.workspaceId);
+    if (missingPrices.length) {
+      const names = missingPrices.map((line) => line.variant_label
+        ? `${line.item_name} / ${line.variant_label}` : line.item_name);
+      throw new ValidationError(`${names.join(', ')} ${names.length === 1 ? 'does' : 'do'} not have a selling price. Set the price before confirming this customer order.`, {
+        reason: 'missing_sales_price', skuIds: missingPrices.map((line) => line.sku_id),
+      });
+    }
     const allocations = [];
     for (const line of orderLineRows(db, ctx.workspaceId, orderId)) {
       allocations.push({ lineId: line.id, skuId: line.sku_id,
@@ -259,6 +277,67 @@ function confirm(db, ctx, orderId, options = {}) {
   return outcome.order;
 }
 
+/**
+ * Commits stock that has become available since the order was confirmed.
+ *
+ * Allocation ran once, at confirmation, and never again. So a delivery could
+ * arrive against the exact shortfall an order was waiting for and the order
+ * could not take it: sixty units in the store room, an order short sixteen, and
+ * no way to put the two together. Needs you sent the reader to that page, where
+ * the only options were to add more demand or cancel.
+ *
+ * Foundry does not do this by itself, and that is deliberate rather than
+ * missing. Committing stock to one customer takes it away from the next person
+ * who asks, which is a commercial decision about who gets served — so it stays
+ * a decision somebody makes, with the shortfall and the free stock both on
+ * screen before they make it.
+ *
+ * The allocation itself is the same primitive confirmation uses. It counts what
+ * is already allocated and already shipped, so it can only ever close the gap
+ * and never over-commit, and it does not touch on-hand: reserving is a promise
+ * about stock, not a movement of it.
+ */
+function allocateAvailable(db, ctx, orderId, options = {}) {
+  const outcome = inTransaction(db, () => {
+    const order = requireOrderRow(db, ctx.workspaceId, orderId);
+    if (order.status === 'DRAFT') {
+      throw new ValidationError('Confirm the order first. Foundry holds stock for a customer once the order is committed.');
+    }
+    if (['CANCELLED', 'FULFILLED'].includes(order.status)) {
+      throw new ValidationError('That sales order is already closed.');
+    }
+
+    const before = totalsForOrder(db, orderId);
+    const shortfall = Number(before.ordered) - Number(before.fulfilled) - Number(before.allocated);
+    if (shortfall <= 0) {
+      return { order: getOrder(db, ctx.workspaceId, orderId), event: null, committed: 0, replayed: true };
+    }
+
+    const allocations = [];
+    for (const line of orderLineRows(db, ctx.workspaceId, orderId)) {
+      allocations.push({ lineId: line.id, skuId: line.sku_id,
+        ...allocateLine(db, ctx.workspaceId, line, order.fulfillment_location_id) });
+    }
+    const committed = allocations.reduce((total, entry) => total + Number(entry.allocated || 0), 0);
+    if (!committed) {
+      return { order: getOrder(db, ctx.workspaceId, orderId), event: null, committed: 0, replayed: false };
+    }
+
+    const status = currentStatus(db, orderId);
+    const now = nowIso();
+    db.prepare(`UPDATE sales_orders SET status = ?, updated_at = ?, version = version + 1
+      WHERE id = ? AND workspace_id = ?`)
+      .run(status, now, orderId, ctx.workspaceId);
+    const event = recordEvent(db, ctx, orderId, 'ALLOCATED_FROM_STOCK', { allocations, committed, status },
+      options.idempotencyKey || `sales-order-allocated:${orderId}:${now}`);
+    return { order: getOrder(db, ctx.workspaceId, orderId), event, committed, replayed: false };
+  });
+  if (outcome.event) {
+    react(db, ctx.workspaceId, outcome.event, managerEvents.TYPES.SALES_ORDER_CONFIRMED, outcome.order);
+  }
+  return outcome;
+}
+
 function addLine(db, ctx, orderId, input, options = {}) {
   const outcome = inTransaction(db, () => {
     const order = requireOrderRow(db, ctx.workspaceId, orderId);
@@ -275,9 +354,21 @@ function addLine(db, ctx, orderId, input, options = {}) {
       line = db.prepare('SELECT * FROM sales_order_lines WHERE id = ?').get(existing.id);
     } else {
       const id = newId('sol');
-      const price = prices.currentForSku(db, ctx.workspaceId, sku.id);
+      const suppliedPrice = input.unitPriceMinor === null || input.unitPriceMinor === undefined
+        ? null : Number(input.unitPriceMinor);
+      if (suppliedPrice !== null && (!Number.isSafeInteger(suppliedPrice) || suppliedPrice < 0)) {
+        throw new ValidationError('The order-line price must be a non-negative whole number of minor currency units.');
+      }
+      const price = suppliedPrice === null
+        ? prices.currentForSku(db, ctx.workspaceId, sku.id)
+        : { isSet: true, amount_minor: suppliedPrice, id: null, currency: order.currency };
       if (price.isSet && price.currency !== order.currency) {
         throw new ValidationError(`${sku.item_name} is priced in ${price.currency}, but this order uses ${order.currency}.`);
+      }
+      if (!price.isSet && order.status !== 'DRAFT') {
+        throw new ValidationError(`${sku.item_name} does not have a selling price. Set a price before adding it to a confirmed customer order.`, {
+          reason: 'missing_sales_price', skuIds: [sku.id],
+        });
       }
       db.prepare(`INSERT INTO sales_order_lines
         (id, workspace_id, sales_order_id, sku_id, quantity_ordered, quantity_fulfilled,
@@ -498,7 +589,8 @@ function getOrder(db, workspaceId, orderId) {
       COALESCE((SELECT SUM(soa.quantity) FROM sales_order_allocations soa WHERE soa.sales_order_line_id = sol.id), 0) AS allocated
     FROM sales_order_lines sol JOIN skus s ON s.id = sol.sku_id JOIN items i ON i.id = s.item_id
     WHERE sol.sales_order_id = ? AND sol.workspace_id = ? ORDER BY sol.created_at, sol.id`).all(orderId, workspaceId)
-    .map((line) => ({ ...line, backordered: Math.max(0, Number(line.quantity_ordered) - Number(line.quantity_fulfilled) - Number(line.allocated)),
+    .map((line) => ({ ...line, backordered: ['CANCELLED', 'FULFILLED'].includes(row.status)
+      ? 0 : Math.max(0, Number(line.quantity_ordered) - Number(line.quantity_fulfilled) - Number(line.allocated)),
       lineTotalMinor: line.unit_price_minor === null ? null : Number(line.unit_price_minor) * Number(line.quantity_ordered),
       displayName: line.variant_label ? `${line.item_name} / ${line.variant_label}` : line.item_name,
       allocations: db.prepare(`SELECT soa.*, l.name AS location_name FROM sales_order_allocations soa
@@ -689,7 +781,7 @@ function react(db, workspaceId, salesEvent, type, order) {
 
 module.exports = {
   OPEN, createCustomer, listCustomers, getCustomer, updateCustomer, requireCustomer,
-  createOrder, confirm, addLine, setLineQuantity, fulfill, cancel, cancelLine,
+  createOrder, confirm, allocateAvailable, addLine, setLineQuantity, fulfill, cancel, cancelLine,
   getOrder, listOrders, listCompletedSales, waitingForStock, committedByPosition, availabilityForSku,
   commitmentsForSku, reconcileForSkus,
 };

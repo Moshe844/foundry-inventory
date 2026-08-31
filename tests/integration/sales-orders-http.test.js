@@ -339,3 +339,91 @@ test('a partly shipped order does not claim nothing was shipped', async () => {
     'because something was shipped, and the same page says so');
   assert.match(after, /34 units shipped/, 'it says how much actually went');
 });
+
+/**
+ * Stock that arrives after an order is confirmed can be committed to it.
+ *
+ * Allocation ran once, at confirmation, and never again — so a delivery could
+ * land against the exact shortfall an order was waiting for and the order could
+ * not take it. Sixty units in the store room, an order short sixteen, and the
+ * only options on the page were to add more demand or cancel. Needs you sent
+ * the reader there, which made it a loop into a dead end.
+ *
+ * Foundry still does not do it by itself: holding stock for one customer takes
+ * it from the next person who asks, so it is offered and not done.
+ */
+test('stock arriving after confirmation can be committed, without moving any of it', async () => {
+  const env = setup();
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10,
+  });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const form = await agent.get('/sales/new');
+  const created = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'Riverside Builders', skuId: env.item.skuId,
+    quantity: 30, orderDate: '2026-08-31', fulfillmentLocationId: env.workspace.main.id,
+  });
+  let page = await agent.get(created.headers.location);
+  await agent.post(`${created.headers.location}/confirm`).type('form').send({ _csrf: csrfFrom(page.text) });
+
+  let order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
+  assert.equal(order.totals.allocated, 10);
+  assert.equal(order.totals.backordered, 20);
+
+  // Nothing free, so nothing to offer and nothing to commit.
+  page = await agent.get(created.headers.location);
+  assert.doesNotMatch(plain(page.text), /Commit the stock that has arrived/);
+
+  // A delivery lands.
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 12,
+  });
+  page = await agent.get(created.headers.location);
+  assert.match(plain(page.text), /Commit the stock that has arrived/);
+  assert.match(plain(page.text), /Commit 12 to this order/);
+
+  const onHandBefore = sales.availabilityForSku(env.db, env.workspace.workspaceId, env.item.skuId).onHand;
+  const committed = await agent.post(`${created.headers.location}/allocate`).type('form')
+    .send({ _csrf: csrfFrom(page.text), idempotencyKey: 'commit-once' });
+  assert.equal(committed.status, 303);
+
+  order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
+  assert.equal(order.totals.allocated, 22, 'the twelve that arrived are now held');
+  assert.equal(order.totals.backordered, 8, 'and the rest is still short');
+
+  const after = sales.availabilityForSku(env.db, env.workspace.workspaceId, env.item.skuId);
+  assert.equal(after.onHand, onHandBefore, 'committing is a promise about stock, not a movement of it');
+  assert.equal(after.available, 0, 'but none of it is free any more');
+
+  // Committing again commits nothing: the shortfall is real but the stock is not.
+  const again = await agent.post(`${created.headers.location}/allocate`).type('form')
+    .send({ _csrf: csrfFrom((await agent.get(created.headers.location)).text), idempotencyKey: 'commit-twice' });
+  assert.equal(again.status, 303);
+  order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
+  assert.equal(order.totals.allocated, 22, 'never more than is on the shelf');
+  assert.ok(order.totals.allocated <= after.onHand, 'and never more than exists');
+});
+
+test('a draft order is told to be confirmed rather than silently holding stock', async () => {
+  const env = setup();
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20,
+  });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const form = await agent.get('/sales/new');
+  const created = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'Draft Co', skuId: env.item.skuId,
+    quantity: 5, orderDate: '2026-08-31', fulfillmentLocationId: env.workspace.main.id,
+  });
+  const page = await agent.get(created.headers.location);
+  await agent.post(`${created.headers.location}/allocate`).type('form').send({ _csrf: csrfFrom(page.text) });
+
+  const order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
+  assert.equal(order.status, 'DRAFT');
+  assert.equal(order.totals.allocated, 0, 'a draft holds nothing');
+  assert.match(plain((await agent.get(created.headers.location)).text), /Confirm the order first/);
+});
