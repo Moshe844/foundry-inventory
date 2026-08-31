@@ -355,14 +355,25 @@ input:focus, select:focus, textarea:focus {
   border-radius: var(--radius-lg);
   box-shadow: none;
 }
+/*
+ * Items sit left, and a trailing action is pushed right by the spacer that
+ * already exists for it.
+ *
+ * This said space-between, which is right for a title and one action and wrong
+ * for everything else. A head written as icon then title — "Who do you buy this
+ * from?" — had the two shoved to opposite ends of the card, leaving the heading
+ * floating against the right edge with an icon stranded on the left. 155 card
+ * heads in the views, and the ones that need an action on the right already
+ * carry a .spacer to do it.
+ */
 .card-head, .panel-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--line-soft);
 }
+.card-head .spacer, .panel-head .spacer { margin-left: auto; }
 .card-head h2, .card-head h3, .panel-head h2, .panel-head h3 { font-size: var(--text-md); font-weight: var(--weight-semi); }
 .card-body, .panel-body { padding: var(--space-5); }
 .card-body--tight { padding: var(--space-4); }
@@ -1722,3 +1733,97 @@ a.list-row.panel { display: flex; margin-bottom: var(--space-4); }
   border-color: var(--accent-line);
   background: var(--accent-soft);
 }
+
+/* ===================================================== Classes with no rules
+
+   Found by listing every class used in a view and subtracting every class any
+   stylesheet defines: 31 of 496 had no rule anywhere. They are not decorative
+   leftovers — they are the difference between a form and a letter.
+
+   The worst was field-help, the explanatory line under a form field, used on
+   thirteen screens. With no rule it inherited body text: same size as the label
+   above it, full-strength ink, and hard against the input. Six fields of that
+   stacked up is why "add a supplier" read like correspondence.
+   ========================================================================= */
+
+/*
+ * The hint under a field.
+ *
+ * The real cause of the letter: app.css styles `.field > span` as a label —
+ * full ink, 13px, weight 600 — and the hint is a span inside a field, so every
+ * explanation was rendered as a second bold label under the first. Six fields
+ * of that stacked, with no size or colour separating question from
+ * explanation, is a page of correspondence rather than a form.
+ *
+ * Selected as a child of the field so it outranks that blanket rule, rather
+ * than by piling on !important.
+ */
+.field > .field-help,
+.field-help {
+  display: block;
+  margin-top: var(--space-2);
+  margin-bottom: 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--muted);
+  font-weight: var(--weight-normal);
+}
+
+/* "optional" beside a label is an aside, not part of the name. */
+.optional { font-weight: var(--weight-normal); color: var(--muted-soft); }
+
+/* A dense table: same vocabulary as every other table, less air per row. */
+.table--tight thead th { padding: var(--space-2) var(--space-3); }
+.table--tight tbody td { padding: var(--space-2) var(--space-3); font-size: var(--text-sm); }
+
+/* A table that can outgrow its container scrolls inside its own frame rather
+   than pushing the page sideways. */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+
+/* A heading inside a section — below h2, above body text. */
+.sub-head {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  color: var(--ink);
+}
+.sub-head:first-child { margin-top: 0; }
+
+/* Notices carried three tone names the stylesheets never defined, so a success
+   and a warning looked identical. Same five meanings as every other status. */
+.notice {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+.notice--success, .notice--ok { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok); }
+.notice--info { background: var(--info-bg); border-color: var(--info-line); color: var(--info); }
+.notice--warn { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn); }
+.notice strong { font-weight: var(--weight-semi); }
+
+.input--sm { min-height: 32px; padding: var(--space-1) var(--space-2); font-size: var(--text-sm); }
+
+/* Breadcrumbs, singular and plural — both spellings are in the views. */
+.breadcrumb, .breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.breadcrumb a, .breadcrumbs a { color: var(--muted); text-decoration: none; }
+.breadcrumb a:hover, .breadcrumbs a:hover { color: var(--accent-ink); text-decoration: underline; }
+.breadcrumb svg, .breadcrumbs svg { color: var(--line-strong); }
+
+/* A checkbox row that explains its own consequence. */
+.choice { display: flex; gap: var(--space-3); align-items: flex-start; cursor: pointer; }
+.choice input[type="checkbox"] { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
+.choice strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-semi); }
+.choice small { display: block; margin-top: 2px; font-size: var(--text-xs); color: var(--muted); line-height: var(--leading-snug); }
