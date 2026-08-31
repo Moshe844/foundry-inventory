@@ -1,0 +1,28 @@
+<aside class="screen-guide" id="context-help" aria-label="Guidance for this screen">
+  <details class="screen-guide__help">
+    <summary><%- helpers.icon('question', { size: 15 }) %> What can I do here?</summary>
+    <p><%= screenGuide.description %></p>
+  </details>
+  <div class="screen-guide__state">
+    <span class="screen-guide__need">
+      <% if (attentionCount > 0) { %>
+        <strong><%= attentionCount %> <%= attentionCount === 1 ? 'thing needs' : 'things need' %> you</strong>
+      <% } else { %>
+        <strong>Nothing needs you</strong>
+      <% } %>
+    </span>
+    <% if (screenGuide.next) { %>
+      <span class="screen-guide__next"><span>Do now:</span> <strong><%= screenGuide.next.title %></strong></span>
+      <%# This band appears above every screen, so a primary button in it is a
+          primary button on every screen — and it is about the workspace rather
+          than about the page you opened. On Inventory, Purchasing, Settings and
+          Locations it was the loudest control on screen while belonging to none
+          of them, and on Suppliers it sat next to that page's own "Add supplier"
+          saying the same thing twice. It is the suggestion it always was; the
+          page keeps its own primary action. %>
+      <% if (screenGuide.next.href && screenGuide.next.action) { %>
+        <a class="screen-guide__go" href="<%= screenGuide.next.href %>"><%= screenGuide.next.action %> <%- helpers.icon('chevron', { size: 12 }) %></a>
+      <% } %>
+    <% } %>
+  </div>
+</aside>

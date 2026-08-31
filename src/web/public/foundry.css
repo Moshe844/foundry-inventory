@@ -1563,3 +1563,17 @@ tbody tr:hover td { background: var(--surface-2); }
   .provider__form .btn { width: 100%; }
   .provider__more > summary, .provider__more > div { padding-left: 0; }
 }
+
+/* The guidance band's suggestion: a link, because it belongs to the workspace
+   rather than to the page it happens to be sitting above. */
+.screen-guide__go {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  color: var(--accent-ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.screen-guide__go:hover { text-decoration: underline; }

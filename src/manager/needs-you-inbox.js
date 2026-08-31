@@ -345,6 +345,28 @@ function fromImports(db, workspaceId) {
     });
 }
 
+/** Inventory documents captured from a watched mailbox, waiting for review. */
+function fromMailboxInventory(db, workspaceId) {
+  return db.prepare(`SELECT d.id, d.understanding_id, d.source_name, d.created_at, m.sender
+    FROM setup_documents d
+    JOIN connection_email_attachments a ON a.setup_document_id = d.id AND a.workspace_id = d.workspace_id
+    JOIN connection_email_messages m ON m.id = a.message_id AND m.workspace_id = a.workspace_id
+    WHERE d.workspace_id = ? AND d.status = 'PREPARED'
+    ORDER BY d.created_at DESC`).all(workspaceId).map((row) => ({
+      id: `mailbox-inventory:${row.id}`,
+      kind: 'import',
+      title: `${row.source_name} is ready for inventory review`,
+      happened: `Foundry read the attachment from ${row.sender}. Nothing has been added or changed yet.`,
+      why: 'Email attachments are external evidence. Foundry waits for you to review the exact products and quantities.',
+      recommendation: 'Check the proposed matches and new records, then approve only if the file belongs in this inventory.',
+      missing: 'Your approval of the inventory preview.',
+      actionLabel: 'Choose what to add',
+      href: `/foundry/proposal/${row.understanding_id}`,
+      at: row.created_at,
+      priority: 75,
+    }));
+}
+
 /**
  * A rule written but never switched on.
  *
@@ -403,8 +425,13 @@ function fromSalesOrders(db, workspaceId) {
       const suppliers = supplierService.suppliersForSku(db, workspaceId, line.sku_id);
       const leadDays = suppliers.map((entry) => Number(entry.effectiveLeadTimeDays))
         .filter((value) => Number.isFinite(value) && value >= 0).sort((a, b) => a - b)[0];
-      const earliest = leadDays === undefined ? null
-        : new Date(today.getTime() + leadDays * dayMs).toISOString().slice(0, 10);
+      // A supplier-provided date on a committed PO is stronger evidence than
+      // the generic lead time. If that date moves past a customer promise,
+      // explain the actual consequence instead of claiming a hypothetical new
+      // order could still arrive sooner.
+      const committedArrival = incoming.onOrder ? incoming.nextExpectedDate : null;
+      const earliest = committedArrival || (leadDays === undefined ? null
+        : new Date(today.getTime() + leadDays * dayMs).toISOString().slice(0, 10));
       const dateMiss = Boolean(order.needed_by && (!earliest || earliest > order.needed_by));
       entries.push({
         id: `sales-order:${order.id}:${line.id}`,
@@ -415,7 +442,9 @@ function fromSalesOrders(db, workspaceId) {
         happened: `${line.quantity_ordered} ordered · ${line.allocated} committed · ${line.backordered} waiting for stock.`,
         why: dateMiss
           ? earliest
-            ? `The earliest supported supplier arrival is ${earliest}, after the customer needs it.`
+            ? committedArrival
+              ? `${incoming.onOrder} incoming unit(s) are now expected ${earliest}, after the customer needs them.`
+              : `The earliest supported supplier arrival is ${earliest}, after the customer needs it.`
             : 'No supported supplier arrival date is available, so Foundry cannot promise the requested date.'
           : 'Foundry cannot allocate stock that is not physically available or already committed elsewhere.',
         recommendation: incoming.onOrder
@@ -440,6 +469,8 @@ function fromConnections(db, workspaceId) {
     WHERE ci.workspace_id = ? AND ci.status = 'OPEN' ORDER BY ci.updated_at DESC`).all(workspaceId);
   return rows.map((row) => ({
     id: `connection:${row.id}`,
+    kind: 'connection',
+    issueType: row.issue_type,
     title: row.title,
     happened: row.detail,
     why: row.issue_type === 'CONNECTION_STALE'
@@ -460,22 +491,50 @@ function inbox(db, workspaceId) {
     try { return fn(db, workspaceId) || []; } catch { return []; }
   };
 
-  return [
+  const entries = [
     ...safely(fromPhysicalEvents),
     ...safely(fromWorkItems),
     ...safely(fromInvestigations),
     ...safely(fromCorrections),
     ...safely(fromImports),
+    ...safely(fromMailboxInventory),
     ...safely(fromPolicies),
     ...safely(fromAutomationSuggestions),
     ...safely(fromSalesOrders),
     ...safely(fromConnections),
     ...safely(fromFindings),
-    ...safely(fromReadiness),
+    // Learning demand is not a decision. Home teaches the user to record real
+    // sales in context; Needs You remains reserved for something Foundry is
+    // genuinely blocked on, such as a mismatch, approval or unknown mapping.
   ].map((entry) => ({
     ...entry,
     importance: entry.priority >= 90 ? 'Urgent' : entry.priority >= 80 ? 'Important' : 'Needs You',
-  })).sort((a, b) => (b.priority - a.priority) || String(b.at || '').localeCompare(String(a.at || '')));
+  }));
+
+  /*
+   * Two entries that ask the same person for the same decision about the same
+   * record are one decision, however many internal rows produced them.
+   *
+   * Found on a real workspace: PO-1001 appeared twice in Needs you, with the
+   * same title, the same explanation and the same "Book it in" button pointing
+   * at the same order — because two work items existed for the one delivery.
+   * Nothing was wrong with either of them; there is simply only one box arriving
+   * and one thing to do about it. A queue that lists it twice makes somebody
+   * wonder what the difference is, and there is none to find.
+   *
+   * Matched on what the reader can see — the record it goes to and what it asks
+   * them to do — because that is exactly what makes two entries impossible to
+   * tell apart. The more urgent one survives, so nothing is quietly downgraded.
+   */
+  const seen = new Map();
+  for (const entry of entries) {
+    const key = `${entry.href} :: ${entry.actionLabel} :: ${entry.title}`;
+    const kept = seen.get(key);
+    if (!kept || (entry.priority || 0) > (kept.priority || 0)) seen.set(key, entry);
+  }
+
+  return [...seen.values()]
+    .sort((a, b) => (b.priority - a.priority) || String(b.at || '').localeCompare(String(a.at || '')));
 }
 
 module.exports = {
@@ -485,6 +544,7 @@ module.exports = {
   fromInvestigations,
   fromCorrections,
   fromImports,
+  fromMailboxInventory,
   fromPolicies,
   fromAutomationSuggestions,
   fromSalesOrders,
