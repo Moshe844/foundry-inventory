@@ -487,10 +487,30 @@ async function runImport(db, ctx, membership, source, plan, suppressedRowNumbers
     detectedType: sheetProfile ? sheetProfile.detectedType : undefined,
   });
 
-  // Re-read with the migration's location decisions applied, so a row that said
-  // "Brooklyn Whse" lands in Brooklyn Warehouse rather than failing.
-  if (Object.keys(locationMappings).length) {
-    importPlans.revalidate(db, ctx, membership, imported.id, { locationMappings });
+  /*
+   * Where stock goes when the file never says.
+   *
+   * A file with no location column produced no mappings, so nothing was handed
+   * to the import and every row failed with "No location for this stock, and
+   * no default chosen". Forty good rows, nothing created, and the migration
+   * reporting "There is nothing in that file Foundry can import" about a file
+   * it had just read forty products and 751 units out of.
+   *
+   * The plan proposes a location in that case and the migration has created it
+   * by now, so it is named here as the default. A file that does say where its
+   * stock is keeps using its own spellings, exactly as before.
+   */
+  const singleLocation = db
+    .prepare(`SELECT id FROM locations WHERE workspace_id = ? AND is_active = 1
+              ORDER BY created_at LIMIT 1`)
+    .get(ctx.workspaceId);
+  const needsDefault = !Object.keys(locationMappings).length && singleLocation;
+
+  if (Object.keys(locationMappings).length || needsDefault) {
+    importPlans.revalidate(db, ctx, membership, imported.id, {
+      locationMappings,
+      ...(needsDefault ? { defaultLocationId: singleLocation.id } : {}),
+    });
   }
 
   // Rows another file already establishes. Excluded before approval, so the

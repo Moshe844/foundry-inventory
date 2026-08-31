@@ -517,3 +517,70 @@ test('a position counted in two files is established once, from the row that won
   assert.equal(receipts, 3);
   assert.equal(engine.verifyIntegrity(env.db, env.workspace.workspaceId).ok, true);
 });
+
+/**
+ * A stock file with one row per size, and no location column at all.
+ *
+ * This is the ordinary shape of a small shop's spreadsheet, and setup could not
+ * get it in. Two separate faults, both found by uploading a real one.
+ *
+ * Rows sharing a product name and differing only by a mapped variant column
+ * were compared pairwise as if they might be the same product under different
+ * names. Forty rows produced fifty-two of "Classic Crew T-Shirt / Classic Crew
+ * T-Shirt — treat as the same product, or keep them separate?", each comparing
+ * a product to itself, and none of them answerable.
+ *
+ * And with no location column, nothing was proposed to hold the stock, so every
+ * row failed validation with "No location for this stock, and no default
+ * chosen". The migration then reported "There is nothing in that file Foundry
+ * can import" about a file it had just read forty products and 751 units out of.
+ */
+const VARIANTS_NO_LOCATION = csv([
+  'SKU,Item Name,Colour,Size,Qty On Hand',
+  'TSH-BLK-S,Classic Crew T-Shirt,Black,S,34',
+  'TSH-BLK-M,Classic Crew T-Shirt,Black,M,42',
+  'TSH-WHT-S,Classic Crew T-Shirt,White,S,17',
+  'BLT-BRN-L,Leather Belt,Brown,L,14',
+]);
+
+test('variants of one product are not offered as a duplicate to resolve', () => {
+  const env = setup();
+  addSource(env, 'stock.csv', VARIANTS_NO_LOCATION);
+  const plan = migration.buildPlan(env.db, env.ctx, env.membership);
+
+  const conflicts = migration.conflictsFor(env.db, env.workspace.workspaceId, plan.id);
+  const duplicates = conflicts.filter((c) => c.kind === 'same_product_different_names');
+  assert.equal(duplicates.length, 0,
+    `rows that differ by colour or size are not a question: got ${duplicates.map((c) => c.subject).join('; ')}`);
+});
+
+test('a file that never says where stock is still gets somewhere to put it', () => {
+  const env = setup();
+  addSource(env, 'stock.csv', VARIANTS_NO_LOCATION);
+  const plan = migration.buildPlan(env.db, env.ctx, env.membership);
+
+  assert.equal(plan.proposedLocations.length, 1, 'one location is proposed');
+  assert.equal(plan.expectedTotals.locations, 1);
+  assert.equal(plan.expectedTotals.units, 107, 'every unit in the file is accounted for');
+});
+
+test('the whole spreadsheet path completes and the stock lands', async () => {
+  const env = setup();
+  addSource(env, 'stock.csv', VARIANTS_NO_LOCATION);
+  const plan = migration.buildPlan(env.db, env.ctx, env.membership);
+
+  const { run } = await migration.migrate(env.db, env.ctx, env.membership, plan.id, {
+    idempotencyKey: `test-migration:${plan.id}`,
+  });
+
+  const count = (sql) => env.db.prepare(sql).get(env.workspace.workspaceId).n;
+  assert.equal(count('SELECT COUNT(*) n FROM locations WHERE workspace_id = ? AND is_active = 1'), 1);
+  assert.equal(count('SELECT COUNT(*) n FROM skus WHERE workspace_id = ?'), 4, 'every row became stock');
+  assert.equal(
+    env.db.prepare('SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ?')
+      .get(env.workspace.workspaceId).n,
+    107,
+    'and the totals match the file rather than the migration reporting success over nothing'
+  );
+  assert.ok(run, 'the migration produced a run to report on');
+});

@@ -29,6 +29,14 @@ const resolver = require('../actions/resolver');
 const catalog = require('../imports/catalog-service');
 const sourceService = require('./source-service');
 
+/**
+ * What a location is called when the file never says.
+ *
+ * Deliberately plain: it describes the only place the stock can be, and the
+ * owner renames it the moment they have a better word for it.
+ */
+const DEFAULT_LOCATION_NAME = 'Main location';
+
 const CONFLICT = {
   SAME_PRODUCT_DIFFERENT_NAMES: 'same_product_different_names',
   DUPLICATE_SKU: 'duplicate_sku',
@@ -215,6 +223,26 @@ function analyse(db, workspaceId, sources) {
     }
   }
   const locationGroups = groupLocations(locationNames);
+
+  /*
+   * A stock file that never says where the stock is.
+   *
+   * Perfectly ordinary — a shop with one store room lists what it has, not
+   * where, because there is only one answer. Foundry proposed no locations,
+   * and then every row failed validation with "No location for this stock,
+   * and no default chosen": forty good rows, nothing created, and a migration
+   * that reported "There is nothing in that file Foundry can import" about a
+   * file it had just read forty products and 751 units out of.
+   *
+   * Somewhere is required before stock can exist, so one is proposed. It is
+   * named, shown on the review page before anything is created, and renameable
+   * afterwards like any other location.
+   */
+  const quantitiesPresent = readSources.some((entry) => entry.sheet
+    && entry.sheet.mappings.quantity !== undefined);
+  if (!locationGroups.length && quantitiesPresent) {
+    locationGroups.push({ canonical: DEFAULT_LOCATION_NAME, variants: [DEFAULT_LOCATION_NAME], invented: true });
+  }
   const canonicalFor = (name) => {
     const group = locationGroups.find((candidate) => candidate.variants.includes(String(name).trim()));
     return group ? group.canonical : String(name || '').trim();
@@ -400,6 +428,25 @@ function analyse(db, workspaceId, sources) {
     }
   }
 
+  /**
+   * Two entries that are the same product told apart by a variant column.
+   *
+   * The sheet distinguishes them itself — black from white, small from medium —
+   * so there is nothing for a person to decide. Only rows that actually carry
+   * differing variant values count: two rows with no variants at all are not
+   * siblings, they are candidates for a genuine duplicate.
+   */
+  function variantSiblings(left, right) {
+    const valuesOf = (product) => product.rows
+      .flatMap((row) => row.variants || [])
+      .map((value) => normaliseKey(value))
+      .filter(Boolean);
+    const a = new Set(valuesOf(left));
+    const b = new Set(valuesOf(right));
+    if (!a.size || !b.size) return false;
+    return [...a].some((value) => !b.has(value)) || [...b].some((value) => !a.has(value));
+  }
+
   // --- products that only resemble each other -------------------------------
   const named = [...products.values()].filter((product) => product.names.size);
   for (let i = 0; i < named.length; i += 1) {
@@ -408,6 +455,25 @@ function analyse(db, workspaceId, sources) {
       const b = [...named[j].names][0];
       const sameCode = [...named[i].codes].some((code) => named[j].codes.has(code));
       if (sameCode) continue;
+
+      /*
+       * This asks whether two products with *different* names are really one.
+       * It was also firing when the names were identical, which is not a
+       * question anybody can answer: a clothing sheet with one row per size
+       * produced fifty-two of "Classic Crew T-Shirt / Classic Crew T-Shirt —
+       * treat as the same product, or keep them separate?", each comparing a
+       * product to itself. Forty rows, and setup asked fifty-two unanswerable
+       * questions before it would create anything.
+       *
+       * Rows sharing a name and differing by a mapped variant column are the
+       * ordinary shape of a product sheet — the same shirt in black and in
+       * medium. Foundry had already recognised Color and Size as variant axes
+       * on this very file, so the sheet had answered the question before it
+       * was asked.
+       */
+      if (normaliseKey(a) === normaliseKey(b)) continue;
+      if (variantSiblings(named[i], named[j])) continue;
+
       if (!catalog.looksLikeSameProduct(a, b)) continue;
       conflicts.push({
         kind: CONFLICT.SAME_PRODUCT_DIFFERENT_NAMES,
