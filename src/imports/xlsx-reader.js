@@ -19,6 +19,8 @@
 
 const zlib = require('node:zlib');
 
+const { ValidationError } = require('../domain/errors');
+
 const LIMITS = {
   maxEntries: 512,
   maxEntryBytes: 64 * 1024 * 1024,
@@ -27,7 +29,20 @@ const LIMITS = {
   maxColumns: 512,
 };
 
-class SpreadsheetError extends Error {
+/**
+ * A spreadsheet Foundry cannot read.
+ *
+ * This extended plain Error, so the web layer — which decides between "your
+ * problem, here is what is wrong" and "our problem, sorry" by asking whether
+ * the error is a DomainError — classified every unreadable workbook as a
+ * server fault. Somebody uploading a file got "Something went wrong on our
+ * side. Please try again.", which is untrue, unactionable, and invites them to
+ * retry something that will fail identically.
+ *
+ * The messages here were already written for a person to read. They just could
+ * not reach one.
+ */
+class SpreadsheetError extends ValidationError {
   constructor(message) {
     super(message);
     this.code = 'spreadsheet_unreadable';
@@ -111,7 +126,7 @@ function decodeXml(text) {
 /** All the text inside one element, runs included. */
 function textOf(fragment) {
   const parts = [];
-  const re = /<t(?:\s[^>]*)?>([\s\S]*?)<\/t>|<t\s*\/>/g;
+  const re = /<(?:[\w.-]+:)?t(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w.-]+:)?t>|<(?:[\w.-]+:)?t\s*\/>/g;
   let match;
   while ((match = re.exec(fragment)) !== null) parts.push(decodeXml(match[1] || ''));
   return parts.join('');
@@ -122,7 +137,7 @@ function readSharedStrings(files) {
   if (!xml) return [];
   const text = xml.toString('utf8');
   const strings = [];
-  const re = /<si(?:\s[^>]*)?>([\s\S]*?)<\/si>|<si\s*\/>/g;
+  const re = /<(?:[\w.-]+:)?si(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w.-]+:)?si>|<(?:[\w.-]+:)?si\s*\/>/g;
   let match;
   while ((match = re.exec(text)) !== null) strings.push(textOf(match[1] || ''));
   return strings;
@@ -138,16 +153,16 @@ function readDateStyles(files) {
   // Built-in formats that are dates, plus any custom one whose code has y/m/d.
   const builtinDates = new Set([14, 15, 16, 17, 22, 27, 30, 36, 45, 46, 47, 50, 57]);
   const customDates = new Set();
-  const numFmtRe = /<numFmt[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"/g;
+  const numFmtRe = /<(?:[\w.-]+:)?numFmt[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"/g;
   let match;
   while ((match = numFmtRe.exec(text)) !== null) {
     const code = decodeXml(match[2]).replace(/\[[^\]]*\]/g, '').toLowerCase();
     if (/[dmy]/.test(code) && !/^[#0.,%\s]*$/.test(code)) customDates.add(Number(match[1]));
   }
 
-  const cellXfs = text.match(/<cellXfs[\s\S]*?<\/cellXfs>/);
+  const cellXfs = text.match(/<(?:[\w.-]+:)?cellXfs[\s\S]*?<\/(?:[\w.-]+:)?cellXfs>/);
   if (!cellXfs) return dateStyles;
-  const xfRe = /<xf\b[^>]*>/g;
+  const xfRe = /<(?:[\w.-]+:)?xf\b[^>]*>/g;
   let index = 0;
   while ((match = xfRe.exec(cellXfs[0])) !== null) {
     const id = /numFmtId="(\d+)"/.exec(match[0]);
@@ -180,14 +195,14 @@ function serialToDate(serial) {
 function readSheet(xml, sharedStrings, dateStyles) {
   const text = xml.toString('utf8');
   const rows = [];
-  const rowRe = /<row(?:\s[^>]*)?>([\s\S]*?)<\/row>|<row\s[^>]*\/>/g;
+  const rowRe = /<(?:[\w.-]+:)?row(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w.-]+:)?row>|<(?:[\w.-]+:)?row\s[^>]*\/>/g;
   let rowMatch;
 
   while ((rowMatch = rowRe.exec(text)) !== null) {
     if (rows.length >= LIMITS.maxRows) break;
     const body = rowMatch[1] || '';
     const cells = [];
-    const cellRe = /<c\b([^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g;
+    const cellRe = /<(?:[\w.-]+:)?c\b([^>]*)(?:\/>|>([\s\S]*?)<\/(?:[\w.-]+:)?c>)/g;
     let cellMatch;
 
     while ((cellMatch = cellRe.exec(body)) !== null) {
@@ -199,7 +214,7 @@ function readSheet(xml, sharedStrings, dateStyles) {
 
       const type = /t="([^"]+)"/.exec(attributes);
       const style = /s="(\d+)"/.exec(attributes);
-      const valueMatch = /<v(?:\s[^>]*)?>([\s\S]*?)<\/v>/.exec(content);
+      const valueMatch = /<(?:[\w.-]+:)?v(?:\s[^>]*)?>([\s\S]*?)<\/(?:[\w.-]+:)?v>/.exec(content);
       const raw = valueMatch ? decodeXml(valueMatch[1]) : '';
 
       let value = '';
@@ -237,16 +252,22 @@ function sheetParts(files) {
 
   const targets = new Map();
   if (rels) {
-    const relRe = /<Relationship\b[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g;
+    // Attributes are read from the whole tag rather than in a fixed order.
+    // This pattern required Id before Target; the file that exposed all of
+    // this writes Type, Target, Id, so every relationship was missed.
+    const relRe = /<(?:[\w.-]+:)?Relationship\b([^>]*)>/g;
     let match;
     while ((match = relRe.exec(rels.toString('utf8'))) !== null) {
-      const target = decodeXml(match[2]).replace(/^\/?xl\//, '').replace(/^\//, '');
-      targets.set(match[1], target);
+      const id = /\bId="([^"]+)"/.exec(match[1]);
+      const rawTarget = /\bTarget="([^"]+)"/.exec(match[1]);
+      if (!id || !rawTarget) continue;
+      const target = decodeXml(rawTarget[1]).replace(/^\/?xl\//, '').replace(/^\//, '');
+      targets.set(id[1], target);
     }
   }
 
   const sheets = [];
-  const sheetRe = /<sheet\b([^>]*)\/?>/g;
+  const sheetRe = /<(?:[\w.-]+:)?sheet\b([^>]*)\/?>/g;
   let match;
   while ((match = sheetRe.exec(workbook.toString('utf8'))) !== null) {
     const name = /name="([^"]*)"/.exec(match[1]);

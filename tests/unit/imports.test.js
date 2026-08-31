@@ -453,3 +453,110 @@ test('a read-only member cannot add products', () => {
   const viewer = { role: 'staff', permissions: JSON.stringify(['VIEW']) };
   assert.throws(() => permissions.assertCanPerform(viewer, 'create_item'), /do not have permission to add products/);
 });
+
+/**
+ * A workbook whose elements carry a namespace prefix.
+ *
+ * OOXML lets a producer choose its own prefix, and plenty do: the file that
+ * exposed this writes <x:workbook>, <x:sheets>, <x:sheet>, and the same for
+ * every row, cell and shared string. Every pattern in the reader matched the
+ * bare name, so a perfectly ordinary spreadsheet — one Excel and every other
+ * tool opens without comment — reported "no readable sheets".
+ *
+ * The relationships in that file are also written Type, Target, Id, while the
+ * reader required Id before Target, so no sheet could be located by id either.
+ *
+ * Both are exactly the failure mode of parsing XML with regular expressions:
+ * it works until it meets a producer that made different, equally valid,
+ * choices about spelling.
+ */
+function prefixedWorkbook() {
+  const zip = require('node:zlib');
+  const entries = new Map();
+  const put = (name, xml) => entries.set(name, Buffer.from(xml, 'utf8'));
+
+  put('[Content_Types].xml', '<?xml version="1.0"?><Types/>');
+  put('xl/workbook.xml',
+    '<?xml version="1.0" encoding="utf-8"?>'
+    + '<x:workbook xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    + '<x:sheets>'
+    + '<x:sheet name="Clothing Inventory" sheetId="1" r:id="Rabc" '
+    + 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" />'
+    + '</x:sheets></x:workbook>');
+  // Attribute order Type, Target, Id — and an absolute target path.
+  put('xl/_rels/workbook.xml.rels',
+    '<?xml version="1.0" encoding="utf-8"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + '<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"'
+    + ' Target="/xl/worksheets/sheet1.xml" Id="Rabc" /></Relationships>');
+  put('xl/sharedStrings.xml',
+    '<?xml version="1.0" encoding="utf-8"?>'
+    + '<x:sst xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    + '<x:si><x:t>SKU</x:t></x:si><x:si><x:t>Classic Crew T-Shirt</x:t></x:si>'
+    + '</x:sst>');
+  put('xl/worksheets/sheet1.xml',
+    '<?xml version="1.0" encoding="utf-8"?>'
+    + '<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData>'
+    + '<x:row r="1"><x:c r="A1" t="s"><x:v>0</x:v></x:c></x:row>'
+    + '<x:row r="2"><x:c r="A2" t="s"><x:v>1</x:v></x:c><x:c r="B2"><x:v>34</x:v></x:c></x:row>'
+    + '</x:sheetData></x:worksheet>');
+
+  // Minimal store-only zip: local headers, then the central directory.
+  const locals = [];
+  const central = [];
+  let offset = 0;
+  for (const [name, body] of entries) {
+    const nameBuf = Buffer.from(name, 'utf8');
+    const crc = (() => {
+      let c = ~0;
+      for (const byte of body) {
+        c ^= byte;
+        for (let i = 0; i < 8; i += 1) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1));
+      }
+      return ~c >>> 0;
+    })();
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc, 14); local.writeUInt32LE(body.length, 18);
+    local.writeUInt32LE(body.length, 22); local.writeUInt16LE(nameBuf.length, 26);
+    locals.push(local, nameBuf, body);
+
+    const dir = Buffer.alloc(46);
+    dir.writeUInt32LE(0x02014b50, 0); dir.writeUInt16LE(20, 6);
+    dir.writeUInt32LE(crc, 16); dir.writeUInt32LE(body.length, 20);
+    dir.writeUInt32LE(body.length, 24); dir.writeUInt16LE(nameBuf.length, 28);
+    dir.writeUInt32LE(offset, 42);
+    central.push(dir, nameBuf);
+    offset += local.length + nameBuf.length + body.length;
+  }
+  const localPart = Buffer.concat(locals);
+  const centralPart = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.size, 8); end.writeUInt16LE(entries.size, 10);
+  end.writeUInt32LE(centralPart.length, 12); end.writeUInt32LE(localPart.length, 16);
+  return Buffer.concat([localPart, centralPart, end]);
+}
+
+test('a namespace-prefixed workbook is read like any other', () => {
+  const workbook = xlsxReader.readWorkbook(prefixedWorkbook());
+
+  assert.equal(workbook.sheets.length, 1, 'the sheet is found despite the x: prefix');
+  assert.equal(workbook.sheets[0].name, 'Clothing Inventory');
+
+  const [header, first] = workbook.sheets[0].rows;
+  assert.deepEqual(header, ['SKU'], 'shared strings resolve through prefixed <x:t>');
+  assert.equal(first[0], 'Classic Crew T-Shirt');
+  assert.equal(first[1], '34', 'and inline numbers still read');
+});
+
+test('an unreadable spreadsheet is the uploader’s problem, not a server fault', () => {
+  const { DomainError } = require('../../src/domain/errors');
+  const error = new xlsxReader.SpreadsheetError('That spreadsheet has no readable sheets.');
+
+  // The web layer decides between "here is what is wrong with your file" and
+  // "something went wrong on our side" by asking this exact question.
+  assert.ok(error instanceof DomainError, 'so the real message reaches the person');
+  assert.equal(error.status, 400);
+  assert.equal(error.code, 'spreadsheet_unreadable');
+});
