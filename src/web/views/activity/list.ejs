@@ -1,10 +1,46 @@
+<%
+  /*
+   * One timeline, one filter pattern, one set of controls.
+   *
+   * The page opened with three rows of controls before a single event: a row of
+   * stream chips, a form holding nothing but a search box, and a second form
+   * holding six selects and two dates. Two of those forms existed only because
+   * they were added at different times, and between them they carried the same
+   * hidden stream field twice.
+   *
+   * The chips were also a third filter style — Needs you and Purchasing use a
+   * segmented control, and this used chips — and the events used a list built
+   * only for this page while Home and the item record use a timeline. Same idea,
+   * three appearances, which is the thing this redesign exists to stop.
+   *
+   * Everything below the search is now one form, and the detailed filters fold
+   * away, because most people arrive wanting the last few days and not a query
+   * by person and date range.
+   */
+  var STREAM_ORDER = ['all', 'inventory', 'purchasing', 'foundry', 'exception', 'system'];
+  // A stream this list has not been told about — sales orders, when that engine
+  // added its own — sorts to the end rather than to the front. indexOf returns
+  // -1 for anything unknown, which put the newest stream ahead of "All
+  // activity" and made the page open on a filter nobody chose.
+  var streamRank = function (name) {
+    var at = STREAM_ORDER.indexOf(name);
+    return at === -1 ? STREAM_ORDER.length : at;
+  };
+  var streamKeys = streams.concat(['all'])
+    .filter(function (s, i, a) { return a.indexOf(s) === i; })
+    .sort(function (a, b) { return streamRank(a) - streamRank(b); });
+
+  var hasDetailFilters = filters.operation || filters.itemId || filters.locationId
+    || filters.actorId || filters.dateFrom || filters.dateTo;
+%>
+
 <div class="page-head">
-  <div class="titles">
+  <div>
     <h1>Activity</h1>
-    <div class="page-sub">
-      What happened to your operation — stock, orders, differences and the work
-      Foundry did about them. <a href="/autopilot/history">Foundry's own working</a> is kept separately.
-    </div>
+    <p class="page-sub">
+      What happened to your operation — stock, orders, differences and the work Foundry did about
+      them. <a href="/autopilot/history">Foundry's own working</a> is kept separately.
+    </p>
   </div>
 </div>
 
@@ -12,112 +48,112 @@
     a person asking "what happened to my stock" and a person auditing routine
     checks are asking different questions, and answering both at once is what
     buried the sale under fifty inventory checks. %>
-<nav class="act-streams section" aria-label="Filter activity">
-  <% streams.concat(['all']).filter(function (s, i, a) { return a.indexOf(s) === i; }).sort(function (a, b) {
-       var order = ['all', 'inventory', 'purchasing', 'foundry', 'exception', 'system'];
-       return order.indexOf(a) - order.indexOf(b);
-     }).forEach(function (name) { %>
-    <a class="chip <%= stream === name ? 'is-active' : '' %>"
-       href="/activity?stream=<%= name %><%= query ? '&q=' + encodeURIComponent(query) : '' %>">
-      <%= streamLabels[name] %>
-      <% if (log.counts[name]) { %><span class="chip-count"><%= log.counts[name] %></span><% } %>
-    </a>
-  <% }) %>
-</nav>
+<div class="inbox-bar">
+  <div class="segmented" role="group" aria-label="Filter activity">
+    <% streamKeys.forEach(function (name) { %>
+      <a class="segmented__item <%= stream === name ? 'is-on' : '' %>"
+         href="/activity?stream=<%= name %><%= query ? '&q=' + encodeURIComponent(query) : '' %>"
+         <%= stream === name ? 'aria-current="true"' : '' %>><%= streamLabels[name] %><%
+         %><% if (log.counts[name]) { %><span class="segmented__count"><%= log.counts[name] %></span><% } %></a>
+    <% }) %>
+  </div>
+  <span class="t-xs t-muted">Newest first</span>
+</div>
 
-<form class="filters" method="get" action="/activity">
+<form class="filters section" method="get" action="/activity">
   <input type="hidden" name="stream" value="<%= stream %>">
   <input class="input filter-search" type="search" name="q" value="<%= query %>"
          placeholder="Search this activity" aria-label="Search activity">
+  <button class="btn btn--sm" type="submit">Search</button>
+
+  <details class="filter-more" <%= hasDetailFilters ? 'open' : '' %>>
+    <summary>Narrow it down<% if (hasDetailFilters) { %> <span class="badge badge--info">on</span><% } %></summary>
+    <div class="filter-more__body">
+      <select class="select" name="operation" aria-label="Operation" data-auto-submit>
+        <option value="">All operations</option>
+        <% helpers.OPERATIONS.forEach(function (operation) { %><option value="<%= operation.id %>" <%= filters.operation === operation.id ? 'selected' : '' %>><%= operation.label %></option><% }) %>
+      </select>
+      <select class="select" name="item" aria-label="Item" data-auto-submit><option value="">All items</option><% items.forEach(function (row) { %><option value="<%= row.id %>" <%= filters.itemId === row.id ? 'selected' : '' %>><%= row.name %></option><% }) %></select>
+      <select class="select" name="location" aria-label="Location" data-auto-submit><option value="">All locations</option><% locations.forEach(function (location) { %><option value="<%= location.id %>" <%= filters.locationId === location.id ? 'selected' : '' %>><%= location.name %></option><% }) %></select>
+      <select class="select" name="user" aria-label="Person" data-auto-submit><option value="">Anyone</option><% users.forEach(function (user) { %><option value="<%= user.id %>" <%= filters.actorId === user.id ? 'selected' : '' %>><%= user.name %></option><% }) %></select>
+      <input class="input" type="date" name="from" value="<%= filters.dateFrom %>" aria-label="From date">
+      <input class="input" type="date" name="to" value="<%= filters.dateTo %>" aria-label="To date">
+      <button class="btn btn--sm" type="submit">Apply</button>
+      <% if (hasDetailFilters) { %><a class="btn btn--ghost btn--sm" href="/activity?stream=<%= stream %>">Clear</a><% } %>
+    </div>
+  </details>
 </form>
 
-<form class="filters" method="get" action="/activity">
-  <input type="hidden" name="stream" value="<%= stream %>">
-  <select class="select" name="operation" aria-label="Operation" data-auto-submit>
-    <option value="">All operations</option>
-    <% helpers.OPERATIONS.forEach(function (operation) { %><option value="<%= operation.id %>" <%= filters.operation === operation.id ? 'selected' : '' %>><%= operation.label %></option><% }) %>
-  </select>
-  <select class="select" name="item" aria-label="Item" data-auto-submit><option value="">All items</option><% items.forEach(function (row) { %><option value="<%= row.id %>" <%= filters.itemId === row.id ? 'selected' : '' %>><%= row.name %></option><% }) %></select>
-  <select class="select" name="location" aria-label="Location" data-auto-submit><option value="">All locations</option><% locations.forEach(function (location) { %><option value="<%= location.id %>" <%= filters.locationId === location.id ? 'selected' : '' %>><%= location.name %></option><% }) %></select>
-  <select class="select" name="user" aria-label="Person" data-auto-submit><option value="">Anyone</option><% users.forEach(function (user) { %><option value="<%= user.id %>" <%= filters.actorId === user.id ? 'selected' : '' %>><%= user.name %></option><% }) %></select>
-  <input class="input" type="date" name="from" value="<%= filters.dateFrom %>" aria-label="From date">
-  <input class="input" type="date" name="to" value="<%= filters.dateTo %>" aria-label="To date">
-  <button class="btn btn--sm" type="submit">Apply</button>
-  <% if (filters.operation || filters.itemId || filters.locationId || filters.actorId || filters.dateFrom || filters.dateTo) { %><a class="btn btn--ghost btn--sm" href="/activity">Clear</a><% } %>
-</form>
-
-<div class="card section">
-  <div class="card-head">
-    <h2><%= streamLabels[stream] %></h2>
-    <span class="spacer"></span>
-    <span class="muted" style="font-size:12.5px;">Newest first</span>
-  </div>
-  <div class="card-body">
-    <% if (!log.events.length) { %>
-      <div class="empty">
-        <div class="icon-wrap"><%- helpers.icon('empty', { size: 22 }) %></div>
-        <h3>Nothing here yet</h3>
-        <p>When stock moves, an order is placed or a difference is found, it appears here.</p>
-      </div>
-    <% } else { %>
-      <ol class="act-log ledger">
+<section class="section">
+  <% if (!log.events.length) { %>
+    <div class="empty-state">
+      <span class="empty-state__icon"><%- helpers.icon('activity', { size: 20 }) %></span>
+      <p class="empty-state__title">Nothing here yet</p>
+      <p class="empty-state__body">
+        When stock moves, an order is placed or a difference is found, it appears here.
+      </p>
+    </div>
+  <% } else { %>
+    <div class="panel">
+      <ol class="timeline timeline--panel">
         <% log.events.forEach(function (event) { %>
-          <li class="act-log__row act-log__row--<%= event.stream %>">
-            <div class="act-log__body">
-              <a class="act-log__title" href="<%= event.href %>"><%= event.title %></a>
-              <% if (event.detail) { %><p class="act-log__detail"><%= event.detail %></p><% } %>
-              <p class="act-log__meta">
-                <span class="badge badge--muted"><%= streamLabels[event.stream] %></span>
-                <% if (event.who) { %><span><%= event.who %></span><% } %>
-                <% if (event.at) { %><span><%= helpers.timeAgo ? helpers.timeAgo(event.at) : event.at %></span><% } %>
-              </p>
-            </div>
+          <li class="timeline-item timeline-item--<%= event.stream %>">
+            <span class="timeline-when"><%= event.at ? (helpers.timeAgo ? helpers.timeAgo(event.at) : event.at) : '' %></span>
+            <span class="timeline-what">
+              <a href="<%= event.href %>"><%= event.title %></a>
+              <% if (event.detail) { %><span class="timeline-detail"><%= event.detail %></span><% } %>
+            </span>
+            <span class="timeline-who">
+              <span class="badge badge--muted"><%= streamLabels[event.stream] %></span>
+              <% if (event.who) { %><span><%= event.who %></span><% } %>
+            </span>
           </li>
         <% }) %>
       </ol>
-      <% if (stream === 'all' && log.quietChecks) { %>
-        <p class="muted" style="font-size:12.5px; margin-top:12px;">
-          <%= log.quietChecks %> routine check<%= log.quietChecks === 1 ? '' : 's' %> found nothing and
-          <a href="/activity?stream=system"><%= log.quietChecks === 1 ? 'is' : 'are' %> kept out of the way</a>.
-        </p>
-      <% } %>
-    <% } %>
-  </div>
-</div>
-
-<% if ((stream === 'all' || stream === 'inventory') && !query) { %>
-<details class="section">
-  <summary class="muted" style="cursor:pointer; font-size:13px;">Raw movement details</summary>
-
-<div class="card">
-  <div class="card-head">
-    <h2><%= helpers.qty(total) %> <%= helpers.plural(total, 'movement') %></h2>
-    <span class="spacer"></span>
-    <span class="muted" style="font-size:12.5px;">Newest first</span>
-  </div>
-  <% if (groups.length === 0) { %>
-    <div class="empty">
-      <div class="icon-wrap"><%- helpers.icon('activity', { size: 22 }) %></div>
-      <h3>No movements match</h3>
-      <p>Inventory changes appear here as soon as somebody receives, issues, transfers or adjusts stock.</p>
-      <a class="btn" href="/activity">Clear filters</a>
     </div>
-  <% } else { %>
-    <%- include('../partials/ledger', { groups: groups, helpers: helpers, ledgerClass: 'raw-movement-ledger' }) %>
-    <% if (page > 1 || hasMore) { %>
-      <div class="card-foot" style="display:flex; gap:8px; align-items:center;">
-        <span class="muted">Page <%= page %></span>
-        <span style="margin-left:auto; display:flex; gap:8px;">
-          <% if (page > 1) { %>
-            <a class="btn btn--sm" href="/activity<%= helpers.queryString(query, { page: page - 1 }) %>">Previous</a>
-          <% } %>
-          <% if (hasMore) { %>
-            <a class="btn btn--sm" href="/activity<%= helpers.queryString(query, { page: page + 1 }) %>">Next</a>
-          <% } %>
-        </span>
-      </div>
+
+    <% if (stream === 'all' && log.quietChecks) { %>
+      <p class="section-foot t-muted">
+        <%= log.quietChecks %> routine check<%= log.quietChecks === 1 ? '' : 's' %> found nothing and
+        <a href="/activity?stream=system"><%= log.quietChecks === 1 ? 'is' : 'are' %> kept out of the way</a>.
+      </p>
     <% } %>
   <% } %>
-</div>
-</details>
+</section>
+
+<%# The immutable ledger underneath. It is the source of truth and somebody
+    auditing wants every row of it, which is exactly why it is not the first
+    thing on a page about what happened to the business. %>
+<% if ((stream === 'all' || stream === 'inventory') && !query) { %>
+  <section class="section">
+    <details class="disclose">
+      <summary>
+        <span>The raw movement ledger — <%= helpers.qty(total) %> <%= helpers.plural(total, 'movement') %>, newest first</span>
+        <span class="disclose__cue">Show</span>
+      </summary>
+      <div class="disclose__body">
+        <% if (groups.length === 0) { %>
+          <p class="t-muted">
+            No movements match. Inventory changes appear here as soon as somebody receives, issues,
+            transfers or adjusts stock. <a href="/activity">Clear the filters</a>.
+          </p>
+        <% } else { %>
+          <%- include('../partials/ledger', { groups: groups, helpers: helpers, ledgerClass: 'raw-movement-ledger' }) %>
+          <% if (page > 1 || hasMore) { %>
+            <div class="pager">
+              <span class="t-muted">Page <%= page %></span>
+              <span class="pager__go">
+                <% if (page > 1) { %>
+                  <a class="btn btn--sm" href="/activity<%= helpers.queryString(query, { page: page - 1 }) %>">Previous</a>
+                <% } %>
+                <% if (hasMore) { %>
+                  <a class="btn btn--sm" href="/activity<%= helpers.queryString(query, { page: page + 1 }) %>">Next</a>
+                <% } %>
+              </span>
+            </div>
+          <% } %>
+        <% } %>
+      </div>
+    </details>
+  </section>
 <% } %>
