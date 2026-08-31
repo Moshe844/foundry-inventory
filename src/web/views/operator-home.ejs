@@ -19,7 +19,7 @@
   var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
   var needsCount = home.needsYou.length;
   var handlingCount = home.handling.length;
-  var isSettingUp = !!home.setup;
+  var isSettingUp = !!home.setup || !!(home.guidance && home.guidance.checklistActive);
   var paused = home.status.paused || home.status.suspended;
   var learningCount = home.readiness.evidenceGaps ? home.readiness.evidenceGaps.length : 0;
 
@@ -29,23 +29,23 @@
   // telling somebody on their first morning that everything is fine — when
   // Foundry does not yet know what they hold — is the friendliest possible way
   // to be wrong. Setup gets its own verdict until it is finished.
-  var verdict = isSettingUp
-    ? 'Getting Foundry ready'
-    : paused
-      ? 'Foundry is paused'
-      : needsCount === 0
-        ? 'Everything is under control'
-        : needsCount + (needsCount === 1 ? ' thing needs you' : ' things need you');
+  var verdict = paused
+    ? 'Foundry is paused'
+    : needsCount > 0
+      ? needsCount + (needsCount === 1 ? ' thing needs you' : ' things need you')
+      : isSettingUp
+        ? 'Getting Foundry ready'
+        : 'Everything is under control';
 
-  var subVerdict = isSettingUp
-    ? 'Give Foundry your inventory once. After that, tell it what happens and it manages the routine work.'
-    : paused
-      ? (home.status.suspendedReason || home.status.pausedReason || 'Nothing happens automatically until you resume.')
-      : needsCount === 0
-        ? (handlingCount
+  var subVerdict = paused
+    ? (home.status.suspendedReason || home.status.pausedReason || 'Nothing happens automatically until you resume.')
+    : needsCount > 0
+      ? (isSettingUp ? 'Finish the setup step below, then settle the decisions Foundry has already found.' : 'Everything else, Foundry is getting on with.')
+      : isSettingUp
+        ? 'Give Foundry your inventory once. After that, tell it what happens and it manages the routine work.'
+        : (handlingCount
             ? 'Foundry is handling ' + handlingCount + ' thing' + (handlingCount === 1 ? '' : 's') + ' and needs nothing from you.'
-            : 'Nothing is waiting on you.')
-        : 'Everything else, Foundry is getting on with.';
+            : 'Nothing is waiting on you.');
 
   var didHeadline = needsCount && /nothing needed doing/i.test(home.did.headline || '')
     ? 'No new work found on the last check.'
@@ -83,32 +83,6 @@
   </div>
 </header>
 
-<%# ------------------------------------------------- Tell Foundry: the command %>
-<section class="section tell" id="tell-foundry">
-  <form class="tell__form" method="post" action="/foundry/tell" enctype="multipart/form-data" data-busy data-operator-command-form>
-    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <span class="tell__mark" aria-hidden="true"><%- helpers.icon('foundry', { size: 18 }) %></span>
-    <label class="visually-hidden" for="ask-question">Tell Foundry what happened</label>
-    <input class="tell__input" id="ask-question" data-ask-input type="text" name="message"
-           placeholder="<%= home.guidance.examples[0] || 'Tell Foundry what happened' %>"
-           maxlength="400" autocomplete="off">
-    <label class="tell__attach" title="Attach a file">
-      <input type="file" name="file" accept=".csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*" data-operator-attachment>
-      <%- helpers.icon('import', { size: 17 }) %><span class="visually-hidden">Attach a file</span>
-    </label>
-    <button class="btn btn--primary tell__send" type="submit">Send</button>
-  </form>
-  <div class="tell__status" data-operator-attachment-status role="status" aria-live="polite" hidden>
-    <%- helpers.icon('check', { size: 15 }) %>
-    <span><strong data-operator-attachment-name></strong> attached. Add a note if useful, then send.</span>
-  </div>
-  <div class="tell__examples">
-    <% home.guidance.examples.slice(0, 3).forEach(function (example) { %>
-      <a href="#tell-foundry" data-fill-ask="<%= example %>"><%= example %></a>
-    <% }) %>
-  </div>
-</section>
-
 <%
   // State-aware guidance. The checklist shows only while something is left to
   // tick off, so this teaches by doing and then disappears on its own.
@@ -125,7 +99,39 @@
   <%- include('partials/operating-guidance', { guidance: home.guidance }) %>
 <% } %>
 
-<% if (!isSettingUp) { %>
+<%# Tell Foundry follows the single next action and teaches with examples from
+    the same workspace state. It is an alternative way to perform the work,
+    not a competing first decision. %>
+<section class="section tell" id="tell-foundry">
+  <form class="tell__form" method="post" action="/foundry/tell" enctype="multipart/form-data" data-busy data-ask-form data-operator-command-form>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <span class="tell__mark" aria-hidden="true"><%- helpers.icon('foundry', { size: 18 }) %></span>
+    <label class="visually-hidden" for="ask-question">Tell Foundry what happened</label>
+    <input class="tell__input" id="ask-question" data-ask-input type="text" name="message"
+           placeholder="<%= home.guidance.examples[0] || 'Tell Foundry what happened' %>"
+           maxlength="400" autocomplete="off">
+    <label class="tell__attach" title="Attach a file">
+      <input type="file" name="file" accept=".csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*" data-operator-attachment>
+      <%- helpers.icon('import', { size: 17 }) %><span class="visually-hidden">Attach a file</span>
+    </label>
+    <button class="btn btn--primary tell__send" type="submit" data-ask-submit>Send</button>
+  </form>
+  <div class="ask-pending tell__pending" data-ask-pending role="status" aria-live="polite" hidden>
+    <span class="working-spinner" aria-hidden="true"></span>
+    Foundry is working out what that means…
+  </div>
+  <div class="tell__status" data-operator-attachment-status role="status" aria-live="polite" hidden>
+    <%- helpers.icon('check', { size: 15 }) %>
+    <span><strong data-operator-attachment-name></strong> attached. Add a note if useful, then send.</span>
+  </div>
+  <div class="tell__examples">
+    <% home.guidance.examples.slice(0, 3).forEach(function (example) { %>
+      <a href="#tell-foundry" data-fill-ask="<%= example %>"><%= example %></a>
+    <% }) %>
+  </div>
+</section>
+
+<% if (!isSettingUp || needsCount) { %>
 
 <%# ------------------------------------------------------- Needs your attention %>
 <section class="section">
@@ -162,16 +168,14 @@
   <% } %>
 </section>
 
+<% } %>
+
+<% if (!isSettingUp) { %>
+
 <%# ------------------------------------------------------------------ Coming up %>
 <section class="section">
   <div class="section-head">
     <h2>Coming up</h2>
-    <% if (canOperate) { %>
-      <form method="post" action="/autopilot/run" data-busy>
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button class="btn btn--sm btn--ghost" type="submit">Check now</button>
-      </form>
-    <% } %>
   </div>
   <%
     // Coming up is the operation's diary: deliveries arriving, dates that
@@ -237,7 +241,7 @@
     <div><span class="stat-value"><%= stats.itemCount %></span><span class="stat-label">Product<%= stats.itemCount === 1 ? '' : 's' %></span></div>
     <div><span class="stat-value"><%= stats.locationCount %></span><span class="stat-label">Location<%= stats.locationCount === 1 ? '' : 's' %></span></div>
     <div><span class="stat-value"><%= stats.unitsOnHand %></span><span class="stat-label">Units on hand</span></div>
-    <div><span class="stat-value"><%= home.did.counts.positionsWatched %></span><span class="stat-label">Positions watched</span></div>
+    <div><span class="stat-value"><%= home.did.counts.positionsWatched %></span><span class="stat-label">Product locations watched</span></div>
   </div>
 
   <%

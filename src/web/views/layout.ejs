@@ -134,7 +134,11 @@
           <div class="search-results" data-search-results hidden></div>
         </form>
         <div class="topbar-actions">
-          <a class="topbar-help" href="/guide"><%- helpers.icon('question', { size: 15 }) %> How do I use Foundry?</a>
+          <% if (typeof screenGuide !== 'undefined' && screenGuide) { %>
+            <a class="topbar-help" href="#context-help"><%- helpers.icon('question', { size: 15 }) %> What can I do here?</a>
+          <% } else { %>
+            <a class="topbar-help" href="/guide"><%- helpers.icon('question', { size: 15 }) %> How do I use Foundry?</a>
+          <% } %>
           <a class="btn btn--primary btn--sm" href="<%= tellFoundryHref %>"><%- helpers.icon('foundry', { size: 16 }) %><span class="btn-label">Tell Foundry</span></a>
         </div>
       <% } else { %>
@@ -152,6 +156,9 @@
           var glyph = icons[message.type] || 'check';
           var live = message.type === 'error' || message.type === 'warn' ? 'alert' : 'status';
         %><div class="flash flash--<%= message.type %>" role="<%= live %>"><%- helpers.icon(glyph, { size: 18 }) %><span><%= message.message %></span></div><% }) %></div>
+      <% } %>
+      <% if (typeof screenGuide !== 'undefined' && screenGuide) { %>
+        <%- include('partials/screen-guide', { screenGuide: screenGuide }) %>
       <% } %>
       <%- body %>
     </main>

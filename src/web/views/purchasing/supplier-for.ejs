@@ -73,6 +73,16 @@
                placeholder="The company you order this from">
       </label>
 
+      <% if (itemSkus.length > 1) { %>
+        <label class="choice" style="max-width:680px; margin-bottom:18px;">
+          <input type="checkbox" name="applyToItem" value="1" checked>
+          <span>
+            <strong>Use this supplier for all <%= itemSkus.length %> <%= itemName %> variants</strong>
+            <small>Set this up once. You can change pack size, lead time, or cost for an individual variant later.</small>
+          </span>
+        </label>
+      <% } %>
+
       <div class="field-row">
         <label class="field">
           <span class="field-label">They sell it by the</span>
@@ -108,7 +118,7 @@
       <span class="muted">Nothing is ordered here. Foundry recalculates this line and shows you the order to review.</span>
       <span class="btn-row" style="margin-left:auto;">
         <a class="btn" href="/purchasing">Cancel</a>
-        <button class="btn btn--primary" type="submit">Save supplier and work out the order</button>
+        <button class="btn btn--primary" type="submit"><%= itemSkus.length > 1 ? 'Save supplier for all variants' : 'Save supplier and work out the order' %></button>
       </span>
     </div>
   </form>

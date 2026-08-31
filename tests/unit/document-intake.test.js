@@ -123,4 +123,40 @@ test('an approved setup document creates products, supplier, order, receipt and 
   const replayed = documentIntake.apply(env.db, env.ctx, env.membership, prepared.understandingId, null);
   assert.equal(replayed.result.units, 30);
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ?').get(env.ctx.workspaceId).n, 3);
+
+  const nextInterpretation = { ...invoiceInterpretation(), documentNumber: 'INV-2026-0817',
+    lines: invoiceInterpretation().lines.map((line) => ({ ...line, quantity: 1 })) };
+  const next = documentIntake.prepareFromInterpretation(env.db, env.ctx, env.membership, {
+    filename: 'next-invoice.csv', mimeType: 'text/csv', buffer: Buffer.from('different invoice bytes'),
+  }, nextInterpretation, 'next inventory list');
+  assert.deepEqual(documentIntake.matchPreview(env.db, env.ctx.workspaceId, nextInterpretation)
+    .map((entry) => entry.status), ['match', 'match', 'match']);
+  documentIntake.apply(env.db, env.ctx, env.membership, next.understandingId, null);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(env.ctx.workspaceId).n, 2,
+    'a later document reuses exact supplier SKU and variant matches');
+  assert.equal(env.db.prepare('SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ?').get(env.ctx.workspaceId).n, 33);
+});
+
+test('a stock document can preserve separate quantities for multiple locations', () => {
+  const env = setup();
+  const interpretation = {
+    ...invoiceInterpretation(), documentType: 'stock_report', documentNumber: 'COUNT-10',
+    destinationName: '', destinationAddress: '',
+    lines: [{ styleName: 'Work Shirt', color: 'Blue', variantDimension: 'Size', size: 'M',
+      supplierSku: 'WS-BLU-M', description: 'Work Shirt / Blue / M', quantity: 9, unitCost: 8,
+      locationQuantities: [{ locationName: 'Main Warehouse', quantity: 6 },
+        { locationName: 'Downtown Store', quantity: 3 }] }],
+  };
+  const prepared = documentIntake.prepareFromInterpretation(env.db, env.ctx, env.membership, {
+    filename: 'inventory.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    buffer: Buffer.from('workbook bytes'),
+  }, interpretation, 'inventory workbook');
+  documentIntake.apply(env.db, env.ctx, env.membership, prepared.understandingId, null);
+  const locations = env.db.prepare('SELECT id, name FROM locations WHERE workspace_id = ? ORDER BY name')
+    .all(env.ctx.workspaceId);
+  assert.deepEqual(locations.map((row) => row.name), ['Downtown Store', 'Main Warehouse']);
+  const balances = env.db.prepare(`SELECT l.name, b.on_hand FROM balances b JOIN locations l ON l.id = b.location_id
+    WHERE b.workspace_id = ? ORDER BY l.name`).all(env.ctx.workspaceId);
+  assert.deepEqual(balances, [{ name: 'Downtown Store', on_hand: 3 }, { name: 'Main Warehouse', on_hand: 6 }]);
+  env.db.close();
 });

@@ -6,6 +6,7 @@ const { toWireSchema } = require('../foundry/schema-tools');
 const { ValidationError } = require('../domain/errors');
 const resolver = require('../actions/resolver');
 const sales = require('./sales-order-service');
+const prices = require('../pricing/price-service');
 
 const SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -89,28 +90,74 @@ function findOrder(db, workspaceId, intent) {
 }
 
 function findSku(db, workspaceId, intent) {
+  if (intent.resolvedSkuId) {
+    try { return { ok: true, value: prices.requireSku(db, workspaceId, intent.resolvedSkuId) }; }
+    catch { /* Re-resolve below so a stale continuation cannot target a removed SKU. */ }
+  }
   const result = resolver.resolveSku(db, workspaceId, intent.itemText, intent.variantText, { instruction: intent.statedAs });
-  if (!result.ok) throw new ValidationError(result.question || result.message || 'Which product or variant is this for?');
-  return result.value;
+  if (!result.ok) {
+    return {
+      ok: false,
+      question: result.question || result.message || 'Which product or variant is this for?',
+      choices: (result.clarification && result.clarification.choices) || null,
+    };
+  }
+  return result;
+}
+
+function question(intent, field, message, extra = {}) {
+  return {
+    kind: 'question',
+    question: message,
+    choices: extra.choices || null,
+    continuation: { intent: { ...intent }, field, skuId: extra.skuId || null },
+  };
+}
+
+function priceForOrder(db, ctx, intent, sku) {
+  if (Number.isSafeInteger(Number(intent.unitPriceMinor)) && Number(intent.unitPriceMinor) >= 0) {
+    return Number(intent.unitPriceMinor);
+  }
+  const current = prices.currentForSku(db, ctx.workspaceId, sku.id);
+  if (current.isSet) return current.amount_minor;
+  return null;
 }
 
 function apply(db, ctx, intent, options = {}) {
   if (intent.operation === 'list_waiting') return { kind: 'list', orders: sales.waitingForStock(db, ctx.workspaceId) };
   if (intent.operation === 'create') {
-    if (!intent.customerText) throw new ValidationError('Which customer placed this order?');
-    if (intent.quantity < 1) throw new ValidationError('How many units did the customer order?');
-    const sku = findSku(db, ctx.workspaceId, intent);
+    if (!intent.customerText) return question(intent, 'customerText', 'Which customer placed this order?');
+    if (intent.quantity < 1) return question(intent, 'quantity', 'How many units did the customer order?');
+    const resolved = findSku(db, ctx.workspaceId, intent);
+    if (!resolved.ok) return question(intent, 'variantText', resolved.question, { choices: resolved.choices });
+    const sku = resolved.value;
+    const unitPriceMinor = priceForOrder(db, ctx, intent, sku);
+    if (unitPriceMinor === null) {
+      const displayName = sku.variant_label ? `${sku.item_name} / ${sku.variant_label}` : sku.item_name;
+      return question({ ...intent, resolvedSkuId: sku.id }, 'unitPriceMinor',
+        `${displayName} does not have a selling price. What price should this customer order use?`, { skuId: sku.id });
+    }
     const draft = sales.createOrder(db, ctx, { customerName: intent.customerText, neededBy: intent.neededBy || null,
-      lines: [{ skuId: sku.id, quantity: intent.quantity }], notes: intent.statedAs });
+      lines: [{ skuId: sku.id, quantity: intent.quantity, unitPriceMinor }], notes: intent.statedAs,
+      requirePrices: true });
     return { kind: 'created', order: sales.confirm(db, ctx, draft.id, { idempotencyKey: `tell-confirm:${draft.id}` }) };
   }
   const order = findOrder(db, ctx.workspaceId, intent);
   if (intent.operation === 'cancel_order') return { kind: 'cancelled', order: sales.cancel(db, ctx, order.id, intent.reason) };
-  const sku = findSku(db, ctx.workspaceId, intent);
+  const resolved = findSku(db, ctx.workspaceId, intent);
+  if (!resolved.ok) return question(intent, 'variantText', resolved.question, { choices: resolved.choices });
+  const sku = resolved.value;
   const line = order.lines.find((entry) => entry.sku_id === sku.id);
   if (intent.operation === 'add') {
-    if (intent.quantity < 1) throw new ValidationError('How many units should Foundry add?');
-    return { kind: 'changed', order: sales.addLine(db, ctx, order.id, { skuId: sku.id, quantity: intent.quantity }) };
+    if (intent.quantity < 1) return question(intent, 'quantity', 'How many units should Foundry add?');
+    const unitPriceMinor = priceForOrder(db, ctx, intent, sku);
+    if (unitPriceMinor === null) {
+      const displayName = sku.variant_label ? `${sku.item_name} / ${sku.variant_label}` : sku.item_name;
+      return question({ ...intent, resolvedSkuId: sku.id }, 'unitPriceMinor',
+        `${displayName} does not have a selling price. What price should this customer order use?`, { skuId: sku.id });
+    }
+    return { kind: 'changed', order: sales.addLine(db, ctx, order.id,
+      { skuId: sku.id, quantity: intent.quantity, unitPriceMinor }) };
   }
   if (!line) throw new ValidationError(`${sku.item_name || 'That product'} is not on ${order.order_number}.`);
   if (intent.operation === 'cancel_line') return { kind: 'changed', order: sales.cancelLine(db, ctx, order.id, line.id, intent.reason) };
@@ -130,4 +177,31 @@ function apply(db, ctx, intent, options = {}) {
   throw new ValidationError('Foundry could not safely determine the requested sales-order change.');
 }
 
-module.exports = { SCHEMA, SYSTEM, snapshot, fallback, interpret, apply };
+function continueApply(db, ctx, continuation, answer, options = {}) {
+  if (!continuation || !continuation.intent || !continuation.field) {
+    throw new ValidationError('That customer-order question is no longer waiting. Please send the order again.');
+  }
+  const intent = { ...continuation.intent };
+  if (continuation.field === 'unitPriceMinor') {
+    const amount = prices.toMinor(answer, 'Selling price');
+    if (amount === null) throw new ValidationError('Enter the selling price for this customer order.');
+    intent.unitPriceMinor = amount;
+    if (continuation.skuId) intent.resolvedSkuId = continuation.skuId;
+  } else if (continuation.field === 'quantity') {
+    const quantity = Number(String(answer || '').trim());
+    if (!Number.isInteger(quantity) || quantity < 1) throw new ValidationError('Quantity must be a whole number greater than zero.');
+    intent.quantity = quantity;
+  } else if (continuation.field === 'customerText') {
+    const customer = String(answer || '').trim();
+    if (!customer) throw new ValidationError('Enter the customer name.');
+    intent.customerText = customer;
+  } else if (continuation.field === 'variantText') {
+    intent.variantText = String(answer || '').trim();
+    intent.statedAs = `${intent.statedAs || ''} — ${intent.variantText}`;
+  } else {
+    throw new ValidationError('That customer-order question can no longer be continued safely.');
+  }
+  return apply(db, ctx, intent, options);
+}
+
+module.exports = { SCHEMA, SYSTEM, snapshot, fallback, interpret, apply, continueApply };

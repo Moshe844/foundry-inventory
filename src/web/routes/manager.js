@@ -18,6 +18,7 @@ const actionPresenter = require('../../actions/presenter');
 const importPlans = require('../../imports/plan-service');
 const workItems = require('../../autopilot/work-items');
 const operatingInstructions = require('../../manager/operating-instructions');
+const actionResolver = require('../../actions/resolver');
 const managerRunner = require('../../autopilot/runner');
 const supplierCodeMappings = require('../../purchasing/supplier-code-mappings');
 const managerEvents = require('../../manager/events');
@@ -38,6 +39,126 @@ function actionRedirect(result) {
   return null;
 }
 
+/**
+ * A capability question is not yet a policy change.
+ *
+ * "Can you set up restrictions?" asks what Foundry can do and where to begin.
+ * Sending that sentence straight into the rule compiler produces a technically
+ * accurate but useless list of missing fields. Keep the product knowledge
+ * deterministic, answer the question, and offer one bounded next choice.
+ */
+function asksAboutRestrictions(message) {
+  const clean = String(message || '').trim();
+  // A button answer is appended to the original sentence by the shared
+  // continuation form. It is no longer the broad capability question and
+  // must continue into the selected restriction instead of reopening the
+  // same menu.
+  if (/\bClarification\s*:/i.test(clean)) return false;
+  return /^(?:(?:can|could|would|will)\s+(?:you|foundry)\s+(?:help\s+(?:me\s+)?)?(?:set(?:\s*up)?|create|configure|add|manage)\s+(?:some\s+|any\s+)?(?:restrictions?|limits?|guardrails?|rules?)|(?:what|which)\s+(?:restrictions?|limits?|guardrails?|rules?)\s+(?:can|could|does|would)\s+(?:you|foundry)\b)/i.test(clean)
+    && !/\b\d+(?:\.\d+)?\b/.test(clean);
+}
+
+function restrictionHelp(message) {
+  return {
+    question: 'Yes. Foundry can protect low stock, limit automatic purchasing or transfers, control supplier price and quantity changes, and decide when supplier emails may be sent. Which restriction do you want to set first?',
+    instruction: message,
+    choices: [
+      {
+        label: 'Protect low stock',
+        value: 'Set up stock protection. Ask me for the product, location if relevant, limit, and what should be blocked.',
+        workflowKind: 'stock_protection',
+      },
+      {
+        label: 'Limit purchasing',
+        value: 'Set a purchasing approval or spend limit. Ask me for the supplier, product scope, and amount.',
+        workflowKind: 'purchase_authority',
+      },
+      {
+        label: 'Limit transfers',
+        value: 'Set a transfer restriction. Ask me for the product or locations and maximum quantity.',
+        workflowKind: 'transfer_authority',
+      },
+      {
+        label: 'Control supplier changes',
+        value: 'Set supplier price or quantity-change tolerances. Ask me which supplier and percentage.',
+        workflowKind: 'supplier_tolerance',
+      },
+      {
+        label: 'Control supplier emails',
+        value: 'Set supplier email sending authority. Ask me which supplier and automatic send limit.',
+        workflowKind: 'supplier_email_authority',
+      },
+    ],
+    tone: null,
+    answerAction: '/foundry/tell',
+    workflow: 'restriction_setup',
+    workflowStep: 'category',
+  };
+}
+
+const RESTRICTION_FLOW_TTL_MS = 30 * 60 * 1000;
+
+function activeRestrictionFlow(req) {
+  const flow = req.session.pendingRestrictionFlow;
+  return Boolean(flow && Number(flow.startedAt) > Date.now() - RESTRICTION_FLOW_TTL_MS);
+}
+
+const PRODUCT_RULE_DOMAINS = new Set([
+  'replenishment', 'location_stock', 'supplier_assignment', 'supplier_terms', 'stock_protection',
+]);
+
+/**
+ * Turn a failed product resolution into a product decision, not a generic
+ * "missing detail" or a misleading preview about "this inventory".
+ */
+function productResolution(db, workspaceId, proposal) {
+  for (let index = 0; index < proposal.resolvedChanges.length; index += 1) {
+    const resolved = proposal.resolvedChanges[index] || {};
+    if (!PRODUCT_RULE_DOMAINS.has(resolved.domain) || resolved.skuId) continue;
+    const raw = proposal.changes[index] || {};
+    const result = actionResolver.resolveSku(db, workspaceId, raw.itemText, raw.variantText, {
+      instruction: proposal.statedAs,
+      groundIdentity: true,
+    });
+    if (result && result.ok) continue;
+    const query = trimOrNull(raw.itemText) || trimOrNull(raw.variantText)
+      || (proposal.questions.join(' ').match(/[“"]([^”"]+)[”"]/) || [])[1]
+      || 'that product';
+    return {
+      query,
+      reason: result?.reason || 'not_found',
+      candidates: (result?.candidates || []).map((candidate) => ({
+        skuId: candidate.item_id ? candidate.id : null,
+        label: [candidate.item_name || candidate.name, candidate.variant_label].filter(Boolean).join(' — '),
+        answer: [candidate.item_name || candidate.name, candidate.variant_label].filter(Boolean).join(' '),
+      })),
+      createHref: `/inventory/new?name=${encodeURIComponent(query)}&resumeInstructionId=${encodeURIComponent(proposal.id)}`,
+    };
+  }
+  return null;
+}
+
+/** Convert an incomplete rule into the next human question, never model/debug prose. */
+function incompleteRestrictionQuestion(message) {
+  const clean = String(message || '').toLowerCase();
+  if (/price|quantity[- ]?change|tolerance/.test(clean)) {
+    return 'Which supplier should this apply to, and what percentage change may Foundry accept without asking you?';
+  }
+  if (/email|message|send/.test(clean)) {
+    return 'Which supplier is this for, and up to what order value may Foundry send without asking you?';
+  }
+  if (/transfer|move/.test(clean)) {
+    return 'What product or locations should the transfer restriction cover, and what maximum quantity should be allowed?';
+  }
+  if (/purchase|buy|spend|order approval/.test(clean)) {
+    return 'Which supplier or products should the purchasing restriction cover, and what approval or spending limit do you want?';
+  }
+  if (/stock|sale|outgoing|issue|low/.test(clean)) {
+    return 'Which product should Foundry protect, at what quantity, and should it block outgoing stock or only warn you?';
+  }
+  return 'What should Foundry restrict: low-stock sales, purchasing, transfers, supplier changes, or supplier email sending?';
+}
+
 router.post('/foundry/tell', asyncRoute(async (req, res) => {
   const attached = (req.files || []).find((entry) => entry.field === 'file' && entry.size > 0);
   // A clarification answer must continue the original manager request. The
@@ -47,6 +168,9 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   // movement parser.
   const original = trimOrNull(req.body.original) || '';
   const answer = trimOrNull(req.body.answer) || '';
+  const workflow = trimOrNull(req.body.workflow) || '';
+  const workflowStep = trimOrNull(req.body.workflowStep) || '';
+  const workflowKind = trimOrNull(req.body.workflowKind) || '';
   const message = answer
     ? `${original}${original ? ' — Clarification: ' : ''}${answer}`
     : trimOrNull(req.body.message) || (attached ? `Import ${attached.filename}` : '');
@@ -143,6 +267,16 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       return res.redirect(303, `/pricing/proposals/${proposal.id}`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
+      if (err.details && err.details.kind === 'price_clarification') {
+        req.session.pendingPriceContinuation = err.details.continuation;
+        req.session.pendingActionQuestion = {
+          question: err.message,
+          instruction: message,
+          choices: err.details.choices || null,
+          answerAction: '/pricing/clarify',
+        };
+        return res.redirect(303, '/actions');
+      }
       req.flash('warn', err.message);
       return res.redirect(303, '/#tell-foundry');
     }
@@ -167,6 +301,48 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   const intent = await intentRouter.classify(req.db, req.ctx, message, {
     provider: req.app.locals.aiProvider || undefined,
   });
+  if (asksAboutRestrictions(message)) {
+    req.session.pendingRestrictionFlow = { startedAt: Date.now(), instruction: message };
+    req.session.pendingActionQuestion = restrictionHelp(message);
+    intentRouter.markRouted(req.db, req.ctx, intent.id, 'restriction_help', null, 'NEEDS_CLARIFICATION');
+    return res.redirect(303, '/actions');
+  }
+  // Once somebody has entered the restriction setup, their short answers are
+  // answers to that workflow. "Snacks" is a product name, not a new question
+  // for the general Ask page. Keep this route deterministic even if the model
+  // classifies the isolated word differently.
+  const structuredRestriction = workflow === 'restriction_setup';
+  const continuingRestriction = answer && (structuredRestriction || activeRestrictionFlow(req)
+    || /\bClarification\s*:/i.test(original) && /\b(?:restriction|stock protection|purchase|transfer|supplier)\b/i.test(original));
+  if (continuingRestriction) {
+    intent.handler = 'operating_instruction';
+    intent.intentClass = 'OPERATING_INSTRUCTION';
+    intent.clarifyingQuestion = '';
+  }
+  const restrictionFlow = activeRestrictionFlow(req) ? req.session.pendingRestrictionFlow : null;
+  const stockProductAnswer = Boolean(
+    (workflowKind === 'stock_protection' && workflowStep === 'product')
+    || (restrictionFlow?.kind === 'stock_protection' && restrictionFlow.stage === 'product')
+    // Compatibility for a form that was already open before this deployment:
+    // the original text names the chosen category, so a server restart must
+    // not make the next product answer disappear.
+    || /\bClarification\s*:\s*Set up stock protection\b/i.test(original)
+  );
+  if ((restrictionFlow || structuredRestriction) && (workflowKind === 'stock_protection' || /\bset up stock protection\b/i.test(answer))) {
+    const flow = restrictionFlow || (req.session.pendingRestrictionFlow = {
+      startedAt: Date.now(), instruction: original || message,
+    });
+    flow.kind = 'stock_protection';
+    flow.stage = 'product';
+  }
+  if (stockProductAnswer && answer) {
+    const proposal = operatingInstructions.proposeStockProtectionAnswer(
+      req.db, req.ctx, req.user, answer, message
+    );
+    delete req.session.pendingRestrictionFlow;
+    intentRouter.markRouted(req.db, req.ctx, intent.id, 'operating_instruction', proposal.id);
+    return res.redirect(303, `/operating-instructions/${proposal.id}`);
+  }
   // A question from the classifier is a last resort, not a first one.
   //
   // It is written by a model that has seen only the sentence, while the
@@ -215,6 +391,17 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       const result = salesIntent.apply(req.db, req.ctx, parsed, {
         idempotencyKey: `tell-sales:${intent.id}`,
       });
+      if (result.kind === 'question') {
+        req.session.pendingSalesContinuation = result.continuation;
+        req.session.pendingActionQuestion = {
+          question: result.question,
+          instruction: message,
+          choices: result.choices || null,
+          answerAction: '/sales/clarify',
+        };
+        intentRouter.markRouted(req.db, req.ctx, intent.id, 'sales_order', null, 'NEEDS_CLARIFICATION');
+        return res.redirect(303, '/actions');
+      }
       if (result.kind === 'list') {
         intentRouter.markRouted(req.db, req.ctx, intent.id, 'sales_orders');
         return res.redirect(303, '/sales?status=BACKORDERED');
@@ -526,16 +713,23 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       const proposal = await operatingInstructions.interpret(req.db, req.ctx, req.user, message, {
         provider: req.app.locals.aiProvider || undefined,
       });
+      delete req.session.pendingRestrictionFlow;
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'operating_instruction', proposal.id);
-      req.flash('info', proposal.questions.length
-        ? 'Foundry understood the kind of rule, but needs one exact answer before it can be approved.'
-        : 'Foundry translated that into the same structured settings used everywhere else. Nothing has changed yet.');
       return res.redirect(303, `/operating-instructions/${proposal.id}`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'operating_instruction', null, 'NEEDS_CLARIFICATION');
-      req.flash('warn', err.message);
-      return res.redirect(303, '/#tell-foundry');
+      req.session.pendingActionQuestion = {
+        question: incompleteRestrictionQuestion(message),
+        instruction: message,
+        choices: null,
+        tone: 'warning',
+        answerAction: '/foundry/tell',
+        workflow: 'restriction_setup',
+        workflowKind: /\bstock protection\b/i.test(message) ? 'stock_protection' : workflowKind || null,
+        workflowStep: /\bstock protection\b/i.test(message) ? 'product' : workflowStep || null,
+      };
+      return res.redirect(303, '/actions');
     }
   }
   req.flash('warn', 'Foundry could not safely route that yet. Say what happened or what outcome you want.');
@@ -575,6 +769,7 @@ router.get('/operating-instructions/:id', asyncRoute(async (req, res) => {
   return res.page('manager/operating-instruction', {
     title: 'Review what Foundry should remember', nav: 'settings', proposal,
     clarification: operatingInstructions.clarificationFor(proposal),
+    productResolution: productResolution(req.db, req.ctx.workspaceId, proposal),
     descriptions: proposal.resolvedChanges.map(operatingInstructions.describe),
   });
 }));
@@ -690,9 +885,19 @@ router.post('/operating-instructions/:id/answer', asyncRoute(async (req, res) =>
     const proposal = await operatingInstructions.answer(req.db, req.ctx, req.user, req.params.id, req.body.answer, {
       provider: req.app.locals.aiProvider || undefined,
     });
-    req.flash('info', proposal.questions.length
-      ? 'Foundry continued the same instruction and needs one more exact detail.'
-      : 'Foundry continued the same instruction. Review the complete rule before approving it.');
+    return res.redirect(303, `/operating-instructions/${proposal.id}`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('error', err.message);
+    return res.redirect(303, `/operating-instructions/${req.params.id}`);
+  }
+}));
+
+router.post('/operating-instructions/:id/select-product', asyncRoute(async (req, res) => {
+  try {
+    const proposal = operatingInstructions.selectProduct(
+      req.db, req.ctx, req.user, req.params.id, req.body.skuId
+    );
     return res.redirect(303, `/operating-instructions/${proposal.id}`);
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;

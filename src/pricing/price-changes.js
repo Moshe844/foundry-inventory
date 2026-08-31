@@ -100,7 +100,40 @@ function fallbackMany(db, ctx, message) {
   return found;
 }
 
-function fallback(message) {
+function identityFromMessage(message, catalogueRows = []) {
+  const text = String(message || '');
+  const lower = text.toLowerCase();
+
+  // A catalogue code written in the request is stronger than the surrounding
+  // prose. Also accept an incomplete code prefix such as ZIP-HOODIE-NAVY-:
+  // that does not identify one SKU, but it does identify the exact product
+  // family so the resolver can ask which remaining size instead of claiming
+  // the whole sentence is a product name.
+  const exact = catalogueRows.filter((row) => row.code
+    && lower.includes(String(row.code).toLowerCase()));
+  if (exact.length === 1) return exact[0].code;
+
+  const codeFragments = text.match(/[A-Za-z0-9]+(?:-[A-Za-z0-9]*)+/g) || [];
+  const prefix = codeFragments
+    .sort((a, b) => b.length - a.length)
+    .find((fragment) => fragment.length >= 3 && catalogueRows.some((row) =>
+      String(row.code || '').toLowerCase().startsWith(fragment.toLowerCase())));
+  if (prefix) return prefix;
+
+  const namedItems = [...new Set(catalogueRows
+    .filter((row) => row.name && lower.includes(String(row.name).toLowerCase()))
+    .map((row) => row.name))]
+    .sort((a, b) => b.length - a.length);
+  if (namedItems.length) return namedItems[0];
+
+  // Last-resort grammar for a name that has not been encoded as a code. Stop
+  // before the monetary assignment so "Please set price for Hat to $12" gives
+  // the resolver "Hat", never the entire instruction.
+  const described = text.match(/\b(?:price\s+for|for)\s+(.+?)\s+(?:to|at|is)\s*(?=[$£€¥]|\b(?:USD|EUR|GBP|CAD|AUD|JPY)\b)/i);
+  return described ? described[1].trim() : text;
+}
+
+function fallback(message, catalogueRows = []) {
   const text = String(message || '');
   const remove = /\b(?:remove|clear|no)\b[^.]{0,30}\bprice\b|\bprice\b[^.]{0,30}\b(?:remove|clear)\b/i.test(text);
   const symbol = text.match(/([$£€¥])\s*([\d,]+(?:\.\d{1,2})?)/);
@@ -108,12 +141,62 @@ function fallback(message) {
   const plain = text.match(/\b(?:price(?:\s+is)?|at|to)\s*(?:is\s*)?([\d,]+(?:\.\d{1,2})?)/i);
   const amount = remove ? -1 : Number((symbol && symbol[2]) || (coded && coded[2]) || (plain && plain[1]) || -1);
   const currency = coded ? coded[1].toUpperCase() : symbol ? ({ '$': 'USD', '£': 'GBP', '€': 'EUR', '¥': 'JPY' }[symbol[1]]) : 'USD';
-  return { operation: remove ? 'remove' : 'set', itemText: text, variantText: '', amount, currency,
+  return { operation: remove ? 'remove' : 'set', itemText: identityFromMessage(text, catalogueRows), variantText: '', amount, currency,
     reason: 'The owner stated a customer selling price.' };
+}
+
+function clarificationError(resolved, data, statedAs) {
+  const sameItem = resolved.candidates && resolved.candidates.length > 1
+    && resolved.candidates.every((candidate) => candidate.item_id
+      && candidate.item_id === resolved.candidates[0].item_id);
+  const dimension = resolved.clarification && resolved.clarification.dimension;
+  const axis = dimension && dimension.startsWith('variant:') ? dimension.slice('variant:'.length) : null;
+  const choices = [ ...((resolved.clarification && resolved.clarification.choices) || []) ];
+  if (sameItem) {
+    choices.push({
+      label: axis ? `All ${axis}${axis.endsWith('s') ? '' : 's'}` : 'All variants',
+      value: '__all_candidates__',
+    });
+  }
+  return new ValidationError(
+    resolved.question || resolved.message || 'Which product or variant is this price for?',
+    {
+      kind: 'price_clarification',
+      choices: choices.length ? choices : null,
+      continuation: {
+        data: {
+          operation: data.operation,
+          itemText: data.itemText,
+          variantText: data.variantText || '',
+          amount: data.amount,
+          currency: data.currency || 'USD',
+          reason: data.reason || 'The owner stated a customer selling price.',
+        },
+        sourceText: statedAs,
+        candidateSkuIds: sameItem ? resolved.candidates.map((candidate) => candidate.id) : [],
+      },
+    }
+  );
+}
+
+function proposalFromInterpreted(db, ctx, data, statedAs) {
+  if (data.operation === 'set' && Number(data.amount) < 0) {
+    throw new ValidationError('What selling price should Foundry use?');
+  }
+  const resolved = resolver.resolveSku(db, ctx.workspaceId, data.itemText, data.variantText, {
+    instruction: statedAs,
+  });
+  if (!resolved.ok) throw clarificationError(resolved, data, statedAs);
+  return createProposal(db, ctx, {
+    skuId: resolved.value.id,
+    amountMinor: data.operation === 'remove' ? null : prices.toMinor(String(data.amount)),
+    currency: data.currency || 'USD', sourceText: statedAs,
+  });
 }
 
 async function interpret(db, ctx, message, options = {}) {
   const statedAs = requireText(message, 'Price instruction', { max: 1200 });
+  const catalogueRows = catalogue(db, ctx.workspaceId);
   let data;
   try {
     const response = await (options.provider || createProviderForTier('fast')).complete({
@@ -126,26 +209,45 @@ async function interpret(db, ctx, message, options = {}) {
     const checked = validate(toWireSchema(SCHEMA), response.data, { key: 'selling-price-change-wire' });
     if (!checked.ok) throw new Error('invalid price instruction');
     data = checked.data;
-  } catch { data = fallback(statedAs); }
-  if (data.operation === 'set' && Number(data.amount) < 0) throw new ValidationError('What selling price should Foundry use?');
-  let resolved = resolver.resolveSku(db, ctx.workspaceId, data.itemText, data.variantText, { instruction: statedAs });
-  if (!resolved.ok) {
-    // Offline fallback: match only catalogue identities actually present in
-    // the sentence. This is data-driven, not a list of product-specific
-    // phrasings, and ambiguity still fails closed.
-    const haystack = String(statedAs).toLowerCase();
-    const candidates = db.prepare(`SELECT s.*, i.name AS item_name FROM skus s JOIN items i ON i.id = s.item_id
-      WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1`).all(ctx.workspaceId)
-      .filter((sku) => [sku.code, sku.item_name, sku.variant_label].filter(Boolean)
-        .some((identity) => haystack.includes(String(identity).toLowerCase())));
-    if (candidates.length === 1) resolved = { ok: true, value: candidates[0] };
+  } catch { data = fallback(statedAs, catalogueRows); }
+  return proposalFromInterpreted(db, ctx, data, statedAs);
+}
+
+function continueInterpret(db, ctx, continuation, answer) {
+  if (!continuation || !continuation.data || !continuation.sourceText) {
+    throw new ValidationError('That selling-price question is no longer waiting. Please send the price again.');
   }
-  if (!resolved.ok) throw new ValidationError(resolved.question || resolved.message || 'Which product or variant is this price for?');
-  return createProposal(db, ctx, {
-    skuId: resolved.value.id,
-    amountMinor: data.operation === 'remove' ? null : prices.toMinor(String(data.amount)),
-    currency: data.currency || 'USD', sourceText: statedAs,
-  });
+  const selected = requireText(answer, 'Your choice', { max: 200 });
+  if (selected === '__all_candidates__') {
+    const candidateSkuIds = Array.isArray(continuation.candidateSkuIds)
+      ? [...new Set(continuation.candidateSkuIds)]
+      : [];
+    if (candidateSkuIds.length < 2) {
+      throw new ValidationError('That group of variants is no longer available. Please send the price again.');
+    }
+    const amountMinor = continuation.data.operation === 'remove'
+      ? null
+      : prices.toMinor(String(continuation.data.amount));
+    const currency = prices.normaliseCurrency(continuation.data.currency || 'USD');
+    const prepared = candidateSkuIds.filter((skuId) => {
+      const sku = prices.requireSku(db, ctx.workspaceId, skuId);
+      const current = prices.currentForSku(db, ctx.workspaceId, sku.id);
+      return continuation.data.operation === 'remove'
+        ? current.isSet
+        : current.amount_minor !== amountMinor || current.currency !== currency;
+    });
+    if (!prepared.length) throw new ValidationError('Every selected variant already has that selling price.');
+    const proposals = db.transaction(() => prepared.map((skuId) => createProposal(db, ctx, {
+      skuId,
+      amountMinor,
+      currency,
+      sourceText: `${continuation.sourceText} — Clarification: All variants`,
+    })))();
+    return { kind: 'batch', proposals };
+  }
+  const data = { ...continuation.data, variantText: selected };
+  const statedAs = `${continuation.sourceText} — Clarification: ${selected}`;
+  return proposalFromInterpreted(db, ctx, data, statedAs);
 }
 
 async function interpretMany(db, ctx, message, options = {}) {
@@ -269,5 +371,5 @@ function cancelBatch(db, workspaceId, ids) {
 module.exports = {
   SCHEMA, SYSTEM, BULK_SCHEMA, BULK_SYSTEM,
   matchesInstruction, matchesBulkInstruction, fallback, fallbackMany,
-  interpret, interpretMany, createProposal, get, approve, approveBatch, cancel, cancelBatch,
+  interpret, continueInterpret, interpretMany, createProposal, get, approve, approveBatch, cancel, cancelBatch,
 };

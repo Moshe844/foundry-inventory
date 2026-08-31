@@ -204,7 +204,7 @@ test(
       // the Mission 2 experience, unchanged.
       await Promise.all([
         page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Starting fresh")'),
+        page.click('button:has-text("Enter it in Foundry")'),
       ]);
 
       assert.equal(await currentInventory(page), CLOTHING.name);
@@ -247,7 +247,7 @@ test(
       // the Mission 2 experience, unchanged.
       await Promise.all([
         page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Starting fresh")'),
+        page.click('button:has-text("Enter it in Foundry")'),
       ]);
 
       assert.equal(await currentInventory(page), EQUIPMENT.name, 'the new inventory is now open');

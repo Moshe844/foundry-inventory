@@ -3,17 +3,41 @@
 const express = require('express');
 const connections = require('../../connections/service');
 const ingestion = require('../../connections/event-ingestion');
+const precheckout = require('../../connections/precheckout');
 const { DomainError } = require('../../domain/errors');
 
 function createConnectionsApi(db) {
   const router = express.Router();
+
+  router.options('/precheckout', (req, res) => res.set({
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Max-Age': '600',
+  }).status(204).end());
+
+  router.post('/precheckout', (req, res) => {
+    try {
+      const auth = connections.authenticate(db, req.get('authorization'));
+      const result = precheckout.evaluate(db, auth, req.body || {});
+      return res.set('Access-Control-Allow-Origin', '*').json(result);
+    } catch (error) {
+      const status = error instanceof DomainError ? error.status : 500;
+      if (!(error instanceof DomainError)) console.error('[connections] unexpected precheckout error', error);
+      return res.status(status).set('Access-Control-Allow-Origin', '*').json({ error: {
+        code: error.code || 'error',
+        message: error instanceof DomainError ? error.message : 'Inventory could not be checked before checkout.',
+      } });
+    }
+  });
 
   router.get('/events/schema', (req, res) => {
     try {
       connections.authenticate(db, req.get('authorization'));
       return res.json({
         name: 'Foundry normalized business event contract', version: '1.0',
-        endpoint: '/api/v1/events', authentication: 'Authorization: Bearer <connection token>',
+        endpoint: '/api/v1/events', precheckoutEndpoint: '/api/v1/precheckout',
+        authentication: 'Authorization: Bearer <connection token>',
         batching: { singleEvent: true, envelope: { events: 'array' }, maximumEvents: ingestion.MAX_BATCH },
         idempotency: 'eventId is required and immutable within one connection. Safe retries return replayed=true.',
         ordering: 'Use aggregateId and a monotonically increasing version for stale-event protection.',

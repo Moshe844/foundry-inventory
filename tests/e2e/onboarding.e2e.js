@@ -180,8 +180,8 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
     await register(page, ACCOUNT);
     const text = await page.locator('body').innerText();
 
-    assert.match(text, /How are you managing inventory today/);
-    for (const label of ['Starting fresh', 'Excel / spreadsheets', 'Existing inventory system', "It's a mess"]) {
+    assert.match(text, /Where should Foundry get your inventory from/);
+    for (const label of ['Enter it in Foundry', 'Upload files or documents', 'Use email attachments', 'Connect another system', 'Use several sources']) {
       assert.ok(text.includes(label), `the chooser is missing "${label}"`);
     }
     assert.match(text, /Not sure/);
@@ -191,7 +191,7 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
   await t.test('2. choosing spreadsheets asks for the file, not for a description', async () => {
     await Promise.all([
       page.waitForURL(`${BASE}/onboarding/files`),
-      page.click('button:has-text("Excel / spreadsheets")'),
+      page.click('button:has-text("Upload files or documents")'),
     ]);
     const text = await page.locator('body').innerText();
     assert.match(text, /Give Foundry your spreadsheet/);
@@ -366,7 +366,7 @@ test('Onboarding end to end: the messy customer', { timeout: 600000 }, async (t)
     await register(page, account);
     await Promise.all([
       page.waitForURL(/\/onboarding\/files/),
-      page.click('button:has-text("It\'s a mess")'),
+      page.click('button:has-text("Use several sources")'),
     ]);
     assert.match(await page.locator('body').innerText(), /Give Foundry everything you have/);
 

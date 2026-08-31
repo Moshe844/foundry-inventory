@@ -1,13 +1,18 @@
 <div class="page-head">
   <div class="titles">
     <span class="setup-eyebrow">New inventory</span>
-    <h1>How are you managing inventory today?</h1>
-    <div class="page-sub">Choose the closest answer. Foundry will do the setup work from there.</div>
+    <h1>Where should Foundry get your inventory from?</h1>
+    <div class="page-sub">Choose the place that contains the real product or quantity details. You can add another source later.</div>
   </div>
 </div>
 
 <div class="grid grid--2 section">
-  <% paths.forEach(function (path) { %>
+  <% sourceOptions.forEach(function (path) { %>
+    <% if (path.href) { %><a href="<%= path.href %>" class="card onboard-card" style="text-decoration:none"><span class="onboard-choice">
+      <span class="onboard-icon"><%- helpers.icon(path.icon, { size: 20 }) %></span>
+      <span class="onboard-text"><strong><%= path.label %></strong><span class="onboard-blurb"><%= path.blurb %></span><span class="muted"><%= path.detail %></span><% if (path.providers) { %><span class="form-actions" style="margin-top:8px;gap:6px"><% path.providers.forEach(function(provider) { %><span class="badge badge--muted"><%= provider %></span><% }) %></span><% } %></span>
+      <%- helpers.icon('chevron', { size: 16 }) %>
+    </span></a><% } else { %>
     <form method="post" action="/onboarding/choose" class="card onboard-card">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input type="hidden" name="path" value="<%= path.id %>">
@@ -17,43 +22,50 @@
           <strong><%= path.label %></strong>
           <span class="onboard-blurb"><%= path.blurb %></span>
           <span class="muted"><%= path.detail %></span>
+          <% if (path.providers) { %><span class="form-actions" style="margin-top:8px;gap:6px"><% path.providers.forEach(function(provider) { %><span class="badge badge--muted"><%= provider %></span><% }) %></span><% } %>
         </span>
         <%- helpers.icon('chevron', { size: 16 }) %>
       </button>
     </form>
+    <% } %>
   <% }) %>
 </div>
 
 <div class="card section">
-  <div class="card-head"><h2>Not sure? Tell Foundry what's going on.</h2></div>
+  <div class="card-head"><h2>Not sure where the records are?</h2></div>
   <form method="post" action="/onboarding/describe">
     <div class="card-body">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <label class="field">
-        <span class="field-label">Tell Foundry what's going on</span>
+        <span class="field-label">Tell Foundry where the details live now</span>
         <input class="input" type="text" name="description" value="<%= description %>"
-               placeholder="We track everything in a couple of spreadsheets and a stock count from last month"
+               placeholder="The product list is in supplier PDFs, quantities are in Excel, and sales happen in Square"
                maxlength="500" autocomplete="off">
       </label>
 
       <% if (recommendation) { %>
         <div class="notice section">
-          <strong>Foundry suggests: <%= paths.find(function (p) { return p.id === recommendation.path; }).label %></strong>
+          <% var recommendedOption = sourceOptions.find(function (p) { return p.id === recommendation.path; }); %>
+          <strong>Foundry suggests: <%= recommendedOption.label %></strong>
           <div class="muted">Because <%= recommendation.reason %>.</div>
         </div>
-        <form method="post" action="/onboarding/choose">
+        <% if (recommendedOption.href) { %>
+          <a class="btn btn--primary" href="<%= recommendedOption.href %>">Use that source</a>
+        <% } else { %><form method="post" action="/onboarding/choose">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="path" value="<%= recommendation.path %>">
           <input type="hidden" name="chosenBy" value="foundry">
           <input type="hidden" name="reason" value="<%= recommendation.reason %>">
           <input type="hidden" name="describedAs" value="<%= description %>">
           <button class="btn btn--primary" type="submit">Go that way</button>
-        </form>
-        <p class="muted">Or pick one of the four above — Foundry is only guessing from what you wrote.</p>
+        </form><% } %>
+        <p class="muted">Or choose a different source above. Foundry is only using what you wrote.</p>
+      <% } else if (sourcePrompt) { %>
+        <div class="notice notice--warn section"><strong>Foundry still needs the records</strong><div><%= sourcePrompt %></div></div>
       <% } %>
     </div>
     <% if (!recommendation) { %>
-      <div class="card-foot"><button class="btn" type="submit">Work out where I fit</button></div>
+      <div class="card-foot"><button class="btn" type="submit">Help me choose a source</button></div>
     <% } %>
   </form>
 </div>

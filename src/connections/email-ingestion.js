@@ -36,16 +36,23 @@ function capture(db, auth, event) {
 
   const rule = matchingRule(db, auth, sender);
   const attachments = Array.isArray(data.attachments) ? data.attachments : [];
-  const classification = classify(data.subject, data.bodyText || data.body, attachments);
+  const classification = rule?.document_mode === 'inventory_list' && attachments.length
+    ? 'inventory_document' : classify(data.subject, data.bodyText || data.body, attachments);
+  const messageContentHash = crypto.createHash('sha256').update(JSON.stringify({ sender,
+    subject: data.subject || null, body: data.bodyText || data.body || null,
+    attachments: attachments.map((attachment) => ({ filename: attachment.filename,
+      content: attachment.contentBase64 || attachment.extractedText || null })) })).digest('hex');
   const id = newId('emailmsg');
   const now = nowIso();
   db.prepare(`INSERT INTO connection_email_messages
     (id, workspace_id, connector_id, external_message_id, sender, recipients, subject, body_text,
-     received_at, supplier_id, trust_status, classification, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+     received_at, supplier_id, trust_status, classification, external_thread_id, internet_message_id,
+     content_hash, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, auth.workspaceId, auth.connectorId, messageId, sender, JSON.stringify(data.recipients || data.to || []),
       trimOrNull(data.subject), trimOrNull(data.bodyText || data.body), event.occurredAt || now,
-      rule && rule.supplier_id, rule ? 'TRUSTED' : 'UNTRUSTED', classification, now);
+      rule && rule.supplier_id, rule ? 'TRUSTED' : 'UNTRUSTED', classification,
+      trimOrNull(data.threadId || data.externalThreadId), trimOrNull(data.internetMessageId), messageContentHash, now);
 
   for (const attachment of attachments) {
     const filename = requireText(attachment.filename, 'Attachment filename', { max: 240 });
@@ -56,22 +63,22 @@ function capture(db, auth, event) {
     }
     const contentHash = crypto.createHash('sha256').update(content || Buffer.from(`${messageId}:${filename}`)).digest('hex');
     db.prepare(`INSERT OR IGNORE INTO connection_email_attachments
-      (id, workspace_id, message_id, external_attachment_id, filename, mime_type, content_hash, content, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      (id, workspace_id, message_id, external_attachment_id, filename, mime_type, content_hash, content,
+       extracted_text, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(newId('emailatt'), auth.workspaceId, id, trimOrNull(attachment.id), filename,
-        trimOrNull(attachment.mimeType), contentHash, content, now);
+        trimOrNull(attachment.mimeType), contentHash, content, trimOrNull(attachment.extractedText), now);
   }
 
-  if (!rule) connections.issue(db, { workspaceId: auth.workspaceId, connectorId: auth.connectorId,
-    externalEventId: event.eventId, issueType: 'UNTRUSTED_EMAIL',
-    fingerprint: `untrusted-email:${auth.connectorId}:${messageId}`,
-    title: `Message from an unapproved sender: ${sender}`,
-    detail: 'Foundry captured the message for audit but did not treat it as trusted supplier evidence.',
-    resolutionHint: 'Approve the sender only if it belongs to a supplier you trust.' });
+  let evidence = null;
+  if (rule?.document_mode === 'supplier_documents') {
+    evidence = require('../purchasing/supplier-evidence').process(db, id, data.facts || {});
+  }
 
-  // Mission 11 captures and classifies evidence only. An invoice or packing
-  // slip never becomes a receipt here; Mission 12 will add those rules.
-  return { actionType: `email.${classification}_captured`, actionRecordId: id, movementIds: [], skuIds: [] };
+  // Purchasing evidence may change a PO expectation, cost history, or create a
+  // decision. It never becomes a physical receipt here.
+  return { actionType: evidence ? `supplier.${evidence.document_type}_processed` : `email.${classification}_captured`,
+    actionRecordId: evidence?.id || id, movementIds: [], skuIds: [] };
 }
 
 module.exports = { matchingRule, classify, capture };

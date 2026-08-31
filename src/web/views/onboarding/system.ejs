@@ -1,66 +1,71 @@
 <div class="page-head">
   <div class="titles">
     <a class="back-link" href="/onboarding"><%- helpers.icon('chevron', { size: 14 }) %> Start over</a>
-    <h1>What system are you using?</h1>
-    <div class="page-sub">Foundry can take the inventory over, or read from a system you keep running.</div>
+    <span class="setup-eyebrow">Connect your system</span>
+    <h1>Where do you sell or manage inventory?</h1>
+    <div class="page-sub">Choose the system you already use. Foundry will authorize it, discover products and locations, and ask only about uncertain matches.</div>
   </div>
 </div>
 
-<div class="card section">
-  <div class="card-head"><h2>Connected systems</h2></div>
-  <div class="card-body">
-    <% if (connectors.length) { %>
-      <ul class="plain-list">
-        <% connectors.forEach(function (connector) { %>
-          <li>
-            <strong><%= connector.displayName %></strong>
-            <span class="muted"><%= connector.readOnly ? 'read-only' : 'read and write' %></span>
-          </li>
-        <% }) %>
-      </ul>
-    <% } else { %>
-      <p class="lede">Foundry does not connect directly to any inventory system yet.</p>
-      <p class="muted">
-        There is no list of logos here on purpose. A connector appears when Foundry can genuinely read your
-        system — showing one that did nothing would tell you your inventory was connected when nothing was
-        reading it.
-      </p>
-    <% } %>
+<% if (connectors.length) { %>
+  <section class="section">
+    <div class="section-head"><div><h2>Already connected</h2><p class="muted">Continue setup or open the connection details.</p></div></div>
+    <div class="grid grid--2">
+      <% connectors.forEach(function(connector) { %>
+        <a class="card list-row" href="/settings/connections/<%= connector.id %>">
+          <div><strong><%= connector.display_name %></strong><p><%= connector.provider_account_name || connector.provider_type.replaceAll('_', ' ') %></p></div>
+          <span class="badge <%= connector.publicStatus === 'Connected' ? 'badge--ok' : 'badge--warn' %>"><%= connector.publicStatus %></span>
+        </a>
+      <% }) %>
+    </div>
+  </section>
+<% } %>
+
+<section class="section">
+  <div class="section-head"><div><h2>Connection options</h2><p class="muted">These are working connectors, not placeholder logos.</p></div></div>
+  <div class="grid grid--2">
+    <% providerCatalog.forEach(function(provider) { %>
+      <article class="card"><div class="card-body grid">
+        <div class="list-row" style="padding:0;border:0"><div><span class="eyebrow"><%= provider.mark %></span><h2><%= provider.name %></h2></div><span class="badge badge--ok">Available</span></div>
+        <p><%= provider.description %></p>
+        <p class="muted">Provides: <%= provider.provides.join(', ') %>.</p>
+        <% if (!canManageConnections) { %>
+          <p class="hint">Ask an inventory owner to connect this system.</p>
+        <% } else if (provider.type === 'reference_webhook') { %>
+          <form method="post" action="/settings/connections" class="grid">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="reference_webhook">
+            <label class="field"><span class="label">Connection name</span><input class="input" name="displayName" placeholder="Warehouse ERP" required></label>
+            <button class="btn btn--primary" type="submit">Create secure API connection</button>
+            <p class="hint">Foundry gives your technical team a scoped key, event contract, and pre-checkout decision endpoint.</p>
+          </form>
+        <% } else { %>
+          <form method="post" action="/settings/connections/connect" class="grid">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= provider.type %>">
+            <% if (provider.type === 'shopify') { %><label class="field"><span class="label">Shopify store</span><input class="input" name="shop" placeholder="your-store.myshopify.com" required></label><% } %>
+            <% if (provider.type === 'woocommerce') { %><label class="field"><span class="label">WooCommerce store URL</span><input class="input" type="url" name="storeUrl" placeholder="https://shop.example.com" required></label><% } %>
+            <button class="btn btn--primary" type="submit">Connect <%= provider.name %></button>
+            <% if (provider.type === 'square' || provider.type === 'clover') { %><p class="hint"><%= provider.name %> opens so you can choose and approve the business account.</p><% } else { %><p class="hint">You will sign in and approve access. Foundry stores the resulting credential encrypted.</p><% } %>
+          </form>
+        <% } %>
+      </div></article>
+    <% }) %>
   </div>
-</div>
+</section>
 
 <form method="post" action="/onboarding/system" class="card section">
-  <div class="card-head"><h2>Export what you have</h2></div>
-  <div class="card-body">
+  <div class="card-head"><div><h2>Use an export instead</h2><p class="muted">For a system that cannot connect yet.</p></div></div>
+  <div class="card-body grid">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <p class="lede">
-      Export your inventory to CSV or Excel and give it to Foundry. It reads the export, sets itself up from
-      what it finds, and reconciles the totals against your file.
-    </p>
-    <label class="field">
-      <span class="field-label">Which system is it? (optional)</span>
-      <input class="input" type="text" name="system" placeholder="NetSuite, Shopify, Fishbowl…"
-             maxlength="120" autocomplete="off">
-      <span class="field-help">Recorded so Foundry knows where this inventory came from.</span>
-    </label>
+    <p>Export the catalogue and current inventory to CSV or Excel. Foundry will read and reconcile it without requiring a template.</p>
+    <label class="field"><span class="field-label">Which system is it? (optional)</span><input class="input" type="text" name="system" placeholder="NetSuite, Fishbowl, another ERP…" maxlength="120" autocomplete="off"></label>
   </div>
-  <div class="card-foot">
-    <button class="btn btn--primary" type="submit" <%= canOperate ? '' : 'disabled' %>>
-      Continue with an export
-    </button>
-  </div>
+  <div class="card-foot"><button class="btn" type="submit" <%= canOperate ? '' : 'disabled' %>>Continue with an export</button></div>
 </form>
 
 <div class="card section">
-  <div class="card-head"><h2>Which system owns your inventory?</h2></div>
+  <div class="card-head"><h2>One source of inventory truth</h2></div>
   <div class="card-body">
-    <p>
-      This inventory is currently
-      <strong><%= sourceOfTruth === 'FOUNDRY_NATIVE' ? 'owned by Foundry' : 'owned by an external system' %></strong>.
-    </p>
-    <p class="muted">
-      Foundry never keeps a second set of balances competing with the system you actually run on. Either its
-      ledger is the record, or an external system is and Foundry reads from it — never both.
-    </p>
+    <p>This inventory is currently <strong><%= sourceOfTruth === 'FOUNDRY_NATIVE' ? 'owned by Foundry' : 'owned by an external system' %></strong>.</p>
+    <p class="muted">Connecting a selling system brings its activity into Foundry's guarded engines. Foundry does not run a second competing balance or silently rewrite stock.</p>
   </div>
 </div>

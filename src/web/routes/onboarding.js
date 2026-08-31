@@ -13,7 +13,8 @@ const express = require('express');
 const paths = require('../../onboarding/paths');
 const sourceService = require('../../onboarding/source-service');
 const migration = require('../../onboarding/migration-service');
-const registry = require('../../onboarding/connectors/registry');
+const providerRegistry = require('../../connections/providers/registry');
+const connections = require('../../connections/service');
 const permissions = require('../../actions/permissions');
 const config = require('../../config');
 const { requireAuth, asyncRoute } = require('../middleware');
@@ -27,14 +28,22 @@ router.get(
   '/onboarding',
   asyncRoute(async (req, res) => {
     const state = paths.ensure(req.db, req.ctx.workspaceId);
-    if (state.isComplete) return res.redirect(303, '/');
+    const hasProducts = Boolean(req.db.prepare(
+      'SELECT 1 FROM items WHERE workspace_id = ? AND is_active = 1 LIMIT 1'
+    ).get(req.ctx.workspaceId));
+    // A model can understand the kind of business without receiving a single
+    // real product record. Do not call that onboarding complete and trap the
+    // owner on a Home page that points only to manual item entry.
+    if (state.isComplete && hasProducts) return res.redirect(303, '/');
 
     return res.page('onboarding/start', {
       title: 'Get your inventory into Foundry',
       nav: 'foundry',
       state,
       paths: paths.PATHS,
+      sourceOptions: paths.SOURCE_OPTIONS,
       recommendation: null,
+      sourcePrompt: null,
       description: '',
       canOperate: permissions.can(req.user, permissions.OPERATE),
     });
@@ -67,9 +76,33 @@ router.post(
       nav: 'foundry',
       state,
       paths: paths.PATHS,
+      sourceOptions: paths.SOURCE_OPTIONS,
       recommendation,
+      sourcePrompt: description && !recommendation
+        ? 'That explains the kind of business, but it does not contain the actual product names, variants, locations, or quantities. Choose where Foundry should get those real records.'
+        : null,
       description,
       canOperate: permissions.can(req.user, permissions.OPERATE),
+    });
+  })
+);
+
+// Email is one supported way of supplying inventory evidence, alongside files,
+// connected systems and manual entry. It belongs in onboarding, not somewhere
+// a new owner has to discover in Settings.
+router.get(
+  '/onboarding/mailbox',
+  asyncRoute(async (req, res) => {
+    const connected = connections.list(req.db, req.ctx.workspaceId)
+      .filter((row) => ['gmail', 'microsoft365'].includes(row.provider_type));
+    return res.page('onboarding/mailbox', {
+      title: 'Use inventory files from email',
+      nav: 'foundry',
+      state: paths.ensure(req.db, req.ctx.workspaceId),
+      connected,
+      providerCatalog: providerRegistry.catalog().filter((provider) =>
+        ['gmail', 'microsoft365'].includes(provider.type)),
+      canManageConnections: req.user.role === 'owner',
     });
   })
 );
@@ -245,11 +278,12 @@ router.get(
       title: 'Which system are you using?',
       nav: 'foundry',
       state: paths.ensure(req.db, req.ctx.workspaceId),
-      // Empty until a connector genuinely exists. The screen says so rather
-      // than showing logos that do nothing.
-      connectors: registry.available(),
+      connectors: connections.list(req.db, req.ctx.workspaceId),
+      providerCatalog: providerRegistry.catalog().filter((provider) =>
+        provider.available && ['selling', 'business'].includes(provider.category)),
       sourceOfTruth: paths.sourceOfTruth(req.db, req.ctx.workspaceId),
       canOperate: permissions.can(req.user, permissions.OPERATE),
+      canManageConnections: req.user.role === 'owner',
     });
   })
 );

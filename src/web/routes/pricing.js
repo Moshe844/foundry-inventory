@@ -21,6 +21,37 @@ router.post('/pricing/proposals', requireOwner, asyncRoute(async (req, res) => {
   res.redirect(303, `/pricing/proposals/${proposal.id}`);
 }));
 
+router.post('/pricing/clarify', requireOwner, asyncRoute(async (req, res) => {
+  const continuation = req.session.pendingPriceContinuation;
+  if (!continuation) {
+    req.flash('info', 'That selling-price question is no longer waiting. Please send the price again.');
+    return res.redirect(303, '/#tell-foundry');
+  }
+  try {
+    const result = changes.continueInterpret(req.db, req.ctx, continuation, req.body.answer);
+    delete req.session.pendingPriceContinuation;
+    delete req.session.pendingActionQuestion;
+    if (result.kind === 'batch') {
+      req.session.pendingPriceBatch = result.proposals.map((proposal) => proposal.id);
+      req.flash('success', `Foundry understood ${result.proposals.length} selling-price changes. Review the complete list before anything changes.`);
+      return res.redirect(303, '/pricing/proposals/batch');
+    }
+    req.flash('success', 'Foundry understood the selling-price change. Review it before anything changes.');
+    return res.redirect(303, `/pricing/proposals/${result.id}`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    const details = err.details && err.details.kind === 'price_clarification' ? err.details : null;
+    if (details) req.session.pendingPriceContinuation = details.continuation;
+    req.session.pendingActionQuestion = {
+      question: err.message,
+      instruction: req.body.original || continuation.sourceText,
+      choices: details ? details.choices || null : null,
+      answerAction: '/pricing/clarify',
+    };
+    return res.redirect(303, '/actions');
+  }
+}));
+
 function pendingBatch(req) {
   const ids = Array.isArray(req.session.pendingPriceBatch) ? req.session.pendingPriceBatch : [];
   return ids.map((id) => changes.get(req.db, req.ctx.workspaceId, id))

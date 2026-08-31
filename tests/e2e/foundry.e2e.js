@@ -140,7 +140,7 @@ test(
       // the Mission 2 experience, unchanged.
       await Promise.all([
         page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Starting fresh")'),
+        page.click('button:has-text("Enter it in Foundry")'),
       ]);
 
       await page.locator('text=Give Foundry what you already have').first().waitFor();

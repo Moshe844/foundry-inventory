@@ -146,12 +146,15 @@ test('an instruction to order becomes a draft order, not a purchase', { skip: !L
 
 test('ordering without a number uses the engine, and says so', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const env = wholesaler();
+  // Read the recommendation before preparing the draft. Once the draft exists,
+  // the engine correctly counts it as incoming and no longer recommends a
+  // second order.
+  const engineAnswer = replenishment.evaluateOne(env.db, env.workspace.workspaceId, env.item.skuId);
   const result = await actionService.interpret(
     env.db, env.ctx, env.membership, 'Reorder the Navy Oxfords from ABC'
   );
 
   assert.equal(result.kind, 'purchase_order', JSON.stringify(result));
-  const engineAnswer = replenishment.evaluateOne(env.db, env.workspace.workspaceId, env.item.skuId);
   assert.equal(result.order.lines[0].quantityUnits, engineAnswer.quantityUnits);
   assert.match(result.assumptions.join(' '), /reorder point/i);
 });

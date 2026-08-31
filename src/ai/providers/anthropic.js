@@ -336,10 +336,9 @@ function translateError(err) {
   // program on this machine is not letting Foundry open it.
   if (deniedLocally(err)) {
     return new ProviderError(
-      'Security software on this computer is refusing to let Foundry open the connection. '
-        + 'Foundry kept trying for half a minute and it was still refused. The network itself '
-        + 'is fine. Try again in a few minutes, and if it keeps happening ask whoever manages '
-        + 'this machine to allow Foundry out to the model provider.',
+      'This Foundry server process is not allowed to connect to the model provider. '
+        + 'Restart Foundry with normal outbound network access, or ask whoever manages this '
+        + 'machine to allow outbound HTTPS to api.anthropic.com. Nothing was changed.',
       { code: 'ai_blocked_locally', status: 503, retryable: true, cause: err }
     );
   }

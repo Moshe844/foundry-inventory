@@ -42,6 +42,18 @@ CREATE TABLE IF NOT EXISTS suppliers (
   item_code_label        TEXT NOT NULL DEFAULT 'Supplier code',
   item_code_aliases      TEXT NOT NULL DEFAULT '[]',
 
+  -- Mission 12 communication policy. These settings are part of the supplier
+  -- relationship rather than a separate mailbox-management product.
+  preferred_ordering_method TEXT NOT NULL DEFAULT 'email',
+  watched_connector_id   TEXT,
+  prepare_communications INTEGER NOT NULL DEFAULT 1 CHECK (prepare_communications IN (0,1)),
+  auto_send_enabled      INTEGER NOT NULL DEFAULT 0 CHECK (auto_send_enabled IN (0,1)),
+  auto_send_limit_minor  INTEGER,
+  price_tolerance_percent REAL NOT NULL DEFAULT 5,
+  quantity_tolerance_percent REAL NOT NULL DEFAULT 0,
+  trusted_delivery_receipt INTEGER NOT NULL DEFAULT 0 CHECK (trusted_delivery_receipt IN (0,1)),
+  follow_up_days         INTEGER NOT NULL DEFAULT 2,
+
   created_at            TEXT NOT NULL,
   updated_at            TEXT NOT NULL
 );
@@ -282,3 +294,62 @@ CREATE TABLE IF NOT EXISTS purchase_order_events (
 -- Queries order by (created_at, rowid) so events sharing a timestamp keep their
 -- insertion order; rowid cannot appear in an index, only in the ORDER BY.
 CREATE INDEX IF NOT EXISTS idx_po_events_order ON purchase_order_events(purchase_order_id, created_at);
+
+-- Supplier documents are purchasing evidence. They may update confirmations,
+-- expected quantities, dates and costs, but this table never writes balances.
+CREATE TABLE IF NOT EXISTS supplier_documents (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  connector_id          TEXT NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
+  message_id            TEXT NOT NULL REFERENCES connection_email_messages(id) ON DELETE CASCADE,
+  attachment_id         TEXT REFERENCES connection_email_attachments(id) ON DELETE SET NULL,
+  supplier_id           TEXT REFERENCES suppliers(id) ON DELETE SET NULL,
+  purchase_order_id     TEXT REFERENCES purchase_orders(id) ON DELETE SET NULL,
+  document_type         TEXT NOT NULL,
+  document_reference    TEXT,
+  content_hash          TEXT NOT NULL,
+  facts                 TEXT NOT NULL DEFAULT '{}',
+  discrepancies         TEXT NOT NULL DEFAULT '[]',
+  confidence            REAL NOT NULL DEFAULT 0,
+  status                TEXT NOT NULL DEFAULT 'RECORDED'
+                          CHECK (status IN ('RECORDED','MATCHED','NEEDS_REVIEW','IGNORED')),
+  created_at            TEXT NOT NULL,
+  processed_at          TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_documents_identity
+  ON supplier_documents(workspace_id, connector_id, content_hash, document_type, IFNULL(document_reference, ''));
+CREATE INDEX IF NOT EXISTS idx_supplier_documents_po
+  ON supplier_documents(workspace_id, purchase_order_id, processed_at DESC);
+
+CREATE TABLE IF NOT EXISTS purchase_order_line_expectations (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  purchase_order_id     TEXT NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  purchase_order_line_id TEXT NOT NULL REFERENCES purchase_order_lines(id) ON DELETE CASCADE,
+  confirmed_units       INTEGER,
+  shipping_units        INTEGER,
+  backordered_units     INTEGER,
+  expected_ship_date    TEXT,
+  expected_arrival_date TEXT,
+  source_document_id    TEXT REFERENCES supplier_documents(id) ON DELETE SET NULL,
+  updated_at            TEXT NOT NULL,
+  UNIQUE (workspace_id, purchase_order_line_id)
+);
+CREATE INDEX IF NOT EXISTS idx_po_line_expectations_order
+  ON purchase_order_line_expectations(workspace_id, purchase_order_id);
+
+CREATE TABLE IF NOT EXISTS supplier_price_history (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  supplier_id           TEXT NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+  sku_id                TEXT NOT NULL REFERENCES skus(id) ON DELETE CASCADE,
+  supplier_item_id      TEXT REFERENCES supplier_items(id) ON DELETE SET NULL,
+  unit_cost             REAL NOT NULL,
+  currency              TEXT NOT NULL DEFAULT 'USD',
+  source_document_id    TEXT NOT NULL REFERENCES supplier_documents(id) ON DELETE CASCADE,
+  observed_at           TEXT NOT NULL,
+  created_at            TEXT NOT NULL,
+  UNIQUE (workspace_id, source_document_id, sku_id)
+);
+CREATE INDEX IF NOT EXISTS idx_supplier_price_history_lookup
+  ON supplier_price_history(workspace_id, supplier_id, sku_id, observed_at DESC);

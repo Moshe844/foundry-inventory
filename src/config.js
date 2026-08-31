@@ -97,6 +97,19 @@ const config = {
       get environment() { return process.env.CLOVER_ENVIRONMENT === 'sandbox' ? 'sandbox' : 'production'; },
       get configured() { return Boolean(this.clientId && this.clientSecret && this.webhookAuthCode); },
     },
+    gmail: {
+      get clientId() { return process.env.GMAIL_CLIENT_ID || null; },
+      get clientSecret() { return process.env.GMAIL_CLIENT_SECRET || null; },
+      get pubsubTopic() { return process.env.GMAIL_PUBSUB_TOPIC || null; },
+      get pubsubVerificationToken() { return process.env.GMAIL_PUBSUB_VERIFICATION_TOKEN || null; },
+      get configured() { return Boolean(this.clientId && this.clientSecret); },
+    },
+    microsoft365: {
+      get clientId() { return process.env.MICROSOFT365_CLIENT_ID || null; },
+      get clientSecret() { return process.env.MICROSOFT365_CLIENT_SECRET || null; },
+      get tenant() { return process.env.MICROSOFT365_TENANT || 'common'; },
+      get configured() { return Boolean(this.clientId && this.clientSecret); },
+    },
   },
 
   /**

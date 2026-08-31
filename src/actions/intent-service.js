@@ -304,6 +304,62 @@ function normalise(raw) {
   };
 }
 
+/**
+ * Detect the ordinary list shape a model must never silently truncate.
+ *
+ * The deterministic check does not try to interpret the missing action. It
+ * merely proves that the sentence contains another numbered clause while the
+ * response contains only one action. An exact common transfer grammar can be
+ * expanded deterministically; every other shape becomes a question rather
+ * than a partial proposal.
+ */
+function needsNumberedClauseRetry(instruction, intent) {
+  return intent.lines.length === 1
+    && !['clarify', 'unsupported'].includes(intent.lines[0].actionType)
+    && /\b(?:and|then)\s+\d+\b/i.test(String(instruction || ''));
+}
+
+/**
+ * Expands the most common two-line transfer without another model call.
+ * Every field comes directly from the sentence or the already validated first
+ * line. Anything outside this exact grammar is left for a human clarification.
+ */
+function expandSimpleNumberedTransfer(instruction, intent) {
+  if (!needsNumberedClauseRetry(instruction, intent)) return null;
+  const first = intent.lines[0];
+  if (first.actionType !== 'transfer') return null;
+  const match = /^\s*(?:move|transfer)\s+(\d+)\s+(.+?)\s+(?:and|then)\s+(\d+)\s+(.+?)\s+from\s+(.+?)\s+to\s+(.+?)\s*$/i
+    .exec(String(instruction || ''));
+  if (!match) return null;
+  const [, firstQuantity, firstIdentity, secondQuantity, secondIdentity, source, destination] = match;
+  const item = String(first.item || '').trim();
+  const secondHasItem = item && secondIdentity.toLowerCase().includes(item.toLowerCase());
+  const secondVariant = secondHasItem
+    ? secondIdentity.replace(new RegExp(item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '').trim()
+    : secondIdentity.trim();
+  return {
+    ...intent,
+    lines: [
+      {
+        ...first,
+        quantity: Number(firstQuantity),
+        sourceText: `${firstQuantity} ${firstIdentity}`,
+        sourceLocation: source.trim(),
+        destinationLocation: destination.trim(),
+      },
+      {
+        ...first,
+        item: secondHasItem ? item : (item ? secondIdentity.trim() : ''),
+        variant: item ? secondVariant : secondIdentity.trim(),
+        quantity: Number(secondQuantity),
+        sourceText: `${secondQuantity} ${secondIdentity}`,
+        sourceLocation: source.trim(),
+        destinationLocation: destination.trim(),
+      },
+    ],
+  };
+}
+
 /** Turns an instruction into a validated intent. Never returns free-form SQL. */
 async function readInstruction(instruction, options = {}) {
   const clean = requireText(instruction, 'Instruction', { max: MAX_INSTRUCTION });
@@ -312,12 +368,13 @@ async function readInstruction(instruction, options = {}) {
   }
 
   const provider = options.provider || createProviderForTier('standard');
-  const response = await provider.complete({
+  const request = {
     system: SYSTEM,
     prompt: intentPrompt(clean, options.context || {}),
     schema: INTENT_SCHEMA,
     schemaName: 'inventory_action_intent',
-  });
+  };
+  const response = await provider.complete(request);
 
   const result = validate(toWireSchema(INTENT_SCHEMA), response.data, { key: 'action-intent-wire' });
   if (!result.ok) {
@@ -327,7 +384,16 @@ async function readInstruction(instruction, options = {}) {
       unsupportedReason: '',
     };
   }
-  return normalise(result.data);
+  const intent = normalise(result.data);
+  if (!needsNumberedClauseRetry(clean, intent)) return intent;
+  const expanded = expandSimpleNumberedTransfer(clean, intent);
+  if (expanded) return expanded;
+  return {
+    lines: [],
+    clarifyingQuestion:
+      'Foundry could not safely separate every numbered change in that instruction. Please put each change on its own line.',
+    unsupportedReason: '',
+  };
 }
 
 module.exports = {
@@ -340,5 +406,7 @@ module.exports = {
   readInstruction,
   normalise,
   normaliseLine,
+  needsNumberedClauseRetry,
+  expandSimpleNumberedTransfer,
   intentPrompt,
 };

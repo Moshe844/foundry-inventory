@@ -221,7 +221,7 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     // the Mission 2 experience, unchanged.
     await Promise.all([
       page.waitForURL(`${BASE}/foundry/describe`),
-      page.click('button:has-text("Starting fresh")'),
+      page.click('button:has-text("Enter it in Foundry")'),
     ]);
     await assertVisibleText(page, 'Give Foundry what you already have');
     await Promise.all([

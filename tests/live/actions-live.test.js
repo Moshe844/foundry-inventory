@@ -312,17 +312,22 @@ test('things Foundry truly cannot do stay refused, not handed over', { skip: !LI
   const queryPlanner = require('../../src/attention/query-planner');
   const env = clothing();
 
-  // Still outside the product: forecasting beyond current usage, selling
-  // prices, and anything that would contact a supplier.
+  // Still outside the product: forecasting beyond current usage and anything
+  // that would contact a supplier without going through purchasing authority.
   for (const question of [
     'What will demand be next quarter?',
-    'What should I charge for these?',
     'Email ABC Footwear and chase the order',
   ]) {
     const result = await queryPlanner.ask(env.db, env.workspace.workspaceId, question, {});
     assert.equal(result.plan.intent, 'unsupported', `"${question}" → ${result.plan.intent}`);
     assert.equal(result.isAction, false, `"${question}" must not be offered as an action`);
   }
+
+  // Mission 12 added current selling-price records. Asking what is already
+  // configured is supported; Foundry still does not invent a recommended price.
+  const price = await queryPlanner.ask(env.db, env.workspace.workspaceId, 'What do we charge for these?', {});
+  assert.equal(price.plan.intent, 'selling_price');
+  assert.equal(price.isAction, false);
 
   // Inside it since Mission 6: what something cost, and what to buy.
   const cost = await queryPlanner.ask(env.db, env.workspace.workspaceId, 'What did we pay our supplier for these?', {});

@@ -33,6 +33,16 @@ test('selling price is integer money and sales orders snapshot it', () => {
   assert.equal(second.pricing.totalMinor, 3000);
 });
 
+test('a legacy draft with a missing price cannot be confirmed as customer demand', () => {
+  const env = setup();
+  const draft = sales.createOrder(env.db, env.ctx, {
+    customerName: 'ABC School', lines: [{ skuId: env.item.skuId, quantity: 2 }],
+  });
+  assert.equal(draft.lines[0].unit_price_minor, null);
+  assert.throws(() => sales.confirm(env.db, env.ctx, draft.id), /does not have a selling price/i);
+  assert.equal(sales.getOrder(env.db, env.workspace.workspaceId, draft.id).status, 'DRAFT');
+});
+
 test('a price instruction is previewed and explicitly approved', () => {
   const env = setup();
   const proposal = changes.createProposal(env.db, env.ctx, { skuId: env.item.skuId,

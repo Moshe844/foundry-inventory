@@ -15,6 +15,9 @@
 
 <form method="post" action="/inventory" autocomplete="off">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <% if (typeof resumeInstructionId !== 'undefined' && resumeInstructionId) { %>
+    <input type="hidden" name="resumeInstructionId" value="<%= resumeInstructionId %>">
+  <% } %>
 
   <div class="card" style="max-width: 720px;">
     <div class="card-head"><h2>What are you tracking?</h2></div>
@@ -89,16 +92,16 @@
           <span>List the choices for each option, separated by commas. Foundry creates one tracked variant per combination.</span>
         </div>
         <div class="option-row">
-          <input class="input" name="options[0][name]" placeholder="Colour" value="<%= (form.options && form.options[0] && form.options[0].name) || '' %>">
-          <input class="input" name="options[0][values]" placeholder="Navy, Cream" value="<%= (form.options && form.options[0] && form.options[0].values) || '' %>">
+          <label class="field"><span class="field-label">Option name</span><input class="input" name="options[0][name]" aria-label="First option name" placeholder="Colour" value="<%= (form.options && form.options[0] && form.options[0].name) || '' %>"></label>
+          <label class="field"><span class="field-label">Choices</span><input class="input" name="options[0][values]" aria-label="First option choices" placeholder="Black, White" value="<%= (form.options && form.options[0] && form.options[0].values) || '' %>"></label>
         </div>
         <div class="option-row">
-          <input class="input" name="options[1][name]" placeholder="Size" value="<%= (form.options && form.options[1] && form.options[1].name) || '' %>">
-          <input class="input" name="options[1][values]" placeholder="4, 5, 6" value="<%= (form.options && form.options[1] && form.options[1].values) || '' %>">
+          <label class="field"><span class="field-label">Option name</span><input class="input" name="options[1][name]" aria-label="Second option name" placeholder="Size" value="<%= (form.options && form.options[1] && form.options[1].name) || '' %>"></label>
+          <label class="field"><span class="field-label">Choices</span><input class="input" name="options[1][values]" aria-label="Second option choices" placeholder="Small, Medium, Large" value="<%= (form.options && form.options[1] && form.options[1].values) || '' %>"></label>
         </div>
         <div class="option-row">
-          <input class="input" name="options[2][name]" placeholder="Another option (optional)" value="<%= (form.options && form.options[2] && form.options[2].name) || '' %>">
-          <input class="input" name="options[2][values]" placeholder="Values, separated, by commas" value="<%= (form.options && form.options[2] && form.options[2].values) || '' %>">
+          <label class="field"><span class="field-label">Another option <span class="optional">optional</span></span><input class="input" name="options[2][name]" aria-label="Third option name" placeholder="Fit" value="<%= (form.options && form.options[2] && form.options[2].name) || '' %>"></label>
+          <label class="field"><span class="field-label">Choices</span><input class="input" name="options[2][values]" aria-label="Third option choices" placeholder="Regular, Relaxed" value="<%= (form.options && form.options[2] && form.options[2].values) || '' %>"></label>
         </div>
       </div>
     </div>

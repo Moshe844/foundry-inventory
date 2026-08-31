@@ -45,19 +45,22 @@ function providerOrigin(requestOrigin) { return config.connections.publicOrigin 
 async function beginAuthorization(db, ctx, input, requestOrigin) {
   const providerType = requireText(input.providerType, 'Provider', { max: 40 }).toLowerCase();
   const adapter = providers.get(providerType);
-  if (!adapter) throw new ValidationError('Choose Shopify, Square, Clover, or WooCommerce.');
+  if (!adapter) throw new ValidationError('Choose a supported connection provider.');
   const meta = adapter.metadata();
   if (!meta.available) throw new ValidationError(meta.unavailableReason);
   const now = nowIso();
   const connectorId = input.connectorId || newId('con');
   const origin = providerOrigin(requestOrigin);
   if (!input.connectorId) {
+    const expectedIntervalMinutes = ['gmail', 'microsoft365'].includes(providerType)
+      ? Math.max(1, Number(input.expectedIntervalMinutes) || 5)
+      : Math.max(0, Number(input.expectedIntervalMinutes) || 360);
     db.prepare(`INSERT INTO workspace_connectors
       (id, workspace_id, connector_key, display_name, provider_type, status, capabilities, provides,
        config, expected_interval_minutes, setup_status, authorized_by_user_id, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, 'disconnected', '[]', ?, '{}', ?, 'AUTHORIZING', ?, ?, ?)`)
       .run(connectorId, ctx.workspaceId, `${providerType}:${connectorId}`, input.displayName || meta.name,
-        providerType, JSON.stringify(meta.provides), Math.max(0, Number(input.expectedIntervalMinutes) || 360),
+        providerType, JSON.stringify(meta.provides), expectedIntervalMinutes,
         ctx.actorId, now, now);
   } else {
     const existing = connections.get(db, ctx.workspaceId, connectorId);
@@ -136,6 +139,25 @@ async function completeWooCallback(db, body, requestOrigin) {
 }
 
 async function finishAuthorization(db, connection, actorId, result, requestOrigin, adapter) {
+  // A fresh "connect another mailbox" attempt may still authorize an address
+  // that is already connected. Keep the established connector in that case:
+  // it owns the sender rules, message history and audit trail. The fresh row is
+  // only an empty authorization placeholder, so remove it and refresh the
+  // existing connector's credential instead of replacing the working mailbox.
+  if (['gmail', 'microsoft365'].includes(connection.provider_type) && result.accountId
+      && connection.setup_status === 'AUTHORIZING' && !connection.credential_ref
+      && !connection.provider_account_id) {
+    const established = db.prepare(`SELECT id FROM workspace_connectors
+      WHERE workspace_id = ? AND provider_type = ? AND provider_account_id = ?
+        AND id <> ? AND status = 'connected'
+      ORDER BY updated_at DESC LIMIT 1`)
+      .get(connection.workspace_id, connection.provider_type, result.accountId, connection.id);
+    if (established) {
+      db.prepare('DELETE FROM workspace_connectors WHERE workspace_id = ? AND id = ?')
+        .run(connection.workspace_id, connection.id);
+      connection = connections.get(db, connection.workspace_id, established.id);
+    }
+  }
   credentialsStore.put(db, connection.workspace_id, connection.id, 'provider', result.credentials, result.expiresAt);
   const now = nowIso();
   const configValue = { ...connection.config };
@@ -301,6 +323,133 @@ async function sync(db, workspaceId, connectorId, actorId, options = {}) {
   }
 }
 
+async function syncMailbox(db, workspaceId, connectorId, options = {}) {
+  const connection = connections.get(db, workspaceId, connectorId);
+  const adapter = options.adapter || providers.get(connection.provider_type);
+  if (!adapter?.poll || !['gmail', 'microsoft365'].includes(connection.provider_type)) {
+    throw new ValidationError('This connection is not a supplier mailbox.');
+  }
+  const providerCredentials = await loadProviderCredentials(db, connection, adapter);
+  const found = await adapter.poll({ credentials: providerCredentials,
+    since: options.since || connection.last_synced_at || new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
+    connection });
+  const auth = actorAuth(db, connection);
+  const results = [];
+  for (const message of found.messages || []) {
+    const rule = require('./email-ingestion').matchingRule(db, auth, message.sender || message.from || '');
+    // A connected mailbox is not permission to ingest the owner's whole
+    // inbox. Provider polling reads only enough envelope data to match an
+    // approved sender; everything else is ignored and never becomes a
+    // Foundry message, issue, or purchasing record.
+    if (!rule) continue;
+    // Capturing an approved sender and interpreting a document are separate
+    // permissions. Only purchasing rules extract purchasing evidence here;
+    // inventory rules go through the preview builder below, and review_each
+    // stores the original bytes without reading their contents.
+    if (rule?.document_mode === 'supplier_documents') {
+      for (const attachment of message.attachments || []) {
+        if (!attachment.extractedText && attachment.contentBase64) {
+          try {
+            attachment.extractedText = await require('../foundry/document-intake').extractText({
+              filename: attachment.filename, buffer: Buffer.from(attachment.contentBase64, 'base64'),
+            });
+          } catch { /* Preserve the original attachment; uncertain extraction remains Needs You evidence. */ }
+        }
+      }
+      if (!message.facts) {
+        try { message.facts = await require('../purchasing/supplier-document-extractor').extract(message,
+          message.attachments || []); } catch { message.facts = null; }
+      }
+    }
+    results.push(require('./event-ingestion').ingest(db, auth, {
+      eventId: `${connection.provider_type}:${message.messageId}`,
+      type: 'supplier_document.received', occurredAt: message.receivedAt, data: message,
+    }));
+    const captured = db.prepare(`SELECT m.id, r.document_mode FROM connection_email_messages m
+      LEFT JOIN connection_email_rules r ON r.workspace_id = m.workspace_id AND r.connector_id = m.connector_id
+        AND r.is_active = 1 AND (LOWER(r.sender_pattern) = LOWER(m.sender)
+          OR (r.sender_pattern LIKE '@%' AND LOWER(m.sender) LIKE '%' || LOWER(r.sender_pattern)))
+      WHERE m.workspace_id = ? AND m.connector_id = ? AND m.external_message_id = ?`)
+      .get(workspaceId, connectorId, message.messageId);
+    if (captured?.document_mode === 'inventory_list') {
+      const attachments = db.prepare(`SELECT id FROM connection_email_attachments
+        WHERE workspace_id = ? AND message_id = ? AND setup_document_id IS NULL`).all(workspaceId, captured.id);
+      for (const attachment of attachments) {
+        try {
+          await require('./mailbox-inventory').prepare(db, auth, auth, connectorId, attachment.id);
+        } catch (error) {
+          db.prepare(`UPDATE connection_email_messages SET processing_status = 'INVENTORY_REVIEW_FAILED', processed_at = ?
+            WHERE workspace_id = ? AND id = ?`).run(nowIso(), workspaceId, captured.id);
+        }
+      }
+    }
+  }
+  const now = nowIso();
+  require('./mailbox-inventory').reconcileStatuses(db, workspaceId, connectorId);
+  db.prepare(`UPDATE workspace_connectors SET status = 'connected', setup_status = 'CONNECTED',
+    last_synced_at = ?, last_activity_at = CASE WHEN ? > 0 THEN ? ELSE last_activity_at END,
+    last_error = NULL, updated_at = ? WHERE workspace_id = ? AND id = ?`)
+    .run(now, results.length, now, now, workspaceId, connectorId);
+  connections.resolveIssues(db, workspaceId, connectorId, 'CONNECTION_STALE');
+  connections.resolveIssues(db, workspaceId, connectorId, 'MAILBOX_SYNC_FAILED');
+  connections.resolveIssues(db, workspaceId, connectorId, 'MAILBOX_AUTH_REQUIRED');
+  return { messages: results.length, results };
+}
+
+/** Renew expiring Gmail watches and Microsoft Graph subscriptions unattended. */
+async function maintainMailboxWatch(db, workspaceId, connectorId, options = {}) {
+  const connection = connections.get(db, workspaceId, connectorId);
+  const adapter = options.adapter || providers.get(connection.provider_type);
+  if (!adapter?.registerWebhooks || !['gmail', 'microsoft365'].includes(connection.provider_type)) {
+    throw new ValidationError('This connection is not a renewable supplier mailbox.');
+  }
+  let providerCredentials = await loadProviderCredentials(db, connection, adapter);
+  const now = Number(options.now || Date.now());
+  const rawExpiration = connection.provider_type === 'gmail'
+    ? providerCredentials.watchExpiration : providerCredentials.subscriptionExpiresAt;
+  const expiration = connection.provider_type === 'gmail'
+    ? Number(rawExpiration || 0) : Date.parse(rawExpiration || 0);
+  const pushHealthy = providerCredentials.deliveryMode === 'push'
+    && Number.isFinite(expiration) && expiration > now + 12 * 60 * 60_000;
+  if (pushHealthy) return { renewed: false, expiresAt: rawExpiration };
+
+  const origin = providerOrigin('');
+  if (!origin || !origin.startsWith('https://')) return { renewed: false, reason: 'public_https_required' };
+  const webhookUrl = `${origin}/api/v1/connections/${connection.provider_type}/webhooks/${connection.id}`;
+  const renew = adapter.renewWebhooks || adapter.registerWebhooks;
+  try {
+    const result = await renew({ credentials: providerCredentials, webhookUrl, connection });
+    if (result?.credentials) {
+      providerCredentials = result.credentials;
+      credentialsStore.put(db, workspaceId, connectorId, 'provider', providerCredentials,
+        providerCredentials.expiresAt ? new Date(Number(providerCredentials.expiresAt)).toISOString() : null);
+    }
+    connections.resolveIssues(db, workspaceId, connectorId, 'MAILBOX_WATCH_RENEWAL_FAILED');
+    return { renewed: true, expiresAt: connection.provider_type === 'gmail'
+      ? providerCredentials.watchExpiration : providerCredentials.subscriptionExpiresAt };
+  } catch (error) {
+    // Push is an optimization. Scheduled OAuth polling remains active, so a
+    // missing Pub/Sub topic is installation diagnostics—not an owner decision.
+    connections.resolveIssues(db, workspaceId, connectorId, 'MAILBOX_WATCH_RENEWAL_FAILED');
+    // Push is only an accelerator. Do not paint a healthy, automatically
+    // polled mailbox red because optional push setup is unavailable.
+    return { renewed: false, error: String(error.message || error) };
+  }
+}
+
+async function sendMailboxMessage(db, workspaceId, connectorId, message) {
+  const connection = connections.get(db, workspaceId, connectorId);
+  const adapter = providers.get(connection.provider_type);
+  if (!adapter?.send || !['gmail', 'microsoft365'].includes(connection.provider_type)) {
+    throw new ValidationError('Choose a connected Gmail or Microsoft 365 mailbox for supplier sending.');
+  }
+  if (connection.status !== 'connected' || connection.paused_at) {
+    throw new AuthenticationError('This mailbox is paused or disconnected. No message was sent.');
+  }
+  const providerCredentials = await loadProviderCredentials(db, connection, adapter);
+  return adapter.send({ credentials: providerCredentials, message, connection });
+}
+
 function setSelectedLocations(db, workspaceId, connectorId, ids) {
   connections.get(db, workspaceId, connectorId);
   const chosen = new Set((Array.isArray(ids) ? ids : [ids]).filter(Boolean).map(String));
@@ -399,6 +548,7 @@ async function createSandboxCheckout(db, workspaceId, connectorId, input, option
   return adapter.createSandboxCheckout({ credentials: providerCredentials, externalSku, externalLocationId, quantity });
 }
 
-module.exports = { beginAuthorization, completeOAuth, completeWooCallback, sync, reviewHistory, setSelectedLocations,
+module.exports = { beginAuthorization, completeOAuth, completeWooCallback, sync, syncMailbox, maintainMailboxWatch, sendMailboxMessage,
+  reviewHistory, setSelectedLocations,
   createSandboxCheckout, ignoreExternal, webhookContext, readState, stateConnection, providerOrigin,
   deactivateDuplicateProviderAccounts };

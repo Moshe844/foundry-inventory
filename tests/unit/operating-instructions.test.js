@@ -30,7 +30,7 @@ const blank = () => ({
   maximumQuantity: -1, maximumValue: -1, cooldownHours: -1, daysOfStock: -1,
   purchaseUnit: '', contactName: '', email: '', orderingMethod: '',
   preferTransferBeforePurchasing: false, approvalRequired: true,
-  guardAction: '', guardMetric: '', guardComparator: '', guardThreshold: -1,
+  guardAction: '', guardMode: '', guardMetric: '', guardComparator: '', guardThreshold: -1,
   guardReleaseCondition: '', guardReleaseThreshold: -1,
 });
 const read = (changes, summary = 'Operating rule') => ({ understood: true, summary, changes, clarifyingQuestion: '', unsupportedReason: '' });
@@ -139,7 +139,7 @@ test('a generic stock-protection instruction blocks outgoing stock until a suppl
   const proposal = await operating.interpret(env.db, env.ctx, env.membership,
     'Protect this variant from outgoing orders once stock is under the floor; release it after replenishment is ordered.', {
       provider: provider(read([{ ...blank(), domain: 'stock_protection', itemText: 'Everyday Shirt',
-        variantText: 'Black Small', guardAction: 'issue', guardMetric: 'network_on_hand',
+        variantText: 'Black Small', guardAction: 'issue', guardMode: 'block', guardMetric: 'network_on_hand',
         guardComparator: 'below', guardThreshold: 10, guardReleaseCondition: 'on_order' }], 'Protect Black Small sales')),
     });
   assert.equal(operatingGuards.list(env.db, env.workspace.workspaceId, { activeOnly: true }).length, 0, 'the preview grants nothing');
@@ -301,7 +301,7 @@ test('finite rule questions expose field-specific choices and apply the selected
   const env = setup();
   const missingRelease = read([{
     ...blank(), domain: 'stock_protection', itemText: 'Everyday Shirt', variantText: 'Black Small',
-    guardAction: 'issue', guardMetric: 'network_on_hand', guardComparator: 'below', guardThreshold: 10,
+    guardAction: 'issue', guardMode: 'block', guardMetric: 'network_on_hand', guardComparator: 'below', guardThreshold: 10,
   }], 'Protect Black Small');
   const proposal = await operating.interpret(env.db, env.ctx, env.membership,
     'Block outgoing Black Small sales below 10.', { provider: provider(missingRelease) });

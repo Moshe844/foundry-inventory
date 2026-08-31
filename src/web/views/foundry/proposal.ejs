@@ -71,16 +71,19 @@
         </label>
         <div class="table-wrap" style="margin-top:16px;">
           <table class="table table--stack table--tight">
-            <thead><tr><th>Style</th><th>Color</th><th>Size</th><th data-vendor-code-label><%= docCodeLabel %></th><th class="right">Qty</th><th class="right">Unit cost</th></tr></thead>
+            <thead><tr><th>Style</th><th>Color</th><th>Size</th><th data-vendor-code-label><%= docCodeLabel %></th><th>Foundry action</th><th class="right">Qty</th><th class="right">Unit cost</th></tr></thead>
             <tbody>
-              <% docLines.forEach(function (line) { %>
+              <% docLines.forEach(function (line, lineIndex) { var documentMatch = documentMatches[lineIndex]; %>
                 <tr>
                   <td class="cell-main"><span class="cell-title"><%= line.styleName %></span></td>
                   <td data-label="Color"><%= line.color || '—' %></td>
                   <td data-label="Size"><%= line.size || '—' %></td>
                   <td data-label="<%= docCodeLabel %>" data-vendor-code-cell class="mono"><%= line.supplierSku || '—' %></td>
+                  <td data-label="Foundry action"><span class="badge <%= documentMatch && documentMatch.status === 'match' ? 'badge--ok' : 'badge--muted' %>"><%= documentMatch ? documentMatch.label : 'Create as new' %></span></td>
+                  <% if (line.locationQuantities && line.locationQuantities.length) { %><td data-label="Locations" colspan="2"><%= line.locationQuantities.map(function(entry) { return entry.locationName + ': ' + entry.quantity; }).join(' · ') %></td><% } else { %>
                   <td data-label="Qty" class="right"><strong><%= line.quantity %></strong></td>
                   <td data-label="Unit cost" class="right"><%= line.unitCost == null ? '—' : doc.currency + ' ' + line.unitCost.toFixed(2) %></td>
+                  <% } %>
                 </tr>
               <% }) %>
             </tbody>

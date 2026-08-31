@@ -2122,6 +2122,31 @@ test('clarification names whatever catalogue axis is actually unresolved', () =>
   assert.deepEqual(asked.clarification.choices.map((choice) => choice.label), ['Nitrile / A', 'Nitrile / B']);
 });
 
+test('grounding an unknown product never redirects the person to an unrelated catalogue item', () => {
+  const env = clothing();
+  const asked = resolver.clarifySkuFromInstruction(
+    env.db,
+    env.workspace.workspaceId,
+    'Move 5 jetpacks from Main Warehouse to Downtown Store'
+  );
+
+  assert.equal(asked.ok, false);
+  assert.equal(asked.reason, 'not_found');
+  assert.match(asked.message, /jetpack/);
+  assert.deepEqual(asked.candidates, []);
+});
+
+test('a single parsed action cannot silently cover only the first numbered clause', () => {
+  assert.equal(intentService.needsNumberedClauseRetry(
+    'Move 10 Navy 4 and 8 Navy 5 from Main Warehouse to Downtown Store',
+    { lines: [intent({ actionType: 'transfer', quantity: 10 })] }
+  ), true);
+  assert.equal(intentService.needsNumberedClauseRetry(
+    'Move 10 Navy 4 from Main Warehouse to Downtown Store',
+    { lines: [intent({ actionType: 'transfer', quantity: 10 })] }
+  ), false);
+});
+
 test('ordinary words around a location name do not defeat it', () => {
   const env = clothing();
   // "Move it to the store" is how people talk. Every search term has to match,

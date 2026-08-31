@@ -1,0 +1,39 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/onboarding"><%- helpers.icon('chevron', { size: 14 }) %> All inventory sources</a>
+    <span class="setup-eyebrow">Inventory source</span>
+    <h1>Use files that arrive by email</h1>
+    <div class="page-sub">Connect the mailbox. Then choose the sender and whether its PDF, Excel, CSV, Word, or text files contain inventory or purchasing information.</div>
+  </div>
+</div>
+
+<% if (connected.length) { %>
+  <section class="section">
+    <div class="section-head"><div><h2>Continue with a connected mailbox</h2><p class="muted">Choose which sender and files Foundry should use.</p></div></div>
+    <div class="grid grid--2">
+      <% connected.forEach(function(connection) { %>
+        <a class="card list-row" href="/settings/connections/<%= connection.id %>">
+          <div><strong><%= connection.display_name %></strong><p><%= connection.provider_account_name || 'Mailbox connected' %></p></div>
+          <span class="btn btn--primary btn--sm">Choose emails and files</span>
+        </a>
+      <% }) %>
+    </div>
+  </section>
+<% } %>
+
+<section class="section">
+  <div class="section-head"><div><h2><%= connected.length ? 'Connect another mailbox' : 'Choose your mailbox' %></h2><p class="muted">Foundry ignores every sender you do not approve.</p></div></div>
+  <div class="grid grid--2">
+    <% providerCatalog.forEach(function(provider) { %>
+      <article class="card"><div class="card-body grid">
+        <div class="list-row" style="padding:0;border:0"><div><span class="eyebrow"><%= provider.mark %></span><h2><%= provider.name %></h2></div><span class="badge <%= provider.available ? 'badge--ok' : 'badge--muted' %>"><%= provider.available ? 'Ready' : 'Setup required' %></span></div>
+        <p>Sign in normally. Foundry will ask next which sender and attachments to use.</p>
+        <% if (!canManageConnections) { %><p class="hint">Ask an inventory owner to connect this mailbox.</p>
+        <% } else if (!provider.available) { %><p class="hint"><%= provider.unavailableReason %></p>
+        <% } else { %><form method="post" action="/settings/connections/connect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= provider.type %>"><button class="btn btn--primary" type="submit">Connect <%= provider.name %></button></form><% } %>
+      </div></article>
+    <% }) %>
+  </div>
+</section>
+
+<div class="notice section"><div><strong>What happens after connection</strong><p>Foundry checks automatically, prepares one safe review when an approved file arrives, and puts that review on Home. Nothing becomes stock until you approve the exact products and quantities.</p></div></div>

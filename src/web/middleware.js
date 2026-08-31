@@ -201,6 +201,22 @@ function requireOwner(req, res, next) {
 /** Renders a view inside the application shell. */
 function pageRenderer(req, res, next) {
   res.page = (view, data = {}) => {
+    let workspaceGuidance = null;
+    let screenGuide = Object.prototype.hasOwnProperty.call(data, 'screenGuide')
+      ? data.screenGuide
+      : null;
+    if (req.ctx && data.nav && data.nav !== 'home' && data.nav !== 'overview') {
+      try {
+        const guidance = require('../manager/guidance');
+        workspaceGuidance = guidance.build(req.db, req.ctx.workspaceId);
+        if (!Object.prototype.hasOwnProperty.call(data, 'screenGuide')) {
+          screenGuide = guidance.screenContext(workspaceGuidance, data.nav);
+        }
+      } catch {
+        // Guidance is presentation support. A partially migrated development
+        // database must not make the underlying business screen unavailable.
+      }
+    }
     res.render(view, { ...data }, (err, html) => {
       if (err) return next(err);
       // A page may opt out of the application chrome — a purchase order printed
@@ -211,6 +227,8 @@ function pageRenderer(req, res, next) {
         body: html,
         title: data.title || 'Foundry Inventory',
         nav: data.nav || null,
+        workspaceGuidance,
+        screenGuide,
         // Absolute base for anything that cannot be a relative path — social
         // preview images are fetched by other people's servers, which have no
         // idea what "/og.png" means. Taken from the request rather than

@@ -7,9 +7,7 @@
 </div>
 
 <% if (proposal.status === 'COMPLETED') { %>
-  <form method="post" action="/document-removals/<%= proposal.id %>/approve" class="card section" data-selection-group data-busy>
-    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <input type="hidden" name="integrityHash" value="<%= proposal.integrityHash %>">
+  <section class="card section">
     <div class="card-head"><h2>Completed</h2><span class="badge badge--ok">Verified</span></div>
     <div class="card-body">
       <p class="lede"><strong><%= proposal.result.productsRemoved %> product<%= proposal.result.productsRemoved === 1 ? '' : 's' %></strong> and <strong><%= proposal.result.variantsRemoved %> variant<%= proposal.result.variantsRemoved === 1 ? '' : 's' %></strong> are no longer active.</p>
@@ -26,7 +24,9 @@
     <span><strong>Nothing has been removed yet.</strong> Check the products and current quantities below. Only an owner can approve this.</span>
   </div>
 
-  <section class="card section">
+  <form method="post" action="/document-removals/<%= proposal.id %>/approve" class="card section" data-selection-group data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="integrityHash" value="<%= proposal.integrityHash %>">
     <div class="card-head">
       <h2>Foundry traced these products to <%= proposal.snapshot.document.sourceName %></h2>
       <span class="badge badge--danger"><%= proposal.snapshot.productCount %> product<%= proposal.snapshot.productCount === 1 ? '' : 's' %></span>

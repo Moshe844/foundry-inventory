@@ -229,9 +229,21 @@ router.post(
   '/autopilot/mode',
   asyncRoute(async (req, res) => {
     try {
+      const firstAuthorityDecision = !req.db.prepare(
+        "SELECT 1 FROM domain_events WHERE workspace_id = ? AND event_type = 'authority.updated' LIMIT 1"
+      ).get(req.ctx.workspaceId);
       const state = modes.setMode(req.db, req.ctx, req.user, trimOrNull(req.body.mode));
       react(req, { change: 'mode', mode: state.mode });
-      req.flash('success', 'Changed what Foundry is allowed to do.');
+      req.flash(
+        'success',
+        firstAuthorityDecision
+          ? state.mode === modes.MODES.SUPERVISED
+            ? 'You’re set up. Foundry will watch the operation and ask before carrying out consequential work.'
+            : state.mode === modes.MODES.POLICY_AUTOMATED
+              ? 'You’re set up. Foundry may handle routine work only inside limits you approve.'
+              : 'You’re set up. Foundry will watch and explain, without preparing or changing anything.'
+          : 'Changed what Foundry is allowed to do.'
+      );
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);

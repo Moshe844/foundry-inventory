@@ -27,7 +27,16 @@ function normalizeStoreUrl(value) {
 }
 
 async function jsonRequest(url, options = {}) {
-  const response = await fetch(url, { ...options, signal: options.signal || AbortSignal.timeout(20_000) });
+  let response;
+  try {
+    response = await fetch(url, { ...options, signal: options.signal || AbortSignal.timeout(20_000) });
+  } catch (cause) {
+    const error = new Error('Foundry could not reach the external service from this computer. Check its internet or security-software access; Foundry will retry safely.');
+    error.code = 'PROVIDER_UNREACHABLE';
+    error.transient = true;
+    error.cause = cause;
+    throw error;
+  }
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : {}; } catch { body = { raw: text.slice(0, 500) }; }

@@ -57,12 +57,22 @@ const ADDED_COLUMNS = [
   { table: 'physical_events', column: 'attachment_content', definition: 'BLOB' },
   { table: 'suppliers', column: 'item_code_label', definition: "TEXT NOT NULL DEFAULT 'Supplier code'" },
   { table: 'suppliers', column: 'item_code_aliases', definition: "TEXT NOT NULL DEFAULT '[]'" },
+  { table: 'suppliers', column: 'preferred_ordering_method', definition: "TEXT NOT NULL DEFAULT 'email'" },
+  { table: 'suppliers', column: 'watched_connector_id', definition: 'TEXT' },
+  { table: 'suppliers', column: 'prepare_communications', definition: 'INTEGER NOT NULL DEFAULT 1' },
+  { table: 'suppliers', column: 'auto_send_enabled', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'suppliers', column: 'auto_send_limit_minor', definition: 'INTEGER' },
+  { table: 'suppliers', column: 'price_tolerance_percent', definition: 'REAL NOT NULL DEFAULT 5' },
+  { table: 'suppliers', column: 'quantity_tolerance_percent', definition: 'REAL NOT NULL DEFAULT 0' },
+  { table: 'suppliers', column: 'trusted_delivery_receipt', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'suppliers', column: 'follow_up_days', definition: 'INTEGER NOT NULL DEFAULT 2' },
   { table: 'setup_documents', column: 'supplier_code_label', definition: "TEXT NOT NULL DEFAULT 'Supplier code'" },
   { table: 'setup_documents', column: 'scope_confirmed_at', definition: 'TEXT' },
   { table: 'import_plans', column: 'scope_confirmed_at', definition: 'TEXT' },
   { table: 'work_plans', column: 'trigger_event_id', definition: 'TEXT' },
   { table: 'work_items', column: 'trigger_event_id', definition: 'TEXT' },
   { table: 'operating_instruction_proposals', column: 'source', definition: "TEXT NOT NULL DEFAULT 'owner_instruction'" },
+  { table: 'operating_guards', column: 'enforcement_mode', definition: "TEXT NOT NULL DEFAULT 'block' CHECK (enforcement_mode IN ('block','warn'))" },
   { table: 'sales_orders', column: 'currency', definition: "TEXT NOT NULL DEFAULT 'USD'" },
   { table: 'sales_orders', column: 'discount_minor', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'sales_orders', column: 'tax_minor', definition: 'INTEGER NOT NULL DEFAULT 0' },
@@ -86,6 +96,19 @@ const ADDED_COLUMNS = [
   { table: 'connector_feed_events', column: 'action_record_id', definition: 'TEXT' },
   { table: 'connector_feed_events', column: 'aggregate_key', definition: 'TEXT' },
   { table: 'connector_feed_events', column: 'last_attempt_at', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'external_thread_id', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'internet_message_id', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'content_hash', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'processing_status', definition: "TEXT NOT NULL DEFAULT 'CAPTURED'" },
+  { table: 'connection_email_messages', column: 'processed_at', definition: 'TEXT' },
+  { table: 'connection_email_attachments', column: 'extracted_text', definition: 'TEXT' },
+  { table: 'connection_email_attachments', column: 'setup_document_id', definition: 'TEXT' },
+  { table: 'connection_email_rules', column: 'document_mode', definition: "TEXT NOT NULL DEFAULT 'review_each'" },
+  { table: 'supplier_communications', column: 'message_kind', definition: "TEXT NOT NULL DEFAULT 'purchase_order'" },
+  { table: 'supplier_communications', column: 'connector_id', definition: 'TEXT' },
+  { table: 'supplier_communications', column: 'external_thread_id', definition: 'TEXT' },
+  { table: 'supplier_communications', column: 'approved_by_user_id', definition: 'TEXT' },
+  { table: 'supplier_communications', column: 'approved_at', definition: 'TEXT' },
 ];
 
 function addMissingColumns(db) {
@@ -228,6 +251,23 @@ function dropLegacyUserLogin(db) {
   }
 }
 
+function migrateMailboxDocumentPurpose(db) {
+  if (!tableExists(db, 'connection_email_rules') || !tableExists(db, 'schema_meta')) return;
+  const now = new Date().toISOString();
+  const migrated = db.prepare("SELECT 1 FROM schema_meta WHERE key = 'mailbox_document_purpose_v1'").get();
+  if (!migrated) {
+    // Before purpose selection existed every watched sender was silently
+    // treated as purchasing evidence. Move those legacy rules to the neutral
+    // state once; future choices are always explicit.
+    db.prepare("UPDATE connection_email_rules SET document_mode = 'review_each'").run();
+    db.prepare("INSERT INTO schema_meta (key, value) VALUES ('mailbox_document_purpose_v1', ?)").run(now);
+  }
+  // Push delivery is optional; every real mailbox has scheduled OAuth polling.
+  // Old builds surfaced a failed push registration as an urgent owner task.
+  db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+    WHERE issue_type = 'MAILBOX_WATCH_RENEWAL_FAILED' AND status = 'OPEN'`).run(now, now);
+}
+
 /**
  * Drops the CHECK that enumerated action types.
  *
@@ -345,6 +385,7 @@ function migrate(db) {
   // so a second additive pass keeps fresh and upgraded databases identical.
   addMissingColumns(db);
   db.exec(fs.readFileSync(CONNECTIONS_SCHEMA_PATH, 'utf8'));
+  migrateMailboxDocumentPurpose(db);
   dropLegacyUserLogin(db);
   db.prepare(
     `INSERT INTO schema_meta (key, value) VALUES ('version', '15')

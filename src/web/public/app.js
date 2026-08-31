@@ -315,6 +315,13 @@
         if (target && target.tagName === 'DIALOG') return;
 
         if (target) {
+          // The persistent “What can I do here?” link points at a compact
+          // disclosure. Landing on a closed disclosure would move the page
+          // without answering the question the person just clicked.
+          if (target.id === 'context-help') {
+            const help = target.querySelector('details');
+            if (help) help.open = true;
+          }
           // A response to Tell Foundry belongs beside the request box. The
           // global message area is above a long home page; scrolling to the
           // input used to hide the answer that had just arrived. Move that
@@ -503,33 +510,35 @@
    * the difference between "thinking" and "broken".
    */
   function initAskPending() {
-    const form = document.querySelector('[data-ask-form]');
-    if (!form) return;
+    const forms = [...document.querySelectorAll('[data-ask-form]')];
+    if (!forms.length) return;
 
-    // Choosing a file is the whole instruction — nobody wants to pick a
-    // spreadsheet and then hunt for a second button.
-    const attach = form.querySelector('.ask-attach input[type="file"]');
-    if (attach) {
-      attach.addEventListener('change', () => {
-        if (!attach.files || !attach.files.length) return;
-        const label = attach.closest('.ask-attach');
-        if (label) {
-          label.classList.add('is-chosen');
-          const text = label.querySelector('span');
-          if (text) text.textContent = attach.files[0].name;
-        }
-        form.requestSubmit();
-      });
-    }
-
-    form.addEventListener('submit', () => {
-      const pending = form.parentElement.querySelector('[data-ask-pending]');
-      if (pending) pending.hidden = false;
-      const button = form.querySelector('[data-ask-submit]');
-      if (button) {
-        button.classList.add('is-busy');
-        button.setAttribute('aria-busy', 'true');
+    forms.forEach((form) => {
+      // Choosing a file is the whole instruction — nobody wants to pick a
+      // spreadsheet and then hunt for a second button.
+      const attach = form.querySelector('.ask-attach input[type="file"]');
+      if (attach) {
+        attach.addEventListener('change', () => {
+          if (!attach.files || !attach.files.length) return;
+          const label = attach.closest('.ask-attach');
+          if (label) {
+            label.classList.add('is-chosen');
+            const text = label.querySelector('span');
+            if (text) text.textContent = attach.files[0].name;
+          }
+          form.requestSubmit();
+        });
       }
+
+      form.addEventListener('submit', () => {
+        const pending = form.parentElement.querySelector('[data-ask-pending]');
+        if (pending) pending.hidden = false;
+        const button = form.querySelector('[data-ask-submit]');
+        if (button) {
+          button.classList.add('is-busy');
+          button.setAttribute('aria-busy', 'true');
+        }
+      });
     });
   }
 
@@ -622,6 +631,39 @@
         .catch(() => {});
     };
     window.setInterval(tick, 3000);
+    // Browsers heavily throttle timers in background tabs. Check immediately
+    // when the owner comes back from Gmail so a message already captured by
+    // Foundry appears now, not on the browser's delayed timer schedule.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) tick();
+    });
+    window.addEventListener('focus', tick);
+    tick();
+  }
+
+  /** Keep an open mailbox page in step with unattended provider checks. */
+  function initLiveMailbox() {
+    const marker = document.querySelector('[data-live-mailbox]');
+    if (!marker) return;
+    const connectorId = marker.dataset.connectorId;
+    let signature = marker.dataset.signature || '';
+    let reloading = false;
+    const tick = () => {
+      if (document.hidden || reloading) return;
+      const active = document.activeElement;
+      if (active && active.matches('input, select, textarea')) return;
+      fetch(`/settings/connections/${encodeURIComponent(connectorId)}/state`, {
+        headers: { Accept: 'application/json' },
+      })
+        .then((response) => response.ok ? response.json() : null)
+        .then((state) => {
+          if (!state || !state.signature || state.signature === signature) return;
+          reloading = true;
+          window.location.reload();
+        })
+        .catch(() => {});
+    };
+    window.setInterval(tick, 3000);
   }
 
   /** Turn server-rendered upload warnings into a real blocking modal. */
@@ -682,6 +724,7 @@
     initSwitcher();
     initVendorVocabulary();
     initLiveHome();
+    initLiveMailbox();
     initScopeWarnings();
     initSelectionGroups();
   });

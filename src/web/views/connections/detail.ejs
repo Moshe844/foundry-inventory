@@ -1,21 +1,44 @@
+<% var isMailbox = ['supplier_email','gmail','microsoft365'].includes(connection.provider_type); %>
+<% var watchedRules = isMailbox ? emailRules.filter(function(rule) { return rule.supplier_id && rule.supplier_name; }) : []; %>
+<% var pendingEmailRule = isMailbox ? emailRules.find(function(rule) { return !rule.supplier_id; }) : null; %>
+<% if (isMailbox) { %><div data-live-mailbox data-connector-id="<%= connection.id %>" data-signature="<%= mailboxSignature %>" hidden></div><% } %>
 <header class="page-head">
   <div class="titles">
     <div class="breadcrumbs"><a href="/settings/connections">Connections</a><span>›</span><span><%= connection.display_name %></span></div>
     <h1><%= connection.display_name %></h1>
-    <p class="page-sub"><%= provider.name %><%= connection.provider_account_name ? ' · ' + connection.provider_account_name : '' %> · <%= connection.provides.join(', ') %></p>
+    <p class="page-sub"><% if (isMailbox) { %><%= connection.provider_account_name || provider.name %> · Foundry watches only the suppliers you choose<% } else { %><%= provider.name %><%= connection.provider_account_name ? ' · ' + connection.provider_account_name : '' %> · <%= connection.provides.join(', ') %><% } %></p>
   </div>
   <span class="badge <%= connection.publicStatus === 'Connected' ? 'badge--ok' : connection.publicStatus === 'Needs attention' ? 'badge--warn' : 'badge--muted' %>"><%= connection.publicStatus %></span>
 </header>
 
-<div class="stats-row section">
+<% if (!isMailbox) { %><div class="stats-row section">
   <div class="stat"><strong><%= connection.productsMapped %></strong><span>products mapped</span></div>
   <div class="stat"><strong><%= connection.locationsMapped %></strong><span>locations mapped</span></div>
   <div class="stat"><strong><%= connection.itemsNeedingMapping %></strong><span>need mapping</span></div>
   <div class="stat"><strong><%= connection.last_activity_at ? helpers.timeAgo(connection.last_activity_at) : 'None yet' %></strong><span>last event received</span></div>
-</div>
+</div><% } %>
 
 <% if (token) { %>
-  <div class="notice notice--warn section"><div><strong>Copy this token now. Foundry will not show it again.</strong><input class="input mono" value="<%= token %>" readonly onclick="this.select()"></div></div>
+  <div class="notice notice--warn section"><div><strong>Copy this secure connection key now. Foundry will not show it again.</strong><input class="input mono" value="<%= token %>" readonly onclick="this.select()"></div></div>
+<% } %>
+
+<% if (isMailbox) { %>
+  <section class="setup-journey">
+    <div class="setup-journey__head">
+      <div class="setup-journey__head-copy">
+        <span class="setup-journey__eyebrow"><%= provider.name %> setup</span>
+        <h1><%= watchedRules.length ? 'Your supplier inbox is ready' : 'One more step: choose a supplier' %></h1>
+        <p><%= watchedRules.length
+          ? `Foundry is connected to ${connection.provider_account_name || 'this mailbox'} and knows which supplier emails matter.`
+          : 'Connecting Gmail only gives Foundry permission to read the mailbox. Now tell it which supplier email address to watch.' %></p>
+      </div>
+    </div>
+    <div class="setup-steps">
+      <div class="setup-step setup-step--done"><span class="setup-step__number">✓</span><div><strong>Connect <%= provider.name %></strong><p><%= connection.provider_account_name || 'Mailbox connected' %></p></div><span class="setup-step__state">Done</span></div>
+      <div class="setup-step <%= watchedRules.length ? 'setup-step--done' : 'setup-step--current' %>"><span class="setup-step__number"><%= watchedRules.length ? '✓' : '2' %></span><div><strong>Choose supplier emails</strong><p>Enter the address your supplier sends from. Foundry handles the association.</p></div><span class="setup-step__state"><%= watchedRules.length ? 'Done' : 'Do this now' %></span></div>
+      <div class="setup-step <%= watchedRules.length ? 'setup-step--current' : '' %>"><span class="setup-step__number">3</span><div><strong>Send one test email</strong><p>Foundry checks automatically and will show the message below.</p></div><span class="setup-step__state"><%= watchedRules.length ? 'Ready to test' : 'Next' %></span></div>
+    </div>
+  </section>
 <% } %>
 
 <div class="grid grid--sidebar">
@@ -62,23 +85,54 @@
                   </select><button class="btn btn--primary btn--sm" type="submit">Save mapping and retry</button>
                 </form>
               <% } %>
+              <% var supplierSkuCandidates = issue.issue_type === 'SUPPLIER_DOCUMENT_REVIEW' ? issue.candidates.filter(function(candidate) { return candidate.kind === 'supplier_sku' && candidate.supplierSku && candidate.supplierId; }) : []; %>
+              <% supplierSkuCandidates.forEach(function(candidate) { %>
+                <form method="post" action="/settings/connections/<%= connection.id %>/supplier-sku-map" class="form-actions" style="margin-top:10px">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="issueId" value="<%= issue.id %>"><input type="hidden" name="supplierSku" value="<%= candidate.supplierSku %>">
+                  <label class="field"><span class="field-label">What is <%= candidate.supplierSku %> in Foundry?</span><select class="select" name="skuId" required><option value="">Choose the matching product</option><% skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %><%= sku.variant_label ? ' / ' + sku.variant_label : '' %> · <%= sku.code %></option><% }) %></select></label>
+                  <button class="btn btn--primary btn--sm" type="submit">Save match for future emails</button>
+                </form>
+              <% }) %>
+              <% var documentDecision = issue.issue_type === 'SUPPLIER_DOCUMENT_REVIEW' ? issue.candidates.find(function(candidate) { return candidate.kind === 'supplier_document_review'; }) : null; %>
+              <% if (documentDecision && !documentDecision.discrepancies.some(function(discrepancy) { return discrepancy.type === 'unknown_sku'; })) { %>
+                <form method="post" action="/settings/connections/<%= connection.id %>/supplier-document-decision" class="form-actions" style="margin-top:10px">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="issueId" value="<%= issue.id %>">
+                  <button class="btn btn--primary btn--sm" type="submit" name="decision" value="accept">Accept supplier changes</button>
+                  <button class="btn btn--sm" type="submit" name="decision" value="keep_original">Keep original purchase order</button>
+                </form>
+              <% } %>
             </div><span class="badge badge--warn"><%= issue.issue_type.replaceAll('_', ' ').toLowerCase() %></span></div>
           <% }) %>
         </div>
       </section>
     <% } %>
 
-    <% if (connection.provider_type === 'supplier_email') { %>
-      <section class="card"><div class="card-head"><div><h2>Trusted supplier senders</h2><p class="muted">Only configured senders become trusted evidence. No email changes inventory in Mission 11.</p></div></div><div class="card-body grid">
-        <% emailRules.forEach(function(rule) { %><div class="list-row"><div><strong><%= rule.sender_pattern %></strong><p><%= rule.supplier_name || 'No supplier associated' %></p></div><span class="badge badge--ok">Allowed</span></div><% }) %>
-        <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/<%= connection.id %>/email-rules" class="form-actions"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input class="input" name="senderPattern" placeholder="orders@supplier.com or @supplier.com" required><select class="select" name="supplierId"><option value="">No supplier association</option><% suppliers.forEach(function(s) { %><option value="<%= s.id %>"><%= s.name %></option><% }) %></select><button class="btn" type="submit">Allow sender</button></form><% } %>
+    <% if (isMailbox) { %>
+      <section class="card"><div class="card-head"><div><h2><%= watchedRules.length ? 'Suppliers Foundry watches' : 'Which supplier should Foundry watch?' %></h2><p class="muted">Use the address the supplier sends email from—not the Gmail inbox you just connected.</p></div></div><div class="card-body grid">
+        <% watchedRules.forEach(function(rule) { var modeLabel = rule.document_mode === 'inventory_list' ? 'Inventory files → prepare review' : rule.document_mode === 'supplier_documents' ? 'Purchasing documents → process' : 'Ask what each file is'; %><div class="list-row"><div><strong><%= rule.supplier_name %></strong><p>Emails from <%= rule.sender_pattern %> · <%= modeLabel %></p></div><span class="badge badge--ok">Watching</span></div><% }) %>
+        <% if (currentUser.role === 'owner') { %>
+          <form method="post" action="/settings/connections/<%= connection.id %>/email-rules" class="grid grid--2">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <label class="field"><span class="field-label">Which email address should Foundry use?</span><input class="input" name="senderPattern" value="<%= pendingEmailRule ? pendingEmailRule.sender_pattern : '' %>" placeholder="orders@abcapparel.com" required><span class="field-help">Everything from other senders remains ignored.</span></label>
+            <label class="field"><span class="field-label">What should Foundry call this source? <span class="muted">optional</span></span><input class="input" name="supplierName" list="supplier-name-options" placeholder="ABC Apparel"><span class="field-help">Type any useful name. There is no separate supplier setup required.</span></label>
+            <label class="field"><span class="field-label">What do its attached files contain?</span><select class="select" name="documentMode"><option value="review_each">I will choose for each file</option><option value="inventory_list">Products or inventory quantities</option><option value="supplier_documents">Purchase orders, invoices or shipment updates</option></select><span class="field-help">PDF, Excel, CSV, Word, and text work the same way. Foundry prepares a review; it does not silently change stock.</span></label>
+            <datalist id="supplier-name-options"><% suppliers.forEach(function(s) { %><option value="<%= s.name %>"><% }) %></datalist>
+            <div class="form-actions"><button class="btn btn--primary" type="submit"><%= watchedRules.length ? 'Watch another sender' : 'Start watching this sender' %></button></div>
+          </form>
+        <% } %>
       </div></section>
-      <section class="card"><div class="card-head"><h2>Captured messages</h2></div><div class="card-body grid"><% if (!messages.length) { %><p class="muted">No messages received.</p><% } messages.forEach(function(message) { %><div class="list-row"><div><strong><%= message.subject || '(no subject)' %></strong><p><%= message.sender %> · <%= message.classification.replaceAll('_', ' ') %> · <%= message.attachment_count %> attachment<%= message.attachment_count === 1 ? '' : 's' %></p></div><span class="badge <%= message.trust_status === 'TRUSTED' ? 'badge--ok' : 'badge--warn' %>"><%= message.trust_status === 'TRUSTED' ? 'Trusted evidence' : 'Untrusted' %></span></div><% }) %></div></section>
+      <section class="card"><div class="card-head"><div><h2>Emails Foundry found</h2><p class="muted">Each file shows its real outcome: waiting, imported, or safely ignored as a duplicate.</p></div></div><div class="card-body grid"><% if (!messages.length) { %><p class="muted"><%= watchedRules.length ? 'No approved-sender email has arrived yet. Foundry will check automatically.' : 'Choose a sender above first.' %></p><% } messages.forEach(function(message) { var attachmentsForMessage = messageAttachments.filter(function(a) { return a.message_id === message.id; }); var hasPendingInventory = attachmentsForMessage.some(function(a) { return a.document_status === 'PREPARED'; }); var hasAppliedInventory = attachmentsForMessage.some(function(a) { return a.document_status === 'APPLIED'; }); var isDuplicateInventory = message.processing_status === 'DUPLICATE_IGNORED'; var messageBadge = message.trust_status !== 'TRUSTED' ? 'Ignored—not approved' : isDuplicateInventory ? 'Duplicate ignored' : hasPendingInventory ? 'Inventory review ready' : hasAppliedInventory ? 'Imported' : 'Approved sender'; %><div class="list-row" style="align-items:flex-start"><div style="flex:1"><strong><%= message.subject || '(no subject)' %></strong><p><%= message.sender %><%= message.attachment_count ? ' · ' + message.attachment_count + ' attachment' + (message.attachment_count === 1 ? '' : 's') : '' %></p>
+        <% attachmentsForMessage.forEach(function(attachment) { %><div class="notice" style="margin-top:10px"><div><strong><%= attachment.filename %></strong>
+          <% if (attachment.document_status === 'PREPARED' && attachment.understanding_id) { %><p>Ready for review. Nothing has been imported yet.</p><a class="btn btn--primary btn--sm" href="/foundry/proposal/<%= attachment.understanding_id %>">Review inventory</a>
+          <% } else if (attachment.document_status === 'APPLIED') { %><% if (isDuplicateInventory) { %><p><strong>Duplicate file.</strong> These exact contents were already imported<%= attachment.document_applied_at ? ' ' + helpers.timeAgo(attachment.document_applied_at) : '' %>. Nothing was added again.</p><% } else { %><p><strong>Imported<%= attachment.document_applied_at ? ' ' + helpers.timeAgo(attachment.document_applied_at) : '' %>.</strong> This file is already part of the inventory. There is nothing left to review.</p><a class="btn btn--sm" href="/inventory">See inventory</a><% } %>
+          <% } else if (message.trust_status === 'TRUSTED') { %><form method="post" action="/settings/connections/<%= connection.id %>/email-attachments/<%= attachment.id %>/inventory-preview" class="grid" style="margin-top:8px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="choice"><input type="checkbox" name="rememberFuture" value="1"><span><strong>Future files from this sender are inventory lists</strong><small>Prepare a review automatically; never import without approval.</small></span></label><button class="btn btn--primary btn--sm" type="submit">Review this file as inventory</button></form><% } %>
+        </div></div><% }) %>
+      </div><span class="badge <%= message.trust_status !== 'TRUSTED' || isDuplicateInventory ? 'badge--muted' : 'badge--ok' %>"><%= messageBadge %></span></div><% }) %></div></section>
     <% } %>
 
-    <section class="card"><div class="card-head"><div><h2>Recent activity received</h2><p class="muted">Understandable status here; exact payloads remain available in diagnostics.</p></div></div><div class="card-body grid">
+    <% if (!isMailbox) { %><section class="card"><div class="card-head"><div><h2>Recent activity received</h2><p class="muted">Understandable status here; exact payloads remain available in diagnostics.</p></div></div><div class="card-body grid">
       <% if (!events.length) { %><p class="muted">Waiting for first activity.</p><% } events.forEach(function(event) { %><div class="list-row"><div><strong><%= event.event_type %></strong><p>External event <%= event.external_event_id %> · received <%= helpers.timeAgo(event.received_at) %><%= event.action_type ? ' · Foundry action ' + event.action_type : '' %></p><% if (event.error_message) { %><p class="is-warn"><%= event.error_message %></p><% } %></div><span class="badge <%= event.status === 'COMPLETED' ? 'badge--ok' : event.status === 'NEEDS_MAPPING' ? 'badge--warn' : 'badge--muted' %>"><%= event.status.replaceAll('_', ' ') %></span></div><% }) %>
-    </div></section>
+    </div></section><% } %>
 
     <% if (reconciliations.length) { %><section class="card"><div class="card-head"><h2>Reconciliation</h2></div><div class="card-body grid"><% reconciliations.forEach(function(row) { %><div class="list-row"><div><strong><%= row.status === 'MATCHED' ? 'External history matches' : 'Mismatch found' %></strong><p><%= row.period_start || 'All recorded time' %><%= row.period_end ? ' to ' + row.period_end : '' %></p></div><span class="badge <%= row.status === 'MATCHED' ? 'badge--ok' : 'badge--warn' %>"><%= row.status %></span></div><% }) %></div></section><% } %>
   </main>
@@ -97,13 +151,44 @@
     "locationName": "Main Store",
     "quantity": 1
   }
-}</pre></details><% } %><% if (connection.provider_type === 'supplier_email') { %><label class="field"><span class="label">Email endpoint</span><input class="input mono" value="<%= origin %>/api/v1/email/messages" readonly onclick="this.select()"></label><% } %></div></section><% } else { %>
+}</pre></details><% } %><% if (connection.provider_type === 'supplier_email') { %><label class="field"><span class="label">Email endpoint</span><input class="input mono" value="<%= origin %>/api/v1/email/messages" readonly onclick="this.select()"></label><% } %></div></section><% } else if (isMailbox) { %>
+      <section class="card"><div class="card-head"><h2><%= watchedRules.length ? 'Test it now' : 'What happens next?' %></h2></div><div class="card-body grid">
+        <% if (watchedRules.length) { var testRule = watchedRules[0]; %>
+          <p>Send an email from <strong><%= testRule.sender_pattern %></strong> to <strong><%= connection.provider_account_name %></strong>.</p>
+          <p class="hint">Use a subject such as <strong>Order acknowledgement PO-1234</strong>. Foundry will match real PO numbers when they exist.</p>
+        <% } else { %>
+          <p>Enter one supplier name and sender email on the left. Then Foundry will show the exact test to run.</p>
+        <% } %>
+        <p class="hint">Foundry checks automatically every <%= connection.config.mailboxCheckMinutes || 5 %> minutes. Last checked <%= connection.last_synced_at ? helpers.timeAgo(connection.last_synced_at) : 'not yet' %>.</p>
+        <% if (currentUser.role === 'owner' && ['gmail','microsoft365'].includes(connection.provider_type)) { %><form method="post" action="/settings/connections/<%= connection.id %>/mailbox-cadence" class="form-actions"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Check for new mail</span><select class="select" name="minutes"><% [1,5,10,15,30].forEach(function(n) { %><option value="<%= n %>" <%= Number(connection.config.mailboxCheckMinutes || 5) === n ? 'selected' : '' %>>Every <%= n %> minute<%= n === 1 ? '' : 's' %></option><% }) %></select></label><button class="btn btn--sm" type="submit">Save timing</button></form><% } %>
+      </div></section>
+    <% } else { %>
       <section class="card"><div class="card-head"><h2>Automatic provider sync</h2></div><div class="card-body grid"><p>Events arrive automatically from <%= provider.name %>. You do not need an API command or Check now.</p><p class="hint">Initial setup imports product and location identities only. It does not replay historical sales into current stock.</p><% if (currentUser.role === 'owner' && connection.status === 'connected') { %><div class="form-actions"><form method="post" action="/settings/connections/<%= connection.id %>/sync"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Refresh products and locations</button></form><form method="post" action="/settings/connections/<%= connection.id %>/reconcile"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Compare recent provider history</button></form></div><p class="hint">History comparison is read-only. A mismatch creates a clear issue; it never rewrites stock.</p><% } %></div></section>
     <% } %>
-    <section class="card"><div class="card-head"><h2>Connection control</h2></div><div class="card-body form-actions"><% if (currentUser.role === 'owner') { %>
-      <% if (connection.status === 'disconnected' && connection.provider_type === 'reference_webhook') { %><form method="post" action="/settings/connections/<%= connection.id %>/rotate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Reconnect with new token</button></form><% } else if (connection.status === 'disconnected' && ['shopify','square','clover','woocommerce'].includes(connection.provider_type)) { %><form method="post" action="/settings/connections/connect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= connection.provider_type %>"><input type="hidden" name="connectorId" value="<%= connection.id %>"><% if (connection.provider_type === 'shopify') { %><input type="hidden" name="shop" value="<%= connection.config.shop || '' %>"><% } %><% if (connection.provider_type === 'woocommerce') { %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl || '' %>"><% } %><button class="btn btn--primary" type="submit">Reconnect <%= provider.name %></button></form><% } else if (connection.paused_at) { %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Resume trusting events</button></form><% } else if (connection.status !== 'disconnected') { %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Pause ingestion</button></form><% } %>
+    <% if (!isMailbox) { %>
+      <section class="card"><div class="card-head"><h2>Before-checkout stock warning</h2></div><div class="card-body grid">
+        <label class="field"><span class="label">Decision endpoint</span><input class="input mono" value="<%= origin %>/api/v1/precheckout" readonly onclick="this.select()"></label>
+        <% if (connection.provider_type === 'woocommerce') { %>
+          <p>Supported with the Foundry WooCommerce plugin. It checks the live Foundry balance, commitments, reorder point, and stock-protection rules before checkout.</p>
+        <% } else if (connection.provider_type === 'reference_webhook') { %>
+          <p>Supported now. Your POS, ERP, or checkout can call this endpoint before taking payment and display the returned <code>ALLOW</code>, <code>WARN</code>, or <code>BLOCK</code> decision.</p>
+        <% } else if (connection.provider_type === 'shopify') { %>
+          <p>The Foundry decision API is ready. Showing it inside Shopify checkout requires deploying a Shopify checkout-validation extension and Shopify approval for its required capability.</p>
+        <% } else if (connection.provider_type === 'square') { %>
+          <p>Square's standard POS cannot accept an injected Foundry warning. This endpoint is ready for a custom Square checkout or Terminal app; completed Square sales still reach Foundry automatically.</p>
+        <% } else if (connection.provider_type === 'clover') { %>
+          <p>Clover's standard New Sale screen cannot accept a warning from this web connector. This endpoint is ready for a Clover Android companion/custom checkout app; completed Clover sales still reach Foundry automatically.</p>
+        <% } %>
+        <p class="hint">This is read-only. It never changes stock. Only an existing owner-set stock-protection rule returns <strong>BLOCK</strong>; low stock and reorder-point crossings return <strong>WARN</strong>.</p>
+        <% if (currentUser.role === 'owner' && connection.status === 'connected') { %>
+          <form method="post" action="/settings/connections/<%= connection.id %>/checkout-token"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Create checkout integration key</button></form>
+        <% } %>
+      </div></section>
+    <% } %>
+    <<%= isMailbox ? 'details' : 'section' %> class="card"><%- isMailbox ? '<summary class="card-head"><h2>Connection settings</h2></summary>' : '<div class="card-head"><h2>Connection control</h2></div>' %><div class="card-body form-actions"><% if (currentUser.role === 'owner') { %>
+      <% if (connection.status === 'disconnected' && connection.provider_type === 'reference_webhook') { %><form method="post" action="/settings/connections/<%= connection.id %>/rotate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Reconnect with new token</button></form><% } else if (connection.status === 'disconnected' && ['shopify','square','clover','woocommerce','gmail','microsoft365'].includes(connection.provider_type)) { %><form method="post" action="/settings/connections/connect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= connection.provider_type %>"><input type="hidden" name="connectorId" value="<%= connection.id %>"><% if (connection.provider_type === 'shopify') { %><input type="hidden" name="shop" value="<%= connection.config.shop || '' %>"><% } %><% if (connection.provider_type === 'woocommerce') { %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl || '' %>"><% } %><button class="btn btn--primary" type="submit">Reconnect <%= provider.name %></button></form><% } else if (connection.paused_at) { %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Resume trusting events</button></form><% } else if (connection.status !== 'disconnected') { %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Pause ingestion</button></form><% } %>
       <% if (connection.status !== 'disconnected') { %><% if (connection.provider_type === 'reference_webhook') { %><form method="post" action="/settings/connections/<%= connection.id %>/rotate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Rotate token</button></form><% } %><form method="post" action="/settings/connections/<%= connection.id %>/disconnect" data-confirm="Disconnect this source? Mappings and audit history will be kept."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--danger" type="submit">Disconnect</button></form><% } %>
-    <% } %></div></section>
+    <% } %></div></<%= isMailbox ? 'details' : 'section' %>>
     <details class="card"><summary class="card-head"><h2>Advanced diagnostics</h2></summary><div class="card-body"><p class="mono">Connection <%= connection.id %></p><p>Provider: <%= connection.provider_type %></p><% if (connection.provider_type === 'clover') { %><p>Webhook URL: <span class="mono"><%= origin %>/api/v1/connections/clover/webhooks</span></p><% } %><p>Setup: <%= connection.setup_status %></p><p>Mappings: <%= mappings.length %></p><p>Last event: <%= connection.last_activity_at || 'none' %></p><p>Last successful sync: <%= connection.last_synced_at || 'none' %></p><p>Last sync problem: <%= connection.last_error || 'none' %></p><% syncRuns.forEach(function(run) { %><p><%= run.sync_kind %> · <%= run.status %> · <%= run.started_at %><%= run.error_message ? ' · ' + run.error_message : '' %></p><% }) %></div></details>
   </aside>
 </div>

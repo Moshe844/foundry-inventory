@@ -182,6 +182,19 @@ router.get(
       // already withdrawn.
       title: presented.title,
       nav: 'attention',
+      // The detail route recalculates replenishment against live stock and open
+      // orders. Its contextual next step must use that same live presentation;
+      // otherwise the shell can repeat the stale title stored when the finding
+      // was first detected (for example, still offering an order that is now
+      // already drafted).
+      screenGuide: {
+        description: 'Understand this decision, why Foundry stopped, and the one safe action available now.',
+        next: {
+          title: presented.title,
+          action: null,
+          href: null,
+        },
+      },
       // A finding stores its wording when it is detected. By the time someone
       // opens it, an order may have been drafted or stock received, and the
       // stored heading would then contradict the plan printed beneath it — the

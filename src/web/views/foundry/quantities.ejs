@@ -1,6 +1,6 @@
 <div class="foundry-hero foundry-hero--tight">
   <span class="foundry-mark foundry-mark--done"><%- helpers.icon('check', { size: 24 }) %></span>
-  <h1>Foundry built the inventory</h1>
+  <h1>Your products are ready</h1>
   <p>
     <strong><%= item.name %></strong> is live with
     <strong><%= skuCount %></strong> trackable <%= skuCount === 1 ? 'item' : 'variants' %>
@@ -23,6 +23,28 @@
     </div>
 
     <div class="quantity-options">
+      <% if (canEnterGrid) { %>
+        <form class="quantity-option quantity-option--primary opening-grid" method="post" action="/foundry/quantities/<%= item.id %>/save">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="opening-grid__head">
+            <span class="quantity-option__icon"><%- helpers.icon('inventory', { size: 20 }) %></span>
+            <div><h3>Type quantities yourself</h3><p>Enter what is physically on hand now. Leave a box empty if there is none at that location.</p></div>
+          </div>
+          <div class="table-wrap"><table class="table table--tight">
+            <thead><tr><th>Variant</th><% locations.forEach(function (location) { %><th><%= location.name %></th><% }) %></tr></thead>
+            <tbody><% skus.forEach(function (sku) { %><tr>
+              <td><strong><%= sku.variant_label || item.name %></strong><small class="mono"><%= sku.code %></small></td>
+              <% locations.forEach(function (location) { %><td>
+                <input type="hidden" name="skuId" value="<%= sku.id %>">
+                <input type="hidden" name="locationId" value="<%= location.id %>">
+                <input class="input input--qty" type="number" min="0" step="1" name="quantity" aria-label="<%= sku.variant_label || item.name %> at <%= location.name %>" placeholder="0">
+              </td><% }) %>
+            </tr><% }) %></tbody>
+          </table></div>
+          <div><button class="btn btn--primary" type="submit">Save opening inventory</button></div>
+        </form>
+      <% } %>
+
       <div class="quantity-option quantity-option--primary">
         <span class="quantity-option__icon"><%- helpers.icon('foundry', { size: 20 }) %></span>
         <div>
@@ -44,11 +66,11 @@
         <%- helpers.icon('chevron', { size: 16 }) %>
       </a>
 
-      <a class="quantity-option" href="/inventory/<%= item.id %>?action=receive">
+      <% if (!canEnterGrid) { %><a class="quantity-option" href="/inventory/<%= item.id %>?action=receive">
         <span class="quantity-option__icon"><%- helpers.icon('receive', { size: 20 }) %></span>
-        <div><h3>Enter manually</h3><p>Open the traditional receiving form for this product.</p></div>
+        <div><h3>Type quantities yourself</h3><p>Enter what you currently have for each variant and location.</p></div>
         <%- helpers.icon('chevron', { size: 16 }) %>
-      </a>
+      </a><% } %>
     </div>
   </div>
   <div class="card-foot quantity-complete">

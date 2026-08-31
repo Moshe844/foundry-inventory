@@ -6,7 +6,7 @@ const activityService = require('../../domain/activity-service');
 const planApplier = require('../../foundry/plan-applier');
 const onboardingPaths = require('../../onboarding/paths');
 const attention = require('../../attention/attention-engine');
-const readiness = require('../../manager/readiness');
+const needsYouInbox = require('../../manager/needs-you-inbox');
 const presenter = require('../../attention/presenter');
 const briefService = require('../../attention/brief-service');
 const { purchasingBrief } = require('../../purchasing/brief-lines');
@@ -88,7 +88,7 @@ router.get(
       // say "All clear" about the same inventory that Needs You said had a
       // thing waiting, which leaves a new customer with two screens
       // contradicting each other and no way to tell which is lying.
-      operatingDecisions: readiness.decisions(req.db, req.ctx.workspaceId),
+      operatingDecisions: needsYouInbox.inbox(req.db, req.ctx.workspaceId),
       guidance: guidance.build(req.db, req.ctx.workspaceId),
       isEmpty: stats.itemCount === 0 && stats.locationCount === 0,
     });

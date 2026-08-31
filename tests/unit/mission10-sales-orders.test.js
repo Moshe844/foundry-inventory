@@ -6,6 +6,7 @@ const authService = require('../../src/domain/auth-service');
 const inventory = require('../../src/domain/inventory-engine');
 const repo = require('../../src/domain/repository');
 const sales = require('../../src/sales/sales-order-service');
+const prices = require('../../src/pricing/price-service');
 const needsYou = require('../../src/manager/needs-you-inbox');
 const attention = require('../../src/attention/attention-engine');
 const reorderPolicies = require('../../src/purchasing/policy-service');
@@ -21,6 +22,7 @@ function setup(name = 'Mission 10 Co') {
   const workspace = seedWorkspace(db, { workspaceName: name });
   const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
   const item = makeQuantityItem(db, workspace.ctx, { name: 'Black Small Shirt', code: 'BLACK-S' });
+  prices.setPrice(db, workspace.ctx, { skuId: item.skuId, amount: '25.00', currency: 'USD' });
   return { db, workspace, membership, item, ctx: workspace.ctx };
 }
 

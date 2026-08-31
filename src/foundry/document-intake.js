@@ -33,6 +33,10 @@ const LINE_SCHEMA = {
     styleName: { type: 'string' }, color: { type: 'string' }, variantDimension: { type: 'string' }, size: { type: 'string' },
     supplierSku: { type: 'string' }, description: { type: 'string' },
     quantity: { type: 'integer' }, unitCost: { type: 'number' }, sellingPrice: { type: 'number' },
+    locationQuantities: { type: 'array', maxItems: 50, items: {
+      type: 'object', additionalProperties: false, required: ['locationName', 'quantity'],
+      properties: { locationName: { type: 'string' }, quantity: { type: 'integer' } },
+    } },
   },
 };
 
@@ -58,6 +62,8 @@ Do not invent values. Use an empty string for missing text, -1 for missing unit 
 styleName is the reusable inventory product without its line-level variant value. Put colour in color when it is explicit. variantDimension is the business name for the value in size: for example Size, Model, Grade, Length, or Pack. The size field holds that value; leave both strings empty when there is no variant. Preserve supplier SKU exactly. quantity is the inventory units on that exact line. unitCost is supplier purchase cost per inventory unit. sellingPrice is the customer retail/list price only when the source explicitly labels it as retail, selling, list, MSRP or RRP; otherwise use -1. Never copy invoice unit cost into sellingPrice.
 
 unitLabel is the singular thing being counted, such as pair, bottle, machine, roll, or unit. Use the document's wording when it is present; otherwise use unit. Never assume an industry-specific unit from the file format.
+
+When a stock report gives separate quantities for named stores, warehouses, bins, or other locations, put every explicit location and its quantity in locationQuantities. Keep quantity as the explicit total when the document provides one, otherwise use the sum of locationQuantities. Do not put a Total column in locationQuantities. Leave locationQuantities empty when the row has no location split.
 
 businessDescription must describe only what this document genuinely establishes about the inventory model: what products are kept, whether size/colour variants exist, the named stock destination, the supplier relationship, and that this document is purchasing/receiving evidence. It must not claim other locations or workflows not shown.
 
@@ -141,6 +147,10 @@ function normalise(raw) {
     description: clean(line.description).slice(0, 240), quantity: Math.max(0, Math.trunc(Number(line.quantity) || 0)),
     unitCost: Number(line.unitCost) >= 0 ? Math.round(Number(line.unitCost) * 10000) / 10000 : null,
     sellingPrice: Number(line.sellingPrice) >= 0 ? Math.round(Number(line.sellingPrice) * 100) / 100 : null,
+    locationQuantities: (line.locationQuantities || []).map((entry) => ({
+      locationName: clean(entry.locationName).slice(0, 160),
+      quantity: Math.max(0, Math.trunc(Number(entry.quantity) || 0)),
+    })).filter((entry) => entry.locationName),
   })).filter((line) => line.styleName && line.quantity > 0);
   return {
     documentType: raw.documentType, businessDescription: clean(raw.businessDescription), unitLabel: clean(raw.unitLabel) || 'unit',
@@ -196,7 +206,10 @@ function understandingFromDocument(interpretation, sourceName) {
     line.color && !line.styleName.toLowerCase().includes(line.color.toLowerCase())
       ? `${line.styleName} - ${line.color}` : line.styleName
   )).slice(0, 24);
-  const destination = interpretation.destinationName;
+  const locationNames = unique(interpretation.lines.flatMap((line) =>
+    (line.locationQuantities || []).map((entry) => entry.locationName)));
+  const destinations = locationNames.length ? locationNames : [interpretation.destinationName];
+  const destination = destinations[0];
   const evidence = `${interpretation.documentType.replace('_', ' ')} ${interpretation.documentNumber || sourceName}`;
   const result = {
     businessDescription: interpretation.businessDescription,
@@ -216,10 +229,12 @@ function understandingFromDocument(interpretation, sourceName) {
     lotTracking: { applies: false, certainty: 'inferred_confidently', reason: 'The document contains no lot or batch identifiers.' },
     expirationTracking: { applies: false, certainty: 'inferred_confidently', reason: 'The document contains no expiration dates.' },
     locationModel: {
-      summary: `The document names ${destination} as the only evidenced inventory destination.`,
-      multipleLocations: false, transfersExpected: false, certainty: 'inferred_confidently',
+      summary: destinations.length > 1
+        ? `The document gives separate inventory quantities for ${destinations.join(', ')}.`
+        : `The document names ${destination} as the evidenced inventory destination.`,
+      multipleLocations: destinations.length > 1, transfersExpected: false, certainty: 'inferred_confidently',
     },
-    likelyLocations: [{ name: destination, kind: 'warehouse', certainty: 'inferred_confidently' }],
+    likelyLocations: destinations.map((name) => ({ name, kind: 'warehouse', certainty: 'inferred_confidently' })),
     unitsOfMeasure: [interpretation.unitLabel],
     receivingWorkflow: `Receive the exact lines in ${evidence} into ${destination}.`,
     issuingWorkflow: 'How inventory leaves was not established by this document.',
@@ -298,7 +313,17 @@ function hydrate(row) {
     supplierCodeLabel: row.supplier_code_label || interpretation.supplierCodeLabel || 'Supplier code', status: row.status,
     scopeConfirmedAt: row.scope_confirmed_at,
     appliedPlanId: row.applied_plan_id, purchaseOrderId: row.purchase_order_id,
-    result: JSON.parse(row.result || '{}'), errorMessage: row.error_message };
+    result: JSON.parse(row.result || '{}'), errorMessage: row.error_message,
+    createdAt: row.created_at, appliedAt: row.applied_at };
+}
+
+function markMailboxDocumentApplied(db, setupDocumentId, at = nowIso()) {
+  db.prepare(`UPDATE connection_email_messages SET classification = 'inventory_document',
+    processing_status = 'INVENTORY_APPLIED', processed_at = ?
+    WHERE workspace_id = (SELECT workspace_id FROM setup_documents WHERE id = ?)
+      AND processing_status = 'AWAITING_INVENTORY_REVIEW'
+      AND id IN (SELECT message_id FROM connection_email_attachments WHERE setup_document_id = ?)`)
+    .run(at, setupDocumentId, setupDocumentId);
 }
 
 function setSupplierCodeLabel(db, ctx, understandingId, value) {
@@ -335,16 +360,63 @@ function resolveLocation(db, ctx, membership, interpretation) {
   });
 }
 
+function resolveNamedLocation(db, ctx, name) {
+  const existing = repo.listLocations(db, ctx.workspaceId, { includeInactive: true })
+    .find((location) => location.name.toLowerCase() === name.toLowerCase());
+  return existing || locationService.createLocation(db, ctx, { name, kind: 'warehouse' });
+}
+
+function existingSkuForDocumentLine(db, workspaceId, supplierId, itemName, line) {
+  return db.prepare(`SELECT s.*, i.name AS item_name
+    FROM skus s JOIN items i ON i.id = s.item_id AND i.workspace_id = s.workspace_id
+    LEFT JOIN supplier_items si ON si.sku_id = s.id AND si.workspace_id = s.workspace_id
+      AND si.supplier_id = ? AND si.is_active = 1
+    WHERE s.workspace_id = ? AND s.is_active = 1 AND (
+      (? <> '' AND LOWER(COALESCE(si.supplier_sku, '')) = LOWER(?)
+        AND (? = '' OR LOWER(COALESCE(s.variant_label, '')) = LOWER(?)))
+      OR (? <> '' AND LOWER(s.code) = LOWER(?))
+      OR (LOWER(i.name) = LOWER(?) AND LOWER(COALESCE(s.variant_label, '')) = LOWER(?))
+    ) ORDER BY CASE WHEN LOWER(COALESCE(si.supplier_sku, '')) = LOWER(?) THEN 0 ELSE 1 END LIMIT 1`)
+    .get(supplierId || '', workspaceId, line.supplierSku || '', line.supplierSku || '',
+      line.size || '', line.size || '', line.supplierSku || '', line.supplierSku || '',
+      itemName, line.size || '', line.supplierSku || '') || null;
+}
+
+function matchPreview(db, workspaceId, interpretation) {
+  const supplier = interpretation.supplierName ? db.prepare(
+    'SELECT id FROM suppliers WHERE workspace_id = ? AND name = ? COLLATE NOCASE'
+  ).get(workspaceId, interpretation.supplierName) : null;
+  return interpretation.lines.map((line) => {
+    const itemName = line.color && !line.styleName.toLowerCase().includes(line.color.toLowerCase())
+      ? `${line.styleName} - ${line.color}` : line.styleName;
+    const match = existingSkuForDocumentLine(db, workspaceId, supplier?.id, itemName, line);
+    return match ? { status: 'match', skuId: match.id, label: `${match.item_name}${match.variant_label ? ` / ${match.variant_label}` : ''}` }
+      : { status: 'new', skuId: null, label: 'Create as new' };
+  });
+}
+
 function apply(db, ctx, membership, understandingId, planId) {
   const row = db.prepare('SELECT * FROM setup_documents WHERE workspace_id = ? AND understanding_id = ?').get(ctx.workspaceId, understandingId);
   if (!row) return null;
-  if (row.status === 'APPLIED') return hydrate(row);
+  if (row.status === 'APPLIED') {
+    markMailboxDocumentApplied(db, row.id);
+    return hydrate(row);
+  }
   const interpretation = JSON.parse(row.interpretation);
   const itemCodeLabel = row.supplier_code_label || interpretation.supplierCodeLabel || 'Supplier code';
 
   return inTransaction(db, () => {
     db.prepare("UPDATE setup_documents SET status = 'APPLYING', error_message = NULL WHERE id = ?").run(row.id);
-    const location = resolveLocation(db, ctx, membership, interpretation);
+    const explicitLocationNames = unique(interpretation.lines.flatMap((line) =>
+      (line.locationQuantities || []).map((entry) => entry.locationName)));
+    const location = explicitLocationNames.length
+      ? resolveNamedLocation(db, ctx, explicitLocationNames[0])
+      : resolveLocation(db, ctx, membership, interpretation);
+    const locationsByName = new Map([[location.name.toLowerCase(), location]]);
+    for (const name of unique(interpretation.lines.flatMap((line) =>
+      (line.locationQuantities || []).map((entry) => entry.locationName)))) {
+      if (!locationsByName.has(name.toLowerCase())) locationsByName.set(name.toLowerCase(), resolveNamedLocation(db, ctx, name));
+    }
     let supplier = db.prepare('SELECT id FROM suppliers WHERE workspace_id = ? AND name = ? COLLATE NOCASE')
       .get(ctx.workspaceId, interpretation.supplierName);
     supplier = supplier
@@ -372,15 +444,29 @@ function apply(db, ctx, membership, understandingId, planId) {
     for (const group of groups.values()) {
       const sizes = [...new Set(group.lines.map((line) => line.size).filter(Boolean))];
       const variantDimension = group.lines.map((line) => line.variantDimension).find(Boolean) || 'Variant';
-      const created = itemService.createItem(db, ctx, {
-        name: group.name, baseCode: group.code, trackingMode: 'quantity', unitLabel: interpretation.unitLabel,
-        hasVariants: sizes.length > 0, options: sizes.length ? [{ name: variantDimension, values: sizes }] : [],
-        description: `Created from ${row.source_name}`,
-      });
-      createdItemIds.push(created.itemId);
-      const skus = repo.listSkusForItem(db, ctx.workspaceId, created.itemId);
-      for (const line of group.lines) {
-        const sku = line.size ? skus.find((entry) => String(entry.variant_label).toLowerCase() === line.size.toLowerCase()) : skus[0];
+      const existingForLine = group.lines.map((line) =>
+        existingSkuForDocumentLine(db, ctx.workspaceId, supplier.id, group.name, line));
+      const matchedCount = existingForLine.filter(Boolean).length;
+      if (matchedCount && matchedCount !== group.lines.length) {
+        throw new ValidationError(`${group.name} partly matches existing inventory. Review its variants before importing; Foundry did not create a duplicate item.`);
+      }
+      let skus;
+      if (matchedCount === group.lines.length) {
+        skus = existingForLine;
+      } else {
+        const created = itemService.createItem(db, ctx, {
+          name: group.name, baseCode: group.code, trackingMode: 'quantity', unitLabel: interpretation.unitLabel,
+          hasVariants: sizes.length > 0, options: sizes.length ? [{ name: variantDimension, values: sizes }] : [],
+          description: `Created from ${row.source_name}`,
+        });
+        createdItemIds.push(created.itemId);
+        const createdSkus = repo.listSkusForItem(db, ctx.workspaceId, created.itemId);
+        skus = group.lines.map((line) => line.size
+          ? createdSkus.find((entry) => String(entry.variant_label).toLowerCase() === line.size.toLowerCase())
+          : createdSkus[0]);
+      }
+      for (const [index, line] of group.lines.entries()) {
+        const sku = skus[index];
         if (!sku) throw new ValidationError(`Foundry could not match size ${line.size} for ${group.name}.`);
         supplierService.linkItem(db, ctx, membership, {
           supplierId: supplier.id, skuId: sku.id, supplierSku: line.supplierSku,
@@ -390,8 +476,13 @@ function apply(db, ctx, membership, understandingId, planId) {
         if (line.sellingPrice !== null) prices.setPrice(db, ctx, { skuId: sku.id,
           amountMinor: prices.fromMajorNumber(line.sellingPrice), currency: interpretation.currency,
           source: 'approved_document', sourceDetail: { setupDocumentId: row.id, sourceName: row.source_name } });
-        orderLines.push({ skuId: sku.id, quantityUnits: line.quantity, unitCost: line.unitCost,
-          destinationLocationId: location.id, description: line.description, supplierSku: line.supplierSku });
+        const allocations = (line.locationQuantities?.length ? line.locationQuantities
+          : [{ locationName: location.name, quantity: line.quantity }]).filter((entry) => entry.quantity > 0);
+        for (const allocation of allocations) {
+          const destination = locationsByName.get(allocation.locationName.toLowerCase()) || location;
+          orderLines.push({ skuId: sku.id, quantityUnits: allocation.quantity, unitCost: line.unitCost,
+            destinationLocationId: destination.id, description: line.description, supplierSku: line.supplierSku });
+        }
       }
     }
 
@@ -406,17 +497,22 @@ function apply(db, ctx, membership, understandingId, planId) {
       idempotencyKey: `setup-document:${row.id}`, receivedAt: interpretation.documentDate || undefined,
       reference: interpretation.documentNumber || row.source_name,
       note: `Opening inventory received from ${row.source_name}`,
-      lines: order.lines.map((line) => ({ lineId: line.id, quantityUnits: line.quantityUnits, locationId: location.id })),
+      lines: order.lines.map((line) => ({ lineId: line.id, quantityUnits: line.quantityUnits,
+        locationId: line.destinationLocationId || location.id })),
     });
-    const result = { products: groups.size, variants: orderLines.length, units: received.result.unitsReceived,
+    const result = { products: groups.size, variants: new Set(orderLines.map((entry) => entry.skuId)).size,
+      units: received.result.unitsReceived,
       unitLabel: interpretation.unitLabel,
-      supplier: supplier.name, location: location.name, poNumber: order.poNumber, purchaseOrderId: order.id,
+      supplier: supplier.name, location: [...locationsByName.values()].map((entry) => entry.name).join(', '),
+      poNumber: order.poNumber, purchaseOrderId: order.id,
       createdItemIds,
       detectedSupplierCodeLabel: interpretation.supplierCodeLabel || 'Product code', itemCodeLabel };
+    const appliedAt = nowIso();
     db.prepare(
       `UPDATE setup_documents SET status = 'APPLIED', applied_plan_id = ?, purchase_order_id = ?,
         result = ?, applied_at = ? WHERE id = ?`
-    ).run(planId, order.id, JSON.stringify(result), nowIso(), row.id);
+    ).run(planId, order.id, JSON.stringify(result), appliedAt, row.id);
+    markMailboxDocumentApplied(db, row.id, appliedAt);
     return getByUnderstanding(db, ctx.workspaceId, understandingId);
   });
 }
@@ -424,4 +520,5 @@ function apply(db, ctx, membership, understandingId, planId) {
 module.exports = { SUPPORTED, DOCUMENT_SCHEMA, SYSTEM, extractText, interpret, normalise,
   renderPdfPage, createOcrWorker,
   understandingFromDocument, prepare, prepareFromInterpretation,
-  hydrate, getByUnderstanding, getByPlan, setSupplierCodeLabel, confirmScope, apply };
+  hydrate, getByUnderstanding, getByPlan, setSupplierCodeLabel, confirmScope, markMailboxDocumentApplied,
+  existingSkuForDocumentLine, matchPreview, apply };

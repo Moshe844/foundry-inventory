@@ -30,7 +30,7 @@ const reactions = require('./reactions');
 const DOMAINS = [
   'replenishment', 'location_stock', 'supplier_assignment', 'supplier_terms',
   'transfer_authority', 'purchase_authority', 'operating_preference', 'hard_limits',
-  'stock_protection',
+  'stock_protection', 'supplier_communication',
 ];
 
 // All fields are required because providers are more reliable with a closed,
@@ -44,7 +44,7 @@ const CHANGE_SCHEMA = {
     'locationTarget', 'leadTimeDays', 'unitsPerPurchaseUnit', 'minimumOrderQuantity',
     'orderMultiple', 'maximumQuantity', 'maximumValue', 'cooldownHours', 'daysOfStock',
     'purchaseUnit', 'contactName', 'email', 'orderingMethod',
-    'preferTransferBeforePurchasing', 'approvalRequired', 'guardAction', 'guardMetric',
+    'preferTransferBeforePurchasing', 'approvalRequired', 'guardAction', 'guardMode', 'guardMetric',
     'guardComparator', 'guardThreshold', 'guardReleaseCondition', 'guardReleaseThreshold',
   ],
   properties: {
@@ -61,8 +61,12 @@ const CHANGE_SCHEMA = {
     maximumValue: { type: 'number' }, cooldownHours: { type: 'integer' },
     daysOfStock: { type: 'integer' }, purchaseUnit: { type: 'string' },
     contactName: { type: 'string' }, email: { type: 'string' }, orderingMethod: { type: 'string' },
+    prepareCommunications: { type: 'boolean' }, autoSendEnabled: { type: 'boolean' },
+    autoSendLimit: { type: 'number' }, priceTolerancePercent: { type: 'number' },
+    quantityTolerancePercent: { type: 'number' }, watchSupplier: { type: 'boolean' }, trustedSender: { type: 'string' },
     preferTransferBeforePurchasing: { type: 'boolean' }, approvalRequired: { type: 'boolean' },
     guardAction: { type: 'string', enum: ['', 'issue'] },
+    guardMode: { type: 'string', enum: ['', 'block', 'warn'] },
     guardMetric: { type: 'string', enum: ['', 'network_on_hand', 'location_on_hand'] },
     guardComparator: { type: 'string', enum: ['', 'below', 'at_or_below'] },
     guardThreshold: { type: 'integer' },
@@ -90,13 +94,17 @@ Use replenishment for reorder point, order-up-to target, network safety stock, a
 Use location_stock for a location minimum/keep-back and a desired location target.
 Use supplier_assignment to make a named supplier preferred for a product.
 Use supplier_terms for supplier contact, ordering method, lead time, purchase unit, units per purchase unit, MOQ, and order multiple.
+Use supplier_communication for watched supplier senders, preparing supplier messages, automatic send limits,
+price-change tolerance, and quantity-change tolerance. Preparing is not sending. Automatic sending requires a
+stated supplier and maximum value. Supplier communication never grants authority to change inventory.
 Use transfer_authority only when the owner explicitly permits automatic transfers without approval; maximumQuantity must be stated.
 Use purchase_authority only when the owner explicitly permits automatic purchase-order approval; maximumValue and supplier must be stated.
 Use operating_preference for transfer-before-buying or target days of stock.
 Use hard_limits for a workspace cooldown.
-Use stock_protection when the owner wants to block outgoing sales/issues at a stock threshold.
+Use stock_protection when the owner wants to block outgoing sales/issues or receive a warning at a stock threshold.
 The guardAction is issue. Use network_on_hand unless a location was named. "Below" is below; "at or below"
-is inclusive. If the owner says sales may resume after more is ordered, guardReleaseCondition is on_order.
+is inclusive. Set guardMode to block for a hard stop and warn when the owner says to only warn or notify them.
+If the owner says sales may resume after more is ordered, guardReleaseCondition is on_order.
 If sales may resume only after stock is received/recovered, use stock_recovered and extract the stated recovery
 level, or use the guard threshold when no separate recovery level was stated. Use manual only when the owner
 explicitly wants an owner to release the block. A customer order or sale leaving inventory is an issue; a
@@ -125,8 +133,10 @@ function emptyChange() {
     leadTimeDays: -1, unitsPerPurchaseUnit: -1, minimumOrderQuantity: -1, orderMultiple: -1,
     maximumQuantity: -1, maximumValue: -1, cooldownHours: -1, daysOfStock: -1,
     purchaseUnit: '', contactName: '', email: '', orderingMethod: '',
+    prepareCommunications: false, autoSendEnabled: false, autoSendLimit: -1,
+    priceTolerancePercent: -1, quantityTolerancePercent: -1, watchSupplier: false, trustedSender: '',
     preferTransferBeforePurchasing: false, approvalRequired: true,
-    guardAction: '', guardMetric: '', guardComparator: '', guardThreshold: -1,
+    guardAction: '', guardMode: '', guardMetric: '', guardComparator: '', guardThreshold: -1,
     guardReleaseCondition: '', guardReleaseThreshold: -1,
   };
 }
@@ -188,12 +198,34 @@ function compileStockProtection(instruction) {
     summary: 'Protect outgoing stock at the stated threshold',
     clarifyingQuestion: '', unsupportedReason: '',
     changes: [{
-      ...emptyChange(), domain: 'stock_protection', guardAction: 'issue',
+      ...emptyChange(), domain: 'stock_protection', guardAction: 'issue', guardMode: 'block',
       guardMetric: 'network_on_hand', guardComparator: inclusive ? 'at_or_below' : 'below',
       guardThreshold, guardReleaseCondition: releaseCondition,
       guardReleaseThreshold: releaseCondition === 'stock_recovered' ? guardThreshold : -1,
     }],
   };
+}
+
+function compileSupplierCommunication(instruction) {
+  const text = String(instruction || '').trim();
+  const lower = text.toLowerCase();
+  if (!/(watch\s+(?:emails?|messages?)|prepare\s+supplier|automatically\s+send|you\s+can\s+send|price\s+(?:increase|change))/.test(lower)) return null;
+  const named = text.match(/watch\s+(?:emails?|messages?)\s+from\s+(.+?)(?:\.|,|$)/i)
+    || text.match(/^(?:for\s+)?(.+?)(?:,?\s+(?:prepare|automatically|you\s+can|never|always))/i);
+  const supplierText = named?.[1]?.trim() || '';
+  const email = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || '';
+  const amount = text.match(/(?:under|up\s+to|limit(?:\s+is)?)\s*\$\s*([\d,.]+)/i);
+  const tolerance = text.match(/(?:price\s+(?:increase|change)[^\d]{0,25})(\d+(?:\.\d+)?)\s*%/i)
+    || text.match(/(\d+(?:\.\d+)?)\s*%[^.]{0,30}price/i);
+  const change = { ...emptyChange(), domain: 'supplier_communication', supplierText,
+    trustedSender: email, watchSupplier: /watch\s+(?:emails?|messages?)/i.test(text),
+    prepareCommunications: /prepare/i.test(text),
+    autoSendEnabled: /(?:automatically\s+send|you\s+can\s+send)/i.test(text),
+    autoSendLimit: amount ? Number(amount[1].replaceAll(',', '')) : -1,
+    priceTolerancePercent: tolerance ? Number(tolerance[1]) : -1 };
+  return { understood: true, summary: `Configure supplier communication${supplierText ? ` for ${supplierText}` : ''}`,
+    changes: [change], clarifyingQuestion: change.autoSendEnabled && change.autoSendLimit < 0
+      ? 'What is the most Foundry may send to this supplier without asking?' : '', unsupportedReason: '' };
 }
 
 function supplierMatch(db, workspaceId, name) {
@@ -239,7 +271,7 @@ function resolveChange(db, workspaceId, raw, instruction) {
     if (!source.ok) questions.push(source.message);
     else { out.sourceLocationId = source.value.id; out.sourceLocationName = source.value.name; }
   }
-  if (['supplier_assignment', 'supplier_terms', 'purchase_authority'].includes(raw.domain)) {
+  if (['supplier_assignment', 'supplier_terms', 'purchase_authority', 'supplier_communication'].includes(raw.domain)) {
     const supplier = supplierMatch(db, workspaceId, raw.supplierText);
     if (!supplier.ok) questions.push(supplier.question);
     else { out.supplierId = supplier.value.id; out.supplierName = supplier.value.name; }
@@ -250,10 +282,27 @@ function resolveChange(db, workspaceId, raw, instruction) {
   if (raw.domain === 'purchase_authority' && raw.operation === 'set' && !positive(raw.maximumValue)) {
     questions.push('What is the most Foundry may commit on one supplier order without asking?');
   }
+  if (raw.domain === 'supplier_communication' && raw.autoSendEnabled && !positive(raw.autoSendLimit)) {
+    questions.push('What is the most Foundry may send to this supplier without asking?');
+  }
+  if (raw.domain === 'supplier_communication' && raw.watchSupplier && out.supplierId) {
+    const supplier = suppliers.getSupplier(db, workspaceId, out.supplierId);
+    const mailbox = supplier.watchedConnectorId
+      ? db.prepare(`SELECT id, display_name FROM workspace_connectors WHERE workspace_id = ? AND id = ?
+          AND provider_type IN ('gmail','microsoft365','supplier_email') AND status = 'connected'`).get(workspaceId, supplier.watchedConnectorId)
+      : db.prepare(`SELECT id, display_name FROM workspace_connectors WHERE workspace_id = ?
+          AND provider_type IN ('gmail','microsoft365','supplier_email') AND status = 'connected'
+          ORDER BY created_at LIMIT 1`).get(workspaceId);
+    if (!mailbox) questions.push('Connect Gmail or Microsoft 365 first. Which mailbox should watch this supplier?');
+    else { out.connectorId = mailbox.id; out.connectorName = mailbox.display_name; }
+  }
   if (raw.domain === 'stock_protection' && raw.operation === 'set') {
+    const guardMode = raw.guardMode || (raw.guardReleaseCondition ? 'block' : '');
+    out.guardMode = guardMode;
     if (raw.guardAction !== 'issue') questions.push('Should this block outgoing sales/issues, or supplier purchase orders?');
-    if (nonnegative(raw.guardThreshold) === null) questions.push('At what on-hand quantity should Foundry block the outgoing sale or issue?');
-    if (!raw.guardReleaseCondition) questions.push('What should release the block: a placed supplier order, received stock, or an owner changing the rule?');
+    if (!['block', 'warn'].includes(guardMode)) questions.push('Should Foundry block outgoing stock at the limit, or only warn you?');
+    if (nonnegative(raw.guardThreshold) === null) questions.push('At what on-hand quantity should Foundry warn or block outgoing stock?');
+    if (guardMode === 'block' && !raw.guardReleaseCondition) questions.push('What should release the block: a placed supplier order, received stock, or an owner changing the rule?');
   }
   return { change: out, questions };
 }
@@ -273,6 +322,14 @@ function describe(change) {
     case 'location_stock': return `${subject} at ${change.locationName}: keep at least ${change.locationMinimum}${nonnegative(change.locationTarget) !== null ? ` and replenish toward ${change.locationTarget}` : ''}.`;
     case 'supplier_assignment': return `${change.supplierName} becomes the preferred supplier for ${subject}.`;
     case 'supplier_terms': return `Remember the stated purchasing terms for ${subject} from ${change.supplierName}.`;
+    case 'supplier_communication': {
+      const parts = [];
+      if (change.watchSupplier) parts.push(`watch approved messages from ${change.trustedSender || change.supplierName}`);
+      if (change.prepareCommunications) parts.push('prepare routine supplier messages');
+      if (change.autoSendEnabled) parts.push(`send routine orders up to $${change.autoSendLimit}`);
+      if (nonnegative(change.priceTolerancePercent) !== null) parts.push(`ask above a ${change.priceTolerancePercent}% price change`);
+      return `${change.supplierName}: ${parts.join('; ')}.`;
+    }
     case 'transfer_authority': return `Foundry may automatically transfer no more than ${change.maximumQuantity} units per action${change.locationName ? ` involving ${change.locationName}` : ''}; all safety checks still apply.`;
     case 'purchase_authority': return `Foundry may automatically approve routine replenishment orders from ${change.supplierName} up to $${change.maximumValue}; anything else still needs approval.`;
     case 'operating_preference': return change.preferTransferBeforePurchasing ? 'Try an internal transfer before buying more.' : `Aim for ${change.daysOfStock} days of stock.`;
@@ -283,6 +340,9 @@ function describe(change) {
         comparator: change.guardComparator || 'below',
         threshold: change.guardThreshold,
       });
+      if (change.guardMode === 'warn') {
+        return `${subject}: warn when on-hand stock is ${boundary.blockedWhen}${scope}. Outgoing stock remains allowed.`;
+      }
       const release = change.guardReleaseCondition === 'on_order'
         ? 'until a supplier order is placed'
         : change.guardReleaseCondition === 'stock_recovered'
@@ -371,15 +431,16 @@ function list(db, workspaceId, { status = null } = {}) {
 async function interpret(db, ctx, membership, instruction, options = {}) {
   const clean = String(instruction || '').trim().slice(0, 2000);
   if (!clean) throw new ValidationError('Tell Foundry how you want this inventory run.');
-  if (!options.provider && !config.ai.configured) throw new ValidationError('Foundry needs its model connection to read that instruction.');
-  const provider = options.provider || createProviderForTier('standard');
+  const deterministic = compileSupplierCommunication(clean);
+  if (!deterministic && !options.provider && !config.ai.configured) throw new ValidationError('Foundry needs its model connection to read that instruction.');
+  const provider = deterministic ? null : options.provider || createProviderForTier('standard');
   const catalogue = db.prepare(
     `SELECT i.name, s.code, s.variant_label FROM skus s JOIN items i ON i.id = s.item_id
       WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1 ORDER BY i.name, s.position`
   ).all(ctx.workspaceId);
   const locationRows = db.prepare("SELECT name FROM locations WHERE workspace_id = ? AND is_active = 1 ORDER BY name").all(ctx.workspaceId);
   const supplierRows = suppliers.listSuppliers(db, ctx.workspaceId).map((s) => ({ name: s.name }));
-  const response = await provider.complete({
+  const response = deterministic ? { data: deterministic } : await provider.complete({
     system: SYSTEM,
     prompt: `Instruction:\n${clean}\n\nReal variants:\n${JSON.stringify(catalogue)}\n\nReal locations:\n${JSON.stringify(locationRows)}\n\nReal suppliers:\n${JSON.stringify(supplierRows)}`,
     schema: SCHEMA, schemaName: 'operating_instruction',
@@ -405,6 +466,67 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   ).run(id, ctx.workspaceId, ctx.actorId, clean, interpreted.summary || 'Operating rule change',
     JSON.stringify(interpreted.changes), JSON.stringify(resolvedChanges), JSON.stringify(questions), hash(snapshot), now, now);
   return get(db, ctx.workspaceId, id);
+}
+
+/**
+ * Start stock protection from the product answer alone.
+ *
+ * The setup UI has already established the domain. Re-asking a language model
+ * to infer that domain from a one-word product such as "Snacks" is both less
+ * reliable and less safe than checking the real catalogue here. Remaining
+ * threshold/action/release details stay as explicit questions.
+ */
+function parseStockProtectionAnswer(value) {
+  const text = String(value || '').trim();
+  const warning = /\b(?:only\s+)?warn(?:\s+(?:me|us))?\b|\bnotify(?:\s+(?:me|us))?\b/i.test(text);
+  const blocking = /\b(?:block|stop|prevent|refuse)\b/i.test(text);
+  const structured = text.match(/^(.+?)\s*(?:,\s*|\s+)(?:at\s+(?:a\s+)?quantity\s+(?:of\s+)?|at\s+or\s+below\s+|at\s+|below\s+|under\s+)(\d+)\b/i)
+    || text.match(/^(.+?)\s*,\s*(\d+)\b/i);
+  let productText = structured?.[1]?.trim() || text;
+  const threshold = structured ? Number(structured[2]) : -1;
+  productText = productText
+    .replace(/\s*(?:,|\s)\s*(?:only\s+)?(?:warn|notify)(?:\s+(?:me|us))?\s*$/i, '')
+    .replace(/\s*(?:,|\s)\s*(?:block|stop|prevent|refuse)(?:\s+outgoing\s+stock)?\s*$/i, '')
+    .trim();
+  return { productText, threshold, guardMode: warning ? 'warn' : blocking ? 'block' : '' };
+}
+
+function proposeStockProtectionAnswer(db, ctx, membership, answer, statedAs) {
+  const parsed = parseStockProtectionAnswer(answer);
+  const cleanProduct = String(parsed.productText || '').trim().slice(0, 300);
+  if (!cleanProduct) throw new ValidationError('Enter the product Foundry should protect.');
+  const cleanStatement = String(statedAs || cleanProduct).trim().slice(0, 2000);
+  const change = {
+    ...emptyChange(), domain: 'stock_protection', itemText: cleanProduct,
+    guardAction: 'issue', guardMode: parsed.guardMode,
+    guardMetric: 'network_on_hand', guardComparator: parsed.guardMode === 'warn' ? 'at_or_below' : 'below',
+    guardThreshold: parsed.threshold,
+    guardReleaseCondition: parsed.guardMode === 'warn' ? 'stock_recovered' : '',
+    guardReleaseThreshold: parsed.guardMode === 'warn' ? parsed.threshold : -1,
+  };
+  const resolved = resolveChange(db, ctx.workspaceId, change, cleanStatement);
+  const changes = [change];
+  const resolvedChanges = [resolved.change];
+  const questions = [...new Set(resolved.questions.filter(Boolean))];
+  const snapshot = { statedAs: cleanStatement, changes, resolvedChanges };
+  const now = nowIso();
+  const id = newId('oin');
+  db.prepare(
+    `INSERT INTO operating_instruction_proposals
+       (id, workspace_id, created_by_user_id, stated_as, summary, changes, resolved_changes,
+        questions, status, integrity_hash, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)`
+  ).run(
+    id, ctx.workspaceId, ctx.actorId, cleanStatement,
+    parsed.guardMode === 'warn' ? `Warn when ${cleanProduct} is low` : `Protect ${cleanProduct} from low stock`,
+    JSON.stringify(changes), JSON.stringify(resolvedChanges), JSON.stringify(questions),
+    hash(snapshot), now, now
+  );
+  return get(db, ctx.workspaceId, id);
+}
+
+function proposeStockProtectionProduct(db, ctx, membership, productText, statedAs) {
+  return proposeStockProtectionAnswer(db, ctx, membership, productText, statedAs);
 }
 
 function compact(object) {
@@ -464,6 +586,30 @@ function applyChange(db, ctx, membership, change) {
       reorderPolicies.setPolicy(db, ctx, membership, change.skuId, { preferredSupplierId: change.supplierId, source: 'foundry' });
     }
     return { kind: 'supplier_item', id: linked.id, supplierId: change.supplierId, skuId: change.skuId };
+  }
+  if (change.domain === 'supplier_communication') {
+    if (change.operation === 'remove') {
+      suppliers.updateSupplier(db, ctx, membership, change.supplierId, {
+        prepareCommunications: false, autoSendEnabled: false, watchedConnectorId: null,
+      });
+      return { kind: 'supplier_communication', supplierId: change.supplierId, removed: true };
+    }
+    const updated = suppliers.updateSupplier(db, ctx, membership, change.supplierId, compact({
+      watchedConnectorId: change.connectorId || undefined,
+      prepareCommunications: change.prepareCommunications ? true : undefined,
+      autoSendEnabled: change.autoSendEnabled ? true : undefined,
+      autoSendLimit: positive(change.autoSendLimit) ?? undefined,
+      priceTolerancePercent: nonnegative(change.priceTolerancePercent) ?? undefined,
+      quantityTolerancePercent: nonnegative(change.quantityTolerancePercent) ?? undefined,
+    }));
+    if (change.watchSupplier && change.connectorId) {
+      const sender = change.trustedSender || updated.email;
+      if (!sender) throw new ValidationError(`${updated.name} needs an ordering email before Foundry can watch it.`);
+      require('../connections/service').addEmailRule(db, ctx, change.connectorId, {
+        senderPattern: sender, supplierId: updated.id, documentMode: 'supplier_documents',
+      });
+    }
+    return { kind: 'supplier_communication', supplierId: updated.id, connectorId: change.connectorId || null };
   }
   if (change.domain === 'transfer_authority' || change.domain === 'purchase_authority') {
     const transfer = change.domain === 'transfer_authority';
@@ -533,6 +679,7 @@ function applyChange(db, ctx, membership, change) {
     const guard = operatingGuards.set(db, ctx, membership, {
       skuId: change.skuId, locationId: change.locationId || null,
       actionType: change.guardAction,
+      enforcementMode: change.guardMode || 'block',
       metric: change.locationId ? 'location_on_hand' : (change.guardMetric || 'network_on_hand'),
       comparator: change.guardComparator || 'below', threshold: change.guardThreshold,
       releaseCondition: change.guardReleaseCondition,
@@ -557,6 +704,7 @@ function approve(db, ctx, membership, id, expectedHash) {
       if (change.domain === 'replenishment') return `replenishment:${change.skuId}`;
       if (change.domain === 'location_stock') return `location:${change.skuId}:${change.locationId}`;
       if (['supplier_assignment', 'supplier_terms'].includes(change.domain)) return `supplier:${change.supplierId}:${change.skuId}`;
+      if (change.domain === 'supplier_communication') return `supplier-communication:${change.supplierId}`;
       if (change.domain === 'purchase_authority') return `purchase-authority:${change.supplierId || '*'}`;
       if (change.domain === 'transfer_authority') return `transfer-authority:${change.sourceLocationId || '*'}:${change.locationId || '*'}`;
       if (change.domain === 'operating_preference') return `preference:${change.daysOfStock >= 0 ? 'days' : 'transfer-first'}`;
@@ -578,7 +726,7 @@ function approve(db, ctx, membership, id, expectedHash) {
   }).immediate();
   for (const record of applied) {
     const type = record.kind === 'automation_policy' ? managerEvents.TYPES.AUTHORITY_UPDATED
-      : record.kind === 'supplier_item' ? managerEvents.TYPES.SUPPLIER_UPDATED
+      : ['supplier_item', 'supplier_communication'].includes(record.kind) ? managerEvents.TYPES.SUPPLIER_UPDATED
         : managerEvents.TYPES.REORDER_POLICY_UPDATED;
     reactions.publishAndReact(db, ctx.workspaceId, type, { instructionId: id, ...record }, { idempotencyKey: `${type}:instruction:${id}:${record.kind}:${record.id || record.skuId || record.key || 'workspace'}` });
   }
@@ -640,6 +788,53 @@ async function answer(db, ctx, membership, id, value, options = {}) {
   db.prepare("UPDATE operating_instruction_proposals SET status = 'SUPERSEDED', updated_at = ? WHERE id = ? AND workspace_id = ?")
     .run(nowIso(), proposal.id, ctx.workspaceId);
   return continued;
+}
+
+/**
+ * Continue a pending rule with a catalogue record selected by the owner.
+ * This path is deliberately model-free: the browser posts a SKU id, it is
+ * workspace-scoped here, and the original structured change is re-resolved.
+ */
+function selectProduct(db, ctx, membership, id, skuId) {
+  const proposal = get(db, ctx.workspaceId, id);
+  if (proposal.status !== 'PENDING' || !proposal.questions.length) {
+    throw new ValidationError('That instruction is not waiting for a product.');
+  }
+  const sku = db.prepare(
+    `SELECT s.id, s.code, s.variant_label, i.name AS item_name
+       FROM skus s JOIN items i ON i.id = s.item_id AND i.workspace_id = s.workspace_id
+      WHERE s.workspace_id = ? AND s.id = ? AND s.is_active = 1 AND i.is_active = 1`
+  ).get(ctx.workspaceId, skuId);
+  if (!sku) throw new ValidationError('Choose a product from this inventory.');
+
+  let replaced = false;
+  const changes = proposal.changes.map((change, index) => {
+    if (replaced || !needsSku(change.domain) || proposal.resolvedChanges[index]?.skuId) return change;
+    replaced = true;
+    return { ...change, itemText: sku.item_name, variantText: sku.variant_label || '' };
+  });
+  if (!replaced) throw new ValidationError('That instruction is not waiting for a product.');
+
+  const statedAs = `${proposal.statedAs}\nProduct selected: ${sku.item_name}${sku.variant_label ? ` — ${sku.variant_label}` : ''}`;
+  const resolved = changes.map((change) => resolveChange(db, ctx.workspaceId, change, statedAs));
+  const questions = [...new Set(resolved.flatMap((entry) => entry.questions).filter(Boolean))];
+  const resolvedChanges = resolved.map((entry) => entry.change);
+  const snapshot = { statedAs, changes, resolvedChanges };
+  const now = nowIso();
+  const continuedId = newId('oin');
+  db.prepare(
+    `INSERT INTO operating_instruction_proposals
+       (id, workspace_id, created_by_user_id, stated_as, summary, changes, resolved_changes,
+        questions, status, integrity_hash, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)`
+  ).run(
+    continuedId, ctx.workspaceId, ctx.actorId, statedAs, proposal.summary,
+    JSON.stringify(changes), JSON.stringify(resolvedChanges), JSON.stringify(questions),
+    hash(snapshot), now, now
+  );
+  db.prepare("UPDATE operating_instruction_proposals SET status = 'SUPERSEDED', updated_at = ? WHERE id = ? AND workspace_id = ?")
+    .run(now, proposal.id, ctx.workspaceId);
+  return get(db, ctx.workspaceId, continuedId);
 }
 
 function remove(db, ctx, membership, id) {
@@ -724,4 +919,4 @@ function suggestFromRepeatedApproval(db, ctx, item) {
   return get(db, ctx.workspaceId, id);
 }
 
-module.exports = { DOMAINS, CHANGE_SCHEMA, SCHEMA, SYSTEM, interpret, resolveChange, describe, clarificationFor, get, list, approve, cancel, answer, remove, suggestFromRepeatedApproval };
+module.exports = { DOMAINS, CHANGE_SCHEMA, SCHEMA, SYSTEM, interpret, proposeStockProtectionAnswer, proposeStockProtectionProduct, resolveChange, describe, clarificationFor, get, list, approve, cancel, answer, selectProduct, remove, suggestFromRepeatedApproval };

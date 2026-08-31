@@ -8,13 +8,30 @@ const connections = require('../../connections/service');
 const catalogImport = require('../../connections/catalog-import');
 const ingestion = require('../../connections/event-ingestion');
 const providerService = require('../../connections/provider-service');
+const mailboxInventory = require('../../connections/mailbox-inventory');
 const shopifyBootstrap = require('../../connections/shopify-bootstrap');
 const providers = require('../../connections/providers/registry');
+const supplierService = require('../../purchasing/supplier-service');
 const repo = require('../../domain/repository');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 
 const router = express.Router();
 router.use('/settings/connections', requireAuth);
+
+function mailboxStateSignature(db, workspaceId, connectorId) {
+  const connection = db.prepare(`SELECT status, paused_at, last_error FROM workspace_connectors
+    WHERE workspace_id = ? AND id = ?`).get(workspaceId, connectorId);
+  const messages = db.prepare(`SELECT COUNT(*) AS total, COALESCE(MAX(rowid), 0) AS last,
+      COALESCE(MAX(processed_at), '') AS processed,
+      SUM(CASE WHEN processing_status = 'AWAITING_INVENTORY_REVIEW' THEN 1 ELSE 0 END) AS pending,
+      SUM(CASE WHEN processing_status = 'DUPLICATE_IGNORED' THEN 1 ELSE 0 END) AS duplicates
+    FROM connection_email_messages WHERE workspace_id = ? AND connector_id = ?`)
+    .get(workspaceId, connectorId);
+  const issues = db.prepare(`SELECT COUNT(*) AS total, COALESCE(MAX(updated_at), '') AS updated
+    FROM connection_issues WHERE workspace_id = ? AND connector_id = ? AND status = 'OPEN'`)
+    .get(workspaceId, connectorId);
+  return JSON.stringify({ connection, messages, issues });
+}
 
 router.get('/settings/connections', (req, res, next) => {
   // With Shopify's legacy install flow, the Dev Dashboard opens the configured
@@ -62,12 +79,14 @@ router.post('/settings/connections/connect', requireOwner, asyncRoute(async (req
 }));
 
 router.get('/settings/connections/:provider/callback', requireOwner, asyncRoute(async (req, res) => {
-  if (!['shopify', 'square', 'clover'].includes(req.params.provider)) return res.status(404).page('error', {
+  if (!['shopify', 'square', 'clover', 'gmail', 'microsoft365'].includes(req.params.provider)) return res.status(404).page('error', {
     title: 'Not found', status: 404, message: 'Provider not found.' });
   const connection = await providerService.completeOAuth(req.db, req.params.provider, req.query,
     `${req.protocol}://${req.get('host')}`);
   req.session.workspaceId = connection.workspace_id;
-  req.flash('success', `${connection.display_name} is connected. Foundry discovered its products and locations.`);
+  req.flash('success', ['gmail', 'microsoft365'].includes(req.params.provider)
+    ? `${connection.display_name} is connected. Choose the supplier senders Foundry should watch.`
+    : `${connection.display_name} is connected. Foundry discovered its products and locations.`);
   res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 
@@ -97,11 +116,20 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
     ORDER BY entity_type, external_id COLLATE NOCASE`).all(req.ctx.workspaceId, connection.id);
   const reconciliations = req.db.prepare(`SELECT * FROM connection_reconciliations WHERE workspace_id = ? AND connector_id = ?
     ORDER BY created_at DESC LIMIT 20`).all(req.ctx.workspaceId, connection.id);
-  const messages = connection.provider_type === 'supplier_email' ? req.db.prepare(`SELECT m.*,
+  const isMailbox = ['supplier_email', 'gmail', 'microsoft365'].includes(connection.provider_type);
+  const messages = isMailbox ? req.db.prepare(`SELECT m.*,
     (SELECT COUNT(*) FROM connection_email_attachments a WHERE a.message_id = m.id) AS attachment_count
     FROM connection_email_messages m WHERE m.workspace_id = ? AND m.connector_id = ?
     ORDER BY received_at DESC LIMIT 50`).all(req.ctx.workspaceId, connection.id) : [];
-  const emailRules = connection.provider_type === 'supplier_email' ? req.db.prepare(`SELECT r.*, s.name AS supplier_name
+  const messageAttachments = isMailbox ? req.db.prepare(`SELECT a.*, d.understanding_id,
+      d.status AS document_status, d.created_at AS document_created_at, d.applied_at AS document_applied_at,
+      d.purchase_order_id AS document_purchase_order_id, d.result AS document_result
+    FROM connection_email_attachments a
+    JOIN connection_email_messages m ON m.id = a.message_id AND m.workspace_id = a.workspace_id
+    LEFT JOIN setup_documents d ON d.id = a.setup_document_id AND d.workspace_id = a.workspace_id
+    WHERE a.workspace_id = ? AND m.connector_id = ? ORDER BY a.created_at, a.rowid`)
+    .all(req.ctx.workspaceId, connection.id) : [];
+  const emailRules = isMailbox ? req.db.prepare(`SELECT r.*, s.name AS supplier_name
     FROM connection_email_rules r LEFT JOIN suppliers s ON s.id = r.supplier_id
     WHERE r.workspace_id = ? AND r.connector_id = ? ORDER BY r.sender_pattern COLLATE NOCASE`)
     .all(req.ctx.workspaceId, connection.id) : [];
@@ -121,11 +149,20 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
   const view = connection.provider_type === 'square' && provider.sandboxMode
     ? 'connections/detail-square-sandbox' : 'connections/detail';
   res.page(view, { title: connection.display_name, nav: 'connections', connection, token,
-    issues, events, mappings, reconciliations, messages, emailRules, externalRecords, syncRuns, canBootstrapShopify,
-    provider,
+    issues, events, mappings, reconciliations, messages, messageAttachments, emailRules, externalRecords, syncRuns, canBootstrapShopify,
+    provider, mailboxSignature: isMailbox
+      ? mailboxStateSignature(req.db, req.ctx.workspaceId, connection.id) : null,
     skus: dbSkus(req.db, req.ctx.workspaceId), locations: repo.listLocations(req.db, req.ctx.workspaceId),
     customers: req.db.prepare('SELECT id, name FROM customers WHERE workspace_id = ? ORDER BY name COLLATE NOCASE').all(req.ctx.workspaceId),
     suppliers: req.db.prepare('SELECT id, name FROM suppliers WHERE workspace_id = ? ORDER BY name COLLATE NOCASE').all(req.ctx.workspaceId) });
+}));
+
+router.get('/settings/connections/:id/state', asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  if (!['supplier_email', 'gmail', 'microsoft365'].includes(connection.provider_type)) {
+    return res.status(404).json({ error: 'This connection does not have mailbox state.' });
+  }
+  return res.json({ signature: mailboxStateSignature(req.db, req.ctx.workspaceId, connection.id) });
 }));
 
 router.post('/settings/connections/:id/sync', requireOwner, asyncRoute(async (req, res) => {
@@ -133,6 +170,48 @@ router.post('/settings/connections/:id/sync', requireOwner, asyncRoute(async (re
   req.flash('success', `Sync complete: ${result.products} product${result.products === 1 ? '' : 's'}, ${result.locations} location${result.locations === 1 ? '' : 's'}; ${result.needsMapping} need your match.`);
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
+
+router.post('/settings/connections/:id/sync-mailbox', requireOwner, asyncRoute(async (req, res) => {
+  const result = await providerService.syncMailbox(req.db, req.ctx.workspaceId, req.params.id);
+  req.flash('success', result.messages
+    ? `Mailbox checked. Foundry processed ${result.messages} message${result.messages === 1 ? '' : 's'} safely.`
+    : 'Mailbox checked. No new supplier messages needed processing.');
+  res.redirect(303, `/settings/connections/${req.params.id}`);
+}));
+
+router.post('/settings/connections/:id/mailbox-cadence', requireOwner, asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  if (!['gmail', 'microsoft365'].includes(connection.provider_type)) throw new Error('This is not a connected mailbox.');
+  const minutes = [1, 5, 10, 15, 30].includes(Number(req.body.minutes)) ? Number(req.body.minutes) : 5;
+  const next = { ...connection.config, mailboxCheckMinutes: minutes };
+  req.db.prepare(`UPDATE workspace_connectors SET config = ?, expected_interval_minutes = ?, updated_at = ?
+    WHERE workspace_id = ? AND id = ?`).run(JSON.stringify(next), Math.max(15, minutes * 3),
+      new Date().toISOString(), req.ctx.workspaceId, connection.id);
+  req.flash('success', `Foundry will check this mailbox automatically every ${minutes} minute${minutes === 1 ? '' : 's'}.`);
+  res.redirect(303, `/settings/connections/${connection.id}`);
+}));
+
+router.post('/settings/connections/:id/email-attachments/:attachmentId/inventory-preview', requireOwner,
+  asyncRoute(async (req, res) => {
+    const result = await mailboxInventory.prepare(req.db, req.ctx, req.user, req.params.id,
+      req.params.attachmentId, { provider: req.app.locals.aiProvider || undefined });
+    if (req.body.rememberFuture === '1') {
+      const row = mailboxInventory.attachment(req.db, req.ctx.workspaceId, req.params.id, req.params.attachmentId);
+      req.db.prepare(`UPDATE connection_email_rules SET document_mode = 'inventory_list'
+        WHERE workspace_id = ? AND connector_id = ? AND sender_pattern = ? COLLATE NOCASE`)
+        .run(req.ctx.workspaceId, req.params.id, row.sender);
+    }
+    if (result.alreadyApplied) {
+      req.flash('warning', result.duplicate
+        ? 'Duplicate ignored: this exact file was already imported. Foundry added no products or quantities.'
+        : 'This file was already imported. Foundry added nothing again.');
+      return res.redirect(303, `/settings/connections/${req.params.id}`);
+    }
+    req.flash('success', result.replayed
+      ? 'This file is already waiting for review. Foundry did not create another copy.'
+      : 'Foundry read the attachment as inventory. Review every match, new item, quantity, cost, and location before approving.');
+    return res.redirect(303, `/foundry/proposal/${result.understandingId}`);
+  }));
 
 router.post('/settings/connections/:id/bootstrap-shopify', requireOwner, asyncRoute(async (req, res) => {
   const result = await shopifyBootstrap.bootstrap(req.db, req.ctx, req.params.id);
@@ -182,6 +261,46 @@ router.post('/settings/connections/:id/map', requireOwner, asyncRoute(async (req
   req.flash('success', completed ? `Mapping saved. Foundry safely completed ${completed} waiting event${completed === 1 ? '' : 's'}.`
     : 'Mapping saved. Foundry will remember it for future events.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
+}));
+
+router.post('/settings/connections/:id/supplier-sku-map', requireOwner, asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  if (!['gmail', 'microsoft365', 'supplier_email'].includes(connection.provider_type)) {
+    throw new Error('Supplier SKU matches belong to a supplier mailbox.');
+  }
+  const issue = req.db.prepare(`SELECT * FROM connection_issues
+    WHERE id = ? AND workspace_id = ? AND connector_id = ? AND status = 'OPEN'
+      AND issue_type = 'SUPPLIER_DOCUMENT_REVIEW'`)
+    .get(req.body.issueId, req.ctx.workspaceId, connection.id);
+  if (!issue) throw new Error('That supplier-document decision is no longer waiting.');
+  const candidates = connections.parseJson(issue.candidate_matches, []);
+  const candidate = candidates.find((entry) => entry.kind === 'supplier_sku'
+    && entry.supplierSku === req.body.supplierSku);
+  if (!candidate?.supplierId) throw new Error('That supplier SKU cannot be matched from this decision.');
+  const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
+  supplierService.linkItem(req.db, req.ctx, membership, {
+    supplierId: candidate.supplierId, skuId: req.body.skuId, supplierSku: candidate.supplierSku,
+    purchaseUnit: 'unit', unitsPerPurchaseUnit: 1,
+  });
+  const now = new Date().toISOString();
+  req.db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+    WHERE id = ? AND workspace_id = ?`).run(now, now, issue.id, req.ctx.workspaceId);
+  req.flash('success', `Matched supplier SKU ${candidate.supplierSku}. Future documents will use this product automatically.`);
+  return res.redirect(303, `/settings/connections/${connection.id}`);
+}));
+
+router.post('/settings/connections/:id/supplier-document-decision', requireOwner, asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  if (!['gmail', 'microsoft365', 'supplier_email'].includes(connection.provider_type)) {
+    throw new Error('Supplier-document decisions belong to a supplier mailbox.');
+  }
+  const result = require('../../purchasing/supplier-evidence').decide(
+    req.db, req.ctx, req.body.issueId, req.body.decision
+  );
+  req.flash('success', result.decision === 'accept'
+    ? 'Accepted the supplier changes and updated the purchase order. Inventory was not received.'
+    : 'Kept the original purchase order. The supplier document remains in the audit history.');
+  return res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 
 router.post('/settings/connections/:id/create-location-map', requireOwner, asyncRoute(async (req, res) => {
@@ -236,8 +355,58 @@ router.post('/settings/connections/:id/create-products-map', requireOwner, async
 }));
 
 router.post('/settings/connections/:id/email-rules', requireOwner, asyncRoute(async (req, res) => {
-  connections.addEmailRule(req.db, req.ctx, req.params.id, req.body);
-  req.flash('success', 'Allowed sender saved. Future messages from it will be trusted supplier evidence.');
+  const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
+  const senderPattern = String(req.body.senderPattern || '').trim();
+  let supplierId = String(req.body.supplierId || '').trim() || null;
+  const existingRule = senderPattern ? req.db.prepare(`SELECT supplier_id FROM connection_email_rules
+    WHERE workspace_id = ? AND connector_id = ? AND sender_pattern = ? COLLATE NOCASE`)
+    .get(req.ctx.workspaceId, req.params.id, senderPattern) : null;
+  if (!supplierId && existingRule?.supplier_id) supplierId = existingRule.supplier_id;
+  let supplier = supplierId
+    ? supplierService.getSupplier(req.db, req.ctx.workspaceId, supplierId)
+    : null;
+
+  if (!supplier) {
+    const suppliedName = String(req.body.supplierName || '').trim();
+    const addressPart = senderPattern.replace(/^@/, '').split('@')[0] || senderPattern.replace(/^@/, '');
+    const supplierName = suppliedName || addressPart.replace(/[._-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+      || 'Email inventory source';
+    const existing = supplierName ? req.db.prepare(`SELECT id FROM suppliers
+      WHERE workspace_id = ? AND name = ? COLLATE NOCASE`).get(req.ctx.workspaceId, supplierName) : null;
+    supplier = existing
+      ? supplierService.getSupplier(req.db, req.ctx.workspaceId, existing.id)
+      : supplierService.createSupplier(req.db, req.ctx, membership, {
+        name: supplierName,
+        email: senderPattern.startsWith('@') ? null : senderPattern,
+        watchedConnectorId: req.params.id,
+      });
+    supplierId = supplier.id;
+  }
+
+  connections.addEmailRule(req.db, req.ctx, req.params.id, {
+    senderPattern, supplierId, documentMode: req.body.documentMode,
+  });
+  supplierService.updateSupplier(req.db, req.ctx, membership, supplierId, {
+    watchedConnectorId: req.params.id,
+  });
+  let found = 0;
+  const mailboxConnection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  try {
+    // The approved message may already be in the inbox. Looking back after the
+    // rule is saved prevents the normal setup order (connect, approve sender)
+    // from skipping the very file the owner connected Gmail to retrieve.
+    if (['gmail', 'microsoft365'].includes(mailboxConnection.provider_type)) {
+      const result = await providerService.syncMailbox(req.db, req.ctx.workspaceId, req.params.id, {
+        since: new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString(),
+      });
+      found = result.messages || 0;
+    }
+  } catch (error) {
+    req.flash('error', `The sender rule was saved, but the mailbox check could not finish: ${error.message}`);
+  }
+  req.flash('success', found
+    ? `Foundry is watching ${senderPattern} and checked the mailbox now. Open Home to review what it found.`
+    : `Foundry is watching ${senderPattern}. It will check automatically and put any required review on Home.`);
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 
@@ -264,6 +433,14 @@ router.post('/settings/connections/:id/rotate', requireOwner, asyncRoute(async (
   const rotated = connections.rotateToken(req.db, req.ctx, membership, req.params.id);
   req.session.newConnectionToken = { connectorId: req.params.id, token: rotated.token };
   req.flash('success', 'Connection token rotated. The old token no longer works.');
+  res.redirect(303, `/settings/connections/${req.params.id}`);
+}));
+
+router.post('/settings/connections/:id/checkout-token', requireOwner, asyncRoute(async (req, res) => {
+  const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
+  const issued = connections.issueCheckoutToken(req.db, req.ctx, membership, req.params.id);
+  req.session.newConnectionToken = { connectorId: req.params.id, token: issued.token };
+  req.flash('success', 'Checkout key created. Copy it now; Foundry will not show it again.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 

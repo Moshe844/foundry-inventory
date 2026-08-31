@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS connection_email_rules (
   connector_id        TEXT NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
   sender_pattern      TEXT NOT NULL,
   supplier_id         TEXT REFERENCES suppliers(id) ON DELETE SET NULL,
+  document_mode       TEXT NOT NULL DEFAULT 'review_each'
+                      CHECK (document_mode IN ('review_each','supplier_documents','inventory_list')),
   is_active           INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0,1)),
   created_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   created_at          TEXT NOT NULL,
@@ -78,6 +80,11 @@ CREATE TABLE IF NOT EXISTS connection_email_messages (
   supplier_id         TEXT REFERENCES suppliers(id) ON DELETE SET NULL,
   trust_status        TEXT NOT NULL CHECK (trust_status IN ('TRUSTED','UNTRUSTED')),
   classification      TEXT NOT NULL DEFAULT 'unclassified',
+  external_thread_id  TEXT,
+  internet_message_id TEXT,
+  content_hash        TEXT,
+  processing_status   TEXT NOT NULL DEFAULT 'CAPTURED',
+  processed_at        TEXT,
   created_at          TEXT NOT NULL,
   UNIQUE (workspace_id, connector_id, external_message_id)
 );
@@ -91,6 +98,8 @@ CREATE TABLE IF NOT EXISTS connection_email_attachments (
   mime_type           TEXT,
   content_hash        TEXT NOT NULL,
   content             BLOB,
+  extracted_text      TEXT,
+  setup_document_id   TEXT REFERENCES setup_documents(id) ON DELETE SET NULL,
   created_at          TEXT NOT NULL,
   UNIQUE (message_id, content_hash, filename)
 );

@@ -13,6 +13,8 @@ const assistant = require('../../foundry/assistant-service');
 const jobRunner = require('../../foundry/job-runner');
 const inventoryQuery = require('../../domain/inventory-query');
 const repo = require('../../domain/repository');
+const inventoryEngine = require('../../domain/inventory-engine');
+const { ValidationError } = require('../../domain/errors');
 const { inTransaction } = require('../../db');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 const { toArray, trimOrNull, nowIso } = require('../../lib/util');
@@ -189,12 +191,19 @@ router.get(
       return res.redirect(303, '/foundry');
     }
     const setupDocument = documentIntake.getByUnderstanding(req.db, req.ctx.workspaceId, stored.id);
+    if (setupDocument?.status === 'APPLIED') {
+      req.flash('warning', `Duplicate ignored: ${setupDocument.sourceName} was already imported${setupDocument.appliedAt ? ` on ${new Date(setupDocument.appliedAt).toLocaleString()}` : ''}. Foundry added nothing again.`);
+      return res.redirect(303, '/inventory');
+    }
     return res.page('foundry/proposal', {
       title: "Here's how I'd organize your inventory",
       nav: 'foundry',
       understandingId: stored.id,
       understanding: stored.understanding,
       setupDocument,
+      documentMatches: setupDocument
+        ? documentIntake.matchPreview(req.db, req.ctx.workspaceId, setupDocument.interpretation)
+        : [],
       scopeWarning: setupDocument
         ? scopeSafety.fromDocument(req.db, req.ctx.workspaceId, setupDocument.interpretation)
         : { needsConfirmation: false },
@@ -345,11 +354,7 @@ router.get(
 router.get(
   '/foundry/quantities/:itemId',
   asyncRoute(async (req, res) => {
-    const onboarding = onboardingPaths.reconcileWithInventoryTruth(req.db, req.ctx.workspaceId);
-    if (onboarding && onboarding.isComplete) {
-      req.flash('success', 'Foundry has current inventory truth and is now managing it.');
-      return res.redirect(303, '/');
-    }
+    onboardingPaths.reconcileWithInventoryTruth(req.db, req.ctx.workspaceId);
     const item = repo.requireItem(req.db, req.ctx.workspaceId, req.params.itemId);
     const skus = repo.listSkusForItem(req.db, req.ctx.workspaceId, item.id);
     const locations = repo.listLocations(req.db, req.ctx.workspaceId);
@@ -365,10 +370,58 @@ router.get(
       title: 'Add your current quantities',
       nav: 'foundry',
       item,
+      skus,
       skuCount: skus.length,
       locations,
       total,
+      canEnterGrid: skus.every((sku) => sku.tracking_mode === 'quantity'),
     });
+  })
+);
+
+router.post(
+  '/foundry/quantities/:itemId/save',
+  requireOwner,
+  asyncRoute(async (req, res) => {
+    const item = repo.requireItem(req.db, req.ctx.workspaceId, req.params.itemId);
+    const allowedSkus = new Set(repo.listSkusForItem(req.db, req.ctx.workspaceId, item.id)
+      .filter((sku) => sku.tracking_mode === 'quantity').map((sku) => sku.id));
+    const allowedLocations = new Set(repo.listLocations(req.db, req.ctx.workspaceId).map((location) => location.id));
+    const skuIds = toArray(req.body.skuId);
+    const locationIds = toArray(req.body.locationId);
+    const quantities = toArray(req.body.quantity);
+    let recorded = 0;
+
+    inTransaction(req.db, () => {
+      for (let index = 0; index < skuIds.length; index += 1) {
+        const skuId = skuIds[index];
+        const locationId = locationIds[index];
+        const raw = String(quantities[index] ?? '').trim();
+        if (!raw) continue;
+        const quantity = Number(raw);
+        if (!allowedSkus.has(skuId) || !allowedLocations.has(locationId)
+          || !Number.isInteger(quantity) || quantity < 0) {
+          throw new ValidationError('Enter whole quantities of zero or more in the opening inventory grid.');
+        }
+        if (quantity === 0) continue;
+        inventoryEngine.adjust(req.db, req.ctx, {
+          skuId,
+          locationId,
+          countedQty: quantity,
+          reasonCode: 'physical_count',
+          notes: 'Opening inventory',
+        });
+        recorded += quantity;
+      }
+    });
+
+    if (!recorded) {
+      req.flash('info', 'No opening quantities were entered. Add at least one quantity, or choose “starting with no stock”.');
+      return res.redirect(303, `/foundry/quantities/${item.id}`);
+    }
+    onboardingPaths.reconcileWithInventoryTruth(req.db, req.ctx.workspaceId);
+    req.flash('success', `Opening inventory recorded: ${recorded} unit${recorded === 1 ? '' : 's'}.`);
+    return res.redirect(303, '/');
   })
 );
 

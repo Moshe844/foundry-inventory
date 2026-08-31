@@ -65,11 +65,9 @@ test('headers Foundry cannot read are named by the model', { skip: !LIVE, timeou
   assert.equal(columnNamed(sheet, result.mappings.name), 'MAKTX');
   assert.equal(columnNamed(sheet, result.mappings.location), 'LGORT');
   assert.equal(columnNamed(sheet, result.mappings.quantity), 'LABST');
-  // A price column has nowhere to go, and is left alone rather than forced in.
-  assert.ok(
-    !Object.values(result.mappings).includes(4),
-    `NETPR was mapped to ${JSON.stringify(result.mappings)}`
-  );
+  // Foundry now stores current selling prices, so the ERP price column should
+  // be recognised instead of silently discarded.
+  assert.equal(columnNamed(sheet, result.mappings.sellingPrice), 'NETPR');
   assert.equal(result.detectedType, 'inventory');
 });
 

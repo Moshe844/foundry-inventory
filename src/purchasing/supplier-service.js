@@ -72,6 +72,25 @@ function optionalMoney(value, field) {
   return Math.round(n * 10000) / 10000;
 }
 
+function optionalPercent(value, field, fallback = null) {
+  if (value === undefined) return fallback;
+  if (value === null || String(value).trim() === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0 || n > 100) throw new ValidationError(`${field} must be between 0 and 100.`, { field });
+  return Math.round(n * 100) / 100;
+}
+
+const checkbox = (value, fallback = false) => {
+  if (value === undefined) return fallback;
+  const chosen = Array.isArray(value) ? value[value.length - 1] : value;
+  return ['1', 'true', 'on', 'yes'].includes(String(chosen).toLowerCase());
+};
+const moneyMinor = (value, field, fallback = null) => {
+  if (value === undefined) return fallback;
+  const money = optionalMoney(value, field);
+  return money === null ? null : Math.round(money * 100);
+};
+
 function hydrate(row) {
   if (!row) return null;
   return {
@@ -93,6 +112,16 @@ function hydrate(row) {
     internalCode: row.internal_code,
     internalBaseCode: row.internal_base_code,
     itemCodeAliases: parseAliases(row.item_code_aliases),
+    preferredOrderingMethod: row.preferred_ordering_method || 'email',
+    watchedConnectorId: row.watched_connector_id,
+    prepareCommunications: row.prepare_communications !== 0,
+    autoSendEnabled: row.auto_send_enabled === 1,
+    autoSendLimitMinor: row.auto_send_limit_minor,
+    autoSendLimit: row.auto_send_limit_minor === null ? null : Number(row.auto_send_limit_minor) / 100,
+    priceTolerancePercent: Number(row.price_tolerance_percent ?? 5),
+    quantityTolerancePercent: Number(row.quantity_tolerance_percent ?? 0),
+    trustedDeliveryReceipt: row.trusted_delivery_receipt === 1,
+    followUpDays: Number(row.follow_up_days ?? 2),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -119,8 +148,10 @@ function createSupplier(db, ctx, membership, input) {
     `INSERT INTO suppliers (
        id, workspace_id, name, code, contact_name, email, phone, notes, status,
        default_lead_time_days, minimum_order_amount, currency, payment_terms,
-       item_code_label, item_code_aliases, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       item_code_label, item_code_aliases, preferred_ordering_method, watched_connector_id,
+       prepare_communications, auto_send_enabled, auto_send_limit_minor, price_tolerance_percent,
+       quantity_tolerance_percent, trusted_delivery_receipt, follow_up_days, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     ctx.workspaceId,
@@ -137,6 +168,15 @@ function createSupplier(db, ctx, membership, input) {
     trimOrNull(input.paymentTerms),
     itemCodeLabel,
     JSON.stringify(itemCodeAliases),
+    trimOrNull(input.preferredOrderingMethod) || 'email',
+    trimOrNull(input.watchedConnectorId),
+    checkbox(input.prepareCommunications, true) ? 1 : 0,
+    checkbox(input.autoSendEnabled, false) ? 1 : 0,
+    moneyMinor(input.autoSendLimit, 'Automatic send limit'),
+    optionalPercent(input.priceTolerancePercent, 'Price tolerance', 5) ?? 5,
+    optionalPercent(input.quantityTolerancePercent, 'Quantity tolerance', 0) ?? 0,
+    checkbox(input.trustedDeliveryReceipt, false) ? 1 : 0,
+    optionalInt(input.followUpDays, 'Follow-up timing', { min: 1, max: 60 }) ?? 2,
     now,
     now
   );
@@ -165,7 +205,10 @@ function updateSupplier(db, ctx, membership, supplierId, input) {
     `UPDATE suppliers
         SET name = ?, code = ?, contact_name = ?, email = ?, phone = ?, notes = ?, status = ?,
             default_lead_time_days = ?, minimum_order_amount = ?, currency = ?, payment_terms = ?,
-            item_code_label = ?, item_code_aliases = ?, updated_at = ?
+            item_code_label = ?, item_code_aliases = ?, preferred_ordering_method = ?, watched_connector_id = ?,
+            prepare_communications = ?, auto_send_enabled = ?, auto_send_limit_minor = ?,
+            price_tolerance_percent = ?, quantity_tolerance_percent = ?, trusted_delivery_receipt = ?,
+            follow_up_days = ?, updated_at = ?
       WHERE id = ? AND workspace_id = ?`
   ).run(
     name,
@@ -185,11 +228,24 @@ function updateSupplier(db, ctx, membership, supplierId, input) {
     pick('paymentTerms', existing.paymentTerms),
     itemCodeLabel,
     JSON.stringify(itemCodeAliases),
+    input.preferredOrderingMethod === undefined ? existing.preferredOrderingMethod : trimOrNull(input.preferredOrderingMethod) || 'email',
+    input.watchedConnectorId === undefined ? existing.watchedConnectorId : trimOrNull(input.watchedConnectorId),
+    checkbox(input.prepareCommunications, existing.prepareCommunications) ? 1 : 0,
+    checkbox(input.autoSendEnabled, existing.autoSendEnabled) ? 1 : 0,
+    moneyMinor(input.autoSendLimit, 'Automatic send limit', existing.autoSendLimitMinor),
+    optionalPercent(input.priceTolerancePercent, 'Price tolerance', existing.priceTolerancePercent) ?? existing.priceTolerancePercent,
+    optionalPercent(input.quantityTolerancePercent, 'Quantity tolerance', existing.quantityTolerancePercent) ?? existing.quantityTolerancePercent,
+    checkbox(input.trustedDeliveryReceipt, existing.trustedDeliveryReceipt) ? 1 : 0,
+    input.followUpDays === undefined ? existing.followUpDays : optionalInt(input.followUpDays, 'Follow-up timing', { min: 1, max: 60 }),
     nowIso(),
     supplierId,
     ctx.workspaceId
   );
-  return getSupplier(db, ctx.workspaceId, supplierId);
+  const saved = getSupplier(db, ctx.workspaceId, supplierId);
+  db.prepare(`UPDATE supplier_communications SET connector_id = ?, recipient = COALESCE(?, recipient), updated_at = ?
+    WHERE workspace_id = ? AND supplier_id = ? AND status IN ('PREPARED','QUEUED','FAILED')`)
+    .run(saved.watchedConnectorId, saved.email, nowIso(), ctx.workspaceId, supplierId);
+  return saved;
 }
 
 function getSupplier(db, workspaceId, supplierId) {

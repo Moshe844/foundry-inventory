@@ -32,6 +32,46 @@
           <span>Remembered and active. Settings shows the same underlying records.</span>
         </div>
         <a class="btn btn--block" href="/settings#learned-instructions">Inspect or remove it</a>
+      <% } else if (productResolution) { %>
+        <div class="notice notice--warn">
+          <div>
+            <strong>I can’t find “<%= productResolution.query %>” in this inventory.</strong>
+            <p style="margin:6px 0 0;">No restriction has been created. Choose an existing product, create it, or try another name.</p>
+          </div>
+        </div>
+        <% if (productResolution.candidates.length) { %>
+          <div>
+            <div class="label">Did you mean one of these?</div>
+            <div class="act-choice-grid">
+              <% productResolution.candidates.forEach(function(candidate) { %>
+                <% if (candidate.skuId) { %>
+                  <form method="post" action="/operating-instructions/<%= proposal.id %>/select-product" data-loading-text="Selecting product…">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button class="btn" type="submit" name="skuId" value="<%= candidate.skuId %>"><%= candidate.label %></button>
+                  </form>
+                <% } else { %>
+                  <form method="post" action="/operating-instructions/<%= proposal.id %>/answer" data-loading-text="Checking product…">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button class="btn" type="submit" name="answer" value="<%= candidate.answer %>"><%= candidate.label %></button>
+                  </form>
+                <% } %>
+              <% }) %>
+            </div>
+          </div>
+        <% } %>
+        <a class="btn btn--primary btn--block" href="<%= productResolution.createHref %>">Create “<%= productResolution.query %>”</a>
+        <details>
+          <summary class="muted">Try another product name</summary>
+          <form method="post" action="/operating-instructions/<%= proposal.id %>/answer" data-loading-text="Checking product…" style="margin-top:10px;">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input class="input" name="answer" required autocomplete="off" placeholder="Enter a product name from this inventory">
+            <button class="btn btn--block" type="submit" style="margin-top:10px;">Try this product</button>
+          </form>
+        </details>
+        <form method="post" action="/operating-instructions/<%= proposal.id %>/cancel">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--ghost btn--block" type="submit">Cancel restriction setup</button>
+        </form>
       <% } else if (proposal.questions.length) { %>
         <p class="muted" style="margin:0;">Foundry did not guess. Your answer continues this same instruction:</p>
         <div>
@@ -68,6 +108,7 @@
   </aside>
 </div>
 
+<% if (!productResolution) { %>
 <section class="card" style="margin-top:16px;">
   <div class="card-head">
     <div><h2>Exactly what Foundry understood</h2><p class="muted"><%= proposal.summary %></p></div>
@@ -100,3 +141,8 @@
     </div>
   </div>
 </section>
+<% } else { %>
+  <div class="notice" style="margin-top:16px;">
+    <span>Nothing has been prepared or saved until you choose or create a real product.</span>
+  </div>
+<% } %>

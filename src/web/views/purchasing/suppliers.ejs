@@ -9,7 +9,7 @@
 <div class="card section">
   <div class="card-head"><h2><%= suppliers.length %> supplier<%= suppliers.length === 1 ? '' : 's' %></h2></div>
   <% if (suppliers.length === 0) { %>
-    <div class="card-body"><p class="muted">No suppliers yet. Add one below and Foundry can start working out what to order.</p></div>
+    <div class="empty-state"><p class="empty-state__title">No suppliers yet</p><p class="empty-state__body">Add who you buy inventory from so Foundry can prepare replenishment orders and understand pack sizes, costs and lead times.</p><a class="btn btn--primary" href="#add-supplier">Add supplier</a><p class="hint">Or tell Foundry: “ABC Apparel supplies our T-shirts.”</p></div>
   <% } else { %>
     <table class="table table--tight">
       <thead><tr><th>Supplier</th><th>Contact</th><th class="num">Lead time</th><th class="num">Products</th><th class="num">Open orders</th></tr></thead>
@@ -32,7 +32,7 @@
 </div>
 
 <% if (permissions.suppliers) { %>
-  <form method="post" action="/suppliers" class="card section">
+  <form method="post" action="/suppliers" class="card section" id="add-supplier">
     <div class="card-head"><h2>Add a supplier</h2></div>
     <div class="card-body">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">

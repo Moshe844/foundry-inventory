@@ -15,6 +15,7 @@ const { ValidationError, InvariantError, NotFoundError } = require('./errors');
 const permissions = require('../actions/permissions');
 
 const ACTIONS = Object.freeze({ ISSUE: 'issue' });
+const ENFORCEMENT_MODES = Object.freeze({ BLOCK: 'block', WARN: 'warn' });
 const METRICS = Object.freeze({ NETWORK_ON_HAND: 'network_on_hand', LOCATION_ON_HAND: 'location_on_hand' });
 const COMPARATORS = Object.freeze({ BELOW: 'below', AT_OR_BELOW: 'at_or_below' });
 const RELEASES = Object.freeze({ ON_ORDER: 'on_order', STOCK_RECOVERED: 'stock_recovered', MANUAL: 'manual' });
@@ -45,7 +46,8 @@ function hydrate(row) {
   if (!row) return null;
   return {
     id: row.id, workspaceId: row.workspace_id, skuId: row.sku_id, locationId: row.location_id,
-    actionType: row.action_type, metric: row.metric, comparator: row.comparator,
+    actionType: row.action_type, enforcementMode: row.enforcement_mode || ENFORCEMENT_MODES.BLOCK,
+    metric: row.metric, comparator: row.comparator,
     threshold: row.threshold, releaseCondition: row.release_condition,
     releaseThreshold: row.release_threshold, source: row.source, statedAs: row.stated_as,
     isActive: Boolean(row.is_active), createdByUserId: row.created_by_user_id,
@@ -64,10 +66,12 @@ function wholeNumber(value, label) {
 function set(db, ctx, membership, input) {
   permissions.assertCan(membership, permissions.MANAGE_REPLENISHMENT, 'set stock-protection rules');
   const actionType = input.actionType || ACTIONS.ISSUE;
+  const enforcementMode = input.enforcementMode || ENFORCEMENT_MODES.BLOCK;
   const metric = input.locationId ? METRICS.LOCATION_ON_HAND : (input.metric || METRICS.NETWORK_ON_HAND);
   const comparator = input.comparator || COMPARATORS.BELOW;
   const releaseCondition = input.releaseCondition || RELEASES.STOCK_RECOVERED;
   if (!Object.values(ACTIONS).includes(actionType)) throw new ValidationError('That operation cannot currently be guarded.');
+  if (!Object.values(ENFORCEMENT_MODES).includes(enforcementMode)) throw new ValidationError('Choose whether Foundry should block outgoing stock or only warn you.');
   if (!Object.values(METRICS).includes(metric)) throw new ValidationError('Choose a supported stock measurement.');
   if (!Object.values(COMPARATORS).includes(comparator)) throw new ValidationError('Choose whether the threshold means below or at-or-below.');
   if (!Object.values(RELEASES).includes(releaseCondition)) throw new ValidationError('Choose what releases the stock protection.');
@@ -88,19 +92,19 @@ function set(db, ctx, membership, input) {
   const now = nowIso();
   if (existing) {
     db.prepare(
-      `UPDATE operating_guards SET metric = ?, comparator = ?, threshold = ?, release_condition = ?,
+      `UPDATE operating_guards SET enforcement_mode = ?, metric = ?, comparator = ?, threshold = ?, release_condition = ?,
          release_threshold = ?, source = ?, stated_as = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`
-    ).run(metric, comparator, threshold, releaseCondition, releaseThreshold, input.source || 'settings',
+    ).run(enforcementMode, metric, comparator, threshold, releaseCondition, releaseThreshold, input.source || 'settings',
       input.statedAs || null, now, existing.id, ctx.workspaceId);
     return get(db, ctx.workspaceId, existing.id);
   }
   const id = newId('ogr');
   db.prepare(
     `INSERT INTO operating_guards
-       (id, workspace_id, sku_id, location_id, action_type, metric, comparator, threshold,
+       (id, workspace_id, sku_id, location_id, action_type, enforcement_mode, metric, comparator, threshold,
         release_condition, release_threshold, source, stated_as, created_by_user_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, ctx.workspaceId, input.skuId, input.locationId || null, actionType, metric, comparator,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, ctx.workspaceId, input.skuId, input.locationId || null, actionType, enforcementMode, metric, comparator,
     threshold, releaseCondition, releaseThreshold, input.source || 'settings', input.statedAs || null,
     ctx.actorId, now, now);
   return get(db, ctx.workspaceId, id);
@@ -158,7 +162,9 @@ function compare(value, comparator, threshold) {
 /** Return the first deterministic reason an issue is blocked, or null. */
 function evaluateIssue(db, workspaceId, { skuId, locationId, quantity }) {
   const rules = list(db, workspaceId, { activeOnly: true, skuId })
-    .filter((rule) => rule.actionType === ACTIONS.ISSUE && (!rule.locationId || rule.locationId === locationId));
+    .filter((rule) => rule.actionType === ACTIONS.ISSUE
+      && rule.enforcementMode === ENFORCEMENT_MODES.BLOCK
+      && (!rule.locationId || rule.locationId === locationId));
   for (const rule of rules) {
     const scopeLocationId = rule.metric === METRICS.LOCATION_ON_HAND ? rule.locationId || locationId : null;
     const before = currentOnHand(db, workspaceId, skuId, scopeLocationId);
@@ -196,6 +202,7 @@ function assertIssueAllowed(db, workspaceId, input) {
 
 module.exports = {
   ACTIONS,
+  ENFORCEMENT_MODES,
   METRICS,
   COMPARATORS,
   RELEASES,

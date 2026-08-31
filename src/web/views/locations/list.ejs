@@ -15,7 +15,7 @@
     <div class="empty">
       <div class="icon-wrap"><%- helpers.icon('locations', { size: 22 }) %></div>
       <h3>No locations yet</h3>
-      <p>A location is anywhere stock lives: a warehouse, a store, a stockroom, a truck or an office.</p>
+      <p>Add the first place stock can live — a warehouse, store, stockroom, truck or office. Foundry needs this before it can record quantities.</p>
       <% if (currentUser.role === 'owner') { %>
         <button class="btn btn--primary" type="button" data-modal-open="modal-location">Add your first location</button>
       <% } %>

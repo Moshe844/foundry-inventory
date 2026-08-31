@@ -694,7 +694,8 @@ function detectStockProtectionBoundary(signals, options = {}) {
       : null;
     const onHand = rule.locationId ? Number(location?.onHand || 0) : Number(sku.measured.onHand || 0);
     const boundary = operatingGuards.describeBoundary(rule);
-    const allowedFloor = boundary.lowestPermitted;
+    const warningOnly = rule.enforcementMode === operatingGuards.ENFORCEMENT_MODES.WARN;
+    const allowedFloor = warningOnly ? boundary.configuredLimit : boundary.lowestPermitted;
     if (onHand > allowedFloor) continue;
 
     const incoming = incomingFor(signals, rule.skuId);
@@ -713,7 +714,9 @@ function detectStockProtectionBoundary(signals, options = {}) {
       : onHand === boundary.configuredLimit
         ? 'at'
         : 'one unit from';
-    const title = `${sku.displayName} is ${relation} its protected stock limit`;
+    const title = warningOnly
+      ? `${sku.displayName} reached its low-stock warning`
+      : `${sku.displayName} is ${relation} its protected stock limit`;
     const release = rule.releaseCondition === operatingGuards.RELEASES.ON_ORDER
       ? 'Place a supplier order before recording more outgoing stock.'
       : rule.releaseCondition === operatingGuards.RELEASES.STOCK_RECOVERED
@@ -729,16 +732,21 @@ function detectStockProtectionBoundary(signals, options = {}) {
       confidence: 'high',
       fingerprint: `stock_protection_boundary:${rule.id}`,
       title,
-      conciseSummary: approachingInclusiveLimit
+      conciseSummary: warningOnly
+        ? `${onHand} on hand${where} · warn at ${boundary.configuredLimit}`
+        : approachingInclusiveLimit
         ? `${onHand} on hand${where} · the next outgoing unit would reach the configured limit of ${boundary.configuredLimit}`
         : `${onHand} on hand${where} · configured protected limit ${boundary.configuredLimit}`,
-      explanation: approachingInclusiveLimit
+      explanation: warningOnly
+        ? `${onHand} ${sku.unitLabel || 'units'} are on hand${where}. You asked Foundry to warn at or below `
+          + `${boundary.configuredLimit}. Outgoing stock remains allowed.`
+        : approachingInclusiveLimit
         ? `${onHand} ${sku.unitLabel || 'units'} are on hand${where}. The configured rule blocks any result `
           + `${boundary.blockedWhen}, so ${boundary.lowestPermitted} is the lowest permitted balance. `
           + 'Any further outgoing stock will be blocked.'
         : `${onHand} ${sku.unitLabel || 'units'} are on hand${where}. The configured rule blocks any result `
           + `${boundary.blockedWhen}. ${boundary.permittedExplanation}`,
-      recommendation: release,
+      recommendation: warningOnly ? 'Review stock or replenishment. Foundry will not block outgoing stock.' : release,
       affectedEntityType: 'sku',
       affectedEntityIds: [rule.skuId],
       affectedLocationIds: rule.locationId ? [rule.locationId] : [],

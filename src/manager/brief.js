@@ -12,6 +12,18 @@ function build(db, workspaceId, { now = Date.now() } = {}) {
     type: 'work', id: item.id, title: item.categoryLabel, outcome: item.outcome,
     completedAt: item.completedAt, verified: item.verificationStatus === 'VERIFIED',
   }));
+  handled.push(...db.prepare(`SELECT d.id, d.document_type, d.purchase_order_id, d.processed_at,
+      po.po_number, s.name AS supplier_name
+    FROM supplier_documents d LEFT JOIN purchase_orders po ON po.id = d.purchase_order_id
+    LEFT JOIN suppliers s ON s.id = d.supplier_id
+    WHERE d.workspace_id = ? AND d.status = 'MATCHED' AND d.processed_at >= ?
+      AND json_array_length(d.discrepancies) = 0
+    ORDER BY d.processed_at DESC LIMIT 12`).all(workspaceId, since.toISOString()).map((row) => ({
+      type: 'supplier', id: row.id,
+      title: `${row.supplier_name || 'Supplier'} ${String(row.document_type).replaceAll('_', ' ')} matched${row.po_number ? ` ${row.po_number}` : ''}`,
+      outcome: { purchaseOrderId: row.purchase_order_id, noActionNeeded: true },
+      completedAt: row.processed_at, verified: true,
+    })));
   const handling = workItems.list(db, workspaceId, {
     status: [workItems.STATUS.DETECTED, workItems.STATUS.PLANNED, workItems.STATUS.AUTHORIZED,
       workItems.STATUS.EXECUTING, workItems.STATUS.VERIFYING], limit: 20,

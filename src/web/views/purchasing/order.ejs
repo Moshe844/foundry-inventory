@@ -14,7 +14,7 @@
 <% if (communications && communications.length) { var communication = communications[0]; %>
   <div class="card section">
     <div class="card-head">
-      <div><h2>Supplier message</h2><p class="muted">Prepared from this order; delivery transport stays separate and pluggable.</p></div>
+      <div><h2>Supplier message</h2><p class="muted">Prepared from this order and sent only through the supplier's approved mailbox and authority.</p></div>
       <span class="spacer"></span>
       <span class="badge <%= communication.status === 'SENT' ? 'badge--ok' : communication.status === 'FAILED' ? 'badge--danger' : 'badge--muted' %>"><%= communication.status.toLowerCase() %></span>
     </div>
@@ -22,12 +22,13 @@
       <% if (communication.status === 'PREPARED') { %>
         <div class="notice"><span>Prepared, not queued or sent. Approving the order records the commitment in Foundry.</span></div>
       <% } else if (communication.status === 'QUEUED') { %>
-        <div class="notice notice--warn"><span>Queued inside Foundry, but no external communication transport is connected. Foundry has not told the supplier.</span></div>
+        <div class="notice notice--warn"><span>Ready to send. Foundry has not told the supplier yet.</span></div>
       <% } else if (communication.status === 'SENT') { %>
         <div class="notice" style="background:var(--ok-bg); border-color:#bbf7d0; color:#14532d;"><span>Sent and confirmed by <%= communication.transport %><%= communication.externalMessageId ? ' · ' + communication.externalMessageId : '' %>.</span></div>
       <% } %>
       <dl class="kv"><dt>To</dt><dd><%= communication.recipient || 'No supplier email on file' %></dd><dt>Subject</dt><dd><%= communication.subject %></dd></dl>
       <details><summary>Preview message</summary><pre style="white-space:pre-wrap; font-family:inherit;"><%= communication.body %></pre></details>
+      <% if (permissions.approve && communication.status !== 'SENT' && communication.connectorId && communication.recipient) { %><form method="post" action="/purchasing/orders/<%= order.id %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Approve &amp; send</button></form><% } %>
     </div>
   </div>
 <% } %>
@@ -138,8 +139,8 @@
     </div>
     <% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)) { %>
       <p class="muted" style="margin-top:8px;">
-        Nothing has been sent to <%= order.supplierName %>. Foundry does not contact suppliers —
-        approving records that you have placed this order.
+        Nothing has been sent to <%= order.supplierName %> yet. Approving records the order and then follows
+        this supplier's communication rule: send within approved authority, or wait for you to approve the message.
       </p>
     <% } %>
   </div>
@@ -192,6 +193,7 @@
   <div class="card-head"><h2>What has happened to this order</h2></div>
   <div class="card-body">
     <ul class="plain-list">
+      <% supplierDocuments.forEach(function(document) { %><li><strong><%= document.document_type.replaceAll('_', ' ') %> from <%= document.sender %></strong><span class="muted"><%= document.status === 'NEEDS_REVIEW' ? 'Needs your decision' : 'Matched to this order' %> · <%= helpers.dateTime(document.received_at) %></span></li><% }) %>
       <% events.forEach(function (event) { %>
         <li>
           <strong><%= event.event %></strong>

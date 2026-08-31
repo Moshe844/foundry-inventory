@@ -107,7 +107,8 @@ test('a refusal that never lifts is explained as the machine, not the network', 
     }, [1, 1, 1]),
     (err) => {
       assert.equal(err.code, 'ai_blocked_locally');
-      assert.match(err.message, /Security software on this computer/);
+      assert.match(err.message, /server process is not allowed/i);
+      assert.match(err.message, /normal outbound network access/i);
       assert.doesNotMatch(err.message, /Check the connection/,
         'the connection is the one part that was working');
       return true;

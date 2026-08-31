@@ -18,6 +18,7 @@ const permissions = require('../../actions/permissions');
 const salesOrders = require('../../sales/sales-order-service');
 const purchasingPosition = require('../../purchasing/position');
 const prices = require('../../pricing/price-service');
+const operatingInstructions = require('../../manager/operating-instructions');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { toArray, trimOrNull } = require('../../lib/util');
 
@@ -184,6 +185,11 @@ router.get(
     const dimensions = Array.isArray(model.variantDimensions) ? model.variantDimensions : [];
 
     const form = {};
+    const requestedName = trimOrNull(req.query.name);
+    if (requestedName) form.name = requestedName;
+    const resumeInstructionId = /^oin_[a-z0-9]+$/i.test(String(req.query.resumeInstructionId || ''))
+      ? String(req.query.resumeInstructionId)
+      : null;
     if (model.usesVariants && dimensions.length) {
       form.hasVariants = true;
       form.options = dimensions.slice(0, 3).map((dimension) => ({
@@ -196,6 +202,7 @@ router.get(
       title: 'Add an item',
       nav: 'inventory',
       form,
+      resumeInstructionId,
       // So the page can say where the suggestion came from rather than having
       // values appear from nowhere.
       fromConfiguration: Boolean(form.options),
@@ -225,10 +232,22 @@ router.post(
           title: 'Add an item',
           nav: 'inventory',
           form: req.body,
+          resumeInstructionId: /^oin_[a-z0-9]+$/i.test(String(req.body.resumeInstructionId || ''))
+            ? String(req.body.resumeInstructionId)
+            : null,
           error: err.message,
         });
       }
       throw err;
+    }
+    const resumeInstructionId = /^oin_[a-z0-9]+$/i.test(String(req.body.resumeInstructionId || ''))
+      ? String(req.body.resumeInstructionId)
+      : null;
+    if (resumeInstructionId) {
+      const continued = operatingInstructions.selectProduct(
+        req.db, req.ctx, req.user, resumeInstructionId, created.skuIds[0]
+      );
+      return res.redirect(303, `/operating-instructions/${continued.id}`);
     }
     req.flash('success', 'Item created. Receive some stock to get started.');
     return res.redirect(303, `/inventory/${created.itemId}`);

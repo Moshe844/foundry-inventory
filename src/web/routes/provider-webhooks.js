@@ -6,6 +6,8 @@ const ingestion = require('../../connections/event-ingestion');
 const providerService = require('../../connections/provider-service');
 const providers = require('../../connections/providers/registry');
 const { newId, nowIso } = require('../../lib/util');
+const config = require('../../config');
+const { safeEqual } = require('../../connections/providers/common');
 
 function createProviderWebhooks(db) {
   const router = express.Router();
@@ -22,6 +24,11 @@ function createProviderWebhooks(db) {
       const providerType = String(req.params.provider || '').toLowerCase();
       const adapter = providers.get(providerType);
       if (!adapter) return res.status(404).json({ error: { code: 'provider_not_found', message: 'Provider not found.' } });
+      if (providerType === 'microsoft365' && req.query.validationToken) {
+        return res.type('text/plain').status(200).send(String(req.query.validationToken));
+      }
+      if (providerType === 'gmail') return handleGmailWebhook(db, req, res);
+      if (providerType === 'microsoft365') return handleMicrosoftWebhook(db, req, res, adapter);
       if (providerType === 'clover' && req.body?.verificationCode) {
         return res.status(200).json({ verificationCode: req.body.verificationCode });
       }
@@ -40,6 +47,55 @@ function createProviderWebhooks(db) {
     } catch (error) { return apiError(res, error, 'The provider event could not be processed.'); }
   });
   return router;
+}
+
+async function handleGmailWebhook(db, req, res) {
+  const expectedToken = config.connections.gmail.pubsubVerificationToken;
+  if (!expectedToken || !safeEqual(String(req.query.token || ''), expectedToken)) {
+    return res.status(401).json({ error: { code: 'webhook_authentication_failed', message: 'Gmail push notification was not authenticated.' } });
+  }
+  let notice = {};
+  try { notice = JSON.parse(Buffer.from(req.body?.message?.data || '', 'base64').toString('utf8')); } catch { /* invalid becomes ignored */ }
+  const email = String(notice.emailAddress || '').toLowerCase();
+  const connections = db.prepare(`SELECT * FROM workspace_connectors WHERE provider_type = 'gmail'
+    AND lower(provider_account_id) = ? AND status = 'connected' AND paused_at IS NULL
+    ORDER BY updated_at DESC`).all(email);
+  if (!connections.length) return res.status(202).json({ received: true, message: 'No active Gmail mailbox matched.' });
+
+  // The same mailbox may be deliberately connected to separate workspaces.
+  // Pub/Sub identifies the mailbox, not a Foundry connector, so every active
+  // workspace must run its own isolated sender rules and idempotency checks.
+  // A failure in one workspace must not prevent the others from seeing mail;
+  // scheduled polling remains the safe retry path for the failed one.
+  let messages = 0; let failed = 0;
+  for (const connection of connections) {
+    try {
+      const result = await providerService.syncMailbox(db, connection.workspace_id, connection.id);
+      messages += Number(result.messages || 0);
+    } catch {
+      failed += 1;
+    }
+  }
+  return res.status(200).json({ received: true, mailboxes: connections.length, messages, failed });
+}
+
+async function handleMicrosoftWebhook(db, req, res, adapter) {
+  const first = (req.body?.value || [])[0];
+  const subscriptionId = first?.subscriptionId;
+  let connection = null;
+  if (req.params.connectorId) connection = db.prepare(`SELECT * FROM workspace_connectors WHERE id = ?
+    AND provider_type = 'microsoft365' AND status = 'connected'`).get(req.params.connectorId);
+  if (!connection && subscriptionId) {
+    const rows = db.prepare(`SELECT * FROM workspace_connectors WHERE provider_type = 'microsoft365'
+      AND status = 'connected'`).all();
+    const credentials = require('../../connections/credentials');
+    connection = rows.find((row) => credentials.get(db, row.workspace_id, row.id, 'provider')?.subscriptionId === subscriptionId) || null;
+  }
+  if (!connection) return res.status(202).json({ received: true, message: 'No active Microsoft mailbox matched.' });
+  const context = await providerService.webhookContext(db, 'microsoft365', connection.id, null);
+  adapter.verifyWebhook({ body: req.body || {}, credentials: context.credentials });
+  const result = await providerService.syncMailbox(db, connection.workspace_id, connection.id, { adapter });
+  return res.status(202).json({ received: true, ...result });
 }
 
 async function handleCloverWebhook(db, req, res, adapter) {

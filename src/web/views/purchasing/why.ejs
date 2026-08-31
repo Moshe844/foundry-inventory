@@ -142,26 +142,42 @@
     <% if (permissions.replenishment) { %>
       <form method="post" action="/purchasing/policies/<%= line.skuId %>">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <div class="grid grid--3">
+        <p><strong>When should Foundry get more?</strong></p>
+        <div class="grid grid--2">
           <label class="field">
-            <span class="field-label">Reorder point</span>
+            <span class="field-label">Reorder when available stock reaches</span>
             <input class="input" type="number" min="0" name="reorderPoint"
                    value="<%= rulePreview && rulePreview.kind === 'reorder' ? rulePreview.reorderPoint : policy.reorderPoint === null ? '' : policy.reorderPoint %>"
                    placeholder="<%= line.reorderPoint === undefined ? '' : line.reorderPoint %>">
           </label>
           <label class="field">
-            <span class="field-label">Order up to</span>
+            <span class="field-label">Bring it back to</span>
             <input class="input" type="number" min="0" name="targetStock"
                    value="<%= rulePreview && rulePreview.kind === 'reorder' ? rulePreview.targetStock : policy.targetStock === null ? '' : policy.targetStock %>"
                    placeholder="<%= line.target === undefined ? '' : line.target %>">
           </label>
-          <label class="field">
-            <span class="field-label">Safety stock</span>
-            <input class="input" type="number" min="0" name="safetyStock"
-                   value="<%= policy.safetyStock === null ? '' : policy.safetyStock %>"
-                   placeholder="<%= line.safetyStock === undefined ? '' : line.safetyStock %>">
-          </label>
         </div>
+        <% if (itemSkus.length > 1) { %>
+          <label class="choice" style="max-width:680px; margin:14px 0;">
+            <input type="checkbox" name="applyToItem" value="1" checked>
+            <span>
+              <strong>Use these settings for all <%= itemSkus.length %> <%= itemSkus[0].item_name %> variants</strong>
+              <small>Set the product up once. You can change an individual variant later.</small>
+            </span>
+          </label>
+        <% } %>
+        <details class="disclosure" style="margin:14px 0;">
+          <summary>Advanced replenishment settings</summary>
+          <div style="padding-top:12px; max-width:320px;">
+            <label class="field">
+              <span class="field-label">Safety stock</span>
+              <input class="input" type="number" min="0" name="safetyStock"
+                     value="<%= policy.safetyStock === null ? '' : policy.safetyStock %>"
+                     placeholder="<%= line.safetyStock === undefined ? '' : line.safetyStock %>">
+              <span class="field-help">Optional extra stock kept as a buffer.</span>
+            </label>
+          </div>
+        </details>
         <div class="btn-row">
           <button class="btn btn--primary" type="submit">Save settings</button>
         </div>

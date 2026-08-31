@@ -19,10 +19,20 @@ const parseJson = (value, fallback) => {
 };
 const hash = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 
+function latestConnectionEvidence(row) {
+  const candidates = [row.last_activity_at, row.last_synced_at, row.created_at]
+    .filter(Boolean).map((value) => ({ value, time: Date.parse(value) }))
+    .filter((entry) => Number.isFinite(entry.time));
+  candidates.sort((a, b) => b.time - a.time);
+  return candidates[0]?.value || null;
+}
+
 function publicStatus(row, openIssues = 0, now = Date.now()) {
   if (!row || row.status === 'disconnected') return 'Disconnected';
   if (row.status === 'error' || row.paused_at || openIssues > 0) return 'Needs attention';
-  const baseline = row.last_activity_at || row.last_synced_at || row.created_at;
+  // A quiet mailbox is healthy when its scheduled check succeeds. Prefer the
+  // newest proof of life instead of treating "no new email" as an outage.
+  const baseline = latestConnectionEvidence(row);
   if (baseline && row.expected_interval_minutes > 0) {
     const staleAt = Date.parse(baseline) + Number(row.expected_interval_minutes) * 60_000;
     if (Number.isFinite(staleAt) && staleAt < now) return 'Needs attention';
@@ -59,6 +69,8 @@ function hydrate(db, row, now = Date.now()) {
 function list(db, workspaceId, options = {}) {
   return db.prepare(
     `SELECT * FROM workspace_connectors WHERE workspace_id = ?
+       AND NOT (status = 'disconnected' AND setup_status = 'AUTHORIZING'
+         AND provider_account_id IS NULL AND credential_ref IS NULL)
      ORDER BY CASE status WHEN 'connected' THEN 0 WHEN 'error' THEN 1 ELSE 2 END,
        updated_at DESC, display_name COLLATE NOCASE`
   ).all(workspaceId).map((row) => hydrate(db, row, options.now));
@@ -96,6 +108,12 @@ function issue(db, input) {
 
 function resolveIssues(db, workspaceId, connectorId, issueType, externalId) {
   const now = nowIso();
+  if (externalId === undefined || externalId === null || externalId === '') {
+    db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+      WHERE workspace_id = ? AND connector_id = ? AND issue_type = ? AND status = 'OPEN'`)
+      .run(now, now, workspaceId, connectorId, issueType);
+    return;
+  }
   db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
     WHERE workspace_id = ? AND connector_id = ? AND issue_type = ? AND status = 'OPEN'
       AND fingerprint LIKE ?`)
@@ -155,6 +173,21 @@ function rotateToken(db, ctx, membership, connectorId) {
       .run(`connector_feed_tokens:${tokenId}`, now, ctx.workspaceId, connectorId);
   });
   return { connection: get(db, ctx.workspaceId, connectorId), token, tokenPrefix: visiblePrefix };
+}
+
+/** Issue an additional scoped machine token without replacing provider OAuth credentials. */
+function issueCheckoutToken(db, ctx, membership, connectorId) {
+  const connection = get(db, ctx.workspaceId, connectorId);
+  if (connection.status !== 'connected') throw new ValidationError('Reconnect this provider before creating a checkout key.');
+  const now = nowIso();
+  const tokenId = newId('ctok');
+  const visiblePrefix = crypto.randomBytes(6).toString('hex');
+  const token = `${TOKEN_PREFIX}${visiblePrefix}.${crypto.randomBytes(32).toString('base64url')}`;
+  db.prepare(`INSERT INTO connector_feed_tokens
+    (id, workspace_id, connector_id, token_prefix, token_hash, created_by_user_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(tokenId, ctx.workspaceId, connectorId, visiblePrefix, hash(token), membership.id, now);
+  return { token, tokenPrefix: visiblePrefix };
 }
 
 function disconnect(db, workspaceId, connectorId) {
@@ -248,8 +281,12 @@ function mapExternal(db, ctx, connectorId, input) {
 
 function addEmailRule(db, ctx, connectorId, input) {
   const connection = get(db, ctx.workspaceId, connectorId);
-  if (connection.provider_type !== 'supplier_email') throw new ValidationError('Allowed senders belong to an email connection.');
+  if (!['supplier_email', 'gmail', 'microsoft365'].includes(connection.provider_type)) {
+    throw new ValidationError('Allowed senders belong to a supplier mailbox connection.');
+  }
   const sender = requireText(input.senderPattern, 'Allowed sender', { max: 254 }).toLowerCase();
+  const documentMode = ['review_each', 'supplier_documents', 'inventory_list'].includes(input.documentMode)
+    ? input.documentMode : 'review_each';
   if (!sender.includes('@')) throw new ValidationError('Enter a full email address or an @domain pattern.');
   if (input.supplierId) {
     const supplier = db.prepare('SELECT id FROM suppliers WHERE workspace_id = ? AND id = ?').get(ctx.workspaceId, input.supplierId);
@@ -257,11 +294,11 @@ function addEmailRule(db, ctx, connectorId, input) {
   }
   const id = newId('emailrule');
   db.prepare(`INSERT INTO connection_email_rules
-    (id, workspace_id, connector_id, sender_pattern, supplier_id, created_by_user_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    (id, workspace_id, connector_id, sender_pattern, supplier_id, document_mode, created_by_user_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(workspace_id, connector_id, sender_pattern) DO UPDATE SET
-      supplier_id = excluded.supplier_id, is_active = 1`)
-    .run(id, ctx.workspaceId, connectorId, sender, trimOrNull(input.supplierId), ctx.actorId, nowIso());
+      supplier_id = excluded.supplier_id, document_mode = excluded.document_mode, is_active = 1`)
+    .run(id, ctx.workspaceId, connectorId, sender, trimOrNull(input.supplierId), documentMode, ctx.actorId, nowIso());
   return db.prepare('SELECT * FROM connection_email_rules WHERE workspace_id = ? AND connector_id = ? AND sender_pattern = ? COLLATE NOCASE')
     .get(ctx.workspaceId, connectorId, sender);
 }
@@ -270,14 +307,14 @@ function refreshHealth(db, workspaceId, options = {}) {
   const at = Number(options.now || Date.now());
   for (const connection of list(db, workspaceId, { now: at })) {
     if (connection.status !== 'connected' || connection.expected_interval_minutes <= 0) continue;
-    const baseline = connection.last_activity_at || connection.last_synced_at || connection.created_at;
+    const baseline = latestConnectionEvidence(connection);
     const staleAt = Date.parse(baseline) + Number(connection.expected_interval_minutes) * 60_000;
     if (Number.isFinite(staleAt) && staleAt < at) {
       issue(db, { workspaceId, connectorId: connection.id, issueType: 'CONNECTION_STALE',
         fingerprint: `connection-stale:${connection.id}`, title: `${connection.display_name} has stopped sending activity`,
-        detail: connection.last_activity_at
-          ? `No activity has arrived since ${connection.last_activity_at}. Foundry may be missing external events.`
-          : 'No activity has arrived since this connection was established. Foundry may be missing external events.',
+        detail: baseline
+          ? `Foundry has not completed a successful check or received activity since ${baseline}. It may be missing external events.`
+          : 'Foundry has not completed a successful check or received activity since this connection was established.',
         resolutionHint: 'Check the external system, then reconnect or resume this connection.' });
     }
   }
@@ -285,6 +322,6 @@ function refreshHealth(db, workspaceId, options = {}) {
 }
 
 module.exports = {
-  TOKEN_PREFIX, parseJson, publicStatus, list, get, create, rotateToken, disconnect, pause, resume,
-  authenticate, mapping, mapExternal, issue, resolveIssues, addEmailRule, refreshHealth,
+  TOKEN_PREFIX, parseJson, publicStatus, list, get, create, rotateToken, issueCheckoutToken, disconnect, pause, resume,
+  authenticate, mapping, mapExternal, issue, resolveIssues, addEmailRule, refreshHealth, latestConnectionEvidence,
 };

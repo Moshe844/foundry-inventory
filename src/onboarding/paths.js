@@ -20,32 +20,53 @@ const { ValidationError } = require('../domain/errors');
 const PATHS = [
   {
     id: 'fresh',
-    label: 'Starting fresh',
-    blurb: 'I need Foundry to set everything up.',
-    detail: 'Upload your first invoice or inventory sheet, or describe the business. Foundry shows one exact setup preview.',
+    label: 'Enter it in Foundry',
+    blurb: 'I am starting fresh or want to add products myself.',
+    detail: 'Describe the inventory structure, or add products and opening quantities manually.',
     icon: 'foundry',
   },
   {
     id: 'spreadsheet',
-    label: 'Excel / spreadsheets',
-    blurb: 'My inventory already lives in spreadsheets.',
-    detail: 'Hand over the file. Foundry reads it and sets itself up from what it finds.',
+    label: 'Upload files or documents',
+    blurb: 'My real product or quantity details are in files.',
+    detail: 'Upload PDF, Word, Excel, CSV, TSV, or text. Foundry reads what is there and shows a review.',
     icon: 'import',
   },
   {
     id: 'software',
-    label: 'Existing inventory system',
-    blurb: 'My inventory currently lives in another inventory or ERP system.',
-    detail: 'Move to Foundry, or keep that system as the source of truth and let Foundry manage the operation.',
+    label: 'Connect another system',
+    blurb: 'Connect Shopify, Square, Clover, WooCommerce, or your own system.',
+    detail: 'Foundry imports the catalogue, remembers mappings, and receives future sales automatically.',
+    providers: ['Shopify', 'Square', 'Clover', 'WooCommerce', 'Custom API'],
     icon: 'inventory',
   },
   {
     id: 'messy',
-    label: "It's a mess",
-    blurb: 'My inventory is spread across different files or systems.',
-    detail: 'Give Foundry everything you have. It works out what agrees and what does not.',
+    label: 'Use several sources',
+    blurb: 'My inventory is spread across files, email, or different systems.',
+    detail: 'Start with one source, then add the others. Foundry compares what agrees and what needs a decision.',
     icon: 'alert',
   },
+];
+
+// A mailbox is an inventory source, but it is not a durable source-of-truth
+// mode. Keep it out of workspace_onboarding.path and route it directly to its
+// own setup. This avoids pretending that Gmail and a spreadsheet migration are
+// the same thing merely to fit a database enum.
+const SOURCE_OPTIONS = [
+  PATHS[0],
+  PATHS[1],
+  {
+    id: 'mailbox',
+    label: 'Use email attachments',
+    blurb: 'Suppliers or staff send the files to Gmail or Microsoft 365.',
+    detail: 'Connect the mailbox, choose the sender and file purpose, and Foundry checks automatically.',
+    providers: ['Gmail', 'Microsoft 365'],
+    icon: 'link',
+    href: '/onboarding/mailbox',
+  },
+  PATHS[2],
+  PATHS[3],
 ];
 
 const PATH_IDS = PATHS.map((path) => path.id);
@@ -223,8 +244,10 @@ const SIGNALS = [
     reason: 'you mentioned your inventory is spread across more than one place' },
   { path: 'software', pattern: /\b(erp|netsuite|quickbooks|sap|shopify|square|lightspeed|fishbowl|cin7|unleashed|zoho|odoo|dear|katana|system|software|platform)\b/i,
     reason: 'you mentioned another system you are using today' },
-  { path: 'spreadsheet', pattern: /\b(excel|spreadsheet|spread sheet|xlsx|csv|google sheets?|sheets?|workbook)\b/i,
-    reason: 'you mentioned spreadsheets' },
+  { path: 'mailbox', pattern: /\b(gmail|outlook|microsoft 365|office 365|mailbox|email attachment|emailed? (?:invoice|file|sheet|document))\b/i,
+    reason: 'you mentioned that the real records arrive through email' },
+  { path: 'spreadsheet', pattern: /\b(excel|spreadsheet|spread sheet|xlsx|csv|pdf|invoice|document|google sheets?|sheets?|workbook)\b/i,
+    reason: 'you mentioned a file or document containing the records' },
   { path: 'fresh', pattern: /\b(nothing|from scratch|starting|new business|just started|not tracking|on paper|in my head|no system)\b/i,
     reason: 'you mentioned you are not tracking inventory anywhere yet' },
 ];
@@ -251,6 +274,7 @@ function recommendFromDescription(description) {
 
 module.exports = {
   PATHS,
+  SOURCE_OPTIONS,
   PATH_IDS,
   NEXT_STEP,
   SOURCE_OF_TRUTH,
