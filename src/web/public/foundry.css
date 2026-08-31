@@ -1343,3 +1343,147 @@ tbody tr:hover td { background: var(--surface-2); }
 }
 .page-links a { color: var(--muted); text-decoration: none; }
 .page-links a:hover { color: var(--accent-ink); text-decoration: underline; }
+
+/* ========================================================= Inventory: item */
+
+/* The four headline numbers were four cards the size of a paragraph each,
+   sitting in a flex row with the four action buttons wedged in beside them.
+   They are one strip now; the actions are a row underneath, because they are
+   things you can do rather than the first thing to read. */
+.item-hero {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-8);
+}
+.item-hero__hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.action-bar { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.action-bar .btn { min-width: 0; }
+
+.stat-value--quiet { color: var(--muted-soft); }
+.stat-value--warn { color: var(--warn); }
+
+/* Where a variant is held. One quiet line, not a row of bordered chips. */
+.cell-where { max-width: 240px; }
+.where-list { font-size: var(--text-xs); color: var(--muted); }
+.where-at strong { color: var(--ink-soft); font-weight: var(--weight-semi); }
+.where-sep { margin: 0 var(--space-1); color: var(--line-strong); }
+
+/* The metrics cell packs four figures and a button into one column. Keep the
+   figures on a fixed rhythm so the header labels sit over their own numbers. */
+.stock-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(52px, 1fr)) auto;
+  gap: var(--space-3);
+  align-items: center;
+}
+.stock-metrics-heading .stock-metrics-grid > span {
+  text-align: right;
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+.stock-metric { display: block; text-align: right; font-variant-numeric: tabular-nums; }
+.stock-metric-label { display: none; }
+.stock-metric strong { font-weight: var(--weight-semi); color: var(--ink); }
+
+/* The sidebar's section kickers were uppercase micro-labels above each heading
+   — "SALES / Pricing", "PURCHASING / Reorder settings" — which made a 320px
+   column shout twice per panel. */
+.item-reorder__kicker {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semi);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--muted-soft);
+}
+
+/* A little more room for the record, a little less for the rail. */
+.grid--sidebar { grid-template-columns: minmax(0, 1fr) 296px; gap: var(--space-5); }
+
+@media (max-width: 1100px) {
+  .grid--sidebar { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 860px) {
+  .cell-where { max-width: none; }
+  .stock-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+  .stock-metrics-heading { display: none; }
+  .stock-metric { text-align: left; }
+  .stock-metric-label {
+    display: block;
+    font-size: var(--text-2xs);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted-soft);
+  }
+}
+
+/* ------------------------------------- Item record: layout, not decoration */
+
+/*
+ * The variants table was running underneath the sidebar and putting its own
+ * "on order" column behind the pricing panel.
+ *
+ * A grid child is min-width:auto by default, so a card holding a wide table
+ * refuses to shrink and simply overflows its column — and because the sidebar
+ * paints after it, the sidebar wins. Every level between the grid and the
+ * scroll container has to be allowed to shrink, which is what min-width:0 says.
+ */
+.grid--sidebar > *,
+.grid--sidebar .grid,
+.grid--sidebar .card,
+.grid--sidebar .panel { min-width: 0; }
+.table-wrap { max-width: 100%; }
+
+/* Where a variant is held. Place on the left, quantity on the right, aligned
+   down the column so three locations can be compared at a glance. Boxed pills
+   made the column too wide; running the words together made it prose. */
+.cell-where { max-width: 260px; }
+.where-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-3);
+  margin: 0;
+  font-size: var(--text-xs);
+  align-items: baseline;
+}
+.where-list dt {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.where-list dd {
+  margin: 0;
+  text-align: right;
+  color: var(--ink-soft);
+  font-weight: var(--weight-semi);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 860px) {
+  .cell-where { max-width: none; }
+  .where-list { grid-template-columns: minmax(0, 1fr) auto; }
+}
+
+/* The SKU code is the least-scanned column and the widest — CLASSIC-COTTON-T-
+   SHIRT-B-SMALL is thirty characters of something nobody reads across. It gets
+   the smallest type and is allowed to wrap, so the numbers keep the room. */
+.inventory-variant-table td.mono,
+.inventory-variant-table .mono {
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  color: var(--muted);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  max-width: 150px;
+}
+.inventory-variant-table td, .inventory-variant-table th { padding-left: var(--space-3); padding-right: var(--space-3); }
+.inventory-variant-table .cell-main { min-width: 120px; }
