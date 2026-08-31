@@ -292,3 +292,50 @@ test('the global Needs you badge includes every customer order waiting for stock
   assert.match(page.text, new RegExp(`nav-count">${inbox.length}<`));
   env.db.close();
 });
+
+
+/**
+ * A page must not reassure somebody that nothing moved while recording that
+ * something moved.
+ *
+ * Found walking the customer-order scenario. The shortfall notice was written
+ * for the moment an order is confirmed — "Foundry found only N units available
+ * to reserve. No on-hand stock changed and nothing was shipped" — and then
+ * re-rendered unchanged after a shipment. Shipping 34 of 50 left the page
+ * saying "nothing was shipped" directly beneath "34 fulfilled (shipped)",
+ * under a flash reading "SO-1001 was partly fulfilled".
+ */
+test('a partly shipped order does not claim nothing was shipped', async () => {
+  const env = setup();
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 34,
+  });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const form = await agent.get('/sales/new');
+  const created = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'Riverside Builders', skuId: env.item.skuId,
+    quantity: 50, orderDate: '2026-08-31', fulfillmentLocationId: env.workspace.main.id,
+  });
+  let page = await agent.get(created.headers.location);
+  await agent.post(`${created.headers.location}/confirm`).type('form')
+    .send({ _csrf: csrfFrom(page.text) });
+
+  page = await agent.get(created.headers.location);
+  assert.match(plain(page.text), /16 units still short/i);
+  assert.match(plain(page.text), /nothing was shipped/i, 'true while nothing has shipped');
+
+  const order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
+  const line = order.lines[0];
+  await agent.post(`${created.headers.location}/fulfill`).type('form').send({
+    _csrf: csrfFrom(page.text), idempotencyKey: `short-ship:${order.id}`,
+    lineId: line.id, locationId: env.workspace.main.id, quantity: 34,
+  });
+
+  const after = plain((await agent.get(created.headers.location)).text);
+  assert.match(after, /still short/i, 'the shortfall is still stated');
+  assert.doesNotMatch(after, /nothing was shipped/i,
+    'because something was shipped, and the same page says so');
+  assert.match(after, /34 units shipped/, 'it says how much actually went');
+});

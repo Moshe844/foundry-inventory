@@ -4,20 +4,40 @@
 <div class="stats-row">
   <div class="stat"><strong><%= order.totals.ordered %></strong><span>Units ordered</span></div>
   <div class="stat"><strong><%= order.totals.allocated %></strong><span>committed to this customer</span></div>
-  <div class="stat"><strong><%= order.totals.backordered %></strong><span><%= order.status === 'DRAFT' ? 'Not reserved yet' : 'Waiting for stock' %></span></div>
+  <div class="stat"><strong><%= order.totals.backordered %></strong><span><%= order.status === 'DRAFT' ? 'not committed yet' : 'waiting for stock' %></span></div>
   <div class="stat"><strong><%= order.totals.fulfilled %></strong><span>fulfilled (shipped)</span></div>
 </div>
 
 <% if (order.status === 'DRAFT') { %><div class="notice"><strong>Nothing is committed yet.</strong> Confirm the order when the customer has committed to it. Physical on-hand will remain unchanged.</div><% } %>
+<%
+  /*
+   * The shortfall notice, written for the state the order is actually in.
+   *
+   * It was written for the moment an order is confirmed — "Foundry found only N
+   * units available to reserve. No on-hand stock changed and nothing was
+   * shipped" — and then re-rendered unchanged after a shipment. Ship 34 of 50
+   * and the page said "nothing was shipped" directly beneath "34 fulfilled
+   * (shipped)", and beneath a flash reading "SO-1001 was partly fulfilled".
+   *
+   * Reassuring somebody that nothing moved, on the screen recording that
+   * something moved, undermines every other number on the page.
+   */
+  var shipped = order.totals.fulfilled || 0;
+%>
 <% if (order.status !== 'DRAFT' && order.totals.backordered) { %><div class="notice notice--warn sales-outcome">
-  <strong><%= order.totals.backordered %> unit<%= order.totals.backordered === 1 ? '' : 's' %> cannot be reserved yet.</strong>
-  <p>The customer order is confirmed, but Foundry found only <%= order.totals.allocated %> unit<%= order.totals.allocated === 1 ? '' : 's' %> available to reserve. <strong>No on-hand stock changed and nothing was shipped.</strong></p>
+  <strong><%= order.totals.backordered %> unit<%= order.totals.backordered === 1 ? '' : 's' %> still short.</strong>
+  <% if (shipped) { %>
+    <p><%= shipped %> unit<%= shipped === 1 ? '' : 's' %> shipped and
+      <%= order.totals.allocated %> held for this customer. The rest is not in stock yet.</p>
+  <% } else { %>
+    <p>The customer order is confirmed, but Foundry found only <%= order.totals.allocated %> unit<%= order.totals.allocated === 1 ? '' : 's' %> available to hold. <strong>No on-hand stock changed and nothing was shipped.</strong></p>
+  <% } %>
   <p>Foundry automatically checked stock at other locations, incoming supplier orders and replenishment. If a decision or missing setup is required, it is in <a href="/needs-you">Needs you</a>.</p>
 </div><% } %>
 
 <div class="card">
   <div class="card-head"><h2>Order lines</h2></div>
-  <div class="table-wrap"><table class="table table--stack sales-table"><thead><tr><th>Product</th><th>Ordered</th><th>Unit price</th><th>Line total</th><th>Reserved</th><th>Waiting</th><th>Shipped</th><th>Reserved at</th></tr></thead><tbody>
+  <div class="table-wrap"><table class="table table--stack sales-table"><thead><tr><th>Product</th><th>Ordered</th><th>Unit price</th><th>Line total</th><th class="num">Committed</th><th class="num">Short</th><th class="num">Shipped</th><th>Held at</th></tr></thead><tbody>
     <% order.lines.forEach(function(line){ %><tr><td class="cell-main"><strong><%= line.displayName %></strong><small><%= line.code %></small></td><td><%= line.quantity_ordered %></td><td><%= line.unit_price_minor === null ? 'Price not set' : helpers.money(line.unit_price_minor, order.currency) %></td><td><%= line.lineTotalMinor === null ? '—' : helpers.money(line.lineTotalMinor, order.currency) %></td><td><%= line.allocated %></td><td><%= line.backordered %></td><td><%= line.quantity_fulfilled %></td><td><% if (!line.allocations.length) { %>—<% } else { line.allocations.forEach(function(a){ %><span class="pill"><%= a.location_name %> <strong><%= a.quantity %></strong></span><% }) } %></td></tr><% }) %>
   </tbody></table></div>
   <div class="sales-total-block">
@@ -26,16 +46,16 @@
     <% if (order.pricing.taxMinor) { %><div><span>Tax</span><strong><%= helpers.money(order.pricing.taxMinor, order.currency) %></strong></div><% } %>
     <div class="sales-total"><span>Order total</span><strong><%= helpers.money(order.pricing.totalMinor, order.currency) %></strong></div>
   </div>
-  <% if (order.pricing.missingPriceLines) { %><div class="notice notice--warn"><strong><%= order.pricing.missingPriceLines %> line<%= order.pricing.missingPriceLines === 1 ? '' : 's' %> has no selling price.</strong> The total is incomplete. Set the inventory price, then add the line again or create a new draft.</div><% } %>
+  <% if (order.pricing.missingPriceLines) { %><div class="notice notice--warn"><strong>This draft cannot be confirmed yet.</strong> <%= order.pricing.missingPriceLines %> line<%= order.pricing.missingPriceLines === 1 ? '' : 's' %> has no selling price. <% order.lines.filter(function(line){ return line.unit_price_minor === null; }).forEach(function(line){ %><a href="/inventory/<%= line.item_id %>#selling-price">Set the price for <%= line.displayName %></a>. <% }) %></div><% } %>
 </div>
 
 <% if (!['FULFILLED','CANCELLED'].includes(order.status)) { %>
 <div class="grid grid--2" style="margin-top:16px;">
-  <% if (order.status === 'DRAFT') { %><form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/confirm"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h2>Confirm customer demand</h2><p>Foundry will reserve available stock without changing on hand, then manage any shortage.</p><button class="btn btn--primary" type="submit">Confirm and reserve stock</button></form><% } else if (order.totals.allocated > 0) { %>
+  <% if (order.status === 'DRAFT' && !order.pricing.missingPriceLines) { %><form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/confirm"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h2>Confirm customer demand</h2><p>Foundry will reserve available stock without changing on hand, then manage any shortage.</p><button class="btn btn--primary" type="submit">Confirm and reserve stock</button></form><% } else if (order.status !== 'DRAFT' && order.totals.allocated > 0) { %>
   <form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/fulfill"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="web-fulfill:<%= order.id %>:<%= order.version %>"><h2>Record what shipped</h2><p>This is when physical stock actually leaves. On-hand and reserved quantities decrease together.</p>
     <% order.lines.forEach(function(line){ line.allocations.forEach(function(a){ %><div class="form-row"><input type="hidden" name="lineId" value="<%= line.id %>"><input type="hidden" name="locationId" value="<%= a.location_id %>"><label class="field"><span><%= line.displayName %> from <%= a.location_name %> (max <%= a.quantity %>)</span><input type="number" name="quantity" min="0" max="<%= a.quantity %>" value="<%= a.quantity %>"></label></div><% }) }) %>
     <button class="btn btn--primary" type="submit">Record shipment</button></form><% } %>
-  <form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/lines"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="web-line:<%= order.id %>:<%= order.version %>"><h2>Add to this order</h2><p>Add more customer demand. Foundry will recalculate what can be reserved.</p><label class="field"><span>Product</span><select name="skuId" required><option value="">Choose</option><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %></option><% }) %></select></label><label class="field"><span>Quantity</span><input type="number" name="quantity" min="1" required></label><button class="btn" type="submit">Add and recalculate</button></form>
+  <form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/lines"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="web-line:<%= order.id %>:<%= order.version %>"><h2>Add to this order</h2><p>Add more customer demand. Foundry will recalculate what can be reserved.</p><label class="field"><span>Product</span><select name="skuId" required><option value="">Choose</option><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %></option><% }) %></select></label><label class="field"><span>Quantity</span><input type="number" name="quantity" min="1" required></label><label class="field"><span>Selling price <small>if not set in inventory</small></span><input name="unitPrice" inputmode="decimal" placeholder="0.00"></label><button class="btn" type="submit">Add and recalculate</button></form>
   <form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h2>Cancel remaining order</h2><p>Unshipped reservations are released immediately. Stock already shipped remains in the inventory history.</p><label class="field"><span>Reason <small>optional</small></span><input name="reason"></label><button class="btn btn--danger" type="submit">Cancel remaining order</button></form>
 </div>
 <% } %>
