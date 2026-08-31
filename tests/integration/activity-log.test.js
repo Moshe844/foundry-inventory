@@ -175,3 +175,37 @@ test('the sidebar sends Activity to the business history', async () => {
   assert.match(activityLink, /href="\/activity"/, 'pointing at the ledger, not the autopilot log');
   env.db.close();
 });
+
+/**
+ * Activity answers "who did it", so it must not name somebody who did not.
+ *
+ * Found walking the external-sale scenario. A sale rung up on a connected till
+ * is recorded against the workspace owner, because the ledger requires a real
+ * actor and the connector acts as one. The timeline then read "Issued 5 ×
+ * Copper Elbow 15mm from Back store room … Ruth Alvarez" for a sale Ruth had
+ * nothing to do with. The till is named instead, and the machine namespace on
+ * the reference stays out of the sentence.
+ */
+test('a sale from a connected system is credited to the system, not to a person', async () => {
+  const env = await traded({ quietChecks: 0 });
+  const operationsLog = require('../../src/domain/operations-log');
+
+  engine.issue(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 2,
+    reasonCode: 'sold', reference: 'external:till-9001',
+    notes: 'Source: Shop till; external event: till-9001.',
+  });
+
+  const { events } = operationsLog.timeline(env.db, env.workspace.workspaceId, { limit: 50 });
+  const fromTill = events.find((event) => /till-9001/.test(event.detail || ''));
+
+  assert.ok(fromTill, 'the external sale is on the timeline');
+  assert.equal(fromTill.who, 'Shop till', 'credited to the till that rang it up');
+  assert.notEqual(fromTill.who, env.workspace.account.name);
+  assert.doesNotMatch(fromTill.detail, /external:/,
+    'the namespace the ingestion writes is not part of the sentence');
+
+  // A movement somebody really did keeps their name.
+  const byHand = events.find((event) => /Transferred 10/.test(event.title || ''));
+  assert.ok(byHand && byHand.who && !/connected system/i.test(byHand.who));
+});

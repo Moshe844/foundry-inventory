@@ -43,6 +43,28 @@ const STREAM_LABEL = {
 
 const iso = (value) => (value ? String(value) : '');
 
+// The business timeline should read like sentences, not like a form. The count
+// is known at every one of these call sites, so the word can simply be right.
+const units = (n) => `${n} ${Number(n) === 1 ? 'unit' : 'units'}`;
+
+/*
+ * Who a movement should be credited to.
+ *
+ * A sale rung up on a connected till is recorded against the workspace owner,
+ * because the ledger requires a real actor and the connector acts as them. On
+ * this page that read "Issued 5 × Copper Elbow 15mm … Ruth Alvarez" for a sale
+ * Ruth had nothing to do with — she was not in the shop. Activity answers "who
+ * did it", and naming a person who did not is worse than naming nobody.
+ *
+ * The ingestion writes a reference namespaced "external:" and a note saying
+ * which connection it came from, so the till can be named instead.
+ */
+function movementActor(group) {
+  if (!/^external:/i.test(String(group.reference || ''))) return group.actorName;
+  const named = /^Source:\s*([^;.]+)/i.exec(String(group.notes || ''));
+  return named ? named[1].trim() : 'A connected system';
+}
+
 /** Stock that moved, in the words the ledger already produces. */
 function inventoryEvents(db, workspaceId, filters) {
   const { groups } = activityService.listActivity(db, workspaceId, { ...filters, limit: 500, offset: 0 });
@@ -53,10 +75,12 @@ function inventoryEvents(db, workspaceId, filters) {
     kind: group.operation,
     title: group.sentence || group.displayName,
     subject: group.displayName,
-    who: group.actorName,
+    who: movementActor(group),
     detail: [
       group.reasonLabel,
-      group.reference ? `Ref ${group.reference}` : '',
+      // "external:" is the namespace the ingestion writes, not something the
+      // reader needs, and the same identifier followed it in the note.
+      group.reference ? `Ref ${String(group.reference).replace(/^external:/i, '')}` : '',
       group.notes || '',
     ].filter(Boolean).join(' · '),
     href: group.itemId ? `/inventory/${group.itemId}` : '/activity',
@@ -94,7 +118,7 @@ function purchasingEvents(db, workspaceId) {
       title: `${order.po_number} drafted for ${supplier}`,
       subject: order.po_number,
       who: order.created_by || 'Foundry',
-      detail: `${order.units} unit(s). Nothing sent to the supplier yet.`,
+      detail: `${units(order.units)}. Nothing sent to the supplier yet.`,
       href: `/purchasing/orders/${order.id}`,
     });
     if (order.ordered_at) {
@@ -106,7 +130,7 @@ function purchasingEvents(db, workspaceId) {
         title: `${order.po_number} placed with ${supplier}`,
         subject: order.po_number,
         who: order.approved_by || 'Foundry',
-        detail: `${order.units} unit(s) now on order.`,
+        detail: `${units(order.units)} now on order.`,
         href: `/purchasing/orders/${order.id}`,
       });
     }
@@ -153,12 +177,64 @@ function purchasingEvents(db, workspaceId) {
       subject: receipt.po_number,
       who: receipt.received_by || 'You',
       detail: [
-        `${result.unitsReceived || 0} unit(s) booked in`,
+        `${units(result.unitsReceived || 0)} booked in`,
         result.outstandingAfter ? `${result.outstandingAfter} still outstanding` : '',
         receipt.over_receipt_approved ? 'more than ordered, accepted' : '',
         receipt.reference ? `Ref ${receipt.reference}` : '',
       ].filter(Boolean).join(' · '),
       href: `/purchasing/orders/${receipt.purchase_order_id}`,
+    });
+  }
+
+  // Supplier correspondence belongs to the purchase order story. The detailed
+  // extraction evidence remains in the PO audit, while Activity says only the
+  // business consequence: what the supplier confirmed, changed, or received.
+  for (const document of db.prepare(`SELECT d.id, d.document_type, d.status, d.processed_at,
+      d.purchase_order_id, d.discrepancies, po.po_number, s.name AS supplier_name
+    FROM supplier_documents d
+    LEFT JOIN purchase_orders po ON po.id = d.purchase_order_id
+    LEFT JOIN suppliers s ON s.id = d.supplier_id
+    WHERE d.workspace_id = ? AND d.status IN ('MATCHED','NEEDS_REVIEW')
+    ORDER BY d.processed_at DESC LIMIT 200`).all(workspaceId)) {
+    let discrepancies = [];
+    try { discrepancies = JSON.parse(document.discrepancies || '[]'); } catch { discrepancies = []; }
+    const label = String(document.document_type || 'document').replaceAll('_', ' ');
+    const matched = document.status === 'MATCHED' && !discrepancies.length;
+    events.push({
+      id: `supplier-document:${document.id}`,
+      stream: 'purchasing',
+      at: iso(document.processed_at),
+      kind: `supplier_${document.document_type}`,
+      title: matched
+        ? `${document.supplier_name || 'Supplier'} ${label} matched${document.po_number ? ` ${document.po_number}` : ''}`
+        : `${document.supplier_name || 'Supplier'} ${label} needs review`,
+      subject: document.po_number || document.supplier_name || 'Supplier document',
+      who: 'Foundry',
+      detail: matched
+        ? 'Foundry compared the supplier evidence with the purchase order; no action is needed.'
+        : `${discrepancies.length || 1} difference${discrepancies.length === 1 ? '' : 's'} found. Nothing unsafe was applied.`,
+      href: document.purchase_order_id ? `/purchasing/orders/${document.purchase_order_id}` : '/needs-you',
+    });
+  }
+
+  for (const message of db.prepare(`SELECT sc.id, sc.message_kind, sc.recipient, sc.sent_at,
+      sc.purchase_order_id, po.po_number, s.name AS supplier_name
+    FROM supplier_communications sc
+    LEFT JOIN purchase_orders po ON po.id = sc.purchase_order_id
+    LEFT JOIN suppliers s ON s.id = sc.supplier_id
+    WHERE sc.workspace_id = ? AND sc.status = 'SENT'
+    ORDER BY sc.sent_at DESC LIMIT 200`).all(workspaceId)) {
+    const followup = message.message_kind === 'follow_up';
+    events.push({
+      id: `supplier-message:${message.id}`,
+      stream: 'purchasing',
+      at: iso(message.sent_at),
+      kind: followup ? 'supplier_follow_up_sent' : 'supplier_order_sent',
+      title: `${followup ? 'Follow-up' : message.po_number || 'Purchase order'} sent to ${message.supplier_name || message.recipient || 'supplier'}`,
+      subject: message.po_number || message.supplier_name || 'Supplier communication',
+      who: 'Foundry',
+      detail: message.recipient ? `Sent to ${message.recipient}.` : '',
+      href: message.purchase_order_id ? `/purchasing/orders/${message.purchase_order_id}` : '/purchasing',
     });
   }
 
