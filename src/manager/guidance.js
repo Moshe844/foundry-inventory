@@ -497,10 +497,14 @@ function screenContext(guidance, nav) {
       next = { title: 'Connect the system where your records live', action: 'Choose a connection', href: '#connection-group-selling' };
     }
   } else if (nav === 'attention') {
-    next = guidance.firstNeedsYou
-      ? { title: guidance.firstNeedsYou.title, action: guidance.firstNeedsYou.actionLabel,
-          href: guidance.firstNeedsYou.href }
-      : { title: 'Nothing needs a decision from you', action: null, href: null };
+    /*
+     * Needs you is the list of decisions. A band above it saying "3 things need
+     * you · Do now: Copper Elbow 1/2 in. needs a decision · Approve the plan"
+     * repeats the page's own count and its first row, one centimetre higher,
+     * with the same button. The page introduces itself and says how many are
+     * waiting; there is nothing left for this to add.
+     */
+    return null;
   } else if (nav === 'activity') {
     next = state.movementCount
       ? { title: 'Keep recording what comes in, goes out, moves or gets counted', action: 'Tell Foundry', href: '/#tell-foundry' }

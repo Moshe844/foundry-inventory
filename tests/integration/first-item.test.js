@@ -157,7 +157,8 @@ test('accepting the offer creates the combinations and no stock whatsoever', asy
   assert.match(plain(quantities.text), /How should we get your current quantities into Foundry\?/);
   assert.match(plain(quantities.text), /Tell Foundry/);
   assert.match(plain(quantities.text), /Upload Excel/);
-  assert.match(plain(quantities.text), /Enter manually/);
+  assert.match(plain(quantities.text), /Type quantities yourself/);
+  assert.match(plain(quantities.text), /Save opening inventory/);
 
   const resumed = await agent.get('/foundry/quantities');
   assert.equal(resumed.status, 303);
@@ -281,6 +282,39 @@ test('single-letter sizes do not eat the product name', () => {
   for (const [example, values, expected] of cases) {
     assert.equal(firstItemService.tidyName(example, values), expected, `from ${example}`);
   }
+});
+
+test('opening quantities can be entered for several variants in one clear grid', async () => {
+  const env = setup();
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const ready = await agent.get('/foundry/ready/plan_test');
+  const created = await agent
+    .post('/foundry/first-item')
+    .type('form')
+    .send({ _csrf: csrfFrom(ready.text), name: 'Baby headband' });
+  const page = await agent.get(created.headers.location);
+  const item = env.db.prepare('SELECT id FROM items WHERE workspace_id = ?').get(env.workspace.workspaceId);
+  const skus = repo.listSkusForItem(env.db, env.workspace.workspaceId, item.id);
+  const location = repo.listLocations(env.db, env.workspace.workspaceId)[0];
+
+  const saved = await agent
+    .post(`/foundry/quantities/${item.id}/save`)
+    .type('form')
+    .send({
+      _csrf: csrfFrom(page.text),
+      skuId: [skus[0].id, skus[1].id],
+      locationId: [location.id, location.id],
+      quantity: ['12', '8'],
+    });
+
+  assert.equal(saved.status, 303);
+  assert.equal(saved.headers.location, '/');
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, skus[0].id, location.id), 12);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, skus[1].id, location.id), 8);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 2);
 });
 
 test('a plural product keeps the customer\u2019s own wording', () => {

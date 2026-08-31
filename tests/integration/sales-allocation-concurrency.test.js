@@ -7,6 +7,7 @@ const { execFile } = require('node:child_process');
 const { openDatabase } = require('../../src/db');
 const inventory = require('../../src/domain/inventory-engine');
 const sales = require('../../src/sales/sales-order-service');
+const prices = require('../../src/pricing/price-service');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('../helpers');
 
 const WORKER = path.join(__dirname, '..', 'helpers', 'sales-allocation-worker.js');
@@ -29,6 +30,7 @@ test('two simultaneous sales orders cannot commit the same available units', asy
   const { db, databasePath } = makeDatabase();
   const workspace = seedWorkspace(db);
   const item = makeQuantityItem(db, workspace.ctx);
+  prices.setPrice(db, workspace.ctx, { skuId: item.skuId, amount: '10.00', currency: 'USD' });
   inventory.receive(db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 10 });
   const first = sales.createOrder(db, workspace.ctx, {
     customerName: 'First customer', lines: [{ skuId: item.skuId, quantity: 8 }],

@@ -50,7 +50,7 @@ async function post(agent, path, body, from = '/autopilot') {
   return agent.post(path).type('form').send({ _csrf: csrfFrom(page.text), ...body });
 }
 
-test('the primary home is Foundry managing work, not an inventory dashboard', async () => {
+test('Home leads an unfinished business with one real setup action, not a dashboard', async () => {
   const env = setup();
   env.db.prepare(
     `INSERT INTO workspace_configuration
@@ -64,33 +64,19 @@ test('the primary home is Foundry managing work, not an inventory dashboard', as
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
 
-  // Home answers three questions in order: how is the business doing, what
-  // needs me, what has Foundry handled. It opens with a verdict a person could
-  // say out loud rather than with stock counters.
+  // Supplier and replenishment setup are still genuinely unfinished. Home
+  // leads with that real state instead of pretending the business is ready or
+  // asking the person to infer a workflow from stock counters.
   assert.match(page, /Good (morning|afternoon|evening), /, 'a briefing, addressed to somebody');
-  assert.match(page, /thing needs you|Everything is under control/, 'and one plain verdict');
-  assert.match(page, /Needs your attention/);
-  assert.match(page, /Foundry handled/);
-  // The handling lane appears when there is something in it. An empty one
-  // saying "Nothing in progress. There is no routine work in progress." is
-  // three sentences reporting that nothing happened.
-  assert.doesNotMatch(page, /There is no routine work in progress/);
-  // Counters are context underneath the answer, not the answer.
-  assert.match(page, /Inventory pulse/);
-  assert.ok(
-    page.indexOf('Needs your attention') < page.indexOf('Inventory pulse'),
-    'what needs a person comes before how much stock there is'
-  );
-  assert.match(page, /Tell Foundry when you sell something/);
-  // "1 real check" and "Checked inventory after stock arrived" are Foundry's
-  // own bookkeeping: a routine evaluation that changed nothing. Home says what
-  // Foundry handled, and when it handled nothing it says so in a sentence
-  // rather than listing its own checks. The evaluation is still recorded — the
-  // history test below reads it straight off /autopilot/history.
-  assert.match(page, /No new work found|Nothing yet today/);
+  assert.match(page, /Getting Foundry ready/);
+  assert.match(page, /Do this next/);
+  assert.match(page, /Add who supplies/);
+  assert.match(page, /Setup progress · 2 of 5 complete/);
+  assert.doesNotMatch(page, /Inventory pulse/, 'setup guidance replaces the ordinary dashboard until setup is complete');
+  assert.doesNotMatch(page, /Tell Foundry when you sell something/, 'missing history is taught in context, not made into work');
 });
 
-test('Needs you exposes the missing operating input instead of silently showing an empty queue', async () => {
+test('missing demand history stays contextual guidance and does not become a fake Needs you decision', async () => {
   const env = setup();
   env.db.prepare(
     `INSERT INTO workspace_configuration
@@ -102,11 +88,9 @@ test('Needs you exposes the missing operating input instead of silently showing 
 
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/needs-you')).text);
-  // Named in the words somebody new to inventory would use, and saying what
-  // to do about it rather than which internal input is absent.
-  assert.match(page, /Tell Foundry when you sell something/);
-  assert.match(page, /not how fast they go/i);
-  assert.match(page, /cannot silently observe another system or invent demand/i);
+  assert.match(page, /Nothing is waiting/);
+  assert.doesNotMatch(page, /Tell Foundry when you sell something/);
+  assert.doesNotMatch(page, /missing operating input/i);
 });
 
 test('completed manager checks appear in durable history even when no action was supported', async () => {
@@ -117,7 +101,11 @@ test('completed manager checks appear in durable history even when no action was
 
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/autopilot/history')).text);
-  assert.match(page, /Inventory checks/);
+  // The checks are kept and counted, but folded away at the foot of the page.
+  // This page is called "What Foundry has done", and it used to open with fifty
+  // identical lines of a check that did nothing, above the work itself.
+  assert.match(page, /1 inventory check/i, 'counted');
+  assert.match(page, /completed evaluations, including the ones that correctly produced no action/i);
   assert.match(page, /Checked inventory after stock arrived/);
   assert.match(page, /1 position lacked enough outbound history for safe demand action/);
   assert.doesNotMatch(page, /Foundry has not had anything to do yet/);
@@ -145,10 +133,6 @@ test('an active product reaching zero appears automatically in Foundry needs you
   // been told what it sells and must not still be asking.
   assert.match(page, /1 thing needs you/i);
   assert.doesNotMatch(page, /Tell Foundry when you sell something/i);
-  // "Foundry is still learning demand for 1 tracked variant" was true and
-  // unreadable. The plain sentence stays on the page; the thresholds behind it
-  // are one disclosure away rather than in the headline.
-  assert.match(page, /Still learning what sells/i);
   assert.doesNotMatch(page, /tracked variant/i, 'not in Foundry\'s own vocabulary');
 });
 

@@ -11,6 +11,8 @@ process.env.CLOVER_CLIENT_ID = process.env.CLOVER_CLIENT_ID || 'mission12-clover
 process.env.CLOVER_CLIENT_SECRET = process.env.CLOVER_CLIENT_SECRET || 'mission12-clover-secret';
 process.env.CLOVER_WEBHOOK_AUTH_CODE = process.env.CLOVER_WEBHOOK_AUTH_CODE || 'mission12-clover-webhook';
 process.env.CLOVER_ENVIRONMENT = 'sandbox';
+process.env.GMAIL_CLIENT_ID = process.env.GMAIL_CLIENT_ID || 'mission12-gmail-client';
+process.env.GMAIL_CLIENT_SECRET = process.env.GMAIL_CLIENT_SECRET || 'mission12-gmail-secret';
 
 const { createApp } = require('../../src/app');
 const authService = require('../../src/domain/auth-service');
@@ -20,6 +22,8 @@ const sales = require('../../src/sales/sales-order-service');
 const connections = require('../../src/connections/service');
 const credentials = require('../../src/connections/credentials');
 const providerService = require('../../src/connections/provider-service');
+const gmail = require('../../src/connections/providers/gmail');
+const suppliers = require('../../src/purchasing/supplier-service');
 const shopifyBootstrap = require('../../src/connections/shopify-bootstrap');
 const priceService = require('../../src/pricing/price-service');
 const providers = require('../../src/connections/providers/registry');
@@ -62,6 +66,121 @@ test('Connections UI offers real business providers and does not instruct owners
   assert.match(text, /Custom business system/); assert.match(text, /No scripts, manual JSON, or Check now/);
   assert.doesNotMatch(text, /PowerShell|curl/i);
   env.db.close();
+});
+
+test('an abandoned OAuth placeholder never becomes a confusing connection card', async () => {
+  const env = setup();
+  const now = new Date().toISOString();
+  env.db.prepare(`INSERT INTO workspace_connectors
+    (id, workspace_id, connector_key, display_name, provider_type, status, capabilities, provides,
+     config, expected_interval_minutes, setup_status, authorized_by_user_id, created_at, updated_at)
+    VALUES ('con_abandoned_oauth', ?, 'gmail:abandoned', 'Gmail', 'gmail', 'disconnected', '[]', '[]',
+      '{}', 15, 'AUTHORIZING', ?, ?, ?)`)
+    .run(env.workspace.workspaceId, env.workspace.ownerId, now, now);
+  assert.ok(!connections.list(env.db, env.workspace.workspaceId)
+    .some((row) => row.id === 'con_abandoned_oauth'));
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const page = await agent.get('/settings/connections');
+  assert.doesNotMatch(page.text, /con_abandoned_oauth/);
+  env.db.close();
+});
+
+test('Connect another Gmail keeps an existing mailbox and adds a genuinely different account', async () => {
+  const env = setup(); const adapter = providers.get('gmail');
+  const originals = { exchange: adapter.exchangeAuthorization, register: adapter.registerWebhooks,
+    discover: adapter.discover };
+  let mailbox = 'first@example.test'; let tokenNumber = 0;
+  try {
+    adapter.exchangeAuthorization = async () => ({
+      credentials: { accessToken: `gmail-token-${++tokenNumber}`, refreshToken: `refresh-${tokenNumber}`,
+        mailbox, expiresAt: Date.now() + 3600_000 },
+      accountId: mailbox, accountName: mailbox, capabilities: ['MAIL_READ', 'MAIL_SEND', 'MAILBOX_WATCH'],
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    adapter.registerWebhooks = async ({ credentials: current }) => ({ credentials: current });
+    adapter.discover = async () => ({ products: [], locations: [] });
+
+    const begin = () => providerService.beginAuthorization(env.db, env.workspace.ctx,
+      { providerType: 'gmail' }, 'https://foundry.example.test');
+    const complete = async (started) => providerService.completeOAuth(env.db, 'gmail',
+      { code: 'safe-code', state: new URL(started.redirectUrl).searchParams.get('state') },
+      'https://foundry.example.test');
+
+    const first = await complete(await begin());
+    connections.addEmailRule(env.db, env.workspace.ctx, first.id,
+      { senderPattern: 'supplier@example.test', documentMode: 'inventory_list' });
+
+    const same = await complete(await begin());
+    assert.equal(same.id, first.id, 'choosing the existing Gmail must preserve its connector');
+    assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM workspace_connectors
+      WHERE workspace_id = ? AND provider_type = 'gmail'`).get(env.workspace.workspaceId).n, 1);
+    assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_email_rules
+      WHERE workspace_id = ? AND connector_id = ?`).get(env.workspace.workspaceId, first.id).n, 1,
+    're-authorizing the same mailbox must preserve its sender rules');
+    assert.equal(credentials.get(env.db, env.workspace.workspaceId, first.id, 'provider').accessToken,
+      'gmail-token-2', 'the preserved mailbox must receive the refreshed credential');
+
+    mailbox = 'second@example.test';
+    const second = await complete(await begin());
+    assert.notEqual(second.id, first.id);
+    assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM workspace_connectors
+      WHERE workspace_id = ? AND provider_type = 'gmail' AND status = 'connected'`)
+      .get(env.workspace.workspaceId).n, 2);
+  } finally {
+    adapter.exchangeAuthorization = originals.exchange;
+    adapter.registerWebhooks = originals.register;
+    adapter.discover = originals.discover;
+    env.db.close();
+  }
+});
+
+test('one Gmail push wakes every workspace connected to that mailbox without crossing sender rules', async () => {
+  const store = makeDatabase();
+  const first = seedWorkspace(store.db, { workspaceName: 'First Gmail Workspace' });
+  const second = seedWorkspace(store.db, { workspaceName: 'Second Gmail Workspace' });
+  const originalToken = process.env.GMAIL_PUBSUB_VERIFICATION_TOKEN;
+  const originalPoll = gmail.poll;
+  process.env.GMAIL_PUBSUB_VERIFICATION_TOKEN = 'push-secret';
+  try {
+    for (const [workspace, sender] of [[first, 'first@supplier.test'], [second, 'second@supplier.test']]) {
+      const membership = authService.getMembership(store.db, workspace.workspaceId, workspace.accountId);
+      const supplier = suppliers.createSupplier(store.db, workspace.ctx, membership,
+        { name: `${sender.split('@')[0]} Supplier`, email: sender });
+      const created = connections.create(store.db, workspace.ctx, membership,
+        { providerType: 'supplier_email', displayName: 'Shared Gmail' });
+      store.db.prepare(`UPDATE workspace_connectors SET provider_type = 'gmail', provider_account_id = ?,
+        provider_account_name = ?, status = 'connected', setup_status = 'CONNECTED' WHERE id = ?`)
+        .run('shared@gmail.test', 'shared@gmail.test', created.connection.id);
+      credentials.put(store.db, workspace.workspaceId, created.connection.id, 'provider', {
+        accessToken: 'token', refreshToken: 'refresh', expiresAt: Date.now() + 3_600_000,
+        mailbox: 'shared@gmail.test',
+      });
+      connections.addEmailRule(store.db, workspace.ctx, created.connection.id,
+        { senderPattern: sender, supplierId: supplier.id, documentMode: 'supplier_documents' });
+    }
+    gmail.poll = async ({ connection }) => ({ messages: [{
+      messageId: `push-${connection.workspace_id}`, threadId: `thread-${connection.workspace_id}`,
+      sender: connection.workspace_id === first.workspaceId ? 'first@supplier.test' : 'second@supplier.test',
+      subject: 'Testing', bodyText: 'Plain trusted message', receivedAt: new Date().toISOString(), attachments: [],
+    }] });
+    const app = createApp({ db: store.db, env: 'test', sessionSecret: 'gmail-push-fanout' });
+    const data = Buffer.from(JSON.stringify({ emailAddress: 'shared@gmail.test' })).toString('base64');
+    const response = await request(app).post('/api/v1/connections/gmail/webhooks?token=push-secret')
+      .send({ message: { data } });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.mailboxes, 2);
+    assert.equal(response.body.failed, 0);
+    for (const workspace of [first, second]) {
+      assert.equal(store.db.prepare(`SELECT COUNT(*) AS n FROM connection_email_messages
+        WHERE workspace_id = ?`).get(workspace.workspaceId).n, 1);
+    }
+  } finally {
+    gmail.poll = originalPoll;
+    if (originalToken === undefined) delete process.env.GMAIL_PUBSUB_VERIFICATION_TOKEN;
+    else process.env.GMAIL_PUBSUB_VERIFICATION_TOKEN = originalToken;
+    store.db.close();
+  }
 });
 
 test('an unmapped provider location in an empty inventory offers one-step creation instead of an empty dropdown', async () => {

@@ -80,8 +80,8 @@ test('registration creates an account, then the customer creates an inventory', 
 
   const chooser = await agent.get('/onboarding');
   assert.equal(chooser.status, 200);
-  assert.match(chooser.text, /How are you managing inventory today/);
-  assert.match(chooser.text, /Starting fresh/);
+  assert.match(chooser.text, /Where should Foundry get your inventory from/);
+  assert.match(chooser.text, /Enter it in Foundry/);
 
   // The Mission 1 console is still there underneath, and still empty.
   const locations = await agent.get('/locations');

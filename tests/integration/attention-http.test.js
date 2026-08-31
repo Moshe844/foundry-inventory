@@ -476,3 +476,51 @@ test('learning demand stays contextual and does not become a fake Needs you deci
   assert.doesNotMatch(needsYou, /Tell Foundry when you sell something/,
     'normal learning guidance belongs on Home, not in the decision inbox');
 });
+
+/**
+ * One number for "what needs me".
+ *
+ * Found walking the daily-operation scenario. A single morning screen said
+ * "9 things need you", then "Needs your attention — See all 6" pointing at
+ * /attention, then "Separately, 3 things are waiting for you in Needs you",
+ * beside a sidebar badge reading 3 next to the words "Needs you". Two queues
+ * with near-identical names, three totals, and the verdict quietly adding two
+ * of them together.
+ *
+ * needs-you-count states the rule: the inbox is the customer-facing source of
+ * truth, and the sidebar, the workspace switcher and the Needs you page all
+ * count it. Home counts it too. Findings Foundry has spotted but cannot turn
+ * into a decision are still shown, named as what they are.
+ */
+test('Home, the sidebar and Needs you agree on how much needs a person', async () => {
+  const { app, workspace, db } = setup();
+  scenarios.staleScenario(db, workspace);
+  attention.evaluate(db, workspace.workspaceId, { trigger: 'more' });
+
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const inbox = require('../../src/manager/needs-you-inbox').inbox(db, workspace.workspaceId);
+  const home = await agent.get('/overview');
+  const text = plain(home.text);
+
+  const verdict = /(\d+) things? needs? you/.exec(text);
+  if (inbox.length) {
+    assert.ok(verdict, 'the verdict states a number');
+    assert.equal(Number(verdict[1]), inbox.length, 'and it is the inbox count');
+  } else {
+    assert.match(text, /Everything is under control|All clear/);
+  }
+
+  // The sidebar badge beside "Needs you" counts the same thing.
+  const sidebar = home.text.split('<nav class="nav"')[1].split('</nav>')[0];
+  const badge = /<span class="nav-count"[^>]*>(\d+)<\/span>/.exec(sidebar);
+  assert.equal(badge ? Number(badge[1]) : 0, inbox.length, 'the sidebar agrees');
+
+  // And the page it links to lists exactly that many.
+  const needsYou = (await agent.get('/needs-you')).text;
+  assert.equal((needsYou.match(/class="need__title"/g) || []).length, inbox.length);
+
+  // Findings are still surfaced, but not as a second thing needing a person.
+  assert.doesNotMatch(text, /Separately, \d+ things? (is|are) waiting for you/);
+});

@@ -7,8 +7,9 @@ const { createApp } = require('../../src/app');
 const authService = require('../../src/domain/auth-service');
 const inventory = require('../../src/domain/inventory-engine');
 const sales = require('../../src/sales/sales-order-service');
+const prices = require('../../src/pricing/price-service');
 const needsYouInbox = require('../../src/manager/needs-you-inbox');
-const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, signIn, csrfFrom, plain } = require('../helpers');
+const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, makeVariantItem, signIn, csrfFrom, plain } = require('../helpers');
 
 test.after(cleanupAll);
 
@@ -17,6 +18,7 @@ function setup(provider = { complete: async () => ({ data: {} }) }) {
   const workspace = seedWorkspace(db, { workspaceName: 'Mission 10 Browser Co' });
   const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
   const item = makeQuantityItem(db, workspace.ctx, { name: 'Black Small Shirt', baseCode: 'BLACK-S' });
+  prices.setPrice(db, workspace.ctx, { skuId: item.skuId, amount: '25.00', currency: 'USD' });
   const app = createApp({ db, env: 'test', sessionSecret: 'mission-10-http', aiProvider: provider });
   return { db, workspace, membership, item, app };
 }
@@ -94,10 +96,15 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
     _csrf: csrfFrom(page.text), reason: 'Customer changed plans.',
   });
   assert.equal(cancelled.status, 303);
+  assert.equal(sales.getOrder(env.db, env.workspace.workspaceId, order.id).totals.backordered, 0,
+    'cancelled units are no longer waiting for stock');
   const activity = plain((await agent.get('/activity?stream=sales')).text);
   assert.match(activity, /confirmed and stock allocated/i);
   assert.match(activity, /partly fulfilled/i);
   assert.match(activity, /cancelled and commitments released/i);
+  const salesPage = plain((await agent.get('/sales')).text);
+  assert.match(salesPage, /0\s+Open customer orders\s+0\s+committed to customer orders\s+0\s+Units waiting for stock/i,
+    'cancelled orders must not remain in the live commitment totals');
   env.db.close();
 });
 
@@ -157,6 +164,110 @@ test('Tell Foundry creates, changes, fulfills and cancels the same structured Sa
   order = sales.getOrder(env.db, env.workspace.workspaceId, order.id);
   assert.equal(order.status, 'CANCELLED');
   assert.equal(order.totals.allocated, 0);
+  env.db.close();
+});
+
+test('Tell Foundry shows sales-order variant choices instead of flattening the question into a toast', async () => {
+  const provider = { complete: async (request) => {
+    if (request.schemaName === 'manager_intent') return { data: {
+      capabilityId: 'sales.manage-orders', intentClass: 'SALES_ORDER', confidence: 'high',
+      goal: 'Record customer demand.', reason: 'The customer placed an order.', resolvedReference: '',
+      clarifyingQuestion: '', parameters: { fromText: '', toText: '', transformMode: '', documentReference: '' },
+    } };
+    if (request.schemaName === 'sales_order_intent') return { data: {
+      operation: 'create', customerText: 'ABC School', orderText: '', itemText: 'Zip Hoodie - Navy',
+      variantText: '', locationText: '', quantity: 2, neededBy: '', reason: 'Customer order.',
+    } };
+    return { data: {} };
+  } };
+  const env = setup(provider);
+  const hoodie = makeVariantItem(env.db, env.workspace.ctx, {
+    name: 'Zip Hoodie - Navy', options: [{ name: 'Size', values: 'Small, Medium' }],
+  });
+  for (const sku of hoodie.skus) prices.setPrice(env.db, env.workspace.ctx,
+    { skuId: sku.id, amount: '42.00', currency: 'USD' });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const home = await agent.get('/');
+  const asked = await agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text), message: 'ABC School ordered 2 Zip Hoodie - Navy.',
+  });
+  assert.equal(asked.status, 303);
+  assert.equal(asked.headers.location, '/actions');
+  const choices = await agent.get('/actions');
+  assert.match(plain(choices.text), /Which size of Zip Hoodie - Navy do you mean\?/);
+  assert.match(choices.text, /name="answer" value="Small"/);
+  assert.match(choices.text, /name="answer" value="Medium"/);
+  assert.doesNotMatch(choices.text, /flash[^>]*>[^<]*Which size/i);
+
+  const continued = await agent.post('/sales/clarify').type('form').send({
+    _csrf: csrfFrom(choices.text), original: 'ABC School ordered 2 Zip Hoodie - Navy.', answer: 'Small',
+  });
+  assert.equal(continued.status, 303);
+  assert.match(continued.headers.location, /^\/sales\/orders\/so_/);
+  const order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
+  assert.equal(order.status, 'BACKORDERED');
+  assert.match(order.lines[0].displayName, /Small/);
+  assert.equal(order.lines[0].unit_price_minor, 4200);
+  env.db.close();
+});
+
+test('a missing selling price becomes an answerable step and cannot create an incomplete customer order', async () => {
+  const provider = { complete: async (request) => {
+    if (request.schemaName === 'manager_intent') return { data: {
+      capabilityId: 'sales.manage-orders', intentClass: 'SALES_ORDER', confidence: 'high', goal: 'Record order.',
+      reason: 'Customer order.', resolvedReference: '', clarifyingQuestion: '',
+      parameters: { fromText: '', toText: '', transformMode: '', documentReference: '' },
+    } };
+    if (request.schemaName === 'sales_order_intent') return { data: {
+      operation: 'create', customerText: 'North School', orderText: '', itemText: 'Unpriced Cap',
+      variantText: '', locationText: '', quantity: 3, neededBy: '', reason: 'Customer order.',
+    } };
+    return { data: {} };
+  } };
+  const env = setup(provider);
+  const cap = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Unpriced Cap', baseCode: 'CAP-UNPRICED' });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const home = await agent.get('/');
+  const asked = await agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text), message: 'North School ordered 3 Unpriced Cap.',
+  });
+  assert.equal(asked.headers.location, '/actions');
+  assert.equal(sales.listOrders(env.db, env.workspace.workspaceId).length, 0,
+    'a question must not leave a price-less draft behind');
+  const question = await agent.get('/actions');
+  assert.match(plain(question.text), /does not have a selling price.*What price should this customer order use/i);
+  assert.match(question.text, /action="\/sales\/clarify"/);
+
+  const priced = await agent.post('/sales/clarify').type('form').send({
+    _csrf: csrfFrom(question.text), original: 'North School ordered 3 Unpriced Cap.', answer: '32.50',
+  });
+  assert.match(priced.headers.location, /^\/sales\/orders\/so_/);
+  const [order] = sales.listOrders(env.db, env.workspace.workspaceId);
+  assert.equal(order.status, 'BACKORDERED');
+  assert.equal(order.lines[0].unit_price_minor, 3250);
+  assert.equal(prices.currentForSku(env.db, env.workspace.workspaceId, cap.skuId).isSet, false,
+    'an order-specific answer must not silently rewrite the inventory catalogue price');
+  env.db.close();
+});
+
+test('the manual Sales Order form refuses a blank price and explains the correction inline', async () => {
+  const env = setup();
+  const unpriced = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Unpriced Scarf', baseCode: 'SCARF-NO-PRICE' });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const form = await agent.get('/sales/new');
+  assert.match(plain(form.text), /Every customer order needs a price/i);
+  assert.match(plain(form.text), /Do now:.*Set the selling price for Unpriced Scarf/i);
+  assert.match(plain(form.text), /Unpriced Scarf.*Price not set/i);
+  const rejected = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'Test Customer', skuId: unpriced.skuId, quantity: 1,
+    orderDate: '2026-08-30', currency: 'USD',
+  });
+  assert.equal(rejected.status, 400);
+  assert.match(plain(rejected.text), /This order is not ready.*does not have a selling price/i);
+  assert.equal(sales.listOrders(env.db, env.workspace.workspaceId).length, 0);
   env.db.close();
 });
 

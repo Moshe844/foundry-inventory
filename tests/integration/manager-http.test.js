@@ -40,7 +40,7 @@ function operatingChange(overrides = {}) {
     maximumQuantity: -1, maximumValue: -1, cooldownHours: -1, daysOfStock: -1,
     purchaseUnit: '', contactName: '', email: '', orderingMethod: '',
     preferTransferBeforePurchasing: false, approvalRequired: true,
-    guardAction: '', guardMetric: '', guardComparator: '', guardThreshold: -1,
+    guardAction: '', guardMode: '', guardMetric: '', guardComparator: '', guardThreshold: -1,
     guardReleaseCondition: '', guardReleaseThreshold: -1, ...overrides,
   };
 }
@@ -549,13 +549,22 @@ test('an unmatched supplier invoice becomes an exact inventory review instead of
   assert.match(removalText, /Kids Loafer - Black/i);
   assert.match(removalText, /Current stock 12/i);
   assert.doesNotMatch(removalText, /Attach the spreadsheet, PDF or document/i);
+  const approvalFormStart = removalPage.text.indexOf(`action="${removalRequest.headers.location}/approve"`);
+  const approvalFormEnd = removalPage.text.indexOf('</form>', approvalFormStart);
+  const approvalForm = removalPage.text.slice(approvalFormStart, approvalFormEnd);
+  assert.ok(approvalFormStart >= 0 && approvalFormEnd > approvalFormStart,
+    'the document-removal controls must be inside a real approval form');
+  assert.match(approvalForm, /data-selection-group/);
+  assert.match(approvalForm, /data-select-all/);
+  assert.match(approvalForm, /data-remove-selected/);
+  assert.match(approvalForm, /name="selectionMode" value="all"/);
   assert.equal(env.db.prepare("SELECT is_active FROM items WHERE workspace_id = ? AND name LIKE 'Kids Loafer%'")
     .get(env.workspace.workspaceId).is_active, 1, 'the review must not remove the product');
 
   const proposalId = removalRequest.headers.location.split('/').pop();
   const removal = documentRemovals.get(env.db, env.workspace.workspaceId, proposalId);
   const removed = await env.agent.post(`${removalRequest.headers.location}/approve`).type('form').send({
-    _csrf: csrfFrom(removalPage.text), integrityHash: removal.integrityHash,
+    _csrf: csrfFrom(removalPage.text), integrityHash: removal.integrityHash, selectionMode: 'all',
   });
   assert.equal(removed.status, 303);
   assert.equal(env.db.prepare("SELECT is_active FROM items WHERE workspace_id = ? AND name LIKE 'Kids Loafer%'")
@@ -1079,6 +1088,52 @@ test('Tell Foundry routes a direct currency assignment to a selling-price previe
   assert.match(preview, /Nothing changes until you approve/i);
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM sku_prices WHERE workspace_id = ?')
     .get(env.workspace.workspaceId).n, 0);
+  env.db.close();
+});
+
+test('an incomplete SKU price instruction asks which variant instead of becoming a toast', async () => {
+  const env = await setup({});
+  const hoodie = makeVariantItem(env.db, env.workspace.ctx, {
+    name: 'Zip Hoodie - Navy',
+    baseCode: 'ZIP-HOODIE-NAVY',
+    options: [{ name: 'Size', values: 'Small, Medium, Large' }],
+  });
+
+  const home = await env.agent.get('/');
+  const asked = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'Please set price for ZIP-HOODIE-NAVY- to $12.00',
+  });
+  assert.equal(asked.status, 303);
+  assert.equal(asked.headers.location, '/actions');
+
+  const choices = await env.agent.get('/actions');
+  assert.match(plain(choices.text), /Which size of Zip Hoodie - Navy do you mean\?/i);
+  assert.match(choices.text, /action="\/pricing\/clarify"/);
+  assert.match(choices.text, /name="answer" value="Small"/);
+  assert.match(choices.text, /name="answer" value="Medium"/);
+  assert.match(choices.text, /name="answer" value="Large"/);
+  assert.match(choices.text, /name="answer" value="__all_candidates__"/);
+  assert.match(plain(choices.text), /All sizes/i);
+  assert.doesNotMatch(choices.text, /flash[^>]*>[^<]*Which size/i);
+
+  const selected = await env.agent.post('/pricing/clarify').type('form').send({
+    _csrf: csrfFrom(choices.text),
+    original: 'Please set price for ZIP-HOODIE-NAVY- to $12.00',
+    answer: '__all_candidates__',
+  });
+  assert.equal(selected.status, 303);
+  assert.equal(selected.headers.location, '/pricing/proposals/batch');
+  const preview = plain((await env.agent.get(selected.headers.location)).text);
+  assert.match(preview, /Review 3 selling prices/i);
+  assert.match(preview, /Small/i);
+  assert.match(preview, /Medium/i);
+  assert.match(preview, /Large/i);
+  assert.equal((preview.match(/\$12\.00/g) || []).length, 3);
+  assert.match(preview, /Nothing changes until you approve/i);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM sku_prices WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 0);
+  assert.equal(hoodie.skus.length, 3);
   env.db.close();
 });
 

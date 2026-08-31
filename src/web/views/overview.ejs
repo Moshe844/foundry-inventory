@@ -26,7 +26,24 @@
   var greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
 
-  var needing = (attentionTotal || 0) + waiting;
+  /*
+   * What "needs you" means, counted once.
+   *
+   * This page had two of them. It rendered the attention findings as "Needs
+   * your attention" and mentioned the inbox underneath as "Separately, 3 things
+   * are waiting for you in Needs you" — two queues with near-identical names,
+   * going to two different pages, while the verdict added both together. One
+   * morning screen said 9, then 6, then 3, and the sidebar badge beside the
+   * words "Needs you" said 3 again. Nobody can act on that.
+   *
+   * needs-you-count says it plainly: "The inbox is the customer-facing source
+   * of truth", and the sidebar, the workspace switcher and the Needs you page
+   * all count it. So does this page now. The findings Foundry has noticed but
+   * cannot turn into a decision are still one link away, named as what they
+   * are rather than as a second thing needing you.
+   */
+  var decisions = (typeof operatingDecisions !== 'undefined' && operatingDecisions) ? operatingDecisions : [];
+  var needing = decisions.length;
   var verdict = isEmpty_
     ? 'This inventory is empty'
     : needing === 0
@@ -85,8 +102,8 @@
     <div class="section-head">
       <h2>Needs your attention</h2>
       <div class="section-head__aside">
-        <% if (attentionTotal > 3) { %>
-          <a class="section-more" href="/attention">See all <%= attentionTotal %></a>
+        <% if (needing > 3) { %>
+          <a class="section-more" href="/needs-you">See all <%= needing %></a>
         <% } %>
         <form method="post" action="/attention/refresh">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -111,19 +128,19 @@
        * the finding's own page, which is where somebody deciding goes anyway.
        */
     %>
-    <% if (findings.length) { %>
+    <% if (decisions.length) { %>
       <div class="inbox">
-        <% findings.slice(0, 3).forEach(function (item) { %>
-          <article class="inbox-item <%= item.severityTone === 'danger' ? 'inbox-item--urgent' : item.severityTone === 'warn' ? 'inbox-item--important' : '' %>">
+        <% decisions.slice(0, 3).forEach(function (entry) { %>
+          <article class="inbox-item <%= entry.importance === 'Urgent' ? 'inbox-item--urgent' : entry.importance === 'Important' ? 'inbox-item--important' : '' %>">
             <div>
-              <% if (item.severityTone === 'danger' || item.severityTone === 'warn') { %>
-                <span class="badge badge--<%= item.severityTone %>"><%= item.categoryLabel %></span>
+              <% if (entry.importance === 'Urgent' || entry.importance === 'Important') { %>
+                <span class="badge badge--<%= entry.importance === 'Urgent' ? 'danger' : 'warn' %>"><%= entry.importance %></span>
               <% } %>
-              <h3 class="inbox-item__title"><%= item.title %></h3>
-              <p class="inbox-item__because"><%= item.conciseSummary %></p>
+              <h3 class="inbox-item__title"><%= entry.title %></h3>
+              <% if (entry.happened) { %><p class="inbox-item__because"><%= entry.happened %></p><% } %>
             </div>
             <div class="inbox-item__do">
-              <a class="btn btn--primary btn--sm" href="<%= item.actionHref || '/attention/' + item.attentionId %>"><%= item.actionLabel || 'Why this?' %></a>
+              <a class="btn btn--primary btn--sm" href="<%= entry.href %>"><%= entry.actionLabel %></a>
             </div>
           </article>
         <% }) %>
@@ -135,13 +152,15 @@
       </div>
     <% } %>
 
-    <%# Nothing wrong with the stock is not the same as nothing needing a
-        person. Saying only the first, on the page a new customer checks first,
-        contradicts Needs you about the very same inventory. %>
-    <% if (waiting) { %>
-      <p class="section-foot">
-        Separately, <%= waiting === 1 ? 'one thing is' : waiting + ' things are' %> waiting for you in
-        <a href="/needs-you">Needs you</a> — <%= operatingDecisions[0].title || 'Foundry is missing something it needs' %>.
+    <%# Everything else Foundry has spotted in the stock but cannot turn into a
+        decision — an expiring lot, something that has not moved in months. Worth
+        a look, not the same as being asked for something, and named accordingly. %>
+    <% if (attentionTotal) { %>
+      <p class="section-foot t-muted">
+        Foundry has also noticed <%= attentionTotal %>
+        thing<%= attentionTotal === 1 ? '' : 's' %> about your stock
+        <% if (findings.length) { %>— <%= findings[0].title %><% } %>.
+        <a href="/attention">Take a look</a>.
       </p>
     <% } %>
   </section>

@@ -280,8 +280,15 @@ test('Needs you guidance names the real waiting decision even while setup is inc
 
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/needs-you')).text);
-  assert.match(page, /Do now:.*Canvas Tote does not match the records/i);
-  assert.doesNotMatch(page, /Do now:\s*Nothing needs a decision from you/i);
+  // The decision is named on the page, and while setup is still unfinished it
+  // is this decision rather than a setup instruction. It used to be named by a
+  // guidance band above the list, which then repeated the page's own count and
+  // its first row with the same button a centimetre lower — so the naming is
+  // done by the list itself now.
+  assert.match(page, /Canvas Tote does not match the records/i);
+  assert.doesNotMatch(page, /Do now:/i, 'the page is the list; it needs no band telling it so');
+  assert.doesNotMatch(page, /Choose where Foundry should get your inventory|Add the first thing you sell/i,
+    'and setup guidance does not displace a real waiting decision here');
   assert.match((await agent.get('/needs-you')).text, new RegExp(`/investigations/${event.investigationId}`));
   env.db.close();
 });

@@ -25,27 +25,6 @@
   </div>
 <% } %>
 
-<% if (evaluations.length) { %>
-  <div class="card section" id="evaluations">
-    <div class="card-head">
-      <div><h2>Inventory checks</h2><p class="muted">Completed evaluations, including checks that correctly produced no action.</p></div>
-      <span class="spacer"></span>
-      <span class="badge badge--muted"><%= evaluations.length %></span>
-    </div>
-    <div class="card-body">
-      <ul class="plain-list">
-        <% evaluations.forEach(function (evaluation) { %>
-          <li>
-            <strong><%= evaluation.title %></strong>
-            <span class="muted"> — <%= evaluation.detail %></span>
-            <div class="muted"><%= helpers.timeAgo(evaluation.finishedAt) %></div>
-          </li>
-        <% }) %>
-      </ul>
-    </div>
-  </div>
-<% } %>
-
 <% sections.forEach(function (section) { %>
   <% if (groups[section.key].length) { %>
     <div class="card section">
@@ -70,3 +49,43 @@
     </div>
   <% } %>
 <% }) %>
+
+<%
+  /*
+   * The routine checks, last and folded away.
+   *
+   * This page is called "What Foundry has done", and it opened with fifty
+   * lines of "Scheduled inventory check — 10 stock positions checked. 7
+   * positions lacked enough outbound history for safe demand action", each
+   * identical to the last, above the four sections describing what Foundry
+   * actually did. Somebody arriving from "Foundry handled — see everything"
+   * scrolled past fifty repetitions of nothing happening.
+   *
+   * They are evidence that Foundry is alive and looking, which is worth
+   * keeping and worth counting. It is not worth reading fifty times.
+   */
+%>
+<% if (evaluations.length) { %>
+  <section class="section" id="evaluations">
+    <details class="disclose">
+      <summary>
+        <span>
+          <%= evaluations.length %> inventory check<%= evaluations.length === 1 ? '' : 's' %>
+          — completed evaluations, including the ones that correctly produced no action
+        </span>
+        <span class="disclose__cue">Show</span>
+      </summary>
+      <div class="disclose__body">
+        <ul class="plain-list">
+          <% evaluations.forEach(function (evaluation) { %>
+            <li>
+              <strong><%= evaluation.title %></strong>
+              <span class="t-muted"> — <%= evaluation.detail %></span>
+              <div class="t-muted t-xs"><%= helpers.timeAgo(evaluation.finishedAt) %></div>
+            </li>
+          <% }) %>
+        </ul>
+      </div>
+    </details>
+  </section>
+<% } %>

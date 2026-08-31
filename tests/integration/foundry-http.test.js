@@ -116,11 +116,11 @@ test('a new account is handed to Foundry, not an empty dashboard', async () => {
   assert.equal(front.headers.location, '/onboarding');
 
   const chooser = plain((await agent.get('/onboarding')).text);
-  assert.match(chooser, /How are you managing inventory today/);
-  assert.match(chooser, /Starting fresh/);
-  assert.match(chooser, /Excel \/ spreadsheets/);
-  assert.match(chooser, /Existing inventory system/);
-  assert.match(chooser, /It's a mess/);
+  assert.match(chooser, /Where should Foundry get your inventory from/);
+  assert.match(chooser, /Enter it in Foundry/);
+  assert.match(chooser, /Upload files or documents/);
+  assert.match(chooser, /Connect another system/);
+  assert.match(chooser, /Use several sources/);
 
   // Starting Fresh is the Mission 2 experience, reached deliberately and
   // otherwise unchanged.
