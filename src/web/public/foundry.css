@@ -1577,3 +1577,16 @@ tbody tr:hover td { background: var(--surface-2); }
   white-space: nowrap;
 }
 .screen-guide__go:hover { text-decoration: underline; }
+
+/* Sub-headings inside a disclosure body — the breakdowns behind the numbers. */
+.detail-head {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semi);
+  color: var(--ink);
+  margin: var(--space-4) 0 var(--space-2);
+}
+.disclose__body > .detail-head:first-child { margin-top: 0; }
+.disclose__body .location-bars { margin-bottom: var(--space-2); }
+
+/* A section heading may carry a link and a small control without them stacking. */
+.section-head__aside { display: flex; align-items: center; gap: var(--space-3); }

@@ -120,10 +120,36 @@ function resolveMovements(db, workspaceId, item) {
     .all(workspaceId, ...ids);
 }
 
+/*
+ * What the button on a finding should say.
+ *
+ * Every screen showing a finding fell back to "Why this?", because the field it
+ * reached for did not exist — so Home offered three identical buttons under
+ * three different problems, and none of them said what the reader would be
+ * deciding. These name the subject and the decision, and stay honest about the
+ * destination: the finding's own page, where the evidence sits and where it can
+ * be acted on, claimed or dismissed.
+ */
+const CATEGORY_ACTION = {
+  replenishment_needed: 'Decide what to order',
+  stock_protection_boundary: 'Decide on the limit',
+  low_stock: 'Decide what to do',
+  stockout_risk: 'Decide what to order',
+  location_imbalance: 'Decide where it goes',
+  unusual_adjustment: 'Check this correction',
+  expiring_inventory: 'Decide on this lot',
+  stale_inventory: 'Decide on this stock',
+  serialized_inactivity: 'Check this unit',
+  data_integrity: 'Check these records',
+  late_purchase_order: 'Chase this order',
+  supplier_price_change: 'Decide on the price',
+};
+
 /** Decorates one item for display. */
 function present(db, workspaceId, item) {
   return {
     ...item,
+    actionLabel: CATEGORY_ACTION[item.category] || 'See the evidence',
     severityLabel: (SEVERITY[item.severity] || {}).label || item.severity,
     severityTone: (SEVERITY[item.severity] || {}).tone || 'muted',
     categoryLabel: CATEGORY_LABEL[item.category] || item.category,

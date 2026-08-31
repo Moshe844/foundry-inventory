@@ -44,11 +44,17 @@ test('the overview leads with the briefing, not the counters', async () => {
   await signIn(agent, workspace.account.email, workspace.account.password);
 
   const page = plain((await agent.get('/overview')).text);
-  assert.match(page, /Today's briefing/);
-  assert.match(page, /needs your attention/);
+  // The verdict is the first thing on the page, and the findings that produced
+  // it come next. The paragraph headed "Today's briefing" used to sit between
+  // them restating the very list underneath it — "Start with: Lot B-0731 has
+  // expired. Then: ..." — so it was two accounts of the same findings, and the
+  // reader had to check whether they differed. It still speaks where nothing is
+  // listed; where the findings are shown, they are the briefing.
+  assert.match(page, /things? needs? you/i, 'the verdict leads');
+  assert.match(page, /Needs your attention/);
   assert.match(page, /Navy Oxford/);
-  // The briefing appears before the stock counters.
-  assert.ok(page.indexOf("Today's briefing") < page.indexOf('Units on hand'));
+  assert.ok(page.indexOf('Needs your attention') < page.indexOf('Units on hand'),
+    'what needs a person comes before the stock counters');
 });
 
 test('a healthy workspace is told plainly that nothing is wrong', async () => {
@@ -280,7 +286,10 @@ test('the item page says what Foundry has noticed about that item', async () => 
   const page = plain((await agent.get(`/inventory/${scenario.itemId}`)).text);
   assert.match(page, /Running low/);
   assert.match(page, /may run out/);
-  assert.match(page, /Why this\?/);
+  // Every finding fell back to a button reading "Why this?", because the field
+  // the views reached for did not exist. It names the decision now.
+  assert.match(page, /Decide what to order/);
+  assert.doesNotMatch(page, /Why this\?/, 'no generic label survives');
   assert.match(page, /Reorder settings/);
   assert.match(page, /Configure/);
 

@@ -18,9 +18,11 @@ const tempRoots = [];
 /** A throwaway database on disk (not in memory: restarts must be testable). */
 function makeDatabase() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-test-'));
-  tempRoots.push(dir);
   const databasePath = path.join(dir, 'test.db');
   const db = openDatabase(databasePath);
+  // The handle is kept with the directory so cleanup can close it. Without
+  // that, Windows refuses to delete a database SQLite still has open.
+  tempRoots.push({ dir, db });
   return { db, databasePath, dir };
 }
 
@@ -34,13 +36,41 @@ function makeApp(existing) {
   return { ...store, app };
 }
 
+/**
+ * Removes every throwaway database this file created.
+ *
+ * This used to delete the directory and swallow whatever went wrong, on the
+ * belief that "the OS will clean temp up". Windows does not clean %TEMP% up,
+ * and the delete was not failing occasionally — it was failing whenever the
+ * test had not closed its database, because Windows will not unlink a file
+ * SQLite still holds open. Every such run left a directory behind for good.
+ *
+ * That went unnoticed because it is silent and each one is only a couple of
+ * megabytes. It was found when the disk filled: 42,557 directories, 82 GB, and
+ * a test run failing with ENOSPC in places that had nothing to do with the
+ * change being tested.
+ *
+ * So the handle is closed first, and a failure to remove is reported rather
+ * than hidden. A test suite that quietly loses two megabytes per run is a test
+ * suite that will eventually stop the machine it runs on.
+ */
 function cleanupAll() {
-  for (const dir of tempRoots.splice(0)) {
+  const stubborn = [];
+  for (const entry of tempRoots.splice(0)) {
+    const { dir, db } = entry;
     try {
-      fs.rmSync(dir, { recursive: true, force: true });
+      if (db && db.open) db.close();
     } catch {
-      /* Windows sometimes holds the file briefly; the OS will clean temp up. */
+      /* Already closed by the test itself, which is the tidy case. */
     }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch (err) {
+      stubborn.push(`${dir}: ${err.code || err.message}`);
+    }
+  }
+  if (stubborn.length) {
+    console.error(`[tests] could not remove ${stubborn.length} temp database(s):\n  ${stubborn.join('\n  ')}`);
   }
 }
 
