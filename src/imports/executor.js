@@ -53,17 +53,40 @@ function groupRows(rows) {
   const groups = new Map();
   for (const row of rows) {
     const parsed = row.parsed || {};
-    const key = (parsed.code || parsed.name || '').trim().toLowerCase();
+    const nameKey = String(parsed.name || '').trim().toLowerCase();
+    const codeKey = String(parsed.code || '').trim().toLowerCase();
+
+    /*
+     * A row carrying variant values is one version of a product, not a product.
+     *
+     * The key was the row's code before its name, and a variant sheet gives
+     * every version its own code — TSH-BLK-S, TSH-BLK-M — so every row became
+     * its own group and forty rows became forty products, six of them called
+     * "Classic Crew T-Shirt". Exactly what the comment above says must not
+     * happen; the key simply looked at the wrong column first.
+     *
+     * So when a row says which colour and size it is, its name decides the
+     * product and its code stays with the version, which is what a SKU code
+     * means. Rows with no variants keep grouping by code, where two rows under
+     * one name but different codes really might be different things.
+     */
+    const hasVariants = Array.isArray(parsed.variants) && parsed.variants.length > 0;
+    const groupByName = hasVariants && Boolean(nameKey);
+    const key = groupByName ? nameKey : (codeKey || nameKey);
     if (!key) continue;
-    // Rows sharing a code are the same product; rows sharing only a name are
-    // too, unless they carry different codes, which makes them different SKUs.
+
     const groupKey = parsed.existingItemId ? `item:${parsed.existingItemId}` : `new:${key}`;
     if (!groups.has(groupKey)) {
       groups.set(groupKey, {
         key: groupKey,
         existingItemId: parsed.existingItemId || null,
         name: parsed.name || parsed.code,
-        code: parsed.code || null,
+        code: groupByName ? null : (parsed.code || null),
+        groupedByName: groupByName,
+        // Every code the rows of this product carry, so the difference between
+        // "one code for the product" and "a code per version" can be settled
+        // once all its rows are in rather than guessed from the first.
+        codes: new Set(),
         description: parsed.description || null,
         unitLabel: parsed.unitLabel || null,
         rows: [],
@@ -71,10 +94,23 @@ function groupRows(rows) {
     }
     const group = groups.get(groupKey);
     group.rows.push(row);
+    if (parsed.code) group.codes.add(String(parsed.code).trim());
     if (!group.name && parsed.name) group.name = parsed.name;
-    if (!group.code && parsed.code) group.code = parsed.code;
+    if (!group.code && parsed.code && !group.groupedByName) group.code = parsed.code;
     if (!group.description && parsed.description) group.description = parsed.description;
     if (!group.unitLabel && parsed.unitLabel) group.unitLabel = parsed.unitLabel;
+  }
+
+  /*
+   * One code for the product, or a code for each version.
+   *
+   * A file that repeats OX-1002 on every size is naming the product, and that
+   * code belongs on the product. A file that writes TSH-BLK-S and TSH-BLK-M is
+   * naming the versions, and putting either on the product would make the item
+   * answer to one of its own SKUs. Only knowable once every row is grouped.
+   */
+  for (const group of groups.values()) {
+    if (group.groupedByName && group.codes.size === 1) [group.code] = [...group.codes];
   }
   return [...groups.values()];
 }
@@ -303,6 +339,30 @@ function importGroup(db, ctx, plan, group, executionId) {
         );
       }
 
+      /*
+       * The code the customer already uses for this version.
+       *
+       * Grouping a variant sheet into one product means the versions come from
+       * the axes, and their codes are generated from the product name —
+       * CLASSIC-CREW-T-SHIRT-BLACK-S. But the file says TSH-BLK-S, and that is
+       * the code on their labels, in their till, and in the next file they
+       * send. Replacing it with one of ours would be Foundry quietly renaming
+       * the customer's own products.
+       *
+       * Only for versions this import created, and only when the code is free:
+       * an existing SKU keeps whatever it already answers to.
+       */
+      if (created && parsed.code && sku.code !== parsed.code) {
+        const taken = db
+          .prepare('SELECT 1 FROM skus WHERE workspace_id = ? AND code = ? COLLATE NOCASE AND id != ?')
+          .get(ctx.workspaceId, parsed.code, sku.id);
+        if (!taken) {
+          db.prepare('UPDATE skus SET code = ? WHERE id = ? AND workspace_id = ?')
+            .run(parsed.code, sku.id, ctx.workspaceId);
+          sku.code = parsed.code;
+        }
+      }
+
       const quantity = plan.transformations.operationScope === 'selling_price_update'
         ? 0
         : parsed.quantity || 0;
@@ -376,7 +436,9 @@ function importGroup(db, ctx, plan, group, executionId) {
         row.id
       );
       bump(db, executionId, { rows_imported: 1 });
-      results.push({ rowId: row.id, ok: true });
+      // The version this row claimed, so the ones nothing claimed can be told
+      // apart from the ones the file actually describes.
+      results.push({ rowId: row.id, ok: true, skuId: sku.id });
     } catch (error) {
       const problems = [
         ...(row.problems || []),
@@ -389,6 +451,32 @@ function importGroup(db, ctx, plan, group, executionId) {
       );
       bump(db, executionId, { rows_failed: 1 });
       results.push({ rowId: row.id, ok: false, error: error.message });
+    }
+  }
+
+  /*
+   * Versions the file never mentioned.
+   *
+   * Options multiply: black and white against small and medium is four
+   * versions, and a shop that stocks three of them has told Foundry about
+   * three. Creating the fourth because the grid allows it invents a product
+   * nobody sells, gives it a code, and puts it in the catalogue at zero — and
+   * Foundry inventing inventory is the one thing it must never do.
+   *
+   * Only combinations this import created and no row claimed, so an item that
+   * already existed keeps every version it had.
+   */
+  if (created) {
+    const used = new Set(results.filter((entry) => entry.skuId).map((entry) => entry.skuId));
+    const unused = created.skuIds.filter((id) => !used.has(id));
+    if (unused.length && unused.length < created.skuIds.length) {
+      const placeholders = unused.map(() => '?').join(', ');
+      db.prepare(
+        `UPDATE skus SET is_active = 0
+          WHERE workspace_id = ? AND item_id = ? AND id IN (${placeholders})
+            AND NOT EXISTS (SELECT 1 FROM balances b WHERE b.sku_id = skus.id AND b.on_hand != 0)`
+      ).run(ctx.workspaceId, itemId, ...unused);
+      bump(db, executionId, { skus_created: -unused.length });
     }
   }
 

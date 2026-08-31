@@ -575,7 +575,8 @@ test('the whole spreadsheet path completes and the stock lands', async () => {
 
   const count = (sql) => env.db.prepare(sql).get(env.workspace.workspaceId).n;
   assert.equal(count('SELECT COUNT(*) n FROM locations WHERE workspace_id = ? AND is_active = 1'), 1);
-  assert.equal(count('SELECT COUNT(*) n FROM skus WHERE workspace_id = ?'), 4, 'every row became stock');
+  assert.equal(count('SELECT COUNT(*) n FROM skus WHERE workspace_id = ? AND is_active = 1'), 4,
+    'four rows, four versions — the grid does not invent a White / M nobody sells');
   assert.equal(
     env.db.prepare('SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ?')
       .get(env.workspace.workspaceId).n,
@@ -583,4 +584,51 @@ test('the whole spreadsheet path completes and the stock lands', async () => {
     'and the totals match the file rather than the migration reporting success over nothing'
   );
   assert.ok(run, 'the migration produced a run to report on');
+});
+
+/**
+ * A variant sheet becomes products with versions, keeping the shop's own codes.
+ *
+ * Rows were grouped by code before name, and a variant sheet gives every
+ * version its own code, so forty rows became forty products — six of them
+ * called "Classic Crew T-Shirt". Grouping by name fixes that, but only if the
+ * codes survive: TSH-BLK-S is what is on the label, in the till, and in the
+ * next file the shop sends. Foundry generating CLASSIC-CREW-T-SHIRT-BLACK-S
+ * over the top would be renaming the customer's own products.
+ */
+test('a variant sheet becomes one product per name, with the file’s own codes', async () => {
+  const env = setup();
+  addSource(env, 'stock.csv', csv([
+    'SKU,Item Name,Colour,Size,Qty On Hand',
+    'TSH-BLK-S,Classic Crew T-Shirt,Black,S,34',
+    'TSH-BLK-M,Classic Crew T-Shirt,Black,M,42',
+    'BLT-BRN-L,Leather Belt,Brown,L,14',
+  ]));
+  const plan = migration.buildPlan(env.db, env.ctx, env.membership);
+  await migration.migrate(env.db, env.ctx, env.membership, plan.id, { idempotencyKey: `t:${plan.id}` });
+
+  const items = env.db
+    .prepare('SELECT id, name, base_code FROM items WHERE workspace_id = ? ORDER BY name')
+    .all(env.workspace.workspaceId);
+  assert.deepEqual(items.map((i) => i.name), ['Classic Crew T-Shirt', 'Leather Belt'],
+    'two products, not three');
+
+  const shirt = items.find((i) => i.name === 'Classic Crew T-Shirt');
+  const skus = env.db
+    .prepare('SELECT code, variant_label FROM skus WHERE item_id = ? AND is_active = 1 ORDER BY code')
+    .all(shirt.id);
+  assert.deepEqual(skus.map((s) => s.code), ['TSH-BLK-M', 'TSH-BLK-S'],
+    'the shop keeps the codes it already uses');
+  assert.deepEqual(skus.map((s) => s.variant_label).sort(), ['Black / M', 'Black / S']);
+
+  // Two versions under one name is not one product's code; it belongs to each
+  // version, so the product itself is not named after one of its own SKUs.
+  assert.notEqual(shirt.base_code, 'TSH-BLK-S');
+
+  assert.equal(
+    env.db.prepare('SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ?')
+      .get(env.workspace.workspaceId).n,
+    90,
+    'and every unit still arrives'
+  );
 });
