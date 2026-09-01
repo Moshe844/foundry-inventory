@@ -159,12 +159,25 @@
            : hasPendingInventory ? 'Inventory review ready'
            : message.processing_status === 'CAPTURED' && attachmentsForMessage.length ? 'Needs your choice'
            : 'Saved—no action';
+         /*
+          * What to call a message that has no subject.
+          *
+          * Suppliers send documents with the subject line empty, and the list
+          * then showed five rows all reading "(no subject)" — unreadable, and
+          * unnecessary: Foundry already had the attachment filename, which is
+          * exactly how a person thinks of that message. Falls back to the
+          * sender only when there is nothing attached either.
+          */
+         var attachmentNames = attachmentsForMessage.map(function (a) { return a.filename; }).filter(Boolean);
+         var messageTitle = message.subject
+           || attachmentNames.join(", ")
+           || (message.supplier_name || message.sender || "Message with no subject");
          var facts = message.supplierDocumentFacts || {};
          var factLines = Array.isArray(facts.lines) ? facts.lines : [];
          var expectedDate = facts.expectedArrivalDate || facts.expectedDeliveryDate || facts.deliveryDate || '';
          var documentLabel = String(message.supplier_document_type || message.classification || 'supplier message').replaceAll('_', ' ');
     %>
-      <details class="message-history-entry" id="message-<%= message.id %>" <%= (message.processing_status === 'CAPTURED' && attachmentsForMessage.length) || duplicateWasRemoved ? 'open' : '' %>><summary class="list-row" style="align-items:flex-start"><div style="flex:1"><strong><%= message.subject || '(no subject)' %></strong><p><%= message.supplier_name || message.sender %> · received <%= helpers.dateTime(message.received_at) %></p></div><div class="message-history-entry__actions"><span class="badge <%= /Needs/.test(outcome) ? 'badge--warn' : /Matched|imported|restored/.test(outcome) ? 'badge--ok' : 'badge--muted' %>"><%= outcome %></span><span class="message-history-entry__label" aria-hidden="true"></span></div></summary>
+      <details class="message-history-entry" id="message-<%= message.id %>" <%= (message.processing_status === 'CAPTURED' && attachmentsForMessage.length) || duplicateWasRemoved ? 'open' : '' %>><summary class="list-row" style="align-items:flex-start"><div style="flex:1"><strong><%= messageTitle %></strong><p><%= message.supplier_name || message.sender %> · received <%= helpers.dateTime(message.received_at) %></p></div><div class="message-history-entry__actions"><span class="badge <%= /Needs/.test(outcome) ? 'badge--warn' : /Matched|imported|restored/.test(outcome) ? 'badge--ok' : 'badge--muted' %>"><%= outcome %></span><span class="message-history-entry__label" aria-hidden="true"></span></div></summary>
         <div style="padding:12px 16px 18px">
           <% if (message.processing_status === 'INVENTORY_RESTORED') { %>
             <div class="notice notice--success"><strong>The removed import was restored.</strong>
