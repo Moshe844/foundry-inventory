@@ -23,6 +23,8 @@
  */
 
 const payments = require('./payments');
+const config = require('../config');
+const { createProviderForTier } = require('../ai/provider');
 const { ValidationError } = require('../domain/errors');
 
 const money = (minor, currency = 'USD') => new Intl.NumberFormat('en-US',
@@ -70,6 +72,73 @@ function amountFrom(text) {
   const value = Number(match[1].replace(/[$,\s]/g, ''));
   if (!Number.isFinite(value) || value <= 0) return null;
   return Math.round(value * 100);
+}
+
+
+/**
+ * The fields, read from the sentence.
+ *
+ * Deterministic first, because most of these sentences are plain: a payment
+ * verb, an amount, sometimes an invoice number, sometimes a method. The model
+ * is asked only when that leaves the counterparty unknown, and even then the
+ * amount is re-parsed here rather than taken from what it returns.
+ *
+ * Nothing it produces is trusted on its own — propose() checks every field
+ * against real records and refuses what it cannot place.
+ */
+async function read(text, options = {}) {
+  const said = String(text || '').trim();
+  if (!said) return null;
+
+  const receipt = /\b(?:paid|pays|sent|wired|transferred|remitted)\s+(?:us|me)\b/i.test(said)
+    || /\bwe\s+(?:received|got)\b/i.test(said)
+    || /\breceived\s+(?:a\s+)?payment\b/i.test(said);
+
+  const deterministic = {
+    direction: receipt ? 'CUSTOMER_RECEIPT' : 'SUPPLIER_PAYMENT',
+    counterpartyName: '',
+    amountText: (/(\$\s?\d[\d,]*(?:\.\d{1,2})?|\b\d[\d,]*\.\d{2}\b)/.exec(said) || [])[1] || '',
+    reference: (/\b(?:invoice|inv|bill|po|order)\s*#?\s*([A-Za-z0-9-]{2,})/i.exec(said) || [])[1] || '',
+    method: (/\b(ach|cheque|check|card|cash|wire|transfer|bank transfer|paypal)\b/i.exec(said) || [])[1] || '',
+    dateText: /\btoday\b/i.test(said) ? new Date().toISOString().slice(0, 10) : '',
+  };
+
+  // "I paid ABC Apparel $400 …" / "ABC School paid us $500 …"
+  // The terminators need word boundaries: without them the "on" inside
+  // "CottonWorks" ended the name after four letters.
+  const paidWho = /\bpaid\s+([A-Za-z][A-Za-z0-9 &'.-]{1,60}?)\s*(?:\$|\d|\b(?:toward|towards|for|on|by)\b)/i.exec(said);
+  const whoPaid = /^\s*([A-Za-z][A-Za-z0-9 &'.-]{1,60}?)\s+(?:paid|sent|wired)\b/i.exec(said);
+  deterministic.counterpartyName = receipt
+    ? (whoPaid ? whoPaid[1] : '').trim()
+    : (paidWho ? paidWho[1] : '').trim();
+
+  const usable = deterministic.counterpartyName && amountFrom(deterministic.amountText);
+  if (usable || (!options.provider && !config.ai.configured)) return deterministic;
+
+  let response;
+  try {
+    response = await (options.provider || createProviderForTier('fast')).complete({
+      system: SYSTEM,
+      prompt: `Sentence: ${said}`,
+      schema: EXTRACTION_SCHEMA,
+      schemaName: 'reported_payment',
+    });
+  } catch {
+    return deterministic.counterpartyName ? deterministic : null;
+  }
+
+  const data = (response && response.data) || {};
+  return {
+    direction: ['SUPPLIER_PAYMENT', 'CUSTOMER_RECEIPT', 'UNCLEAR'].includes(data.direction)
+      ? data.direction : deterministic.direction,
+    counterpartyName: data.counterpartyName || deterministic.counterpartyName,
+    // The figure that moves money is read from the sentence, never from the
+    // model's retyping of it.
+    amountText: deterministic.amountText || data.amountText || '',
+    reference: data.reference || deterministic.reference,
+    method: data.method || deterministic.method,
+    dateText: data.dateText || deterministic.dateText,
+  };
 }
 
 const normalise = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -148,7 +217,12 @@ function propose(db, workspaceId, fields) {
   }
 
   const documents = openDocuments(db, workspaceId, direction, who.counterparty.id);
-  const named = matchReference(documents, fields.reference);
+  // A document the owner picked when Foundry asked which one. Answering the
+  // question continues the same report rather than restarting it.
+  const picked = fields.documentId
+    ? documents.filter((doc) => doc.id === fields.documentId)
+    : null;
+  const named = picked || matchReference(documents, fields.reference);
 
   let target = null;
   if (named.length === 1) target = named[0];
@@ -248,4 +322,4 @@ function apply(db, ctx, membership, proposal, options = {}) {
   });
 }
 
-module.exports = { EXTRACTION_SCHEMA, SYSTEM, propose, apply, amountFrom, resolveCounterparty };
+module.exports = { EXTRACTION_SCHEMA, SYSTEM, read, propose, apply, amountFrom, resolveCounterparty };

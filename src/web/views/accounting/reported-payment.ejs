@@ -1,0 +1,90 @@
+<%
+  /*
+   * What a reported payment will do, before it does it.
+   *
+   * Foundry cannot see money that moved outside it, so this began as a sentence
+   * somebody typed. That makes the preview the whole safeguard: the owner is
+   * confirming an effect on a real bill, not trusting that a sentence was
+   * parsed correctly.
+   *
+   * Where Foundry could not place the payment it asks one question and offers
+   * the real candidates, because choosing a bill on the owner's behalf would be
+   * two wrong balances rather than one helpful guess.
+   */
+%>
+<div class="breadcrumb">
+  <a href="/accounting">Accounting</a>
+  <%- helpers.icon('chevron', { size: 13 }) %>
+  <span>Reported payment</span>
+</div>
+
+<div class="page-head">
+  <div>
+    <h1><%= outcome.ok ? 'Record this payment' : 'One thing first' %></h1>
+    <p class="page-sub">You told Foundry: “<%= said %>”</p>
+  </div>
+</div>
+
+<% if (!outcome.ok) { %>
+  <section class="section">
+    <div class="panel">
+      <div class="card-body">
+        <p class="lede"><%= outcome.question %></p>
+        <% if (outcome.candidates && outcome.candidates.length) { %>
+          <form method="post" action="/accounting/payments/reported" class="stack">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="btn-row" style="flex-wrap:wrap; gap:8px;">
+              <% outcome.candidates.forEach(function (candidate) { %>
+                <button class="btn btn--sm" type="submit" name="documentId" value="<%= candidate.id %>">
+                  <%= candidate.number %><% if (candidate.balance_minor !== undefined) { %>
+                    · <%= helpers.money(candidate.balance_minor, candidate.currency || 'USD') %> outstanding
+                  <% } %>
+                </button>
+              <% }) %>
+            </div>
+          </form>
+        <% } %>
+        <p class="hint">
+          Nothing has been recorded. Foundry does not choose which bill a payment settles —
+          getting that wrong is two wrong balances, not one.
+        </p>
+      </div>
+    </div>
+  </section>
+<% } else { %>
+  <% var p = outcome.proposal; %>
+  <section class="section">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>
+            <%= helpers.money(p.amountMinor, p.currency) %>
+            <%= p.direction === 'CUSTOMER_RECEIPT' ? 'received from' : 'paid to' %>
+            <%= p.counterpartyName %>
+          </h2>
+          <span class="t-xs t-muted">
+            <%= p.paymentDate %><% if (p.method) { %> · <%= p.method %><% } %>
+          </span>
+        </div>
+      </div>
+      <div class="card-body">
+        <ul class="plain-list">
+          <% p.preview.forEach(function (line) { %><li><%= line %></li><% }) %>
+        </ul>
+      </div>
+      <div class="card-foot">
+        <form method="post" action="/accounting/payments/reported" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--primary" type="submit">Record this payment</button>
+          <a class="btn btn--ghost" href="/accounting">Not now</a>
+        </form>
+      </div>
+    </div>
+
+    <p class="section-foot t-muted">
+      Recording this posts the payment, moves the outstanding balance and updates
+      <%= p.direction === 'CUSTOMER_RECEIPT' ? 'what customers owe you' : 'what you owe suppliers' %>.
+      There is no separate bookkeeping step.
+    </p>
+  </section>
+<% } %>

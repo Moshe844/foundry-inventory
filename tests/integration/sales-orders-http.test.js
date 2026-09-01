@@ -524,3 +524,65 @@ test('a draft order is told to be confirmed rather than silently holding stock',
   assert.equal(order.totals.allocated, 0, 'a draft holds nothing');
   assert.match(plain((await agent.get(created.headers.location)).text), /Confirm the order first/);
 });
+
+/**
+ * What the customer owes, on the order they owe it for.
+ *
+ * The order page carried quantities and no money at all — ordered, committed,
+ * short, shipped — and nothing about whether it had been paid for. The invoice
+ * already knew, and is linked to the order; the page simply never asked.
+ *
+ * It appears once there is an invoice. Before that nothing is owed, and a row
+ * of zeroes would read as a debt of nothing.
+ */
+test('an order with an invoice shows what was invoiced, paid and still owed', async () => {
+  const env = setup();
+  const ledger = require('../../src/accounting/ledger');
+  const receivables = require('../../src/accounting/receivables');
+  const payments = require('../../src/accounting/payments');
+  const membership = authService.getMembership(env.db, env.workspace.workspaceId, env.workspace.accountId);
+  ledger.configure(env.db, env.workspace.ctx, membership, {
+    startDate: '2026-01-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+  });
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 40,
+  });
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const form = await agent.get('/sales/new');
+  const created = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'ABC School', skuId: env.item.skuId,
+    quantity: 40, orderDate: '2026-09-01', fulfillmentLocationId: env.workspace.main.id,
+  });
+
+  // Before an invoice exists nothing is owed, and a row of zeroes would read
+  // as a debt of nothing.
+  const before = plain((await agent.get(created.headers.location)).text);
+  assert.doesNotMatch(before, /still owed/, 'no money section before there is an invoice');
+
+  const order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
+  const draft = receivables.createDraft(env.db, env.workspace.ctx, membership, {
+    customerId: order.customer.id, salesOrderId: order.id,
+    issueDate: '2026-09-01', dueDate: '2026-09-30', sourceKey: 'invoice:so-money',
+    lines: [{ description: 'Black Small Shirt', quantity: 40, unitPriceMinor: 2_500 }],
+  });
+  const invoice = receivables.open(env.db, env.workspace.ctx, membership, draft.invoice.id);
+  assert.equal(invoice.total_minor, 100_000);
+
+  let text = plain((await agent.get(created.headers.location)).text);
+  assert.match(text, /\$1,000\.00 invoiced/, 'the amount invoiced appears on the order');
+  assert.match(text, /still owed/);
+  assert.match(text, /Unpaid/, 'and its state in a word an owner uses');
+
+  payments.record(env.db, env.workspace.ctx, membership, {
+    direction: 'CUSTOMER_RECEIPT', customerId: order.customer.id,
+    paymentDate: '2026-09-02', amountMinor: 50_000, sourceKey: 'receipt:1',
+    allocations: [{ invoiceId: invoice.id, amountMinor: 50_000 }],
+  });
+
+  text = plain((await agent.get(created.headers.location)).text);
+  assert.match(text, /Partly paid/, 'half paid is neither unpaid nor paid');
+  assert.match(text, /\$500\.00 paid/, 'and both halves are shown');
+  env.db.close();
+});

@@ -10,7 +10,8 @@ const capabilityRegistry = require('./capability-registry');
 const INTENT_CLASSES = [
   'QUESTION', 'INVENTORY_ACTION', 'CATALOG_CHANGE', 'IMPORT', 'PHYSICAL_EVENT',
   'PURCHASING_REQUEST', 'SALES_ORDER', 'POLICY_CHANGE', 'INVESTIGATION_REQUEST',
-  'OPERATING_INSTRUCTION', 'CONFIGURATION_CHANGE', 'EXPLANATION', 'STOP', 'UNKNOWN',
+  'OPERATING_INSTRUCTION', 'CONFIGURATION_CHANGE', 'EXPLANATION', 'PAYMENT_REPORT',
+  'STOP', 'UNKNOWN',
 ];
 
 const SCHEMA = {
@@ -42,6 +43,11 @@ supplier assignment or terms, transfer-before-buying, lead time, MOQ, packs, coo
 INVESTIGATION_REQUEST asks why records differ or asks Foundry to investigate.
 CONFIGURATION_CHANGE changes terminology or inventory configuration, including mapping a vendor's product code to the customer's own internal code.
 EXPLANATION asks why Foundry did, did not do, or recommends something.
+PAYMENT_REPORT reports money that has already moved, in either direction: "I paid
+ABC $400 toward invoice 8832", "ABC School paid us $500 by cheque". It is a report of
+a completed payment, never a request for Foundry to pay anyone — Foundry does not
+move money.
+
 STOP is only for a message whose whole point is that Foundry should stop, pause or hold off acting
 on its own: "stop", "stop doing that", "pause", "hold off", "don't do anything for now". A message
 that asks for work to be done — ordering, moving, counting, receiving — is never STOP, however
@@ -64,6 +70,27 @@ function fallbackClassify(message) {
   // plain words people actually use rather than on the word "policy".
   if (/^\s*(?:stop|halt|pause|freeze)\b|\b(?:stop|pause|halt)\s+(?:doing|what|that|it|everything|for now)\b|\bdon'?t do (?:that|anything)\b|\bhold off\b/i.test(clean)) {
     return result('STOP', 'This asks Foundry to stop acting on its own.');
+  }
+  /*
+   * A payment that already happened, reported after the fact.
+   *
+   * Foundry cannot observe money moving outside it, so this sentence is the
+   * only way it learns. It is unmistakable language — a past-tense payment verb
+   * with an amount — and routing it through a probabilistic classifier only
+   * adds a way for it to be missed.
+   *
+   * "Pay ABC $400" is not this: that asks Foundry to make a payment, which it
+   * does not do. Only a report of one already made.
+   */
+  // "Transferred", "sent" and "settled" belong to stock as much as to money —
+  // "Transferred 2 filters from Main Warehouse" is not a payment — so a verb
+  // and a digit are not enough. There has to be actual money in the sentence:
+  // a currency symbol, an amount with cents, or a document that gets paid.
+  const moneyEvidence = /\$\s?\d|\b\d[\d,]*\.\d{2}\b|\b(?:invoice|bill|payment)\b/i.test(clean);
+  if (/\b(?:paid|payed|sent|wired|transferred|remitted|settled)\b/i.test(clean)
+    && moneyEvidence
+    && !/\bplease\s+pay\b|\bpay\s+(?:them|him|her|it)\b|\bshould\s+i\s+pay\b/i.test(clean)) {
+    return result('PAYMENT_REPORT', 'This reports a payment that has already been made or received.');
   }
   if (/\b(handle everything|automatically|autopilot|may (?:approve|move|order)|never (?:approve|move|order)|policy|authority|limit)\b/i.test(clean)) {
     return result('POLICY_CHANGE', 'This explicitly changes what Foundry may do or its limits.');

@@ -29,6 +29,45 @@ function catalogue(db, workspaceId) {
     .map((sku) => ({ ...sku, price: prices.currentForSku(db, workspaceId, sku.id) }));
 }
 
+/**
+ * What this order is worth, what has been paid, and what is still owed.
+ *
+ * The order page showed quantities and no money at all: ordered, committed,
+ * short, shipped, and nothing about whether the customer had paid. The invoices
+ * already carry it — they are linked to the order — so this is a read, not a
+ * new record.
+ *
+ * Amounts come from the invoice rather than the order lines, because an invoice
+ * is what the customer was actually asked to pay: it carries the tax and any
+ * discount, and it is the balance the payment engine settles.
+ */
+function moneyForOrder(db, workspaceId, orderId) {
+  const invoices = db.prepare(`SELECT id, invoice_number, status, currency, total_minor,
+      balance_minor, due_date
+    FROM accounting_customer_invoices
+    WHERE workspace_id = ? AND sales_order_id = ? AND status <> 'VOID'
+    ORDER BY issue_date`).all(workspaceId, orderId);
+  if (!invoices.length) return { invoiced: false, invoices: [] };
+
+  const totalMinor = invoices.reduce((sum, row) => sum + Number(row.total_minor), 0);
+  const outstandingMinor = invoices.reduce((sum, row) => sum + Number(row.balance_minor), 0);
+  const paidMinor = totalMinor - outstandingMinor;
+
+  return {
+    invoiced: true,
+    invoices,
+    currency: invoices[0].currency || 'USD',
+    totalMinor,
+    paidMinor,
+    outstandingMinor,
+    // The word an owner would use, not the enum underneath.
+    state: outstandingMinor === 0 ? 'Paid'
+      : paidMinor === 0 ? 'Unpaid'
+        : 'Partly paid',
+    dueDate: invoices.map((row) => row.due_date).filter(Boolean).sort()[0] || null,
+  };
+}
+
 function accountingForOrder(db, workspaceId, orderId) {
   const configured = db.prepare('SELECT enabled FROM accounting_settings WHERE workspace_id = ?').get(workspaceId);
   if (!configured?.enabled) return { status: 'DISABLED' };
@@ -160,6 +199,7 @@ router.get('/sales/orders/:id', requirePermission(permissions.VIEW, 'view sales 
     title: 'Sales order', nav: 'sales', order,
     shortButAvailable,
     accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
+    money: moneyForOrder(req.db, req.ctx.workspaceId, order.id),
     skus: catalogue(req.db, req.ctx.workspaceId),
   });
 }));

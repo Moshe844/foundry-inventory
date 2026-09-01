@@ -3,6 +3,7 @@
 const express = require('express');
 const crypto = require('node:crypto');
 const intentRouter = require('../../manager/intent-router');
+const paymentIntent = require('../../accounting/payment-intent');
 const managerContext = require('../../manager/context');
 const investigations = require('../../manager/investigations');
 const physicalEvents = require('../../manager/physical-events');
@@ -378,6 +379,33 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'manager_clarification', null, 'NEEDS_CLARIFICATION');
     return res.redirect(303, '/actions');
   }
+  /*
+   * A payment that already happened.
+   *
+   * The sentence is the only way Foundry learns about money that moved outside
+   * it. The fields are read from the sentence, the proposal is built against
+   * real records, and nothing is posted until the owner sees what it will do —
+   * the same shape as every other consequential action here.
+   */
+  if (intent.intentClass === 'PAYMENT_REPORT') {
+    let fields = null;
+    try {
+      fields = await paymentIntent.read(message, {
+        provider: req.app.locals.aiProvider || undefined,
+      });
+    } catch {
+      fields = null;
+    }
+    if (!fields) {
+      req.flash('warn', 'Foundry could not read that payment. Try naming who was paid, how much, and which invoice.');
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'payment_report', null, 'NEEDS_CLARIFICATION');
+      return res.redirect(303, '/accounting');
+    }
+    req.session.reportedPayment = { fields, said: message };
+    intentRouter.markRouted(req.db, req.ctx, intent.id, 'payment_report', null, 'ROUTED');
+    return res.redirect(303, '/accounting/payments/reported');
+  }
+
   if (intent.handler === 'sales_order' || intent.intentClass === 'SALES_ORDER') {
     try {
       const parsed = await salesIntent.interpret(req.db, req.ctx, message, {

@@ -97,6 +97,65 @@
   <p>Foundry automatically checked stock at other locations, incoming supplier orders and replenishment. If a decision or missing setup is required, it is in <a href="/needs-you">Needs you</a>.</p>
 </div><% } %>
 
+
+<%
+  /*
+   * What the customer owes.
+   *
+   * The order carried quantities and no money: ordered, committed, short,
+   * shipped, and nothing about whether it had been paid for. The invoice
+   * already knew — it is linked to this order — so the figures were a query
+   * away and the page simply never asked.
+   *
+   * It appears once there is an invoice. Before that there is nothing owed,
+   * and a row of zeroes would only look like a debt of nothing.
+   */
+  var money = locals.money || { invoiced: false };
+%>
+<% if (money.invoiced) { %>
+  <div class="panel section" id="money">
+    <div class="panel-head">
+      <div>
+        <h2>Money</h2>
+        <span class="t-xs t-muted">
+          <%= money.invoices.map(function (invoice) { return invoice.invoice_number; }).join(', ') %><%
+            %><% if (money.dueDate) { %> · due <%= money.dueDate %><% } %>
+        </span>
+      </div>
+      <span class="badge badge--<%= money.state === 'Paid' ? 'ok' : money.state === 'Unpaid' ? 'warn' : 'info' %>">
+        <%= money.state %>
+      </span>
+    </div>
+    <div class="card-body">
+      <div class="stat-strip">
+        <div>
+          <span class="stat-value"><%= helpers.money(money.totalMinor, money.currency) %></span>
+          <span class="stat-label">invoiced</span>
+        </div>
+        <div>
+          <span class="stat-value <%= money.paidMinor ? '' : 'stat-value--quiet' %>">
+            <%= helpers.money(money.paidMinor, money.currency) %>
+          </span>
+          <span class="stat-label">paid</span>
+        </div>
+        <div>
+          <span class="stat-value <%= money.outstandingMinor ? 'stat-value--warn' : 'stat-value--quiet' %>">
+            <%= helpers.money(money.outstandingMinor, money.currency) %>
+          </span>
+          <span class="stat-label">still owed</span>
+        </div>
+      </div>
+      <% if (money.outstandingMinor) { %>
+        <p class="hint">
+          Tell Foundry when they pay — “<%= order.customer.name %> paid
+          <%= helpers.money(money.outstandingMinor, money.currency) %> toward
+          <%= money.invoices[0].invoice_number %>” — and the balance and the books both move.
+        </p>
+      <% } %>
+    </div>
+  </div>
+<% } %>
+
 <div class="card">
   <div class="card-head"><h2>Order lines</h2></div>
   <div class="table-wrap"><table class="table table--stack sales-table"><thead><tr><th>Product</th><th>Ordered</th><th>Unit price</th><th>Line total</th><th class="num">Committed</th><th class="num">Short</th><th class="num">Shipped</th><th>Held at</th></tr></thead><tbody>

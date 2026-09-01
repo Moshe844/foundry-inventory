@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const paymentIntent = require('../../accounting/payment-intent');
 const { requireAuth, asyncRoute } = require('../middleware');
 const permissions = require('../../actions/permissions');
 const ledger = require('../../accounting/ledger');
@@ -681,6 +682,61 @@ router.post('/accounting/payables/:id/payment', permit(permissions.RECORD_PAYMEN
   const returnTo = String(req.body.returnTo || '');
   res.redirect(303, /^\/purchasing\/orders\/[A-Za-z0-9_-]+$/.test(returnTo)
     ? returnTo : '/accounting/payables');
+}));
+
+/*
+ * A payment the owner reported in a sentence.
+ *
+ * The proposal is rebuilt from records on every view, including at approval, so
+ * a balance that moved between reading and approving cannot be applied from a
+ * stale preview. What is carried in the session is only what was said.
+ */
+router.get('/accounting/payments/reported', requireAuth, asyncRoute(async (req, res) => {
+  const reported = req.session.reportedPayment;
+  if (!reported) return res.redirect(303, '/accounting');
+  const outcome = paymentIntent.propose(req.db, req.ctx.workspaceId, reported.fields);
+  return res.page('accounting/reported-payment', {
+    title: 'Record this payment',
+    nav: 'accounting',
+    said: reported.said,
+    fields: reported.fields,
+    outcome,
+  });
+}));
+
+router.post('/accounting/payments/reported', requireAuth, asyncRoute(async (req, res) => {
+  const reported = req.session.reportedPayment;
+  if (!reported) return res.redirect(303, '/accounting');
+
+  // Answering a question Foundry asked continues the same report rather than
+  // making somebody retype the sentence.
+  const chosen = trimOrNull(req.body.documentId);
+  const fields = chosen ? { ...reported.fields, documentId: chosen } : reported.fields;
+
+  // Rebuilt from records at the moment of approval, so a balance that moved
+  // since the preview cannot be applied from a stale figure.
+  const resolved = paymentIntent.propose(req.db, req.ctx.workspaceId, fields);
+
+  if (!resolved.ok) {
+    req.session.reportedPayment = { ...reported, fields };
+    return res.redirect(303, '/accounting/payments/reported');
+  }
+
+  try {
+    paymentIntent.apply(req.db, req.ctx, req.user, resolved.proposal, {
+      sourceKey: `reported-payment:${req.ctx.workspaceId}:${reported.said}:${resolved.proposal.paymentDate}`,
+    });
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('error', err.message);
+    return res.redirect(303, '/accounting/payments/reported');
+  }
+
+  delete req.session.reportedPayment;
+  req.flash('success', resolved.proposal.target
+    ? `Recorded against ${resolved.proposal.target.number}.`
+    : 'Payment recorded.');
+  return res.redirect(303, '/accounting');
 }));
 
 module.exports = router;
