@@ -30,6 +30,7 @@ const managerRoutes = require('./web/routes/manager');
 const salesRoutes = require('./web/routes/sales');
 const pricingRoutes = require('./web/routes/pricing');
 const connectionRoutes = require('./web/routes/connections');
+const accountingRoutes = require('./web/routes/accounting');
 const { createFeedApi } = require('./web/routes/feed-api');
 const { createConnectionsApi } = require('./web/routes/connections-api');
 const { createProviderWebhooks } = require('./web/routes/provider-webhooks');
@@ -66,6 +67,8 @@ function createApp(options = {}) {
   // External systems authenticate with a scoped bearer token, never a browser
   // session. Mount this before cookie sessions and CSRF so unattended feeds do
   // not depend on a person being signed in.
+  app.use('/api/v1', middleware.rateLimit({ windowMs: 60_000, max: 300,
+    key: (req) => req.ip || req.socket.remoteAddress || 'api' }));
   app.use('/api/v1/feed', createFeedApi(db));
   app.use('/api/v1/connections', createProviderWebhooks(db));
   app.use('/api/v1', createConnectionsApi(db));
@@ -92,7 +95,7 @@ function createApp(options = {}) {
   app.use((req, res, next) => {
     req.db = db;
     res.locals.helpers = helpers;
-    res.locals.appName = 'Foundry Inventory';
+    res.locals.appName = 'Foundry';
     res.locals.origin = `${req.protocol}://${req.get('host')}`;
     res.locals.currentPath = req.path;
     res.locals.query = req.query || {};
@@ -104,13 +107,23 @@ function createApp(options = {}) {
   app.use(middleware.foundryContext(db));
   app.use(middleware.pageRenderer);
 
-  app.get('/healthz', (req, res) => res.json({ ok: true }));
+  app.use('/login', middleware.rateLimit({ windowMs: 15 * 60_000, max: 30 }));
+
+  app.get('/healthz', (req, res) => {
+    try {
+      db.prepare('SELECT 1 AS ok').get();
+      return res.json({ ok: true, database: 'available', uptimeSeconds: Math.floor(process.uptime()) });
+    } catch {
+      return res.status(503).json({ ok: false, database: 'unavailable' });
+    }
+  });
 
   app.use(authRoutes);
   app.use(managerRoutes);
   app.use(salesRoutes);
   app.use(pricingRoutes);
   app.use(connectionRoutes);
+  app.use(accountingRoutes);
   app.use(foundryRoutes);
   app.use(workspaceRoutes);
   app.use(actionRoutes);

@@ -103,8 +103,11 @@ test(
     const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
     // Interpreting a business is a real model call taking a minute or more, and
     // Playwright's 30s default would fire long before the page ever settles.
-    context.setDefaultTimeout(600000);
-    context.setDefaultNavigationTimeout(600000);
+    // Real model calls have their own explicit long waits below. Ordinary UI
+    // controls should fail quickly instead of disguising a stale selector as a
+    // ten-minute provider job.
+    context.setDefaultTimeout(15000);
+    context.setDefaultNavigationTimeout(30000);
     const page = await context.newPage();
 
     const consoleErrors = [];
@@ -117,9 +120,9 @@ test(
     const state = {};
 
     t.after(async () => {
+      await stopServer(server);
       await context.close();
       await browser.close();
-      await stopServer(server);
       fs.rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -305,7 +308,7 @@ test(
       await Promise.all([page.waitForNavigation(), dialog.locator('button[type=submit]').click()]);
 
       assert.equal(
-        Number((await page.locator('.item-total .value').innerText()).replace(/\D/g, '')),
+        Number((await page.locator('.stat-strip .stat-value').first().innerText()).replace(/\D/g, '')),
         40
       );
       await shot(page, 'item-configured-and-received');
@@ -328,7 +331,7 @@ test(
       await Promise.all([page.waitForNavigation(), move.locator('button[type=submit]').click()]);
 
       assert.equal(
-        Number((await page.locator('.item-total .value').innerText()).replace(/\D/g, '')),
+        Number((await page.locator('.stat-strip .stat-value').first().innerText()).replace(/\D/g, '')),
         40,
         'a transfer never changes the total'
       );
@@ -346,7 +349,7 @@ test(
     await t.test('15-16. refresh keeps the configuration and the inventory', async () => {
       await page.reload();
       assert.equal(
-        Number((await page.locator('.item-total .value').innerText()).replace(/\D/g, '')),
+        Number((await page.locator('.stat-strip .stat-value').first().innerText()).replace(/\D/g, '')),
         40
       );
 

@@ -36,6 +36,8 @@ const TYPES = Object.freeze({
   SALES_ORDER_PARTIALLY_FULFILLED: 'sales_order.partially_fulfilled',
   SALES_ORDER_FULFILLED: 'sales_order.fulfilled',
   SALES_ORDER_CANCELLED: 'sales_order.cancelled',
+  CONNECTOR_SALE_COMPLETED: 'connector.sale.completed',
+  CONNECTOR_RETURN_COMPLETED: 'connector.return.completed',
   SUPPLIER_UPDATED: 'supplier.updated',
   REORDER_POLICY_UPDATED: 'reorder_policy.updated',
   AUTHORITY_UPDATED: 'authority.updated',

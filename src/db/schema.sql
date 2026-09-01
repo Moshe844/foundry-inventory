@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS users (
   workspace_id  TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   account_id    TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   name          TEXT NOT NULL,
-  role          TEXT NOT NULL CHECK (role IN ('owner', 'staff')),
+  role          TEXT NOT NULL CHECK (role IN ('owner', 'staff', 'accountant')),
   -- Action permissions granted on top of the role, as a JSON array. NULL means
   -- "whatever the role implies"; a value here is an explicit grant or removal.
   permissions   TEXT,

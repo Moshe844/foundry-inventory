@@ -15,6 +15,7 @@ const mailboxInventory = require('../../src/connections/mailbox-inventory');
 const ingestion = require('../../src/connections/event-ingestion');
 const needsYou = require('../../src/manager/needs-you-inbox');
 const queryPlanner = require('../../src/attention/query-planner');
+const supplierService = require('../../src/purchasing/supplier-service');
 const { makeDatabase, cleanupAll, seedWorkspace, seedAnotherWorkspace, makeQuantityItem,
   signIn, csrfFrom, plain } = require('../helpers');
 
@@ -258,6 +259,27 @@ test('supplier email captures configured sender and attachments exactly once wit
     'capturing an approved sender does not interpret a file until its purpose is chosen');
   assert.equal(env.db.prepare("SELECT classification FROM connection_email_messages WHERE external_message_id = 'msg-100'").get().classification,
     'invoice');
+  const choice = needsYou.inbox(env.db, env.workspace.workspaceId)
+    .find((entry) => /invoice-884\.pdf/i.test(entry.title));
+  assert.ok(choice, 'review-each attachments appear in Needs You until their purpose is chosen');
+  assert.equal(choice.actionLabel, 'Choose what this file is');
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const page = await agent.get(`/settings/connections/${email.connection.id}`);
+  const text = plain(page.text);
+  assert.match(text, /Use as supplier purchasing document/);
+  assert.match(text, /Review invoice-884\.pdf as inventory\/product list/);
+  assert.match(text, /Keep in email history only/);
+  assert.match(text, /1 supplier email decision needs you/);
+  assert.match(text, /Needs your choice/);
+  assert.match(page.text, /message-history-entry__label/,
+    'the rendered email row includes an explicit open/close interaction cue');
+  const csrf = csrfFrom(page.text);
+  const saved = await agent.post(`/settings/connections/${email.connection.id}/email-messages/${choice.id.replace('mailbox-choice:', '')}/save-only`)
+    .type('form').send({ _csrf: csrf });
+  assert.equal(saved.status, 303);
+  assert.ok(!needsYou.inbox(env.db, env.workspace.workspaceId).some((entry) => /invoice-884\.pdf/i.test(entry.title)),
+    'history-only resolves the attachment choice without changing business records');
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), before,
     'an invoice is not proof of physical receipt');
   env.db.close();
@@ -307,9 +329,115 @@ test('an exact inventory-file resend is visibly ignored instead of reopening an 
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const page = await agent.get(`/settings/connections/${mailbox.connection.id}`);
   const text = plain(page.text);
-  assert.match(text, /Duplicate ignored/);
-  assert.match(text, /Duplicate file.*exact contents were already imported.*Nothing was added again/s);
-  assert.doesNotMatch(text, /Review inventory/);
+  assert.match(text, /Exact duplicate.*already imported/);
+  assert.match(text, /prevented the same stock from being added twice/);
+  assert.match(text, /Why it is not in Needs You/);
+  assert.match(text, /See current inventory/);
+  assert.doesNotMatch(text, /Review .* as inventory\/product list/);
+  assert.ok(!needsYou.inbox(env.db, env.workspace.workspaceId).some((entry) => /inventory\.pdf/i.test(entry.title)),
+    'an exact applied duplicate has no unresolved decision');
+
+  env.db.prepare(`UPDATE setup_documents SET result = ? WHERE id = 'already_applied'`).run(JSON.stringify({
+    products: 4, variants: 8, units: 76, unitLabel: 'pairs', location: 'Test Warehouse',
+    supplier: 'ABC Supplier', removedAt: '2026-08-30T16:48:02.017Z',
+    removedItemIds: ['item-1', 'item-2', 'item-3', 'item-4'],
+  }));
+  const removedPage = await agent.get(`/settings/connections/${mailbox.connection.id}`);
+  const removedText = plain(removedPage.text);
+  assert.match(removedText, /Previously imported.*later removed/);
+  assert.match(removedText, /4 products.*8 variants.*76 pairs/);
+  assert.match(removedText, /Test Warehouse/);
+  assert.match(removedText, /4 products archived and their imported stock removed/);
+  assert.match(removedText, /View these products/);
+  assert.doesNotMatch(removedText, /See current inventory/,
+    'a removed prior import must not be presented as current inventory');
+  env.db.close();
+});
+
+test('an exact resend after removal offers a complete review and restores original records exactly once', async () => {
+  const env = setup();
+  const mailbox = connections.create(env.db, env.workspace.ctx, env.membership, {
+    providerType: 'supplier_email', displayName: 'Microsoft 365 Test Mailbox',
+  });
+  const restoredItem = makeQuantityItem(env.db, env.workspace.ctx, {
+    name: 'Archived Test Shoe - Black', baseCode: 'RESTORE-SHOE',
+  });
+  env.db.prepare('UPDATE items SET is_active = 0 WHERE workspace_id = ? AND id = ?')
+    .run(env.workspace.workspaceId, restoredItem.itemId);
+  const bytes = Buffer.from('removed inventory document bytes');
+  const hash = crypto.createHash('sha256').update(bytes).digest('hex');
+  const now = new Date().toISOString();
+  const interpretation = {
+    unitLabel: 'pair', supplierName: 'Restoration Supplier', destinationName: env.workspace.store.name,
+    lines: [{ styleName: 'Archived Test Shoe - Black', color: 'Black', size: '', supplierSku: 'RESTORE-SHOE',
+      quantity: 7, locationQuantities: [] }],
+  };
+  env.db.prepare(`INSERT INTO setup_documents
+    (id, workspace_id, uploaded_by_user_id, source_name, source_content, content_hash,
+     extracted_text, interpretation, status, result, created_at, applied_at)
+    VALUES ('sdoc_removedrestore', ?, ?, 'removed-shoes.pdf', ?, ?, 'rows', ?, 'APPLIED', ?, ?, ?)`)
+    .run(env.workspace.workspaceId, env.workspace.ownerId, bytes, hash, JSON.stringify(interpretation),
+      JSON.stringify({ products: 1, variants: 1, units: 7, unitLabel: 'pair', supplier: 'Restoration Supplier',
+        location: env.workspace.store.name, createdItemIds: [restoredItem.itemId], removedItemIds: [restoredItem.itemId],
+        removedAt: '2026-08-30T16:48:02.017Z' }), now, now);
+  env.db.prepare(`INSERT INTO connection_email_messages
+    (id, workspace_id, connector_id, external_message_id, sender, recipients, received_at,
+     trust_status, classification, processing_status, created_at)
+    VALUES ('emsg_restore', ?, ?, 'resent-after-removal', 'supplier@example.test', '[]', ?,
+      'TRUSTED', 'inventory_document', 'DUPLICATE_IGNORED', ?)`)
+    .run(env.workspace.workspaceId, mailbox.connection.id, now, now);
+  env.db.prepare(`INSERT INTO connection_email_attachments
+    (id, workspace_id, message_id, filename, content_hash, content, created_at)
+    VALUES ('eatt_restore', ?, 'emsg_restore', 'removed-shoes.pdf', ?, ?, ?)`)
+    .run(env.workspace.workspaceId, hash, bytes, now);
+
+  const decision = needsYou.inbox(env.db, env.workspace.workspaceId)
+    .find((entry) => entry.id === 'mailbox-restore:emsg_restore');
+  assert.ok(decision);
+  assert.equal(decision.actionLabel, 'Decide whether to restore');
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const review = await agent.get(decision.href);
+  assert.equal(review.status, 200);
+  const reviewText = plain(review.text);
+  assert.match(reviewText, /Restore the removed import/);
+  assert.match(reviewText, /Archived Test Shoe.*RESTORE-SHOE.*Downtown Store.*\+7/s);
+  assert.match(reviewText, /will be reactivated/);
+  assert.match(reviewText, /will not create products, variants, suppliers, or locations/i);
+  const archived = await agent.get(`/inventory?archived=only&fromConnection=${mailbox.connection.id}&fromMessage=emsg_restore`);
+  assert.equal(archived.status, 200);
+  assert.match(plain(archived.text), /Back to Microsoft 365 Test Mailbox message history/);
+  assert.match(plain(archived.text), /Archived products/);
+  assert.match(archived.text, new RegExp(`/settings/connections/${mailbox.connection.id}#message-emsg_restore`));
+  const originalProducts = await agent.get(`/inventory?sourceDocument=sdoc_removedrestore&fromConnection=${mailbox.connection.id}&fromMessage=emsg_restore`);
+  const originalText = plain(originalProducts.text);
+  assert.match(originalText, /Products from removed-shoes\.pdf/);
+  assert.match(originalText, /Archived Test Shoe - Black/);
+  assert.doesNotMatch(originalProducts.text, new RegExp(`href="/inventory/${env.item.itemId}"`),
+    'the document table contains only records from that import');
+  const csrf = csrfFrom(review.text);
+  const integrityHash = review.text.match(/name="integrityHash" value="([a-f0-9]+)"/)[1];
+  const itemCount = env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n;
+  const restored = await agent.post(decision.href).type('form').send({ _csrf: csrf, integrityHash });
+  assert.equal(restored.status, 303);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, restoredItem.skuId, env.workspace.store.id), 7);
+  assert.equal(env.db.prepare('SELECT is_active FROM items WHERE id = ?').get(restoredItem.itemId).is_active, 1);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, itemCount, 'restoration reuses the original product identity');
+  assert.equal(env.db.prepare("SELECT COUNT(*) AS n FROM movements WHERE reference = 'removed-shoes.pdf'").get().n, 1);
+  assert.equal(env.db.prepare("SELECT processing_status FROM connection_email_messages WHERE id = 'emsg_restore'")
+    .get().processing_status, 'INVENTORY_RESTORED');
+  assert.ok(!needsYou.inbox(env.db, env.workspace.workspaceId).some((entry) => entry.id === decision.id));
+
+  const replay = await agent.post(decision.href).type('form').send({ _csrf: csrf, integrityHash });
+  assert.equal(replay.status, 303);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, restoredItem.skuId, env.workspace.store.id), 7);
+  assert.equal(env.db.prepare("SELECT COUNT(*) AS n FROM movements WHERE reference = 'removed-shoes.pdf'").get().n, 1,
+    'approving the same restoration twice cannot double stock');
+  const history = await agent.get(`/settings/connections/${mailbox.connection.id}`);
+  assert.match(plain(history.text), /Removed import restored.*No duplicate products were created/s);
   env.db.close();
 });
 
@@ -335,9 +463,35 @@ test('mailbox reconciliation closes an old review after its document was applied
     VALUES ('old_review_attachment', ?, 'old_review_message', 'stock.xlsx', 'review-hash', X'01',
       'applied_review', ?)`)
     .run(env.workspace.workspaceId, now);
+  env.db.prepare(`INSERT INTO connection_email_messages
+    (id, workspace_id, connector_id, external_message_id, sender, recipients, received_at,
+     trust_status, classification, processing_status, created_at)
+    VALUES ('resent_applied_message', ?, ?, 'resent-applied', 'records@supplier.test', '[]', ?,
+      'TRUSTED', 'invoice', 'NEEDS_REVIEW', ?)`)
+    .run(env.workspace.workspaceId, mailbox.connection.id, now, now);
+  env.db.prepare(`INSERT INTO connection_email_attachments
+    (id, workspace_id, message_id, filename, content_hash, content, created_at)
+    VALUES ('resent_applied_attachment', ?, 'resent_applied_message', 'same-stock.xlsx', 'review-hash', X'01', ?)`)
+    .run(env.workspace.workspaceId, now);
+  env.db.prepare(`INSERT INTO supplier_documents
+    (id, workspace_id, connector_id, message_id, attachment_id, document_type, content_hash,
+     facts, discrepancies, confidence, status, created_at, processed_at)
+    VALUES ('resent_applied_supplier_doc', ?, ?, 'resent_applied_message', 'resent_applied_attachment',
+      'invoice', 'supplier-review-hash', '{}', '[{"type":"purchase_order"}]', 1,
+      'NEEDS_REVIEW', ?, ?)`)
+    .run(env.workspace.workspaceId, mailbox.connection.id, now, now);
+  connections.issue(env.db, { workspaceId: env.workspace.workspaceId, connectorId: mailbox.connection.id,
+    issueType: 'SUPPLIER_DOCUMENT_REVIEW', fingerprint: 'supplier-document:resent_applied_supplier_doc',
+    title: 'Old duplicate review', detail: 'Could not match', resolutionHint: 'Review' });
   assert.equal(mailboxInventory.reconcileStatuses(env.db, env.workspace.workspaceId, mailbox.connection.id), 1);
   assert.equal(env.db.prepare(`SELECT processing_status FROM connection_email_messages
     WHERE id = 'old_review_message'`).get().processing_status, 'INVENTORY_APPLIED');
+  assert.equal(env.db.prepare(`SELECT processing_status FROM connection_email_messages
+    WHERE id = 'resent_applied_message'`).get().processing_status, 'DUPLICATE_IGNORED');
+  assert.equal(env.db.prepare(`SELECT status FROM supplier_documents
+    WHERE id = 'resent_applied_supplier_doc'`).get().status, 'IGNORED');
+  assert.equal(env.db.prepare(`SELECT status FROM connection_issues
+    WHERE fingerprint = 'supplier-document:resent_applied_supplier_doc'`).get().status, 'RESOLVED');
   env.db.close();
 });
 
@@ -358,7 +512,7 @@ test('unconfigured supplier sender is retained as untrusted evidence and changes
   env.db.close();
 });
 
-test('mailbox setup creates or reuses a supplier from one human-friendly step', async () => {
+test('mailbox setup never guesses a supplier and creates one only after an explicit choice', async () => {
   const env = setup();
   const mailbox = connections.create(env.db, env.workspace.ctx, env.membership, {
     providerType: 'supplier_email', displayName: 'Purchasing Gmail',
@@ -372,8 +526,19 @@ test('mailbox setup creates or reuses a supplier from one human-friendly step', 
   assert.match(plain(page.text), /One more step: choose a supplier/);
   assert.doesNotMatch(plain(page.text), /products mapped/);
 
-  const saved = await agent.post(`/settings/connections/${mailbox.connection.id}/email-rules`)
+  const ambiguous = await agent.post(`/settings/connections/${mailbox.connection.id}/email-rules`)
+    .set('Referer', `/settings/connections/${mailbox.connection.id}`)
     .type('form').send({ _csrf: csrfFrom(page.text), supplierName: 'ABC Apparel',
+      senderPattern: 'orders@abc.test' });
+  assert.equal(ambiguous.status, 303);
+  const afterAmbiguous = await agent.get(`/settings/connections/${mailbox.connection.id}`);
+  assert.match(plain(afterAmbiguous.text), /Choose which existing supplier sends from this address, or explicitly create a new supplier/);
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM suppliers WHERE workspace_id = ? AND name = ?`)
+    .get(env.workspace.workspaceId, 'ABC Apparel').n, 0, 'free text must not silently create a supplier');
+
+  const refreshed = await agent.get(`/settings/connections/${mailbox.connection.id}`);
+  const saved = await agent.post(`/settings/connections/${mailbox.connection.id}/email-rules`)
+    .type('form').send({ _csrf: csrfFrom(refreshed.text), supplierChoice: 'new', supplierName: 'ABC Apparel',
       senderPattern: 'orders@abc.test' });
   assert.equal(saved.status, 303);
   const supplier = env.db.prepare(`SELECT * FROM suppliers WHERE workspace_id = ? AND name = ?`)
@@ -393,6 +558,8 @@ test('mailbox setup creates or reuses a supplier from one human-friendly step', 
   assert.match(readyText, /Your supplier inbox is ready/);
   assert.match(readyText, /Send an email from orders@abc.test/);
   assert.match(readyText, /checks automatically every 5 minutes/i);
+  assert.match(readyText, /Watch another supplier sender/);
+  assert.match(readyText, /This does not connect another Gmail account/i);
   assert.doesNotMatch(readyText, /See if the test email arrived/);
   assert.match(ready.text, /data-live-mailbox/);
   const beforeState = await agent.get(`/settings/connections/${mailbox.connection.id}/state`);
@@ -410,25 +577,39 @@ test('mailbox setup creates or reuses a supplier from one human-friendly step', 
   env.db.close();
 });
 
-test('approving an email sender does not require a supplier to exist first', async () => {
+test('mailbox setup can select an existing supplier and rejects an unknown supplier id', async () => {
   const env = setup();
   const mailbox = connections.create(env.db, env.workspace.ctx, env.membership, {
     providerType: 'supplier_email', displayName: 'Inventory mailbox',
   });
+  const supplier = supplierService.createSupplier(env.db, env.workspace.ctx, env.membership, {
+    name: 'Warehouse Records',
+  });
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const page = await agent.get(`/settings/connections/${mailbox.connection.id}`);
-  const saved = await agent.post(`/settings/connections/${mailbox.connection.id}/email-rules`)
+  const rejected = await agent.post(`/settings/connections/${mailbox.connection.id}/email-rules`)
+    .set('Referer', `/settings/connections/${mailbox.connection.id}`)
     .type('form').send({ _csrf: csrfFrom(page.text), senderPattern: 'records@warehouse.test',
-      documentMode: 'inventory_list' });
+      supplierChoice: 'existing', supplierId: 'sup_does_not_exist', documentMode: 'inventory_list' });
+  assert.equal(rejected.status, 303);
+  const afterRejected = await agent.get(`/settings/connections/${mailbox.connection.id}`);
+  assert.match(plain(afterRejected.text), /That supplier is not in this inventory/);
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_email_rules
+    WHERE workspace_id = ? AND connector_id = ?`).get(env.workspace.workspaceId, mailbox.connection.id).n, 0);
+
+  const refreshed = await agent.get(`/settings/connections/${mailbox.connection.id}`);
+  const saved = await agent.post(`/settings/connections/${mailbox.connection.id}/email-rules`)
+    .type('form').send({ _csrf: csrfFrom(refreshed.text), senderPattern: 'records@warehouse.test',
+      supplierChoice: 'existing', supplierId: supplier.id, documentMode: 'inventory_list' });
   assert.equal(saved.status, 303);
-  const supplier = env.db.prepare(`SELECT * FROM suppliers WHERE workspace_id = ? AND email = ?`)
-    .get(env.workspace.workspaceId, 'records@warehouse.test');
-  assert.ok(supplier, 'Foundry creates the internal source record behind the simple sender step');
-  assert.equal(supplier.name, 'Records');
-  assert.equal(env.db.prepare(`SELECT document_mode FROM connection_email_rules
+  const rule = env.db.prepare(`SELECT supplier_id, document_mode FROM connection_email_rules
     WHERE workspace_id = ? AND connector_id = ? AND sender_pattern = ?`)
-    .get(env.workspace.workspaceId, mailbox.connection.id, 'records@warehouse.test').document_mode, 'inventory_list');
+    .get(env.workspace.workspaceId, mailbox.connection.id, 'records@warehouse.test');
+  assert.equal(rule.supplier_id, supplier.id);
+  assert.equal(rule.document_mode, 'inventory_list');
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM suppliers WHERE workspace_id = ?`)
+    .get(env.workspace.workspaceId).n, 1, 'selecting a supplier must not create another one');
   env.db.close();
 });
 

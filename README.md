@@ -1,4 +1,8 @@
-# Foundry Inventory
+# Foundry by Keeper
+
+**Foundry is a Keeper product.** It continuously manages the routine inventory,
+purchasing, supplier communication, Sales Order, and accounting work of an
+inventory-based business, while the owner supervises genuine exceptions.
 
 One inventory platform with flexible inventory primitives. The same engine
 represents four fundamentally different kinds of inventory — quantity,
@@ -443,8 +447,9 @@ it declines to recommend rather than inventing a number.
 is what a person has committed to and not yet received. They are never blended.
 A draft order is *not* incoming stock — only APPROVED, ORDERED and
 PARTIALLY_RECEIVED count, because those are the ones a supplier has been told
-about. There is deliberately no "available" figure netting off customer demand:
-Foundry has no sales orders, so any such number would be invented.
+about. Available stock is separate from physical on hand: confirmed Sales Order
+commitments reduce what is available to promise while leaving the physical count
+unchanged until fulfilment.
 
 **Knowing when not to buy is the same feature.** Asking "what should I order?"
 three times in a morning produces one order, not three, because the first one is
@@ -727,15 +732,15 @@ Production is unchanged: real onboarding still runs on Opus, once per customer.
 Chromium through each mission's acceptance script. Screenshots are written to
 `artifacts/screenshots/`.
 
-## Deliberately absent
+## Product boundaries
 
-Foundry does not sell, price, forecast beyond current usage, or value
-inventory, and it has no placeholder buttons for any of it. It plans purchases
-and records them; it does not do accounting. The only work it carries out
-unattended is moving stock between the customer's own locations, under a policy
-they wrote and approved, with a limit they set — everything else waits for a
-person, and physical counts are never adjusted automatically. Accounts payable, the general ledger, invoices, payments, customer
-orders, CRM, payroll, manufacturing, supplier portals, EDI, barcodes, kits,
-warehouse bins, integrations and workflow builders belong on top of a proven
-engine, not beside an unproven one. Nothing orders from a supplier by itself:
-there is no autonomous purchasing and no scheduled ordering.
+Foundry includes Sales Orders, supplier purchasing and communication, inventory
+valuation, double-entry accounting, receivables, payables, payments, bank
+reconciliation, tax records, financial reporting, and policy-bounded autonomous
+work. Operational evidence remains the source: an invoice never pretends stock
+arrived, a supplier quote never becomes historical cost, and AI extraction can
+never post or approve a financial consequence by itself.
+
+Payroll, tax filing, full CRM, manufacturing, EDI, and unrestricted payment or
+purchasing authority remain outside the current product. Missing evidence is
+shown as missing; no screen or report invents an amount to look complete.

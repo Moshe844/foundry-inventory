@@ -129,9 +129,9 @@ async function configureThroughFoundry(page, description) {
     page.waitForURL(/\/foundry\/thinking\//, { timeout: 30000 }),
     page.click('button:has-text("Understand my inventory")'),
   ]);
-  await page.waitForURL(/\/foundry\/proposal\//);
+  await page.waitForURL(/\/foundry\/proposal\//, { timeout: 600000 });
   await page.click('button:has-text("Configure my inventory")');
-  await page.waitForURL(/\/foundry\/ready\//);
+  await page.waitForURL(/\/foundry\/ready\//, { timeout: 120000 });
 }
 
 /** The inventory the console is currently showing, read from the switcher. */
@@ -169,8 +169,8 @@ test(
 
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-    context.setDefaultTimeout(600000);
-    context.setDefaultNavigationTimeout(600000);
+    context.setDefaultTimeout(15000);
+    context.setDefaultNavigationTimeout(30000);
     const page = await context.newPage();
 
     const consoleErrors = [];
@@ -181,9 +181,9 @@ test(
     const state = {};
 
     t.after(async () => {
+      await stopServer(server);
       await context.close();
       await browser.close();
-      await stopServer(server);
       fs.rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -240,7 +240,7 @@ test(
       await page.waitForURL(`${BASE}/inventories/new`);
 
       await page.fill('#name', EQUIPMENT.name);
-      await page.click('button:has-text("Create and set up with Foundry")');
+      await page.click('button:has-text("Continue with Foundry")');
       await page.waitForURL(`${BASE}/onboarding`);
       // A new inventory is asked how it is managed today. These customers are
       // starting from nothing, so they take the Starting Fresh path — which is

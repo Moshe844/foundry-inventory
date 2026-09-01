@@ -84,10 +84,12 @@ async function askFoundry(page, instruction) {
   await page.goto(`${BASE}/actions`);
   await page.fill('#action-instruction', instruction);
   await Promise.all([
-    page.waitForResponse((r) => r.url().endsWith('/actions/ask') && r.request().method() === 'POST'),
-    page.click('button:has-text("Continue")'),
+    page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame()),
+    page.click('button:has-text("Continue")', { noWaitAfter: true }),
   ]);
-  await page.waitForLoadState('networkidle');
+  // Action pages poll their durable job state. Waiting for the whole browser
+  // network to become idle can therefore wait forever after a completed POST.
+  await page.waitForLoadState('domcontentloaded');
   if (!/\/actions\/(act_|plan)/.test(page.url())) {
     const said = await page.locator('.act-question').first().innerText().catch(() => '(no answer shown)');
     throw new Error(`Foundry did not propose an action for "${instruction}". It said: ${said}`);
@@ -218,9 +220,9 @@ test(
     page.on('pageerror', (e) => pageErrors.push(String(e)));
 
     t.after(async () => {
+      await stopServer(server);
       await context.close();
       await browser.close();
-      await stopServer(server);
       fs.rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -411,9 +413,11 @@ test(
       await page.goto(`${BASE}/actions`);
       await page.fill('#action-instruction', 'Order 500 more Navy Oxford size 8 from our supplier');
       await Promise.all([
-        page.waitForResponse((r) => r.url().endsWith('/actions/ask') && r.request().method() === 'POST'),
-        page.click('button:has-text("Continue")'),
+        page.waitForResponse((r) => r.url().endsWith('/foundry/tell') && r.request().method() === 'POST',
+          { timeout: 30000 }),
+        page.locator('form:has(#action-instruction) button[type="submit"]').click({ noWaitAfter: true }),
       ]);
+      await page.waitForLoadState('domcontentloaded');
       await page.waitForSelector('.act-question', { timeout: 30000 });
       await shot(page, 'unsupported');
 

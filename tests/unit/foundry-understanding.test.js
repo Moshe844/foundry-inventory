@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const understandingService = require('../../src/foundry/understanding-service');
+const prompts = require('../../src/foundry/prompts');
 const { UNDERSTANDING_SCHEMA, CORE_SCHEMA } = require('../../src/foundry/understanding-schema');
 const { validate } = require('../../src/foundry/validator');
 const { makeDatabase, cleanupAll, seedWorkspace } = require('../helpers');
@@ -15,6 +16,18 @@ const {
 } = require('../helpers/fake-provider');
 
 test.after(cleanupAll);
+
+test('onboarding describes every implemented business capability consistently', () => {
+  const system = prompts.understandingSystemPrompt();
+  assert.match(system, /Sales Orders:/);
+  assert.match(system, /Supplier communication:/);
+  assert.match(system, /Accounting is built in and starts automatically/);
+  assert.match(system, /Connections for Shopify, Square, Clover, WooCommerce/);
+  const unavailable = system.match(/The engine does NOT have,[\s\S]*?If the business/i)?.[0] || '';
+  assert.doesNotMatch(unavailable, /sales orders/i);
+  assert.doesNotMatch(unavailable, /accounting/i);
+  assert.doesNotMatch(unavailable, /integrations/i);
+});
 
 function setup() {
   const { db } = makeDatabase();

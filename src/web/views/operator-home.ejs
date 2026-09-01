@@ -131,6 +131,24 @@
   </div>
 </section>
 
+<% if (brain && brain.finance) { %>
+<section class="section business-brief" aria-labelledby="business-brief-title">
+  <div class="section-head"><div><h2 id="business-brief-title">Your business right now</h2><p class="t-muted"><%= brain.briefing.headline %></p></div><a class="section-more" href="/accounting">See every dollar</a></div>
+  <div class="business-brief__story">
+    <% brain.briefing.lines.forEach(function (line) { %><p><%= line %></p><% }) %>
+  </div>
+  <div class="stat-strip">
+    <div><span class="stat-value"><%= helpers.money(brain.finance.customers.balanceMinor, brain.currency) %></span><span class="stat-label">Customers still owe you</span></div>
+    <div><span class="stat-value"><%= helpers.money(brain.acquisition.supplierOwedMinor, brain.currency) %></span><span class="stat-label">You still owe suppliers</span></div>
+    <div><span class="stat-value"><%= helpers.money(brain.acquisition.stillOwnedMinor, brain.currency) %><%= brain.acquisition.missingCostUnits ? ' recorded' : '' %></span><span class="stat-label"><%= brain.acquisition.missingCostUnits ? `${brain.acquisition.missingCostUnits} units still need cost evidence` : 'Inventory you still own' %></span></div>
+    <div><span class="stat-value"><%= helpers.money(brain.acquisition.receivedCostMinor, brain.currency) %></span><span class="stat-label">Inventory received at recorded cost</span></div>
+  </div>
+  <% if (brain.acquisition.receivedWithoutBillMinor > 0) { %>
+    <div class="quiet-note quiet-note--warn"><strong>A cost is not the same as a bill.</strong> Foundry has received inventory costing <%= helpers.money(brain.acquisition.receivedWithoutBillMinor, brain.currency) %>, but no supplier bill proves what is owed yet. The purchase has not disappeared; it is waiting for bill evidence.</div>
+  <% } %>
+</section>
+<% } %>
+
 <% if (!isSettingUp || needsCount) { %>
 
 <%# ------------------------------------------------------- Needs your attention %>

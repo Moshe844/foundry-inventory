@@ -32,6 +32,11 @@ const MANAGE_REPLENISHMENT = 'MANAGE_REPLENISHMENT';
 const VIEW_SALES = 'VIEW_SALES';
 const MANAGE_SALES = 'MANAGE_SALES';
 const FULFILL_SALES = 'FULFILL_SALES';
+const VIEW_ACCOUNTING = 'VIEW_ACCOUNTING';
+const MANAGE_ACCOUNTING = 'MANAGE_ACCOUNTING';
+const RECORD_PAYMENTS = 'RECORD_PAYMENTS';
+const RECONCILE_ACCOUNTS = 'RECONCILE_ACCOUNTS';
+const CLOSE_ACCOUNTING_PERIOD = 'CLOSE_ACCOUNTING_PERIOD';
 
 const PURCHASING = [
   VIEW_PURCHASING,
@@ -43,11 +48,14 @@ const PURCHASING = [
 ];
 
 const SALES = [VIEW_SALES, MANAGE_SALES, FULFILL_SALES];
-const ALL = [VIEW, OPERATE, ADJUST, ADMIN, ...PURCHASING, ...SALES];
+const ACCOUNTING = [VIEW_ACCOUNTING, MANAGE_ACCOUNTING, RECORD_PAYMENTS,
+  RECONCILE_ACCOUNTS, CLOSE_ACCOUNTING_PERIOD];
+const ALL = [VIEW, OPERATE, ADJUST, ADMIN, ...PURCHASING, ...SALES, ...ACCOUNTING];
 
 /** What each role can do before any explicit grant. */
 const ROLE_DEFAULTS = {
-  owner: [VIEW, OPERATE, ADJUST, ADMIN, ...PURCHASING, ...SALES],
+  owner: [VIEW, OPERATE, ADJUST, ADMIN, ...PURCHASING, ...SALES, ...ACCOUNTING],
+  accountant: [VIEW, VIEW_PURCHASING, VIEW_SALES, ...ACCOUNTING],
   // Staff can see what is on order and book in what arrives — both are part of
   // handling stock. Committing to a purchase, changing suppliers and changing
   // replenishment settings are not, and are withheld until granted explicitly.
@@ -68,6 +76,11 @@ const LABELS = {
   VIEW_SALES: 'See customers and sales orders',
   MANAGE_SALES: 'Create and confirm sales orders',
   FULFILL_SALES: 'Fulfill and cancel sales orders',
+  VIEW_ACCOUNTING: 'See accounting and financial reports',
+  MANAGE_ACCOUNTING: 'Manage bills, invoices and the chart of accounts',
+  RECORD_PAYMENTS: 'Record customer and supplier payments',
+  RECONCILE_ACCOUNTS: 'Reconcile bank and credit-card accounts',
+  CLOSE_ACCOUNTING_PERIOD: 'Close accounting periods',
 };
 
 /**
@@ -175,7 +188,13 @@ module.exports = {
   VIEW_SALES,
   MANAGE_SALES,
   FULFILL_SALES,
+  VIEW_ACCOUNTING,
+  MANAGE_ACCOUNTING,
+  RECORD_PAYMENTS,
+  RECONCILE_ACCOUNTS,
+  CLOSE_ACCOUNTING_PERIOD,
   SALES,
+  ACCOUNTING,
   PURCHASING,
   impliedBy,
   ALL,

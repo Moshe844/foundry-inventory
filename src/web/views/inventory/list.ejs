@@ -1,7 +1,8 @@
 <div class="page-head">
   <div class="titles">
-    <h1>Inventory</h1>
-    <div class="page-sub">Everything you track, and how much of it you have.</div>
+    <% if (returnTo) { %><a class="back-link" href="<%= returnTo %>">← Back to <%= returnLabel %> message history</a><% } %>
+    <h1><%= sourceLabel ? `Products from ${sourceLabel}` : filters.archivedOnly ? 'Archived products' : 'Inventory' %></h1>
+    <div class="page-sub"><%= sourceLabel ? 'The exact original product records from this import, whether active or archived.' : filters.archivedOnly ? 'Products kept for history but not currently active.' : 'Everything you track, and how much of it you have.' %></div>
   </div>
   <div class="page-actions">
     <a class="btn btn--primary" href="/inventory/new"><%- helpers.icon('plus', { size: 16 }) %> Add item</a>
@@ -28,10 +29,13 @@
     <option value="stock_asc" <%= filters.sort === 'stock_asc' ? 'selected' : '' %>>Least stock</option>
     <option value="newest" <%= filters.sort === 'newest' ? 'selected' : '' %>>Newest</option>
   </select>
-  <% if (filters.includeArchived) { %><input type="hidden" name="archived" value="1"><% } %>
+  <% if (filters.includeArchived) { %><input type="hidden" name="archived" value="<%= filters.archivedOnly ? 'only' : '1' %>"><% } %>
+  <% if (fromConnection) { %><input type="hidden" name="fromConnection" value="<%= fromConnection %>"><% } %>
+  <% if (fromMessage) { %><input type="hidden" name="fromMessage" value="<%= fromMessage %>"><% } %>
+  <% if (sourceDocument) { %><input type="hidden" name="sourceDocument" value="<%= sourceDocument %>"><% } %>
   <button class="btn btn--sm" type="submit">Apply</button>
   <% if (filters.q || filters.trackingMode || filters.locationId) { %>
-    <a class="btn btn--ghost btn--sm" href="/inventory">Clear</a>
+    <a class="btn btn--ghost btn--sm" href="/inventory<%= helpers.queryString({}, { archived: filters.archivedOnly ? 'only' : null, sourceDocument: sourceDocument, fromConnection: fromConnection, fromMessage: fromMessage }) %>">Clear</a>
   <% } %>
 </form>
 
@@ -44,10 +48,14 @@
         <p>Try a different search term, or clear the filters to see everything you track.</p>
         <a class="btn" href="/inventory">Clear filters</a>
       <% } else { %>
-        <h3>No items yet</h3>
-        <p>Tell Foundry what you sell so it can create the products, variants and stock locations with you.</p>
-        <a class="btn btn--primary" href="/onboarding">Tell Foundry what you sell</a>
-        <p class="hint">Or <a href="/inventory/new">add one item by hand</a>.</p>
+        <% if (filters.archivedOnly) { %>
+          <h3>No archived products</h3><p>None of this inventory’s products are currently archived.</p><% if (returnTo) { %><a class="btn btn--primary" href="<%= returnTo %>">Back to <%= returnLabel %> message history</a><% } %>
+        <% } else { %>
+          <h3>No items yet</h3>
+          <p>Tell Foundry what you sell so it can create the products, variants and stock locations with you.</p>
+          <a class="btn btn--primary" href="/onboarding">Tell Foundry what you sell</a>
+          <p class="hint">Or <a href="/inventory/new">add one item by hand</a>.</p>
+        <% } %>
       <% } %>
     </div>
   <% } else { %>

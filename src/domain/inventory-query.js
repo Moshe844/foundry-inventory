@@ -15,7 +15,16 @@ function listItems(db, workspaceId, options = {}) {
   const where = ['i.workspace_id = @workspaceId'];
   const params = { workspaceId, limit: limit + 1, offset };
 
-  if (!options.includeArchived) where.push('i.is_active = 1');
+  if (options.archivedOnly) where.push('i.is_active = 0');
+  else if (!options.includeArchived) where.push('i.is_active = 1');
+  if (Array.isArray(options.itemIds) && options.itemIds.length) {
+    const names = options.itemIds.map((id, index) => {
+      const name = `sourceItem${index}`;
+      params[name] = id;
+      return `@${name}`;
+    });
+    where.push(`i.id IN (${names.join(',')})`);
+  }
 
   if (options.q) {
     const term = `%${escapeLike(String(options.q).trim())}%`;

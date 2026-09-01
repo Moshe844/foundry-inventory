@@ -1,0 +1,25 @@
+<div class="page-head">
+  <div><p class="eyebrow">Foundry · A Keeper product</p><h1>Help and support</h1><p class="lede">Start with the task you were trying to complete. Foundry keeps the business evidence and audit history needed to investigate it.</p></div>
+</div>
+
+<section class="card card-body stack">
+  <h2>Get help</h2>
+  <p><a class="btn btn--primary" href="/guide">Open the step-by-step guide</a></p>
+  <p><a class="btn" href="/activity">Open Activity and audit history</a></p>
+  <p><a class="btn" href="/settings/connections">Check connection health</a></p>
+  <% if (supportEmail) { %>
+    <p><a class="btn" href="mailto:<%= supportEmail %>">Email <%= supportEmail %></a></p>
+  <% } else { %>
+    <div class="quiet-note"><strong>Support contact is not configured for this deployment.</strong> The operator must set <code>FOUNDRY_SUPPORT_EMAIL</code> before inviting beta businesses.</div>
+  <% } %>
+</section>
+
+<section class="card card-body stack">
+  <h2>When something looks wrong</h2>
+  <ol>
+    <li>Open <strong>Needs you</strong> for the exact missing decision or evidence.</li>
+    <li>Open <strong>Activity</strong> to see what happened, who or what recorded it, and when.</li>
+    <li>Do not repeat a supplier payment, receipt, or stock action just because a page timed out. Foundry’s duplicate protection will preserve the first result.</li>
+    <li>Include the visible PO, Sales Order, invoice, connection, or event reference when contacting support. Never send passwords, OAuth secrets, or API keys.</li>
+  </ol>
+</section>

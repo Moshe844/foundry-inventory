@@ -325,7 +325,7 @@ test('a prepared-only replenishment leads directly to the draft order approval',
   assert.match(again, new RegExp(`${line.quantity_units} unit\\(s\\) are ready to order`, 'i'));
   assert.match(again, /It is only a draft: the supplier has not received it/i);
   assert.match(again, new RegExp(`Review and place ${order.po_number}`, 'i'));
-  assert.match(again, /Approve and mark as ordered/i);
+  assert.match(again, /complete any missing price, then choose Approve order/i);
   assert.doesNotMatch(again, /No action/i);
   assert.doesNotMatch(again, /I'm on it|Not a problem/i);
   assert.match(againResponse.text, /<details class="card advanced-settings">/,
@@ -337,7 +337,8 @@ test('a prepared-only replenishment leads directly to the draft order approval',
   assert.match(itemPage, new RegExp(`Review ${order.po_number}`, 'i'));
 
   const orderPage = plain((await env.agent.get(`/purchasing/orders/${order.id}`)).text).replace(/\s+/g, ' ');
-  assert.match(orderPage, /Approve and mark as ordered/);
+  assert.match(orderPage, /Finish pricing this order/);
+  assert.match(orderPage, /This order needs a price/);
   env.db.close();
 });
 

@@ -9,10 +9,12 @@ const catalogImport = require('../../connections/catalog-import');
 const ingestion = require('../../connections/event-ingestion');
 const providerService = require('../../connections/provider-service');
 const mailboxInventory = require('../../connections/mailbox-inventory');
+const documentRestorations = require('../../manager/document-restorations');
 const shopifyBootstrap = require('../../connections/shopify-bootstrap');
 const providers = require('../../connections/providers/registry');
 const supplierService = require('../../purchasing/supplier-service');
 const repo = require('../../domain/repository');
+const { ValidationError } = require('../../domain/errors');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 
 const router = express.Router();
@@ -118,17 +120,51 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
     ORDER BY created_at DESC LIMIT 20`).all(req.ctx.workspaceId, connection.id);
   const isMailbox = ['supplier_email', 'gmail', 'microsoft365'].includes(connection.provider_type);
   const messages = isMailbox ? req.db.prepare(`SELECT m.*,
-    (SELECT COUNT(*) FROM connection_email_attachments a WHERE a.message_id = m.id) AS attachment_count
+    (SELECT s.name FROM suppliers s WHERE s.id = m.supplier_id) AS supplier_name,
+    (SELECT COUNT(*) FROM connection_email_attachments a WHERE a.message_id = m.id) AS attachment_count,
+    (SELECT d.status FROM supplier_documents d WHERE d.message_id = m.id ORDER BY d.processed_at DESC LIMIT 1)
+      AS supplier_document_status,
+    (SELECT d.document_type FROM supplier_documents d WHERE d.message_id = m.id ORDER BY d.processed_at DESC LIMIT 1)
+      AS supplier_document_type,
+    (SELECT d.facts FROM supplier_documents d WHERE d.message_id = m.id ORDER BY d.processed_at DESC LIMIT 1)
+      AS supplier_document_facts,
+    (SELECT d.discrepancies FROM supplier_documents d WHERE d.message_id = m.id ORDER BY d.processed_at DESC LIMIT 1)
+      AS supplier_document_discrepancies,
+    (SELECT d.purchase_order_id FROM supplier_documents d WHERE d.message_id = m.id ORDER BY d.processed_at DESC LIMIT 1)
+      AS matched_po_id,
+    (SELECT po.po_number FROM supplier_documents d JOIN purchase_orders po ON po.id = d.purchase_order_id
+      WHERE d.message_id = m.id ORDER BY d.processed_at DESC LIMIT 1) AS matched_po_number
+    ,(SELECT r.status FROM document_restore_reviews r WHERE r.message_id = m.id AND r.workspace_id = m.workspace_id
+      ORDER BY r.created_at DESC LIMIT 1) AS restoration_status
+    ,(SELECT r.result FROM document_restore_reviews r WHERE r.message_id = m.id AND r.workspace_id = m.workspace_id
+      ORDER BY r.created_at DESC LIMIT 1) AS restoration_result
     FROM connection_email_messages m WHERE m.workspace_id = ? AND m.connector_id = ?
-    ORDER BY received_at DESC LIMIT 50`).all(req.ctx.workspaceId, connection.id) : [];
-  const messageAttachments = isMailbox ? req.db.prepare(`SELECT a.*, d.understanding_id,
-      d.status AS document_status, d.created_at AS document_created_at, d.applied_at AS document_applied_at,
-      d.purchase_order_id AS document_purchase_order_id, d.result AS document_result
+    ORDER BY received_at DESC LIMIT 50`).all(req.ctx.workspaceId, connection.id).map((row) => ({
+      ...row,
+      supplierDocumentFacts: connections.parseJson(row.supplier_document_facts, {}),
+      supplierDocumentDiscrepancies: connections.parseJson(row.supplier_document_discrepancies, []),
+      restorationResult: connections.parseJson(row.restoration_result, {}),
+    })) : [];
+  const messageAttachments = isMailbox ? req.db.prepare(`SELECT a.*,
+      COALESCE(d.id, duplicate.id) AS document_id,
+      COALESCE(d.understanding_id, duplicate.understanding_id) AS understanding_id,
+      COALESCE(d.status, duplicate.status) AS document_status,
+      COALESCE(d.source_name, duplicate.source_name) AS document_source_name,
+      COALESCE(d.created_at, duplicate.created_at) AS document_created_at,
+      COALESCE(d.applied_at, duplicate.applied_at) AS document_applied_at,
+      COALESCE(d.purchase_order_id, duplicate.purchase_order_id) AS document_purchase_order_id,
+      COALESCE(d.result, duplicate.result) AS document_result
     FROM connection_email_attachments a
     JOIN connection_email_messages m ON m.id = a.message_id AND m.workspace_id = a.workspace_id
     LEFT JOIN setup_documents d ON d.id = a.setup_document_id AND d.workspace_id = a.workspace_id
+    LEFT JOIN setup_documents duplicate ON duplicate.id = (
+      SELECT prior.id FROM setup_documents prior
+      WHERE prior.workspace_id = a.workspace_id AND prior.content_hash = a.content_hash
+        AND prior.status = 'APPLIED' ORDER BY prior.created_at LIMIT 1)
     WHERE a.workspace_id = ? AND m.connector_id = ? ORDER BY a.created_at, a.rowid`)
-    .all(req.ctx.workspaceId, connection.id) : [];
+    .all(req.ctx.workspaceId, connection.id).map((row) => ({
+      ...row, documentResult: connections.parseJson(row.document_result, {}),
+    })) : [];
   const emailRules = isMailbox ? req.db.prepare(`SELECT r.*, s.name AS supplier_name
     FROM connection_email_rules r LEFT JOIN suppliers s ON s.id = r.supplier_id
     WHERE r.workspace_id = ? AND r.connector_id = ? ORDER BY r.sender_pattern COLLATE NOCASE`)
@@ -146,8 +182,9 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
   const canBootstrapShopify = connection.provider_type === 'shopify' && !connection.config.catalogBootstrap
     && !bootstrapCounts.items && !bootstrapCounts.locations && !bootstrapCounts.movements;
   const provider = providers.get(connection.provider_type)?.metadata() || providers.generic;
-  const view = connection.provider_type === 'square' && provider.sandboxMode
-    ? 'connections/detail-square-sandbox' : 'connections/detail';
+  const view = isMailbox ? 'connections/detail-mailbox'
+    : connection.provider_type === 'square' && provider.sandboxMode
+      ? 'connections/detail-square-sandbox' : 'connections/detail';
   res.page(view, { title: connection.display_name, nav: 'connections', connection, token,
     issues, events, mappings, reconciliations, messages, messageAttachments, emailRules, externalRecords, syncRuns, canBootstrapShopify,
     provider, mailboxSignature: isMailbox
@@ -211,6 +248,80 @@ router.post('/settings/connections/:id/email-attachments/:attachmentId/inventory
       ? 'This file is already waiting for review. Foundry did not create another copy.'
       : 'Foundry read the attachment as inventory. Review every match, new item, quantity, cost, and location before approving.');
     return res.redirect(303, `/foundry/proposal/${result.understandingId}`);
+  }));
+
+router.post('/settings/connections/:id/email-messages/:messageId/supplier-preview', requireOwner,
+  asyncRoute(async (req, res) => {
+    const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+    if (!['gmail', 'microsoft365', 'supplier_email'].includes(connection.provider_type)) {
+      throw new ValidationError('Supplier-document review belongs to a supplier mailbox.');
+    }
+    const message = req.db.prepare(`SELECT * FROM connection_email_messages
+      WHERE id = ? AND workspace_id = ? AND connector_id = ? AND trust_status = 'TRUSTED'`)
+      .get(req.params.messageId, req.ctx.workspaceId, connection.id);
+    if (!message) throw new ValidationError('That approved supplier email is no longer available.');
+    const supplierEvidence = require('../../purchasing/supplier-evidence');
+    const result = await supplierEvidence.interpretAndProcess(req.db, message.id, {
+      provider: req.app.locals.aiProvider || undefined,
+    });
+    const current = req.db.prepare('SELECT processing_status FROM connection_email_messages WHERE id = ?')
+      .get(message.id);
+    if (!result && current?.processing_status === 'DUPLICATE_IGNORED') {
+      req.flash('warning', 'Exact duplicate: this file was already imported earlier. Foundry did not add the same stock twice.');
+    } else if (result?.status === 'NEEDS_REVIEW') {
+      req.flash('warning', 'Foundry read the purchasing document and needs your decision on the unmatched or changed details.');
+    } else {
+      req.flash('success', 'Foundry processed the supplier document. Purchasing expectations may be updated; physical inventory was not received.');
+    }
+    return res.redirect(303, `/settings/connections/${connection.id}${result?.status === 'NEEDS_REVIEW' ? '#needs-you' : `#message-${message.id}`}`);
+  }));
+
+router.post('/settings/connections/:id/email-messages/:messageId/save-only', requireOwner,
+  asyncRoute(async (req, res) => {
+    const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+    const changed = req.db.prepare(`UPDATE connection_email_messages
+      SET processing_status = 'SAVED_NO_ACTION', processed_at = ?
+      WHERE id = ? AND workspace_id = ? AND connector_id = ? AND trust_status = 'TRUSTED'
+        AND processing_status = 'CAPTURED'`)
+      .run(new Date().toISOString(), req.params.messageId, req.ctx.workspaceId, connection.id).changes;
+    if (!changed) throw new ValidationError('That email no longer needs a choice.');
+    req.flash('success', 'Saved the email and attachment in history only. Purchasing and inventory were not changed.');
+    return res.redirect(303, `/settings/connections/${connection.id}#message-${req.params.messageId}`);
+  }));
+
+router.get('/settings/connections/:id/email-messages/:messageId/restore-import', requireOwner,
+  asyncRoute(async (req, res) => {
+    const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+    if (!['gmail', 'microsoft365', 'supplier_email'].includes(connection.provider_type)) {
+      throw new ValidationError('Import restoration belongs to a connected supplier mailbox.');
+    }
+    const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
+    const review = documentRestorations.prepare(req.db, req.ctx, membership, connection.id, req.params.messageId);
+    return res.page('connections/restore-import', {
+      title: review.status === 'COMPLETED' ? 'Import restored' : 'Restore the removed import?',
+      nav: 'connections', connection, provider: providers.get(connection.provider_type)?.metadata() || providers.generic,
+      review,
+    });
+  }));
+
+router.post('/settings/connections/:id/email-messages/:messageId/restore-import', requireOwner,
+  asyncRoute(async (req, res) => {
+    const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+    const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
+    const review = documentRestorations.prepare(req.db, req.ctx, membership, connection.id, req.params.messageId);
+    const completed = documentRestorations.approve(req.db, req.ctx, membership, review.id, req.body.integrityHash);
+    req.flash('success', `Restored ${completed.result.productsRestored} products, ${completed.result.variantsRestored} variants, and ${completed.result.unitsRestored} ${completed.result.unitLabel}${completed.result.unitsRestored === 1 ? '' : 's'}. No duplicate products were created.`);
+    return res.redirect(303, `/settings/connections/${connection.id}#message-${req.params.messageId}`);
+  }));
+
+router.post('/settings/connections/:id/email-messages/:messageId/keep-removed', requireOwner,
+  asyncRoute(async (req, res) => {
+    const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+    const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
+    const review = documentRestorations.prepare(req.db, req.ctx, membership, connection.id, req.params.messageId);
+    documentRestorations.decline(req.db, req.ctx.workspaceId, review.id);
+    req.flash('success', 'Kept the earlier import removed. This email remains in message history and inventory was not changed.');
+    return res.redirect(303, `/settings/connections/${connection.id}#message-${req.params.messageId}`);
   }));
 
 router.post('/settings/connections/:id/bootstrap-shopify', requireOwner, asyncRoute(async (req, res) => {
@@ -303,6 +414,16 @@ router.post('/settings/connections/:id/supplier-document-decision', requireOwner
   return res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 
+router.post('/settings/connections/:id/supplier-document-ignore', requireOwner, asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  if (!['gmail', 'microsoft365', 'supplier_email'].includes(connection.provider_type)) {
+    throw new Error('Supplier-document decisions belong to a supplier mailbox.');
+  }
+  require('../../purchasing/supplier-evidence').ignoreReview(req.db, req.ctx, req.body.issueId);
+  req.flash('success', 'Ignored this document as a purchasing update. The original email remains in message history and inventory was not changed.');
+  return res.redirect(303, `/settings/connections/${connection.id}`);
+}));
+
 router.post('/settings/connections/:id/create-location-map', requireOwner, asyncRoute(async (req, res) => {
   const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
   const externalId = String(req.body.externalId || '');
@@ -357,30 +478,37 @@ router.post('/settings/connections/:id/create-products-map', requireOwner, async
 router.post('/settings/connections/:id/email-rules', requireOwner, asyncRoute(async (req, res) => {
   const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
   const senderPattern = String(req.body.senderPattern || '').trim();
+  const supplierChoice = String(req.body.supplierChoice || '').trim();
   let supplierId = String(req.body.supplierId || '').trim() || null;
   const existingRule = senderPattern ? req.db.prepare(`SELECT supplier_id FROM connection_email_rules
     WHERE workspace_id = ? AND connector_id = ? AND sender_pattern = ? COLLATE NOCASE`)
     .get(req.ctx.workspaceId, req.params.id, senderPattern) : null;
-  if (!supplierId && existingRule?.supplier_id) supplierId = existingRule.supplier_id;
-  let supplier = supplierId
-    ? supplierService.getSupplier(req.db, req.ctx.workspaceId, supplierId)
-    : null;
+  if (!supplierChoice && existingRule?.supplier_id && !supplierId) supplierId = existingRule.supplier_id;
 
-  if (!supplier) {
-    const suppliedName = String(req.body.supplierName || '').trim();
-    const addressPart = senderPattern.replace(/^@/, '').split('@')[0] || senderPattern.replace(/^@/, '');
-    const supplierName = suppliedName || addressPart.replace(/[._-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
-      || 'Email inventory source';
-    const existing = supplierName ? req.db.prepare(`SELECT id FROM suppliers
-      WHERE workspace_id = ? AND name = ? COLLATE NOCASE`).get(req.ctx.workspaceId, supplierName) : null;
-    supplier = existing
-      ? supplierService.getSupplier(req.db, req.ctx.workspaceId, existing.id)
-      : supplierService.createSupplier(req.db, req.ctx, membership, {
-        name: supplierName,
-        email: senderPattern.startsWith('@') ? null : senderPattern,
-        watchedConnectorId: req.params.id,
-      });
+  let supplier;
+  if (supplierChoice === 'new') {
+    if (supplierId) throw new ValidationError('Choose an existing supplier or create a new one, not both.');
+    const supplierName = String(req.body.supplierName || '').trim();
+    if (!supplierName) throw new ValidationError('Enter the new supplier name before creating it.');
+    const duplicate = req.db.prepare(`SELECT id FROM suppliers
+      WHERE workspace_id = ? AND name = ? COLLATE NOCASE`).get(req.ctx.workspaceId, supplierName);
+    if (duplicate) {
+      throw new ValidationError(`“${supplierName}” already exists. Select it from the existing-supplier list instead.`);
+    }
+    supplier = supplierService.createSupplier(req.db, req.ctx, membership, {
+      name: supplierName,
+      email: senderPattern.startsWith('@') ? null : senderPattern,
+      watchedConnectorId: req.params.id,
+    });
     supplierId = supplier.id;
+  } else {
+    if (supplierChoice && supplierChoice !== 'existing') {
+      throw new ValidationError('Choose an existing supplier or explicitly create a new supplier.');
+    }
+    if (!supplierId) {
+      throw new ValidationError('Choose which existing supplier sends from this address, or explicitly create a new supplier.');
+    }
+    supplier = supplierService.getSupplier(req.db, req.ctx.workspaceId, supplierId);
   }
 
   connections.addEmailRule(req.db, req.ctx, req.params.id, {

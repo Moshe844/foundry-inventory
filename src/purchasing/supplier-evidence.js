@@ -41,6 +41,16 @@ function classify(subject, body, attachments = []) {
   return 'supplier_message';
 }
 
+const DOCUMENT_TYPES = new Set([
+  'supplier_message', 'order_acknowledgement', 'invoice', 'packing_slip', 'shipment_notice',
+  'delivery_confirmation', 'backorder_notice', 'quotation', 'price_update', 'credit',
+]);
+
+function validatedDocumentType(value) {
+  const candidate = String(value || '').trim();
+  return DOCUMENT_TYPES.has(candidate) ? candidate : null;
+}
+
 function conservativeFacts(message, supplied = {}) {
   const text = `${message.subject || ''}\n${message.body_text || ''}`;
   const po = text.match(/\bPO[-\s#:]*(\d{2,})\b/i);
@@ -74,7 +84,7 @@ function orderFor(db, message, facts) {
 }
 
 function orderLines(db, orderId) {
-  return db.prepare(`SELECT pol.*, s.code AS sku_code, i.tracking_mode,
+  return db.prepare(`SELECT pol.*, s.code AS sku_code, s.variant_label, i.name AS item_name, i.tracking_mode,
       si.supplier_sku AS mapped_supplier_sku
     FROM purchase_order_lines pol JOIN skus s ON s.id = pol.sku_id
     JOIN items i ON i.id = s.item_id
@@ -113,9 +123,23 @@ function receiveTrustedDelivery(db, message, supplier, order, documentId, matche
 function matchLine(lines, proposed) {
   const keys = [proposed.purchaseOrderLineId, proposed.supplierSku, proposed.sku, proposed.skuCode]
     .filter(Boolean).map((entry) => String(entry).trim().toLowerCase());
-  return lines.find((line) => keys.includes(String(line.id).toLowerCase())
+  const coded = lines.find((line) => keys.includes(String(line.id).toLowerCase())
     || [line.supplier_sku, line.mapped_supplier_sku, line.sku_code].filter(Boolean)
       .some((entry) => keys.includes(String(entry).trim().toLowerCase()))) || null;
+  if (coded) return coded;
+
+  // A supplier does not need to repeat its SKU when an exact product name on
+  // an already-identified PO resolves to one line. This is deliberately exact
+  // and unique: similar wording or two same-named lines still asks the owner.
+  const normalize = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const description = normalize(proposed.description || proposed.displayName || proposed.name);
+  if (!description) return null;
+  const described = lines.filter((line) => [
+    line.description,
+    line.item_name,
+    line.variant_label ? `${line.item_name} / ${line.variant_label}` : null,
+  ].some((candidate) => normalize(candidate) === description));
+  return described.length === 1 ? described[0] : null;
 }
 
 function issue(db, message, type, fingerprint, title, detail, resolutionHint, candidates = []) {
@@ -129,15 +153,46 @@ function process(db, messageId, proposedFacts = {}) {
   if (!message || message.trust_status !== 'TRUSTED') return null;
   const attachments = db.prepare('SELECT * FROM connection_email_attachments WHERE message_id = ?').all(messageId)
     .map((row) => ({ ...row, extractedText: row.extracted_text }));
-  const documentType = classify(message.subject, message.body_text, attachments);
+  // In the normal connected flow the model proposes one closed document type.
+  // The deterministic engine accepts only that enum. The legacy classifier is
+  // retained strictly for installations without an extractor so existing
+  // ingestion does not stop working.
+  const documentType = validatedDocumentType(proposedFacts.documentType)
+    || classify(message.subject, message.body_text, attachments);
   const facts = conservativeFacts(message, proposedFacts);
   const documentReference = facts.invoiceNumber || facts.supplierOrderNumber || facts.poNumber || null;
   const contentHash = message.content_hash || crypto.createHash('sha256')
     .update(`${message.sender}\n${message.subject || ''}\n${message.body_text || ''}\n${attachments.map((a) => a.content_hash).join(':')}`)
     .digest('hex');
-  const existing = db.prepare(`SELECT * FROM supplier_documents WHERE workspace_id = ? AND connector_id = ?
-    AND content_hash = ? AND document_type = ? AND IFNULL(document_reference, '') = IFNULL(?, '')`)
-    .get(message.workspace_id, message.connector_id, contentHash, documentType, documentReference);
+  // Provider notifications and model extraction can be replayed independently.
+  // Identity is therefore based on the trusted supplier plus the original
+  // message/attachment bytes and business reference, never on a model label.
+  const attachmentHash = attachments[0]?.content_hash || null;
+  // If the owner already approved these exact bytes as an inventory import,
+  // the same attachment cannot simultaneously become a supplier invoice that
+  // asks for purchasing decisions. Preserve the email, mark the resend, and
+  // do not create a second interpretation of the same file.
+  const appliedInventory = attachmentHash ? db.prepare(`SELECT id FROM setup_documents
+    WHERE workspace_id = ? AND content_hash = ? AND status = 'APPLIED' LIMIT 1`)
+    .get(message.workspace_id, attachmentHash) : null;
+  if (appliedInventory) {
+    db.prepare(`UPDATE connection_email_attachments SET setup_document_id = ?
+      WHERE workspace_id = ? AND message_id = ? AND content_hash = ? AND setup_document_id IS NULL`)
+      .run(appliedInventory.id, message.workspace_id, message.id, attachmentHash);
+    db.prepare(`UPDATE connection_email_messages SET classification = 'inventory_document_duplicate',
+      processing_status = 'DUPLICATE_IGNORED', processed_at = ? WHERE id = ? AND workspace_id = ?`)
+      .run(nowIso(), message.id, message.workspace_id);
+    return null;
+  }
+  const existing = db.prepare(`SELECT d.* FROM supplier_documents d
+    LEFT JOIN connection_email_attachments a ON a.id = d.attachment_id
+    WHERE d.workspace_id = ? AND d.connector_id = ?
+      AND IFNULL(d.supplier_id, '') = IFNULL(?, '')
+      AND IFNULL(d.document_reference, '') = IFNULL(?, '')
+      AND (d.content_hash = ? OR (? IS NOT NULL AND a.content_hash = ?))
+    ORDER BY d.processed_at DESC LIMIT 1`)
+    .get(message.workspace_id, message.connector_id, message.supplier_id, documentReference,
+      contentHash, attachmentHash, attachmentHash);
   if (existing) {
     db.prepare("UPDATE connection_email_messages SET processing_status = 'DUPLICATE', processed_at = ? WHERE id = ?")
       .run(nowIso(), messageId);
@@ -166,9 +221,11 @@ function process(db, messageId, proposedFacts = {}) {
     }
     const unitPrice = number(proposed.unitPrice ?? (proposed.unitPriceMinor == null ? null : Number(proposed.unitPriceMinor) / 100));
     const quantity = number(proposed.quantity ?? proposed.confirmedQuantity);
+    let priceWithinTolerance = unitPrice !== null && line.unit_cost !== null;
     if (unitPrice !== null && line.unit_cost !== null) {
       const change = line.unit_cost === 0 ? (unitPrice === 0 ? 0 : 100) : ((unitPrice - line.unit_cost) / line.unit_cost) * 100;
       if (Math.abs(change) > Number(supplier.price_tolerance_percent ?? 5)) {
+        priceWithinTolerance = false;
         discrepancies.push({ type: 'price', lineId: line.id, skuId: line.sku_id, previous: line.unit_cost,
           current: unitPrice, changePercent: Math.round(change * 10) / 10,
           message: `${line.description || line.sku_code} changed from ${line.unit_cost} to ${unitPrice} (${change >= 0 ? '+' : ''}${change.toFixed(1)}%).` });
@@ -182,7 +239,7 @@ function process(db, messageId, proposedFacts = {}) {
           message: `${line.description || line.sku_code} changed from ${line.quantity_units} to ${quantity} units.` });
       }
     }
-    matched.push({ proposed, line, unitPrice, quantity });
+    matched.push({ proposed, line, unitPrice, quantity, priceWithinTolerance });
   }
 
   const now = nowIso();
@@ -198,15 +255,28 @@ function process(db, messageId, proposedFacts = {}) {
       status, message.received_at, now);
 
   if (order) {
-    for (const { proposed, line, unitPrice, quantity } of matched) {
+    for (const { proposed, line, unitPrice, quantity, priceWithinTolerance } of matched) {
       if (unitPrice !== null) db.prepare(`INSERT OR IGNORE INTO supplier_price_history
         (id, workspace_id, supplier_id, sku_id, supplier_item_id, unit_cost, currency, source_document_id,
          observed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(newId('sprice'), message.workspace_id, supplier.id, line.sku_id, line.supplier_item_id,
           unitPrice, order.currency || supplier.currency || 'USD', documentId, message.received_at, now);
-      if (['order_acknowledgement', 'shipment_notice', 'backorder_notice'].includes(documentType)) {
+      // A saved price tolerance is deterministic authority to accept routine
+      // supplier price movement. Keep the PO and the supplier's current known
+      // cost aligned with that evidence. Outside the tolerance remains a
+      // review and is never applied here.
+      if (priceWithinTolerance && Number(unitPrice) !== Number(line.unit_cost)) {
+        db.prepare(`UPDATE purchase_order_lines SET unit_cost = ?, line_total = ?
+          WHERE id = ? AND workspace_id = ?`)
+          .run(unitPrice, unitPrice * Number(line.quantity_units), line.id, message.workspace_id);
+        if (line.supplier_item_id) db.prepare(`UPDATE supplier_items SET last_unit_cost = ?, last_cost_at = ?, updated_at = ?
+          WHERE id = ? AND workspace_id = ?`)
+          .run(unitPrice, message.received_at, now, line.supplier_item_id, message.workspace_id);
+      }
+      if (['order_acknowledgement', 'shipment_notice', 'packing_slip', 'backorder_notice'].includes(documentType)) {
         const confirmed = number(proposed.confirmedQuantity ?? quantity);
-        const shipping = number(proposed.shippedQuantity ?? (documentType === 'shipment_notice' ? quantity : null));
+        const shipping = number(proposed.shippedQuantity
+          ?? (['shipment_notice', 'packing_slip'].includes(documentType) ? quantity : null));
         const backordered = number(proposed.backorderedQuantity);
         db.prepare(`INSERT INTO purchase_order_line_expectations
           (id, workspace_id, purchase_order_id, purchase_order_line_id, confirmed_units, shipping_units,
@@ -261,7 +331,52 @@ function process(db, messageId, proposedFacts = {}) {
 
   db.prepare(`UPDATE connection_email_messages SET classification = ?, processing_status = ?, processed_at = ? WHERE id = ?`)
     .run(documentType, status, now, messageId);
-  return db.prepare('SELECT * FROM supplier_documents WHERE id = ?').get(documentId);
+  const savedDocument = db.prepare('SELECT * FROM supplier_documents WHERE id = ?').get(documentId);
+  // Mission 14 consumes only the structured, trusted result above. Any
+  // accounting exception remains a bill/review; this adapter cannot receive
+  // stock, change purchasing authority, or reinterpret the email.
+  if (documentType === 'invoice') {
+    try {
+      require('../accounting/supplier-invoice-adapter').captureMatchedInvoice(db, message, savedDocument, matched);
+    } catch (error) {
+      issue(db, message, 'ACCOUNTING_INVOICE_REVIEW', `accounting-invoice:${documentId}`,
+        `${supplier?.name || message.sender} invoice needs an accounting decision`,
+        error.message, 'Open Accounting → Bills and resolve the exact match or amount before posting.');
+    }
+  }
+  return savedDocument;
+}
+
+/**
+ * Interpret an already-captured message only after the owner explicitly says
+ * it is a purchasing document. AI proposes facts; `process` remains the
+ * deterministic boundary that matches suppliers, POs and tolerances.
+ */
+async function interpretAndProcess(db, messageId, options = {}) {
+  const message = db.prepare('SELECT * FROM connection_email_messages WHERE id = ?').get(messageId);
+  if (!message || message.trust_status !== 'TRUSTED') return null;
+  const attachments = db.prepare('SELECT * FROM connection_email_attachments WHERE message_id = ? ORDER BY rowid')
+    .all(messageId);
+  for (const attachment of attachments) {
+    if (attachment.extracted_text || !attachment.content) continue;
+    try {
+      const extractedText = await require('../foundry/document-intake').extractText({
+        filename: attachment.filename, buffer: Buffer.from(attachment.content),
+      });
+      db.prepare('UPDATE connection_email_attachments SET extracted_text = ? WHERE id = ?')
+        .run(extractedText || null, attachment.id);
+      attachment.extracted_text = extractedText || null;
+    } catch {
+      // Keep the original file. The deterministic review below will surface
+      // any missing PO or line evidence instead of inventing it.
+    }
+  }
+  const proposedFacts = await require('./supplier-document-extractor').extract({
+    sender: message.sender, subject: message.subject, bodyText: message.body_text,
+  }, attachments.map((attachment) => ({
+    filename: attachment.filename, extractedText: attachment.extracted_text || '',
+  })), { provider: options.provider });
+  return process(db, messageId, proposedFacts || {});
 }
 
 function decide(db, ctx, issueId, decision) {
@@ -320,6 +435,110 @@ function decide(db, ctx, issueId, decision) {
   return { documentId: document.id, purchaseOrderId: document.purchase_order_id, decision };
 }
 
+function ignoreReview(db, ctx, issueId) {
+  const issueRow = db.prepare(`SELECT * FROM connection_issues
+    WHERE id = ? AND workspace_id = ? AND status = 'OPEN' AND issue_type = 'SUPPLIER_DOCUMENT_REVIEW'`)
+    .get(issueId, ctx.workspaceId);
+  if (!issueRow) throw new Error('That supplier-document decision is no longer waiting.');
+  const candidate = json(issueRow.candidate_matches, []).find((entry) => entry.kind === 'supplier_document_review');
+  const document = candidate?.documentId ? db.prepare(`SELECT * FROM supplier_documents
+    WHERE id = ? AND workspace_id = ?`).get(candidate.documentId, ctx.workspaceId) : null;
+  if (!document) throw new Error('The supplier document for this decision is no longer available.');
+  const now = nowIso();
+  db.transaction(() => {
+    db.prepare("UPDATE supplier_documents SET status = 'IGNORED', processed_at = ? WHERE id = ? AND workspace_id = ?")
+      .run(now, document.id, ctx.workspaceId);
+    db.prepare("UPDATE connection_email_messages SET processing_status = 'IGNORED', processed_at = ? WHERE id = ? AND workspace_id = ?")
+      .run(now, document.message_id, ctx.workspaceId);
+    db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+      WHERE id = ? AND workspace_id = ?`).run(now, now, issueRow.id, ctx.workspaceId);
+    if (document.purchase_order_id) poService.recordEvent(db, ctx.workspaceId, document.purchase_order_id,
+      'supplier_document_ignored', { documentId: document.id }, ctx.actorId);
+  })();
+  return { documentId: document.id, purchaseOrderId: document.purchase_order_id };
+}
+
+/**
+ * Repairs evidence created before exact PO-description matching was available.
+ * It is intentionally narrow: exact supplier + PO, only unknown-code findings,
+ * every line resolves uniquely by the matcher above, and price/quantity still
+ * fall inside the supplier's saved tolerances. Original evidence is preserved.
+ */
+function reconcileExactDescriptionReview(db, workspaceId, documentId) {
+  const document = db.prepare(`SELECT d.*, m.sender, m.received_at, m.id AS source_message_id,
+      m.connector_id AS source_connector_id
+    FROM supplier_documents d JOIN connection_email_messages m ON m.id = d.message_id
+    WHERE d.id = ? AND d.workspace_id = ?`).get(documentId, workspaceId);
+  if (!document || document.status !== 'NEEDS_REVIEW') return null;
+  const oldDiscrepancies = json(document.discrepancies, []);
+  if (!oldDiscrepancies.length || oldDiscrepancies.some((entry) => entry.type !== 'unknown_sku' || entry.supplierSku)) return null;
+  const facts = json(document.facts, {});
+  const order = document.purchase_order_id
+    ? db.prepare('SELECT * FROM purchase_orders WHERE id = ? AND workspace_id = ?').get(document.purchase_order_id, workspaceId)
+    : null;
+  const supplier = document.supplier_id
+    ? db.prepare('SELECT * FROM suppliers WHERE id = ? AND workspace_id = ?').get(document.supplier_id, workspaceId)
+    : null;
+  if (!order || !supplier || !Array.isArray(facts.lines) || !facts.lines.length) return null;
+  const lines = orderLines(db, order.id);
+  const matched = facts.lines.map((proposed) => ({ proposed, line: matchLine(lines, proposed) }));
+  if (matched.some((entry) => !entry.line)) return null;
+  for (const { proposed, line } of matched) {
+    const unitPrice = number(proposed.unitPrice);
+    const quantity = number(proposed.quantity ?? proposed.confirmedQuantity);
+    if (unitPrice !== null && line.unit_cost !== null) {
+      const change = line.unit_cost === 0 ? (unitPrice === 0 ? 0 : 100) : Math.abs((unitPrice - line.unit_cost) / line.unit_cost * 100);
+      if (change > Number(supplier.price_tolerance_percent ?? 5)) return null;
+    }
+    if (quantity !== null) {
+      const percent = Number(line.quantity_units)
+        ? Math.abs(quantity - Number(line.quantity_units)) / Number(line.quantity_units) * 100 : 100;
+      if (percent > Number(supplier.quantity_tolerance_percent ?? 0)) return null;
+    }
+  }
+
+  const now = nowIso();
+  db.transaction(() => {
+    for (const { proposed, line } of matched) {
+      const unitPrice = number(proposed.unitPrice);
+      const quantity = number(proposed.quantity ?? proposed.confirmedQuantity);
+      if (unitPrice !== null) db.prepare(`INSERT OR IGNORE INTO supplier_price_history
+        (id, workspace_id, supplier_id, sku_id, supplier_item_id, unit_cost, currency, source_document_id,
+         observed_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(newId('sprice'), workspaceId, supplier.id, line.sku_id, line.supplier_item_id,
+          unitPrice, order.currency || supplier.currency || 'USD', document.id, document.received_at, now);
+      if (['order_acknowledgement', 'shipment_notice', 'packing_slip', 'backorder_notice'].includes(document.document_type)) {
+        db.prepare(`INSERT INTO purchase_order_line_expectations
+          (id, workspace_id, purchase_order_id, purchase_order_line_id, confirmed_units, shipping_units,
+           backordered_units, expected_ship_date, expected_arrival_date, source_document_id, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(workspace_id, purchase_order_line_id) DO UPDATE SET
+            confirmed_units = COALESCE(excluded.confirmed_units, confirmed_units),
+            shipping_units = COALESCE(excluded.shipping_units, shipping_units),
+            backordered_units = COALESCE(excluded.backordered_units, backordered_units),
+            expected_ship_date = COALESCE(excluded.expected_ship_date, expected_ship_date),
+            expected_arrival_date = COALESCE(excluded.expected_arrival_date, expected_arrival_date),
+            source_document_id = excluded.source_document_id, updated_at = excluded.updated_at`)
+          .run(newId('poexp'), workspaceId, order.id, line.id,
+            number(proposed.confirmedQuantity ?? quantity), number(proposed.shippedQuantity),
+            number(proposed.backorderedQuantity), date(proposed.expectedShipDate || facts.expectedShipDate),
+            date(proposed.expectedArrivalDate || facts.expectedArrivalDate), document.id, now);
+      }
+    }
+    db.prepare("UPDATE supplier_documents SET status = 'MATCHED', discrepancies = '[]', processed_at = ? WHERE id = ? AND workspace_id = ?")
+      .run(now, document.id, workspaceId);
+    db.prepare("UPDATE connection_email_messages SET processing_status = 'MATCHED', processed_at = ? WHERE id = ? AND workspace_id = ?")
+      .run(now, document.source_message_id, workspaceId);
+    db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+      WHERE workspace_id = ? AND connector_id = ? AND issue_type = 'SUPPLIER_DOCUMENT_REVIEW'
+        AND fingerprint = ? AND status = 'OPEN'`)
+      .run(now, now, workspaceId, document.source_connector_id, `supplier-document:${document.id}`);
+    poService.recordEvent(db, workspaceId, order.id, `supplier_${document.document_type}`,
+      { documentId: document.id, sender: document.sender, facts, reconciledExactDescription: true }, null);
+  })();
+  return db.prepare('SELECT * FROM supplier_documents WHERE id = ? AND workspace_id = ?').get(document.id, workspaceId);
+}
+
 function forOrder(db, workspaceId, purchaseOrderId) {
   return db.prepare(`SELECT d.*, m.sender, m.subject, m.received_at FROM supplier_documents d
     JOIN connection_email_messages m ON m.id = d.message_id
@@ -328,4 +547,5 @@ function forOrder(db, workspaceId, purchaseOrderId) {
       discrepancies: json(row.discrepancies, []) }));
 }
 
-module.exports = { classify, conservativeFacts, process, decide, forOrder, matchLine, receiveTrustedDelivery };
+module.exports = { classify, conservativeFacts, process, interpretAndProcess, decide, ignoreReview, forOrder, matchLine,
+  receiveTrustedDelivery, reconcileExactDescriptionReview };

@@ -7,6 +7,7 @@ const { createApp } = require('./app');
 const reevaluate = require('./attention/reevaluate');
 const autopilotScheduler = require('./autopilot/scheduler');
 const mailboxScheduler = require('./connections/mailbox-scheduler');
+const backupService = require('./operations/backup');
 
 config.ensureDataDir();
 
@@ -34,6 +35,12 @@ const stopAutopilot = config.autopilot.enabled
   ? autopilotScheduler.start(db, { intervalMs: config.autopilot.intervalMs })
   : () => {};
 const stopMailboxes = config.autopilot.enabled ? mailboxScheduler.start(db) : () => {};
+const stopBackups = config.backups.enabled ? backupService.startScheduler(db, {
+  directory: config.backups.directory,
+  retentionDays: config.backups.retentionDays,
+  intervalMs: config.backups.intervalMs,
+  runOnStart: true,
+}) : () => {};
 
 const server = app.listen(config.port, () => {
   console.log(`Foundry Inventory listening on http://localhost:${config.port}  (${config.env})`);
@@ -50,6 +57,7 @@ function shutdown(signal) {
   stopSweeper();
   stopAutopilot();
   stopMailboxes();
+  stopBackups();
   server.close(() => {
     try {
       db.close();

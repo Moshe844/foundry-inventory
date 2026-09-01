@@ -5,6 +5,7 @@ const { inTransaction } = require('../db');
 const inventory = require('../domain/inventory-engine');
 const repo = require('../domain/repository');
 const sales = require('../sales/sales-order-service');
+const events = require('../manager/events');
 const reevaluate = require('../attention/reevaluate');
 const connections = require('./service');
 const { ValidationError } = require('../domain/errors');
@@ -169,6 +170,17 @@ function apply(db, auth, event) {
     const result = inventory.issue(db, ctx, { skuId: sku.id, locationId: location.id,
       quantity: positive(data.quantity), reasonCode: trimOrNull(data.reasonCode) || 'sold',
       reference, notes, occurredAt: event.occurredAt });
+    events.publish(db, auth.workspaceId, events.TYPES.CONNECTOR_SALE_COMPLETED, {
+      connectorId: auth.connectorId, connectorName: auth.displayName,
+      externalEventId: event.eventId, occurredAt: event.occurredAt,
+      movementIds: result.movementIds || [], skuId: sku.id, itemId: sku.item_id,
+      locationId: location.id, quantity: positive(data.quantity),
+      unitPriceMinor: data.unitPriceMinor, grossMinor: data.grossMinor,
+      discountMinor: data.discountMinor, taxMinor: data.taxMinor,
+      settlement: trimOrNull(data.settlement || data.paymentStatus), reference,
+    }, { source: auth.providerType, sourceRecordType: 'connector_event',
+      sourceRecordId: event.eventId,
+      idempotencyKey: `connector-sale:${auth.connectorId}:${event.eventId}` });
     return { actionType: 'inventory.issue', actionRecordId: (result.movementIds || [])[0] || null,
       movementIds: result.movementIds || [], skuIds: [sku.id] };
   }
@@ -179,6 +191,17 @@ function apply(db, auth, event) {
       quantity: positive(data.quantity), serials: data.serials, lotCode: data.lotCode,
       expiresAt: data.expiresAt, reasonCode: trimOrNull(data.reasonCode), reference, notes,
       occurredAt: event.occurredAt });
+    if (event.type === 'return.completed') events.publish(db, auth.workspaceId,
+      events.TYPES.CONNECTOR_RETURN_COMPLETED, {
+        connectorId: auth.connectorId, connectorName: auth.displayName,
+        externalEventId: event.eventId, originalSaleEventId: trimOrNull(data.originalSaleEventId),
+        occurredAt: event.occurredAt, movementIds: result.movementIds || [],
+        skuId: sku.id, itemId: sku.item_id, locationId: location.id,
+        quantity: positive(data.quantity), revenueMinor: data.revenueMinor ?? data.refundMinor,
+        taxMinor: data.taxMinor, reference,
+      }, { source: auth.providerType, sourceRecordType: 'connector_event',
+        sourceRecordId: event.eventId,
+        idempotencyKey: `connector-return:${auth.connectorId}:${event.eventId}` });
     return { actionType: event.type === 'return.completed' ? 'inventory.return' : 'inventory.receive',
       actionRecordId: (result.movementIds || [])[0] || null, movementIds: result.movementIds || [], skuIds: [sku.id] };
   }

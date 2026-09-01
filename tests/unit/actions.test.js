@@ -21,6 +21,7 @@ const proposals = require('../../src/actions/proposal-service');
 const execution = require('../../src/actions/execution-service');
 const actionService = require('../../src/actions/action-service');
 const intentService = require('../../src/actions/intent-service');
+const managerIntentRouter = require('../../src/manager/intent-router');
 const resolver = require('../../src/actions/resolver');
 const presenter = require('../../src/actions/presenter');
 const permissions = require('../../src/actions/permissions');
@@ -39,6 +40,90 @@ test('opening-inventory explanations map to the existing audited correction reas
   for (const answer of ['starting inventory', 'starting from scratch', 'opening inventory', 'initial balances']) {
     assert.equal(actionService.adjustmentReasonFromAnswer(answer), 'correction', answer);
   }
+});
+
+test('explicit receive and physical-count instructions do not wait on an AI provider', async () => {
+  const context = {
+    itemNames: ['Navy Oxford'],
+    locationNames: ['Brooklyn Warehouse', 'New Jersey Warehouse'],
+  };
+  const receive = await intentService.readInstruction(
+    'Receive 50 more Navy Oxford size 8 into Brooklyn Warehouse', { context }
+  );
+  assert.equal(receive.lines[0].actionType, 'receive');
+  assert.equal(receive.lines[0].item, 'Navy Oxford');
+  assert.equal(receive.lines[0].variant, 'size 8');
+  assert.equal(receive.lines[0].destinationLocation, 'Brooklyn Warehouse');
+  assert.equal(receive.lines[0].quantity, 50);
+
+  const correction = await intentService.readInstruction(
+    'Set Brooklyn Warehouse Navy Oxford size 8 to 60 after a physical count', { context }
+  );
+  assert.equal(correction.lines[0].actionType, 'adjust');
+  assert.equal(correction.lines[0].item, 'Navy Oxford');
+  assert.equal(correction.lines[0].variant, 'size 8');
+  assert.equal(correction.lines[0].sourceLocation, 'Brooklyn Warehouse');
+  assert.equal(correction.lines[0].adjustmentTarget, 60);
+  assert.equal(correction.lines[0].reasonCode, 'physical_count');
+  assert.equal(managerIntentRouter.fallbackClassify(
+    'Set Brooklyn Warehouse Navy Oxford size 8 to 60 after a physical count'
+  ).intentClass, 'INVENTORY_ACTION');
+
+  const purchase = await intentService.readInstruction(
+    'Order 500 more Navy Oxford size 8 from our supplier', { context }
+  );
+  assert.equal(purchase.lines[0].actionType, 'purchase');
+  assert.equal(purchase.lines[0].item, 'Navy Oxford');
+  assert.equal(purchase.lines[0].variant, 'size 8');
+  assert.equal(purchase.lines[0].quantity, 500);
+  assert.equal(purchase.lines[0].supplier, 'our supplier');
+
+  const packedPurchase = await intentService.readInstruction(
+    'Order 5 cases of Navy Oxford from ABC Footwear', { context }
+  );
+  assert.equal(packedPurchase.lines[0].actionType, 'purchase');
+  assert.equal(packedPurchase.lines[0].item, 'Navy Oxford');
+  assert.equal(packedPurchase.lines[0].variant, '');
+  assert.equal(packedPurchase.lines[0].purchaseUnit, 'cases');
+  assert.equal(packedPurchase.lines[0].supplier, 'ABC Footwear');
+  assert.equal(packedPurchase.lines[0].quantity, 5);
+
+  const shipment = await intentService.readInstruction(
+    "ABC Footwear's shipment arrived", { context }
+  );
+  assert.equal(shipment.lines[0].actionType, 'receive_shipment');
+  assert.equal(shipment.lines[0].supplier, 'ABC Footwear');
+  assert.equal(shipment.lines[0].quantity, null);
+
+  const env = setup();
+  makeVariantItem(env.db, env.ctx, { name: 'Navy Oxford' });
+  const unsupportedPurchase = await actionService.interpret(
+    env.db, env.ctx, env.membership,
+    'Order 500 more Navy Oxford Navy 4 from our supplier'
+  );
+  assert.equal(unsupportedPurchase.kind, 'unsupported');
+  assert.match(unsupportedPurchase.message, /supplier/i);
+});
+
+test('an explicit coded catalogue list is complete without depending on provider formatting', async () => {
+  const parsed = await intentService.readInstruction(
+    'Create: Copper Elbow CE-100, Copper Tee CT-200, Copper Pipe CP-300',
+    { context: { itemNames: [], locationNames: [] } }
+  );
+  assert.deepEqual(parsed.lines.map((line) => [line.productName, line.productCode]), [
+    ['Copper Elbow', 'CE-100'],
+    ['Copper Tee', 'CT-200'],
+    ['Copper Pipe', 'CP-300'],
+  ]);
+  assert.ok(parsed.lines.every((line) => line.actionType === 'create_item'));
+
+  const named = await intentService.readInstruction(
+    'Add three products: Rye Flour 16kg, Spelt Flour 16kg and Semolina 10kg',
+    { context: { itemNames: [], locationNames: [] } }
+  );
+  assert.deepEqual(named.lines.map((line) => line.productName), [
+    'Rye Flour 16kg', 'Spelt Flour 16kg', 'Semolina 10kg',
+  ]);
 });
 
 test('a location question offers one atomic all-locations choice', async () => {
@@ -2145,6 +2230,17 @@ test('a single parsed action cannot silently cover only the first numbered claus
     'Move 10 Navy 4 from Main Warehouse to Downtown Store',
     { lines: [intent({ actionType: 'transfer', quantity: 10 })] }
   ), false);
+});
+
+test('an exactly duplicated provider line cannot create the same stock action twice', () => {
+  const line = {
+    ...intent({ item: 'banana', variant: '', quantity: 3, destinationLocation: 'monroe' }),
+    sourceText: 'move 3 bannana to monroe',
+  };
+  const result = intentService.normalise({
+    lines: [line, { ...line }], clarifyingQuestion: '', unsupportedReason: '',
+  });
+  assert.equal(result.lines.length, 1);
 });
 
 test('ordinary words around a location name do not defeat it', () => {

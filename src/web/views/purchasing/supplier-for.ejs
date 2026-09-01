@@ -107,12 +107,32 @@
           <input class="input num" type="number" name="leadTimeDays" min="0" step="1">
           <span class="field-help">How long a delivery takes. Foundry orders early enough to cover it.</span>
         </label>
+        <% if (itemSkus.length === 1 || itemSkus.length > 8) { %>
         <label class="field">
-          <span class="field-label">What you last paid <span class="optional">optional</span></span>
+          <span class="field-label"><%= itemSkus.length > 1 ? 'Same cost for every selected variant' : 'Cost of one inventory unit' %> <span class="optional">optional</span></span>
           <input class="input num" type="number" name="lastUnitCost" min="0" step="0.01">
-          <span class="field-help">Per unit. Used to estimate what an order will cost.</span>
+          <span class="field-help">Enter the cost of one item inside the pack—not the cost of the whole case or box.<% if (itemSkus.length > 1) { %> Leave this blank if the variants cost different amounts; add their individual costs from the supplier page.<% } else { %> Example: if a case of 12 costs $96, enter $8.00. Foundry then shows the case cost as $96.<% } %></span>
         </label>
+        <% } %>
       </div>
+
+      <% if (itemSkus.length > 1 && itemSkus.length <= 8) { %>
+        <div class="field" style="margin-top:16px;">
+          <span class="field-label">Cost of one inventory unit for each variant <span class="optional">optional</span></span>
+          <span class="field-help" style="margin-bottom:8px;">Enter each item's cost inside the supplier pack—not the price of the whole case or box. Different sizes can have different costs.</span>
+          <table class="table table--tight">
+            <thead><tr><th>Variant</th><th class="num">Cost of one item</th></tr></thead>
+            <tbody>
+              <% itemSkus.forEach(function (sku) { %>
+                <tr>
+                  <td><strong><%= sku.variant_label || sku.code %></strong></td>
+                  <td class="num"><input class="input num" style="max-width:150px;margin-left:auto;" type="number" name="lastUnitCost_<%= sku.id %>" min="0" step="0.01" aria-label="Cost of one <%= sku.variant_label || sku.code %>"></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
     </div>
     <div class="card-foot">
       <span class="muted">Nothing is ordered here. Foundry recalculates this line and shows you the order to review.</span>

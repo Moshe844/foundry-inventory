@@ -226,8 +226,8 @@ test(
 
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
-    context.setDefaultTimeout(600000);
-    context.setDefaultNavigationTimeout(600000);
+    context.setDefaultTimeout(15000);
+    context.setDefaultNavigationTimeout(30000);
     const page = await context.newPage();
     const pageErrors = [];
     page.on('pageerror', (e) => pageErrors.push(String(e)));
@@ -236,9 +236,9 @@ test(
     let recommended = null;
 
     t.after(async () => {
+      await stopServer(server);
       await context.close();
       await browser.close();
-      await stopServer(server);
       fs.rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -286,7 +286,7 @@ test(
       await page.goto(`${BASE}/purchasing`);
       await Promise.all([
         page.waitForURL(/\/purchasing\/orders\/po_/),
-        page.click('button:has-text("Review ABC Footwear order")'),
+        page.click('button:has-text("Prepare ABC Footwear order")'),
       ]);
       orderPath = new URL(page.url()).pathname;
       await shot(page, 'draft-order');
@@ -301,7 +301,7 @@ test(
     await t.test('4. approving makes it incoming, and the plan goes quiet', async () => {
       await Promise.all([
         page.waitForLoadState('networkidle'),
-        page.click('button:has-text("Approve and mark as ordered")'),
+        page.click('button:has-text("Approve order")'),
       ]);
       await shot(page, 'approved');
 
@@ -443,16 +443,16 @@ test(
 
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
-    context.setDefaultTimeout(600000);
-    context.setDefaultNavigationTimeout(600000);
+    context.setDefaultTimeout(15000);
+    context.setDefaultNavigationTimeout(30000);
     const page = await context.newPage();
     const pageErrors = [];
     page.on('pageerror', (e) => pageErrors.push(String(e)));
 
     t.after(async () => {
+      await stopServer(server);
       await context.close();
       await browser.close();
-      await stopServer(server);
       fs.rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -468,7 +468,8 @@ test(
 
       const text = await page.locator('body').innerText();
       assert.match(text, /Nothing is below its reorder point/);
-      assert.match(text, /Incoming stock currently covers the expected requirement/);
+      assert.match(text, /Everything was checked against how fast it sells and what is already on the way/);
+      assert.match(text, /Nothing is below its reorder point/);
       assert.doesNotMatch(text, /Review ABC Footwear order/);
     });
 

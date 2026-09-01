@@ -503,7 +503,10 @@ function fulfill(db, ctx, orderId, input = {}, options = {}) {
         .run(quantity, nowIso(), allocation.sales_order_line_id);
       fulfilled.push({ lineId: allocation.sales_order_line_id, skuId: allocation.sku_id,
         locationId: allocation.location_id, locationName: allocation.location_name, quantity,
-        movementIds: (result.movements || []).map((movement) => movement.id) });
+        // The inventory engine returns immutable movement IDs directly. Keep
+        // them on the sales event so downstream accounting and audit consumers
+        // can trace COGS to the exact physical issue without guessing by time.
+        movementIds: result.movementIds || [] });
     }
     if (!fulfilled.length) throw new ValidationError('Choose at least one allocated quantity to fulfill.');
     const status = currentStatus(db, orderId);

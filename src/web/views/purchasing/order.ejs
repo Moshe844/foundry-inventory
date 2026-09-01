@@ -11,7 +11,21 @@
   </div>
 </div>
 
-<% if (communications && communications.length) { var communication = communications[0]; %>
+<% var missingCostLines = (order.lines || []).filter(function(line) { return line.unitCost === null || line.unitCost === undefined; }); %>
+<% if (order.isEditable && missingCostLines.length) { %>
+  <form method="post" action="/purchasing/orders/<%= order.id %>/prices" class="card section">
+    <div class="card-head"><div><h2>Finish pricing this order</h2><p class="muted">Foundry will not approve or send an order until every selected product has a unit cost.</p></div><span class="spacer"></span><span class="badge badge--warn">Do this now</span></div>
+    <div class="card-body grid">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <% missingCostLines.forEach(function(line) { %>
+        <label class="field"><span class="field-label"><%= line.displayName %> · cost for one <%= line.unitLabel %></span><input class="input" type="number" min="0" step="0.01" name="unitCost[<%= line.id %>]" placeholder="20.00" required autofocus></label>
+      <% }) %>
+    </div>
+    <div class="card-foot"><button class="btn btn--primary" type="submit">Save prices and continue</button></div>
+  </form>
+<% } %>
+
+<% if (communications && communications.length && order.hasCosts) { var communication = communications[0]; %>
   <div class="card section">
     <div class="card-head">
       <div><h2>Supplier message</h2><p class="muted">Prepared from this order and sent only through the supplier's approved mailbox and authority.</p></div>
@@ -24,11 +38,11 @@
       <% } else if (communication.status === 'QUEUED') { %>
         <div class="notice notice--warn"><span>Ready to send. Foundry has not told the supplier yet.</span></div>
       <% } else if (communication.status === 'SENT') { %>
-        <div class="notice" style="background:var(--ok-bg); border-color:#bbf7d0; color:#14532d;"><span>Sent and confirmed by <%= communication.transport %><%= communication.externalMessageId ? ' · ' + communication.externalMessageId : '' %>.</span></div>
+        <div class="notice" style="background:var(--ok-bg); border-color:#bbf7d0; color:#14532d;"><span>Sent successfully<%= communication.mailboxProviderName ? ' through ' + communication.mailboxProviderName : '' %> from <%= communication.mailboxName %> to <%= communication.recipient %>.</span></div>
       <% } %>
       <dl class="kv"><dt>To</dt><dd><%= communication.recipient || 'No supplier email on file' %></dd><dt>Subject</dt><dd><%= communication.subject %></dd></dl>
       <details><summary>Preview message</summary><pre style="white-space:pre-wrap; font-family:inherit;"><%= communication.body %></pre></details>
-      <% if (permissions.approve && communication.status !== 'SENT' && communication.connectorId && communication.recipient) { %><form method="post" action="/purchasing/orders/<%= order.id %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Approve &amp; send</button></form><% } %>
+      <% if (permissions.approve && communication.status !== 'SENT' && communication.connectorId && communication.recipient && !order.isEditable) { %><form method="post" action="/purchasing/orders/<%= order.id %>/send"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Send to supplier</button></form><% } %>
     </div>
   </div>
 <% } %>
@@ -43,9 +57,47 @@
   </div>
 <% } %>
 
+<% var moneyStatus = !supplierBills.length ? 'Waiting for supplier invoice'
+     : billSummary.needsReview ? 'Invoice needs review'
+     : billSummary.owedMinor === 0 ? 'Paid'
+     : billSummary.paidMinor > 0 ? 'Partially paid' : 'Unpaid'; %>
+<section class="card section supplier-order-story">
+  <div class="card-head"><div><p class="eyebrow">Foundry handles the routine work</p><h2>Delivery and payment are tracked separately</h2><p class="hint">Receiving products changes inventory. A supplier invoice creates the bill. A payment reduces only the bill.</p></div></div>
+  <div class="card-body">
+    <div class="supplier-order-tracks">
+      <div class="supplier-order-track">
+        <h3>Products</h3>
+        <p class="supplier-order-track__status"><%= order.outstandingUnits === 0 ? 'Everything received' : order.receivedUnits > 0 ? 'Partially received' : 'Waiting for delivery' %></p>
+        <dl class="money-plain-list"><div><dt>Ordered</dt><dd><%= order.orderedUnits %> units</dd></div><div><dt>Received</dt><dd><%= order.receivedUnits %> units</dd></div><div><dt>Still expected</dt><dd><%= order.outstandingUnits %> units</dd></div></dl>
+      </div>
+      <div class="supplier-order-track">
+        <h3>Supplier money</h3>
+        <p class="supplier-order-track__status"><%= moneyStatus %></p>
+        <dl class="money-plain-list"><div><dt>Supplier invoices received</dt><dd><%= helpers.money(billSummary.invoiceTotalMinor, order.currency) %></dd></div><div><dt>Paid</dt><dd><%= helpers.money(billSummary.paidMinor, order.currency) %></dd></div><div><dt>Still owed</dt><dd><%= helpers.money(billSummary.owedMinor, order.currency) %></dd></div></dl>
+      </div>
+    </div>
+    <div class="notice notice--info"><div><strong>These balances never change each other.</strong><br>A partial delivery changes “Still expected.” A partial payment changes “Still owed.” Foundry waits for evidence of each event and never treats an invoice as a delivery or a delivery as a payment.</div></div>
+
+    <% if (!supplierBills.length) { %>
+      <div class="notice"><div><strong>No supplier invoice has been received for this order yet.</strong><br>Foundry is watching the approved supplier mailbox. A trusted invoice will be matched to <%= order.poNumber %>, checked against its products and prices, and turned into a supplier bill automatically. Receiving inventory alone does not say the supplier was paid.</div></div>
+    <% } else { %>
+      <div class="stack supplier-bill-list">
+        <% supplierBills.forEach(function(bill) { var openBill = ['OPEN','PARTIALLY_PAID'].includes(bill.status); var paid = Number(bill.total_minor) - Number(bill.balance_minor); %>
+          <div class="list-row">
+            <div><strong><%= bill.supplier_invoice_number ? 'Supplier invoice ' + bill.supplier_invoice_number : bill.bill_number %></strong><p><%= helpers.money(bill.total_minor, bill.currency) %> invoice · <%= helpers.money(paid, bill.currency) %> paid · <%= helpers.money(bill.balance_minor, bill.currency) %> still owed</p><small><%= bill.status.replaceAll('_',' ').toLowerCase() %> · <%= bill.match_status.replaceAll('_',' ').toLowerCase() %><%= bill.due_date ? ' · due ' + bill.due_date : '' %></small></div>
+            <% if (openBill && permissions.payments) { %><details class="advanced-settings"><summary class="btn btn--sm">Record payment</summary><form method="post" action="/accounting/payables/<%= bill.id %>/payment" class="form-inline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= bill.id %>-<%= Date.now() %>"><input type="hidden" name="returnTo" value="/purchasing/orders/<%= order.id %>"><label class="field"><span class="field-label">Amount actually paid</span><input class="input input--sm" name="amount" inputmode="decimal" value="<%= (bill.balance_minor / 100).toFixed(2) %>" required></label><label class="field"><span class="field-label">Payment date</span><input class="input input--sm" type="date" name="paymentDate" value="<%= new Date().toISOString().slice(0,10) %>" required></label><label class="field"><span class="field-label">Reference</span><input class="input input--sm" name="reference" placeholder="Check, transfer, card…"></label><button class="btn btn--primary btn--sm" type="submit">Record payment</button></form></details><% } %>
+          </div>
+        <% }) %>
+      </div>
+    <% } %>
+
+    <div class="supplier-autonomy-next"><strong>What Foundry does next</strong><p><% if (order.outstandingUnits > 0) { %>Keeps watching for shipment and delivery evidence for the remaining <%= order.outstandingUnits %> units. <% } %><% if (!supplierBills.length) { %>Keeps watching for the supplier invoice. <% } else if (billSummary.owedMinor > 0) { %>Keeps the <%= helpers.money(billSummary.owedMinor, order.currency) %> balance open and updates it when payment evidence is recorded. <% } %>Any price, quantity, SKU, duplicate, or authority exception goes to Needs You instead of being guessed.</p></div>
+  </div>
+</section>
+
 <div class="card section">
   <div class="card-head">
-    <h2><%= order.status === 'DRAFT' || order.status === 'AWAITING_APPROVAL' ? 'Foundry is ready to order' : 'The order' %></h2>
+    <h2><%= order.isEditable && !order.hasCosts ? 'This order needs a price' : order.status === 'DRAFT' || order.status === 'AWAITING_APPROVAL' ? 'Foundry is ready to order' : 'The order' %></h2>
     <span class="spacer"></span>
     <span class="badge badge--<%= order.status === 'RECEIVED' ? 'ok' : order.status === 'CANCELLED' ? 'danger' : 'muted' %>">
       <%= helpers.columnLabel(order.status.toLowerCase().replace('_', ' ')) %>
@@ -91,11 +143,11 @@
   </div>
   <div class="card-foot">
     <div class="btn-row">
-      <% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status) && permissions.approve) { %>
+      <% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status) && order.hasCosts && permissions.approve) { %>
         <form method="post" action="/purchasing/orders/<%= order.id %>/approve" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="integrityHash" value="<%= order.integrityHash %>">
-          <button class="btn btn--primary" type="submit">Approve and mark as ordered</button>
+          <button class="btn btn--primary" type="submit">Approve order</button>
         </form>
       <% } %>
       <% if (order.isOpen && permissions.receive) { %>
@@ -139,8 +191,12 @@
     </div>
     <% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)) { %>
       <p class="muted" style="margin-top:8px;">
-        Nothing has been sent to <%= order.supplierName %> yet. Approving records the order and then follows
-        this supplier's communication rule: send within approved authority, or wait for you to approve the message.
+        <% if (order.isEditable && !order.hasCosts) { %>
+          Nothing has been sent to <%= order.supplierName %>. Add the missing price above before this order can be approved.
+        <% } else { %>
+          Nothing has been sent to <%= order.supplierName %> yet. Approving records the order and then follows
+          this supplier's communication rule: send within approved authority, or wait for you to approve the message.
+        <% } %>
       </p>
     <% } %>
   </div>

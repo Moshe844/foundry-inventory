@@ -89,15 +89,47 @@ async function prepare(db, ctx, membership, connectorId, attachmentId, options =
 }
 
 function reconcileStatuses(db, workspaceId, connectorId) {
-  return db.prepare(`UPDATE connection_email_messages SET classification = 'inventory_document',
-    processing_status = 'INVENTORY_APPLIED', processed_at = COALESCE(processed_at, ?)
-    WHERE workspace_id = ? AND connector_id = ? AND processing_status = 'AWAITING_INVENTORY_REVIEW'
-      AND EXISTS (
-        SELECT 1 FROM connection_email_attachments a
-        JOIN setup_documents d ON d.id = a.setup_document_id AND d.workspace_id = a.workspace_id
-        WHERE a.workspace_id = connection_email_messages.workspace_id
-          AND a.message_id = connection_email_messages.id AND d.status = 'APPLIED'
-      )`).run(nowIso(), workspaceId, connectorId).changes;
+  const now = nowIso();
+  return db.transaction(() => {
+    const applied = db.prepare(`UPDATE connection_email_messages SET classification = 'inventory_document',
+      processing_status = 'INVENTORY_APPLIED', processed_at = COALESCE(processed_at, ?)
+      WHERE workspace_id = ? AND connector_id = ? AND processing_status = 'AWAITING_INVENTORY_REVIEW'
+        AND EXISTS (
+          SELECT 1 FROM connection_email_attachments a
+          JOIN setup_documents d ON d.id = a.setup_document_id AND d.workspace_id = a.workspace_id
+          WHERE a.workspace_id = connection_email_messages.workspace_id
+            AND a.message_id = connection_email_messages.id AND d.status = 'APPLIED'
+        )`).run(now, workspaceId, connectorId).changes;
+
+    // A later resend may have been classified as purchasing before Foundry
+    // noticed that the exact file was already approved as inventory. Close the
+    // false purchasing review while preserving both email and audit records.
+    const duplicates = db.prepare(`SELECT DISTINCT sd.id, sd.message_id
+      FROM supplier_documents sd
+      JOIN connection_email_attachments a ON a.id = sd.attachment_id
+      WHERE sd.workspace_id = ? AND sd.connector_id = ? AND sd.status = 'NEEDS_REVIEW'
+        AND EXISTS (SELECT 1 FROM setup_documents d
+          WHERE d.workspace_id = sd.workspace_id AND d.content_hash = a.content_hash AND d.status = 'APPLIED')`)
+      .all(workspaceId, connectorId);
+    for (const duplicate of duplicates) {
+      db.prepare(`UPDATE connection_email_attachments SET setup_document_id = (
+          SELECT d.id FROM setup_documents d
+          WHERE d.workspace_id = connection_email_attachments.workspace_id
+            AND d.content_hash = connection_email_attachments.content_hash AND d.status = 'APPLIED'
+          ORDER BY d.created_at LIMIT 1)
+        WHERE workspace_id = ? AND message_id = ? AND setup_document_id IS NULL`)
+        .run(workspaceId, duplicate.message_id);
+      db.prepare("UPDATE supplier_documents SET status = 'IGNORED', processed_at = ? WHERE id = ? AND workspace_id = ?")
+        .run(now, duplicate.id, workspaceId);
+      db.prepare(`UPDATE connection_email_messages SET classification = 'inventory_document_duplicate',
+        processing_status = 'DUPLICATE_IGNORED', processed_at = ? WHERE id = ? AND workspace_id = ?`)
+        .run(now, duplicate.message_id, workspaceId);
+      db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
+        WHERE workspace_id = ? AND connector_id = ? AND fingerprint = ? AND status = 'OPEN'`)
+        .run(now, now, workspaceId, connectorId, `supplier-document:${duplicate.id}`);
+    }
+    return applied;
+  })();
 }
 
 module.exports = { SUPPORTED, attachment, prepare, reconcileStatuses };

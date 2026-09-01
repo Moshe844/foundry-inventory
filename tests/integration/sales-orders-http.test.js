@@ -31,7 +31,7 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
 
   const form = await agent.get('/sales/new');
   assert.equal(form.status, 200);
-  assert.match(plain(form.text), /Customer demand before stock leaves|does not reduce physical stock/i);
+  assert.match(plain(form.text), /customer demand before stock leaves/i);
   assert.match(form.text, /class="card form-card"/);
   assert.match(form.text, /class="form-grid"/);
   const styles = await agent.get('/app.css');
@@ -49,16 +49,18 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   assert.match(created.headers.location, /^\/sales\/orders\/so_/);
 
   let page = await agent.get(created.headers.location);
-  assert.match(plain(page.text), /Nothing is committed yet/);
+  assert.match(plain(page.text), /Do this next.*Confirm this order and reserve stock/i);
   const confirmed = await agent.post(`${created.headers.location}/confirm`).type('form')
     .send({ _csrf: csrfFrom(page.text) });
   assert.equal(confirmed.status, 303);
   page = await agent.get(created.headers.location);
   let text = plain(page.text);
   assert.match(page.text, /class="stats-row"/);
-  assert.match(page.text, /class="card sales-action-card"/);
+  assert.match(page.text, /class="card sales-action-card sales-primary-action"/);
+  assert.match(text, /Do this next.*Record the items as shipped/i);
+  assert.match(page.text, /<details class="card advanced-settings sales-secondary-actions"/);
   assert.match(text, /30 committed/);
-  assert.match(text, /On hand will remain unchanged|physical stock actually leaves/i);
+  assert.match(text, /Only use this when the items physically leave.*reduce on-hand once/i);
 
   const createdCustomer = sales.listCustomers(env.db, env.workspace.workspaceId)[0];
   let customerPage = await agent.get(`/sales/customers/${createdCustomer.id}`);
@@ -82,7 +84,7 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   assert.equal(fulfilled.status, 303);
   page = await agent.get(created.headers.location);
   text = plain(page.text);
-  assert.match(text, /partially fulfilled/i);
+  assert.match(text, /partly shipped|partly fulfilled/i);
   assert.match(text, /20 committed/);
   assert.match(text, /10 fulfilled/);
 
@@ -105,6 +107,40 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   const salesPage = plain((await agent.get('/sales')).text);
   assert.match(salesPage, /0\s+Open customer orders\s+0\s+committed to customer orders\s+0\s+Units waiting for stock/i,
     'cancelled orders must not remain in the live commitment totals');
+  env.db.close();
+});
+
+test('the short manual flow can reserve an order or complete an in-stock sale in one submission', async () => {
+  const env = setup();
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20,
+  });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  let form = await agent.get('/sales/new').expect(200);
+  const reserved = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'Reserved Customer', skuId: env.item.skuId,
+    quantity: 5, nextStep: 'confirm',
+  }).expect(303);
+  let order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
+  assert.equal(order.status, 'CONFIRMED');
+  assert.equal(order.totals.allocated, 5);
+  assert.equal(env.db.prepare("SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ? AND operation = 'issue'")
+    .get(env.workspace.workspaceId).n, 0, 'reserving an order does not remove stock');
+  assert.match(plain((await agent.get(reserved.headers.location)).text), /Record the items as shipped/i);
+
+  form = await agent.get('/sales/new').expect(200);
+  const completed = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'Counter Sale Customer', skuId: env.item.skuId,
+    quantity: 3, nextStep: 'fulfill',
+  }).expect(303);
+  order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
+  assert.equal(order.status, 'FULFILLED');
+  assert.equal(order.totals.fulfilled, 3);
+  assert.equal(env.db.prepare("SELECT SUM(-quantity_delta) AS n FROM movements WHERE workspace_id = ? AND operation = 'issue'")
+    .get(env.workspace.workspaceId).n, 3, 'the completed-sale choice removes stock exactly once');
+  assert.match(plain((await agent.get(completed.headers.location)).text), /Shipped.*Accounting/i);
   env.db.close();
 });
 
@@ -164,6 +200,67 @@ test('Tell Foundry creates, changes, fulfills and cancels the same structured Sa
   order = sales.getOrder(env.db, env.workspace.workspaceId, order.id);
   assert.equal(order.status, 'CANCELLED');
   assert.equal(order.totals.allocated, 0);
+  env.db.close();
+});
+
+test('Tell Foundry completes a named whole order immediately without AI routing or a false Sales redirect', async () => {
+  const provider = { complete: async () => {
+    throw new Error('The exact whole-order command must not wait for an AI provider.');
+  } };
+  const env = setup(provider);
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20,
+  });
+  const draft = sales.createOrder(env.db, env.workspace.ctx, {
+    customerName: 'Hendel', lines: [{ skuId: env.item.skuId, quantity: 8 }], requirePrices: true,
+  });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const home = await agent.get('/');
+  const response = await agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text), message: 'Can you complete the sales order for Hendel',
+  });
+
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.location, `/sales/orders/${draft.id}`,
+    'a completed command returns to the exact order, never the empty Sales list');
+  const order = sales.getOrder(env.db, env.workspace.workspaceId, draft.id);
+  assert.equal(order.status, 'FULFILLED');
+  assert.deepEqual(order.totals, { ordered: 8, fulfilled: 8, allocated: 0, backordered: 0 });
+  assert.equal(env.db.prepare(`SELECT SUM(-quantity_delta) AS n FROM movements
+    WHERE workspace_id = ? AND operation = 'issue' AND reference = ?`)
+    .get(env.workspace.workspaceId, draft.order_number).n, 8);
+  const routed = env.db.prepare(`SELECT status, routed_to, related_record_id FROM manager_intents
+    WHERE workspace_id = ? AND stated_as = ? ORDER BY created_at DESC LIMIT 1`)
+    .get(env.workspace.workspaceId, 'Can you complete the sales order for Hendel');
+  assert.deepEqual(routed, { status: 'ROUTED', routed_to: 'sales_order', related_record_id: draft.id });
+  assert.match(plain((await agent.get(response.headers.location)).text), /Shipped.*Accounting/i);
+  env.db.close();
+});
+
+test('Tell Foundry keeps an unfillable whole order on its exact page and ships nothing', async () => {
+  const env = setup({ complete: async () => { throw new Error('AI should not be called.'); } });
+  const draft = sales.createOrder(env.db, env.workspace.ctx, {
+    customerName: 'Hendel', lines: [{ skuId: env.item.skuId, quantity: 8 }], requirePrices: true,
+  });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const home = await agent.get('/');
+  const response = await agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text), message: 'Please finish the customer order for Hendel.',
+  });
+
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.location, `/sales/orders/${draft.id}`);
+  const order = sales.getOrder(env.db, env.workspace.workspaceId, draft.id);
+  assert.equal(order.status, 'BACKORDERED');
+  assert.equal(order.totals.fulfilled, 0);
+  assert.equal(env.db.prepare("SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ? AND operation = 'issue'")
+    .get(env.workspace.workspaceId).n, 0);
+  const page = plain((await agent.get(response.headers.location)).text);
+  assert.match(page, /cannot be completed yet.*8 unit\(s\) are not available/i);
+  assert.match(page, /nothing was shipped/i);
   env.db.close();
 });
 
@@ -374,15 +471,15 @@ test('stock arriving after confirmation can be committed, without moving any of 
 
   // Nothing free, so nothing to offer and nothing to commit.
   page = await agent.get(created.headers.location);
-  assert.doesNotMatch(plain(page.text), /Commit the stock that has arrived/);
+  assert.doesNotMatch(plain(page.text), /Reserve the stock that is now available/);
 
   // A delivery lands.
   inventory.receive(env.db, env.workspace.ctx, {
     skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 12,
   });
   page = await agent.get(created.headers.location);
-  assert.match(plain(page.text), /Commit the stock that has arrived/);
-  assert.match(plain(page.text), /Commit 12 to this order/);
+  assert.match(plain(page.text), /Reserve the stock that is now available/);
+  assert.match(plain(page.text), /Reserve 12 for Riverside Builders/);
 
   const onHandBefore = sales.availabilityForSku(env.db, env.workspace.workspaceId, env.item.skuId).onHand;
   const committed = await agent.post(`${created.headers.location}/allocate`).type('form')

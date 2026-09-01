@@ -385,7 +385,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       });
       if (parsed.operation === 'list_waiting') {
         permissions.assertCan(req.user, permissions.VIEW_SALES, 'view sales orders');
-      } else if (parsed.operation === 'fulfill' || parsed.operation === 'cancel_line' || parsed.operation === 'cancel_order') {
+      } else if (parsed.operation === 'fulfill' || parsed.operation === 'complete_order' || parsed.operation === 'cancel_line' || parsed.operation === 'cancel_order') {
         permissions.assertCan(req.user, permissions.FULFILL_SALES, 'fulfill or cancel sales orders');
       } else permissions.assertCan(req.user, permissions.MANAGE_SALES, 'create or change sales orders');
       const result = salesIntent.apply(req.db, req.ctx, parsed, {
@@ -408,10 +408,11 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       }
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'sales_order', result.order.id);
       managerContext.remember(req.db, req.ctx, { entities: { salesOrderId: result.order.id } });
-      req.flash(result.order.totals.backordered ? 'warn' : 'success',
-        `${result.order.order_number} is ${result.order.status.toLowerCase().replace(/_/g, ' ')}. `
+      const summary = result.message || `${result.order.order_number} is ${result.order.status.toLowerCase().replace(/_/g, ' ')}. `
         + `${result.order.totals.allocated} committed, ${result.order.totals.backordered} waiting for stock, `
-        + `${result.order.totals.fulfilled} fulfilled.`);
+        + `${result.order.totals.fulfilled} fulfilled.`;
+      req.flash(result.kind === 'blocked' || result.order.totals.backordered ? 'warn'
+        : result.kind === 'already_completed' ? 'info' : 'success', summary);
       return res.redirect(303, `/sales/orders/${result.order.id}`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;

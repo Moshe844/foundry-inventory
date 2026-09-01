@@ -64,6 +64,14 @@
 .setup-step--done .setup-step__state { color: var(--ok); }
 .setup-journey__action { display: flex; justify-content: flex-end; margin-top: 14px; }
 
+.guided-setup-form {
+  padding: 14px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.guided-setup-form--current { border-color: var(--accent-line); background: var(--accent-soft); }
+.guided-setup-form--locked { color: var(--muted); }
+.guided-setup-form > strong { display: block; margin-bottom: 4px; }
+
 .operator-command__promise { display: block; margin: 2px 0 9px; color: var(--muted); font-size: 12.5px; }
 .operator-command__examples { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .operator-command__examples a {

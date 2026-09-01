@@ -171,6 +171,22 @@
     <% } %>
   </div>
 
+  <% if (!addingToExisting) { %>
+    <section class="card section">
+      <div class="card-head"><div><p class="eyebrow">The whole business stays connected</p><h2>What starts working after this setup</h2><p class="hint">This page chooses how stock is organized. The rest of Foundry is already built in and updates from the same verified activity.</p></div></div>
+      <div class="card-body">
+        <div class="explain-grid">
+          <div><strong>Inventory</strong><p>Receipts, sales, transfers and counts keep physical stock current.</p></div>
+          <div><strong>Customer orders</strong><p>Confirmed orders hold available stock; fulfilment updates inventory and the customer balance.</p></div>
+          <div><strong>Purchasing</strong><p>Foundry calculates replenishment, prepares supplier orders and keeps incoming quantities separate from stock already here.</p></div>
+          <div><strong>Supplier email</strong><p>Connect Gmail or Microsoft 365 and approve the supplier sender; Foundry then matches replies, invoices and shipment updates.</p></div>
+          <div><strong>Accounting</strong><p>It is on automatically. Verified receipts, bills, sales and payments update what you own, owe, earned and received—without starting Accounting manually.</p></div>
+          <div><strong>Needs you</strong><p>Foundry handles supported routine work and asks only when evidence, authority or a real business decision is missing.</p></div>
+        </div>
+      </div>
+    </section>
+  <% } %>
+
   <% if (u.unresolvedDecisions.length) { %>
     <div class="card section">
       <div class="card-head">

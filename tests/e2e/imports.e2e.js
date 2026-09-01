@@ -169,8 +169,8 @@ test(
 
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-    context.setDefaultTimeout(600000);
-    context.setDefaultNavigationTimeout(600000);
+    context.setDefaultTimeout(15000);
+    context.setDefaultNavigationTimeout(30000);
     const page = await context.newPage();
 
     const consoleErrors = [];
@@ -182,9 +182,9 @@ test(
     let expectedNotFound = null;
 
     t.after(async () => {
+      await stopServer(server);
       await context.close();
       await browser.close();
-      await stopServer(server);
       fs.rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -323,7 +323,7 @@ test(
       await page.fill('#name', 'Meridian Coffee');
       await Promise.all([
         page.waitForURL(`${BASE}/onboarding`),
-        page.click('button[type=submit]:has-text("Create")'),
+        page.click('button[type=submit]:has-text("Continue with Foundry")'),
       ]);
 
       await page.goto(`${BASE}/inventory`);
@@ -371,16 +371,16 @@ test(
 
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-    context.setDefaultTimeout(600000);
-    context.setDefaultNavigationTimeout(600000);
+    context.setDefaultTimeout(15000);
+    context.setDefaultNavigationTimeout(30000);
     const page = await context.newPage();
     const pageErrors = [];
     page.on('pageerror', (e) => pageErrors.push(String(e)));
 
     t.after(async () => {
+      await stopServer(server);
       await context.close();
       await browser.close();
-      await stopServer(server);
       fs.rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -388,10 +388,11 @@ test(
       await page.goto(`${BASE}/actions`);
       await page.fill('#action-instruction', instruction);
       await Promise.all([
-        page.waitForResponse((r) => r.url().endsWith('/actions/ask') && r.request().method() === 'POST'),
-        page.click('button:has-text("Continue")'),
+        page.waitForResponse((r) => r.url().endsWith('/foundry/tell') && r.request().method() === 'POST',
+          { timeout: 120000 }),
+        page.click('button:has-text("Continue")', { noWaitAfter: true }),
       ]);
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('domcontentloaded');
     };
 
     const items = () =>
@@ -410,9 +411,8 @@ test(
 
     await t.test('1. a described product becomes a proposal, not a product', async () => {
       await ask('Add a new product called Sourdough Starter Culture, code SD-01');
-      assert.match(page.url(), /\/actions\/act_/, await page.locator('body').innerText());
-
       const text = await page.locator('body').innerText();
+      assert.match(text, /Foundry is ready to add a product/);
       assert.match(text, /Sourdough Starter Culture/);
       // Not asked how it is counted: the business already answered that once.
       assert.doesNotMatch(text, /serial number\?|how do you track/i);
@@ -437,9 +437,8 @@ test(
 
     await t.test('3. several products in one sentence become several lines', async () => {
       await ask('Add three products: Rye Flour 16kg, Spelt Flour 16kg and Semolina 10kg');
-      assert.match(page.url(), /\/actions\/(plan|act_)/, await page.locator('body').innerText());
-
       const text = await page.locator('body').innerText();
+      assert.match(text, /Foundry is ready to make 3 changes/);
       assert.match(text, /Rye Flour 16kg/);
       assert.match(text, /Spelt Flour 16kg/);
       assert.match(text, /Semolina 10kg/);
@@ -456,7 +455,7 @@ test(
 
     await t.test('4. a range of sizes is expanded by Foundry, not by the model', async () => {
       await ask('Add Baking Trays in sizes 1 through 6');
-      assert.match(page.url(), /\/actions\/act_/, await page.locator('body').innerText());
+      assert.match(await page.locator('body').innerText(), /Foundry is ready to add a product/);
       await Promise.all([
         page.waitForLoadState('networkidle'),
         page.click('button:has-text("Approve")'),

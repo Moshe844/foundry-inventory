@@ -34,12 +34,22 @@ function forOrder(db, workspaceId, purchaseOrderId) {
 function prepareForOrder(db, workspaceId, order) {
   const key = `purchase-order:${order.id}:initial`;
   const existing = db.prepare('SELECT * FROM supplier_communications WHERE workspace_id = ? AND idempotency_key = ?').get(workspaceId, key);
-  if (existing) return hydrate(existing);
   const supplier = supplierService.getSupplier(db, workspaceId, order.supplierId);
   const lines = (order.lines || []).map((line) =>
-    `- ${line.displayName}: ${line.quantityPurchaseUnits} ${line.purchaseUnit}${line.quantityPurchaseUnits === 1 ? '' : 's'} (${line.quantityUnits} units)`
+    `- ${line.displayName}: ${line.quantityPurchaseUnits} ${line.purchaseUnit}${line.quantityPurchaseUnits === 1 ? '' : 's'} (${line.quantityUnits} units)` +
+      (line.unitCost === null || line.unitCost === undefined ? '' : ` @ ${order.currency} ${Number(line.unitCost).toFixed(2)} each`)
   );
+  const subject = `Purchase order ${order.poNumber}`;
+  const body = `Hello${supplier.contactName ? ` ${supplier.contactName}` : ''},\n\nPlease find our purchase order ${order.poNumber}:\n${lines.join('\n')}\n\nThank you.`;
   const now = nowIso();
+  if (existing) {
+    if (existing.status === 'PREPARED') {
+      db.prepare(`UPDATE supplier_communications SET recipient = ?, subject = ?, body = ?, connector_id = ?, updated_at = ?
+        WHERE id = ? AND workspace_id = ?`)
+        .run(supplier.email || null, subject, body, supplier.watchedConnectorId || null, now, existing.id, workspaceId);
+    }
+    return get(db, workspaceId, existing.id);
+  }
   const id = newId('scom');
   db.prepare(
     `INSERT INTO supplier_communications
@@ -47,7 +57,7 @@ function prepareForOrder(db, workspaceId, order) {
         status, idempotency_key, connector_id, message_kind, created_at, updated_at)
      VALUES (?, ?, ?, ?, 'email', ?, ?, ?, 'PREPARED', ?, ?, 'purchase_order', ?, ?)`
   ).run(id, workspaceId, supplier.id, order.id, supplier.email || null,
-    `Purchase order ${order.poNumber}`, `Hello${supplier.contactName ? ` ${supplier.contactName}` : ''},\n\nPlease find our purchase order ${order.poNumber}:\n${lines.join('\n')}\n\nThank you.`,
+    subject, body,
     key, supplier.watchedConnectorId || null, now, now);
   return get(db, workspaceId, id);
 }
@@ -106,6 +116,8 @@ async function sendThroughMailbox(db, workspaceId, id, actorId = null) {
     db.prepare(`UPDATE supplier_communications SET status = 'SENT', external_message_id = ?, external_thread_id = ?,
       error_message = NULL, sent_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
       .run(result?.externalMessageId || null, result?.externalThreadId || null, sentAt, sentAt, id, workspaceId);
+    require('../connections/service').resolveIssues(db, workspaceId, message.connectorId,
+      'SUPPLIER_FOLLOW_UP_APPROVAL', id);
     if (message.purchaseOrderId) require('./po-service').recordEvent(db, workspaceId, message.purchaseOrderId,
       'supplier_communication_sent', { communicationId: id, recipient: message.recipient,
         externalMessageId: result?.externalMessageId || null }, actorId);
@@ -145,7 +157,8 @@ async function dispatchAutomaticForOrder(db, workspaceId, purchaseOrderId) {
       issueType: 'SUPPLIER_SEND_APPROVAL', fingerprint: `supplier-send:${purchaseOrderId}`,
       title: `${order.poNumber} for ${supplier.currency} ${order.subtotal.toFixed(2)} is ready for ${supplier.name}`,
       detail: `The automatic sending limit is ${supplier.currency} ${Number(supplier.autoSendLimit || 0).toFixed(2)}. Nothing was sent.`,
-      resolutionHint: 'Open the purchase order, review it, then approve and send.' });
+      resolutionHint: 'Open the purchase order, review it, then approve and send.',
+      candidates: [{ kind: 'supplier_communication', purchaseOrderId, supplierId: supplier.id }] });
     return forOrder(db, workspaceId, purchaseOrderId);
   }
   for (const message of forOrder(db, workspaceId, purchaseOrderId).filter((row) => ['PREPARED', 'QUEUED', 'FAILED'].includes(row.status))) {
@@ -158,7 +171,7 @@ function prepareDueFollowups(db, workspaceId, options = {}) {
   const now = new Date(options.now || Date.now());
   const rows = db.prepare(`SELECT po.id, po.po_number, po.ordered_at, po.expected_date,
       s.id AS supplier_id, s.name AS supplier_name, s.contact_name, s.email, s.follow_up_days,
-      s.watched_connector_id
+      s.watched_connector_id, s.auto_send_enabled
     FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id
     WHERE po.workspace_id = ? AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')
       AND s.prepare_communications = 1`).all(workspaceId);
@@ -193,6 +206,18 @@ function prepareDueFollowups(db, workspaceId, options = {}) {
         row.watched_connector_id, kind, key, at, at);
     require('./po-service').recordEvent(db, workspaceId, row.id, 'supplier_follow_up_prepared',
       { communicationId: id, reason: kind }, null);
+    if (!row.auto_send_enabled && row.watched_connector_id) {
+      require('../connections/service').issue(db, {
+        workspaceId, connectorId: row.watched_connector_id,
+        issueType: 'SUPPLIER_FOLLOW_UP_APPROVAL', fingerprint: `supplier-follow-up:${id}`,
+        title: `${row.po_number} follow-up is ready for ${row.supplier_name}`,
+        detail: lateDelivery
+          ? `${row.po_number} was expected ${row.expected_date}. Foundry prepared a concise status request but has no authority to send it.`
+          : `${row.po_number} has not been confirmed. Foundry prepared a concise status request but has no authority to send it.`,
+        resolutionHint: `Open ${row.po_number}, review the prepared message, then approve and send it.`,
+        candidates: [{ kind: 'supplier_communication', communicationId: id, purchaseOrderId: row.id }],
+      });
+    }
     prepared.push(get(db, workspaceId, id));
   }
   return prepared;

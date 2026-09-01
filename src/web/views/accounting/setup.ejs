@@ -1,0 +1,69 @@
+<div class="page-head">
+  <div><p class="eyebrow"><%= focusInventoryCost ? 'Missing inventory evidence' : 'Accountant tool · optional' %></p><h1><%= focusInventoryCost ? 'Add the missing inventory cost' : 'Earlier balances and migration' %></h1>
+    <p class="lede"><%= focusInventoryCost ? 'Foundry knows exactly what is physically in stock, but it cannot prove what this older inventory originally cost. Add cost—not selling price—for the products listed below.' : 'Accounting is already working automatically. Use this page only to bring in balances that existed before this inventory began using Foundry.' %></p></div>
+  <a class="btn btn--ghost" href="/accounting">Back to Accounting</a>
+</div>
+
+<% if (latestOpeningId) { %>
+  <div class="notice notice--warning"><div><strong>An opening-balance review is waiting.</strong><br>Current Foundry activity continues posting normally; this earlier balance will not post until you approve it.</div>
+    <a class="btn btn--sm" href="/accounting/opening/<%= latestOpeningId %>">Continue review</a></div>
+<% } %>
+
+<% if (!focusInventoryCost) { %><section class="card"><div class="card-head"><div><h2>Accounting is already part of Foundry</h2><p class="hint">There is no activation step and no routine amount entry on this page.</p></div><span class="badge badge--success">Automatic</span></div>
+  <div class="card-body"><div class="grid grid--3">
+    <div class="stat"><span>1. Business happens</span><strong>Sell, buy, receive, invoice, or pay</strong><small>Use the same Sales, Purchasing, supplier-email, and connection flows you already use.</small></div>
+    <div class="stat"><span>2. Foundry posts it</span><strong>No duplicate amount entry</strong><small>The deterministic accounting engine uses the price, cost, tax, and payment evidence already attached to the activity.</small></div>
+    <div class="stat"><span>3. You see what matters</span><strong>Reports or a genuine exception</strong><small>If evidence is missing or conflicts, Foundry stops and explains what it needs instead of guessing.</small></div>
+  </div></div>
+</section><% } %>
+
+<details class="card advanced-settings" open>
+  <summary class="card-head"><div><p class="eyebrow"><%= focusInventoryCost ? 'One exact job' : 'One-time migration only' %></p><h2><%= focusInventoryCost ? 'Tell Foundry what the listed stock cost' : 'Bring in balances that existed before Foundry' %></h2><p class="hint"><%= focusInventoryCost ? 'The quantity and location come from Inventory and cannot be changed here.' : 'Use only for cash, unpaid customer invoices, supplier bills, or inventory cost that Foundry could not derive from its own evidence.' %></p></div></summary>
+  <form method="post" action="/accounting/setup/review" class="stack-xl card-body">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="notice notice--warning"><div><strong><%= focusInventoryCost ? 'Use purchase cost—not selling price.' : 'These are opening balances, not routine transactions.' %></strong><br><%= focusInventoryCost ? 'Use a supplier invoice, old purchase record, or accountant-approved value. Foundry will show you a complete review before anything posts.' : 'Foundry cannot safely invent a bank balance or what older stock cost. Enter each starting total once from a statement, prior accounting system, or accountant-approved conversion sheet. Nothing posts until you review the complete balance.' %></div></div>
+
+    <% if (focusInventoryCost) { %>
+      <input type="hidden" name="startDate" value="<%= today %>">
+      <input type="hidden" name="currency" value="USD">
+      <input type="hidden" name="costingMethod" value="WEIGHTED_AVERAGE">
+      <input type="hidden" name="cash" value="0.00">
+      <input type="hidden" name="receivables" value="0.00">
+      <input type="hidden" name="payables" value="0.00">
+      <input type="hidden" name="sourceDescription" value="Missing historical inventory cost supplied from Accounting">
+    <% } else { %>
+    <section><div class="section-head"><div><p class="eyebrow">Migration step 1 of 3</p><h2>Choose the cutoff</h2><p class="hint">Transactions before this date remain operational history only and are not silently replayed.</p></div></div>
+      <div class="grid grid--3">
+        <label class="field"><span class="field-label">Accounting start date</span><input class="input" type="date" name="startDate" value="<%= today %>" required></label>
+        <label class="field"><span class="field-label">Currency</span><select class="select" name="currency"><option value="USD">USD — US dollar</option><option value="CAD">CAD — Canadian dollar</option><option value="GBP">GBP — British pound</option><option value="EUR">EUR — euro</option></select></label>
+        <label class="field"><span class="field-label">Inventory costing</span><select class="select" name="costingMethod"><option value="WEIGHTED_AVERAGE">Moving weighted average</option></select><span class="field-help">This method applies automatically after setup.</span></label>
+      </div>
+  </section>
+    <% } %>
+
+    <% if (!focusInventoryCost) { %><section><div class="section-head"><div><p class="eyebrow">Migration step 2 of 3</p><h2>Record the totals at that cutoff</h2><p class="hint">These amounts existed before automatic Accounting began.</p></div></div>
+    <div class="grid grid--3">
+      <label class="field"><span class="field-label">Cash and bank accounts</span><span class="input-prefix"><span>$</span><input class="input" inputmode="decimal" name="cash" value="0.00"></span></label>
+      <label class="field"><span class="field-label">Customers owe you</span><span class="input-prefix"><span>$</span><input class="input" inputmode="decimal" name="receivables" value="0.00"></span></label>
+      <label class="field"><span class="field-label">You owe suppliers</span><span class="input-prefix"><span>$</span><input class="input" inputmode="decimal" name="payables" value="0.00"></span></label>
+      <label class="field field--wide"><span class="field-label">Where these balances came from <span class="muted">optional</span></span><input class="input" name="sourceDescription" maxlength="250" placeholder="Example: bank statement and accountant conversion worksheet"></label>
+    </div>
+  </section><% } %>
+
+    <section id="inventory-costs"><div class="section-head"><div><p class="eyebrow"><%= focusInventoryCost ? 'Products missing cost' : 'Migration step 3 of 3' %></p><h2><%= focusInventoryCost ? 'What did this inventory cost you?' : 'Value stock that predates Accounting' %></h2>
+    <p class="hint">Enter cost—not selling price. The quantity is read-only because Inventory remains the physical source of truth.</p></div></div>
+    <div>
+      <% if (!positions.length) { %><div class="empty"><strong>No opening stock to value.</strong><p>Your inventory currently has no units on hand.</p></div><% } else { %>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Product</th><th>Location</th><th class="num">On hand</th><th>Total cost value</th></tr></thead><tbody>
+        <% positions.forEach(function(row) { %><tr>
+          <td><strong><%= row.item_name %><%= row.variant_label ? ` / ${row.variant_label}` : '' %></strong><br><span class="muted"><%= row.code %></span></td>
+          <td><%= row.location_name %></td><td class="num"><%= row.on_hand %></td>
+          <td><input type="hidden" name="skuId" value="<%= row.sku_id %>"><input type="hidden" name="locationId" value="<%= row.location_id %>">
+            <label class="input-prefix"><span>$</span><input class="input" name="inventoryCost" inputmode="decimal" required placeholder="0.00" aria-label="Total cost value for <%= row.item_name %> at <%= row.location_name %>"></label></td>
+        </tr><% }) %>
+      </tbody></table></div><% } %>
+    </div>
+  </section>
+    <div class="form-actions"><button class="btn" type="submit"><%= focusInventoryCost ? 'Review these inventory costs' : 'Review one-time opening balances' %></button><span class="hint">Nothing posts on this step.</span></div>
+  </form>
+</details>

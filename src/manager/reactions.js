@@ -55,6 +55,11 @@ function processClaimed(db, event, { now = Date.now() } = {}) {
   const scope = scopeFor(event);
   const state = modes.ensure(db, workspaceId);
 
+  // Accounting observes the same committed event through an independent,
+  // idempotent adapter. It never throws into inventory/sales/purchasing: an
+  // incomplete financial consequence is retained for accounting review.
+  const accounting = require('../accounting/operational-adapter').captureAndProcess(db, event);
+
   // Physical events can make earlier customer commitments newly coverable—or
   // invalidate a location allocation. Reconcile those promises before the
   // normal attention/replenishment pass reads available stock.
@@ -81,6 +86,7 @@ function processClaimed(db, event, { now = Date.now() } = {}) {
   if (state.paused || state.suspended || state.mode === modes.MODES.OBSERVE) {
     return {
       eventId: event.id,
+      accounting,
       readOnly: true,
       because: state.paused ? 'paused' : state.suspended ? 'suspended' : 'ask-first observation',
       opened: refreshed.opened,
@@ -106,6 +112,7 @@ function processClaimed(db, event, { now = Date.now() } = {}) {
   });
   return {
     eventId: event.id,
+    accounting,
     opened: refreshed.opened,
     resolved: refreshed.resolved,
     ...managed,

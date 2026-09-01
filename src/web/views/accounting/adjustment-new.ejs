@@ -1,0 +1,11 @@
+<div class="page-head"><div><a class="back-link" href="/accounting/transactions">‹ Transactions</a><p class="eyebrow">Accountant control</p><h1>New accounting adjustment</h1><p class="lede">Use this only for a financial correction or entry that has no operational workflow. Posted adjustments cannot be edited or deleted; reverse them if they are wrong.</p></div></div>
+<div class="notice notice--warning"><div><strong>Do not recreate a sale, purchase, supplier bill, payment, refund, or transfer here.</strong><br>Those records post automatically from their original Foundry workflow. This form exists only for accountant-directed exceptions.</div></div>
+<form class="stack-xl" method="post" action="/accounting/adjustments"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<section class="card"><div class="card-body grid grid--2">
+  <label class="field"><span class="field-label">Posting date</span><input class="input" type="date" name="postingDate" value="<%= today %>" required></label>
+  <label class="field"><span class="field-label">Amount</span><input class="input" name="amount" inputmode="decimal" placeholder="0.00" required></label>
+  <label class="field field--wide"><span class="field-label">What is this entry for?</span><input class="input" name="description" maxlength="500" required></label>
+  <label class="field"><span class="field-label">Debit account</span><select class="select" name="debitAccountId" required><option value="">Choose…</option><% accounts.forEach(function(account){ %><option value="<%= account.id %>"><%= account.code %> · <%= account.name %></option><% }) %></select></label>
+  <label class="field"><span class="field-label">Credit account</span><select class="select" name="creditAccountId" required><option value="">Choose…</option><% accounts.forEach(function(account){ %><option value="<%= account.id %>"><%= account.code %> · <%= account.name %></option><% }) %></select></label>
+  <label class="field field--wide"><span class="field-label">Reason / supporting reference (optional)</span><input class="input" name="reason" maxlength="500"></label>
+</div></section><div class="form-actions"><button class="btn" type="submit">Post adjustment</button><span class="hint">Foundry validates that the entry balances and that its period is open.</span></div></form>

@@ -385,6 +385,16 @@ function resolve(db, ctx, id, note) {
   };
 }
 
+function resolveByTrigger(db, workspaceId, trigger, note) {
+  const rows = db.prepare(
+    `SELECT id FROM inventory_investigations
+      WHERE workspace_id = ? AND trigger = ?
+        AND status IN ('OPEN','INVESTIGATING','NEEDS_HUMAN','INCONCLUSIVE')`
+  ).all(workspaceId, trigger);
+  for (const row of rows) resolve(db, { workspaceId, actorId: null }, row.id, note);
+  return rows.length;
+}
+
 /**
  * Closes opening-balance investigations that have answered themselves.
  *
@@ -464,4 +474,5 @@ function recover(db, workspaceId) {
   ).run(nowIso(), workspaceId).changes;
 }
 
-module.exports = { STATUS, hydrate, keyFor, create, get, list, events, openPhysicalCount, investigate, resolve, settleOpeningBalances, recover };
+module.exports = { STATUS, hydrate, keyFor, create, get, list, events, openPhysicalCount, investigate,
+  resolve, resolveByTrigger, settleOpeningBalances, recover };

@@ -97,6 +97,12 @@ function fromPhysicalEvents(db, workspaceId) {
 function fromInvestigations(db, workspaceId) {
   return investigations
     .list(db, workspaceId, { statuses: ['NEEDS_HUMAN', 'INCONCLUSIVE'], limit: 100 })
+    // Older versions incorrectly opened a record disagreement when the only
+    // missing fact was historical purchase cost. The stock quantities do not
+    // disagree in that case, so never present that legacy record as a
+    // "Resolve the difference" decision. Accounting owns the exact
+    // "Add the missing cost" task instead.
+    .filter((entry) => entry.trigger !== 'business_consistency_inventory-cost-coverage')
     .map((entry) => {
       const ageDays = Math.max(0, Math.floor((Date.now() - new Date(entry.createdAt).getTime()) / 86400000));
       return ({
@@ -376,6 +382,76 @@ function fromMailboxInventory(db, workspaceId) {
     }));
 }
 
+/** Approved attachments whose rule says "ask me for each attachment". */
+function fromMailboxAttachmentChoices(db, workspaceId) {
+  return db.prepare(`SELECT m.id AS message_id, m.connector_id, m.sender, m.subject, m.received_at,
+      COUNT(a.id) AS attachment_count,
+      GROUP_CONCAT(a.filename, ', ') AS filenames
+    FROM connection_email_messages m
+    JOIN connection_email_attachments a ON a.message_id = m.id AND a.workspace_id = m.workspace_id
+    JOIN connection_email_rules r ON r.workspace_id = m.workspace_id AND r.connector_id = m.connector_id
+      AND r.is_active = 1 AND r.document_mode = 'review_each'
+      AND (LOWER(r.sender_pattern) = LOWER(m.sender)
+        OR (r.sender_pattern LIKE '@%' AND LOWER(m.sender) LIKE '%' || LOWER(r.sender_pattern)))
+    WHERE m.workspace_id = ? AND m.trust_status = 'TRUSTED' AND m.processing_status = 'CAPTURED'
+    GROUP BY m.id, m.connector_id, m.sender, m.subject, m.received_at
+    ORDER BY m.received_at DESC`).all(workspaceId).map((row) => ({
+    id: `mailbox-choice:${row.message_id}`,
+    kind: 'decision',
+    title: row.attachment_count === 1
+      ? `Choose what Foundry should do with ${row.filenames}`
+      : `Choose what Foundry should do with ${row.attachment_count} email attachments`,
+    happened: `${row.sender} sent ${row.subject || 'an email without a subject'} with ${row.filenames}. Nothing has been changed.`,
+    why: 'This sender is configured to ask you what each new attachment means.',
+    recommendation: 'Choose whether it is a supplier purchasing document, an inventory/product list, or history only.',
+    missing: 'How Foundry should use this attachment.',
+    actionLabel: 'Choose what this file is',
+    href: `/settings/connections/${row.connector_id}#message-${row.message_id}`,
+    at: row.received_at,
+    priority: 82,
+  }));
+}
+
+/**
+ * The same bytes are normally a resolved duplicate. They become a real owner
+ * decision when the records from the first import were subsequently removed:
+ * keep that removal, or restore the exact original identities and quantities.
+ */
+function fromMailboxRemovedImportChoices(db, workspaceId) {
+  return db.prepare(`SELECT DISTINCT m.id AS message_id, m.connector_id, m.sender, m.received_at,
+      a.filename, d.applied_at, json_extract(d.result, '$.removedAt') AS removed_at
+    FROM connection_email_messages m
+    JOIN connection_email_attachments a ON a.message_id = m.id AND a.workspace_id = m.workspace_id
+    JOIN setup_documents d ON d.workspace_id = a.workspace_id AND d.content_hash = a.content_hash
+      AND d.status = 'APPLIED'
+    LEFT JOIN document_restore_reviews rr ON rr.workspace_id = m.workspace_id
+      AND rr.message_id = m.id AND rr.setup_document_id = d.id
+    WHERE m.workspace_id = ? AND m.trust_status = 'TRUSTED'
+      AND m.processing_status = 'DUPLICATE_IGNORED'
+      AND json_extract(d.result, '$.removedAt') IS NOT NULL
+      AND (json_extract(d.result, '$.restoredAt') IS NULL
+        OR json_extract(d.result, '$.removedAt') > json_extract(d.result, '$.restoredAt'))
+      AND (rr.id IS NULL OR rr.status = 'PENDING')
+      AND m.id = (SELECT m2.id FROM connection_email_messages m2
+        JOIN connection_email_attachments a2 ON a2.message_id = m2.id AND a2.workspace_id = m2.workspace_id
+        WHERE m2.workspace_id = m.workspace_id AND a2.content_hash = a.content_hash
+          AND m2.trust_status = 'TRUSTED' AND m2.processing_status = 'DUPLICATE_IGNORED'
+        ORDER BY m2.received_at DESC, m2.rowid DESC LIMIT 1)
+    ORDER BY m.received_at DESC`).all(workspaceId).map((row) => ({
+    id: `mailbox-restore:${row.message_id}`,
+    kind: 'decision',
+    title: `${row.filename} was sent again after its earlier import was removed`,
+    happened: `Foundry recognized the exact file from ${row.sender}. Its original import was removed, so Foundry did not silently add the stock again.`,
+    why: 'This is a real choice now: restore the original products and quantities, or keep the earlier removal.',
+    recommendation: 'Review the exact archived records and quantities before restoring them.',
+    missing: 'Your approval to restore the import or keep it removed.',
+    actionLabel: 'Decide whether to restore',
+    href: `/settings/connections/${row.connector_id}/email-messages/${row.message_id}/restore-import`,
+    at: row.received_at,
+    priority: 86,
+  }));
+}
+
 /**
  * A rule written but never switched on.
  *
@@ -497,26 +573,147 @@ function fromConnections(db, workspaceId) {
   const rows = db.prepare(`SELECT ci.*, wc.display_name
     FROM connection_issues ci JOIN workspace_connectors wc ON wc.id = ci.connector_id
     WHERE ci.workspace_id = ? AND ci.status = 'OPEN' ORDER BY ci.updated_at DESC`).all(workspaceId);
-  return rows.map((row) => ({
-    id: `connection:${row.id}`,
-    kind: 'connection',
-    issueType: row.issue_type,
-    title: row.title,
-    happened: row.detail,
-    why: row.issue_type === 'CONNECTION_STALE'
-      ? 'Foundry may be missing activity, so its view of demand and stock may be incomplete.'
-      : 'Foundry stopped before changing business records because the external evidence was not safe to apply.',
-    recommendation: row.resolution_hint,
-    missing: row.resolution_hint,
-    actionLabel: `Fix ${row.display_name}`,
-    href: `/settings/connections/${row.connector_id}`,
-    at: row.updated_at,
-    priority: row.issue_type === 'CONNECTION_STALE' ? 86 : 90,
-  }));
+  return rows.map((row) => {
+    let candidates = [];
+    try { candidates = JSON.parse(row.candidate_matches || '[]'); } catch { candidates = []; }
+    const procurement = ['SUPPLIER_FOLLOW_UP_APPROVAL', 'SUPPLIER_SEND_APPROVAL'].includes(row.issue_type);
+    const documentReview = row.issue_type === 'SUPPLIER_DOCUMENT_REVIEW';
+    const documentCandidate = documentReview
+      ? candidates.find((entry) => entry.kind === 'supplier_document_review') : null;
+    const documentDiscrepancies = documentCandidate?.discrepancies || [];
+    const missingOrder = documentDiscrepancies.find((entry) => entry.type === 'purchase_order');
+    const unknownCodes = [...new Set(documentDiscrepancies
+      .filter((entry) => entry.type === 'unknown_sku' && entry.supplierSku)
+      .map((entry) => entry.supplierSku))];
+    const purchaseOrderId = candidates.find((entry) => entry.purchaseOrderId)?.purchaseOrderId;
+    return {
+      id: `connection:${row.id}`,
+      kind: procurement || documentReview ? 'decision' : 'connection',
+      issueType: row.issue_type,
+      title: documentReview ? 'A supplier document needs your review' : row.title,
+      happened: documentReview
+        ? missingOrder?.message || (unknownCodes.length
+          ? `Foundry does not yet know which product ${unknownCodes.join(', ')} refers to.`
+          : documentDiscrepancies.map((entry) => entry.message).filter(Boolean).join(' ')
+            || 'Foundry found a meaningful difference between the supplier document and the purchase order.')
+        : row.detail,
+      why: row.issue_type === 'CONNECTION_STALE'
+        ? 'Foundry may be missing activity, so its view of demand and stock may be incomplete.'
+        : documentReview
+          ? 'Foundry saved the original email but did not change the purchase order or physical inventory.'
+        : procurement
+          ? 'Foundry prepared the supplier communication but your authority settings require your approval before it is sent.'
+          : 'Foundry stopped before changing business records because the external evidence was not safe to apply.',
+      recommendation: documentReview ? 'Review the document and either resolve the match or mark it as not relevant.' : row.resolution_hint,
+      missing: procurement ? 'Your approval to send the prepared supplier message.'
+        : documentReview ? 'Your decision about this supplier document.' : row.resolution_hint,
+      actionLabel: row.issue_type === 'SUPPLIER_FOLLOW_UP_APPROVAL' ? 'Approve follow-up'
+        : row.issue_type === 'SUPPLIER_SEND_APPROVAL' ? 'Approve & send order'
+          : documentReview ? 'Review supplier document' : `Fix ${row.display_name}`,
+      href: procurement && purchaseOrderId ? `/purchasing/orders/${purchaseOrderId}`
+        : `/settings/connections/${row.connector_id}${documentReview ? '#needs-you' : ''}`,
+      at: row.updated_at,
+      priority: row.issue_type === 'CONNECTION_STALE' ? 86 : 90,
+    };
+  });
+}
+
+function fromAccounting(db, workspaceId) {
+  const rows = db.prepare(`SELECT aei.*, so.id AS sales_order_id, so.order_number
+    FROM accounting_event_inbox aei
+    LEFT JOIN domain_events de ON de.id = aei.domain_event_id
+    LEFT JOIN sales_order_events soe ON de.source_record_type = 'sales_order_event'
+      AND soe.id = de.source_record_id AND soe.workspace_id = aei.workspace_id
+    LEFT JOIN sales_orders so ON so.id = soe.sales_order_id AND so.workspace_id = aei.workspace_id
+    WHERE aei.workspace_id = ? AND aei.status IN ('NEEDS_REVIEW','FAILED')
+    ORDER BY aei.created_at DESC`)
+    .all(workspaceId);
+  const eventEntries = rows.map((row) => {
+    let outcome = {};
+    try { outcome = JSON.parse(row.outcome || '{}'); } catch { outcome = {}; }
+    return {
+      id: `accounting:${row.id}`,
+      kind: 'decision',
+      title: row.order_number ? `${row.order_number} shipped, but its accounting is not finished`
+        : 'An accounting consequence needs review',
+      happened: outcome.message || row.error_message || `Foundry recorded ${row.event_type.replaceAll('.', ' · ')} operationally.`,
+      why: 'Foundry kept the business event but did not invent a missing cost, price, match, or posting date.',
+      recommendation: row.order_number
+        ? `Open the ${row.order_number} review to see the exact sale, verified cost evidence, and posting Foundry will make.`
+        : 'Open Accounting to supply the missing evidence or review the proposed correction.',
+      missing: 'The financial evidence needed for a balanced, traceable posting.',
+      actionLabel: row.order_number ? `Finish ${row.order_number} accounting` : 'Resolve accounting exception',
+      href: `/accounting/review/${row.id}`,
+      at: row.created_at,
+      priority: 88,
+    };
+  });
+  const bills = db.prepare(`SELECT b.*, s.name AS supplier_name, po.po_number
+    FROM accounting_supplier_bills b JOIN suppliers s ON s.id = b.supplier_id
+    LEFT JOIN purchase_orders po ON po.id = b.purchase_order_id
+    WHERE b.workspace_id = ? AND b.status = 'DISPUTED' ORDER BY b.updated_at DESC`).all(workspaceId);
+  const billEntries = bills.map((bill) => {
+    let detail = {};
+    try { detail = JSON.parse(bill.exception_detail || '{}'); } catch { detail = {}; }
+    const kinds = [...new Set((detail.differences || []).map((entry) => entry.kind))];
+    const explanation = kinds.includes('quantity_above_received')
+      ? 'The invoice includes quantity that has not been physically received.'
+      : kinds.includes('price_outside_tolerance')
+        ? 'The invoice price is outside this supplier’s approved tolerance.'
+        : 'The invoice could not be matched completely to its purchase order and receipts.';
+    return {
+      id: `accounting-bill:${bill.id}`, kind: 'decision',
+      title: `${bill.supplier_name} invoice needs an accounting decision`,
+      happened: `${bill.supplier_invoice_number || bill.bill_number}${bill.po_number ? ` for ${bill.po_number}` : ''}: ${explanation}`,
+      why: 'Foundry saved the bill but posted no guessed inventory, expense, or payable.',
+      recommendation: 'Resolve the receipt, price, quantity, or PO match before approving this bill.',
+      missing: 'A complete PO ↔ receipt ↔ supplier invoice match, or your explicit correction.',
+      actionLabel: 'Resolve supplier bill', href: '/accounting/payables',
+      at: bill.updated_at, priority: 92,
+    };
+  });
+  return [...eventEntries, ...billEntries];
+}
+
+function fromBusinessConsistency(db, workspaceId) {
+  const state = require('./business-brain').build(db, workspaceId);
+  return state.attention
+    .filter((entry) => ['consistency', 'missing-bill'].includes(entry.kind))
+    .map((entry, index) => ({
+      id: `business:${entry.kind}:${entry.id || index}`,
+      kind: entry.kind === 'consistency' ? 'investigation' : 'decision',
+      title: entry.title,
+      happened: entry.because,
+      why: entry.kind === 'consistency'
+        ? 'Foundry compared the records across inventory, purchasing, connections, and accounting and they do not agree.'
+        : 'Foundry knows the inventory arrived, but receiving products is not evidence of the supplier bill or payment.',
+      recommendation: entry.kind === 'consistency'
+        ? 'Review the source records before making another change; Foundry will not silently repair a material difference.'
+        : 'Add or match the supplier bill so Foundry can show exactly what is owed.',
+      missing: entry.kind === 'consistency' ? 'A decision about which source record is correct.' : 'The supplier bill.',
+      actionLabel: entry.kind === 'consistency' ? 'Resolve the difference' : 'Add supplier bill',
+      href: entry.href,
+      at: null,
+      priority: entry.priority,
+    }));
 }
 
 /** Everything waiting, newest and most urgent first, as one list. */
 function inbox(db, workspaceId) {
+  // Clean up the legacy false-positive before reading the inbox. This is
+  // intentionally idempotent and makes the corrected behavior immediate for
+  // workspaces that have not yet run a scheduled reconciliation.
+  try {
+    investigations.resolveByTrigger(
+      db,
+      workspaceId,
+      'business_consistency_inventory-cost-coverage',
+      'Foundry reclassified this as missing financial evidence, not a disagreement in the business records.'
+    );
+  } catch {
+    // The defensive filter in fromInvestigations still prevents stale UI if a
+    // read-only or partially migrated database cannot record the cleanup.
+  }
   const safely = (fn) => {
     try { return fn(db, workspaceId) || []; } catch { return []; }
   };
@@ -527,11 +724,15 @@ function inbox(db, workspaceId) {
     ...safely(fromInvestigations),
     ...safely(fromCorrections),
     ...safely(fromImports),
+    ...safely(fromMailboxRemovedImportChoices),
+    ...safely(fromMailboxAttachmentChoices),
     ...safely(fromMailboxInventory),
     ...safely(fromPolicies),
     ...safely(fromAutomationSuggestions),
     ...safely(fromSalesOrders),
     ...safely(fromConnections),
+    ...safely(fromAccounting),
+    ...safely(fromBusinessConsistency),
     ...safely(fromFindings),
     // Learning demand is not a decision. Home teaches the user to record real
     // sales in context; Needs You remains reserved for something Foundry is
@@ -575,10 +776,14 @@ module.exports = {
   fromCorrections,
   fromImports,
   fromMailboxInventory,
+  fromMailboxAttachmentChoices,
+  fromMailboxRemovedImportChoices,
   fromPolicies,
   fromAutomationSuggestions,
   fromSalesOrders,
   fromConnections,
+  fromAccounting,
+  fromBusinessConsistency,
   fromWorkItems,
   fromFindings,
   fromReadiness,

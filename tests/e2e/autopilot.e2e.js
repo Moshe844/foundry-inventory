@@ -30,6 +30,7 @@ const itemService = require('../../src/domain/item-service');
 const locationService = require('../../src/domain/location-service');
 const repo = require('../../src/domain/repository');
 const investigations = require('../../src/manager/investigations');
+const workItems = require('../../src/autopilot/work-items');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const SHOTS = path.join(ROOT, 'artifacts', 'screenshots', 'autopilot');
@@ -168,6 +169,26 @@ async function signIn(page) {
   await page.waitForURL(`${BASE}/`);
 }
 
+/** Test mode disables the production scheduler; trigger one authenticated turn. */
+async function runSchedulerTurn(page) {
+  const csrf = await page.locator('input[name="_csrf"]').first().inputValue();
+  await Promise.all([
+    page.waitForNavigation(),
+    page.evaluate((token) => {
+      const form = document.createElement('form');
+      form.method = 'post';
+      form.action = '/autopilot/run';
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = '_csrf';
+      input.value = token;
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+    }, csrf),
+  ]);
+}
+
 const balance = (databasePath, state, locationId) =>
   inspect(databasePath, (db) => repo.getBalance(db, state.workspaceId, state.skuId, locationId));
 
@@ -186,8 +207,8 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
 
   const browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
-  context.setDefaultTimeout(120000);
-  context.setDefaultNavigationTimeout(120000);
+  context.setDefaultTimeout(15000);
+  context.setDefaultNavigationTimeout(30000);
   const page = await context.newPage();
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e)));
@@ -195,17 +216,18 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
   let workPath = null;
 
   t.after(async () => {
+    await stopServer(server);
     await context.close();
     await browser.close();
-    await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
   await t.test('0. the home page is what Foundry is doing, not a table of counts', async () => {
     await signIn(page);
     const text = await page.locator('body').innerText();
-    assert.match(text, /What did Foundry do\?/i);
-    assert.match(text, /What happens next\?/i);
+    assert.match(text, /Getting Foundry ready/i);
+    assert.match(text, /Do this next/i);
+    assert.match(text, /Your business right now/i);
     await shot(page, 'operator-home');
   });
 
@@ -213,8 +235,7 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     const before = { brooklyn: balance(databasePath, state, state.brooklyn), jersey: balance(databasePath, state, state.jersey) };
     assert.equal(before.brooklyn, 8, 'Brooklyn is down to eight');
 
-    await page.click('form[action="/autopilot/run"] button[type=submit]');
-    await page.waitForURL(`${BASE}/`);
+    await runSchedulerTurn(page);
 
     assert.equal(balance(databasePath, state, state.brooklyn), before.brooklyn, 'nothing was authorised, so nothing moved');
     assert.equal(balance(databasePath, state, state.jersey), before.jersey);
@@ -239,8 +260,7 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
 
     const before = balance(databasePath, state, state.brooklyn);
     await page.goto(`${BASE}/`);
-    await page.click('form[action="/autopilot/run"] button[type=submit]');
-    await page.waitForURL(`${BASE}/`);
+    await runSchedulerTurn(page);
 
     assert.equal(balance(databasePath, state, state.brooklyn), before, 'still supervised — it prepares, it does not act');
 
@@ -250,9 +270,12 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
   });
 
   await t.test('4. Foundry explains the transfer it is proposing, with the numbers', async () => {
-    await page.click('.act-row a[href^="/autopilot/work/"]');
-    await page.waitForURL(/\/autopilot\/work\//);
-    workPath = new URL(page.url()).pathname;
+    const waiting = inspect(databasePath, (db) =>
+      workItems.awaitingApproval(db, state.workspaceId)
+        .find((item) => item.category === 'balance_transfer'));
+    assert.ok(waiting, 'the supervised run prepared one transfer for approval');
+    workPath = `/autopilot/work/${waiting.id}`;
+    await page.goto(`${BASE}${workPath}`);
 
     const text = await page.locator('body').innerText();
     assert.match(text, /Brooklyn Warehouse/);
@@ -278,19 +301,17 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
       'the total did not change — nothing was created'
     );
 
-    await page.goto(`${BASE}/`);
+    await page.goto(`${BASE}${workPath}`);
     const text = await page.locator('body').innerText();
-    assert.match(text, /Moved 12 Kids Tights/);
+    assert.match(text, /I transferred 12\./);
     assert.doesNotMatch(text, /not verified/);
     await shot(page, 'it-did-it');
   });
 
   await t.test('6. running again does not move it twice', async () => {
     const before = balance(databasePath, state, state.brooklyn);
-    await page.click('form[action="/autopilot/run"] button[type=submit]');
-    await page.waitForURL(`${BASE}/`);
-    await page.click('form[action="/autopilot/run"] button[type=submit]');
-    await page.waitForURL(`${BASE}/`);
+    await runSchedulerTurn(page);
+    await runSchedulerTurn(page);
     assert.equal(balance(databasePath, state, state.brooklyn), before, 'one shortage is one piece of work');
   });
 
@@ -321,7 +342,7 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     });
     await page.goto(`${BASE}/`);
     const home = await page.locator('body').innerText();
-    assert.match(home, /I need you for 1 thing/i);
+    assert.match(home, /things? need you/i);
     assert.match(home, /Kids Tights \/ Black \/ 5 does not match the records/i);
     assert.equal(inspect(databasePath, (db) => db.prepare('SELECT COUNT(*) n FROM adjustments WHERE workspace_id = ?').get(state.workspaceId).n), 0,
       'investigation never silently changes the ledger');
@@ -346,8 +367,7 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
 
     // Even asked directly, it does nothing while paused.
     const before = balance(databasePath, state, state.brooklyn);
-    await page.click('form[action="/autopilot/run"] button[type=submit]');
-    await page.waitForURL(`${BASE}/`);
+    await runSchedulerTurn(page);
     assert.equal(balance(databasePath, state, state.brooklyn), before, 'paused means paused');
   });
 

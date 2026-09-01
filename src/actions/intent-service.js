@@ -297,8 +297,21 @@ function normalise(raw) {
         + 'one location at a time works well — or bring the quantities in as a file.',
     };
   }
+  const lines = [];
+  const exactLines = new Set();
+  for (const rawLine of raws) {
+    const line = normaliseLine(rawLine);
+    // Provider retries can occasionally repeat the same structured line even
+    // though the person supplied one instruction. An identical typed line is
+    // one piece of evidence, not permission to move stock twice. Different
+    // products, quantities, places, or source clauses remain separate.
+    const identity = JSON.stringify(line);
+    if (exactLines.has(identity)) continue;
+    exactLines.add(identity);
+    lines.push(line);
+  }
   return {
-    lines: raws.map(normaliseLine),
+    lines,
     clarifyingQuestion: String(raw.clarifyingQuestion || '').trim(),
     unsupportedReason: String(raw.unsupportedReason || '').trim(),
   };
@@ -360,9 +373,129 @@ function expandSimpleNumberedTransfer(instruction, intent) {
   };
 }
 
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function namedMatch(text, names = []) {
+  return [...names].sort((a, b) => String(b).length - String(a).length)
+    .find((name) => new RegExp(`(?:^|\\s)${escapeRegExp(name)}(?:$|\\s)`, 'i').test(text)) || '';
+}
+
+function removeNamed(text, name) {
+  return name ? String(text).replace(new RegExp(escapeRegExp(name), 'i'), ' ').replace(/\s+/g, ' ').trim()
+    : String(text).trim();
+}
+
+/**
+ * A colon-led catalogue list with an explicit code on every clause is already
+ * fully structured evidence. Parsing this small grammar in code prevents a
+ * provider from silently returning only the first product. Names and codes are
+ * copied from the instruction; this does not infer tracking, variants or stock.
+ */
+function deterministicCatalogueList(instruction) {
+  const source = String(instruction || '');
+  const coded = /^\s*(?:create|add)\s*:\s*(.+)\s*$/i.exec(source);
+  const declared = /^\s*(?:create|add)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+products?\s*:\s*(.+)\s*$/i.exec(source);
+  if (!coded && !declared) return null;
+  const countWords = { one: 1, two: 2, three: 3, four: 4, five: 5,
+    six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  const expected = declared
+    ? (countWords[declared[1].toLowerCase()] || Number(declared[1]))
+    : null;
+  const list = coded ? coded[1] : declared[2];
+  const clauses = list.split(/\s*[,;\n]\s*|\s+and\s+/i).map((value) => value.trim()).filter(Boolean);
+  if (clauses.length < 2 || clauses.length > MAX_LINES || (expected && clauses.length !== expected)) return null;
+  const parsed = clauses.map((clause) => {
+    const codeMatch = /^(.*?)\s+(?:sku\s+)?([a-z0-9][a-z0-9._/-]*[-_][a-z0-9._/-]+)\s*$/i.exec(clause);
+    if (coded && (!codeMatch || !codeMatch[1].trim())) return null;
+    return normaliseLine({
+      actionType: 'create_item',
+      productName: codeMatch ? codeMatch[1].trim() : clause,
+      productCode: codeMatch ? codeMatch[2].trim() : '',
+      sourceText: clause,
+      quantity: -1,
+      adjustmentTarget: -1,
+    });
+  });
+  if (parsed.some((line) => !line)) return null;
+  return { lines: parsed, clarifyingQuestion: '', unsupportedReason: '' };
+}
+
+/**
+ * Common, fully explicit stock instructions do not need a model round trip.
+ * Every product and location still comes from the workspace context and is
+ * resolved again by the normal proposal builder; this parser grants no
+ * authority and never supplies a missing business fact.
+ */
+function deterministicInstruction(instruction, context = {}) {
+  const clean = String(instruction || '').trim();
+  const catalogue = deterministicCatalogueList(clean);
+  if (catalogue) return catalogue;
+  const correction = /^(?:set|correct|adjust)\s+(.+?)\s+to\s+(\d+)\s+(?:after|from|based on)\s+(?:a\s+)?physical count\s*$/i.exec(clean);
+  if (correction) {
+    const identity = correction[1].trim();
+    const sourceLocation = namedMatch(identity, context.locationNames);
+    const withoutLocation = removeNamed(identity, sourceLocation);
+    const item = namedMatch(withoutLocation, context.itemNames);
+    if (sourceLocation && item) return { lines: [normaliseLine({
+      actionType: 'adjust', item, variant: removeNamed(withoutLocation, item),
+      sourceText: clean, sourceLocation, adjustmentTarget: Number(correction[2]),
+      quantity: -1, reasonCode: 'physical_count',
+    })], clarifyingQuestion: '', unsupportedReason: '' };
+  }
+
+  const received = /^receive\s+(\d+)\s+(?:more\s+)?(.+?)\s+(?:into|at)\s+(.+?)\s*$/i.exec(clean);
+  if (received) {
+    const destinationLocation = namedMatch(received[3].trim(), context.locationNames);
+    const item = namedMatch(received[2].trim(), context.itemNames);
+    if (destinationLocation && item) return { lines: [normaliseLine({
+      actionType: 'receive', item, variant: removeNamed(received[2], item),
+      sourceText: clean, destinationLocation, quantity: Number(received[1]),
+      adjustmentTarget: -1, reasonCode: '',
+    })], clarifyingQuestion: '', unsupportedReason: '' };
+  }
+
+  // Announcing a delivery is not permission to receive stock. The supplier's
+  // name is literal evidence from the sentence; the normal receiving workflow
+  // will resolve its open orders and ask for the quantities that actually came.
+  const supplierDelivery = /^(.+?)(?:'s|’s)\s+(?:shipment|delivery|order)\s+(?:has\s+)?(?:arrived|came\s+in|was\s+delivered)\s*$/i.exec(clean);
+  const deliveryFrom = /^(?:the\s+)?(?:shipment|delivery|order)\s+from\s+(.+?)\s+(?:has\s+)?(?:arrived|came\s+in|was\s+delivered)\s*$/i.exec(clean);
+  const announcedSupplier = supplierDelivery ? supplierDelivery[1].trim()
+    : deliveryFrom ? deliveryFrom[1].trim() : '';
+  if (announcedSupplier) return { lines: [normaliseLine({
+    actionType: 'receive_shipment', supplier: announcedSupplier, sourceText: clean,
+    quantity: -1, adjustmentTarget: -1, reasonCode: '',
+  })], clarifyingQuestion: '', unsupportedReason: '' };
+
+  const purchase = /^(?:order|buy|purchase)\s+(\d+)\s+(?:more\s+)?(.+)$/i.exec(clean);
+  if (purchase) {
+    let productWords = purchase[2].trim();
+    let supplier = '';
+    const from = /^(.*?)\s+from\s+(.+)$/i.exec(productWords);
+    if (from) {
+      productWords = from[1].trim();
+      supplier = from[2].trim();
+    }
+    let purchaseUnit = '';
+    const packed = /^([^\s]+)\s+of\s+(.+)$/i.exec(productWords);
+    if (packed) {
+      purchaseUnit = packed[1].trim();
+      productWords = packed[2].trim();
+    }
+    const item = namedMatch(productWords, context.itemNames);
+    if (item) return { lines: [normaliseLine({
+      actionType: 'purchase', item, variant: removeNamed(productWords, item),
+      sourceText: clean, quantity: Number(purchase[1]), supplier, purchaseUnit,
+      adjustmentTarget: -1, reasonCode: '',
+    })], clarifyingQuestion: '', unsupportedReason: '' };
+  }
+  return null;
+}
+
 /** Turns an instruction into a validated intent. Never returns free-form SQL. */
 async function readInstruction(instruction, options = {}) {
   const clean = requireText(instruction, 'Instruction', { max: MAX_INSTRUCTION });
+  const deterministic = deterministicInstruction(clean, options.context || {});
+  if (deterministic) return deterministic;
   if (!options.provider && !config.ai.configured) {
     throw new ValidationError('Foundry needs an AI provider configured before it can read instructions.');
   }
@@ -408,5 +541,7 @@ module.exports = {
   normaliseLine,
   needsNumberedClauseRetry,
   expandSimpleNumberedTransfer,
+  deterministicInstruction,
+  deterministicCatalogueList,
   intentPrompt,
 };

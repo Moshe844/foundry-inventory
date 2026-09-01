@@ -27,12 +27,15 @@ function createProviderWebhooks(db) {
       if (providerType === 'microsoft365' && req.query.validationToken) {
         return res.type('text/plain').status(200).send(String(req.query.validationToken));
       }
-      if (providerType === 'gmail') return handleGmailWebhook(db, req, res);
-      if (providerType === 'microsoft365') return handleMicrosoftWebhook(db, req, res, adapter);
+      // Await delegated handlers inside this try block. Returning their
+      // promise directly lets a rejection escape the catch and can terminate
+      // the Node process on an unhandled webhook failure.
+      if (providerType === 'gmail') return await handleGmailWebhook(db, req, res);
+      if (providerType === 'microsoft365') return await handleMicrosoftWebhook(db, req, res, adapter);
       if (providerType === 'clover' && req.body?.verificationCode) {
         return res.status(200).json({ verificationCode: req.body.verificationCode });
       }
-      if (providerType === 'clover') return handleCloverWebhook(db, req, res, adapter);
+      if (providerType === 'clover') return await handleCloverWebhook(db, req, res, adapter);
       const providerAccountId = providerType === 'square' ? req.body?.merchant_id
         : null;
       const context = await providerService.webhookContext(db, providerType, req.params.connectorId, providerAccountId);

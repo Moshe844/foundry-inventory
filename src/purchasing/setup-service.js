@@ -152,6 +152,8 @@ function linkSupplierToMany(db, ctx, membership, input) {
   const linked = [];
   inTransaction(db, () => {
     for (const skuId of skuIds) {
+      const hasVariantCost = input.lastUnitCostBySku &&
+        Object.prototype.hasOwnProperty.call(input.lastUnitCostBySku, skuId);
       linked.push(
         supplierService.linkItem(db, ctx, membership, {
           supplierId: supplier.id,
@@ -161,7 +163,7 @@ function linkSupplierToMany(db, ctx, membership, input) {
           minimumOrderQuantity: input.minimumOrderQuantity,
           orderMultiple: input.orderMultiple,
           leadTimeDays: input.leadTimeDays,
-          lastUnitCost: input.lastUnitCost,
+          lastUnitCost: hasVariantCost ? input.lastUnitCostBySku[skuId] : input.lastUnitCost,
           isPreferred: input.isPreferred,
         })
       );

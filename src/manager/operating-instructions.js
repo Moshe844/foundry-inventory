@@ -97,6 +97,10 @@ Use supplier_terms for supplier contact, ordering method, lead time, purchase un
 Use supplier_communication for watched supplier senders, preparing supplier messages, automatic send limits,
 price-change tolerance, and quantity-change tolerance. Preparing is not sending. Automatic sending requires a
 stated supplier and maximum value. Supplier communication never grants authority to change inventory.
+To stop one supplier-communication capability, use operation remove and set only the matching boolean true:
+autoSendEnabled for automatic sending, prepareCommunications for preparation, or watchSupplier for mailbox
+watching. Use operation remove with all three false only when the owner explicitly asks to remove the entire
+supplier communication setup. This identifies what to remove; it never means enable it.
 Use transfer_authority only when the owner explicitly permits automatic transfers without approval; maximumQuantity must be stated.
 Use purchase_authority only when the owner explicitly permits automatic purchase-order approval; maximumValue and supplier must be stated.
 Use operating_preference for transfer-before-buying or target days of stock.
@@ -282,7 +286,8 @@ function resolveChange(db, workspaceId, raw, instruction) {
   if (raw.domain === 'purchase_authority' && raw.operation === 'set' && !positive(raw.maximumValue)) {
     questions.push('What is the most Foundry may commit on one supplier order without asking?');
   }
-  if (raw.domain === 'supplier_communication' && raw.autoSendEnabled && !positive(raw.autoSendLimit)) {
+  if (raw.domain === 'supplier_communication' && raw.operation === 'set'
+      && raw.autoSendEnabled && !positive(raw.autoSendLimit)) {
     questions.push('What is the most Foundry may send to this supplier without asking?');
   }
   if (raw.domain === 'supplier_communication' && raw.watchSupplier && out.supplierId) {
@@ -309,7 +314,14 @@ function resolveChange(db, workspaceId, raw, instruction) {
 
 function describe(change) {
   const subject = change.displayName || change.supplierName || 'this inventory';
-  if (change.operation === 'remove') return `Stop using the ${change.domain.replaceAll('_', ' ')} rule for ${subject}.`;
+  if (change.operation === 'remove') {
+    if (change.domain === 'supplier_communication') {
+      if (change.autoSendEnabled) return `Stop automatically sending supplier messages to ${subject}; keep its other communication settings.`;
+      if (change.prepareCommunications) return `Stop preparing routine supplier messages for ${subject}; keep its other communication settings.`;
+      if (change.watchSupplier) return `Stop watching supplier messages from ${subject}; keep its other communication settings.`;
+    }
+    return `Stop using the ${change.domain.replaceAll('_', ' ')} rule for ${subject}.`;
+  }
   switch (change.domain) {
     case 'replenishment': {
       const values = [];
@@ -431,16 +443,20 @@ function list(db, workspaceId, { status = null } = {}) {
 async function interpret(db, ctx, membership, instruction, options = {}) {
   const clean = String(instruction || '').trim().slice(0, 2000);
   if (!clean) throw new ValidationError('Tell Foundry how you want this inventory run.');
-  const deterministic = compileSupplierCommunication(clean);
-  if (!deterministic && !options.provider && !config.ai.configured) throw new ValidationError('Foundry needs its model connection to read that instruction.');
-  const provider = deterministic ? null : options.provider || createProviderForTier('standard');
+  // Connected installations always use the closed AI schema so supplier names,
+  // wording and policy changes are not encoded as phrase lists. The narrow
+  // compiler is retained only as an offline compatibility fallback.
+  const offlineFallback = !options.provider && !config.ai.configured
+    ? compileSupplierCommunication(clean) : null;
+  if (!offlineFallback && !options.provider && !config.ai.configured) throw new ValidationError('Foundry needs its model connection to read that instruction.');
+  const provider = offlineFallback ? null : options.provider || createProviderForTier('standard');
   const catalogue = db.prepare(
     `SELECT i.name, s.code, s.variant_label FROM skus s JOIN items i ON i.id = s.item_id
       WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1 ORDER BY i.name, s.position`
   ).all(ctx.workspaceId);
   const locationRows = db.prepare("SELECT name FROM locations WHERE workspace_id = ? AND is_active = 1 ORDER BY name").all(ctx.workspaceId);
   const supplierRows = suppliers.listSuppliers(db, ctx.workspaceId).map((s) => ({ name: s.name }));
-  const response = deterministic ? { data: deterministic } : await provider.complete({
+  const response = offlineFallback ? { data: offlineFallback } : await provider.complete({
     system: SYSTEM,
     prompt: `Instruction:\n${clean}\n\nReal variants:\n${JSON.stringify(catalogue)}\n\nReal locations:\n${JSON.stringify(locationRows)}\n\nReal suppliers:\n${JSON.stringify(supplierRows)}`,
     schema: SCHEMA, schemaName: 'operating_instruction',
@@ -589,10 +605,22 @@ function applyChange(db, ctx, membership, change) {
   }
   if (change.domain === 'supplier_communication') {
     if (change.operation === 'remove') {
-      suppliers.updateSupplier(db, ctx, membership, change.supplierId, {
-        prepareCommunications: false, autoSendEnabled: false, watchedConnectorId: null,
+      const targeted = change.autoSendEnabled || change.prepareCommunications || change.watchSupplier;
+      const updates = compact({
+        autoSendEnabled: !targeted || change.autoSendEnabled ? false : undefined,
+        prepareCommunications: !targeted || change.prepareCommunications ? false : undefined,
+        watchedConnectorId: !targeted || change.watchSupplier ? null : undefined,
       });
-      return { kind: 'supplier_communication', supplierId: change.supplierId, removed: true };
+      suppliers.updateSupplier(db, ctx, membership, change.supplierId, updates);
+      if (!targeted || change.watchSupplier) {
+        db.prepare(`UPDATE connection_email_rules SET is_active = 0, updated_at = ?
+          WHERE workspace_id = ? AND supplier_id = ? AND is_active = 1`)
+          .run(nowIso(), ctx.workspaceId, change.supplierId);
+      }
+      return { kind: 'supplier_communication', supplierId: change.supplierId, removed: true,
+        capability: change.autoSendEnabled ? 'automatic_sending'
+          : change.prepareCommunications ? 'preparation'
+            : change.watchSupplier ? 'mailbox_watching' : 'all' };
     }
     const updated = suppliers.updateSupplier(db, ctx, membership, change.supplierId, compact({
       watchedConnectorId: change.connectorId || undefined,

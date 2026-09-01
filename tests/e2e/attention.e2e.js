@@ -154,9 +154,9 @@ test(
     const state = {};
 
     t.after(async () => {
+      await stopServer(server);
       await context.close();
       await browser.close();
-      await stopServer(server);
       fs.rmSync(dataDir, { recursive: true, force: true });
     });
 
@@ -282,10 +282,10 @@ test(
       // The landing page is now Operator Home. The classic overview, which is
       // what this step is about, stayed at /overview.
       await page.goto(`${BASE}/overview`);
-      await page.locator("text=Today's briefing").first().waitFor();
+      await page.getByRole('heading', { name: 'Needs your attention' }).waitFor();
       const body = await page.locator('body').innerText();
-      assert.match(body, /need your attention/);
-      assert.ok(body.indexOf("Today's briefing") < body.indexOf('Units on hand'));
+      assert.match(body, /needs your attention/i);
+      assert.ok(body.indexOf('Needs your attention') < body.indexOf('Inventory pulse'));
       await shot(page, 'overview-briefing');
     });
 
@@ -402,11 +402,11 @@ test(
           .get(state.workspaceId, state.valveSku.id).n
       );
       assert.match(body, new RegExp(String(total)), 'the answer is the engine\'s number');
-      assert.match(body, /Foundry read this as/);
-      assert.match(body, /changes are approved on the actions page/);
+      assert.match(body, /How Foundry read this/);
+      assert.match(body, /on hand/i);
     });
 
-    await t.test('11. a question outside inventory is refused honestly', async () => {
+    await t.test('11. an accounting question is answered without inventing a margin', async () => {
       await page.goto(`${BASE}/ask`);
       await page.fill('#ask-question', 'What was our gross margin on valves last quarter?');
       await page.locator('[data-ask-form] button[type=submit]').click();
@@ -414,8 +414,9 @@ test(
       await shot(page, 'ask-unsupported');
 
       const body = await page.locator('body').innerText();
-      assert.match(body, /Not something Foundry can answer/);
-      assert.match(body, /Here is what you can ask/, "a refusal still points somewhere");
+      assert.match(body, /does not have a realized margin to report yet/i);
+      assert.match(body, /Open profit and loss/);
+      assert.match(body, /Revenue\s+\$0\.00/);
       assert.ok(!/\bI (?:ordered|switched|moved)\b/i.test(body), 'no invented action');
     });
 

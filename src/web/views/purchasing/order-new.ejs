@@ -28,12 +28,17 @@
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input type="hidden" name="supplierId" value="<%= supplierId %>">
 
+      <% if (orderErrors && orderErrors.length) { %>
+        <div class="notice notice--warn" role="alert"><div><strong>This order is missing information</strong><% orderErrors.forEach(function(error) { %><p><%= error %></p><% }) %></div></div>
+      <% } %>
+
       <% if (supplierItems.length === 0) { %>
         <p class="muted">
           Nothing is linked to this supplier yet. <a href="/suppliers/<%= supplierId %>">Link some products</a>
           so Foundry knows the pack size and price.
         </p>
       <% } else { %>
+        <p class="muted" style="margin-bottom:12px;">These are the products linked to this supplier. Enter a pack quantity for each product you want to order. <a href="/suppliers/<%= supplierId %>#link-product">Link another product</a>.</p>
         <table class="table table--tight">
           <thead><tr><th>Product</th><th>Pack</th><th class="num">Unit cost</th><th class="num">How many packs</th></tr></thead>
           <tbody>
@@ -41,9 +46,16 @@
               <tr>
                 <td><%= item.displayName %><% if (item.supplierSku) { %> <span class="muted"><%= item.supplierSku %></span><% } %></td>
                 <td><%= item.unitsPerPurchaseUnit > 1 ? item.purchaseUnit + ' of ' + item.unitsPerPurchaseUnit : item.purchaseUnit %></td>
-                <td class="num"><%= item.lastUnitCost === null ? '—' : item.lastUnitCost %></td>
                 <td class="num">
-                  <input class="input input--sm" type="number" min="0" name="quantity[<%= item.skuId %>]" style="max-width:110px;">
+                  <label class="sr-only" for="unit-cost-<%= item.skuId %>">Unit cost for <%= item.displayName %></label>
+                  <input class="input input--sm" id="unit-cost-<%= item.skuId %>" type="number" min="0" step="0.01"
+                         name="unitCost[<%= item.skuId %>]" style="max-width:120px;"
+                         value="<%= submitted && submitted.unitCost && submitted.unitCost[item.skuId] !== undefined ? submitted.unitCost[item.skuId] : item.lastUnitCost === null ? '' : item.lastUnitCost %>"
+                         placeholder="Required if unknown">
+                </td>
+                <td class="num">
+                  <input class="input input--sm" type="number" min="0" name="quantity[<%= item.skuId %>]" style="max-width:110px;"
+                         value="<%= submitted && submitted.quantity && submitted.quantity[item.skuId] !== undefined ? submitted.quantity[item.skuId] : '' %>">
                 </td>
               </tr>
             <% }) %>

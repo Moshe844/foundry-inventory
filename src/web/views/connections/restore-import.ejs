@@ -1,0 +1,60 @@
+<div class="page-head">
+  <div class="titles">
+    <a class="back-link" href="/settings/connections/<%= connection.id %>#message-<%= review.messageId %>">← Back to <%= provider.name || connection.display_name %></a>
+    <h1><%= review.status === 'COMPLETED' ? 'The removed import was restored' : 'Restore the removed import?' %></h1>
+    <div class="page-sub"><%= review.snapshot.source.filename %></div>
+  </div>
+</div>
+
+<div class="notice notice--info section">
+  <% if (review.status === 'COMPLETED') { %>
+    <strong>Completed.</strong> Foundry reactivated the original products where needed and restored their quantities through the inventory ledger. It did not create duplicate products.
+  <% } else { %>
+    <strong>This is not being treated as a meaningless duplicate.</strong> The same file was imported before, then that import was removed. Review exactly what will return before approving it.
+  <% } %>
+</div>
+
+<div class="card section">
+  <div class="card-head"><div><h2>What happened before</h2><p class="muted">The complete history attached to this exact file.</p></div></div>
+  <div class="card-body">
+    <dl class="kv">
+      <dt>Originally imported</dt><dd><%= helpers.dateTime(review.snapshot.source.originallyImportedAt) %></dd>
+      <dt>Removed</dt><dd><%= helpers.dateTime(review.snapshot.source.removedAt) %></dd>
+      <dt>Supplier</dt><dd><%= review.snapshot.source.supplier || 'Not stated' %></dd>
+      <dt>This review</dt><dd><%= review.snapshot.productCount %> products · <%= review.snapshot.variantCount %> variants · <%= review.snapshot.totalUnits %> <%= review.snapshot.unitLabel %><%= review.snapshot.totalUnits === 1 ? '' : 's' %></dd>
+    </dl>
+  </div>
+</div>
+
+<div class="card section">
+  <div class="card-head"><div><h2>Exact inventory that will return</h2><p class="muted">The original product and SKU identities are reused. Current stock is shown so this approval cannot hide a changed balance.</p></div></div>
+  <div class="table-wrap">
+    <table class="table table--stack">
+      <thead><tr><th>Product</th><th>Variant / SKU</th><th>Location</th><th class="num">Current</th><th class="num">Restore</th><th class="num">After</th></tr></thead>
+      <tbody><% review.snapshot.lines.forEach(function(line) { %><tr>
+        <td class="cell-main"><strong><%= line.itemName %></strong><% if (!line.itemActive) { %><span class="cell-sub">Archived now — will be reactivated</span><% } %></td>
+        <td><%= line.variant || 'Default' %><span class="cell-sub mono"><%= line.skuCode %></span></td>
+        <td><%= line.locationName %></td>
+        <td class="num"><%= helpers.qty(line.currentOnHand) %></td>
+        <td class="num"><strong>+<%= helpers.qty(line.quantity) %></strong></td>
+        <td class="num"><strong><%= helpers.qty(line.currentOnHand + line.quantity) %></strong></td>
+      </tr><% }) %></tbody>
+    </table>
+  </div>
+  <% if (review.status === 'PENDING') { %>
+    <div class="card-foot">
+      <p><strong>Approval will:</strong> reactivate the original products if archived and post the quantities above as new, traceable inventory movements. It will not create products, variants, suppliers, or locations.</p>
+      <div class="form-actions">
+        <form method="post" action="/settings/connections/<%= connection.id %>/email-messages/<%= review.messageId %>/restore-import" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= review.integrityHash %>">
+          <button class="btn btn--primary" type="submit">Approve and restore <%= review.snapshot.totalUnits %> <%= review.snapshot.unitLabel %><%= review.snapshot.totalUnits === 1 ? '' : 's' %></button>
+        </form>
+        <form method="post" action="/settings/connections/<%= connection.id %>/email-messages/<%= review.messageId %>/keep-removed">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Keep it removed</button>
+        </form>
+      </div>
+    </div>
+  <% } else { %>
+    <div class="card-foot"><a class="btn btn--primary" href="/settings/connections/<%= connection.id %>#message-<%= review.messageId %>">Back to message history</a> <a class="btn" href="/inventory">See restored inventory</a></div>
+  <% } %>
+</div>

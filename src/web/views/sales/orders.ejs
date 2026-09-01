@@ -21,11 +21,11 @@
   var waiting = openOrders.reduce(function (n, o) { return n + o.totals.backordered; }, 0);
 
   var STATUS = {
-    DRAFT: { label: 'Draft', tone: 'muted' },
-    CONFIRMED: { label: 'Committed', tone: 'info' },
-    BACKORDERED: { label: 'Waiting for stock', tone: 'warn' },
-    PARTIALLY_FULFILLED: { label: 'Part fulfilled', tone: 'info' },
-    FULFILLED: { label: 'Fulfilled', tone: 'ok' },
+    DRAFT: { label: 'Being prepared', tone: 'muted' },
+    CONFIRMED: { label: 'Confirmed — stock held', tone: 'info' },
+    BACKORDERED: { label: 'Confirmed — waiting for stock', tone: 'warn' },
+    PARTIALLY_FULFILLED: { label: 'Partly shipped', tone: 'info' },
+    FULFILLED: { label: 'Shipped', tone: 'ok' },
     CANCELLED: { label: 'Cancelled', tone: 'muted' },
   };
 %>

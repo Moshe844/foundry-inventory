@@ -1,0 +1,37 @@
+<div class="page-head"><div><a class="back-link" href="/accounting">‹ Accounting</a><p class="eyebrow">Ledger-backed report</p><h1><%= title %></h1>
+  <p class="lede"><%= kind === 'inventory-valuation' ? 'Cost value from the inventory cost subledger—not selling prices.' : 'Calculated only from immutable posted journal entries.' %></p></div></div>
+
+<% if (kind !== 'balance-sheet' && kind !== 'inventory-valuation') { %><form class="card card-body form-inline" method="get"><label class="field"><span class="field-label">From</span><input class="input" type="date" name="from" value="<%= from %>"></label><label class="field"><span class="field-label">To</span><input class="input" type="date" name="to" value="<%= to %>"></label><button class="btn btn--sm" type="submit">Update report</button></form><% } %>
+
+<% if (kind === 'profit-and-loss') { %>
+  <section class="card"><div class="card-body"><div class="report-lines">
+    <div class="report-line report-line--strong"><span>Revenue</span><strong><%= helpers.money(report.revenueMinor, report.currency) %></strong></div>
+    <div class="report-line"><span>Cost of goods sold</span><span>(<%= helpers.money(report.cogsMinor, report.currency) %>)</span></div>
+    <div class="report-line report-line--total"><span>Gross profit</span><strong><%= helpers.money(report.grossProfitMinor, report.currency) %></strong></div>
+    <div class="report-line"><span>Operating expenses</span><span>(<%= helpers.money(report.operatingExpenseMinor, report.currency) %>)</span></div>
+    <div class="report-line report-line--total"><span>Net income</span><strong><%= helpers.money(report.netIncomeMinor, report.currency) %></strong></div>
+  </div><p class="hint">Gross profit is revenue minus product cost. Net income also includes operating expenses.</p></div></section>
+<% } else if (kind === 'balance-sheet') { %>
+  <section class="card"><div class="card-head"><h2>As of <%= report.asOf %></h2><span class="badge <%= report.balanced ? 'badge--success' : 'badge--warning' %>"><%= report.balanced ? 'Balanced' : 'Needs review' %></span></div><div class="card-body"><div class="report-lines">
+    <div class="report-line report-line--total"><span>Assets</span><strong><%= helpers.money(report.assetMinor, report.currency) %></strong></div>
+    <% report.assets.filter(a=>a.net_minor).forEach(function(a){ %><div class="report-line report-line--detail"><span><%= a.code %> · <%= a.name %></span><span><%= helpers.money(a.net_minor, report.currency) %></span></div><% }) %>
+    <div class="report-line report-line--total"><span>Liabilities</span><strong><%= helpers.money(report.liabilityMinor, report.currency) %></strong></div>
+    <% report.liabilities.filter(a=>a.net_minor).forEach(function(a){ %><div class="report-line report-line--detail"><span><%= a.code %> · <%= a.name %></span><span><%= helpers.money(a.net_minor, report.currency) %></span></div><% }) %>
+    <div class="report-line"><span>Posted equity</span><span><%= helpers.money(report.postedEquityMinor, report.currency) %></span></div><div class="report-line"><span>Current earnings</span><span><%= helpers.money(report.currentEarningsMinor, report.currency) %></span></div>
+    <div class="report-line report-line--total"><span>Liabilities and equity</span><strong><%= helpers.money(report.liabilitiesAndEquityMinor, report.currency) %></strong></div>
+  </div></div></section>
+<% } else if (kind === 'trial-balance') { %>
+  <section class="card"><div class="card-head"><h2>Account balances</h2><span class="badge <%= report.balanced ? 'badge--success' : 'badge--warning' %>"><%= report.balanced ? 'Debits equal credits' : 'Out of balance' %></span></div><div class="card-body"><div class="table-wrap"><table class="table"><thead><tr><th>Account</th><th>Type</th><th class="num">Debit balance</th><th class="num">Credit balance</th></tr></thead><tbody>
+  <% report.accounts.forEach(function(a){ %><tr><td><%= a.code %> · <%= a.name %></td><td><%= a.account_type %></td><td class="num"><%= a.ending_debit_minor ? helpers.money(a.ending_debit_minor, report.currency) : '—' %></td><td class="num"><%= a.ending_credit_minor ? helpers.money(a.ending_credit_minor, report.currency) : '—' %></td></tr><% }) %>
+  </tbody><tfoot><tr><th colspan="2">Total</th><th class="num"><%= helpers.money(report.totals.ending_debit_minor, report.currency) %></th><th class="num"><%= helpers.money(report.totals.ending_credit_minor, report.currency) %></th></tr></tfoot></table></div></div></section>
+<% } else if (kind === 'general-ledger') { %>
+  <section class="card"><div class="card-body"><div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Entry</th><th>Account</th><th>Description</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead><tbody>
+  <% report.rows.forEach(function(row){ %><tr><td><%= row.posting_date %></td><td><a href="/accounting/entries/<%= row.entry_id %>">#<%= row.entry_number %></a></td><td><%= row.account_code %> · <%= row.account_name %></td><td><%= row.description %></td><td class="num"><%= row.debit_minor ? helpers.money(row.debit_minor,row.currency) : '—' %></td><td class="num"><%= row.credit_minor ? helpers.money(row.credit_minor,row.currency) : '—' %></td></tr><% }) %>
+  </tbody></table></div><% if(!report.rows.length){ %><div class="empty"><strong>No posted entries in this period.</strong></div><% } %></div></section>
+<% } else if (kind === 'cash-flow') { %>
+  <section class="card"><div class="card-body"><div class="report-lines"><div class="report-line"><span>Operating</span><span><%= helpers.money(report.sections.operating, report.currency) %></span></div><div class="report-line"><span>Investing</span><span><%= helpers.money(report.sections.investing, report.currency) %></span></div><div class="report-line"><span>Financing</span><span><%= helpers.money(report.sections.financing, report.currency) %></span></div><div class="report-line report-line--total"><span>Net cash change</span><strong><%= helpers.money(report.netCashChangeMinor, report.currency) %></strong></div></div></div></section>
+<% } else if (kind === 'inventory-valuation') { %>
+  <section class="card"><div class="card-head"><div><h2><%= report.totalUnits %> units</h2><p class="hint">Cost subledger <%= helpers.money(report.valuationMinor, configured.currency) %> · Inventory control <%= helpers.money(report.ledgerMinor, configured.currency) %></p></div><span class="badge <%= report.reconciled ? 'badge--success' : 'badge--warning' %>"><%= report.reconciled ? 'Reconciled' : `Difference ${helpers.money(Math.abs(report.differenceMinor), configured.currency)}` %></span></div><div class="card-body"><div class="table-wrap"><table class="table"><thead><tr><th>Product</th><th>Location</th><th class="num">Units</th><th class="num">Average unit cost</th><th class="num">Total cost</th></tr></thead><tbody>
+  <% report.rows.forEach(function(row){ %><tr><td><%= row.item_name %><%= row.variant_label ? ` / ${row.variant_label}` : '' %><br><span class="muted"><%= row.code %></span></td><td><%= row.location_name %></td><td class="num"><%= row.quantity_units %></td><td class="num"><%= helpers.money(Math.round(row.averageUnitCostMinor), configured.currency) %></td><td class="num"><%= helpers.money(row.total_cost_minor, configured.currency) %></td></tr><% }) %>
+  </tbody></table></div></div></section>
+<% } %>

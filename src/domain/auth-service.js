@@ -112,6 +112,16 @@ function createWorkspaceFor(db, accountId, workspaceName, options = {}) {
      VALUES (?, ?, ?, ?, 'owner', ?)`
   ).run(userId, workspaceId, accountId, options.name || account.name, now);
 
+  // Accounting is a built-in consequence of operating the business in
+  // Foundry. A new inventory never has to visit an activation screen before
+  // receipts, sales, or supplier documents can keep its books.
+  require('../accounting/ledger').configure(
+    db,
+    { workspaceId, actorId: userId },
+    { id: userId, role: 'owner' },
+    { startDate: now.slice(0, 10), currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE' }
+  );
+
   return { workspaceId, userId, name: clean };
 }
 

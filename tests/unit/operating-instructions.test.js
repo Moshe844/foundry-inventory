@@ -106,6 +106,27 @@ test('supplier assignment and purchasing terms use the existing supplier-item re
   assert.equal(linked.leadTimeDays, 9);
 });
 
+test('stopping automatic supplier email removes only that authority', async () => {
+  const env = setup();
+  const supplier = supplierService.createSupplier(env.db, env.ctx, env.membership, {
+    name: 'Northstar Textiles', email: 'orders@northstar.test', prepareCommunications: true,
+    autoSendEnabled: true, autoSendLimit: 500,
+  });
+  const proposal = await operating.interpret(env.db, env.ctx, env.membership,
+    'Stop automatically sending orders to Northstar Textiles.', {
+      provider: provider(read([{ ...blank(), domain: 'supplier_communication', operation: 'remove',
+        supplierText: 'Northstar Textiles', prepareCommunications: false,
+        autoSendEnabled: true, autoSendLimit: -1, priceTolerancePercent: -1,
+        quantityTolerancePercent: -1, watchSupplier: false, trustedSender: '' }], 'Stop automatic sending')),
+    });
+  assert.match(operating.describe(proposal.resolvedChanges[0]), /keep its other communication settings/i);
+  operating.approve(env.db, env.ctx, env.membership, proposal.id, proposal.integrityHash);
+  const updated = supplierService.getSupplier(env.db, env.workspace.workspaceId, supplier.id);
+  assert.equal(updated.autoSendEnabled, false);
+  assert.equal(updated.prepareCommunications, true);
+  assert.equal(updated.autoSendLimitMinor, 50000, 'the remembered limit remains available if authority is restored');
+});
+
 test('authority sentences create approved, versioned policies only after proposal approval', async () => {
   const env = setup();
   const supplier = supplierService.createSupplier(env.db, env.ctx, env.membership, { name: 'Northstar Textiles' });

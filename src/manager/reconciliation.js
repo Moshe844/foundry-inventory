@@ -154,6 +154,37 @@ function reconcileFailedImports(db, workspaceId) {
   });
 }
 
+function reconcileUnifiedBusinessState(db, workspaceId) {
+  const state = require('./business-brain').build(db, workspaceId);
+  return state.consistency
+    .filter((check) => check.key !== 'inventory-ledger')
+    .map((check) => {
+      const result = record(db, workspaceId, {
+        kind: `business_${check.key}`,
+        referenceType: 'workspace', referenceId: workspaceId,
+        status: check.passed ? (check.complete === false ? 'PENDING' : 'VERIFIED') : 'FAILED',
+        expectedState: { consistent: true },
+        observedState: { consistent: check.passed, complete: check.complete !== false,
+          detail: check.detail, evidence: check.evidence },
+        checks: [{ name: check.title, passed: check.passed, detail: check.detail }],
+        evidence: Array.isArray(check.evidence) ? check.evidence : [check.evidence],
+      });
+      if (!check.passed && check.needsOwner !== false) investigations.create(db, workspaceId, {
+        trigger: `business_consistency_${check.key}`,
+        affectedEntities: { workspaceId, consistencyKey: check.key },
+        observedDifference: { detail: check.detail, evidence: check.evidence },
+        confidence: 'high',
+        recommendedNextStep: `Review ${check.title.toLowerCase()} before making another related change.`,
+        idempotencyKey: `reconciliation:${result.id}`,
+      });
+      else investigations.resolveByTrigger(db, workspaceId, `business_consistency_${check.key}`,
+        check.complete === false
+          ? 'Foundry reclassified this as missing financial evidence, not a contradiction in the business records.'
+          : 'The related records now agree.');
+      return result;
+    });
+}
+
 function scanWorkspace(db, workspaceId) {
   const records = [reconcileInventoryIntegrity(db, workspaceId)];
   const items = db.prepare(
@@ -168,6 +199,7 @@ function scanWorkspace(db, workspaceId) {
   ).all(workspaceId);
   for (const order of orders) records.push(reconcilePurchaseOrder(db, workspaceId, order.id));
   records.push(...reconcileFailedImports(db, workspaceId));
+  records.push(...reconcileUnifiedBusinessState(db, workspaceId));
   return { checked: records.length, failed: records.filter((entry) => entry && entry.status === 'FAILED').length, records };
 }
 
@@ -179,4 +211,5 @@ function list(db, workspaceId, { status = null, limit = 100 } = {}) {
 }
 
 module.exports = { hydrate, keyFor, record, reconcileWorkItem, reconcilePurchaseOrder,
-  reconcileInventoryIntegrity, reconcileFailedImports, scanWorkspace, list };
+  reconcileInventoryIntegrity, reconcileFailedImports, reconcileUnifiedBusinessState,
+  scanWorkspace, list };

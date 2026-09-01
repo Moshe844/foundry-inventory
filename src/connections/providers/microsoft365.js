@@ -102,7 +102,12 @@ async function poll({ credentials, since }) {
   const messages = [];
   for (const row of rows) {
     const attachments = row.hasAttachments ? ((await graph(credentials,
-      `/me/messages/${encodeURIComponent(row.id)}/attachments?$select=id,name,contentType,contentBytes`)).body.value || []) : [];
+      // `contentBytes` belongs to the derived fileAttachment type, not the
+      // base attachment type. Graph rejects selecting it on `/attachments`
+      // even though it includes the bytes for file attachments in the normal
+      // response. Asking for the attachment normally supports PDFs and sheets
+      // without turning a valid webhook into an HTTP 400.
+      `/me/messages/${encodeURIComponent(row.id)}/attachments`)).body.value || []) : [];
     messages.push({ messageId: row.id, threadId: row.conversationId, internetMessageId: row.internetMessageId,
       sender: row.from?.emailAddress?.address, recipients: (row.toRecipients || []).map((entry) => entry.emailAddress?.address).filter(Boolean),
       subject: row.subject, bodyText: row.body?.content, receivedAt: row.receivedDateTime,

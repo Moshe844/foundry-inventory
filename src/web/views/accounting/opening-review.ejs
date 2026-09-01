@@ -1,0 +1,19 @@
+<div class="page-head"><div><a class="back-link" href="/accounting">‹ Accounting setup</a><p class="eyebrow">Final review</p><h1>Confirm what Foundry will start with</h1>
+  <p class="lede">This creates one balanced opening entry on <%= opening.accounting_start_date %>. It does not recreate earlier transactions or move physical stock.</p></div></div>
+
+<section class="card"><div class="card-head"><h2>Opening journal</h2><span class="badge"><%= opening.currency %></span></div><div class="card-body">
+  <div class="table-wrap"><table class="table"><thead><tr><th>Account</th><th>Explanation</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead><tbody>
+  <% opening.lines.forEach(function(line) { %><tr><td><%= line.account_code %> · <strong><%= line.account_name %></strong></td><td><%= line.memo || 'Opening balance' %></td>
+    <td class="num"><%= line.debit_minor ? helpers.money(line.debit_minor, opening.currency) : '—' %></td><td class="num"><%= line.credit_minor ? helpers.money(line.credit_minor, opening.currency) : '—' %></td></tr><% }) %>
+  </tbody><tfoot><tr><th colspan="2">Balanced total</th><th class="num"><%= helpers.money(opening.lines.reduce((n,l)=>n+Number(l.debit_minor),0), opening.currency) %></th><th class="num"><%= helpers.money(opening.lines.reduce((n,l)=>n+Number(l.credit_minor),0), opening.currency) %></th></tr></tfoot></table></div>
+</div></section>
+
+<section class="card"><div class="card-head"><div><h2>Opening inventory at cost</h2><p class="hint">These quantities must agree with Inventory. Only the financial cost layer is being established.</p></div></div><div class="card-body">
+  <% if (!opening.inventory.length) { %><p class="muted">No opening inventory.</p><% } else { %><div class="table-wrap"><table class="table"><thead><tr><th>Product</th><th>Location</th><th class="num">Units</th><th class="num">Cost value</th></tr></thead><tbody>
+  <% opening.inventory.forEach(function(row) { %><tr><td><%= row.item_name %><%= row.variant_label ? ` / ${row.variant_label}` : '' %></td><td><%= row.location_name %></td><td class="num"><%= row.quantity_units %></td><td class="num"><%= helpers.money(row.total_cost_minor, opening.currency) %></td></tr><% }) %>
+  </tbody></table></div><% } %>
+</div></section>
+
+<div class="notice notice--warning"><div><strong>After approval</strong><br>Foundry will account only for activity dated <%= opening.accounting_start_date %> or later. Posted entries can be corrected only by a visible reversal.</div></div>
+<form method="post" action="/accounting/opening/<%= opening.id %>/approve" class="form-actions"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= opening.integrity_hash %>">
+  <button class="btn" type="submit">Approve and start accounting</button><a class="btn btn--ghost" href="/accounting">Go back without posting</a></form>

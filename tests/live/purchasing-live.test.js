@@ -181,14 +181,11 @@ test('a delivery announcement opens receiving rather than booking anything in', 
   );
 });
 
-test('Foundry still refuses what it genuinely cannot do', { skip: !LIVE, timeout: TIMEOUT }, async () => {
+test('new financial and supplier communication questions route to their real subsystems', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const env = wholesaler();
-  for (const question of [
-    'What was our gross profit last month?',
-    'Send the purchase order to ABC by email',
-  ]) {
-    const { plan } = await ask(env, question);
-    assert.equal(plan.intent, 'unsupported', `"${question}" produced ${plan.intent}`);
-    assert.ok(plan.unsupportedReason.length > 0);
-  }
+  const profit = await ask(env, 'What was our gross profit last month?');
+  assert.equal(profit.plan.intent, 'profit_and_loss');
+  const supplierMessage = await ask(env, 'Send the purchase order to ABC by email');
+  assert.ok(['supplier_order_status', 'action'].includes(supplierMessage.plan.intent),
+    `supplier communication produced ${supplierMessage.plan.intent}`);
 });

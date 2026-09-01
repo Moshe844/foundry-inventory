@@ -99,17 +99,46 @@ router.get(
   asyncRoute(async (req, res) => {
     const limit = 25;
     const page = Math.max(Number(req.query.page) || 1, 1);
+    const sourceDocument = /^sdoc_[a-z0-9]+$/i.test(String(req.query.sourceDocument || ''))
+      ? String(req.query.sourceDocument) : null;
+    let sourceLabel = null;
+    let sourceItemIds = [];
+    if (sourceDocument) {
+      const document = req.db.prepare('SELECT source_name, result FROM setup_documents WHERE workspace_id = ? AND id = ?')
+        .get(req.ctx.workspaceId, sourceDocument);
+      if (document) {
+        try { sourceItemIds = JSON.parse(document.result || '{}').createdItemIds || []; } catch { sourceItemIds = []; }
+        if (sourceItemIds.length) sourceLabel = document.source_name;
+      }
+    }
     const filters = {
       q: trimOrNull(req.query.q) || '',
       trackingMode: trimOrNull(req.query.tracking) || '',
       locationId: trimOrNull(req.query.location) || '',
       sort: trimOrNull(req.query.sort) || 'name',
-      includeArchived: req.query.archived === '1',
+      includeArchived: Boolean(sourceLabel) || req.query.archived === '1' || req.query.archived === 'only',
+      archivedOnly: req.query.archived === 'only',
+      itemIds: sourceItemIds,
       limit,
       offset: (page - 1) * limit,
     };
     const result = inventoryQuery.listItems(req.db, req.ctx.workspaceId, filters);
     const locations = repo.listLocations(req.db, req.ctx.workspaceId);
+    let returnTo = null;
+    let returnLabel = null;
+    const fromConnection = /^con_[a-z0-9]+$/i.test(String(req.query.fromConnection || ''))
+      ? String(req.query.fromConnection) : null;
+    const fromMessage = /^(?:emsg|emailmsg)_[a-z0-9]+$/i.test(String(req.query.fromMessage || ''))
+      ? String(req.query.fromMessage) : null;
+    if (fromConnection) {
+      const source = req.db.prepare(`SELECT id, display_name, provider_type FROM workspace_connectors
+        WHERE workspace_id = ? AND id = ?`).get(req.ctx.workspaceId, fromConnection);
+      if (source) {
+        returnTo = `/settings/connections/${source.id}${fromMessage ? `#message-${fromMessage}` : ''}`;
+        returnLabel = source.provider_type === 'microsoft365' ? 'Microsoft 365'
+          : source.provider_type === 'gmail' ? 'Gmail' : source.display_name;
+      }
+    }
 
     /*
      * What a person actually needs to read off this list.
@@ -166,6 +195,12 @@ router.get(
       page,
       filters,
       locations,
+      returnTo,
+      returnLabel,
+      fromConnection,
+      fromMessage,
+      sourceDocument: sourceLabel ? sourceDocument : null,
+      sourceLabel,
     });
   })
 );

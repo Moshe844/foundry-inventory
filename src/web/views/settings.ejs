@@ -261,6 +261,13 @@
       <span>Open</span>
     </a>
 
+    <% if (currentUser.role === 'owner') { %>
+      <a class="list-row panel" href="/settings/export">
+        <div><strong>Export this workspace</strong><p>Download the complete workspace-scoped business record. Passwords, OAuth secrets, sessions, and connection credentials are excluded.</p></div>
+        <span>Download</span>
+      </a>
+    <% } %>
+
     <div class="card">
       <div class="card-head"><h2>Inventory integrity</h2></div>
       <div class="card-body">

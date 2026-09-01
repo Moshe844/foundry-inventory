@@ -7,10 +7,16 @@ const entitlements = require('../../entitlements/service');
 const eventFeed = require('../../connectors/event-feed');
 const operatingInstructions = require('../../manager/operating-instructions');
 const operatingGuards = require('../../domain/operating-guards');
+const workspaceExport = require('../../domain/workspace-export');
+const config = require('../../config');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 
 const router = express.Router();
 router.use('/settings', requireAuth);
+
+router.get('/support', requireAuth, asyncRoute(async (req, res) => res.page('support', {
+  title: 'Help and support', nav: null, supportEmail: config.supportEmail,
+})));
 
 router.get(
   '/settings',
@@ -63,6 +69,15 @@ router.post(
     res.redirect(303, '/settings#live-event-feed');
   })
 );
+
+router.get('/settings/export', requireOwner, asyncRoute(async (req, res) => {
+  const payload = workspaceExport.build(req.db, req.ctx.workspaceId);
+  const safeName = String(req.workspace.name || 'keeper-workspace')
+    .replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'keeper-workspace';
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="${safeName}-${new Date().toISOString().slice(0, 10)}.json"`);
+  return res.send(`${JSON.stringify(payload, null, 2)}\n`);
+}));
 
 router.post(
   '/settings/event-feed/disconnect',

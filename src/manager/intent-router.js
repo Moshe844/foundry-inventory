@@ -71,8 +71,15 @@ function fallbackClassify(message) {
   if (/(?:\breorder\b.*\b(?:at|below|when|to)\b)|\b(restock(?:ing)?|replenish(?:ment|ing)?|stock (?:level|reaches)|order[- ]?up[- ]?to|safety stock|keep(?: at least)?|never let|days? of stock|lead time|minimum order|moq|purchase unit|order multiple|preferred supplier|use .+ for|transfer before (?:buying|purchasing)|cooldown)\b/i.test(clean)) {
     return result('OPERATING_INSTRUCTION', 'This teaches a lasting inventory operating rule.');
   }
-  if (/\b(order what|what should (?:i|we) order|buy|purchase|reorder|purchase order|supplier order)\b/i.test(clean)) {
+  if (/^\s*order\b|\b(order what|what should (?:i|we) order|buy|purchase|reorder|purchase order|supplier order)\b/i.test(clean)) {
     return result('PURCHASING_REQUEST', 'This explicitly asks about purchasing or replenishment.');
+  }
+  // "Set ... to 60 after a physical count" is a complete correction command,
+  // not merely a report that a count happened. Route it to the controlled
+  // action preview immediately so it cannot stall behind a second provider
+  // call before the deterministic action parser sees it.
+  if (/^\s*(?:set|correct|adjust)\b.+\bto\s+\d+\b.+\bphysical count\b/i.test(clean)) {
+    return result('INVENTORY_ACTION', 'This explicitly asks Foundry to correct a recorded count from physical evidence.');
   }
   if (/\b(physical count|counted|i count|we count|shipment arrived|delivery arrived|arrived damaged|damaged|returned|found stock)\b/i.test(clean)) {
     return result('PHYSICAL_EVENT', 'This explicitly reports something that happened to physical inventory.');
@@ -108,7 +115,7 @@ function fallbackClassify(message) {
   // UNKNOWN, produced the meaningless "what would you like Foundry to do?"
   // question. This is grammar-level routing only: product, variant, quantity
   // and location are still resolved by the normal grounded action pipeline.
-  if (/\b(?:customer|client|school|company)\b.*\b(?:ordered|cancelled|canceled)\b|\badd\b.*\bto\b.*\border\b|\b(?:ship|fulfill)\b.*\b(?:order|customer)\b|\b(?:sales order|backorder|waiting for stock)\b/i.test(clean)) {
+  if (/\b(?:customer|client|school|company)\b.*\b(?:ordered|cancelled|canceled)\b|\badd\b.*\bto\b.*\border\b|\b(?:ship|fulfill)\b.*\b(?:order|customer)\b|\b(?:complete|finish)\b.*\b(?:(?:sales|customer)\s+)?order\b|\b(?:sales order|backorder|waiting for stock)\b/i.test(clean)) {
     return result('SALES_ORDER', 'This creates, changes, fulfills, cancels or inspects committed customer demand.');
   }
   const actorReportedMovement =
@@ -149,7 +156,11 @@ async function classify(db, ctx, message, options = {}) {
   // has a guess. That is what prevents a new phrasing from needing a new route
   // patch. The keyword classifier remains an offline fallback, not the product
   // intelligence layer.
-  const safeFastPath = ['INVENTORY_ACTION', 'PHYSICAL_EVENT', 'STOP'].includes(deterministic.intentClass);
+  const wholeSalesOrderCompletion = deterministic.intentClass === 'SALES_ORDER'
+    && (/\b(?:complete|finish|fulfill|ship)\b[^.?!]*\b(?:(?:sales|customer)\s+)?order\b/i.test(clean)
+      || /\b(?:(?:sales|customer)\s+)?order\b[^.?!]*\b(?:complete|finished|fulfilled|shipped)\b/i.test(clean));
+  const safeFastPath = ['INVENTORY_ACTION', 'PHYSICAL_EVENT', 'PURCHASING_REQUEST', 'STOP'].includes(deterministic.intentClass)
+    || wholeSalesOrderCompletion;
   if (safeFastPath) data = deterministic;
   else if (options.provider || config.ai.configured) {
     try {

@@ -29,6 +29,24 @@ function catalogue(db, workspaceId) {
     .map((sku) => ({ ...sku, price: prices.currentForSku(db, workspaceId, sku.id) }));
 }
 
+function accountingForOrder(db, workspaceId, orderId) {
+  const configured = db.prepare('SELECT enabled FROM accounting_settings WHERE workspace_id = ?').get(workspaceId);
+  if (!configured?.enabled) return { status: 'DISABLED' };
+  const row = db.prepare(`SELECT aei.*, aje.entry_number
+    FROM sales_order_events soe
+    JOIN domain_events de ON de.workspace_id = soe.workspace_id
+      AND de.source_record_type = 'sales_order_event' AND de.source_record_id = soe.id
+    JOIN accounting_event_inbox aei ON aei.domain_event_id = de.id AND aei.workspace_id = soe.workspace_id
+    LEFT JOIN accounting_journal_entries aje ON aje.id = aei.journal_entry_id
+    WHERE soe.workspace_id = ? AND soe.sales_order_id = ?
+      AND soe.event_type IN ('PARTIALLY_FULFILLED','FULFILLED')
+    ORDER BY soe.created_at DESC, soe.rowid DESC LIMIT 1`).get(workspaceId, orderId);
+  if (!row) return { status: 'WAITING' };
+  let outcome = {};
+  try { outcome = JSON.parse(row.outcome || '{}'); } catch { outcome = {}; }
+  return { ...row, outcome };
+}
+
 router.get('/sales', requirePermission(permissions.VIEW, 'view sales orders'), asyncRoute(async (req, res) => {
   const status = trimOrNull(req.query.status);
   const sellingConnectionCount = req.db.prepare(
@@ -92,7 +110,27 @@ router.post('/sales/orders', requirePermission(permissions.OPERATE, 'create sale
       formError: err.message, unpricedCount: skus.filter((sku) => !sku.price.isSet).length,
     });
   }
-  req.flash('success', `${order.order_number} is a draft. Confirm it when the customer has committed.`);
+  const nextStep = ['confirm', 'fulfill'].includes(req.body.nextStep) ? req.body.nextStep : 'draft';
+  if (nextStep !== 'draft') {
+    order = sales.confirm(req.db, req.ctx, order.id, { idempotencyKey: `web-create-confirm:${order.id}` });
+  }
+  if (nextStep === 'fulfill' && !order.totals.backordered) {
+    order = sales.fulfill(req.db, req.ctx, order.id, {}, { idempotencyKey: `web-create-fulfill:${order.id}` });
+  }
+  if (nextStep === 'fulfill' && order.status === 'FULFILLED') {
+    const financial = accountingForOrder(req.db, req.ctx.workspaceId, order.id);
+    req.flash(financial.status === 'POSTED' ? 'success' : 'warn', financial.status === 'POSTED'
+      ? `${order.order_number} is complete. Stock and Accounting were updated automatically.`
+      : `${order.order_number} is complete and stock was updated. Accounting needs one evidence decision; the sale will not be posted with guessed amounts.`);
+  } else if (nextStep === 'fulfill' && order.totals.backordered) {
+    req.flash('warn', `${order.order_number} could not be completed because ${order.totals.backordered} unit(s) are not available. ${order.totals.allocated} available unit(s) are held; nothing shipped.`);
+  } else if (nextStep === 'confirm') {
+    req.flash(order.totals.backordered ? 'warn' : 'success', order.totals.backordered
+      ? `${order.order_number} is confirmed. ${order.totals.allocated} held; ${order.totals.backordered} waiting for stock.`
+      : `${order.order_number} is confirmed and ${order.totals.allocated} unit(s) are held for the customer.`);
+  } else {
+    req.flash('success', `${order.order_number} was saved as a draft. No stock is held yet.`);
+  }
   res.redirect(303, `/sales/orders/${order.id}`);
 }));
 
@@ -110,7 +148,7 @@ router.get('/sales/orders/:id', requirePermission(permissions.VIEW, 'view sales 
    * it was confirmed.
    */
   let shortButAvailable = 0;
-  if (order && order.totals.backordered) {
+  if (order && order.status !== 'DRAFT' && order.totals.backordered) {
     for (const line of order.lines) {
       if (!line.backordered) continue;
       const free = sales.availabilityForSku(req.db, req.ctx.workspaceId, line.sku_id).available || 0;
@@ -121,6 +159,7 @@ router.get('/sales/orders/:id', requirePermission(permissions.VIEW, 'view sales 
   res.page('sales/order', {
     title: 'Sales order', nav: 'sales', order,
     shortButAvailable,
+    accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
     skus: catalogue(req.db, req.ctx.workspaceId),
   });
 }));

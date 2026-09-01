@@ -78,6 +78,24 @@ function tidyName(raw, optionValues = []) {
   const words = text.split(' ');
   const cut = words.findIndex((word, index) => index > 0 && values.has(word.toLowerCase()));
   if (cut > 0) text = words.slice(0, cut).join(' ').trim();
+
+  // A measurement variant is also often the first word of the example:
+  // "1kg bag of coffee beans". Keeping it would create a product called 1kg
+  // that then has both 250g and 1kg variants. Restrict this special case to
+  // unmistakable measurements so a real product such as "Red Label Tea" is
+  // not renamed merely because Red is also a colour option.
+  const leadingWords = text.split(' ');
+  const leading = String(leadingWords[0] || '').toLowerCase();
+  if (
+    leadingWords.length > 1 &&
+    values.has(leading) &&
+    /^\d+(?:\.\d+)?(?:g|kg|mg|ml|l|oz|lb|lbs|cm|mm|m)$/i.test(leading)
+  ) {
+    text = leadingWords.slice(1).join(' ').trim();
+    // The package is not the product in phrases such as "bag of coffee
+    // beans"; the package size already belongs to purchasing configuration.
+    text = text.replace(/^(?:bag|box|case|pack|bottle|jar|can)s?\s+of\s+/i, '').trim();
+  }
   if (!text) return null;
 
   // Left in the customer's own words. Singularising looks tidy until it meets

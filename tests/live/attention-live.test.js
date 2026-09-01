@@ -184,7 +184,6 @@ test(
     const outside = [
       'Should I raise my prices?',
       'What will demand look like next year?',
-      'What was our gross margin last quarter?',
       'Which customers order the most?',
     ];
 
@@ -194,6 +193,10 @@ test(
       assert.ok(result.answer.length > 10, 'and it says why');
       assert.equal(result.rows.length, 0);
     }
+    const margin = await queryPlanner.ask(db, workspace.workspaceId,
+      'What was our gross margin last quarter?', {});
+    assert.equal(margin.plan.intent, 'profit_and_loss');
+    assert.match(margin.answer, /Accounting is not set up|gross profit|margin/i);
   }
 );
 

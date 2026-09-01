@@ -252,7 +252,7 @@ test('nothing Foundry cannot do is promised as configured', { skip: !LIVE, timeo
       const text = `${rec.title} ${rec.recommendation}`
         .toLowerCase()
         .replace(/\b(not|never|no|without|rather than|instead of|cannot|can't|does not|doesn't)\b[^.;]*/g, '');
-      const mentionsMissing = /forecast|barcode scan|valuation|bill of materials|sales order/.test(text);
+      const mentionsMissing = /forecast|barcode scan|bill of materials|payroll|tax filing|manufactur|\bedi\b/.test(text);
       if (mentionsMissing && rec.scope === 'configuration') {
         assert.fail(`${key}: "${rec.title}" promises an unavailable feature as configuration`);
       }
@@ -263,6 +263,23 @@ test('nothing Foundry cannot do is promised as configured', { skip: !LIVE, timeo
       assert.ok(['quantity', 'serial', 'lot'].includes(mode));
     }
   }
+});
+
+test('onboarding never denies Sales Orders, supplier communication, connections or Accounting', { skip: !LIVE, timeout: TIMEOUT }, async () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const { understanding } = await understandingService.describeBusiness(
+    db,
+    workspace.ctx,
+    'We sell coffee bags from one store, buy cases from a supplier, take customer orders, email purchase orders, connect our POS and need accounting kept current.'
+  );
+  const recommendations = understanding.recommendations.map((rec) =>
+    `${rec.title} ${rec.recommendation} ${rec.whyItMatters}`
+  ).join(' ');
+  assert.doesNotMatch(recommendations,
+    /(?:sales orders?|supplier communication|accounting|inventory valuation|connections?|POS).{0,120}(?:not available|does not exist|cannot|separate system)/i);
+  assert.doesNotMatch(recommendations,
+    /(?:not available|does not exist|cannot|separate system).{0,120}(?:sales orders?|supplier communication|accounting|inventory valuation|connections?|POS)/i);
 });
 
 test('applying a live plan configures structure and never invents inventory', { skip: !LIVE, timeout: TIMEOUT }, async () => {

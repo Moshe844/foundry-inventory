@@ -61,6 +61,7 @@ const config = {
   dataDir,
   env: process.env.NODE_ENV || 'development',
   port: Number(process.env.PORT || 4000),
+  get supportEmail() { return process.env.FOUNDRY_SUPPORT_EMAIL || null; },
   databasePath: process.env.DATABASE_PATH
     ? path.resolve(process.env.DATABASE_PATH)
     : path.join(dataDir, 'foundry-inventory.db'),
@@ -132,6 +133,28 @@ const config = {
       // A minute is the floor. Below that the per-minute plan key would collapse
       // consecutive ticks into one and the extra runs would be silently wasted.
       return Number.isFinite(configured) && configured >= 60000 ? configured : 15 * 60 * 1000;
+    },
+  },
+
+  backups: {
+    get enabled() {
+      if (process.env.FOUNDRY_BACKUPS_ENABLED !== undefined) {
+        return process.env.FOUNDRY_BACKUPS_ENABLED === 'true';
+      }
+      return (process.env.NODE_ENV || 'development') === 'production';
+    },
+    get directory() {
+      return process.env.FOUNDRY_BACKUP_DIR
+        ? path.resolve(process.env.FOUNDRY_BACKUP_DIR)
+        : path.join(dataDir, 'backups');
+    },
+    get retentionDays() {
+      const value = Number(process.env.FOUNDRY_BACKUP_RETENTION_DAYS || 30);
+      return Number.isFinite(value) && value >= 1 ? value : 30;
+    },
+    get intervalMs() {
+      const value = Number(process.env.FOUNDRY_BACKUP_INTERVAL_MS || 24 * 60 * 60 * 1000);
+      return Number.isFinite(value) && value >= 60_000 ? value : 24 * 60 * 60 * 1000;
     },
   },
 

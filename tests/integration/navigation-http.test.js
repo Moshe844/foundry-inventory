@@ -34,6 +34,10 @@ test('the global Tell Foundry link always points at an input that exists', async
   assert.match(guide, /How do I use Foundry\?/);
   assert.match(guide, /Record a sale/);
   assert.match(guide, /Control what Foundry may do automatically/);
+
+  const support = (await agent.get('/support')).text;
+  assert.match(support, /Help and support/);
+  assert.match(support, /Never send passwords, OAuth secrets, or API keys/);
 });
 
 /**

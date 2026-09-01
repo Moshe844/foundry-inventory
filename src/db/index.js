@@ -15,6 +15,7 @@ const AUTOPILOT_SCHEMA_PATH = path.join(__dirname, 'schema-autopilot.sql');
 const MANAGER_SCHEMA_PATH = path.join(__dirname, 'schema-manager.sql');
 const SALES_SCHEMA_PATH = path.join(__dirname, 'schema-sales.sql');
 const CONNECTIONS_SCHEMA_PATH = path.join(__dirname, 'schema-connections.sql');
+const ACCOUNTING_SCHEMA_PATH = path.join(__dirname, 'schema-accounting.sql');
 
 /**
  * Opens (and initialises) a SQLite database.
@@ -109,6 +110,7 @@ const ADDED_COLUMNS = [
   { table: 'supplier_communications', column: 'external_thread_id', definition: 'TEXT' },
   { table: 'supplier_communications', column: 'approved_by_user_id', definition: 'TEXT' },
   { table: 'supplier_communications', column: 'approved_at', definition: 'TEXT' },
+  { table: 'accounting_customer_invoices', column: 'payment_status_confirmed_at', definition: 'TEXT' },
 ];
 
 function addMissingColumns(db) {
@@ -381,14 +383,22 @@ function migrate(db) {
   db.exec(fs.readFileSync(AUTOPILOT_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(MANAGER_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(SALES_SCHEMA_PATH, 'utf8'));
+  // Accounting consumes durable sales, purchasing, inventory, and manager
+  // events. It is additive and never becomes the physical stock authority.
+  db.exec(fs.readFileSync(ACCOUNTING_SCHEMA_PATH, 'utf8'));
   // The connection/feed tables are created by onboarding on a fresh database,
   // so a second additive pass keeps fresh and upgraded databases identical.
   addMissingColumns(db);
+
+  // Mission 14 adds an accountant membership. Existing databases carried the
+  // original owner/staff CHECK, so widen that storage rule before a membership
+  // can be granted. Fresh databases already use the current schema.
+  relaxColumnCheck(db, 'users', 'role');
   db.exec(fs.readFileSync(CONNECTIONS_SCHEMA_PATH, 'utf8'));
   migrateMailboxDocumentPurpose(db);
   dropLegacyUserLogin(db);
   db.prepare(
-    `INSERT INTO schema_meta (key, value) VALUES ('version', '15')
+    `INSERT INTO schema_meta (key, value) VALUES ('version', '16')
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   ).run();
 }

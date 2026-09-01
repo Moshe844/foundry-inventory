@@ -41,10 +41,36 @@ const INTENTS = [
   'why_low',
   'on_order',
   'late_orders',
+  'supplier_order_status',
+  'supplier_document_changes',
+  'supplier_price_changes',
   'last_cost',
   'suppliers_for_item',
   'selling_price',
   'sales_summary',
+  // Mission 14 financial questions. Every answer below is calculated from the
+  // posted ledger and subledgers; the model only chooses one bounded intent.
+  'financial_summary',
+  'business_health',
+  'cash_pressure',
+  'customer_orders_at_risk',
+  'stock_coverage',
+  'supplier_risk',
+  'next_attention',
+  'profit_and_loss',
+  'balance_sheet',
+  'cash_position',
+  'receivables_aging',
+  'payables_aging',
+  'inventory_valuation',
+  'sales_tax_summary',
+  'bills_due',
+  'customer_payments',
+  'supplier_spend',
+  'product_profitability',
+  'location_profitability',
+  'financial_comparison',
+  'slow_inventory_value',
   'connection_summary',
   'connection_last_event',
   'connection_mapping_issues',
@@ -60,6 +86,9 @@ const INTENTS = [
 
 const MAX_ROWS = 25;
 const MAX_WINDOW_DAYS = 365;
+const moneyForBrain = (minor, currency = 'USD') => new Intl.NumberFormat('en-US', {
+  style: 'currency', currency,
+}).format(Number(minor || 0) / 100);
 
 /** Keeps a plan inside what the executor can honour, whatever the model said. */
 function normalisePlan(raw) {
@@ -525,6 +554,428 @@ const EXECUTORS = {
       columns: ['measure', 'value'],
     };
   },
+
+  financial_summary(db, workspaceId, plan) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return { supported: false, rows: [],
+      handoff: { href: '/accounting', label: 'Set up accounting' },
+      answer: 'Accounting is not set up yet. Foundry does not know what you paid or which expenses belong in the period, so it will not guess at profit or cash.' };
+    const reports = require('../accounting/reports');
+    const to = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const pnl = reports.profitAndLoss(db, workspaceId, { from, to });
+    const balance = reports.balanceSheet(db, workspaceId, { asOf: to });
+    const ar = reports.arAging(db, workspaceId, { asOf: to });
+    const ap = reports.apAging(db, workspaceId, { asOf: to });
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    const cash = balance.assets.filter((a) => a.subtype === 'CASH').reduce((sum, a) => sum + a.net_minor, 0);
+    const rows = [
+      { measure: 'Revenue', amountMinor: pnl.revenueMinor, display: money(pnl.revenueMinor) },
+      { measure: 'Gross profit', amountMinor: pnl.grossProfitMinor, display: money(pnl.grossProfitMinor) },
+      { measure: 'Net income', amountMinor: pnl.netIncomeMinor, display: money(pnl.netIncomeMinor) },
+      { measure: 'Cash', amountMinor: cash, display: money(cash) },
+      { measure: 'Customers owe', amountMinor: ar.totalMinor, display: money(ar.totalMinor) },
+      { measure: 'Bills to pay', amountMinor: ap.totalMinor, display: money(ap.totalMinor) },
+    ];
+    return { rows, columns: ['measure', 'display'],
+      answer: `For ${from} through ${to}, revenue is ${money(pnl.revenueMinor)}, gross profit is ${money(pnl.grossProfitMinor)}, and recorded net income is ${money(pnl.netIncomeMinor)}. Cash is ${money(cash)}; customers owe ${money(ar.totalMinor)} and open supplier bills total ${money(ap.totalMinor)}. Net income includes only expenses recorded in Foundry; it is incomplete if costs such as rent or payroll have not been entered.` };
+  },
+
+  business_health(db, workspaceId) {
+    const brain = require('../manager/business-brain').build(db, workspaceId);
+    const rows = [
+      { measure: 'Physical stock', value: brain.inventory.onHand },
+      { measure: 'Committed to customers', value: brain.inventory.committed },
+      { measure: 'Available now', value: brain.inventory.available },
+      { measure: 'Incoming from suppliers', value: brain.inventory.incoming },
+      { measure: 'Open customer orders', value: brain.sales.open },
+      { measure: 'Open purchase orders', value: brain.purchasing.open },
+      { measure: 'Customers still owe', value: brain.finance ? moneyForBrain(brain.finance.customers.balanceMinor, brain.currency) : 'No evidence' },
+      { measure: 'Still owed to suppliers', value: brain.finance ? moneyForBrain(brain.acquisition.supplierOwedMinor, brain.currency) : 'No evidence' },
+    ];
+    return { rows, columns: ['measure', 'value'], handoff: { href: '/', label: 'Open the business briefing' },
+      answer: [brain.briefing.headline, ...brain.briefing.lines].join(' ') };
+  },
+
+  cash_pressure(db, workspaceId) {
+    const brain = require('../manager/business-brain').build(db, workspaceId);
+    if (!brain.finance) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
+    const causes = [];
+    if (brain.finance.customers.balanceMinor > 0) causes.push(`${moneyForBrain(brain.finance.customers.balanceMinor, brain.currency)} is still with customers`);
+    if (brain.acquisition.stillOwnedMinor > 0) causes.push(`${moneyForBrain(brain.acquisition.stillOwnedMinor, brain.currency)} remains tied up in products still owned`);
+    if (brain.acquisition.supplierPaidMinor > brain.finance.cashActivity.customerReceivedMinor) causes.push(`supplier payments exceed customer receipts for the period by ${moneyForBrain(brain.acquisition.supplierPaidMinor - brain.finance.cashActivity.customerReceivedMinor, brain.currency)}`);
+    const rows = [
+      { measure: 'Cash currently recorded', value: moneyForBrain(brain.finance.currentCashMinor, brain.currency) },
+      { measure: 'Customer money still outstanding', value: moneyForBrain(brain.finance.customers.balanceMinor, brain.currency) },
+      { measure: 'Cost still held in inventory', value: moneyForBrain(brain.acquisition.stillOwnedMinor, brain.currency) },
+      { measure: 'Supplier bills still owed', value: moneyForBrain(brain.acquisition.supplierOwedMinor, brain.currency) },
+    ];
+    return { rows, columns: ['measure', 'value'], handoff: { href: '/accounting#cash', label: 'See where cash went' },
+      answer: causes.length ? `The strongest evidence-based reasons are: ${causes.join('; ')}. Foundry does not infer bank money it has not received.`
+        : 'Foundry does not have evidence of a specific cash-pressure cause in the recorded customer payments, supplier payments, or inventory value.' };
+  },
+
+  customer_orders_at_risk(db, workspaceId) {
+    const brain = require('../manager/business-brain').build(db, workspaceId);
+    const rows = brain.sales.atRisk.map((order) => ({ order: order.order_number,
+      customer: order.customer_name, neededBy: order.needed_by,
+      unitsStillNeeded: order.outstanding, unitsNotProtected: order.unprotected,
+      status: order.overdue ? 'OVERDUE' : 'AT RISK' }));
+    return { rows, columns: ['order', 'customer', 'neededBy', 'unitsStillNeeded', 'unitsNotProtected', 'status'],
+      handoff: rows.length ? { href: '/sales', label: 'Open customer orders' } : null,
+      answer: rows.length ? `${rows.length} customer order${rows.length === 1 ? '' : 's'} may miss the requested date because ${rows.reduce((sum, row) => sum + row.unitsNotProtected, 0)} needed units are not protected by committed stock.`
+        : 'No dated customer order is currently shown at risk from an unprotected stock shortage.' };
+  },
+
+  stock_coverage(db, workspaceId) {
+    const brain = require('../manager/business-brain').build(db, workspaceId);
+    const uncovered = brain.sales.backorderedUnits;
+    const rows = brain.inventory.rows.filter((row) => row.committed || row.incoming)
+      .map((row) => ({ product: `${row.item_name}${row.variant_label ? ` / ${row.variant_label}` : ''}`,
+        location: row.location_name, onHand: row.onHand, committed: row.committed,
+        available: row.available, incoming: row.incoming }));
+    return { rows, columns: ['product', 'location', 'onHand', 'committed', 'available', 'incoming'],
+      answer: uncovered ? `Current stock does not fully cover open customer orders: ${uncovered} unit${uncovered === 1 ? '' : 's'} is not protected by a commitment. ${brain.purchasing.incomingUnits} supplier units are still expected.`
+        : `Current commitments are covered by recorded stock. ${brain.purchasing.incomingUnits} more supplier units are still expected.` };
+  },
+
+  supplier_risk(db, workspaceId) {
+    const brain = require('../manager/business-brain').build(db, workspaceId);
+    const rows = brain.purchasing.late.map((po) => ({ supplier: po.supplier_name,
+      purchaseOrder: po.po_number, expected: po.current_eta, outstanding: po.outstanding,
+      backordered: po.backordered }));
+    return { rows, columns: ['supplier', 'purchaseOrder', 'expected', 'outstanding', 'backordered'],
+      answer: rows.length ? `${rows.length} supplier order${rows.length === 1 ? '' : 's'} is late. The largest outstanding order is ${rows.sort((a,b) => b.outstanding - a.outstanding)[0].purchaseOrder}.`
+        : 'No open supplier order is past its latest recorded expected arrival date.' };
+  },
+
+  next_attention(db, workspaceId) {
+    const brain = require('../manager/business-brain').build(db, workspaceId);
+    const rows = brain.attention.map((entry) => ({ priority: entry.priority,
+      what: entry.title, why: entry.because }));
+    return { rows, columns: ['priority', 'what', 'why'], handoff: rows.length ? { href: '/needs-you', label: 'Open Needs you' } : null,
+      answer: rows.length ? `${brain.attention[0].title}. ${brain.attention[0].because}` : 'Nothing in the recorded cross-business state is likely to require attention next.' };
+  },
+
+  profit_and_loss(db, workspaceId, plan) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
+    const to = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const pnl = require('../accounting/reports').profitAndLoss(db, workspaceId, { from, to });
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    const rows = [
+      { measure: 'Revenue', amountMinor: pnl.revenueMinor, display: money(pnl.revenueMinor) },
+      { measure: 'Cost of goods sold', amountMinor: pnl.cogsMinor, display: money(pnl.cogsMinor) },
+      { measure: 'Gross profit', amountMinor: pnl.grossProfitMinor, display: money(pnl.grossProfitMinor) },
+      { measure: 'Operating expenses', amountMinor: pnl.operatingExpenseMinor, display: money(pnl.operatingExpenseMinor) },
+      { measure: 'Net income', amountMinor: pnl.netIncomeMinor, display: money(pnl.netIncomeMinor) },
+    ];
+    const noActivity = pnl.revenueMinor === 0 && pnl.cogsMinor === 0 && pnl.operatingExpenseMinor === 0;
+    return { rows, columns: ['measure', 'display'], handoff: { href: `/accounting/reports/profit-and-loss?from=${from}&to=${to}`, label: 'Open profit and loss' },
+      answer: noActivity
+        ? `No revenue, product cost, or operating expense has been posted for ${from} through ${to}, so Foundry does not have a realized margin to report yet. The Accounting inventory view shows on-hand cost, selling value, and potential gross profit separately.`
+        : `This is ${money(pnl.netIncomeMinor)} net ${pnl.netIncomeMinor >= 0 ? 'profit' : 'loss'} based on the expenses recorded in Foundry for ${from} through ${to}: ${money(pnl.revenueMinor)} revenue minus ${money(pnl.cogsMinor)} cost of goods and ${money(pnl.operatingExpenseMinor)} operating expenses recorded in Foundry. Gross profit is ${money(pnl.grossProfitMinor)}; it is not the same as net profit. This net result is incomplete if business costs such as rent or payroll have not been recorded in Foundry.` };
+  },
+
+  balance_sheet(db, workspaceId) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
+    const asOf = new Date().toISOString().slice(0, 10);
+    const report = require('../accounting/reports').balanceSheet(db, workspaceId, { asOf });
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    const rows = [
+      { measure: 'Assets', display: money(report.assetMinor) },
+      { measure: 'Liabilities', display: money(report.liabilityMinor) },
+      { measure: 'Equity including current earnings', display: money(report.equityMinor) },
+    ];
+    return { rows, columns: ['measure', 'display'], handoff: { href: `/accounting/reports/balance-sheet?asOf=${asOf}`, label: 'Open balance sheet' },
+      answer: `As of ${asOf}, assets are ${money(report.assetMinor)}, liabilities are ${money(report.liabilityMinor)}, and equity including current earnings is ${money(report.equityMinor)}. The ledger is ${report.balanced ? 'balanced' : 'not balanced and needs review'}.` };
+  },
+
+  cash_position(db, workspaceId) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
+    const asOf = new Date().toISOString().slice(0, 10);
+    const report = require('../accounting/reports').balanceSheet(db, workspaceId, { asOf });
+    const accounts = report.assets.filter((a) => a.subtype === 'CASH');
+    const total = accounts.reduce((sum, a) => sum + a.net_minor, 0);
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows: accounts.map((a) => ({ account: a.name, amountMinor: a.net_minor, display: money(a.net_minor) })), columns: ['account', 'display'],
+      answer: `Ledger cash is ${money(total)} as of ${asOf}. This is the book balance; bank reconciliation shows whether statements agree.` };
+  },
+
+  receivables_aging(db, workspaceId) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
+    const report = require('../accounting/reports').arAging(db, workspaceId);
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows: report.rows.slice(0, 25), handoff: { href: '/accounting/receivables', label: 'Open receivables' },
+      answer: `Customers owe ${money(report.totalMinor)} across ${report.rows.length} open invoice${report.rows.length === 1 ? '' : 's'}. ${money(report.buckets.over90)} is more than 90 days past due.` };
+  },
+
+  payables_aging(db, workspaceId) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
+    const report = require('../accounting/reports').apAging(db, workspaceId);
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows: report.rows.slice(0, 25), handoff: { href: '/accounting/payables', label: 'Open bills' },
+      answer: `Open supplier bills total ${money(report.totalMinor)} across ${report.rows.length} bill${report.rows.length === 1 ? '' : 's'}. ${money(report.buckets.over90)} is more than 90 days past due.` };
+  },
+
+  inventory_valuation(db, workspaceId) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
+    const valuation = require('../accounting/costing').valuation(db, workspaceId);
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows: valuation.rows.slice(0, 25), handoff: { href: '/accounting/reports/inventory-valuation', label: 'Open inventory valuation' },
+      answer: `${valuation.totalUnits} units carry a total weighted-average value of ${money(valuation.totalCostMinor)}. This is cost value, not selling-price value.` };
+  },
+
+  sales_tax_summary(db, workspaceId) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
+    const trial = require('../accounting/reports').trialBalance(db, workspaceId, { from: '1900-01-01', to: new Date().toISOString().slice(0, 10) });
+    const payable = trial.accounts.find((a) => a.system_key === 'SALES_TAX_PAYABLE')?.net_minor || 0;
+    const recoverable = trial.accounts.find((a) => a.system_key === 'SALES_TAX_RECOVERABLE')?.net_minor || 0;
+    const net = payable - recoverable;
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows: [
+      { measure: 'Collected/payable', display: money(payable) },
+      { measure: 'Recoverable', display: money(recoverable) },
+      { measure: 'Net liability', display: money(net) },
+    ], columns: ['measure', 'display'], answer: `The ledger shows ${money(payable)} of sales tax payable, ${money(recoverable)} recoverable, and a net ${money(net)} liability. Filing status is not inferred from the balance.` };
+  },
+
+  bills_due(db, workspaceId, plan) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
+    const today = new Date().toISOString().slice(0, 10);
+    const through = new Date(Date.now() + Math.max(1, plan.windowDays) * 86400000).toISOString().slice(0, 10);
+    const rows = db.prepare(`SELECT b.bill_number, b.supplier_invoice_number, b.due_date,
+        b.balance_minor, b.currency, s.name AS supplier
+      FROM accounting_supplier_bills b JOIN suppliers s ON s.id = b.supplier_id
+      WHERE b.workspace_id = ? AND b.status IN ('OPEN','PARTIALLY_PAID')
+        AND b.balance_minor > 0 AND b.due_date IS NOT NULL AND b.due_date <= ?
+      ORDER BY b.due_date, b.bill_number LIMIT ?`).all(workspaceId, through, plan.limit);
+    const total = rows.reduce((sum, row) => sum + Number(row.balance_minor), 0);
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows, handoff: { href: '/accounting/payables', label: 'Open bills' },
+      answer: rows.length ? `${rows.length} bill${rows.length === 1 ? '' : 's'} totaling ${money(total)} are due by ${through}; overdue bills are included.`
+        : `No recorded supplier bills are due by ${through}.`,
+      columns: ['supplier', 'supplier_invoice_number', 'due_date', 'balance_minor'] };
+  },
+
+  customer_payments(db, workspaceId, plan) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
+    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const terms = searchTerms(plan.entityQuery);
+    const rows = db.prepare(`SELECT p.payment_date, p.amount_minor, p.reference, c.name AS customer
+      FROM accounting_payments p JOIN customers c ON c.id = p.customer_id
+      WHERE p.workspace_id = ? AND p.direction = 'CUSTOMER_RECEIPT' AND p.status = 'POSTED'
+        AND p.payment_date >= ? ORDER BY p.payment_date DESC`).all(workspaceId, from)
+      .filter((row) => !terms.length || terms.every((term) => row.customer.toLowerCase().includes(term)))
+      .slice(0, plan.limit);
+    const total = rows.reduce((sum, row) => sum + Number(row.amount_minor), 0);
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows, handoff: { href: '/accounting/receivables', label: 'Open receivables' },
+      answer: rows.length ? `${plan.entityQuery || 'Customers'} paid ${money(total)} in ${rows.length} recorded payment${rows.length === 1 ? '' : 's'} during the last ${plan.windowDays} days.`
+        : `No matching customer payments were recorded in the last ${plan.windowDays} days.` };
+  },
+
+  supplier_spend(db, workspaceId, plan) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
+    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const terms = searchTerms(plan.entityQuery);
+    const rows = db.prepare(`SELECT s.id, s.name AS supplier,
+        COALESCE(SUM(CASE WHEN a.system_key = 'ACCOUNTS_PAYABLE' THEN l.credit_minor - l.debit_minor ELSE 0 END),0) AS purchases_minor
+      FROM accounting_journal_lines l JOIN accounting_journal_entries e ON e.id = l.entry_id
+      JOIN accounting_accounts a ON a.id = l.account_id JOIN suppliers s ON s.id = l.supplier_id
+      WHERE l.workspace_id = ? AND e.status = 'POSTED' AND e.posting_date >= ?
+        AND e.source_type IN ('purchase_receipt','supplier_bill','supplier_invoice_variance')
+      GROUP BY s.id ORDER BY purchases_minor DESC`).all(workspaceId, from)
+      .filter((row) => !terms.length || terms.every((term) => row.supplier.toLowerCase().includes(term)))
+      .slice(0, plan.limit).map((row) => ({ ...row,
+        paymentsMinor: Number(db.prepare(`SELECT COALESCE(SUM(amount_minor),0) AS n FROM accounting_payments
+          WHERE workspace_id = ? AND supplier_id = ? AND direction = 'SUPPLIER_PAYMENT'
+            AND status = 'POSTED' AND payment_date >= ?`).get(workspaceId, row.id, from).n) }));
+    const purchases = rows.reduce((sum, row) => sum + Number(row.purchases_minor), 0);
+    const paid = rows.reduce((sum, row) => sum + row.paymentsMinor, 0);
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows, answer: rows.length ? `Recorded purchases from ${plan.entityQuery || 'suppliers'} are ${money(purchases)} in the last ${plan.windowDays} days; recorded cash payments are ${money(paid)}. Purchases and payments are intentionally separate.`
+      : `No matching supplier purchases were posted in the last ${plan.windowDays} days.` };
+  },
+
+  product_profitability(db, workspaceId, plan) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
+    const to = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const rows = require('../accounting/reports').profitability(db, workspaceId, { from, to, dimension: 'product' }).rows
+      .filter((row) => row.id).slice(0, plan.limit);
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows, answer: rows.length ? `${rows[0].label} has the highest recorded gross profit for this period at ${money(rows[0].grossProfitMinor)} (${money(rows[0].revenueMinor)} revenue minus ${money(rows[0].cogsMinor)} product cost). This is gross, not net, profitability.`
+      : 'No product-level revenue and COGS are posted for this period.' };
+  },
+
+  location_profitability(db, workspaceId, plan) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
+    const to = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const rows = require('../accounting/reports').profitability(db, workspaceId, { from, to, dimension: 'location' }).rows
+      .filter((row) => row.id).slice(0, plan.limit);
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows, answer: rows.length ? `${rows[0].label} has the highest recorded gross profit for this period at ${money(rows[0].grossProfitMinor)}. Location-level operating expenses are not allocated, so this is not net location profit.`
+      : 'No location-level revenue and COGS are posted for this period.' };
+  },
+
+  financial_comparison(db, workspaceId, plan) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
+    const days = Math.max(1, plan.windowDays);
+    const currentTo = new Date().toISOString().slice(0, 10);
+    const currentFrom = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
+    const priorTo = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    const priorFrom = new Date(Date.now() - (days * 2 - 1) * 86400000).toISOString().slice(0, 10);
+    const service = require('../accounting/reports');
+    const current = service.profitAndLoss(db, workspaceId, { from: currentFrom, to: currentTo });
+    const prior = service.profitAndLoss(db, workspaceId, { from: priorFrom, to: priorTo });
+    const delta = current.netIncomeMinor - prior.netIncomeMinor;
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows: [{ period: 'Current', revenueMinor: current.revenueMinor, cogsMinor: current.cogsMinor,
+      expensesMinor: current.operatingExpenseMinor, netIncomeMinor: current.netIncomeMinor },
+    { period: 'Prior', revenueMinor: prior.revenueMinor, cogsMinor: prior.cogsMinor,
+      expensesMinor: prior.operatingExpenseMinor, netIncomeMinor: prior.netIncomeMinor }],
+    answer: `Net income ${delta >= 0 ? 'increased' : 'decreased'} by ${money(Math.abs(delta))} versus the preceding ${days}-day period. Revenue changed by ${money(current.revenueMinor - prior.revenueMinor)}, COGS by ${money(current.cogsMinor - prior.cogsMinor)}, and recorded operating expenses by ${money(current.operatingExpenseMinor - prior.operatingExpenseMinor)}.` };
+  },
+
+  slow_inventory_value(db, workspaceId, plan) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
+    const report = require('../accounting/reports').slowInventoryValue(db, workspaceId, {
+      before: new Date(Date.now() - plan.windowDays * 86400000).toISOString().slice(0, 10),
+    });
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    return { rows: report.rows.slice(0, plan.limit), handoff: { href: '/accounting/reports/inventory-valuation', label: 'Open inventory valuation' },
+      answer: `${money(report.totalCostMinor)} is tied up in ${report.rows.length} stock position${report.rows.length === 1 ? '' : 's'} with no outbound movement in the last ${plan.windowDays} days.` };
+  },
+
+  /** Confirmation, outstanding quantity and lateness for a supplier or PO. */
+  supplier_order_status(db, workspaceId, plan) {
+    const query = plan.entityQuery;
+    const po = query ? db.prepare(`SELECT po.*, s.name AS supplier_name
+      FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id
+      WHERE po.workspace_id = ? AND po.po_number LIKE ? ESCAPE '\\'
+      ORDER BY CASE WHEN lower(po.po_number) = lower(?) THEN 0 ELSE 1 END, po.created_at DESC LIMIT 1`)
+      .get(workspaceId, like(query), query) : null;
+    const supplier = !po && query ? db.prepare(`SELECT * FROM suppliers WHERE workspace_id = ? AND status = 'active'
+      AND name LIKE ? ESCAPE '\\' ORDER BY CASE WHEN lower(name) = lower(?) THEN 0 ELSE 1 END, name LIMIT 1`)
+      .get(workspaceId, like(query), query) : null;
+    if (query && !po && !supplier) return { rows: [], answer: `Foundry could not find a supplier or purchase order matching "${query}".` };
+
+    const clauses = ['po.workspace_id = ?'];
+    const params = [workspaceId];
+    if (po) { clauses.push('po.id = ?'); params.push(po.id); }
+    else {
+      clauses.push("po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')");
+      if (supplier) { clauses.push('po.supplier_id = ?'); params.push(supplier.id); }
+    }
+    const rows = db.prepare(`SELECT po.id, po.po_number AS label, po.status, po.expected_date AS expected,
+        s.name AS supplier,
+        COALESCE((SELECT SUM(pol.quantity_units - pol.quantity_received_units)
+          FROM purchase_order_lines pol WHERE pol.purchase_order_id = po.id), 0) AS outstanding,
+        (SELECT d.document_type FROM supplier_documents d WHERE d.workspace_id = po.workspace_id
+          AND d.purchase_order_id = po.id ORDER BY d.processed_at DESC, d.rowid DESC LIMIT 1) AS latestEvidence,
+        (SELECT d.processed_at FROM supplier_documents d WHERE d.workspace_id = po.workspace_id
+          AND d.purchase_order_id = po.id ORDER BY d.processed_at DESC, d.rowid DESC LIMIT 1) AS latestEvidenceAt,
+        EXISTS(SELECT 1 FROM supplier_documents d WHERE d.workspace_id = po.workspace_id
+          AND d.purchase_order_id = po.id AND d.document_type = 'order_acknowledgement'
+          AND d.status IN ('MATCHED','RECORDED')) AS confirmed
+      FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id
+      WHERE ${clauses.join(' AND ')} ORDER BY po.created_at DESC LIMIT ?`)
+      .all(...params, plan.limit).map((row) => ({ ...row, confirmed: Boolean(row.confirmed) }));
+    if (!rows.length) return { rows: [], answer: supplier
+      ? `Foundry has no purchase orders recorded for ${supplier.name}.`
+      : 'Foundry has no purchase orders recorded yet.' };
+    const first = rows[0];
+    const confirmation = first.confirmed ? `${first.supplier} has confirmed ${first.label}.`
+      : `Foundry has not recorded a confirmation for ${first.label}.`;
+    const timing = first.expected && first.expected < new Date().toISOString().slice(0, 10) && first.outstanding > 0
+      ? ` It is past its expected date with ${first.outstanding} unit(s) outstanding${first.latestEvidence ? `; the latest supplier evidence is ${first.latestEvidence.replaceAll('_', ' ')}` : ' and no newer supplier update is recorded'}.`
+      : ` ${first.outstanding} unit(s) remain outstanding${first.expected ? `, expected ${first.expected}` : ''}.`;
+    return { rows, answer: rows.length === 1 ? `${confirmation}${timing}`
+      : `${rows.length} order(s) are recorded for ${supplier?.name || 'this scope'}; ${rows.reduce((n, row) => n + Number(row.outstanding), 0)} unit(s) remain outstanding.` };
+  },
+
+  /** Consequential differences extracted from a supplier document. */
+  supplier_document_changes(db, workspaceId, plan) {
+    const query = plan.entityQuery;
+    const params = [workspaceId];
+    let filter = '';
+    if (query) {
+      filter = ` AND (d.document_reference LIKE ? ESCAPE '\\' OR po.po_number LIKE ? ESCAPE '\\'
+        OR s.name LIKE ? ESCAPE '\\' OR m.subject LIKE ? ESCAPE '\\')`;
+      params.push(like(query), like(query), like(query), like(query));
+    }
+    const docs = db.prepare(`SELECT d.id, d.document_type, d.document_reference, d.discrepancies,
+        d.processed_at, d.status, po.po_number, s.name AS supplier_name
+      FROM supplier_documents d
+      LEFT JOIN purchase_orders po ON po.id = d.purchase_order_id
+      LEFT JOIN suppliers s ON s.id = d.supplier_id
+      JOIN connection_email_messages m ON m.id = d.message_id
+      WHERE d.workspace_id = ?${filter} ORDER BY d.processed_at DESC, d.rowid DESC LIMIT ?`)
+      .all(...params, plan.limit);
+    if (!docs.length) return { rows: [], answer: query
+      ? `Foundry could not find a supplier document matching "${query}".`
+      : 'Foundry has not processed any supplier documents yet.' };
+    const rows = docs.map((doc) => {
+      let differences = [];
+      try { differences = JSON.parse(doc.discrepancies || '[]'); } catch { differences = []; }
+      return { label: doc.document_reference || doc.document_type.replaceAll('_', ' '), supplier: doc.supplier_name,
+        purchaseOrder: doc.po_number, type: doc.document_type.replaceAll('_', ' '),
+        differences: differences.map((entry) => entry.message).filter(Boolean).join(' ') || 'No consequential difference',
+        received: doc.processed_at };
+    });
+    return { rows, answer: rows[0].differences === 'No consequential difference'
+      ? `${rows[0].label} matched the recorded order; Foundry found no consequential difference.`
+      : `${rows[0].supplier || 'The supplier'} changed: ${rows[0].differences}` };
+  },
+
+  /** Evidence-backed supplier price increases in the requested period. */
+  supplier_price_changes(db, workspaceId, plan) {
+    const query = plan.entityQuery;
+    const params = [workspaceId];
+    let filter = '';
+    if (query) { filter = ` AND s.name LIKE ? ESCAPE '\\'`; params.push(like(query)); }
+    const history = db.prepare(`SELECT h.supplier_id, h.sku_id, h.unit_cost, h.currency, h.observed_at,
+        s.name AS supplier, i.name, sk.variant_label
+      FROM supplier_price_history h JOIN suppliers s ON s.id = h.supplier_id
+      JOIN skus sk ON sk.id = h.sku_id JOIN items i ON i.id = sk.item_id
+      WHERE h.workspace_id = ?${filter}
+      ORDER BY h.supplier_id, h.sku_id, h.observed_at, h.rowid`).all(...params);
+    if (query && !history.length) return { rows: [], answer: `Foundry could not find supplier price evidence matching "${query}".` };
+    const cutoff = Date.parse(since(plan.windowDays));
+    const previous = new Map(); const changes = [];
+    for (const row of history) {
+      const key = `${row.supplier_id}:${row.sku_id}`;
+      const prior = previous.get(key);
+      if (prior && Date.parse(row.observed_at) >= cutoff && Number(row.unit_cost) > Number(prior.unit_cost)) {
+        const percent = Number(prior.unit_cost) === 0 ? 100
+          : round((Number(row.unit_cost) - Number(prior.unit_cost)) / Number(prior.unit_cost) * 100, 1);
+        changes.push({ label: row.variant_label ? `${row.name} — ${row.variant_label}` : row.name,
+          supplier: row.supplier, previous: prior.unit_cost, current: row.unit_cost,
+          increasePercent: percent, currency: row.currency, observed: row.observed_at });
+      }
+      previous.set(key, row);
+    }
+    const rows = changes.sort((a, b) => Date.parse(b.observed) - Date.parse(a.observed)).slice(0, plan.limit);
+    return { rows, answer: rows.length
+      ? `${rows.length} supplier price increase(s) were recorded in the last ${plan.windowDays} day(s). ${rows[0].label} from ${rows[0].supplier} increased from ${rows[0].previous} to ${rows[0].current} (${rows[0].increasePercent}%).`
+      : `No supplier price increases were recorded in the last ${plan.windowDays} day(s).` };
+  },
   selling_price(db, workspaceId, plan) {
     const prices = require('../pricing/price-service');
     const skus = resolveSkus(db, workspaceId, plan.entityQuery, plan.limit);
@@ -931,6 +1382,41 @@ function foundryActivity(db, workspaceId, plan, options = {}) {
 function foundryWhy(db, workspaceId, plan) {
   const autopilotPresenter = require('../autopilot/presenter');
   const workItems = require('../autopilot/work-items');
+  const businessBrain = require('../manager/business-brain');
+
+  // Purchasing is a cross-business story, not only an autopilot work item.
+  // Match against the PO, supplier, products, variants and ordered quantities,
+  // then use the shared trace that also powers consistency and owner reporting.
+  const purchaseCandidates = db.prepare(`SELECT po.id, po.po_number, s.name AS supplier_name,
+      GROUP_CONCAT(i.name || ' ' || COALESCE(sk.variant_label, '') || ' '
+        || CAST(pol.quantity_units AS TEXT), ' ') AS line_text
+    FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id
+    JOIN purchase_order_lines pol ON pol.purchase_order_id = po.id
+    JOIN skus sk ON sk.id = pol.sku_id JOIN items i ON i.id = sk.item_id
+    WHERE po.workspace_id = ?
+    GROUP BY po.id ORDER BY po.created_at DESC LIMIT 50`).all(workspaceId);
+  const wantedTerms = searchTerms(plan.entityQuery);
+  const purchase = wantedTerms.length ? purchaseCandidates.find((row) => {
+    const evidence = `${row.po_number} ${row.supplier_name} ${row.line_text}`.toLowerCase();
+    return wantedTerms.every((term) => evidence.includes(term));
+  }) : null;
+  if (purchase) {
+    const story = businessBrain.purchaseOrderStory(db, workspaceId, purchase.id);
+    const explanation = story.explanation;
+    return {
+      answer: [explanation.whatHappened, explanation.whyKeeperConcludedThis,
+        explanation.keeperAction, explanation.whatHappensNext].join(' '),
+      handoff: { href: `/purchasing/orders/${purchase.id}`, label: `Open ${purchase.po_number}` },
+      rows: [
+        { measure: 'What happened', value: explanation.whatHappened },
+        { measure: 'Why Foundry concluded this', value: explanation.whyKeeperConcludedThis },
+        { measure: 'Evidence used', value: `${explanation.evidenceUsed.length} linked business record(s)` },
+        { measure: 'What Foundry did', value: explanation.keeperAction },
+        { measure: 'What happens next', value: explanation.whatHappensNext },
+      ],
+      columns: ['measure', 'value'],
+    };
+  }
 
   const recent = workItems.list(db, workspaceId, { limit: 50 });
   const wanted = String(plan.entityQuery || '').trim().toLowerCase();

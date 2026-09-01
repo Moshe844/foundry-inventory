@@ -312,16 +312,22 @@ test('things Foundry truly cannot do stay refused, not handed over', { skip: !LI
   const queryPlanner = require('../../src/attention/query-planner');
   const env = clothing();
 
-  // Still outside the product: forecasting beyond current usage and anything
-  // that would contact a supplier without going through purchasing authority.
+  // Forecasting beyond recorded evidence remains outside the product.
   for (const question of [
     'What will demand be next quarter?',
-    'Email ABC Footwear and chase the order',
   ]) {
     const result = await queryPlanner.ask(env.db, env.workspace.workspaceId, question, {});
     assert.equal(result.plan.intent, 'unsupported', `"${question}" → ${result.plan.intent}`);
     assert.equal(result.isAction, false, `"${question}" must not be offered as an action`);
   }
+
+  // Mission 13 added supplier-message status/follow-up workflows. Asking to
+  // chase a supplier is no longer refused, but it still is not sent as an
+  // unapproved stock action from Ask Foundry.
+  const followUp = await queryPlanner.ask(env.db, env.workspace.workspaceId,
+    'Email ABC Footwear and chase the order', {});
+  assert.equal(followUp.plan.intent, 'supplier_order_status');
+  assert.equal(followUp.isAction, false);
 
   // Mission 12 added current selling-price records. Asking what is already
   // configured is supported; Foundry still does not invent a recommended price.

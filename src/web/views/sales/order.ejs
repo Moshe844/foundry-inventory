@@ -1,5 +1,43 @@
+<%
+  var statusLabels = { DRAFT: 'Being prepared', CONFIRMED: 'Confirmed — stock held',
+    BACKORDERED: 'Confirmed — waiting for stock', PARTIALLY_FULFILLED: 'Partly shipped',
+    FULFILLED: 'Shipped', CANCELLED: 'Cancelled' };
+  var currentStep = order.status === 'DRAFT' ? 1
+    : ['CONFIRMED','BACKORDERED'].includes(order.status) ? 2
+      : order.status === 'PARTIALLY_FULFILLED' ? 3 : 4;
+%>
 <div class="breadcrumb"><a href="/sales">Sales</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
-<div class="page-head"><div class="titles"><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Ordered <%= order.order_date %><%= order.needed_by ? ' · needed by ' + order.needed_by : '' %></p></div><span class="badge <%= order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= order.status === 'BACKORDERED' ? 'waiting for stock' : order.status.replace(/_/g,' ').toLowerCase() %></span></div>
+<div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= order.order_date %><%= order.needed_by ? ' · customer needs it by ' + order.needed_by : '' %></p></div><span class="badge <%= order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= statusLabels[order.status] || order.status %></span></div>
+
+<% if (order.status === 'DRAFT' && !order.pricing.missingPriceLines) { %>
+  <form class="card sales-action-card sales-primary-action" method="post" action="/sales/orders/<%= order.id %>/confirm">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <p class="eyebrow">Do this next</p><h2>Confirm this order and reserve stock</h2>
+    <p>This is the only action needed now. Foundry will hold available stock for <%= order.customer.name %>; physical on-hand and Accounting remain unchanged until shipment.</p>
+    <button class="btn btn--primary" type="submit">Confirm order and reserve stock</button>
+  </form>
+<% } else if (order.status === 'DRAFT') { %>
+  <div class="notice notice--warn"><div><strong>This order cannot be confirmed yet.</strong><br>Set the missing selling price below. Foundry never treats a blank price as zero.</div></div>
+<% } else if (!['FULFILLED','CANCELLED'].includes(order.status) && locals.shortButAvailable) { %>
+  <form class="card sales-action-card sales-action-card--commit sales-primary-action" method="post" action="/sales/orders/<%= order.id %>/allocate">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="idempotencyKey" value="web-allocate:<%= order.id %>:<%= order.version %>">
+    <p class="eyebrow">Do this next</p><h2>Reserve the stock that is now available</h2>
+    <p><%= locals.shortButAvailable %> unit<%= locals.shortButAvailable === 1 ? ' is' : 's are' %> free now. Reserving keeps it for <%= order.customer.name %>; nothing ships yet.</p>
+    <button class="btn btn--primary" type="submit">Reserve <%= locals.shortButAvailable %> for <%= order.customer.name %></button>
+  </form>
+<% } else if (!['FULFILLED','CANCELLED'].includes(order.status) && order.totals.allocated > 0) { %>
+  <form class="card sales-action-card sales-primary-action" method="post" action="/sales/orders/<%= order.id %>/fulfill">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="idempotencyKey" value="web-fulfill:<%= order.id %>:<%= order.version %>">
+    <p class="eyebrow">Do this next</p><h2>Record the items as shipped</h2>
+    <p>Only use this when the items physically leave. Foundry will reduce on-hand once and update Accounting automatically.</p>
+    <% order.lines.forEach(function(line){ line.allocations.forEach(function(a){ %><div class="form-row"><input type="hidden" name="lineId" value="<%= line.id %>"><input type="hidden" name="locationId" value="<%= a.location_id %>"><label class="field"><span><%= line.displayName %> from <%= a.location_name %> (maximum <%= a.quantity %>)</span><input type="number" name="quantity" min="0" max="<%= a.quantity %>" value="<%= a.quantity %>"></label></div><% }) }) %>
+    <button class="btn btn--primary" type="submit">Ship selected quantities</button>
+  </form>
+<% } %>
+
+<div class="notice notice--info sales-order-explanation"><div><strong>Only two business decisions:</strong><br><strong>Reserve</strong> when the customer commits. <strong>Ship</strong> when the items physically leave. Accounting is automatic after shipment—it is not another step for you.</div></div>
 
 <div class="stats-row">
   <div class="stat"><strong><%= order.totals.ordered %></strong><span>Units ordered</span></div>
@@ -8,7 +46,18 @@
   <div class="stat"><strong><%= order.totals.fulfilled %></strong><span>fulfilled (shipped)</span></div>
 </div>
 
-<% if (order.status === 'DRAFT') { %><div class="notice"><strong>Nothing is committed yet.</strong> Confirm the order when the customer has committed to it. Physical on-hand will remain unchanged.</div><% } %>
+<% if (order.status === 'FULFILLED' || order.status === 'PARTIALLY_FULFILLED') { %>
+  <% if (accounting.status === 'POSTED') { %>
+    <div class="notice notice--success"><div><strong>Accounting updated automatically.</strong><br>Revenue, the customer receivable, product cost, and inventory value were posted from this shipment.</div><a class="btn btn--sm" href="/accounting/entries/<%= accounting.journal_entry_id %>">See entry #<%= accounting.entry_number %></a></div>
+  <% } else if (accounting.status === 'NEEDS_REVIEW' || accounting.status === 'FAILED') { %>
+    <div class="notice notice--warning"><div><strong>The shipment is complete, but Accounting still needs one decision.</strong><br><%= accounting.outcome.message || accounting.error_message %> Stock will not be changed again.</div><a class="btn btn--primary btn--sm" href="/accounting/review/<%= accounting.id %>">Review exact amounts</a></div>
+  <% } else if (accounting.status === 'WAITING') { %>
+    <div class="notice"><strong>Accounting is processing this shipment.</strong> Refresh once if this remains here.</div>
+  <% } else { %>
+    <div class="notice"><strong>Accounting is not active.</strong> The Sales Order and inventory are complete; no financial entry was created.</div>
+  <% } %>
+<% } %>
+
 <%
   /*
    * The shortfall notice, written for the state the order is actually in.
@@ -62,43 +111,11 @@
   <% if (order.pricing.missingPriceLines) { %><div class="notice notice--warn"><strong>This draft cannot be confirmed yet.</strong> <%= order.pricing.missingPriceLines %> line<%= order.pricing.missingPriceLines === 1 ? '' : 's' %> has no selling price. <% order.lines.filter(function(line){ return line.unit_price_minor === null; }).forEach(function(line){ %><a href="/inventory/<%= line.item_id %>#selling-price">Set the price for <%= line.displayName %></a>. <% }) %></div><% } %>
 </div>
 
-<%
-  /*
-   * Stock arrived after the order was confirmed, and it can be committed here.
-   *
-   * Allocation ran once at confirmation and never again, so a delivery landing
-   * against the exact shortfall left the order unable to take it — and Needs
-   * you routed the reader to this page, where the only options were to add more
-   * demand or cancel. Foundry still does not commit it by itself: holding stock
-   * for one customer takes it from the next, so it is offered rather than done.
-   */
-%>
-<% if (!['FULFILLED','CANCELLED'].includes(order.status) && locals.shortButAvailable) { %>
-  <form class="card sales-action-card sales-action-card--commit" method="post" action="/sales/orders/<%= order.id %>/allocate">
-    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <input type="hidden" name="idempotencyKey" value="web-allocate:<%= order.id %>:<%= order.version %>">
-    <h2>Commit the stock that has arrived</h2>
-    <p>
-      <%= locals.shortButAvailable %>
-      <%= locals.shortButAvailable === 1 ? 'unit is' : 'units are' %> on the shelf and free.
-      Committing holds <%= locals.shortButAvailable === 1 ? 'it' : 'them' %> for
-      <%= order.customer.name %> — on-hand does not change, and nothing ships until you say so.
-    </p>
-    <button class="btn btn--primary" type="submit">
-      Commit <%= locals.shortButAvailable %> to this order
-    </button>
-  </form>
-<% } %>
-
 <% if (!['FULFILLED','CANCELLED'].includes(order.status)) { %>
-<div class="grid grid--2" style="margin-top:16px;">
-  <% if (order.status === 'DRAFT' && !order.pricing.missingPriceLines) { %><form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/confirm"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h2>Confirm customer demand</h2><p>Foundry will reserve available stock without changing on hand, then manage any shortage.</p><button class="btn btn--primary" type="submit">Confirm and reserve stock</button></form><% } else if (order.status !== 'DRAFT' && order.totals.allocated > 0) { %>
-  <form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/fulfill"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="web-fulfill:<%= order.id %>:<%= order.version %>"><h2>Record what shipped</h2><p>This is when physical stock actually leaves. On-hand and reserved quantities decrease together.</p>
-    <% order.lines.forEach(function(line){ line.allocations.forEach(function(a){ %><div class="form-row"><input type="hidden" name="lineId" value="<%= line.id %>"><input type="hidden" name="locationId" value="<%= a.location_id %>"><label class="field"><span><%= line.displayName %> from <%= a.location_name %> (max <%= a.quantity %>)</span><input type="number" name="quantity" min="0" max="<%= a.quantity %>" value="<%= a.quantity %>"></label></div><% }) }) %>
-    <button class="btn btn--primary" type="submit">Record shipment</button></form><% } %>
-  <form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/lines"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="web-line:<%= order.id %>:<%= order.version %>"><h2>Add to this order</h2><p>Add more customer demand. Foundry will recalculate what can be reserved.</p><label class="field"><span>Product</span><select name="skuId" required><option value="">Choose</option><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %></option><% }) %></select></label><label class="field"><span>Quantity</span><input type="number" name="quantity" min="1" required></label><label class="field"><span>Selling price <small>if not set in inventory</small></span><input name="unitPrice" inputmode="decimal" placeholder="0.00"></label><button class="btn" type="submit">Add and recalculate</button></form>
-  <form class="card sales-action-card" method="post" action="/sales/orders/<%= order.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h2>Cancel remaining order</h2><p>Unshipped reservations are released immediately. Stock already shipped remains in the inventory history.</p><label class="field"><span>Reason <small>optional</small></span><input name="reason"></label><button class="btn btn--danger" type="submit">Cancel remaining order</button></form>
-</div>
+  <details class="card advanced-settings sales-secondary-actions" style="margin-top:16px;"><summary><strong>Change or cancel this order</strong><span class="hint">Optional</span></summary><div class="card-body grid grid--2">
+    <form class="sales-action-card" method="post" action="/sales/orders/<%= order.id %>/lines"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="web-line:<%= order.id %>:<%= order.version %>"><h2>Add another product</h2><p>Foundry will recalculate what can be held.</p><label class="field"><span>Product</span><select name="skuId" required><option value="">Choose a product</option><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %></option><% }) %></select></label><label class="field"><span>Quantity</span><input type="number" name="quantity" min="1" required></label><label class="field"><span>Selling price <small>only if not set in Inventory</small></span><input name="unitPrice" inputmode="decimal" placeholder="0.00"></label><button class="btn" type="submit">Add product</button></form>
+    <form class="sales-action-card" method="post" action="/sales/orders/<%= order.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h2>Cancel what has not shipped</h2><p>Held stock is released. Anything already shipped remains in history.</p><label class="field"><span>Reason <small>optional</small></span><input name="reason"></label><button class="btn btn--danger" type="submit">Cancel unshipped remainder</button></form>
+  </div></details>
 <% } %>
 
 <% var eventLabels = { CREATED: 'Order created', CONFIRMED: 'Customer order confirmed and stock checked', CHANGED: 'Order changed and reservations recalculated', ALLOCATION_CHANGED: 'Stock reservation updated automatically', PARTIALLY_FULFILLED: 'Part of the order shipped', FULFILLED: 'Order shipped in full', ALLOCATED_FROM_STOCK: 'Stock that arrived was committed to this customer', CANCELLED: 'Remaining order cancelled' }; %>

@@ -169,7 +169,7 @@ function hydrate(db, row) {
     isOpen: OPEN.includes(row.status),
     isEditable: EDITABLE.includes(row.status),
     canCancel: CANCELLABLE.includes(row.status),
-    hasCosts: lines.some((line) => line.unitCost !== null && line.unitCost !== undefined),
+    hasCosts: lines.length > 0 && lines.every((line) => line.unitCost !== null && line.unitCost !== undefined),
   };
 }
 
@@ -490,6 +490,44 @@ function submitForApproval(db, ctx, membership, poId) {
   return get(db, ctx.workspaceId, poId);
 }
 
+/** Complete or correct prices while an order is still a draft. */
+function updateDraftCosts(db, ctx, membership, poId, costs = {}) {
+  permissions.assertCan(membership, permissions.CREATE_PO, 'edit draft purchase orders');
+  const before = get(db, ctx.workspaceId, poId);
+  if (!EDITABLE.includes(before.status)) {
+    throw new ValidationError('Prices can only be changed before the purchase order is approved.');
+  }
+  const byId = new Map(before.lines.map((line) => [line.id, line]));
+  const entries = Object.entries(costs || {});
+  if (!entries.length) throw new ValidationError('Enter at least one unit cost.');
+
+  const updated = inTransaction(db, () => {
+    for (const [lineId, raw] of entries) {
+      const line = byId.get(lineId);
+      if (!line) throw new ValidationError('That product is not on this purchase order.');
+      const unitCost = Number(raw);
+      if (!Number.isFinite(unitCost) || unitCost < 0 || String(raw).trim() === '') {
+        throw new ValidationError(`Enter a valid unit cost for ${line.displayName}.`);
+      }
+      const lineTotal = Math.round(unitCost * line.quantityUnits * 100) / 100;
+      db.prepare(`UPDATE purchase_order_lines SET unit_cost = ?, line_total = ?
+        WHERE id = ? AND purchase_order_id = ? AND workspace_id = ?`)
+        .run(unitCost, lineTotal, lineId, poId, ctx.workspaceId);
+    }
+    const current = get(db, ctx.workspaceId, poId);
+    const hash = computeIntegrityHash(current);
+    db.prepare('UPDATE purchase_orders SET integrity_hash = ?, updated_at = ? WHERE id = ? AND workspace_id = ?')
+      .run(hash, nowIso(), poId, ctx.workspaceId);
+    recordEvent(db, ctx.workspaceId, poId, 'prices_updated', {
+      lines: entries.length,
+      subtotal: current.subtotal,
+    }, ctx.actorId);
+    return get(db, ctx.workspaceId, poId);
+  });
+  supplierCommunications.prepareForOrder(db, ctx.workspaceId, updated);
+  return get(db, ctx.workspaceId, poId);
+}
+
 /**
  * Approval. Committing to spend money, so it checks that what is being
  * approved is still what was on the screen.
@@ -650,6 +688,7 @@ module.exports = {
   defaultDestination,
   destinationForSku,
   submitForApproval,
+  updateDraftCosts,
   approve,
   cancel,
   deleteDraft,

@@ -80,6 +80,7 @@ const CONDITION_IDS = CONDITIONS.map((c) => c.id);
 
 const ROLES = [
   { id: 'owner', label: 'Owner', blurb: 'Full access, including locations, people and settings.' },
+  { id: 'accountant', label: 'Accountant', blurb: 'Financial records, reconciliation, reports and period close; no physical stock operations.' },
   { id: 'staff', label: 'Staff', blurb: 'Day-to-day inventory work: receive, issue, transfer, adjust.' },
 ];
 

@@ -15,6 +15,7 @@ const request = require('supertest');
 
 const engine = require('../../src/domain/inventory-engine');
 const authService = require('../../src/domain/auth-service');
+const connections = require('../../src/connections/service');
 const suppliers = require('../../src/purchasing/supplier-service');
 const poService = require('../../src/purchasing/po-service');
 const replenishment = require('../../src/purchasing/replenishment');
@@ -128,6 +129,158 @@ test('the supplier page separates the vendor code from our code and applies only
 
   const after = plain((await agent.get(`/suppliers/${env.supplier.id}`)).text);
   assert.match(after, /Remembered for future invoices/);
+  env.db.close();
+});
+
+test('a supplier created from scratch shows every setup step and advances from real workspace state', async () => {
+  const env = setup();
+  const { agent } = await owner(env);
+  const supplier = suppliers.createSupplier(env.db, env.workspace.ctx, env.membership, {
+    name: 'Mission 13 Test Supplier',
+  });
+
+  let page = await agent.get(`/suppliers/${supplier.id}`);
+  let text = plain(page.text);
+  for (const step of [
+    'Add the supplier email', 'Link what you buy', 'Connect the mailbox Foundry watches',
+    "Approve this supplier's sender", 'Choose what Foundry may do', 'Create the first purchase order',
+  ]) assert.match(text, new RegExp(step.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(text, /Add the supplier email[\s\S]*Do this now/);
+  assert.doesNotMatch(text, /What may Foundry do\?/, 'future authority choices stay hidden until the sender is approved');
+
+  const savedEmail = await agent.post(`/suppliers/${supplier.id}`).type('form').send({
+    _csrf: csrfFrom(page.text), email: 'orders@mission13.test',
+  });
+  assert.equal(savedEmail.status, 302);
+  page = await agent.get(`/suppliers/${supplier.id}`);
+  text = plain(page.text);
+  assert.match(text, /Link what you buy[\s\S]*Do this now/);
+
+  suppliers.linkItem(env.db, env.workspace.ctx, env.membership, {
+    supplierId: supplier.id, skuId: env.item.skuId, supplierSku: 'TEST-BLK-S',
+    purchaseUnit: 'case', unitsPerPurchaseUnit: 12, lastUnitCost: 8.2,
+  });
+  page = await agent.get(`/suppliers/${supplier.id}`);
+  text = plain(page.text);
+  assert.match(text, /Connect the mailbox Foundry watches[\s\S]*Do this now/);
+  assert.doesNotMatch(text, /Approve Mission 13 Test Supplier's sender/, 'the sender action stays hidden until a mailbox exists');
+
+  const mailbox = connections.create(env.db, env.workspace.ctx, env.membership, {
+    providerType: 'supplier_email', displayName: 'Purchasing mailbox',
+  }).connection;
+  page = await agent.get(`/suppliers/${supplier.id}`);
+  text = plain(page.text);
+  assert.match(text, /Approve this supplier's sender[\s\S]*Do this now/);
+  assert.match(text, /Approve Mission 13 Test Supplier's sender/);
+  assert.match(text, /orders@mission13\.test → Purchasing mailbox/);
+  assert.doesNotMatch(text, /What may Foundry do\?/, 'there is still one current task');
+
+  connections.addEmailRule(env.db, env.workspace.ctx, mailbox.id, {
+    senderPattern: 'orders@mission13.test', supplierId: supplier.id, documentMode: 'supplier_documents',
+  });
+  suppliers.updateSupplier(env.db, env.workspace.ctx, env.membership, supplier.id, {
+    watchedConnectorId: mailbox.id,
+  });
+  const readyPage = await agent.get(`/suppliers/${supplier.id}`);
+  text = plain(readyPage.text);
+  assert.match(text, /Create the first purchase order[\s\S]*Do this now/);
+  assert.match(text, /What may Foundry do\?/);
+  assert.match(readyPage.text, new RegExp(`/purchasing/orders/new\\?supplier=${supplier.id}`));
+  env.db.close();
+});
+
+test('manual purchase order entry makes a missing supplier cost editable and refuses an unpriced draft inline', async () => {
+  const env = setup();
+  const { agent } = await owner(env);
+  const supplier = suppliers.createSupplier(env.db, env.workspace.ctx, env.membership, {
+    name: 'Unpriced Supplier', email: 'orders@unpriced.test',
+  });
+  suppliers.linkItem(env.db, env.workspace.ctx, env.membership, {
+    supplierId: supplier.id, skuId: env.item.skuId, purchaseUnit: 'unit', unitsPerPurchaseUnit: 1,
+  });
+
+  let page = await agent.get(`/purchasing/orders/new?supplier=${supplier.id}`);
+  assert.equal(page.status, 200);
+  assert.match(page.text, new RegExp(`name="unitCost\\[${env.item.skuId}\\]"`));
+  assert.match(page.text, /placeholder="Required if unknown"/);
+  assert.match(plain(page.text), /These are the products linked to this supplier/);
+
+  const missing = await agent.post('/purchasing/orders').type('form').send({
+    _csrf: csrfFrom(page.text), supplierId: supplier.id,
+    [`quantity[${env.item.skuId}]`]: '1', [`unitCost[${env.item.skuId}]`]: '',
+    destinationLocationId: env.workspace.main.id,
+  });
+  assert.equal(missing.status, 422);
+  assert.match(plain(missing.text), /Enter the unit cost for Navy Oxford before creating this order/);
+  assert.equal(poService.list(env.db, env.workspace.workspaceId, { supplierId: supplier.id }).length, 0);
+
+  const priced = await agent.post('/purchasing/orders').type('form').send({
+    _csrf: csrfFrom(missing.text), supplierId: supplier.id,
+    [`quantity[${env.item.skuId}]`]: '1', [`unitCost[${env.item.skuId}]`]: '12.50',
+    destinationLocationId: env.workspace.main.id,
+  });
+  assert.equal(priced.status, 302);
+  const order = poService.list(env.db, env.workspace.workspaceId, { supplierId: supplier.id })[0];
+  assert.equal(order.lines[0].unitCost, 12.5);
+  assert.equal(order.subtotal, 12.5);
+  env.db.close();
+});
+
+test('an existing unpriced draft has one repair action and cannot be approved or sent until fixed', async () => {
+  const env = setup();
+  const { agent } = await owner(env);
+  const supplier = suppliers.createSupplier(env.db, env.workspace.ctx, env.membership, {
+    name: 'Draft Repair Supplier', email: 'orders@repair.test',
+  });
+  suppliers.linkItem(env.db, env.workspace.ctx, env.membership, {
+    supplierId: supplier.id, skuId: env.item.skuId, purchaseUnit: 'unit', unitsPerPurchaseUnit: 1,
+  });
+  const mailbox = connections.create(env.db, env.workspace.ctx, env.membership, {
+    providerType: 'supplier_email', displayName: 'Repair mailbox',
+  }).connection;
+  suppliers.updateSupplier(env.db, env.workspace.ctx, env.membership, supplier.id, {
+    watchedConnectorId: mailbox.id,
+  });
+  const order = poService.createOrder(env.db, env.workspace.ctx, env.membership, {
+    supplierId: supplier.id, destinationLocationId: env.workspace.main.id,
+    lines: [{ skuId: env.item.skuId, quantityPurchaseUnits: 1 }],
+  });
+  let page = await agent.get(`/purchasing/orders/${order.id}`);
+  let text = plain(page.text);
+  assert.match(text, /Finish pricing this order/);
+  assert.match(text, /Save prices and continue/);
+  assert.doesNotMatch(text, /Approve order|Approve & send|Send to supplier/);
+
+  const blocked = await agent.post(`/purchasing/orders/${order.id}/approve`).type('form').send({
+    _csrf: csrfFrom(page.text), integrityHash: order.integrityHash,
+  });
+  assert.equal(blocked.status, 303);
+  assert.equal(poService.get(env.db, env.workspace.workspaceId, order.id).status, 'DRAFT');
+
+  const priced = await agent.post(`/purchasing/orders/${order.id}/prices`).type('form').send({
+    _csrf: csrfFrom(page.text), [`unitCost[${order.lines[0].id}]`]: '20.00',
+  });
+  assert.equal(priced.status, 303);
+  const fixed = poService.get(env.db, env.workspace.workspaceId, order.id);
+  assert.equal(fixed.hasCosts, true);
+  assert.equal(fixed.lines[0].unitCost, 20);
+  assert.equal(fixed.subtotal, 20);
+
+  page = await agent.get(`/purchasing/orders/${order.id}`);
+  text = plain(page.text);
+  assert.doesNotMatch(text, /Finish pricing this order/);
+  assert.match(text, /Approve order/);
+  assert.doesNotMatch(text, /Approve & send|Send to supplier/);
+  assert.match(text, /USD 20\.00 each/, 'the prepared supplier message is refreshed with the repaired price');
+
+  env.db.prepare(`UPDATE supplier_communications
+    SET status = 'SENT', transport = ?, external_message_id = 'gmail-message-opaque-123'
+    WHERE workspace_id = ? AND purchase_order_id = ?`).run(mailbox.id, env.workspace.workspaceId, order.id);
+  page = await agent.get(`/purchasing/orders/${order.id}`);
+  text = plain(page.text);
+  assert.match(text, /Sent successfully from Repair mailbox to orders@repair\.test/);
+  assert.doesNotMatch(text, /gmail-message-opaque-123|con_[a-z0-9]+/,
+    'customer-facing confirmation never leaks provider or connector identifiers');
   env.db.close();
 });
 
@@ -473,6 +626,9 @@ test('a line blocked for want of a supplier leads to setting one up, and then be
   const formText = plain(form.text);
   assert.match(formText, /Who do you buy Black T-shirt from/i);
   assert.match(formText, /short/i, 'it carries the shortfall it is unblocking');
+  assert.match(formText, /Cost of one inventory unit/i);
+  assert.match(formText, /not the cost of the whole case or box/i,
+    'the owner can tell whether supplier cost means each item or the supplier pack');
 
   // Reaching it from the numbers page works too.
   const why = plain((await agent.get(`/purchasing/why/${env.item.skuId}`)).text);
@@ -612,21 +768,32 @@ test('one clear setup action can apply supplier and reorder settings to every pr
   const { agent } = await owner(env);
 
   const supplierPage = await agent.get(`/purchasing/supplier-for/${env.small.id}`);
-  assert.match(plain(supplierPage.text), /Use this supplier for all 6 Black T-shirt variants/i);
+  const supplierText = plain(supplierPage.text);
+  assert.match(supplierText, /Use this supplier for all 6 Black T-shirt variants/i);
+  assert.match(supplierText, /Cost of one inventory unit for each variant/i,
+    'a shared supplier must not silently give differently sized variants one shared cost');
+  const variantCosts = Object.fromEntries(env.item.skus.map((sku, index) => [
+    `lastUnitCost_${sku.id}`,
+    String(5 + index),
+  ]));
   await agent.post(`/purchasing/supplier-for/${env.small.id}`).type('form').send({
     _csrf: csrfFrom(supplierPage.text),
     newSupplierName: 'ABC Apparel',
     purchaseUnit: 'case',
     unitsPerPurchaseUnit: 12,
     leadTimeDays: 7,
-    lastUnitCost: 6.5,
     applyToItem: '1',
+    ...variantCosts,
   });
 
   const linked = env.db.prepare(
     'SELECT COUNT(*) AS n FROM supplier_items WHERE workspace_id = ? AND is_active = 1'
   ).get(env.workspace.workspaceId);
   assert.equal(linked.n, 6, 'the user should not repeat supplier setup for each variant');
+  const savedCosts = env.db.prepare(
+    'SELECT last_unit_cost AS cost FROM supplier_items WHERE workspace_id = ? ORDER BY last_unit_cost'
+  ).all(env.workspace.workspaceId).map((row) => row.cost);
+  assert.deepEqual(savedCosts, [5, 6, 7, 8, 9, 10], 'each variant keeps the exact cost the owner entered');
 
   const whyPage = await agent.get(`/purchasing/why/${env.small.id}`);
   assert.match(plain(whyPage.text), /Use these settings for all 6 Black T-shirt variants/i);
@@ -644,6 +811,55 @@ test('one clear setup action can apply supplier and reorder settings to every pr
         AND reorder_point = 20 AND target_stock = 50 AND safety_stock = 5`
   ).get(env.workspace.workspaceId);
   assert.equal(policies.n, 6, 'the user should not repeat the same reorder rule for every variant');
+  env.db.close();
+});
+
+test('supplier costs entered during setup automatically value untouched opening inventory', async () => {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Fresh Coffee Setup' });
+  const item = makeVariantItem(store.db, workspace.ctx, {
+    name: 'Coffee beans', baseCode: 'CB-1',
+    options: [{ name: 'Size', values: '250g, 1kg' }],
+  });
+  for (const sku of item.skus) {
+    engine.adjust(store.db, workspace.ctx, {
+      skuId: sku.id, locationId: workspace.main.id,
+      countedQty: sku.variant_label === '250g' ? 24 : 12,
+      reasonCode: 'physical_count', notes: 'Opening inventory',
+    });
+  }
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'opening-supplier-cost-test' });
+  const env = { ...store, workspace, item, app };
+  const { agent } = await owner(env);
+  const first = item.byLabel('250g');
+  const page = await agent.get(`/purchasing/supplier-for/${first.id}`);
+  const costs = Object.fromEntries(item.skus.map((sku) => [
+    `lastUnitCost_${sku.id}`,
+    sku.variant_label === '250g' ? '6.00' : '18.00',
+  ]));
+  const saved = await agent.post(`/purchasing/supplier-for/${first.id}`).type('form').send({
+    _csrf: csrfFrom(page.text), newSupplierName: 'Roastery Supply',
+    purchaseUnit: 'case', unitsPerPurchaseUnit: 12, leadTimeDays: 5,
+    applyToItem: '1', ...costs,
+  });
+  assert.equal(saved.status, 303);
+
+  const balances = env.db.prepare(`SELECT cb.quantity_units AS units, cb.total_cost_minor AS cost,
+      s.variant_label AS variant FROM accounting_inventory_cost_balances cb
+      JOIN skus s ON s.id = cb.sku_id WHERE cb.workspace_id = ? ORDER BY s.position`)
+    .all(workspace.workspaceId);
+  assert.deepEqual(balances, [
+    { units: 24, cost: 14_400, variant: '250g' },
+    { units: 12, cost: 21_600, variant: '1kg' },
+  ]);
+  const entry = env.db.prepare(`SELECT source_type, description FROM accounting_journal_entries
+    WHERE workspace_id = ? AND source_type = 'verified_opening_cost'`)
+    .get(workspace.workspaceId);
+  assert.match(entry.description, /supplier terms entered during setup/i);
+  const accountingText = plain((await agent.get('/accounting')).text);
+  assert.match(accountingText, /started Foundry with \$360\.00 of inventory already on hand/i);
+  assert.match(accountingText, /Total inventory cost recorded \$360\.00/i,
+    'Accounting shows the automatically recovered opening inventory cost');
   env.db.close();
 });
 

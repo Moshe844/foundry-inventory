@@ -94,6 +94,30 @@ function inspect(databasePath, callback) {
   try { return callback(db); } finally { db.close(); }
 }
 
+/**
+ * Production runs this cycle from the scheduler. Test servers deliberately do
+ * not start timers, so acceptance tests trigger exactly one authenticated turn
+ * without putting a manual "run automation" control back on the owner Home.
+ */
+async function runSchedulerTurn(page) {
+  const csrf = await page.locator('input[name="_csrf"]').first().inputValue();
+  await Promise.all([
+    page.waitForNavigation(),
+    page.evaluate((token) => {
+      const form = document.createElement('form');
+      form.method = 'post';
+      form.action = '/autopilot/run';
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = '_csrf';
+      input.value = token;
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+    }, csrf),
+  ]);
+}
+
 async function withBrowserScenario(options, callback) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-authority-e2e-'));
   const databasePath = path.join(dir, 'authority.db');
@@ -121,8 +145,7 @@ async function withBrowserScenario(options, callback) {
 test('authority browser E2E: real policy boundaries, audit wording, Pause and Resume', { timeout: 180000 }, async (t) => {
   await t.test('qualifying work runs and displays the exact policy version and dated evidence', async () => {
     await withBrowserScenario({ requiredQuantity: 5, policyVersion: 2 }, async ({ page, state, databasePath }) => {
-      await page.click('form[action="/autopilot/run"] button[type=submit]');
-      await page.waitForURL(`${BASE}/`);
+      await runSchedulerTurn(page);
       const item = inspect(databasePath, (db) =>
         workItems.list(db, state.workspaceId, { category: 'balance_transfer' })[0]);
       assert.equal(item.executionStatus, 'COMPLETED');
@@ -136,8 +159,7 @@ test('authority browser E2E: real policy boundaries, audit wording, Pause and Re
 
   await t.test('work above the policy boundary remains full-sized in Needs you', async () => {
     await withBrowserScenario({ requiredQuantity: 8 }, async ({ page, state, databasePath }) => {
-      await page.click('form[action="/autopilot/run"] button[type=submit]');
-      await page.waitForURL(`${BASE}/`);
+      await runSchedulerTurn(page);
       const waiting = inspect(databasePath, (db) => workItems.awaitingApproval(db, state.workspaceId)[0]);
       assert.equal(waiting.recommendedAction.quantity, 8);
       await page.goto(`${BASE}/autopilot/work/${waiting.id}`);
@@ -151,20 +173,25 @@ test('authority browser E2E: real policy boundaries, audit wording, Pause and Re
   await t.test('Pause blocks the run and Resume lets the same eligible work continue', async () => {
     await withBrowserScenario({ requiredQuantity: 5, paused: true }, async ({ page, state, databasePath }) => {
       assert.match(await page.locator('body').innerText(), /Foundry is paused/);
-      await page.click('form[action="/autopilot/run"] button[type=submit]');
-      await page.waitForURL(`${BASE}/`);
+      await runSchedulerTurn(page);
       assert.equal(inspect(databasePath, (db) =>
         db.prepare('SELECT on_hand FROM balances WHERE workspace_id = ? AND sku_id = ? AND location_id = ?')
           .get(state.workspaceId, state.skuId, state.destinationId).on_hand), 4);
 
       await page.click('form[action="/autopilot/resume"] button[type=submit]');
       await page.waitForURL(`${BASE}/`);
-      await page.click('form[action="/autopilot/run"] button[type=submit]');
-      await page.waitForURL(`${BASE}/`);
+      await runSchedulerTurn(page);
       assert.equal(inspect(databasePath, (db) =>
         db.prepare('SELECT on_hand FROM balances WHERE workspace_id = ? AND sku_id = ? AND location_id = ?')
           .get(state.workspaceId, state.skuId, state.destinationId).on_hand), 9);
-      assert.match(await page.locator('body').innerText(), /Moved 5 Dated Demand Fixture/);
+      const completed = inspect(databasePath, (db) =>
+        workItems.list(db, state.workspaceId, { category: 'balance_transfer' })
+          .find((item) => item.executionStatus === 'COMPLETED'));
+      assert.ok(completed, 'the resumed authority completed the waiting transfer');
+      await page.goto(`${BASE}/autopilot/work/${completed.id}`);
+      const detail = await page.locator('body').innerText();
+      assert.match(detail, /Dated Demand Fixture — move stock between locations/);
+      assert.match(detail, /I transferred 5\./);
     });
   });
 });

@@ -10,6 +10,47 @@
   </div>
 </div>
 
+<%
+  var activeSupplierItems = items.filter(function(item) { return item.isActive; });
+  var connectedMailboxes = mailboxConnections.filter(function(connection) { return connection.status === 'connected'; });
+  var supplierSetupSteps = [
+    { done: !!supplier.email, title: 'Add the supplier email', detail: supplier.email || 'Where Foundry sends orders and which sender it can recognize.', href: '#communication' },
+    { done: activeSupplierItems.length > 0, title: 'Link what you buy', detail: activeSupplierItems.length ? activeSupplierItems.length + ' product' + (activeSupplierItems.length === 1 ? '' : 's') + ' linked' : 'Choose a product, supplier code, pack size, and cost.', href: '#link-product' },
+    { done: connectedMailboxes.length > 0, title: 'Connect the mailbox Foundry watches', detail: connectedMailboxes.length ? connectedMailboxes.map(function(connection) { return connection.display_name; }).join(', ') : 'Connect Gmail or Microsoft 365 for this inventory.', href: '/settings/connections#supplier-communication' },
+    { done: senderRules.length > 0 && !!supplier.watchedConnectorId, title: 'Approve this supplier\'s sender', detail: senderRules.length ? senderRules.map(function(rule) { return rule.sender_pattern; }).join(', ') : 'Choose the mailbox and exact sender Foundry may treat as supplier evidence.', href: '#communication' },
+    { done: true, title: 'Choose what Foundry may do', detail: supplier.autoSendEnabled ? 'Routine orders may send automatically up to ' + supplier.currency + ' ' + Number(supplier.autoSendLimit || 0).toFixed(2) : 'Safe default: Foundry prepares messages and asks before sending.', href: '#routine-work' },
+    { done: orders.length > 0, title: 'Create the first purchase order', detail: orders.length ? orders.length + ' purchase order' + (orders.length === 1 ? '' : 's') + ' on record' : 'Make one small order to test the complete supplier workflow.', href: '/purchasing/orders/new?supplier=' + supplier.id }
+  ];
+  var currentSupplierSetupIndex = supplierSetupSteps.findIndex(function(step) { return !step.done; });
+  var supplierSetupComplete = currentSupplierSetupIndex === -1;
+  var currentSupplierSetup = supplierSetupComplete ? null : supplierSetupSteps[currentSupplierSetupIndex];
+  var supplierSenderReady = senderRules.length > 0 && !!supplier.watchedConnectorId;
+%>
+
+<section class="setup-journey" id="supplier-setup">
+  <div class="setup-journey__head">
+    <div class="setup-journey__head-copy">
+      <span class="setup-journey__eyebrow">Supplier setup</span>
+      <h1><%= supplierSetupComplete ? supplier.name + ' is ready' : 'Set up ' + supplier.name %></h1>
+      <p><%= supplierSetupComplete
+        ? 'Foundry can prepare orders, watch the approved sender, understand purchasing documents, and keep this supplier\'s purchase orders current.'
+        : 'Work from top to bottom. Foundry highlights one thing to do now and keeps every later step visible, so you never have to guess where setup continues.' %></p>
+    </div>
+  </div>
+  <div class="setup-steps">
+    <% supplierSetupSteps.forEach(function(step, index) { var isCurrent = index === currentSupplierSetupIndex; %>
+      <div class="setup-step <%= step.done ? 'setup-step--done' : isCurrent ? 'setup-step--current' : '' %>">
+        <span class="setup-step__number"><%= step.done ? '✓' : index + 1 %></span>
+        <div><strong><%= step.title %></strong><p><%= step.detail %></p></div>
+        <span class="setup-step__state"><%= step.done ? 'Done' : isCurrent ? 'Do this now' : 'Next' %></span>
+      </div>
+    <% }) %>
+  </div>
+  <% if (currentSupplierSetup && currentSupplierSetup.href.charAt(0) !== '#') { %>
+    <div class="setup-journey__action"><a class="btn btn--primary" href="<%= currentSupplierSetup.href %>"><%= currentSupplierSetup.title %></a></div>
+  <% } %>
+</section>
+
 <% if (priceHistory.length) { %>
   <div class="card section">
     <div class="card-head"><div><h2>Price evidence</h2><p class="muted">Trusted supplier documents, kept as purchasing history—not accounting entries.</p></div></div>
@@ -21,28 +62,65 @@
 
 <div class="card section" id="communication">
   <div class="card-head">
-    <div><h2>Communication</h2><p class="muted">Foundry watches only approved senders for this supplier. Everything else stays outside the purchasing workflow.</p></div>
+    <div><h2>Supplier email</h2><p class="muted">Set where orders go, which mailbox Foundry watches, and exactly which sender is trusted.</p></div>
   </div>
   <div class="card-body grid">
-    <div class="list-row">
-      <div><strong><%= supplier.email || 'No ordering email yet' %></strong><p><%= helpers.columnLabel(supplier.preferredOrderingMethod) %> · Routine order sending: <%= supplier.autoSendEnabled ? 'Automatic up to ' + supplier.currency + ' ' + (supplier.autoSendLimit || 0).toFixed(2) : 'Ask first' %></p></div>
-      <span class="badge <%= supplier.watchedConnectorId ? 'badge--ok' : 'badge--muted' %>"><%= supplier.watchedConnectorId ? 'Watching this supplier' : 'Not watching' %></span>
-    </div>
-    <% senderRules.forEach(function(rule) { %><div class="list-row"><div><strong><%= rule.sender_pattern %></strong><p><%= rule.connection_name %></p></div><span class="badge badge--ok">Trusted sender</span></div><% }) %>
     <% if (permissions.suppliers) { %>
-      <% if (mailboxConnections.length) { %>
-        <form method="post" action="/suppliers/<%= supplier.id %>/senders" class="form-actions">
+      <% if (!supplier.email) { %>
+        <form method="post" action="/suppliers/<%= supplier.id %>" class="guided-setup-form guided-setup-form--current">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <select class="select" name="connectorId" required><% mailboxConnections.forEach(function(connection) { %><option value="<%= connection.id %>" <%= supplier.watchedConnectorId === connection.id ? 'selected' : '' %>><%= connection.display_name %> · <%= connection.status %></option><% }) %></select>
-          <input class="input" type="text" name="senderPattern" value="<%= supplier.email || '' %>" placeholder="orders@supplier.com or @supplier.com" required>
-          <button class="btn" type="submit">Watch sender</button>
+          <label class="field">
+            <span class="field-label">Where should Foundry send this supplier's orders?</span>
+            <div class="field-row">
+              <input class="input" type="email" name="email" maxlength="160" placeholder="orders@abcapparel.com" required autofocus>
+              <button class="btn btn--primary" type="submit">Save supplier email</button>
+            </div>
+            <span class="field-help">Use the supplier's address—not your connected Gmail or Microsoft mailbox.</span>
+          </label>
         </form>
       <% } else { %>
-        <div class="notice"><div><strong>Connect a supplier mailbox</strong><p>Connect Gmail or Microsoft 365, then return here to approve this supplier's sender.</p><a class="btn btn--sm" href="/settings/connections">Open Connections</a></div></div>
+        <div class="list-row"><div><strong>Supplier address</strong><p><%= supplier.email %></p></div><span class="badge badge--ok">Done</span></div>
+      <% } %>
+
+      <% if (!connectedMailboxes.length) { %>
+        <div class="guided-setup-form <%= supplier.email && activeSupplierItems.length ? 'guided-setup-form--current' : 'guided-setup-form--locked' %>">
+          <strong>Connect the mailbox Foundry should watch</strong>
+          <p class="muted">No Gmail or Microsoft 365 mailbox is connected to this inventory yet. Connections are separate for each inventory.</p>
+          <div class="form-actions"><a class="btn <%= supplier.email && activeSupplierItems.length ? 'btn--primary' : '' %>" href="/settings/connections#supplier-communication">Connect Gmail or Microsoft 365</a></div>
+        </div>
+      <% } else if (!supplierSenderReady) { %>
+        <div class="list-row"><div><strong>Mailbox Foundry watches</strong><p><%= connectedMailboxes.map(function(connection) { return connection.display_name; }).join(', ') %></p></div><span class="badge badge--ok">Connected</span></div>
+        <form method="post" action="/suppliers/<%= supplier.id %>/senders" class="guided-setup-form guided-setup-form--current">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="connectorId" value="<%= connectedMailboxes[0].id %>">
+          <input type="hidden" name="senderPattern" value="<%= supplier.email %>">
+          <strong>Approve <%= supplier.name %>'s sender</strong>
+          <p class="muted"><strong><%= supplier.email %></strong> → <%= connectedMailboxes[0].display_name %></p>
+          <p class="muted">Only messages from this address will become supplier evidence. Everything else in the inbox stays outside purchasing.</p>
+          <div class="form-actions"><button class="btn btn--primary" type="submit">Start watching this sender</button></div>
+        </form>
+      <% } else { %>
+        <% senderRules.forEach(function(rule) { %><div class="list-row"><div><strong>Watching <%= rule.sender_pattern %></strong><p>Supplier messages arrive through <%= rule.connection_name %></p></div><span class="badge badge--ok">Ready</span></div><% }) %>
       <% } %>
     <% } %>
   </div>
 </div>
+
+<% if (permissions.suppliers && supplierSenderReady) { %>
+  <form method="post" action="/suppliers/<%= supplier.id %>" class="card section" id="routine-work">
+    <div class="card-head"><div><h2>What may Foundry do?</h2><p class="muted">The safe default is to prepare the work and ask before anything is sent. Change only the authority you want to grant.</p></div></div>
+    <div class="card-body grid grid--2">
+      <input type="hidden" name="prepareCommunications" value="0">
+      <label class="field"><span class="field-label">Prepare messages</span><label><input type="checkbox" name="prepareCommunications" value="1" <%= supplier.prepareCommunications ? 'checked' : '' %>> Prepare routine order and follow-up emails for me</label></label>
+      <input type="hidden" name="autoSendEnabled" value="0">
+      <label class="field"><span class="field-label">Send automatically</span><label><input type="checkbox" name="autoSendEnabled" value="1" <%= supplier.autoSendEnabled ? 'checked' : '' %>> Send routine approved orders and follow-up emails automatically</label><span class="field-help">Orders still respect your spending limit. Leave unchecked and Foundry prepares the email, then asks you before sending.</span></label>
+      <label class="field"><span class="field-label">Automatic order limit</span><input class="input" type="number" min="0" step="0.01" name="autoSendLimit" value="<%= supplier.autoSendLimit === null ? '' : supplier.autoSendLimit %>" placeholder="500.00"><span class="field-help">Orders above this amount wait for your approval.</span></label>
+      <label class="field"><span class="field-label">Ask if a price changes by more than</span><div class="field-row"><input class="input" type="number" min="0" max="100" step="0.1" name="priceTolerancePercent" value="<%= supplier.priceTolerancePercent %>"><span>%</span></div></label>
+      <label class="field"><span class="field-label">Follow up if there is no reply after</span><div class="field-row"><input class="input" type="number" min="1" max="60" name="followUpDays" value="<%= supplier.followUpDays %>"><span>days</span></div><span class="field-help">Foundry waits this long after the order or latest supplier reply. It then prepares a concise status request; automatic sending follows the choice above.</span></label>
+    </div>
+    <div class="card-foot"><button class="btn" type="submit">Save supplier rules</button></div>
+  </form>
+<% } %>
 
 <div class="card section">
   <div class="card-head">
@@ -157,7 +235,7 @@
 </div>
 
 <% if (permissions.suppliers) { %>
-  <form method="post" action="/suppliers/<%= supplier.id %>/items" class="card section">
+  <form method="post" action="/suppliers/<%= supplier.id %>/items" class="card section" id="link-product">
     <div class="card-head"><h2>Link a product</h2></div>
     <div class="card-body">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -287,16 +365,9 @@
         <p class="hint" style="margin-top:12px;">Foundry remembers these headings as the same vendor-code field: <%= supplier.itemCodeAliases.join(', ') %>. You will not have to map them again on future documents.</p>
       <% } %>
       <details style="margin-top:18px;">
-        <summary><strong>Communication authority and tolerances</strong></summary>
+        <summary><strong>Advanced supplier settings</strong></summary>
         <div class="grid grid--2" style="margin-top:14px;">
-          <input type="hidden" name="prepareCommunications" value="0">
-          <label class="field"><span class="field-label">Prepare routine supplier messages</span><label><input type="checkbox" name="prepareCommunications" value="1" <%= supplier.prepareCommunications ? 'checked' : '' %>> Let Foundry prepare repetitive order and follow-up messages</label></label>
-          <input type="hidden" name="autoSendEnabled" value="0">
-          <label class="field"><span class="field-label">Sending</span><label><input type="checkbox" name="autoSendEnabled" value="1" <%= supplier.autoSendEnabled ? 'checked' : '' %>> Send routine approved orders automatically within the limit</label></label>
-          <label class="field"><span class="field-label">Automatic send limit</span><input class="input" type="number" min="0" step="0.01" name="autoSendLimit" value="<%= supplier.autoSendLimit === null ? '' : supplier.autoSendLimit %>" placeholder="500.00"></label>
-          <label class="field"><span class="field-label">Price-change tolerance (%)</span><input class="input" type="number" min="0" max="100" step="0.1" name="priceTolerancePercent" value="<%= supplier.priceTolerancePercent %>"></label>
           <label class="field"><span class="field-label">Quantity-change tolerance (%)</span><input class="input" type="number" min="0" max="100" step="0.1" name="quantityTolerancePercent" value="<%= supplier.quantityTolerancePercent %>"></label>
-          <label class="field"><span class="field-label">Follow up after (days)</span><input class="input" type="number" min="1" max="60" name="followUpDays" value="<%= supplier.followUpDays %>"></label>
           <label class="field"><span class="field-label">Supplier minimum order value</span><input class="input" type="number" min="0" step="0.01" name="minimumOrderAmount" value="<%= supplier.minimumOrderAmount === null ? '' : supplier.minimumOrderAmount %>" placeholder="250.00"></label>
           <label class="field"><span class="field-label">Currency</span><input class="input" type="text" maxlength="3" name="currency" value="<%= supplier.currency %>" placeholder="USD"></label>
           <label class="field"><span class="field-label">Payment / reference terms</span><input class="input" type="text" maxlength="160" name="paymentTerms" value="<%= supplier.paymentTerms || '' %>" placeholder="Net 30 · account 12345"></label>

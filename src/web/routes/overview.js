@@ -13,12 +13,13 @@ const { purchasingBrief } = require('../../purchasing/brief-lines');
 const autopilotPresenter = require('../../autopilot/presenter');
 const guidance = require('../../manager/guidance');
 const permissions = require('../../actions/permissions');
+const businessBrain = require('../../manager/business-brain');
 const { requireAuth, asyncRoute } = require('../middleware');
 
 const router = express.Router();
 
 function homeSignature(db, workspaceId) {
-  const tables = ['domain_events', 'work_items', 'attention_items', 'inventory_investigations', 'purchase_orders', 'sales_orders', 'sales_order_events', 'movements'];
+  const tables = ['domain_events', 'work_items', 'attention_items', 'inventory_investigations', 'purchase_orders', 'sales_orders', 'sales_order_events', 'movements', 'accounting_journal_entries'];
   return tables.map((table) => {
     const row = db.prepare(`SELECT COALESCE(MAX(rowid), 0) AS last, COUNT(*) AS total FROM ${table} WHERE workspace_id = ?`).get(workspaceId);
     return `${table}:${row.last}:${row.total}`;
@@ -60,6 +61,26 @@ router.get(
     if (!wantsClassic && foundryConfigured) {
       const home = autopilotPresenter.operatorHome(req.db, req.ctx.workspaceId);
       home.guidance = guidance.build(req.db, req.ctx.workspaceId);
+      let brain = null;
+      let financialPulse = null;
+      try {
+        // Accounting is part of every Keeper workspace. This is idempotent and
+        // makes upgraded workspaces behave like newly-created ones before the
+        // unified state is read.
+        const ensuredAccounting = require('../../accounting/automatic').ensure(
+          req.db, req.ctx.workspaceId, { actorId: req.ctx.actorId, recoverCurrent: true }
+        );
+        brain = businessBrain.build(req.db, req.ctx.workspaceId);
+        if (ensuredAccounting.configured.enabled) {
+          financialPulse = { from: brain.period.from, to: brain.period.to,
+            currency: brain.currency, pnl: brain.finance.pnl,
+            cashMinor: brain.finance.currentCashMinor,
+            receivableMinor: brain.finance.customers.balanceMinor,
+            payableMinor: brain.finance.suppliers.balanceMinor };
+        }
+      } catch {
+        // Financial presentation cannot make the operating home unavailable.
+      }
       return res.page('operator-home', {
         title: 'Foundry',
         nav: 'home',
@@ -69,6 +90,8 @@ router.get(
         stats,
         terminology,
         canOperate: permissions.can(req.user, permissions.OPERATE),
+        financialPulse,
+        brain,
       });
     }
 

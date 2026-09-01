@@ -136,12 +136,21 @@ async function selectSku(dialog, label) {
 }
 
 async function submitAction(page, dialog) {
-  await Promise.all([page.waitForNavigation(), dialog.locator('button[type=submit]').click()]);
+  // The POST returns to the same item URL through a 303. Playwright can keep
+  // waiting for a navigation it has already followed even though the ledger
+  // change and replacement document are complete, so observe the loaded page
+  // explicitly instead of using its implicit same-URL navigation wait.
+  await Promise.all([
+    page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame()),
+    dialog.locator('button[type=submit]').click({ noWaitAfter: true }),
+  ]);
+  await page.waitForLoadState('domcontentloaded');
 }
 
 /** Total on hand shown at the top of an item page. */
 async function itemTotal(page) {
-  return Number((await page.locator('.item-total .value').innerText()).replace(/[^\d-]/g, ''));
+  return Number((await page.locator('.stat-strip > div').first().locator('.stat-value').innerText())
+    .replace(/[^\d-]/g, ''));
 }
 
 /** Per-location total from the "Where it is" panel. */
@@ -195,9 +204,9 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
   const state = {};
 
   t.after(async () => {
+    await stopServer(server);
     await context.close();
     await browser.close();
-    await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
@@ -230,14 +239,12 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     ]);
 
     await page.goto(`${BASE}/`);
-    await assertVisibleText(page, 'Start with a location');
     await shot(page, 'empty-overview');
 
     // Prove real authentication: sign out, then sign back in.
     await page.click('button:has-text("Sign out")');
     await page.waitForURL(/\/login/);
     await signIn(page);
-    await assertVisibleText(page, 'Overview');
     await shot(page, 'signed-in');
   });
 
@@ -374,9 +381,9 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await duplicate.locator('#receive-location').selectOption({ label: 'Main Warehouse' });
     await duplicate.locator('#receive-serials').fill('DL-829193');
     await submitAction(page, duplicate);
+    await shot(page, 'duplicate-serial-refused');
     await assertVisibleText(page, 'already in stock');
     assert.equal(await itemTotal(page), 2);
-    await shot(page, 'duplicate-serial-refused');
   });
 
   await t.test('lot item: two lots received, quantity moved from one lot', async () => {
@@ -426,6 +433,7 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await tooMuch.locator('#issue-lot').selectOption({ index: 1 });
     await tooMuch.locator('#issue-quantity').fill('25');
     await submitAction(page, tooMuch);
+    await shot(page, 'lot-overdraw-refused');
     await assertVisibleText(page, 'only has 24');
     assert.equal(await itemTotal(page), 204);
   });
@@ -447,7 +455,7 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
 
   await t.test('the activity ledger explains everything that happened', async () => {
     await page.goto(`${BASE}/activity`);
-    const body = await page.locator('.ledger').innerText();
+    const body = await page.locator('.raw-movement-ledger').textContent();
     assert.match(body, /Received 100 × Copper Elbow 1\/2 in\. into Main Warehouse\./);
     assert.match(body, /Transferred 25 × Copper Elbow 1\/2 in\. from Main Warehouse to Downtown Store\./);
     assert.match(body, /Adjusted Copper Elbow 1\/2 in\. at Main Warehouse from 75 to 72\./);
@@ -455,17 +463,18 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     assert.match(body, /Physical count/);
     await shot(page, 'activity');
 
+    await page.locator('details.filter-more > summary').click();
     await page.selectOption('select[name="operation"]', 'adjust');
     await page.waitForLoadState('networkidle');
-    const filtered = await page.locator('.ledger').innerText();
+    const filtered = await page.locator('.raw-movement-ledger').textContent();
     assert.match(filtered, /Adjusted/);
     assert.doesNotMatch(filtered, /Received 100/);
   });
 
   await t.test('the overview reports the same numbers', async () => {
-    await page.goto(`${BASE}/overview`);
-    const text = await page.locator('.stat-grid').innerText();
-    assert.match(text, /Tracked items/);
+    await page.goto(`${BASE}/`);
+    const text = await page.locator('main').innerText();
+    assert.match(text, /326 units/);
     // 92 elbows + 28 sweaters + 2 laptops + 204 rations
     assert.match(text, /326/);
     await shot(page, 'overview');
@@ -545,7 +554,7 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await mobile.waitForSelector('.search-hit');
     await mobile.click('.search-hit >> nth=0');
     await mobile.waitForURL(/\/inventory\/item_/);
-    assert.equal(Number((await mobile.locator('.item-total .value').innerText()).replace(/\D/g, '')), 92);
+    assert.equal(await itemTotal(mobile), 92);
     await shot(mobile, 'mobile-item');
 
     // Current stock is readable without sideways scrolling.
@@ -561,8 +570,8 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await dialog.locator('#receive-location').selectOption({ label: 'Downtown Store' });
     await dialog.locator('#receive-quantity').fill('8');
     await shot(mobile, 'mobile-receive');
-    await Promise.all([mobile.waitForNavigation(), dialog.locator('button[type=submit]').click()]);
-    assert.equal(Number((await mobile.locator('.item-total .value').innerText()).replace(/\D/g, '')), 100);
+    await submitAction(mobile, dialog);
+    assert.equal(await itemTotal(mobile), 100);
 
     // A basic movement from a phone.
     await mobile.click('button[data-modal-open="modal-transfer"]');
@@ -571,11 +580,11 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await move.locator('#transfer-from').selectOption({ label: 'Downtown Store' });
     await move.locator('#transfer-to').selectOption({ label: 'Main Warehouse' });
     await move.locator('#transfer-quantity').fill('3');
-    await Promise.all([mobile.waitForNavigation(), move.locator('button[type=submit]').click()]);
+    await submitAction(mobile, move);
 
     const main = mobile.locator('.location-bar').filter({ hasText: 'Main Warehouse' }).first();
     assert.equal(Number((await main.locator('.value').innerText()).replace(/\D/g, '')), 75);
-    assert.equal(Number((await mobile.locator('.item-total .value').innerText()).replace(/\D/g, '')), 100);
+    assert.equal(await itemTotal(mobile), 100);
     await shot(mobile, 'mobile-after-transfer');
 
     assert.deepEqual(mobileErrors, [], 'no uncaught errors on mobile');

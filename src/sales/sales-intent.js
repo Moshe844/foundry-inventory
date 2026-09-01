@@ -12,7 +12,7 @@ const SCHEMA = {
   type: 'object', additionalProperties: false,
   required: ['operation', 'customerText', 'orderText', 'itemText', 'variantText', 'locationText', 'quantity', 'neededBy', 'reason'],
   properties: {
-    operation: { type: 'string', enum: ['create', 'add', 'fulfill', 'cancel_line', 'cancel_order', 'list_waiting'] },
+    operation: { type: 'string', enum: ['create', 'add', 'fulfill', 'complete_order', 'cancel_line', 'cancel_order', 'list_waiting'] },
     customerText: { type: 'string' }, orderText: { type: 'string' }, itemText: { type: 'string' },
     variantText: { type: 'string' }, locationText: { type: 'string' }, quantity: { type: 'integer', minimum: -1 },
     neededBy: { type: 'string' }, reason: { type: 'string' },
@@ -21,11 +21,46 @@ const SCHEMA = {
 
 const SYSTEM = `You translate ordinary-language customer-order requests into one typed Sales Order operation.
 Use create when a customer has placed/committed an order. Use add for added quantity on an existing order.
-Use fulfill when stock shipped/left for a named customer order. Use cancel_line when one product was cancelled,
+Use fulfill when a stated quantity of stock shipped/left for a named customer order. Use complete_order when the
+owner explicitly asks to complete, finish, or ship the entire named order and did not state one line quantity.
+Use cancel_line when one product was cancelled,
 cancel_order when the whole order was cancelled, and list_waiting for a read-only question about customer orders
 waiting for stock. Preserve customer, order, product, variant, location, quantity and requested date exactly.
 neededBy must be YYYY-MM-DD when an exact date can be resolved from today's date; otherwise empty.
 Never invent missing records or quantities. Use -1 when quantity was not stated. Return only the schema.`;
+
+function asksToCompleteWholeOrder(message) {
+  const text = String(message || '').trim();
+  return /\b(?:complete|finish|fulfill|ship)\b[^.?!]*\b(?:(?:sales|customer)\s+)?order\b/i.test(text)
+    || /\b(?:(?:sales|customer)\s+)?order\b[^.?!]*\b(?:complete|finished|fulfilled|shipped)\b/i.test(text);
+}
+
+/**
+ * Whole-order completion is both consequential and common enough that it must
+ * not depend on an AI round trip. Ground the customer/order against this
+ * workspace, then let the normal deterministic Sales Order engine act.
+ */
+function groundedWholeOrderCompletion(db, workspaceId, message) {
+  if (!asksToCompleteWholeOrder(message)) return null;
+  const text = String(message || '');
+  const orderNumber = (text.match(/\bSO-\d+\b/i) || [''])[0];
+  if (orderNumber) {
+    return { operation: 'complete_order', customerText: '', orderText: orderNumber,
+      itemText: '', variantText: '', locationText: '', quantity: -1, neededBy: '',
+      reason: 'The owner explicitly asked to complete the whole sales order.' };
+  }
+  const normalized = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
+  const matches = sales.listOrders(db, workspaceId, { limit: 200 })
+    .filter((order) => sales.OPEN.includes(order.status) || order.status === 'DRAFT')
+    .filter((order) => [order.customer.name, order.customer.company].filter(Boolean).some((name) => {
+      const candidate = String(name).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      return candidate && normalized.includes(` ${candidate} `);
+    }));
+  const customers = [...new Set(matches.map((order) => order.customer.name))];
+  return { operation: 'complete_order', customerText: customers.length === 1 ? customers[0] : '',
+    orderText: '', itemText: '', variantText: '', locationText: '', quantity: -1, neededBy: '',
+    reason: 'The owner explicitly asked to complete the whole sales order.' };
+}
 
 function snapshot(db, workspaceId) {
   return {
@@ -48,18 +83,21 @@ function fallback(message) {
     return { operation: 'list_waiting', customerText: '', orderText: '', itemText: '', variantText: '', locationText: '', quantity: -1, neededBy: '', reason: 'Read waiting customer orders.' };
   }
   const cancel = /\bcancel(?:led|ed)?\b/i.test(text);
+  const completeOrder = asksToCompleteWholeOrder(text);
   const fulfill = /\b(ship|shipped|fulfill|fulfilled|dispatch|dispatched)\b/i.test(text);
   const add = /\badd(?:ed)?\b.*\b(?:to|onto)\b/i.test(text);
   const create = /\b(?:ordered|placed an order|customer order)\b/i.test(text);
   return {
     operation: cancel ? (/whole|entire|order\s+(?:was\s+)?cancel/i.test(text) ? 'cancel_order' : 'cancel_line')
-      : fulfill ? 'fulfill' : add ? 'add' : create ? 'create' : 'list_waiting',
-    customerText: '', orderText: (text.match(/\bSO-\d+\b/i) || [''])[0], itemText: text, variantText: '',
+      : completeOrder ? 'complete_order' : fulfill ? 'fulfill' : add ? 'add' : create ? 'create' : 'list_waiting',
+    customerText: '', orderText: (text.match(/\bSO-\d+\b/i) || [''])[0], itemText: completeOrder ? '' : text, variantText: '',
     locationText: (text.match(/\bfrom\s+(.+?)(?:\.|$)/i) || [,''])[1], quantity, neededBy: '', reason: 'Deterministic fallback.',
   };
 }
 
 async function interpret(db, ctx, message, options = {}) {
+  const grounded = groundedWholeOrderCompletion(db, ctx.workspaceId, message);
+  if (grounded) return { ...grounded, statedAs: message };
   let data;
   try {
     const provider = options.provider || createProviderForTier('fast');
@@ -143,6 +181,39 @@ function apply(db, ctx, intent, options = {}) {
     return { kind: 'created', order: sales.confirm(db, ctx, draft.id, { idempotencyKey: `tell-confirm:${draft.id}` }) };
   }
   const order = findOrder(db, ctx.workspaceId, intent);
+  if (intent.operation === 'complete_order') {
+    if (order.status === 'FULFILLED') {
+      return { kind: 'already_completed', order,
+        message: `${order.order_number} was already completed. Nothing was recorded twice.` };
+    }
+    let current = order;
+    try {
+      if (current.status === 'DRAFT') {
+        current = sales.confirm(db, ctx, current.id, {
+          idempotencyKey: `${options.idempotencyKey || `tell-complete:${current.id}`}:confirm`,
+        });
+      } else if (current.totals.backordered > 0) {
+        sales.allocateAvailable(db, ctx, current.id, {
+          idempotencyKey: `${options.idempotencyKey || `tell-complete:${current.id}`}:allocate`,
+        });
+        current = sales.getOrder(db, ctx.workspaceId, current.id);
+      }
+    } catch (error) {
+      if (!(error instanceof ValidationError)) throw error;
+      return { kind: 'blocked', order: sales.getOrder(db, ctx.workspaceId, current.id), message: error.message };
+    }
+    if (current.totals.backordered > 0) {
+      return { kind: 'blocked', order: current,
+        message: `${current.order_number} cannot be completed yet: ${current.totals.backordered} unit(s) are not available. ${current.totals.allocated} available unit(s) are reserved; nothing was shipped.` };
+    }
+    if (current.totals.allocated <= 0) {
+      return { kind: 'blocked', order: current,
+        message: `${current.order_number} has no remaining allocated stock to ship. Nothing was changed.` };
+    }
+    return { kind: 'fulfilled', order: sales.fulfill(db, ctx, current.id, {}, {
+      idempotencyKey: `${options.idempotencyKey || `tell-complete:${current.id}`}:fulfill`,
+    }) };
+  }
   if (intent.operation === 'cancel_order') return { kind: 'cancelled', order: sales.cancel(db, ctx, order.id, intent.reason) };
   const resolved = findSku(db, ctx.workspaceId, intent);
   if (!resolved.ok) return question(intent, 'variantText', resolved.question, { choices: resolved.choices });

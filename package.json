@@ -18,7 +18,9 @@
     "test:live": "node -r ./tests/helpers/test-models.js --test tests/live/*.test.js",
     "test:e2e": "node -r ./tests/helpers/test-models.js --test --test-concurrency=1 tests/e2e/inventory.e2e.js tests/e2e/foundry.e2e.js tests/e2e/attention.e2e.js tests/e2e/workspaces.e2e.js tests/e2e/actions.e2e.js tests/e2e/imports.e2e.js tests/e2e/purchasing.e2e.js tests/e2e/onboarding.e2e.js tests/e2e/autopilot.e2e.js tests/e2e/autopilot-authority.e2e.js",
     "test:all": "npm test && npm run test:live && npm run test:e2e",
-    "seed:samples": "node scripts/make-sample-import.js"
+    "seed:samples": "node scripts/make-sample-import.js",
+    "backup": "node scripts/backup-database.js",
+    "restore:test": "node scripts/verify-restore.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

@@ -151,6 +151,10 @@ test('the whole approval flow works end to end over HTTP', async () => {
   assert.match(proposal, /Track low stock by size/);
   assert.match(proposal, /One thing worth deciding/);
   assert.match(proposal, /Let Foundry decide/);
+  assert.match(proposal, /What starts working after this setup/);
+  assert.match(proposal, /Accounting.*on automatically/);
+  assert.match(proposal, /Confirmed orders hold available stock/);
+  assert.match(proposal, /Connect Gmail or Microsoft 365/);
 
   const understandingId = proposalPath.split('/').pop();
   const configured = await post(

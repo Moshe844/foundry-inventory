@@ -64,11 +64,44 @@ Intents:
 - on_order: what is already ordered and not yet arrived, or what is due to
   arrive in a period.
 - late_orders: purchase orders past their expected arrival date.
+- supplier_order_status: whether a supplier confirmed an order, what is still
+  outstanding from a supplier, or why a named PO is late. Put the supplier or
+  PO number in entityQuery.
+- supplier_document_changes: what a supplier changed on an invoice,
+  acknowledgement, shipment notice or other document. Put the supplier,
+  PO number, invoice/reference or subject wording in entityQuery.
+- supplier_price_changes: supplier price increases in a period. Put the named
+  supplier in entityQuery, or '' for every supplier.
 - last_cost: what they last paid for something.
 - suppliers_for_item: who sells something, or which supplier to use for it.
 - selling_price: the current customer selling price of a product or variant.
 - sales_summary: how many customer sales orders are open, committed,
   backordered/waiting for stock or fulfilled.
+- financial_summary: overall financial health, financial pulse, or how the
+  business is doing financially.
+- business_health: a whole-business briefing combining inventory, customer
+  orders, purchasing, suppliers, connections and money — "how are we doing?".
+- cash_pressure: why cash is low or where operational cash pressure comes from.
+- customer_orders_at_risk: which customer orders may miss their requested date.
+- stock_coverage: whether current and incoming stock covers open customer orders.
+- supplier_risk: which suppliers or late supplier orders are causing problems.
+- next_attention: what is most likely to need the owner's attention next, or
+  whether there is anything to worry about.
+- profit_and_loss: revenue, gross profit, net profit, loss, expenses, margin,
+  or a profit-and-loss question.
+- balance_sheet: assets, liabilities, equity, or balance sheet.
+- cash_position: cash or bank book balance.
+- receivables_aging: customer invoices, who owes money, AR or receivables aging.
+- payables_aging: supplier bills, what the business owes, AP or payables aging.
+- inventory_valuation: inventory value at cost or cost valuation.
+- sales_tax_summary: sales tax collected, recoverable, payable or liability.
+- bills_due: supplier bills due soon or in a named period.
+- customer_payments: how much a named customer paid. Put the customer in entityQuery.
+- supplier_spend: purchase volume and payments for a named supplier. Put the supplier in entityQuery.
+- product_profitability: which product has the most gross profit.
+- location_profitability: which location has the most gross profit.
+- financial_comparison: why profit changed or comparison with the prior period.
+- slow_inventory_value: money tied up in slow or idle inventory.
 - connection_summary: which external connections are connected, disconnected,
   stale, or need attention.
 - connection_last_event: the last activity or event received from a named
@@ -87,8 +120,8 @@ Intents:
 - action: they are telling Foundry to DO something to their stock — move,
   transfer, receive, issue, remove, adjust, correct a count, add a location.
   Not a question about records; a request to change them. Only things that
-  change stock: Foundry cannot contact anyone, so "email the supplier" or
-  "chase that order" is unsupported, not an action.
+  change stock. Supplier communication requests are handled through the
+  supplier and purchase-order workflows, not this stock-action intent.
 - unsupported: anything else.
 
 Rules:
@@ -103,8 +136,9 @@ Rules:
   about buying, incoming stock, lead times, what something cost and who sells
   it all have real answers. Use the purchasing intents for those.
 - Choose 'unsupported' only for things Foundry genuinely cannot do at all:
-  profit, payments, accounting, forecasting beyond current usage, or contacting a supplier or customer by any
-  means — Foundry drafts purchase orders but never sends or chases them. Put one plain sentence in
+  tax filing, payroll, automatic bill payment without authority, or forecasting beyond available evidence. Foundry can answer
+  financial questions from its posted ledger and can prepare, send and
+  follow up supplier messages according to its recorded authority. Put one plain sentence in
   unsupportedReason saying what it cannot do.
 - unsupportedReason must be '' for every other intent.`;
 
@@ -119,6 +153,80 @@ Question: ${question}`;
 /** Turns a question into a validated plan. Never returns unbounded free text. */
 async function plan(question, options = {}) {
   const clean = requireText(question, 'Question', { max: MAX_QUESTION });
+  if (/\b(?:how are we doing|how is (?:my|our|the) business|business briefing|business right now|overall business)\b/i.test(clean)
+      && !/\bfinancial(?:ly)?\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'business_health', windowDays: 30 });
+  }
+  if (/\bwhy\b.*\b(?:cash|money)\b.*\b(?:low|short|down|tight)|\bwhy\b.*\b(?:low|short|tight)\b.*\b(?:cash|money)\b|\bwhat(?:'s| is) (?:using|hurting|draining) (?:our|my) cash\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'cash_pressure', windowDays: 30 });
+  }
+  if (/\bwhich\b.*\bcustomer orders?\b.*\b(?:risk|late|miss)|\bcustomer orders?\b.*\bat risk\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'customer_orders_at_risk' });
+  }
+  if (/\b(?:enough|sufficient) (?:stock|inventory)\b.*\b(?:cover|fulfill|fulfil)|\bcover\b.*\b(?:customer orders?|demand)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'stock_coverage' });
+  }
+  if (/\bwhich suppliers?\b.*\b(?:problem|risk|late|delay)|\bsuppliers?\b.*\bcausing problems?\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'supplier_risk' });
+  }
+  if (/\bwhat\b.*\b(?:attention next|need attention next)|\banything\b.*\b(?:worry|concern)|\bwhat should i worry about\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'next_attention' });
+  }
+  if (/\bwhy\s+did\s+(?:keeper|foundry|you|we)\s+(?:order|buy|reorder)\b/i.test(clean)) {
+    const entityQuery = clean.replace(/^.*?\b(?:order|buy|reorder)\b/i, '')
+      .replace(/[?.!]+$/g, '').trim();
+    return queryService.normalisePlan({ intent: 'foundry_why', entityQuery });
+  }
+  if (/\b(?:which|what)\s+product\b.*\b(?:profit|money|margin)|\bmost\s+profitable\s+product/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'product_profitability', windowDays: /year/i.test(clean) ? 365 : 30 });
+  }
+  if (/\b(?:which|what)\s+location\b.*\b(?:profit|money|margin)|\bmost\s+profitable\s+location/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'location_profitability', windowDays: /year/i.test(clean) ? 365 : 30 });
+  }
+  if (/\b(?:why\s+(?:was|is)\s+profit|what\s+changed|compare).*(?:last|prior|month|period)|\bsince\s+last\s+month/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'financial_comparison', windowDays: /week/i.test(clean) ? 7 : 30 });
+  }
+  if (/\b(?:money|cash|value)\b.*\b(?:tied\s+up|slow|idle)\b.*\b(?:inventory|stock)|\bslow\s+inventory\s+value/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'slow_inventory_value', windowDays: /year/i.test(clean) ? 365 : 90 });
+  }
+  if (/\bhow\s+much\b.*\b(?:customer|school|client)?\s*paid\b/i.test(clean)) {
+    const entityQuery = clean.replace(/\b(?:how|much|did|has|have|customer|client|paid|pay|me|us|this|month|year|week)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    return queryService.normalisePlan({ intent: 'customer_payments', entityQuery, windowDays: /year/i.test(clean) ? 365 : 30 });
+  }
+  if (/\bhow\s+much\b.*\b(?:spend|spent|purchases?|bought)\b.*\b(?:with|from)\b/i.test(clean)) {
+    const entityQuery = clean.replace(/^.*?\b(?:with|from)\b/i, '').replace(/\b(?:this|month|year|week)\b/gi, ' ').trim();
+    return queryService.normalisePlan({ intent: 'supplier_spend', entityQuery, windowDays: /year/i.test(clean) ? 365 : 30 });
+  }
+  if (/\bbills?\b.*\bdue\b|\bwhat\s+is\s+due\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'bills_due', windowDays: /week/i.test(clean) ? 7 : 30 });
+  }
+  if (/\bbills?\b.*\b(?:pay|owe)\b|\bwhat\s+(?:do\s+)?we\s+owe\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'payables_aging' });
+  }
+  if (/\b(?:profit\s*(?:and|&)\s*loss|p\s*&\s*l|gross\s+profit|net\s+(?:profit|income)|revenue|operating\s+expenses?|margin)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'profit_and_loss', windowDays: /this\s+week/i.test(clean) ? 7 : /this\s+year/i.test(clean) ? 365 : 30 });
+  }
+  if (/\b(?:balance\s+sheet|assets?\s+and\s+liabilit|equity)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'balance_sheet' });
+  }
+  if (/\b(?:cash\s+(?:position|balance)|how\s+much\s+cash|bank\s+balance)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'cash_position' });
+  }
+  if (/\b(?:accounts?\s+receivable|a\s*\/\s*r|who\s+owes|customer\s+invoices?|receivables?\s+aging)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'receivables_aging' });
+  }
+  if (/\b(?:accounts?\s+payable|a\s*\/\s*p|bills?\s+(?:to\s+pay|due)|what\s+(?:do\s+)?we\s+owe|payables?\s+aging)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'payables_aging' });
+  }
+  if (/\b(?:inventory\s+(?:value|valuation)|value\s+of\s+(?:my|our|the)\s+inventory|stock\s+value)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'inventory_valuation' });
+  }
+  if (/\b(?:sales\s+tax|tax\s+(?:payable|liability|collected|recoverable))\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'sales_tax_summary' });
+  }
+  if (/\b(?:financial\s+(?:summary|health|pulse)|how\s+(?:is|are)\s+(?:the\s+)?business\s+doing)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'financial_summary', windowDays: 30 });
+  }
   if (/\b(?:how many|number of|count of|total)\s+(?:active\s+)?(?:items?|products?|skus?|variants?)\b.*\b(?:inventory|catalog(?:ue)?)\b/i.test(clean)
       || /\b(?:inventory|catalog(?:ue)?)\s+(?:summary|overview)\b/i.test(clean)
       || /\bwhat(?:'s| is)\s+in\s+(?:my|our|the)\s+inventory\b/i.test(clean)) {
@@ -131,7 +239,7 @@ async function plan(question, options = {}) {
     const entityQuery = clean.replace(/\b(?:what|was|the|last|latest|most|recent|event|activity|received|from|connection)\b/gi, ' ').replace(/\s+/g, ' ').trim();
     return queryService.normalisePlan({ intent: 'connection_last_event', entityQuery });
   }
-  if (/\b(?:which|what)\b.*\b(?:products?|skus?|locations?)\b.*\b(?:unmapped|not\s+mapped|need(?:s|ing)?\s+(?:a\s+)?match)|\b(?:unmapped|mapping\s+issues?)\b/i.test(clean)) {
+  if (/\b(?:which|what)\b.*\b(?:products?|skus?|locations?)\b.*\b(?:unmapped|not\s+mapped|aren'?t\s+mapped|isn'?t\s+mapped|need(?:s|ing)?\s+(?:a\s+)?match)|\b(?:unmapped|mapping\s+issues?)\b/i.test(clean)) {
     const entityQuery = clean.replace(/\b(?:which|what|products?|skus?|locations?|are|is|aren'?t|isn'?t|not|unmapped|mapped|mapping|issues?|need|needs|a|match)\b/gi, ' ').replace(/\s+/g, ' ').trim();
     return queryService.normalisePlan({ intent: 'connection_mapping_issues', entityQuery });
   }

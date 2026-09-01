@@ -277,6 +277,9 @@ test('single-letter sizes do not eat the product name', () => {
     ['Small Parts Kit', ['S', 'M', 'L'], 'Small Parts Kit'],
     ['Baby headband - White, 0-6 months', ['White', '0-6 months'], 'Baby headband'],
     ['Kids Tights - Black, 5', ['Black', '5'], 'Kids Tights'],
+    ['1kg bag of coffee beans', ['250g', '1kg'], 'Coffee beans'],
+    ['250g coffee beans', ['250g', '1kg'], 'Coffee beans'],
+    ['Red Label Tea', ['Red', 'Green'], 'Red Label Tea'],
   ];
 
   for (const [example, values, expected] of cases) {

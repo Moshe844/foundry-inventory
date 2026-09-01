@@ -325,6 +325,30 @@ CREATE TABLE IF NOT EXISTS document_removal_proposals (
 CREATE INDEX IF NOT EXISTS idx_document_removals_workspace
   ON document_removal_proposals(workspace_id, created_at DESC);
 
+-- A later copy of an already-imported document can be meaningful when the
+-- original import was explicitly removed.  Restoring it is a new, approved
+-- ledger operation against the original product/SKU identities, not a second
+-- catalogue import.  The source message makes the approval replay-safe.
+CREATE TABLE IF NOT EXISTS document_restore_reviews (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  setup_document_id     TEXT NOT NULL REFERENCES setup_documents(id) ON DELETE CASCADE,
+  connector_id          TEXT NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
+  message_id            TEXT NOT NULL REFERENCES connection_email_messages(id) ON DELETE CASCADE,
+  requested_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  approved_by_user_id   TEXT REFERENCES users(id) ON DELETE RESTRICT,
+  snapshot              TEXT NOT NULL DEFAULT '{}',
+  integrity_hash        TEXT NOT NULL,
+  status                TEXT NOT NULL DEFAULT 'PENDING'
+                          CHECK (status IN ('PENDING','COMPLETED','DECLINED')),
+  result                TEXT NOT NULL DEFAULT '{}',
+  created_at            TEXT NOT NULL,
+  completed_at          TEXT,
+  UNIQUE (workspace_id, message_id, setup_document_id)
+);
+CREATE INDEX IF NOT EXISTS idx_document_restore_reviews_workspace
+  ON document_restore_reviews(workspace_id, created_at DESC);
+
 -- Controlled catalogue code transformations prepared from Tell Foundry.
 -- External supplier codes are deliberately excluded: these are the owner's
 -- internal item/SKU identifiers, shown old -> new before one atomic approval.

@@ -12,6 +12,14 @@ const providers = require('./providers/registry');
 
 const stateHash = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 
+function mailboxEventId(providerType, messageId) {
+  const raw = `${providerType}:${messageId}`;
+  // Microsoft Graph message ids can exceed the shared external-event limit.
+  // Keep ordinary provider ids readable, but use a stable transport hash when
+  // necessary. The original provider id is still preserved on the email row.
+  return raw.length <= 160 ? raw : `${providerType}:message:${stateHash(messageId)}`;
+}
+
 function createState(db, ctx, connectorId, providerType, metadata = {}) {
   const state = crypto.randomBytes(32).toString('base64url');
   const now = nowIso();
@@ -362,7 +370,7 @@ async function syncMailbox(db, workspaceId, connectorId, options = {}) {
       }
     }
     results.push(require('./event-ingestion').ingest(db, auth, {
-      eventId: `${connection.provider_type}:${message.messageId}`,
+      eventId: mailboxEventId(connection.provider_type, message.messageId),
       type: 'supplier_document.received', occurredAt: message.receivedAt, data: message,
     }));
     const captured = db.prepare(`SELECT m.id, r.document_mode FROM connection_email_messages m

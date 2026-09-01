@@ -1,0 +1,50 @@
+<div class="breadcrumb"><a href="/accounting">Accounting</a> <%- helpers.icon('chevron', { size: 13 }) %> <span>Review</span></div>
+
+<% if (review.order) { %>
+  <div class="page-head"><div><p class="eyebrow">Sales order accounting</p><h1>Finish <%= review.order.order_number %></h1>
+    <p class="lede">The order shipped successfully. Its physical inventory already changed once; this review concerns only the financial record.</p></div>
+    <span class="badge badge--warning">Accounting not posted</span>
+  </div>
+
+  <div class="notice notice--warning"><div><strong>Why Foundry stopped</strong><br><%= review.outcome.message || review.error_message %></div></div>
+
+  <section class="card"><div class="card-head"><div><h2>What happened</h2><p class="hint">One business event, shown in plain language.</p></div></div>
+    <div class="card-body"><div class="grid grid--3">
+      <div class="stat"><span>Customer sale</span><strong><%= review.order.order_number %></strong><small><%= review.order.customer.name %> · shipped <%= helpers.dateTime(review.saleEvent.created_at) %></small></div>
+      <div class="stat"><span>Sales value</span><strong><%= helpers.money(review.revenueMinor, review.order.currency) %></strong><small>From the approved Sales Order price</small></div>
+      <div class="stat"><span>Inventory effect</span><strong>Already completed</strong><small>Foundry will not reduce stock again</small></div>
+    </div></div>
+  </section>
+
+  <section class="card"><div class="card-head"><div><h2>Cost evidence Foundry found</h2><p class="hint">Only received Purchase Orders dated before Accounting started qualify.</p></div></div>
+    <div class="card-body">
+      <% if (review.canUseVerifiedCosts) { %>
+        <div class="table-wrap"><table class="table"><thead><tr><th>Product shipped</th><th>Verified source</th><th class="num">Unit cost</th><th class="num">Cost of this shipment</th></tr></thead><tbody>
+          <% review.fulfilled.forEach(function(entry) { var proof = review.inference.known.find(function(row){ return row.sku_id === entry.line.sku_id && row.location_id === entry.locationId; }); %>
+            <tr><td><strong><%= entry.line.displayName %></strong><br><span class="muted"><%= entry.quantity %> unit<%= entry.quantity === 1 ? '' : 's' %> shipped</span></td>
+              <td><%= [...new Set(proof.evidence.map(function(e){ return e.poNumber; }))].join(', ') %><br><span class="muted">Received before <%= configured.startDate %></span></td>
+              <td class="num"><%= helpers.money(proof.averageUnitCostMinor, review.order.currency) %></td>
+              <td class="num"><%= helpers.money(proof.averageUnitCostMinor * entry.quantity, review.order.currency) %></td></tr>
+          <% }) %>
+        </tbody></table></div>
+        <div class="stats-row">
+          <div class="stat"><strong><%= helpers.money(review.revenueMinor, review.order.currency) %></strong><span>Revenue</span></div>
+          <div class="stat"><strong><%= helpers.money(review.cogsMinor, review.order.currency) %></strong><span>Product cost</span></div>
+          <div class="stat"><strong><%= helpers.money(review.grossProfitMinor, review.order.currency) %></strong><span>Gross profit</span></div>
+        </div>
+        <form method="post" action="/accounting/review/<%= review.id %>/use-verified-costs">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--primary" type="submit">Use the verified PO cost and post <%= review.order.order_number %></button>
+        </form>
+        <p class="hint">This records revenue, customer receivable, product cost, and the inventory asset reduction. It does not ship the order or change on-hand again.</p>
+      <% } else { %>
+        <div class="notice notice--warning"><div><strong>Foundry still cannot prove the earlier product cost.</strong><br>No current supplier price was substituted for historical evidence.</div></div>
+        <% review.inference.unknown.forEach(function(row){ %><p><strong><%= row.item_name %><%= row.variant_label ? ' / ' + row.variant_label : '' %></strong> at <%= row.location_name %>: <%= row.reason %></p><% }) %>
+        <a class="btn" href="/accounting">Return to Accounting</a>
+      <% } %>
+    </div>
+  </section>
+<% } else { %>
+  <div class="page-head"><div><p class="eyebrow">Accounting review</p><h1>A financial record needs evidence</h1><p class="lede"><%= review.outcome.message || review.error_message || 'Foundry stopped before making an unsupported posting.' %></p></div></div>
+  <section class="card"><div class="card-body"><p>Foundry kept the original business event and did not guess. This exception does not yet have a guided resolution screen.</p><a class="btn" href="/accounting">Return to Accounting</a></div></section>
+<% } %>

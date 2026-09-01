@@ -239,7 +239,7 @@ test('Ask Foundry answers from the ledger and shows how it read the question', a
   assert.match(page, /changes are approved on the actions page/);
 });
 
-test('Ask Foundry says what it cannot do rather than guessing', async () => {
+test('Ask Foundry distinguishes no realized margin from a zero-profit claim', async () => {
   const provider = fakeProvider({
     intent: 'unsupported',
     entityQuery: '',
@@ -253,12 +253,9 @@ test('Ask Foundry says what it cannot do rather than guessing', async () => {
   await signIn(agent, workspace.account.email, workspace.account.password);
 
   const page = plain((await agent.get('/ask').query({ q: 'What is our margin on these?' })).text);
-  assert.match(page, /does not know what you paid/);
-  assert.match(page, /Not something Foundry can answer/);
-  // A refusal must still leave somewhere to go: the examples chips only showed
-  // before a question was asked, so a refused question was a dead end.
-  assert.match(page, /Here is what you can ask/);
-  assert.match(page, /what Foundry can do today/);
+  assert.match(page, /does not have a realized margin to report yet/i);
+  assert.match(page, /on-hand cost, selling value, and potential gross profit separately/i);
+  assert.match(page, /Open profit and loss/i);
 });
 
 test('every attention route needs a signed-in session', async () => {

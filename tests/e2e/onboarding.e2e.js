@@ -170,9 +170,9 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
   let reviewUrl = null;
 
   t.after(async () => {
+    await stopServer(server);
     await context.close();
     await browser.close();
-    await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
@@ -356,9 +356,9 @@ test('Onboarding end to end: the messy customer', { timeout: 600000 }, async (t)
   const page = await context.newPage();
 
   t.after(async () => {
+    await stopServer(server);
     await context.close();
     await browser.close();
-    await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
