@@ -673,6 +673,14 @@ const EXECUTORS = {
     ];
     const noActivity = pnl.revenueMinor === 0 && pnl.cogsMinor === 0 && pnl.operatingExpenseMinor === 0;
     return { rows, columns: ['measure', 'display'], handoff: { href: `/accounting/reports/profit-and-loss?from=${from}&to=${to}`, label: 'Open profit and loss' },
+      // "Have I made any profit yet?" is a yes or no before it is a figure.
+      // What this verdict is about, so a question asking the opposite gets
+      // the opposite answer rather than an agreeable one.
+      assertsProfit: true,
+      verdict: noActivity
+        ? { yes: false, asserts: PROFIT_WORDS, opposite: LOSS_WORDS, summary: 'nothing has been sold or bought in this period yet.' }
+        : { yes: pnl.netIncomeMinor > 0, asserts: PROFIT_WORDS, opposite: LOSS_WORDS,
+            summary: `${money(Math.abs(pnl.netIncomeMinor))} ${pnl.netIncomeMinor > 0 ? 'so far' : pnl.netIncomeMinor < 0 ? 'lost so far' : 'exactly break-even'}, on ${money(pnl.revenueMinor)} of sales.` },
       answer: noActivity
         ? `No revenue, product cost, or operating expense has been posted for ${from} through ${to}, so Foundry does not have a realized margin to report yet. The Accounting inventory view shows on-hand cost, selling value, and potential gross profit separately.`
         : `This is ${money(pnl.netIncomeMinor)} net ${pnl.netIncomeMinor >= 0 ? 'profit' : 'loss'} based on the expenses recorded in Foundry for ${from} through ${to}: ${money(pnl.revenueMinor)} revenue minus ${money(pnl.cogsMinor)} cost of goods and ${money(pnl.operatingExpenseMinor)} operating expenses recorded in Foundry. Gross profit is ${money(pnl.grossProfitMinor)}; it is not the same as net profit. This net result is incomplete if business costs such as rent or payroll have not been recorded in Foundry.` };
@@ -1485,11 +1493,65 @@ function notFound(plan) {
  */
 Object.assign(EXECUTORS, PURCHASING_EXECUTORS);
 
+const PROFIT_WORDS = ['profit', 'profitable', 'making money', 'earning', 'in the black'];
+const LOSS_WORDS = ['loss', 'lose', 'losing', 'lost', 'in the red'];
+
+// The words a question starts with when it wants a yes or a no. 'How much'
+// and 'why' do not, and prefixing those with 'Yes' would be noise.
+const VERDICT_OPENERS = new Set(['have','has','had','did','do','does','is','are','am','was','were','can','should','will','any']);
+
+/**
+ * Answers the question that was actually asked, before stating the figures.
+ *
+ * Every answer here is assembled from real numbers rather than written by a
+ * model, which is why Foundry cannot invent one. But a template states a fact
+ * regardless of what was asked, so "Have I made any profit yet?" — a yes or no
+ * question — was answered "This is 9.92 net profit based on the expenses
+ * recorded in Foundry for 2026-08-03 through 2026-09-01: ...". Every figure
+ * correct, and not an answer. An accountant asked that question says "Yes,
+ * about a hundred dollars" and then tells you what it excludes.
+ *
+ * So an executor that knows its question has a yes-or-no form says so, and the
+ * evidence follows the answer instead of replacing it. Executors that cannot
+ * be reduced to a verdict return nothing here and read exactly as before.
+ */
+function leadWithTheAnswer(question, result) {
+  if (!result || !result.verdict || !result.answer) return result;
+  const asked = String(question || '').trim().toLowerCase();
+  const firstWord = asked.split(/[^a-z]+/).filter(Boolean)[0] || '';
+  if (!VERDICT_OPENERS.has(firstWord)) return result;
+
+  /*
+   * Which proposition the question actually makes.
+   *
+   * A verdict is only safe when Foundry knows what it is agreeing with. The
+   * first version answered "Am I making a loss?" with "Yes — 4.50 so far"
+   * about a profitable month, because it asserted its own proposition and
+   * ignored the questioner's. Being confidently wrong is worse than the
+   * unshaped answer it replaced.
+   *
+   * So the executor states what its verdict asserts, and unless the question
+   * plainly asks about that or its opposite, no verdict is offered and the
+   * evidence stands alone — the same rule the rest of Foundry follows.
+   */
+  const { yes, summary, asserts, opposite } = result.verdict;
+  const mentions = (words) => (words || []).some((word) => asked.includes(word));
+  const positive = mentions(asserts);
+  const negative = mentions(opposite);
+  if (positive === negative) return result;
+
+  const answersYes = negative ? !yes : yes;
+  const opening = summary
+    ? (answersYes ? 'Yes — ' : 'No — ') + summary
+    : (answersYes ? 'Yes.' : 'No.');
+  return { ...result, answer: opening + ' ' + result.answer };
+}
 function execute(db, workspaceId, rawPlan, options = {}) {
   const plan = normalisePlan(rawPlan);
   const executor = EXECUTORS[plan.intent] || EXECUTORS.unsupported;
   const started = Date.now();
-  const result = executor(db, workspaceId, plan, options);
+  const executed = executor(db, workspaceId, plan, options);
+  const result = leadWithTheAnswer(options.question, executed);
   return {
     plan,
     isAction: result.isAction === true,

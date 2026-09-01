@@ -63,3 +63,53 @@ test('financial questions work immediately because accounting is automatic', () 
   assert.match(result.answer, /Ledger cash is \$0\.00/i);
   assert.equal(result.handoff, null);
 });
+
+/**
+ * A yes-or-no question gets a yes or a no.
+ *
+ * Answers here are assembled from real figures rather than written by a model,
+ * which is why Foundry cannot invent one — but a template states its fact
+ * regardless of what was asked. "Have I made any profit yet?" was answered
+ * "This is $99.92 net profit based on the expenses recorded in Foundry for
+ * 2026-08-03 through 2026-09-01: ...". Every figure correct, and not an answer.
+ *
+ * The first attempt at fixing it was worse: it asserted its own proposition and
+ * answered "Am I making a loss?" with "Yes — $99.92 so far" about a profitable
+ * month. A verdict is only safe when Foundry knows which proposition the
+ * question makes, so where it cannot tell, it offers none.
+ */
+test('profit questions are answered in the form they were asked', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  ledger.configure(db, workspace.ctx, membership, { startDate: '2026-01-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE' });
+  const today = new Date().toISOString().slice(0, 10);
+  ledger.post(db, workspace.ctx, {
+    postingDate: today, description: 'Sale and cost', sourceKey: 'verdict-sale',
+    lines: [
+      { accountKey: 'CASH', debitMinor: 20_000 },
+      { accountKey: 'SALES_REVENUE', creditMinor: 20_000 },
+      { accountKey: 'COST_OF_GOODS_SOLD', debitMinor: 8_000 },
+      { accountKey: 'INVENTORY_ASSET', creditMinor: 8_000 },
+    ],
+  });
+  const ask = (question) => queries
+    .execute(db, workspace.workspaceId, { intent: 'profit_and_loss', windowDays: 30 }, { question })
+    .answer;
+
+  assert.match(ask('Have I made any profit yet?'), /^Yes — /, 'a profitable month says yes');
+  assert.match(ask('Am I profitable?'), /^Yes — /);
+
+  // The opposite proposition gets the opposite answer, not an agreeable one.
+  assert.match(ask('Am I making a loss?'), /^No — /);
+  assert.match(ask('Did I lose money?'), /^No — /);
+  assert.match(ask('Am I in the red?'), /^No — /);
+
+  // Questions that are not yes-or-no keep the plain statement of figures.
+  assert.doesNotMatch(ask('How much profit have I made?'), /^(Yes|No)/);
+  assert.doesNotMatch(ask('Why is profit low?'), /^(Yes|No)/);
+
+  // The evidence still follows the verdict; nothing is replaced by it.
+  assert.match(ask('Have I made any profit yet?'), /net profit based on the expenses recorded/);
+  db.close();
+});

@@ -16,11 +16,15 @@
         id="ask-question"
         type="text"
         name="q"
-        value="<%= question %>"
+        <%# The question just asked is the heading of the answer directly below,
+            so repeating it in the box only leaves the reader to clear it before
+            asking the next thing. It is still in the address bar to edit and
+            re-run if that is what they want. %>
+        value=""
         placeholder="<%= examples.length ? examples[0] : 'Ask about your stock' %>"
         maxlength="400"
         autocomplete="off"
-        <%= question ? '' : 'autofocus' %>
+        autofocus
       >
       <button class="btn btn--primary" type="submit" data-ask-submit>
         <%- helpers.icon('send', { size: 15 }) %> Ask
