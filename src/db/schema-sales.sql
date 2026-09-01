@@ -138,3 +138,61 @@ CREATE TABLE IF NOT EXISTS price_change_proposals (
 );
 CREATE INDEX IF NOT EXISTS idx_price_change_proposals_workspace
   ON price_change_proposals(workspace_id, status, created_at DESC);
+
+-- Fulfilment (Mission 14.6)
+--
+-- A shipment is the physical half of a sales order: what was actually taken
+-- off a shelf, put in a box, and handed to a carrier. It is deliberately
+-- separate from the order, because one order can leave in three boxes on
+-- three days, and a customer asking "where is my order" is really asking
+-- about a box, not about a promise.
+--
+-- Stock does not move when a shipment is created or packed. Allocation
+-- already means "spoken for, still here", which is exactly what picked and
+-- packed goods are. The inventory issue happens once, at the moment the
+-- shipment ships, so that there is one movement per physical departure and
+-- COGS lands on the day control actually transferred.
+
+CREATE TABLE IF NOT EXISTS sales_shipments (
+  id                     TEXT PRIMARY KEY,
+  workspace_id           TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  sales_order_id         TEXT NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
+  shipment_number        TEXT NOT NULL,
+  status                 TEXT NOT NULL CHECK (status IN ('PICKING','PACKED','SHIPPED','DELIVERED','CANCELLED')),
+  ship_from_location_id  TEXT REFERENCES locations(id) ON DELETE RESTRICT,
+  ship_to_address        TEXT,
+  carrier                TEXT,
+  service                TEXT,
+  tracking_number        TEXT,
+  tracking_url           TEXT,
+  package_count          INTEGER,
+  weight_grams           INTEGER,
+  shipping_cost_minor    INTEGER,
+  currency               TEXT,
+  notes                  TEXT,
+  packed_at              TEXT,
+  shipped_at             TEXT,
+  expected_delivery_date TEXT,
+  delivered_at           TEXT,
+  created_by_user_id     TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at             TEXT NOT NULL,
+  updated_at             TEXT NOT NULL,
+  UNIQUE (workspace_id, shipment_number)
+);
+CREATE INDEX IF NOT EXISTS idx_sales_shipments_order ON sales_shipments(workspace_id, sales_order_id, status);
+CREATE INDEX IF NOT EXISTS idx_sales_shipments_open ON sales_shipments(workspace_id, status, created_at);
+
+CREATE TABLE IF NOT EXISTS sales_shipment_lines (
+  id                  TEXT PRIMARY KEY,
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  shipment_id         TEXT NOT NULL REFERENCES sales_shipments(id) ON DELETE CASCADE,
+  sales_order_line_id TEXT NOT NULL REFERENCES sales_order_lines(id) ON DELETE CASCADE,
+  sku_id              TEXT NOT NULL REFERENCES skus(id) ON DELETE RESTRICT,
+  location_id         TEXT NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  quantity            INTEGER NOT NULL CHECK (quantity > 0),
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL,
+  UNIQUE (shipment_id, sales_order_line_id, location_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sales_shipment_lines_line
+  ON sales_shipment_lines(workspace_id, sales_order_line_id);

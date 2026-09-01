@@ -1,0 +1,124 @@
+<%
+  /*
+   * The fulfilment queue: what needs hands today.
+   *
+   * Two lists, because they are two different jobs. A box that is already
+   * open needs somebody to finish it. An order with stock allocated and no
+   * box needs somebody to start one. Mixing them into a single "orders"
+   * table is how warehouses end up picking the same order twice.
+   *
+   * Oldest first in both, because the thing that has been waiting longest is
+   * the thing most likely to become a phone call.
+   */
+%>
+<div class="page-head">
+  <div>
+    <h1>Fulfilment</h1>
+    <p class="page-sub">What is in a box, and what is waiting for one.</p>
+  </div>
+</div>
+
+<% if (!queue.open.length && !queue.ready.length) { %>
+  <div class="empty-state">
+    <%- helpers.icon('box', { size: 32 }) %>
+    <h2>Nothing to pick</h2>
+    <p>
+      No order has stock allocated and waiting to go out. When one does — usually the
+      moment you confirm an order that has stock, or a delivery arrives against one
+      that was short — it appears here.
+    </p>
+    <a class="btn" href="/sales">Sales orders</a>
+  </div>
+<% } %>
+
+<% if (queue.open.length) { %>
+  <section class="section">
+    <div class="section-head">
+      <h2>In progress</h2>
+      <span class="t-xs t-muted">
+        <%= queue.open.length %> <%= queue.open.length === 1 ? 'box' : 'boxes' %> open ·
+        none of this has left stock yet
+      </span>
+    </div>
+    <div class="panel">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Shipment</th>
+            <th>Order</th>
+            <th>Customer</th>
+            <th class="num">Units</th>
+            <th>From</th>
+            <th>Next step</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% queue.open.forEach(function (box) { %>
+            <tr>
+              <td><a href="/fulfilment/<%= box.id %>"><strong><%= box.shipment_number %></strong></a></td>
+              <td><a href="/sales/orders/<%= box.sales_order_id %>"><%= box.order_number %></a></td>
+              <td><%= box.customer_name || '—' %></td>
+              <td class="num"><%= box.units %></td>
+              <td><%= box.ship_from_location_name || 'Several places' %></td>
+              <td>
+                <a class="btn btn--sm" href="/fulfilment/<%= box.id %>">
+                  <%= box.status === 'PICKING' ? 'Pick it' : 'Ship it' %>
+                </a>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+<% } %>
+
+<% if (queue.ready.length) { %>
+  <section class="section">
+    <div class="section-head">
+      <h2>Ready to pick</h2>
+      <span class="t-xs t-muted">
+        <%= queue.ready.length %>
+        <%= queue.ready.length === 1 ? 'order has' : 'orders have' %>
+        stock allocated and no box started
+      </span>
+    </div>
+    <div class="panel">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Order</th>
+            <th>Customer</th>
+            <th>Needed by</th>
+            <th class="num">Ready</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% queue.ready.forEach(function (order) { %>
+            <tr>
+              <td><a href="/sales/orders/<%= order.id %>"><strong><%= order.order_number %></strong></a></td>
+              <td><%= order.customer_name || '—' %></td>
+              <td>
+                <% if (order.needed_by) { %><%= helpers.shortDate(order.needed_by) %><% } else { %>
+                  <span class="t-muted">No date given</span>
+                <% } %>
+              </td>
+              <td class="num"><%= order.units %></td>
+              <td class="num">
+                <form method="post" action="/sales/orders/<%= order.id %>/pick" class="inline-form" data-busy>
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button class="btn btn--sm btn--primary" type="submit">Start picking</button>
+                </form>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <p class="section-foot t-muted">
+      Starting a box does not move stock. Everything in it stays on the shelf, and
+      stays committed to its order, until the box is marked shipped.
+    </p>
+  </section>
+<% } %>

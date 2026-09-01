@@ -26,6 +26,29 @@
     <p><%= locals.shortButAvailable %> unit<%= locals.shortButAvailable === 1 ? ' is' : 's are' %> free now. Reserving keeps it for <%= order.customer.name %>; nothing ships yet.</p>
     <button class="btn btn--primary" type="submit">Reserve <%= locals.shortButAvailable %> for <%= order.customer.name %></button>
   </form>
+<% } else if (!['FULFILLED','CANCELLED'].includes(order.status) && (locals.shipments || [])
+    .some(function (box) { return box.status === 'PICKING' || box.status === 'PACKED'; })) { %>
+  <%
+    /*
+     * A box is already open on this order, so the direct "record it as
+     * shipped" form stands down. Both do the same thing to the same stock,
+     * and using this one would leave the box holding a claim on units that
+     * had already gone - a shipment stuck being picked forever.
+     */
+    var openBox = (locals.shipments || []).filter(function (box) {
+      return box.status === 'PICKING' || box.status === 'PACKED';
+    })[0];
+  %>
+  <div class="card sales-action-card sales-primary-action">
+    <p class="eyebrow">Do this next</p>
+    <h2><%= openBox.status === 'PICKING' ? 'Finish picking' : 'Hand it to the carrier' %></h2>
+    <p>
+      <%= openBox.shipment_number %> already holds <%= openBox.units %>
+      <%= openBox.units === 1 ? 'unit' : 'units' %> of this order. Ship it from there, so what
+      leaves stock is exactly what went in the box.
+    </p>
+    <a class="btn btn--primary" href="/fulfilment/<%= openBox.id %>">Open <%= openBox.shipment_number %></a>
+  </div>
 <% } else if (!['FULFILLED','CANCELLED'].includes(order.status) && order.totals.allocated > 0) { %>
   <form class="card sales-action-card sales-primary-action" method="post" action="/sales/orders/<%= order.id %>/fulfill">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -97,6 +120,89 @@
   <p>Foundry automatically checked stock at other locations, incoming supplier orders and replenishment. If a decision or missing setup is required, it is in <a href="/needs-you">Needs you</a>.</p>
 </div><% } %>
 
+
+<%
+  /*
+   * Where this order physically stands, and the one thing to do about it.
+   *
+   * The order already had quantities: ordered, committed, short, shipped.
+   * What it never had was a word for the state a person actually asks about —
+   * "has it gone out yet?" — and a way to start the box. Both live here, and
+   * both are derived, so this panel cannot disagree with the shipments below it.
+   */
+  var fulfilment = locals.fulfilment || null;
+  var boxes = locals.shipments || [];
+  var free = locals.pickable || [];
+  var freeUnits = free.reduce(function (sum, row) { return sum + row.available; }, 0);
+%>
+<% if (fulfilment && order.status !== 'DRAFT') { %>
+  <div class="panel section" id="fulfilment">
+    <div class="panel-head">
+      <div>
+        <h2>Fulfilment</h2>
+        <span class="t-xs t-muted">
+          <% if (fulfilment.detail) { %><%= fulfilment.detail %><% } else { %>
+            <%= boxes.length %> <%= boxes.length === 1 ? 'shipment' : 'shipments' %>
+          <% } %>
+        </span>
+      </div>
+      <span class="spacer"></span>
+      <span class="badge badge--<%= ['Shipped', 'Delivered'].indexOf(fulfilment.state) >= 0 ? 'ok'
+        : fulfilment.state === 'Waiting for stock' ? 'warn' : 'info' %>"><%= fulfilment.state %></span>
+    </div>
+
+    <% if (boxes.length) { %>
+      <table class="table">
+        <thead>
+          <tr><th>Shipment</th><th class="num">Units</th><th>State</th><th>Tracking</th></tr>
+        </thead>
+        <tbody>
+          <% boxes.forEach(function (box) { %>
+            <tr>
+              <td><a href="/fulfilment/<%= box.id %>"><strong><%= box.shipment_number %></strong></a></td>
+              <td class="num"><%= box.units %></td>
+              <td>
+                <%= { PICKING: 'Being picked', PACKED: 'Packed', SHIPPED: 'Shipped',
+                      DELIVERED: 'Delivered', CANCELLED: 'Cancelled' }[box.status] %>
+                <% if (box.shipped_at) { %>
+                  <span class="t-xs t-muted">· <%= helpers.shortDate(box.shipped_at) %></span>
+                <% } %>
+              </td>
+              <td>
+                <% if (box.tracking_number && box.trackingUrl) { %>
+                  <a href="<%= box.trackingUrl %>" target="_blank" rel="noopener noreferrer"><%= box.tracking_number %></a>
+                <% } else if (box.tracking_number) { %>
+                  <%= box.tracking_number %>
+                <% } else { %><span class="t-muted">—</span><% } %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+
+    <% if (freeUnits) { %>
+      <div class="card-foot">
+        <form method="post" action="/sales/orders/<%= order.id %>/pick" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--primary" type="submit">
+            Start picking <%= freeUnits %> <%= freeUnits === 1 ? 'unit' : 'units' %>
+          </button>
+          <span class="hint">
+            This opens a box and a pick list. Nothing leaves stock until you mark it shipped.
+          </span>
+        </form>
+      </div>
+    <% } else if (fulfilment.state === 'Waiting for stock') { %>
+      <div class="card-body">
+        <p class="hint">
+          There is nothing to pick because nothing is committed to this order yet.
+          Commit stock above, or wait for the delivery it is short against.
+        </p>
+      </div>
+    <% } %>
+  </div>
+<% } %>
 
 <%
   /*

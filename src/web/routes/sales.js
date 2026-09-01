@@ -3,6 +3,8 @@
 const express = require('express');
 const sales = require('../../sales/sales-order-service');
 const salesIntent = require('../../sales/sales-intent');
+const shipments = require('../../sales/shipment-service');
+const carriers = require('../../sales/carriers');
 const repo = require('../../domain/repository');
 const permissions = require('../../actions/permissions');
 const { requireAuth, asyncRoute } = require('../middleware');
@@ -11,6 +13,9 @@ const prices = require('../../pricing/price-service');
 
 const router = express.Router();
 router.use('/sales', requireAuth);
+// Fulfilment lives on its own path because it is its own job, so it needs
+// the same guard stated separately rather than inherited from /sales.
+router.use('/fulfilment', requireAuth);
 
 function requirePermission(permission, what) {
   return (req, res, next) => {
@@ -200,6 +205,9 @@ router.get('/sales/orders/:id', requirePermission(permissions.VIEW, 'view sales 
     shortButAvailable,
     accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
     money: moneyForOrder(req.db, req.ctx.workspaceId, order.id),
+    shipments: shipments.listForOrder(req.db, req.ctx.workspaceId, order.id),
+    pickable: order.status === 'DRAFT' ? [] : shipments.pickable(req.db, req.ctx.workspaceId, order.id),
+    fulfilment: shipments.fulfilmentState(req.db, req.ctx.workspaceId, order),
     skus: catalogue(req.db, req.ctx.workspaceId),
   });
 }));
@@ -298,6 +306,22 @@ router.post('/sales/orders/:id/fulfill', requirePermission(permissions.OPERATE, 
   const quantities = Array.isArray(req.body.quantity) ? req.body.quantity : [req.body.quantity];
   const lines = lineIds.map((lineId, index) => ({ lineId, locationId: locationIds[index], quantity: quantities[index] }))
     .filter((line) => line.lineId && Number(line.quantity) > 0);
+
+  /*
+   * Refuse when a box is already open on this order.
+   *
+   * Both this and shipping a box issue the same allocated stock. Doing it here
+   * would leave the box holding a claim on units that had already gone, and it
+   * would never be shippable again. Hiding the form is not enough on its own:
+   * the button can still be sitting on a page somebody left open.
+   */
+  const openBox = shipments.listForOrder(req.db, req.ctx.workspaceId, req.params.id)
+    .find((box) => shipments.OPEN_SHIPMENT.includes(box.status));
+  if (openBox) {
+    req.flash('warn', `${openBox.shipment_number} is already open on this order. Ship it from there, so what leaves stock is exactly what went in the box.`);
+    return res.redirect(303, `/fulfilment/${openBox.id}`);
+  }
+
   const order = sales.fulfill(req.db, req.ctx, req.params.id, { lines },
     { idempotencyKey: trimOrNull(req.body.idempotencyKey) });
   req.flash('success', order.status === 'FULFILLED'
@@ -312,4 +336,113 @@ router.post('/sales/orders/:id/cancel', requirePermission(permissions.OPERATE, '
   res.redirect(303, `/sales/orders/${order.id}`);
 }));
 
+/*
+ * Fulfilment.
+ *
+ * Every one of these is a step a person takes with their hands, so each is a
+ * single POST that says what happened rather than a form that asks the person
+ * to restate what Foundry already knows.
+ */
+
+router.get('/fulfilment', requirePermission(permissions.VIEW, 'view fulfilment'), asyncRoute(async (req, res) => {
+  const queue = shipments.workQueue(req.db, req.ctx.workspaceId);
+  res.page('sales/fulfilment', {
+    title: 'Fulfilment', nav: 'fulfilment', queue,
+  });
+}));
+
+router.get('/fulfilment/:id', requirePermission(permissions.VIEW, 'view fulfilment'), asyncRoute(async (req, res) => {
+  const list = shipments.pickList(req.db, req.ctx.workspaceId, req.params.id);
+  res.page('sales/shipment', {
+    title: list.shipment.shipment_number, nav: 'fulfilment',
+    shipment: shipments.getShipment(req.db, req.ctx.workspaceId, req.params.id),
+    pickList: list, carriers: carriers.list(),
+  });
+}));
+
+router.post('/sales/orders/:id/pick', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
+  let shipment;
+  try {
+    shipment = shipments.startPicking(req.db, req.ctx, req.params.id, {});
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+    return res.redirect(303, `/sales/orders/${req.params.id}`);
+  }
+  req.flash('success', `${shipment.shipment_number} is ready to pick — ${shipment.units} to collect. Nothing has left stock yet.`);
+  res.redirect(303, `/fulfilment/${shipment.id}`);
+}));
+
+router.post('/fulfilment/:id/line', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
+  try {
+    shipments.setLineQuantity(req.db, req.ctx, req.params.id,
+      req.body.lineId, req.body.locationId, req.body.quantity);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, `/fulfilment/${req.params.id}`);
+}));
+
+router.post('/fulfilment/:id/packed', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
+  let shipment;
+  try {
+    shipment = shipments.markPacked(req.db, req.ctx, req.params.id, {
+      packageCount: req.body.packageCount || null,
+      weightGrams: req.body.weightGrams || null,
+      notes: trimOrNull(req.body.notes),
+    });
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+    return res.redirect(303, `/fulfilment/${req.params.id}`);
+  }
+  req.flash('success', `${shipment.shipment_number} is packed. Stock still shows as here until you mark it shipped.`);
+  res.redirect(303, `/fulfilment/${shipment.id}`);
+}));
+
+router.post('/fulfilment/:id/ship', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
+  let shipment;
+  try {
+    shipment = shipments.ship(req.db, req.ctx, req.params.id, {
+      carrier: trimOrNull(req.body.carrier),
+      service: trimOrNull(req.body.service),
+      trackingNumber: trimOrNull(req.body.trackingNumber),
+      shippedAt: trimOrNull(req.body.shippedAt),
+      expectedDeliveryDate: trimOrNull(req.body.expectedDeliveryDate),
+      shippingCostMinor: req.body.shippingCost ? Math.round(Number(req.body.shippingCost) * 100) : null,
+    });
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+    return res.redirect(303, `/fulfilment/${req.params.id}`);
+  }
+  req.flash('success', `${shipment.shipment_number} has gone. ${shipment.units} left stock and the sale is on the books.`);
+  res.redirect(303, `/fulfilment/${shipment.id}`);
+}));
+
+router.post('/fulfilment/:id/delivered', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
+  try {
+    shipments.markDelivered(req.db, req.ctx, req.params.id, { deliveredAt: trimOrNull(req.body.deliveredAt) });
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, `/fulfilment/${req.params.id}`);
+}));
+
+router.post('/fulfilment/:id/cancel', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
+  let shipment;
+  try {
+    shipment = shipments.cancelShipment(req.db, req.ctx, req.params.id, trimOrNull(req.body.reason));
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+    return res.redirect(303, `/fulfilment/${req.params.id}`);
+  }
+  req.flash('success', `${shipment.shipment_number} was cancelled. What it was holding is free to pick again.`);
+  res.redirect(303, `/sales/orders/${shipment.sales_order_id}`);
+}));
+
 module.exports = router;
+

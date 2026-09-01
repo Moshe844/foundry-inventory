@@ -2587,3 +2587,42 @@ details > summary { cursor: pointer; }
   .sales-steps { grid-template-columns: 1fr 1fr; }
   .sales-create-choices { grid-template-columns: 1fr; }
 }
+
+/* Fulfilment
+ *
+ * A pick list is read while walking, so a stop is a heading with a table
+ * under it rather than a location column repeated down a page. Everything
+ * else here is small: an inline quantity edit that does not look like a form,
+ * and a plain description list for what a shipment turned out to be.
+ */
+.pick-stop + .pick-stop { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line-soft); }
+.pick-stop-name {
+  display: flex; align-items: center; gap: 7px;
+  margin: 0 0 8px; font-size: 13px; font-weight: 600;
+  letter-spacing: .02em; text-transform: uppercase; color: var(--muted);
+}
+.pick-stop-name svg { color: var(--muted-soft); }
+.pick-stop .table { margin: 0; }
+
+.inline-form { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.inline-form .input--tiny { width: 72px; min-height: 30px; padding: 4px 8px; text-align: right; }
+
+.detail-list { display: grid; gap: 10px; margin: 0; }
+.detail-list > div { display: grid; grid-template-columns: 150px 1fr; gap: 12px; align-items: baseline; }
+.detail-list dt { color: var(--muted); font-size: 13px; }
+.detail-list dd { margin: 0; }
+
+.disclosure {
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+}
+.disclosure > summary {
+  padding: 12px 16px; cursor: pointer; font-size: 13px; color: var(--muted); list-style: none;
+}
+.disclosure > summary:hover { color: var(--ink); }
+.disclosure > summary::-webkit-details-marker { display: none; }
+.disclosure[open] > summary { border-bottom: 1px solid var(--line-soft); }
+
+@media (max-width: 640px) {
+  .detail-list > div { grid-template-columns: 1fr; gap: 2px; }
+}
+.ship-to { font-style: normal; white-space: pre-line; line-height: 1.5; }

@@ -1,0 +1,288 @@
+<%
+  /*
+   * One box, from the shelf to the customer's door.
+   *
+   * The page shows exactly one thing to do next, because a person holding a
+   * scanner does not read a screen of options — they do the step in front of
+   * them. Picking shows where to walk. Packing shows what to weigh. Shipping
+   * asks for the carrier and the tracking number, and nothing else.
+   *
+   * The line that matters most is the one about stock: until this ships,
+   * everything in it is still on the shelf as far as Foundry is concerned,
+   * and saying so plainly is what stops somebody from believing a count is
+   * wrong when it is simply not yet time.
+   */
+  var s = shipment;
+  var isOpen = s.status === 'PICKING' || s.status === 'PACKED';
+  var badge = { PICKING: 'info', PACKED: 'info', SHIPPED: 'ok', DELIVERED: 'ok', CANCELLED: 'muted' }[s.status];
+  var words = { PICKING: 'Being picked', PACKED: 'Packed', SHIPPED: 'Shipped',
+    DELIVERED: 'Delivered', CANCELLED: 'Cancelled' }[s.status];
+%>
+<div class="breadcrumb">
+  <a href="/fulfilment">Fulfilment</a>
+  <%- helpers.icon('chevron', { size: 13 }) %>
+  <a href="/sales/orders/<%= s.sales_order_id %>"><%= s.order_number %></a>
+  <%- helpers.icon('chevron', { size: 13 }) %>
+  <span><%= s.shipment_number %></span>
+</div>
+
+<div class="page-head">
+  <div>
+    <h1><%= s.shipment_number %> <span class="badge badge--<%= badge %>"><%= words %></span></h1>
+    <p class="page-sub">
+      <%= s.units %> <%= s.units === 1 ? 'unit' : 'units' %> for <%= s.customer_name || 'a customer' %>
+      on <%= s.order_number %><% if (s.ship_from_location_name) { %> · from <%= s.ship_from_location_name %><% } %>
+    </p>
+  </div>
+</div>
+
+<% if (s.ship_to_address) { %>
+  <section class="section">
+    <div class="panel">
+      <div class="panel-head"><div><h2>Where it is going</h2></div></div>
+      <div class="card-body">
+        <address class="ship-to"><%= s.customer_name %>
+<%= s.ship_to_address %></address>
+        <% if (isOpen) { %>
+          <p class="hint">
+            Copied from <%= s.customer_name %> when this box was started. If they have
+            moved since, change it on the customer before starting the next one — this
+            box keeps the address it was picked for.
+          </p>
+        <% } %>
+      </div>
+    </div>
+  </section>
+<% } else if (isOpen) { %>
+  <div class="notice notice--warn">
+    <div>
+      <strong>No address on file for <%= s.customer_name || 'this customer' %>.</strong><br>
+      Foundry has nowhere to say this is going. Add a shipping address to the customer,
+      or write it on the label from whatever you have.
+    </div>
+  </div>
+<% } %>
+
+<% if (isOpen) { %>
+  <p class="lede">
+    Nothing in this box has left stock yet. Foundry still counts every one of these
+    <%= s.units %> as on the shelf, and will until you mark it shipped.
+  </p>
+<% } %>
+
+<section class="section">
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2><%= s.status === 'PICKING' ? 'What to collect'
+          : s.status === 'PACKED' ? 'What is in the box' : 'What went' %></h2>
+        <span class="t-xs t-muted">
+          <%= pickList.stops.length %>
+          <%= pickList.stops.length === 1 ? 'place to visit' : 'places to visit' %>
+        </span>
+      </div>
+    </div>
+    <div class="card-body">
+      <% pickList.stops.forEach(function (stop) { %>
+        <div class="pick-stop">
+          <h3 class="pick-stop-name">
+            <%- helpers.icon('locations', { size: 14 }) %> <%= stop.locationName %>
+          </h3>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th class="num">Quantity</th>
+                <% if (s.status === 'PICKING') { %><th class="num">Change</th><% } %>
+              </tr>
+            </thead>
+            <tbody>
+              <% stop.lines.forEach(function (line) { %>
+                <tr>
+                  <td>
+                    <strong><%= line.item_name %></strong>
+                    <% if (line.variant_label) { %>
+                      <span class="t-muted">· <%= line.variant_label %></span>
+                    <% } %>
+                    <div class="t-xs t-muted"><%= line.sku_code %></div>
+                  </td>
+                  <td class="num"><strong><%= line.quantity %></strong>
+                    <span class="t-muted"><%= helpers.unitLabel(line.quantity, line.unit_label || 'unit') %></span></td>
+                  <% if (s.status === 'PICKING') { %>
+                    <td class="num">
+                      <form method="post" action="/fulfilment/<%= s.id %>/line" class="inline-form">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <input type="hidden" name="lineId" value="<%= line.sales_order_line_id %>">
+                        <input type="hidden" name="locationId" value="<%= line.location_id %>">
+                        <input class="input input--tiny" type="number" name="quantity" min="0"
+                          value="<%= line.quantity %>" aria-label="Quantity of <%= line.item_name %> in this box">
+                        <button class="btn btn--ghost btn--sm" type="submit">Set</button>
+                      </form>
+                    </td>
+                  <% } %>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% }) %>
+      <% if (!pickList.stops.length) { %>
+        <p class="empty">This box is empty. Add something to it, or cancel it.</p>
+      <% } %>
+    </div>
+  </div>
+</section>
+
+<% if (s.status === 'PICKING') { %>
+  <section class="section">
+    <div class="panel">
+      <div class="panel-head"><div><h2>Once it is in the box</h2></div></div>
+      <form method="post" action="/fulfilment/<%= s.id %>/packed" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="card-body">
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">Packages</span>
+              <input class="input" type="number" name="packageCount" min="1" value="1">
+              <span class="field-hint">How many boxes this shipment is going in.</span>
+            </label>
+            <label class="field">
+              <span class="field-label">Weight in grams <span class="t-muted">(optional)</span></span>
+              <input class="input" type="number" name="weightGrams" min="1" placeholder="e.g. 3400">
+              <span class="field-hint">Only useful if your carrier asks for it.</span>
+            </label>
+          </div>
+        </div>
+        <div class="card-foot">
+          <button class="btn btn--primary" type="submit">Mark packed</button>
+          <span class="hint">Still nothing leaves stock.</span>
+        </div>
+      </form>
+    </div>
+  </section>
+<% } %>
+
+<% if (s.status === 'PACKED') { %>
+  <section class="section">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Hand it to the carrier</h2>
+          <span class="t-xs t-muted">This is the step that moves stock</span>
+        </div>
+      </div>
+      <form method="post" action="/fulfilment/<%= s.id %>/ship" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="card-body">
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">Carrier <span class="t-muted">(optional)</span></span>
+              <select class="input" name="carrier">
+                <option value="">Work it out from the tracking number</option>
+                <% carriers.forEach(function (carrier) { %>
+                  <option value="<%= carrier.code %>"><%= carrier.name %></option>
+                <% }) %>
+              </select>
+              <span class="field-hint">Leave this alone and Foundry reads it off the number where it can.</span>
+            </label>
+            <label class="field">
+              <span class="field-label">Tracking number <span class="t-muted">(optional)</span></span>
+              <input class="input" type="text" name="trackingNumber" placeholder="1Z999AA10123456784" autocomplete="off">
+              <span class="field-hint">Paste or scan it. It becomes a link the customer can follow.</span>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">Service <span class="t-muted">(optional)</span></span>
+              <input class="input" type="text" name="service" placeholder="Ground">
+            </label>
+            <label class="field">
+              <span class="field-label">Expected delivery <span class="t-muted">(optional)</span></span>
+              <input class="input" type="date" name="expectedDeliveryDate">
+            </label>
+            <label class="field">
+              <span class="field-label">What shipping cost you <span class="t-muted">(optional)</span></span>
+              <input class="input" type="number" step="0.01" min="0" name="shippingCost" placeholder="12.50">
+            </label>
+          </div>
+        </div>
+        <div class="card-foot">
+          <button class="btn btn--primary" type="submit">
+            Mark shipped — <%= s.units %> leaves stock
+          </button>
+          <span class="hint">
+            This issues the stock, records the sale against <%= s.order_number %>,
+            and posts the cost of what went. There is no separate bookkeeping step.
+          </span>
+        </div>
+      </form>
+    </div>
+  </section>
+<% } %>
+
+<% if (s.status === 'SHIPPED' || s.status === 'DELIVERED') { %>
+  <section class="section">
+    <div class="panel">
+      <div class="panel-head"><div><h2>On its way</h2></div></div>
+      <div class="card-body">
+        <dl class="detail-list">
+          <div><dt>Left</dt><dd><%= helpers.shortDate(s.shipped_at) %></dd></div>
+          <% if (s.carrierName) { %><div><dt>Carrier</dt><dd><%= s.carrierName %><% if (s.service) { %> · <%= s.service %><% } %></dd></div><% } %>
+          <% if (s.tracking_number) { %>
+            <div>
+              <dt>Tracking</dt>
+              <dd>
+                <% if (s.trackingUrl) { %>
+                  <a href="<%= s.trackingUrl %>" target="_blank" rel="noopener noreferrer"><%= s.tracking_number %></a>
+                <% } else { %>
+                  <%= s.tracking_number %>
+                  <span class="t-xs t-muted">— no tracking link for this carrier</span>
+                <% } %>
+              </dd>
+            </div>
+          <% } %>
+          <% if (s.package_count) { %><div><dt>Packages</dt><dd><%= s.package_count %></dd></div><% } %>
+          <% if (s.expected_delivery_date) { %><div><dt>Expected</dt><dd><%= helpers.shortDate(s.expected_delivery_date) %></dd></div><% } %>
+          <% if (s.shipping_cost_minor) { %>
+            <div><dt>Shipping cost</dt><dd><%= helpers.money(s.shipping_cost_minor, s.currency || 'USD') %></dd></div>
+          <% } %>
+          <% if (s.delivered_at) { %><div><dt>Delivered</dt><dd><%= helpers.shortDate(s.delivered_at) %></dd></div><% } %>
+        </dl>
+      </div>
+      <% if (s.status === 'SHIPPED') { %>
+        <div class="card-foot">
+          <form method="post" action="/fulfilment/<%= s.id %>/delivered" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn" type="submit">Mark delivered</button>
+            <span class="hint">
+              Foundry has no carrier account, so it cannot see a delivery scan.
+              This is you telling it what you know.
+            </span>
+          </form>
+        </div>
+      <% } %>
+    </div>
+  </section>
+<% } %>
+
+<% if (isOpen) { %>
+  <section class="section">
+    <details class="disclosure">
+      <summary>Cancel this box</summary>
+      <div class="card-body">
+        <form method="post" action="/fulfilment/<%= s.id %>/cancel" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <label class="field">
+            <span class="field-label">Why <span class="t-muted">(optional)</span></span>
+            <input class="input" type="text" name="reason" placeholder="Customer pushed the date">
+          </label>
+          <button class="btn btn--ghost" type="submit">Cancel <%= s.shipment_number %></button>
+          <p class="hint">
+            Nothing physical moved, so nothing physical comes back. What this box was
+            holding simply becomes free to pick again.
+          </p>
+        </form>
+      </div>
+    </details>
+  </section>
+<% } %>

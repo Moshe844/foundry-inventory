@@ -195,6 +195,11 @@ Honest, at the time of writing.
 
 - No barcode scanning, mobile receiving, or label printing. Barcodes are now
   *captured* on import so the data exists when scanning arrives.
+- No carrier account. Fulfilment records a shipment, holds a carrier, service
+  and tracking number, and turns that number into a working tracking link — but
+  Foundry cannot buy a label, quote a real rate, or see a delivery scan. Marking
+  a shipment delivered is the owner telling Foundry what they know, and the page
+  says so. `src/sales/carriers.js` is the seam an integration would fill.
 - Customer-facing documents do not print. Purchase orders do.
 - Reporting is thinner than established inventory systems.
 - Not proven at scale: SQLite, single node.
