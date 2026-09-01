@@ -15,6 +15,7 @@
  */
 
 const express = require('express');
+const automaticAccounting = require('../../accounting/automatic');
 const config = require('../../config');
 const supplierService = require('../../purchasing/supplier-service');
 const supplierCommunications = require('../../purchasing/supplier-communications');
@@ -31,6 +32,8 @@ const repo = require('../../domain/repository');
 const managerEvents = require('../../manager/events');
 const reactions = require('../../manager/reactions');
 const autopilotPresenter = require('../../autopilot/presenter');
+const connectionService = require('../../connections/service');
+const payables = require('../../accounting/payables');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { unitCount } = require('../../lib/units');
 const { localDateKey } = require('../../lib/calendar');
@@ -57,6 +60,7 @@ const can = (req) => ({
   receive: permissions.can(req.user, permissions.RECEIVE_PO),
   suppliers: permissions.can(req.user, permissions.MANAGE_SUPPLIERS),
   replenishment: permissions.can(req.user, permissions.MANAGE_REPLENISHMENT),
+  payments: permissions.can(req.user, permissions.RECORD_PAYMENTS),
 });
 
 function react(req, type, payload, options = {}) {
@@ -183,6 +187,10 @@ router.post(
       const skuIds = req.body.applyToItem === '1'
         ? itemSkus.map((sku) => sku.id)
         : [req.params.skuId];
+      const lastUnitCostBySku = Object.fromEntries(
+        skuIds.map((skuId) => [skuId, req.body[`lastUnitCost_${skuId}`]])
+          .filter((entry) => entry[1] !== undefined)
+      );
       const result = setupService.linkSupplierToMany(req.db, req.ctx, req.user, {
         supplierId,
         skuIds,
@@ -191,8 +199,13 @@ router.post(
         minimumOrderQuantity: req.body.minimumOrderQuantity,
         leadTimeDays: req.body.leadTimeDays,
         lastUnitCost: req.body.lastUnitCost,
+        lastUnitCostBySku,
         isPreferred: true,
       });
+      const accounting = automaticAccounting.ensure(req.db, req.ctx.workspaceId, {
+        actorId: req.ctx.actorId,
+      });
+      const recovered = accounting.supplierOpening;
       react(req, managerEvents.TYPES.SUPPLIER_UPDATED, {
         supplierId, skuIds, change: 'product_linked',
       });
@@ -202,11 +215,14 @@ router.post(
       const line = replenishment.evaluateOne(req.db, req.ctx.workspaceId, req.params.skuId);
       req.flash(
         'success',
-        line && line.recommend
+        (line && line.recommend
           ? `${result.supplier.name} now supplies ${line.displayName}. ${line.headline} — review it below.`
           : skuIds.length > 1
             ? `${result.supplier.name} now supplies all ${skuIds.length} variants of ${currentSku.item_name}.`
-            : `${result.supplier.name} now supplies that product.`
+            : `${result.supplier.name} now supplies that product.`) +
+          (recovered.recoveredUnits
+            ? ` Foundry also used the costs you entered to value ${recovered.recoveredUnits} untouched opening units in Accounting.`
+            : '')
       );
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -354,6 +370,8 @@ router.get(
         ? supplierService.itemsForSupplier(req.db, req.ctx.workspaceId, supplierId)
         : [],
       locations: locations(req.db, req.ctx.workspaceId),
+      submitted: {},
+      orderErrors: [],
       permissions: can(req),
     });
   })
@@ -364,14 +382,47 @@ router.post(
   asyncRoute(async (req, res) => {
     guard(req, permissions.CREATE_PO, 'prepare purchase orders');
     const quantities = req.body.quantity || {};
+    const submittedCosts = req.body.unitCost || {};
     const lines = Object.entries(quantities)
-      .map(([skuId, value]) => ({ skuId, quantityPurchaseUnits: Number(value) }))
+      .map(([skuId, value]) => ({
+        skuId,
+        quantityPurchaseUnits: Number(value),
+        unitCost: submittedCosts[skuId],
+      }))
       .filter((line) => Number.isFinite(line.quantityPurchaseUnits) && line.quantityPurchaseUnits > 0);
 
     if (lines.length === 0) throw new ValidationError('Put a quantity against at least one product.');
 
+    const supplierId = trimOrNull(req.body.supplierId);
+    const supplierItems = supplierId
+      ? supplierService.itemsForSupplier(req.db, req.ctx.workspaceId, supplierId)
+      : [];
+    const supplierItemsBySku = new Map(supplierItems.map((item) => [item.skuId, item]));
+    const costErrors = lines.flatMap((line) => {
+      const item = supplierItemsBySku.get(line.skuId);
+      const typed = String(line.unitCost ?? '').trim();
+      const effective = typed === '' ? item?.lastUnitCost : Number(typed);
+      if (effective === null || effective === undefined || !Number.isFinite(Number(effective)) || Number(effective) < 0) {
+        return [`Enter the unit cost for ${item?.displayName || 'the selected product'} before creating this order.`];
+      }
+      return [];
+    });
+    if (costErrors.length) {
+      return res.status(422).page('purchasing/order-new', {
+        title: 'New purchase order',
+        nav: 'purchasing',
+        suppliers: supplierService.listSuppliers(req.db, req.ctx.workspaceId),
+        supplierId,
+        supplierItems,
+        locations: locations(req.db, req.ctx.workspaceId),
+        submitted: req.body,
+        orderErrors: costErrors,
+        permissions: can(req),
+      });
+    }
+
     const order = poService.createOrder(req.db, req.ctx, req.user, {
-      supplierId: req.body.supplierId,
+      supplierId,
       destinationLocationId: trimOrNull(req.body.destinationLocationId),
       expectedDate: trimOrNull(req.body.expectedDate),
       notes: trimOrNull(req.body.notes),
@@ -386,6 +437,34 @@ router.get(
   asyncRoute(async (req, res) => {
     guard(req, permissions.VIEW_PURCHASING, 'see purchasing');
     const order = poService.get(req.db, req.ctx.workspaceId, req.params.id);
+    const communications = supplierCommunications.forOrder(req.db, req.ctx.workspaceId, order.id)
+      .map((communication) => {
+        if (!communication.connectorId) return { ...communication, mailboxName: 'the connected mailbox' };
+        try {
+          const mailbox = connectionService.get(req.db, req.ctx.workspaceId, communication.connectorId);
+          const providerName = mailbox.provider_type === 'gmail' ? 'Gmail'
+            : mailbox.provider_type === 'microsoft365' ? 'Microsoft 365' : null;
+          const accountName = mailbox.provider_account_name || mailbox.display_name;
+          return { ...communication, mailboxName: accountName, mailboxProviderName: providerName };
+        } catch {
+          return { ...communication, mailboxName: 'the connected mailbox' };
+        }
+      });
+    const supplierBills = req.db.prepare(`SELECT id FROM accounting_supplier_bills
+      WHERE workspace_id = ? AND purchase_order_id = ? AND status <> 'VOID'
+      ORDER BY issue_date, rowid`).all(req.ctx.workspaceId, order.id)
+      .map((row) => payables.hydrate(req.db, req.ctx.workspaceId, row.id));
+    const approvedBills = supplierBills.filter((bill) =>
+      ['OPEN', 'PARTIALLY_PAID', 'PAID'].includes(bill.status));
+    const billSummary = {
+      invoiceCount: supplierBills.length,
+      invoiceTotalMinor: supplierBills.reduce((sum, bill) => sum + Number(bill.total_minor), 0),
+      approvedTotalMinor: approvedBills.reduce((sum, bill) => sum + Number(bill.total_minor), 0),
+      paidMinor: approvedBills.reduce((sum, bill) =>
+        sum + Number(bill.total_minor) - Number(bill.balance_minor), 0),
+      owedMinor: approvedBills.reduce((sum, bill) => sum + Number(bill.balance_minor), 0),
+      needsReview: supplierBills.some((bill) => ['DRAFT', 'DISPUTED'].includes(bill.status)),
+    };
     res.page('purchasing/order', {
       title: `${order.poNumber} · ${order.supplierName}`,
       nav: 'purchasing',
@@ -395,9 +474,21 @@ router.get(
       locations: locations(req.db, req.ctx.workspaceId),
       permissions: can(req),
       expectedInFuture: Boolean(order.expectedDate && order.expectedDate > localDateKey()),
-      communications: supplierCommunications.forOrder(req.db, req.ctx.workspaceId, order.id),
+      communications,
       supplierDocuments: require('../../purchasing/supplier-evidence').forOrder(req.db, req.ctx.workspaceId, order.id),
+      supplierBills,
+      billSummary,
     });
+  })
+);
+
+router.post(
+  '/purchasing/orders/:id/prices',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.CREATE_PO, 'edit draft purchase orders');
+    poService.updateDraftCosts(req.db, req.ctx, req.user, req.params.id, req.body.unitCost || {});
+    req.flash('success', 'The purchase order prices are complete.');
+    return res.redirect(303, `/purchasing/orders/${req.params.id}`);
   })
 );
 
@@ -417,6 +508,11 @@ router.post(
           'so the same stock is not ordered twice.'
       );
       return res.redirect(303, `/autopilot/work/${owner.id}`);
+    }
+    const draft = poService.get(req.db, req.ctx.workspaceId, req.params.id);
+    if (!draft.hasCosts) {
+      req.flash('error', 'Enter the missing unit costs before approving this purchase order.');
+      return res.redirect(303, `/purchasing/orders/${req.params.id}`);
     }
     const order = poService.approve(req.db, req.ctx, req.user, req.params.id, {
       expectedHash: trimOrNull(req.body.integrityHash),
@@ -686,6 +782,9 @@ router.get(
     res.page('purchasing/suppliers', {
       title: 'Suppliers',
       nav: 'purchasing',
+      // Otherwise this page introduces itself with Purchasing's description —
+      // orders, arrivals and receiving — none of which happen here.
+      screenDescription: 'See who you buy from, what each of them sells you, and on what terms.',
       suppliers: supplierService.listWithCounts(req.db, req.ctx.workspaceId, { includeInactive: true }),
       permissions: can(req),
     });

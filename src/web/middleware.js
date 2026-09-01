@@ -5,6 +5,40 @@ const authService = require('../domain/auth-service');
 const workspaceService = require('../domain/workspace-service');
 const { AuthenticationError, AuthorizationError, DomainError } = require('../domain/errors');
 
+/**
+ * Bounded, single-node request limiting. Keys are one-way digests so bearer
+ * tokens and addresses are never retained in memory or logs.
+ */
+function rateLimit(options = {}) {
+  const windowMs = Math.max(1000, Number(options.windowMs || 60_000));
+  const max = Math.max(1, Number(options.max || 120));
+  const buckets = new Map();
+  let seen = 0;
+  return (req, res, next) => {
+    const raw = options.key ? options.key(req) : (req.ip || req.socket.remoteAddress || 'unknown');
+    const key = crypto.createHash('sha256').update(String(raw)).digest('hex');
+    const now = Date.now();
+    let bucket = buckets.get(key);
+    if (!bucket || bucket.resetAt <= now) bucket = { count: 0, resetAt: now + windowMs };
+    bucket.count += 1;
+    buckets.set(key, bucket);
+    res.set('RateLimit-Limit', String(max));
+    res.set('RateLimit-Remaining', String(Math.max(0, max - bucket.count)));
+    res.set('RateLimit-Reset', String(Math.ceil(bucket.resetAt / 1000)));
+    if (bucket.count > max) {
+      res.set('Retry-After', String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
+      return res.status(429).json({ error: { code: 'rate_limited',
+        message: 'Too many requests. Please wait a moment and try again.' } });
+    }
+    // Amortized cleanup prevents an unbounded map without a background timer.
+    seen += 1;
+    if (seen % 500 === 0) {
+      for (const [candidate, value] of buckets) if (value.resetAt <= now) buckets.delete(candidate);
+    }
+    return next();
+  };
+}
+
 /** Adds req.flash()/res.locals.flash without pulling in another dependency. */
 function flash(req, res, next) {
   req.flash = (type, message) => {
@@ -210,7 +244,9 @@ function pageRenderer(req, res, next) {
         const guidance = require('../manager/guidance');
         workspaceGuidance = guidance.build(req.db, req.ctx.workspaceId);
         if (!Object.prototype.hasOwnProperty.call(data, 'screenGuide')) {
-          screenGuide = guidance.screenContext(workspaceGuidance, data.nav);
+          // A page under a shared sidebar section can say what it actually is,
+          // rather than inheriting the section's description.
+          screenGuide = guidance.screenContextFor(workspaceGuidance, data.nav, data.screenDescription);
         }
       } catch {
         // Guidance is presentation support. A partially migrated development
@@ -225,7 +261,7 @@ function pageRenderer(req, res, next) {
       return res.render('layout', {
         ...data,
         body: html,
-        title: data.title || 'Foundry Inventory',
+        title: data.title || 'Foundry',
         nav: data.nav || null,
         workspaceGuidance,
         screenGuide,
@@ -281,6 +317,7 @@ function errorHandler(isProduction) {
 }
 
 module.exports = {
+  rateLimit,
   flash,
   csrf,
   loadUser,

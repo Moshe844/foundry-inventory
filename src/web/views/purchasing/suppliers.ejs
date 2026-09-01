@@ -9,7 +9,7 @@
 <div class="card section">
   <div class="card-head"><h2><%= suppliers.length %> supplier<%= suppliers.length === 1 ? '' : 's' %></h2></div>
   <% if (suppliers.length === 0) { %>
-    <div class="empty-state"><p class="empty-state__title">No suppliers yet</p><p class="empty-state__body">Add who you buy inventory from so Foundry can prepare replenishment orders and understand pack sizes, costs and lead times.</p><a class="btn btn--primary" href="#add-supplier">Add supplier</a><p class="hint">Or tell Foundry: “ABC Apparel supplies our T-shirts.”</p></div>
+    <div class="empty-state"><p class="empty-state__title">No suppliers yet</p><p class="empty-state__body">Add who you buy inventory from so Foundry can prepare replenishment orders and understand pack sizes, costs and lead times.</p><a class="btn btn--primary" href="#add-supplier">Add supplier</a><p class="hint">Foundry needs their pack sizes, lead time and costs, so this one is a form rather than a sentence.</p></div>
   <% } else { %>
     <table class="table table--tight">
       <thead><tr><th>Supplier</th><th>Contact</th><th class="num">Lead time</th><th class="num">Products</th><th class="num">Open orders</th></tr></thead>
@@ -33,7 +33,7 @@
 
 <% if (permissions.suppliers) { %>
   <form method="post" action="/suppliers" class="card section" id="add-supplier">
-    <div class="card-head"><h2>Add a supplier</h2></div>
+    <div class="card-head"><div><h2>Add a supplier</h2><p class="muted">Start with what you know. After this, Foundry walks you through products, email, permissions, and the first order.</p></div></div>
     <div class="card-body">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="grid grid--2">
@@ -61,12 +61,12 @@
         <label class="field">
           <span class="field-label">Payment terms</span>
           <input class="input" type="text" name="paymentTerms" maxlength="80" placeholder="Net 30">
-          <span class="field-help">Recorded for reference. Foundry does not track invoices or payments.</span>
+          <span class="field-help">Kept on the supplier record. Foundry also reads these off their invoices. What you owe them is in Accounting.</span>
         </label>
       </div>
     </div>
     <div class="card-foot">
-      <button class="btn btn--primary" type="submit">Add supplier</button>
+      <button class="btn btn--primary" type="submit">Create supplier and continue</button>
     </div>
   </form>
 <% } %>

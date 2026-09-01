@@ -510,7 +510,23 @@ function screenContext(guidance, nav) {
       ? { title: 'Keep recording what comes in, goes out, moves or gets counted', action: 'Tell Foundry', href: '/#tell-foundry' }
       : guidance.next;
   }
+  /*
+   * A page may describe itself.
+   *
+   * Descriptions are keyed by the sidebar section, and every page under
+   * Purchasing shares that key — so Suppliers, a page listing who you buy from,
+   * introduced itself as "See what Foundry wants to buy, orders already placed,
+   * what is arriving, and what still needs receiving". Nothing on that screen
+   * does any of those things.
+   */
   return { description: screenDescriptions[nav], next };
+}
+
+/** The same context, with a description this particular page provides. */
+function screenContextFor(guidance, nav, description) {
+  const context = screenContext(guidance, nav);
+  if (!context) return context;
+  return description ? { ...context, description } : context;
 }
 
 function guideTopics(db, workspaceId) {
@@ -537,4 +553,4 @@ function guideTopics(db, workspaceId) {
   ];
 }
 
-module.exports = { facts, build, guideTopics, examples, displayName, screenContext };
+module.exports = { facts, build, guideTopics, examples, displayName, screenContext, screenContextFor };
