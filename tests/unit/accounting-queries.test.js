@@ -7,7 +7,8 @@ const ledger = require('../../src/accounting/ledger');
 const planner = require('../../src/attention/query-planner');
 const queries = require('../../src/attention/query-service');
 const authService = require('../../src/domain/auth-service');
-const { makeDatabase, cleanupAll, seedWorkspace } = require('../helpers');
+const engine = require('../../src/domain/inventory-engine');
+const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('../helpers');
 
 test.after(cleanupAll);
 
@@ -161,4 +162,82 @@ test('list questions get a verdict, and only where the proposition is clear', ()
   assert.doesNotMatch(ask('replenishment', 'Do I need to order anything?'), /^Yes/,
     'an inventory with nothing in it does not need ordering');
   db.close();
+});
+
+/**
+ * "Is anything wrong with my books?"
+ *
+ * The one question from the accounting brief with no intent behind it. The
+ * checks were already computed for the Accounting screen and then flattened
+ * into sentences with nothing behind them — no record to open, no action, no
+ * way to ask which ones.
+ *
+ * The checks live in accounting/books-review as entries in a list rather than
+ * branches in a function, and read the owner dashboard's own figures, so the
+ * audit and the screen cannot disagree and a new check is a new entry.
+ */
+test('the books review answers the question and every finding leads somewhere', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  ledger.configure(db, workspace.ctx, membership, {
+    startDate: '2026-01-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+  });
+
+  const review = require('../../src/accounting/books-review');
+  const clean = review.review(db, workspace.workspaceId);
+
+  // A workspace with nothing in it has nothing wrong with it, and says how
+  // much was looked at — "nothing is wrong" is only worth hearing with that.
+  assert.equal(clean.clean, true);
+  assert.deepEqual(clean.findings, []);
+  assert.ok(clean.checksRun >= 8, 'every check ran');
+
+  // Every check must answer the same four questions, or it is just a worry.
+  for (const check of review.CHECKS) {
+    assert.equal(typeof check.id, 'string');
+    assert.equal(typeof check.run, 'function');
+  }
+
+  const answered = queries.execute(db, workspace.workspaceId, { intent: 'books_health' },
+    { question: 'Is anything wrong with my books?' });
+  assert.match(answered.answer, /^No — nothing found across \d+ checks\./,
+    'a yes-or-no question about the books gets a yes or a no');
+  assert.match(answered.answer, /what customers owe/, 'and says what was actually checked');
+});
+
+test('a finding names the record, the reason, and the way to fix it', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  ledger.configure(db, workspace.ctx, membership, {
+    startDate: '2026-01-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+  });
+
+  // Stock on the shelves whose cost was never proven: a real finding, and the
+  // one an imported spreadsheet produces on its first day.
+  const item = makeQuantityItem(db, workspace.ctx, { name: 'Canvas Tote' });
+  engine.receive(db, workspace.ctx, {
+    skuId: item.skuId, locationId: workspace.main.id, quantity: 12,
+    reasonCode: 'opening_inventory', notes: 'Opening inventory',
+  });
+
+  const review = require('../../src/accounting/books-review').review(db, workspace.workspaceId);
+  assert.equal(review.clean, false);
+  const finding = review.findings.find((row) => row.id === 'inventory_without_proven_cost');
+  assert.ok(finding, 'unproven stock cost is found');
+
+  assert.match(finding.what, /12 units/, 'what happened, with the real number');
+  assert.match(finding.why, /will not guess/, 'why Foundry stopped rather than estimating');
+  assert.ok(finding.proof.href, 'what proves it, and where to read it');
+  assert.ok(finding.action.href, 'and one thing to do about it');
+
+  // The answer carries that route through to the row, so the number is a way
+  // in rather than a verdict to be taken on trust.
+  const answered = queries.execute(db, workspace.workspaceId, { intent: 'books_health' },
+    { question: 'Is anything wrong with my books?' });
+  assert.match(answered.answer, /^Yes — /);
+  assert.equal(answered.rows.length, review.findings.length);
+  assert.ok(answered.rows.every((row) => row.href), 'every row drills down');
+  assert.ok(!answered.columns.includes('href'), 'the link is not shown as a column');
 });

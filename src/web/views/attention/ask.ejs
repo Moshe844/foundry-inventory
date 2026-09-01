@@ -141,7 +141,20 @@
                     if (column === 'expiresAt') value = helpers.shortDate(value);
                     if (numeric && column === 'delta' && Number(value) > 0) value = '+' + value;
                   %>
-                  <td class="<%= numeric ? 'right num' : '' %>"><%= value === null || value === undefined ? '—' : value %></td>
+                  <%
+                    /*
+                     * A row that names a record links to it.
+                     *
+                     * Answers were a table of dead text: told "PO-1001 is late"
+                     * and given no way to open PO-1001. Any executor can attach
+                     * an href to a row, and the first column becomes the way in
+                     * — so drilling from a number to the thing that caused it
+                     * works the same everywhere rather than per intent.
+                     */
+                    var isFirst = result.columns.indexOf(column) === 0;
+                    var shown = value === null || value === undefined ? '—' : value;
+                  %>
+                  <td class="<%= numeric ? 'right num' : '' %>"><% if (isFirst && row.href) { %><a href="<%= row.href %>"><%= shown %></a><% } else { %><%= shown %><% } %></td>
                 <% }) %>
               </tr>
             <% }) %>

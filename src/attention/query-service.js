@@ -81,6 +81,7 @@ const INTENTS = [
   'foundry_activity',
   'foundry_why',
   'stop_automation',
+  'books_health',
   'unsupported',
 ];
 
@@ -684,6 +685,48 @@ const EXECUTORS = {
       answer: noActivity
         ? `No revenue, product cost, or operating expense has been posted for ${from} through ${to}, so Foundry does not have a realized margin to report yet. The Accounting inventory view shows on-hand cost, selling value, and potential gross profit separately.`
         : `This is ${money(pnl.netIncomeMinor)} net ${pnl.netIncomeMinor >= 0 ? 'profit' : 'loss'} based on the expenses recorded in Foundry for ${from} through ${to}: ${money(pnl.revenueMinor)} revenue minus ${money(pnl.cogsMinor)} cost of goods and ${money(pnl.operatingExpenseMinor)} operating expenses recorded in Foundry. Gross profit is ${money(pnl.grossProfitMinor)}; it is not the same as net profit. This net result is incomplete if business costs such as rent or payroll have not been recorded in Foundry.` };
+  },
+
+  /**
+   * "Is anything wrong with my books?"
+   *
+   * The checks live in accounting/books-review, which reads the owner
+   * dashboard's own figures — so this answer and the Accounting screen cannot
+   * disagree, and a new thing worth noticing is a new entry there rather than
+   * another branch here.
+   *
+   * Every row carries the record it came from, so the answer is a way in rather
+   * than a verdict to be taken on trust.
+   */
+  books_health(db, workspaceId) {
+    const review = require('../accounting/books-review').review(db, workspaceId);
+    const rows = review.findings.map((finding) => ({
+      finding: finding.what,
+      severity: finding.severity,
+      whatToDo: finding.action.label,
+      href: finding.action.href,
+    }));
+    const answer = review.clean
+      ? `Nothing is wrong that Foundry can see, across ${review.checksRun} checks: what customers owe, `
+        + 'what you owe suppliers, stock received without a bill, payments that look duplicated, sales '
+        + 'with no payment recorded, cash due out against cash in, stock with no proven cost, and stock '
+        + 'that is not selling.'
+      : `${review.findings.length} of ${review.checksRun} checks found something. `
+        + review.findings.map((finding) => `${finding.what} ${finding.why}`).join(' ');
+    return {
+      rows,
+      columns: ['finding', 'severity', 'whatToDo'],
+      handoff: { href: '/accounting', label: 'Open Accounting' },
+      verdict: {
+        yes: !review.clean,
+        asserts: ['wrong', 'problem', 'issue', 'error', 'mistake', 'missing', 'off'],
+        opposite: ['right', 'correct', 'in order', 'fine', 'clean', 'healthy', 'all good'],
+        summary: review.clean
+          ? `nothing found across ${review.checksRun} checks.`
+          : `${review.findings.length} thing${review.findings.length === 1 ? '' : 's'} to look at.`,
+      },
+      answer,
+    };
   },
 
   balance_sheet(db, workspaceId) {

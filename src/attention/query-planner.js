@@ -77,6 +77,11 @@ Intents:
 - selling_price: the current customer selling price of a product or variant.
 - sales_summary: how many customer sales orders are open, committed,
   backordered/waiting for stock or fulfilled.
+- books_health: whether anything is wrong with the books — missing supplier
+  bills, overdue money in or out, payments that look duplicated, sales with no
+  payment recorded, stock with no proven cost. "Is anything wrong?", "check my
+  books", "did I miss anything", "is everything correct". Not a request for a
+  figure: use profit_and_loss, cash_position or the aging intents for those.
 - financial_summary: overall financial health, financial pulse, or how the
   business is doing financially.
 - business_health: a whole-business briefing combining inventory, customer
