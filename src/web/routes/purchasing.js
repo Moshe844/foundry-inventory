@@ -810,6 +810,8 @@ router.get(
     res.page('purchasing/supplier', {
       title: supplier.name,
       nav: 'purchasing',
+      // The list page says what it is; so should the supplier's own page.
+      screenDescription: 'Set up one supplier: what they sell you, where orders go, and what Foundry may send them.',
       supplier,
       items: supplierService.itemsForSupplier(req.db, req.ctx.workspaceId, supplier.id, { includeInactive: true }),
       orders: poService.list(req.db, req.ctx.workspaceId, { supplierId: supplier.id, limit: 10 }),
