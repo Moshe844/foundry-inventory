@@ -29,6 +29,19 @@
 
 const ownerDashboard = require('./owner-dashboard');
 
+/*
+ * What counts as notable.
+ *
+ * Some threshold is unavoidable for "is this worth mentioning", so they are
+ * named here rather than buried in a check, and every finding states the
+ * comparison it made. What is deliberately not here is any figure about a
+ * business other than this one: the baselines are the customer's own previous
+ * period and their own typical spend, never an industry number.
+ */
+const MARGIN_DROP_SHARE = 0.25;   // a quarter of the margin they had before
+const UNUSUAL_MULTIPLE = 3;       // three times that category's own typical entry
+const MINIMUM_HISTORY = 4;        // fewer entries than this is not yet a habit
+
 const SEVERITY = { URGENT: 'urgent', IMPORTANT: 'important', WORTH_KNOWING: 'worth knowing' };
 const RANK = { [SEVERITY.URGENT]: 0, [SEVERITY.IMPORTANT]: 1, [SEVERITY.WORTH_KNOWING]: 2 };
 
@@ -141,6 +154,117 @@ const CHECKS = [
     } : null),
   },
   {
+    /*
+     * Gross margin against the business's own previous period.
+     *
+     * There is no correct margin for a business, so nothing is compared to an
+     * industry figure or a number chosen here. The only meaningful baseline is
+     * what this business itself earned over the same span immediately before,
+     * and a drop only counts when the prior period actually sold something —
+     * otherwise every first month of trading is a collapse from nothing.
+     */
+    id: 'margin_dropped',
+    run: ({ pnl }, { money, priorPnl, marginDropShare }) => {
+      if (!priorPnl || priorPnl.revenueMinor <= 0 || pnl.revenueMinor <= 0) return null;
+      const now = pnl.grossProfitMinor / pnl.revenueMinor;
+      const before = priorPnl.grossProfitMinor / priorPnl.revenueMinor;
+      if (before <= 0 || now >= before) return null;
+      const lostShare = (before - now) / before;
+      if (lostShare < marginDropShare) return null;
+
+      const pct = (value) => `${(value * 100).toFixed(1)}%`;
+      return {
+        severity: SEVERITY.IMPORTANT,
+        what: `Gross margin fell from ${pct(before)} to ${pct(now)}.`,
+        why: 'You are keeping less of every sale than you were. Either buying cost rose, selling '
+          + 'price fell, or the mix shifted toward products that earn less.',
+        proof: {
+          label: `${money(pnl.revenueMinor)} of sales at ${pct(now)}, against `
+            + `${money(priorPnl.revenueMinor)} at ${pct(before)} in the period before`,
+          href: '/accounting/reports/profit-and-loss',
+        },
+        action: { label: 'Compare the two periods', href: '/accounting/reports/profit-and-loss' },
+        amountMinor: Math.round((before - now) * pnl.revenueMinor),
+      };
+    },
+  },
+  {
+    /*
+     * An expense far outside what this business normally spends on that thing.
+     *
+     * "Unusual" only means anything against a habit, so the comparison is each
+     * category against its own typical entry — the median, which one large
+     * payment cannot drag upward the way an average can. A category with too
+     * little history to have a habit is skipped rather than guessed at.
+     */
+    id: 'unusual_expense',
+    run: ({ expenses }, { money, unusualMultiple, minimumHistory }) => {
+      const byCategory = new Map();
+      for (const row of expenses.rows || []) {
+        const key = row.category_name || 'Uncategorised';
+        if (!byCategory.has(key)) byCategory.set(key, []);
+        byCategory.get(key).push(row);
+      }
+
+      const unusual = [];
+      for (const [category, rows] of byCategory) {
+        if (rows.length < minimumHistory) continue;
+        const amounts = rows.map((row) => Math.abs(Number(row.amountMinor || 0))).sort((a, b) => a - b);
+        const median = amounts[Math.floor(amounts.length / 2)];
+        if (median <= 0) continue;
+        for (const row of rows) {
+          const amount = Math.abs(Number(row.amountMinor || 0));
+          if (amount >= median * unusualMultiple) {
+            unusual.push({ category, amount, row });
+          }
+        }
+      }
+      if (!unusual.length) return null;
+
+      const biggest = unusual.sort((a, b) => b.amount - a.amount)[0];
+      return {
+        severity: SEVERITY.WORTH_KNOWING,
+        what: `${money(biggest.amount)} on ${biggest.category} is well above what you usually spend there.`,
+        why: 'Not necessarily wrong — a quarterly bill or a one-off purchase looks exactly like this. '
+          + 'Worth confirming it is the amount you meant to pay.',
+        proof: {
+          label: `${biggest.row.entry_description || biggest.category} on ${biggest.row.posting_date}`
+            + (unusual.length > 1 ? `, and ${unusual.length - 1} other like it` : ''),
+          href: '/accounting/transactions',
+        },
+        action: { label: 'Check this expense', href: '/accounting/transactions' },
+        amountMinor: biggest.amount,
+      };
+    },
+  },
+  {
+    /*
+     * Stock whose recorded balance disagrees with its own movement history.
+     *
+     * The inventory engine already proves this on demand — balances against the
+     * ledger, lots and serials against their balances, and anything negative.
+     * Nothing is recomputed here; a disagreement between what Foundry says it
+     * holds and what its own records add up to is the most serious thing in
+     * this list, because every value above it is built on those quantities.
+     */
+    id: 'inventory_discrepancy',
+    run: (data, { integrity }) => {
+      if (!integrity || integrity.ok || !integrity.problems.length) return null;
+      const kinds = [...new Set(integrity.problems.map((problem) => problem.kind))]
+        .map((kind) => kind.replaceAll('_', ' '));
+      return {
+        severity: SEVERITY.URGENT,
+        what: `${count(integrity.problems.length, 'stock record')} `
+          + `${integrity.problems.length === 1 ? 'does' : 'do'} not match its own history.`,
+        why: 'Every inventory value and every profit figure is built on these quantities. '
+          + 'Foundry recomputes this from the movement ledger, so a mismatch is real, not a display fault.',
+        proof: { label: kinds.join(', '), href: '/settings#inventory-integrity' },
+        action: { label: 'Open inventory integrity', href: '/settings#inventory-integrity' },
+        amountMinor: null,
+      };
+    },
+  },
+  {
     id: 'stock_not_selling',
     run: ({ slowInventory }, { money }) => (slowInventory.totalCostMinor > 0 ? {
       severity: SEVERITY.WORTH_KNOWING,
@@ -178,9 +302,40 @@ function review(db, workspaceId, options = {}) {
   const money = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency })
     .format(Number(amount || 0) / 100);
 
+  /*
+   * The same span again, immediately before, so a change can be measured
+   * against this business rather than against a number chosen for it.
+   */
+  const spanDays = Math.max(1, Math.round(
+    (Date.parse(`${asOf}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000
+  ) + 1);
+  const priorTo = new Date(Date.parse(`${from}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+  const priorFrom = new Date(Date.parse(`${priorTo}T00:00:00Z`) - (spanDays - 1) * 86400000)
+    .toISOString().slice(0, 10);
+  const priorPnl = require('./reports').profitAndLoss(db, workspaceId, { from: priorFrom, to: priorTo });
+
+  // Proven from the movement ledger by the inventory engine, not recomputed here.
+  let integrity = null;
+  try {
+    integrity = require('../domain/inventory-engine').verifyIntegrity(db, workspaceId);
+  } catch {
+    integrity = null;
+  }
+
+  const context = {
+    money,
+    currency,
+    priorPnl,
+    priorPeriod: { from: priorFrom, to: priorTo },
+    integrity,
+    marginDropShare: MARGIN_DROP_SHARE,
+    unusualMultiple: UNUSUAL_MULTIPLE,
+    minimumHistory: MINIMUM_HISTORY,
+  };
+
   const findings = CHECKS
     .map((check) => {
-      const found = check.run(data, { money, currency });
+      const found = check.run(data, context);
       return found ? { id: check.id, ...found } : null;
     })
     .filter(Boolean)

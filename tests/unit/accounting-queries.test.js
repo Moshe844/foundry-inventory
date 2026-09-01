@@ -241,3 +241,117 @@ test('a finding names the record, the reason, and the way to fix it', () => {
   assert.ok(answered.rows.every((row) => row.href), 'every row drills down');
   assert.ok(!answered.columns.includes('href'), 'the link is not shown as a column');
 });
+
+/**
+ * The three checks that need a baseline rather than today's figures.
+ *
+ * Each compares the business against itself — its own previous period, its own
+ * typical spend on that category, its own movement ledger — because there is no
+ * correct margin or normal expense for a business in general. A check that
+ * never fires is worse than no check, so each is proven here against a case
+ * built to trigger it.
+ */
+test('margin drops are measured against the same business a period earlier', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  ledger.configure(db, workspace.ctx, membership, {
+    startDate: '2026-01-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+  });
+
+  const day = (offset) => new Date(Date.now() - offset * 86400000).toISOString().slice(0, 10);
+  // Earlier period: sold 200 at a cost of 80 — a 60% margin.
+  ledger.post(db, workspace.ctx, {
+    postingDate: day(45), description: 'Earlier sales', sourceKey: 'margin-before',
+    lines: [
+      { accountKey: 'CASH', debitMinor: 20_000 }, { accountKey: 'SALES_REVENUE', creditMinor: 20_000 },
+      { accountKey: 'COST_OF_GOODS_SOLD', debitMinor: 8_000 }, { accountKey: 'INVENTORY_ASSET', creditMinor: 8_000 },
+    ],
+  });
+  // This period: sold 200 at a cost of 180 — a 10% margin.
+  ledger.post(db, workspace.ctx, {
+    postingDate: day(2), description: 'Recent sales', sourceKey: 'margin-now',
+    lines: [
+      { accountKey: 'CASH', debitMinor: 20_000 }, { accountKey: 'SALES_REVENUE', creditMinor: 20_000 },
+      { accountKey: 'COST_OF_GOODS_SOLD', debitMinor: 18_000 }, { accountKey: 'INVENTORY_ASSET', creditMinor: 18_000 },
+    ],
+  });
+
+  const review = require('../../src/accounting/books-review')
+    .review(db, workspace.workspaceId, { from: day(30), to: day(0), asOf: day(0) });
+  const finding = review.findings.find((row) => row.id === 'margin_dropped');
+
+  assert.ok(finding, 'a margin falling from 60% to 10% is noticed');
+  assert.match(finding.what, /60\.0% to 10\.0%/, 'and states both figures');
+  assert.match(finding.why, /keeping less of every sale/);
+  assert.ok(finding.action.href, 'with somewhere to compare them');
+  db.close();
+});
+
+test('an unusual expense is unusual against that category, not a fixed amount', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  ledger.configure(db, workspace.ctx, membership, {
+    startDate: '2026-01-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+  });
+
+  const day = (offset) => new Date(Date.now() - offset * 86400000).toISOString().slice(0, 10);
+  // A habit: four ordinary shipping charges.
+  for (const [index, amount] of [1_000, 1_200, 900, 1_100].entries()) {
+    ledger.post(db, workspace.ctx, {
+      postingDate: day(20 - index), description: `Courier ${index + 1}`, sourceKey: `ship-${index}`,
+      lines: [
+        { accountKey: 'SHIPPING_EXPENSE', debitMinor: amount }, { accountKey: 'CASH', creditMinor: amount },
+      ],
+    });
+  }
+  // Then one that is nothing like them.
+  ledger.post(db, workspace.ctx, {
+    postingDate: day(3), description: 'Courier — annual account', sourceKey: 'ship-big',
+    lines: [
+      { accountKey: 'SHIPPING_EXPENSE', debitMinor: 60_000 }, { accountKey: 'CASH', creditMinor: 60_000 },
+    ],
+  });
+
+  const review = require('../../src/accounting/books-review')
+    .review(db, workspace.workspaceId, { from: day(30), to: day(0), asOf: day(0) });
+  const finding = review.findings.find((row) => row.id === 'unusual_expense');
+
+  assert.ok(finding, 'the outlier is found');
+  assert.match(finding.what, /\$600\.00/, 'and named by its amount');
+  assert.match(finding.why, /Not necessarily wrong/,
+    'without accusing the owner of an error they may have meant');
+  db.close();
+});
+
+test('stock that disagrees with its own history is the most serious finding', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  ledger.configure(db, workspace.ctx, membership, {
+    startDate: '2026-01-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+  });
+  const item = makeQuantityItem(db, workspace.ctx, { name: 'Canvas Tote' });
+  engine.receive(db, workspace.ctx, {
+    skuId: item.skuId, locationId: workspace.main.id, quantity: 10, reasonCode: 'opening_inventory',
+  });
+
+  // A balance that no longer matches the movements behind it. The ledger is
+  // immutable, so this is the only way the two can ever disagree — and exactly
+  // what the integrity check exists to catch.
+  db.prepare('UPDATE balances SET on_hand = on_hand + 7 WHERE workspace_id = ? AND sku_id = ?')
+    .run(workspace.workspaceId, item.skuId);
+
+  const review = require('../../src/accounting/books-review').review(db, workspace.workspaceId);
+  const finding = review.findings.find((row) => row.id === 'inventory_discrepancy');
+
+  assert.ok(finding, 'the mismatch is found');
+  assert.equal(finding.severity, 'urgent', 'every value above it depends on these quantities');
+  assert.match(finding.proof.label, /balance ledger mismatch/);
+  assert.ok(finding.action.href, 'and it leads to the integrity report');
+
+  // It sorts above the merely important, because it undermines them.
+  assert.equal(review.findings[0].id, 'inventory_discrepancy');
+  db.close();
+});
