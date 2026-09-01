@@ -63,7 +63,23 @@
       <% } %>
     </div>
     <div class="card-body">
-      <p class="lede" style="white-space:pre-line"><%= result.answer %></p>
+      <%
+        /*
+         * The sentence first, the record underneath.
+         *
+         * `spoken` is a phrasing of the same figures — every number in it was
+         * checked against the computed answer before it got here, and dropped
+         * if it did not match. The computed answer is still shown, because it
+         * is the statement of record and the thing that is true whether or not
+         * a model was available to read it aloud.
+         */
+      %>
+      <% if (result.spoken) { %>
+        <p class="lede"><%= result.spoken %></p>
+        <p class="answer-record" style="white-space:pre-line"><%= result.answer %></p>
+      <% } else { %>
+        <p class="lede" style="white-space:pre-line"><%= result.answer %></p>
+      <% } %>
 
       <%
         /*

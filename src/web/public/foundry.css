@@ -1827,3 +1827,12 @@ a.list-row.panel { display: flex; margin-bottom: var(--space-4); }
 .choice input[type="checkbox"] { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
 .choice strong { display: block; font-size: var(--text-sm); font-weight: var(--weight-semi); }
 .choice small { display: block; margin-top: 2px; font-size: var(--text-xs); color: var(--muted); line-height: var(--leading-snug); }
+
+/* The computed answer beneath a spoken one: the record, quieter than the reply. */
+.answer-record {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}

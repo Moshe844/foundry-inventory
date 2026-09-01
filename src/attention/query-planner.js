@@ -18,6 +18,7 @@ const config = require('../config');
 const { validate } = require('../foundry/validator');
 const { toWireSchema } = require('../foundry/schema-tools');
 const queryService = require('./query-service');
+const phrasing = require('./answer-phrasing');
 const { requireText } = require('../lib/util');
 const { ValidationError } = require('../domain/errors');
 
@@ -280,7 +281,24 @@ async function plan(question, options = {}) {
 async function ask(db, workspaceId, question, options = {}) {
   const queryPlan = await plan(question, options);
   const result = queryService.execute(db, workspaceId, queryPlan, { question: String(question).trim() });
-  return { question: String(question).trim(), ...result };
+
+  /*
+   * The wording, once the figures are settled.
+   *
+   * The deterministic answer stays exactly as it was and is what the page shows
+   * as the statement of record. `spoken` is a sentence arranged around those
+   * same numbers, and it is dropped the moment it contains one it was not
+   * given. No provider, a failed call, or an ungrounded sentence all end in the
+   * same place: the answer Foundry computed.
+   */
+  let spoken = null;
+  try {
+    spoken = await phrasing.phrase(String(question).trim(), result, options);
+  } catch {
+    spoken = null;
+  }
+
+  return { question: String(question).trim(), ...result, spoken };
 }
 
 module.exports = {
