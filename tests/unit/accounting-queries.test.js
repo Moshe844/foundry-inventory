@@ -355,3 +355,51 @@ test('stock that disagrees with its own history is the most serious finding', ()
   assert.equal(review.findings[0].id, 'inventory_discrepancy');
   db.close();
 });
+
+/**
+ * The answer must contain the number that was asked for.
+ *
+ * "how many sales has been shipped yet?" was answered "0 open sales orders;
+ * 0 units committed and 0 waiting for stock" — three measures, none of them
+ * shipped — directly above a table reading "Fulfilled units: 8". Every figure
+ * correct, the question unanswered, and the reader left to find their own
+ * number in the table below the sentence that ignored it.
+ *
+ * The rows already carry every measure with its label, so the question is
+ * matched against those rather than against a sentence written per intent.
+ */
+test('an answer leads with the measure the question named', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const item = makeQuantityItem(db, workspace.ctx, { name: 'Canvas Tote' });
+  engine.receive(db, workspace.ctx, {
+    skuId: item.skuId, locationId: workspace.main.id, quantity: 20, reasonCode: 'opening_inventory',
+  });
+  const sales = require('../../src/sales/sales-order-service');
+  const prices = require('../../src/pricing/price-service');
+  prices.setPrice(db, workspace.ctx, { skuId: item.skuId, amount: '10.00', currency: 'USD' });
+  const order = sales.createOrder(db, workspace.ctx, {
+    customerName: 'Harbour Boutique', orderDate: '2026-09-01',
+    lines: [{ skuId: item.skuId, quantity: 8 }],
+  });
+  sales.confirm(db, workspace.ctx, order.id, { idempotencyKey: `t:${order.id}` });
+  const line = sales.getOrder(db, workspace.workspaceId, order.id).lines[0];
+  sales.fulfill(db, workspace.ctx, order.id, {
+    lineId: line.id, locationId: workspace.main.id, quantity: 8, idempotencyKey: `f:${order.id}`,
+  });
+
+  const ask = (question) => queries
+    .execute(db, workspace.workspaceId, { intent: 'sales_summary' }, { question }).answer;
+
+  // The word the owner uses is not the word on the column.
+  assert.match(ask('how many sales has been shipped yet?'), /^Fulfilled units: 8\./,
+    'shipped means fulfilled, and the number comes first');
+  assert.match(ask('how many units were dispatched?'), /^Fulfilled units: 8\./);
+
+  // A different measure in the same table.
+  assert.match(ask('how many units are committed?'), /^Committed units: /);
+
+  // A question naming no particular measure keeps the summary it always had.
+  assert.doesNotMatch(ask('how are sales doing?'), /^Fulfilled units/);
+  db.close();
+});

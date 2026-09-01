@@ -1636,6 +1636,88 @@ const LIST_VERDICTS = {
 // and 'why' do not, and prefixing those with 'Yes' would be noise.
 const VERDICT_OPENERS = new Set(['have','has','had','did','do','does','is','are','am','was','were','can','should','will','any']);
 
+/*
+ * Words that mean the same measure to a person but not to a column heading.
+ *
+ * Not business knowledge — vocabulary. An owner says "shipped", the ledger says
+ * "fulfilled", and neither is wrong. Each group is a set of equals; nothing
+ * here knows what a business sells.
+ */
+const MEASURE_SYNONYMS = [
+  ['fulfilled', 'shipped', 'dispatched', 'sent', 'delivered', 'went out'],
+  ['committed', 'reserved', 'allocated', 'held', 'promised'],
+  ['ordered', 'demand', 'requested'],
+  ['waiting', 'backordered', 'short', 'outstanding', 'unfulfilled'],
+  ['open', 'unfinished', 'in progress'],
+  ['owed', 'owe', 'outstanding', 'unpaid', 'balance', 'due'],
+  ['paid', 'received', 'collected', 'settled'],
+  ['profit', 'earned', 'made', 'income'],
+  ['revenue', 'sales', 'turnover', 'takings'],
+  ['cost', 'cogs', 'spent'],
+  ['cash', 'bank', 'money'],
+  ['overdue', 'late', 'past due'],
+];
+
+// Words that appear in almost every label and so distinguish nothing.
+const GENERIC_LABEL_WORDS = new Set(['units', 'total', 'amount', 'value', 'orders', 'order',
+  'stock', 'for', 'and', 'the', 'of', 'in', 'at', 'to', 'a']);
+
+const wordsOf = (text) => String(text || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+/** Every word a question could be using for the same idea. */
+function expand(words) {
+  const all = new Set(words);
+  for (const group of MEASURE_SYNONYMS) {
+    if (group.some((word) => words.includes(word))) for (const word of group) all.add(word);
+  }
+  return all;
+}
+
+/**
+ * The measure a question is actually about, when it is about one.
+ *
+ * Answers were a fixed sentence per intent, so "how many sales have shipped?"
+ * was answered "0 open sales orders; 0 units committed and 0 waiting for
+ * stock" — three measures, none of them the one asked for, directly above a
+ * table reading "Fulfilled units: 8". Every figure correct and the question
+ * unanswered.
+ *
+ * The rows already carry every measure with its label, so the question can be
+ * matched against them rather than against a template written per intent. A
+ * question naming none of them, or naming several equally, is left alone: the
+ * summary sentence is the right answer to "how are sales doing?".
+ */
+function leadWithTheMeasure(question, result) {
+  if (!result || !Array.isArray(result.rows) || !result.answer) return result;
+  const columns = result.columns || [];
+  const labelColumn = ['measure', 'label', 'name'].find((column) => columns.includes(column));
+  const valueColumn = ['value', 'display', 'amount'].find((column) => columns.includes(column));
+  if (!labelColumn || !valueColumn || result.rows.length < 2) return result;
+
+  const asked = expand(wordsOf(question));
+  if (!asked.size) return result;
+
+  const scored = result.rows.map((row) => {
+    const label = wordsOf(row[labelColumn]).filter((word) => !GENERIC_LABEL_WORDS.has(word));
+    const hits = label.filter((word) => asked.has(word)).length;
+    return { row, hits };
+  }).filter((entry) => entry.hits > 0).sort((a, b) => b.hits - a.hits);
+
+  // Nothing named, or two measures named equally well: the summary stands.
+  if (!scored.length) return result;
+  if (scored.length > 1 && scored[0].hits === scored[1].hits) return result;
+
+  const { row } = scored[0];
+  const label = String(row[labelColumn]);
+  const value = row[valueColumn];
+  if (value === null || value === undefined) return result;
+
+  const lead = `${label}: ${value}.`;
+  // Do not repeat a figure the sentence already leads with.
+  if (String(result.answer).startsWith(lead)) return result;
+  return { ...result, answer: `${lead} ${result.answer}` };
+}
+
 /**
  * Answers the question that was actually asked, before stating the figures.
  *
@@ -1711,7 +1793,8 @@ function execute(db, workspaceId, rawPlan, options = {}) {
             ? listVerdict.some(executed.rows.length)
             : listVerdict.none,
         } };
-  const result = leadWithTheAnswer(options.question, withVerdict);
+  // The measure they named, then the verdict shape, then the evidence.
+  const result = leadWithTheAnswer(options.question, leadWithTheMeasure(options.question, withVerdict));
   return {
     plan,
     isAction: result.isAction === true,
