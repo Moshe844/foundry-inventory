@@ -30,6 +30,11 @@ It is built in three layers, and each one only ever reads the layer below:
    run unattended only inside a separately approved policy with explicit limits,
    and every result is verified.
 
+
+**Start here:** [](docs/product-brief.md) — what Foundry
+is, the doctrine it is built on, the design principles new screens are held to,
+the fixed vocabulary, and the known gaps. Read it before changing behaviour.
+
 ## Running it
 
 ```bash
