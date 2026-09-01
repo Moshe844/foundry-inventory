@@ -21,6 +21,7 @@
 const FIELDS = [
   { id: 'name', label: 'Product name' },
   { id: 'code', label: 'Code or SKU' },
+  { id: 'barcode', label: 'Barcode (GTIN, UPC, EAN)' },
   { id: 'description', label: 'Description' },
   { id: 'unitLabel', label: 'Unit of measure' },
   { id: 'variant1', label: 'Variant (1)' },
@@ -63,8 +64,22 @@ const PATTERNS = {
     /^price(?:\s*each)?$/,
   ],
   currency: [/\b(?:currency|currency\s*code)\b/],
+  /*
+   * The code a scanner reads off the product.
+   *
+   * These wordings used to sit inside `code`, so a file carrying both an SKU
+   * and a Barcode column had two columns competing for one field. SKU won, and
+   * forty real GTINs were dropped as a column Foundry could find no home for.
+   *
+   * They are different facts: one is what the business calls the product, the
+   * other is what is printed on the box. Anything that ever scans needs the
+   * second, and it cannot be recovered later from a file nobody kept.
+   */
+  barcode: [
+    /\b(?:barcode|bar\s*code|gtin|upc|ean|jan|isbn)\b/,
+  ],
   code: [
-    /\b(?:sku|upc|ean|gtin|mpn|barcode)\b/,
+    /\b(?:sku|mpn)\b/,
     /\b(?:item|product|part|catalog(?:ue)?|stock|material)\s*(?:code|no\.?|num(?:ber)?|id|#)\b/,
     /\b(?:code|part\s*#|ref(?:erence)?)\b/,
   ],

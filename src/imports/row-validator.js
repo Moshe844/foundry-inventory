@@ -282,6 +282,9 @@ function validateRows(db, workspaceId, sheet, plan) {
     const code = cell(row, mappings.code);
     parsed.name = name;
     parsed.code = code;
+    // The code a scanner reads, kept beside the business code rather than
+    // instead of it. A file that carries both is stating two different facts.
+    parsed.barcode = cell(row, mappings.barcode);
     parsed.description = cell(row, mappings.description);
     parsed.unitLabel = cell(row, mappings.unitLabel);
     parsed.notes = cell(row, mappings.notes);

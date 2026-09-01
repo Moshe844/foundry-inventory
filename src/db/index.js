@@ -52,6 +52,11 @@ const ADDED_COLUMNS = [
   { table: 'attention_items', column: 'item_id', definition: 'TEXT' },
   { table: 'attention_items', column: 'sku_id', definition: 'TEXT' },
   { table: 'accounts', column: 'last_workspace_id', definition: 'TEXT' },
+  // The scanned code on the product itself — GTIN, UPC, EAN. Distinct from
+  // the SKU: one is what the business calls the product, the other is what a
+  // scanner reads off the box, and a file usually carries both in separate
+  // columns. Nullable, because most inventories never have one.
+  { table: 'skus', column: 'barcode', definition: 'TEXT' },
   // Per-workspace action permissions, granted on top of the membership role.
   { table: 'users', column: 'permissions', definition: 'TEXT' },
   { table: 'physical_events', column: 'attachment_mime', definition: 'TEXT' },

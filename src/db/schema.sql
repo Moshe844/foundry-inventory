@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS skus (
   workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   item_id       TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
   code          TEXT NOT NULL,
+  barcode       TEXT,
   variant_label TEXT,
   is_default    INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
   position      INTEGER NOT NULL DEFAULT 0,

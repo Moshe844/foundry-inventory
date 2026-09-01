@@ -12,6 +12,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const parser = require('../../src/imports/parser');
+const fields = require('../../src/imports/fields');
 const xlsxReader = require('../../src/imports/xlsx-reader');
 const catalog = require('../../src/imports/catalog-service');
 const proposals = require('../../src/actions/proposal-service');
@@ -559,4 +560,42 @@ test('an unreadable spreadsheet is the uploader’s problem, not a server fault'
   assert.ok(error instanceof DomainError, 'so the real message reaches the person');
   assert.equal(error.status, 400);
   assert.equal(error.code, 'spreadsheet_unreadable');
+});
+
+/**
+ * A barcode and an SKU are two different facts.
+ *
+ * "barcode", "upc", "ean" and "gtin" used to be wordings for the `code` field,
+ * and a field can be claimed by one column. So a file carrying both an SKU
+ * column and a Barcode column had them competing: SKU won, and the barcodes
+ * were reported as a column Foundry could find no home for — forty real GTINs
+ * dropped on the way in, unrecoverable once the file was gone.
+ *
+ * One is what the business calls the product. The other is what is printed on
+ * the box, and it is the only one a scanner can resolve.
+ */
+test('a file with both an SKU and a barcode column keeps both', () => {
+  const columns = ['SKU', 'Item Name', 'Qty On Hand', 'Barcode']
+    .map((name, index) => ({ index, name }));
+  const rows = [
+    { cells: ['TSH-BLK-S', 'Classic Crew T-Shirt', '34', '810001000001'] },
+    { cells: ['TSH-BLK-M', 'Classic Crew T-Shirt', '42', '810001000002'] },
+  ];
+  const { mappings, unnamed } = fields.guessMappings(columns, rows);
+
+  assert.equal(columns[mappings.code].name, 'SKU');
+  assert.equal(columns[mappings.barcode].name, 'Barcode', 'the barcode has its own field');
+  assert.deepEqual(unnamed.map((column) => column.name), [],
+    'and nothing is left as a column with no home');
+});
+
+test('a barcode column alone is still recognised as a barcode', () => {
+  // Common enough: a file that identifies products only by what is on the box.
+  for (const header of ['Barcode', 'UPC', 'EAN', 'GTIN', 'Bar Code']) {
+    const columns = [{ index: 0, name: header }, { index: 1, name: 'Item Name' }];
+    const rows = [{ cells: ['810001000001', 'Classic Crew T-Shirt'] }];
+    const { mappings } = fields.guessMappings(columns, rows);
+    assert.equal(mappings.barcode, 0, `${header} is a barcode`);
+    assert.notEqual(mappings.code, 0, `${header} is not the business code`);
+  }
 });

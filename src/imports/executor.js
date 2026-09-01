@@ -352,6 +352,22 @@ function importGroup(db, ctx, plan, group, executionId) {
        * Only for versions this import created, and only when the code is free:
        * an existing SKU keeps whatever it already answers to.
        */
+      /*
+       * The scanned code from the file, stored on the version it belongs to.
+       *
+       * Recognising "Barcode" used to be part of recognising "SKU", so a file
+       * with both columns had them competing for one field: the SKU won and
+       * forty real GTINs were discarded as a column with no home. A barcode
+       * cannot be reconstructed later from a file nobody kept, so it is written
+       * whenever the row carries one and the version does not already have a
+       * different one recorded.
+       */
+      if (parsed.barcode && !sku.barcode) {
+        db.prepare('UPDATE skus SET barcode = ? WHERE id = ? AND workspace_id = ?')
+          .run(String(parsed.barcode).trim(), sku.id, ctx.workspaceId);
+        sku.barcode = String(parsed.barcode).trim();
+      }
+
       if (created && parsed.code && sku.code !== parsed.code) {
         const taken = db
           .prepare('SELECT 1 FROM skus WHERE workspace_id = ? AND code = ? COLLATE NOCASE AND id != ?')
