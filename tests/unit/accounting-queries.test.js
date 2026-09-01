@@ -113,3 +113,52 @@ test('profit questions are answered in the form they were asked', () => {
   assert.match(ask('Have I made any profit yet?'), /net profit based on the expenses recorded/);
   db.close();
 });
+
+/**
+ * The verdict layer across the intents whose question is "is there any?".
+ *
+ * Most of these executors return the things themselves, so whether there are
+ * any is a fact already in hand. Two traps had to be closed to use it.
+ *
+ * "Is anything not moving?" contains both "not moving" and "moving", so a plain
+ * contains-check saw the question assert and deny the same thing. The longer
+ * phrase is the one the reader meant.
+ *
+ * And replenishment is deliberately excluded: its rows are recommendations in
+ * one branch and lines it cannot assess in another, so a uniform "any rows
+ * means yes" answered "13 lines need ordering" about thirteen lines the
+ * executor had just said it had no basis to judge — inventing the demand figure
+ * the whole executor exists to refuse.
+ */
+test('list questions get a verdict, and only where the proposition is clear', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const ask = (intent, question) => queries
+    .execute(db, workspace.workspaceId, { intent, windowDays: 30, limit: 20 }, { question })
+    .answer;
+  const isVerdict = (answer) => /^(Yes|No)( —|\.)/.test(String(answer || ''));
+
+  // An empty workspace: nothing is late, nothing expires, nothing needs anyone.
+  assert.ok(isVerdict(ask('late_orders', 'Are any orders late?')));
+  assert.match(ask('late_orders', 'Are any orders late?'), /^No — /);
+  assert.match(ask('late_orders', 'Is everything on time?'), /^Yes — /,
+    'the opposite question gets the opposite answer');
+
+  assert.match(ask('expiring_soon', 'Is anything expiring soon?'), /^No — /);
+  assert.match(ask('attention_summary', 'Is anything wrong?'), /^No — /);
+
+  // "not moving" must beat "moving" — the more specific phrase decides.
+  assert.match(ask('idle_stock', 'Is anything not moving?'), /^No — /);
+
+  // Questions that are not yes-or-no keep the plain statement.
+  for (const question of ['How many orders are late?', 'Which orders are late?']) {
+    assert.ok(!isVerdict(ask('late_orders', question)), `${question} needs no verdict`);
+  }
+
+  // Replenishment states its own verdict per branch, or none. What it must
+  // never do is claim lines need ordering off a row count that means
+  // something else in that branch.
+  assert.doesNotMatch(ask('replenishment', 'Do I need to order anything?'), /^Yes/,
+    'an inventory with nothing in it does not need ordering');
+  db.close();
+});

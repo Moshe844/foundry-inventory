@@ -1496,6 +1496,99 @@ Object.assign(EXECUTORS, PURCHASING_EXECUTORS);
 const PROFIT_WORDS = ['profit', 'profitable', 'making money', 'earning', 'in the black'];
 const LOSS_WORDS = ['loss', 'lose', 'losing', 'lost', 'in the red'];
 
+/**
+ * Intents whose question is really "is there any?".
+ *
+ * Most of these executors return the things themselves — the late orders, the
+ * lots expiring, the bills due — so whether there are any is a fact already in
+ * hand. What each one needs is the words that ask for it, and the words that
+ * ask for its opposite, because "are any orders late?" and "is everything on
+ * time?" want opposite answers from the same row count.
+ *
+ * A question matching neither list gets no verdict at all. That is the whole
+ * safety of this: Foundry only agrees or disagrees when it knows which
+ * proposition it is being asked about.
+ */
+const LIST_VERDICTS = {
+  late_orders: {
+    asserts: ['late', 'overdue', 'delayed', 'behind'],
+    opposite: ['on time', 'on schedule'],
+    some: (n) => `${n} order${n === 1 ? ' is' : 's are'} late.`,
+    none: 'nothing is late.',
+  },
+  expiring_soon: {
+    asserts: ['expir', 'use by', 'best before', 'going off', 'out of date'],
+    opposite: ['in date', 'still good'],
+    some: (n) => `${n} lot${n === 1 ? '' : 's'} ${n === 1 ? 'is' : 'are'} expiring soon.`,
+    none: 'nothing is expiring soon.',
+  },
+  idle_stock: {
+    asserts: ['idle', 'not moving', 'not selling', 'stuck', 'dead stock', 'sitting'],
+    opposite: ['moving', 'selling'],
+    some: (n) => `${n} product${n === 1 ? ' is' : 's are'} not moving.`,
+    none: 'everything has moved recently.',
+  },
+  // replenishment is deliberately absent. Its rows mean different things in
+  // different branches — recommendations in one, lines it cannot assess in
+  // another — so a uniform "any rows means yes" would answer "13 lines need
+  // ordering" about thirteen lines the executor had just said it has no basis
+  // to judge. It states its own verdict, per branch, below.
+  on_order: {
+    asserts: ['on order', 'coming', 'arriving', 'ordered', 'on the way', 'incoming'],
+    opposite: ['nothing coming', 'nothing on order'],
+    some: (n) => `${n} order${n === 1 ? ' is' : 's are'} on the way.`,
+    none: 'nothing is on order.',
+  },
+  customer_orders_at_risk: {
+    asserts: ['risk', 'short', 'late', 'miss', 'unable', 'problem'],
+    opposite: ['covered', 'fine', 'on track'],
+    some: (n) => `${n} customer order${n === 1 ? ' is' : 's are'} at risk.`,
+    none: 'no customer order is at risk.',
+  },
+  bills_due: {
+    asserts: ['owe', 'due', 'pay', 'bill', 'outstanding'],
+    opposite: ['paid up', 'settled', 'clear'],
+    some: (n) => `${n} bill${n === 1 ? ' is' : 's are'} due.`,
+    none: 'no bills are due.',
+  },
+  receivables_aging: {
+    asserts: ['owe me', 'owed', 'unpaid', 'customers owe', 'receivable'],
+    opposite: ['paid', 'settled'],
+    some: (n) => `${n} customer invoice${n === 1 ? ' is' : 's are'} unpaid.`,
+    none: 'no customer owes you anything.',
+  },
+  payables_aging: {
+    asserts: ['owe', 'supplier', 'payable', 'unpaid'],
+    opposite: ['paid up', 'settled', 'clear'],
+    some: (n) => `${n} supplier bill${n === 1 ? ' is' : 's are'} unpaid.`,
+    none: 'you owe your suppliers nothing.',
+  },
+  connection_mapping_issues: {
+    asserts: ['unmapped', 'mapping', 'match', 'unmatched', 'issue', 'problem'],
+    opposite: ['all mapped', 'all matched', 'fine'],
+    some: (n) => `${n} record${n === 1 ? '' : 's'} still need${n === 1 ? 's' : ''} matching.`,
+    none: 'everything from your connections is matched.',
+  },
+  recent_adjustments: {
+    asserts: ['adjust', 'correction', 'changed', 'written off', 'shrink'],
+    opposite: ['no adjustments', 'untouched'],
+    some: (n) => `${n} adjustment${n === 1 ? '' : 's'} ${n === 1 ? 'was' : 'were'} recorded.`,
+    none: 'no adjustments were recorded.',
+  },
+  supplier_price_changes: {
+    asserts: ['price change', 'gone up', 'increase', 'cheaper', 'more expensive', 'changed'],
+    opposite: ['same price', 'unchanged', 'held'],
+    some: (n) => `${n} supplier price${n === 1 ? ' has' : 's have'} changed.`,
+    none: 'no supplier prices have changed.',
+  },
+  attention_summary: {
+    asserts: ['wrong', 'attention', 'problem', 'issue', 'need me', 'needs me', 'anything i should'],
+    opposite: ['all clear', 'all fine', 'all good', 'nothing wrong'],
+    some: (n) => `${n} thing${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} you.`,
+    none: 'nothing needs you right now.',
+  },
+};
+
 // The words a question starts with when it wants a yes or a no. 'How much'
 // and 'why' do not, and prefixing those with 'Yes' would be noise.
 const VERDICT_OPENERS = new Set(['have','has','had','did','do','does','is','are','am','was','were','can','should','will','any']);
@@ -1535,12 +1628,21 @@ function leadWithTheAnswer(question, result) {
    * evidence stands alone — the same rule the rest of Foundry follows.
    */
   const { yes, summary, asserts, opposite } = result.verdict;
-  const mentions = (words) => (words || []).some((word) => asked.includes(word));
-  const positive = mentions(asserts);
-  const negative = mentions(opposite);
+  /*
+   * The longer phrase decides.
+   *
+   * "Is anything not moving?" contains both "not moving" and "moving", so a
+   * plain contains-check saw the question assert and deny the same thing and
+   * gave up. The more specific phrase is the one the reader meant.
+   */
+  const longestMatch = (words) => (words || [])
+    .filter((word) => asked.includes(word))
+    .reduce((longest, word) => Math.max(longest, word.length), 0);
+  const positive = longestMatch(asserts);
+  const negative = longestMatch(opposite);
   if (positive === negative) return result;
 
-  const answersYes = negative ? !yes : yes;
+  const answersYes = negative > positive ? !yes : yes;
   const opening = summary
     ? (answersYes ? 'Yes — ' : 'No — ') + summary
     : (answersYes ? 'Yes.' : 'No.');
@@ -1551,7 +1653,22 @@ function execute(db, workspaceId, rawPlan, options = {}) {
   const executor = EXECUTORS[plan.intent] || EXECUTORS.unsupported;
   const started = Date.now();
   const executed = executor(db, workspaceId, plan, options);
-  const result = leadWithTheAnswer(options.question, executed);
+
+  // An executor may state its own verdict; otherwise, for the intents whose
+  // question is "is there any?", the rows it returned already answer that.
+  const listVerdict = LIST_VERDICTS[plan.intent];
+  const withVerdict = executed.verdict || !listVerdict || !Array.isArray(executed.rows)
+    ? executed
+    : { ...executed,
+        verdict: {
+          yes: executed.rows.length > 0,
+          asserts: listVerdict.asserts,
+          opposite: listVerdict.opposite,
+          summary: executed.rows.length
+            ? listVerdict.some(executed.rows.length)
+            : listVerdict.none,
+        } };
+  const result = leadWithTheAnswer(options.question, withVerdict);
   return {
     plan,
     isAction: result.isAction === true,
