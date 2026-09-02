@@ -1,0 +1,110 @@
+<%
+  /*
+   * Three drawers, and nothing else to learn.
+   *
+   * Foundry sorted this mail on arrival and every message carries the reason
+   * it landed where it did, shown in the list rather than hidden behind the
+   * message — somebody skimming needs to see why they are being asked, not
+   * click three times to find out.
+   *
+   * "Needs a reply" leads because it is the only drawer that costs anything to
+   * ignore.
+   */
+%>
+<div class="page-head">
+  <div>
+    <h1>Mail</h1>
+    <p class="page-sub">Who is waiting on you, and who is waiting on them.</p>
+  </div>
+</div>
+
+<div class="tabs">
+  <% drawers.forEach(function (entry) { %>
+    <a class="tab <%= entry.key === drawer.key ? 'is-active' : '' %>"
+       href="/mail?show=<%= entry.key %>">
+      <%= entry.label %>
+      <span class="tab-count"><%= counts[entry.state] %></span>
+    </a>
+  <% }) %>
+</div>
+
+<% if (!messages.length) { %>
+  <div class="empty-state">
+    <%- helpers.icon('send', { size: 32 }) %>
+    <h2>
+      <% if (drawer.state === 'NEEDS_REPLY') { %>Nobody is waiting on you
+      <% } else if (drawer.state === 'WAITING') { %>You are not waiting on anybody
+      <% } else { %>Nothing filed here yet<% } %>
+    </h2>
+    <p>
+      <% if (drawer.state === 'NEEDS_REPLY') { %>
+        Every message that arrived either answered itself or was dealt with. When one
+        asks a question, it appears here.
+      <% } else if (drawer.state === 'WAITING') { %>
+        When you answer somebody and the ball is with them, move it here so it stops
+        asking for your attention without disappearing.
+      <% } else { %>
+        Mail Foundry filed — a document it took what it needed from, or a message
+        nobody needs to answer — collects here.
+      <% } %>
+    </p>
+    <% if (!counts.NEEDS_REPLY && !counts.WAITING && !counts.HANDLED) { %>
+      <a class="btn" href="/settings/connections">Connect a mailbox</a>
+    <% } %>
+  </div>
+<% } else { %>
+  <section class="section">
+    <div class="panel">
+      <ul class="mail-list">
+        <% messages.forEach(function (message) { %>
+          <li class="mail-row">
+            <a class="mail-row-main" href="/mail/<%= message.id %>">
+              <div class="mail-row-top">
+                <strong><%= message.supplier_name || message.sender %></strong>
+                <span class="t-xs t-muted"><%= helpers.shortDate(message.received_at) %></span>
+              </div>
+              <div class="mail-row-subject">
+                <%= message.subject || 'No subject' %>
+                <% if (message.attachment_count) { %>
+                  <span class="t-xs t-muted">
+                    · <%= message.attachment_count %>
+                    <%= message.attachment_count === 1 ? 'attachment' : 'attachments' %>
+                  </span>
+                <% } %>
+              </div>
+              <% if (message.preview) { %>
+                <div class="mail-row-preview t-muted"><%= message.preview %></div>
+              <% } %>
+              <div class="mail-row-why t-xs t-muted">
+                <% if (message.decidedByPerson) { %>You put this here — <% } %><%= message.reply_reason %>
+              </div>
+            </a>
+            <form class="mail-row-action" method="post" action="/mail/<%= message.id %>/state" data-busy>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="returnTo" value="/mail?show=<%= drawer.key %>">
+              <% if (drawer.state === 'NEEDS_REPLY') { %>
+                <button class="btn btn--sm" type="submit" name="state" value="WAITING">
+                  I answered
+                </button>
+                <button class="btn btn--sm" type="submit" name="state" value="HANDLED">
+                  Nothing needed
+                </button>
+              <% } else { %>
+                <button class="btn btn--sm" type="submit" name="state" value="NEEDS_REPLY">
+                  Still needs a reply
+                </button>
+              <% } %>
+            </form>
+          </li>
+        <% }) %>
+      </ul>
+    </div>
+    <% if (drawer.state === 'NEEDS_REPLY') { %>
+      <p class="section-foot t-muted">
+        Foundry cannot send a reply for you yet — these are messages it has read and
+        sorted, not ones it can answer. Reply from your own mailbox, then mark it
+        answered here so it stops asking.
+      </p>
+    <% } %>
+  </section>
+<% } %>

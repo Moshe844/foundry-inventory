@@ -5,6 +5,8 @@ const connections = require('./service');
 const { ValidationError } = require('../domain/errors');
 const { newId, nowIso, requireText, trimOrNull } = require('../lib/util');
 
+const replyTriage = require('./reply-triage');
+
 function matchingRule(db, auth, sender) {
   const rules = db.prepare(`SELECT * FROM connection_email_rules
     WHERE workspace_id = ? AND connector_id = ? AND is_active = 1`)
@@ -44,15 +46,22 @@ function capture(db, auth, event) {
       content: attachment.contentBase64 || attachment.extractedText || null })) })).digest('hex');
   const id = newId('emailmsg');
   const now = nowIso();
+  /*
+   * Whether a person is waiting on an answer is a separate question from what
+   * document came out of this, so it is judged separately and says why.
+   */
+  const triage = replyTriage.judge({ sender, subject: data.subject,
+    bodyText: data.bodyText || data.body, attachmentCount: attachments.length });
   db.prepare(`INSERT INTO connection_email_messages
     (id, workspace_id, connector_id, external_message_id, sender, recipients, subject, body_text,
      received_at, supplier_id, trust_status, classification, external_thread_id, internet_message_id,
-     content_hash, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+     content_hash, reply_state, reply_reason, reply_state_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, auth.workspaceId, auth.connectorId, messageId, sender, JSON.stringify(data.recipients || data.to || []),
       trimOrNull(data.subject), trimOrNull(data.bodyText || data.body), event.occurredAt || now,
       rule && rule.supplier_id, rule ? 'TRUSTED' : 'UNTRUSTED', classification,
-      trimOrNull(data.threadId || data.externalThreadId), trimOrNull(data.internetMessageId), messageContentHash, now);
+      trimOrNull(data.threadId || data.externalThreadId), trimOrNull(data.internetMessageId), messageContentHash,
+      triage.state, triage.reason, now, now);
 
   for (const attachment of attachments) {
     const filename = requireText(attachment.filename, 'Attachment filename', { max: 240 });

@@ -28,6 +28,7 @@ const autopilotRoutes = require('./web/routes/autopilot');
 const purchasingRoutes = require('./web/routes/purchasing');
 const managerRoutes = require('./web/routes/manager');
 const salesRoutes = require('./web/routes/sales');
+const mailRoutes = require('./web/routes/mail');
 const pricingRoutes = require('./web/routes/pricing');
 const connectionRoutes = require('./web/routes/connections');
 const accountingRoutes = require('./web/routes/accounting');
@@ -121,6 +122,7 @@ function createApp(options = {}) {
   app.use(authRoutes);
   app.use(managerRoutes);
   app.use(salesRoutes);
+  app.use(mailRoutes);
   app.use(pricingRoutes);
   app.use(connectionRoutes);
   app.use(accountingRoutes);

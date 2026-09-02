@@ -1,0 +1,110 @@
+<%
+  /*
+   * One message, and the only three things anybody does with it.
+   *
+   * The body is shown as it arrived. Foundry offers no reply here, and the
+   * page says so plainly rather than leaving somebody hunting for a button
+   * that does not exist.
+   */
+  var m = message;
+  var badge = { NEEDS_REPLY: 'warn', WAITING: 'info', HANDLED: 'ok' }[m.reply_state];
+%>
+<div class="breadcrumb">
+  <a href="/mail">Mail</a>
+  <%- helpers.icon('chevron', { size: 13 }) %>
+  <span><%= m.subject || 'No subject' %></span>
+</div>
+
+<div class="page-head">
+  <div>
+    <h1><%= m.subject || 'No subject' %> <span class="badge badge--<%= badge %>"><%= m.stateWords %></span></h1>
+    <p class="page-sub">
+      From <%= m.sender %><% if (m.supplier_name) { %> · <%= m.supplier_name %><% } %>
+      · <%= helpers.dateTime(m.received_at) %>
+      · arrived in <%= m.connector_name %>
+    </p>
+  </div>
+</div>
+
+<div class="notice notice--<%= m.reply_state === 'NEEDS_REPLY' ? 'warn' : 'info' %>">
+  <div>
+    <strong><%= m.decidedByPerson ? 'You put this in ' + m.stateWords.toLowerCase() + '.' : m.stateWords + '.' %></strong><br>
+    <%= m.reply_reason %>
+  </div>
+</div>
+
+<section class="section">
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>What they wrote</h2>
+        <% if (m.trust_status !== 'TRUSTED') { %>
+          <span class="t-xs t-muted">
+            This sender is not one Foundry treats as evidence — nothing in it changed any record.
+          </span>
+        <% } %>
+      </div>
+    </div>
+    <div class="card-body">
+      <% if (m.body_text) { %>
+        <pre class="message-body"><%= m.body_text %></pre>
+      <% } else { %>
+        <p class="empty">This message had no text in it.</p>
+      <% } %>
+
+      <% if (attachments.length) { %>
+        <h3 class="t-sm" style="margin-top:18px;">Attached</h3>
+        <ul class="plain-list">
+          <% attachments.forEach(function (file) { %>
+            <li>
+              <%= file.filename %>
+              <% if (file.mime_type) { %><span class="t-xs t-muted"> · <%= file.mime_type %></span><% } %>
+            </li>
+          <% }) %>
+        </ul>
+        <p class="hint">
+          What Foundry did with these is on
+          <a href="/settings/connections/<%= m.connector_id %>#message-<%= m.id %>">the mailbox connection</a>.
+        </p>
+      <% } %>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="panel">
+    <div class="panel-head"><div><h2>Where this belongs</h2></div></div>
+    <form method="post" action="/mail/<%= m.id %>/state" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="card-body">
+        <label class="field">
+          <span class="field-label">Why <span class="t-muted">(optional)</span></span>
+          <input class="input" type="text" name="reason"
+            placeholder="Phoned them instead — they are sending two replacement cartons">
+          <span class="field-hint">
+            Kept with the message, so the next person to open it knows what happened.
+          </span>
+        </label>
+      </div>
+      <div class="card-foot">
+        <% drawers.forEach(function (entry) { %>
+          <% if (entry.state !== m.reply_state) { %>
+            <button class="btn <%= entry.state === 'NEEDS_REPLY' ? '' : 'btn--primary' %>"
+              type="submit" name="state" value="<%= entry.state %>">
+              <%= entry.state === 'NEEDS_REPLY' ? 'Still needs a reply'
+                : entry.state === 'WAITING' ? 'I answered — waiting on them'
+                : 'Handled, nothing needed' %>
+            </button>
+          <% } %>
+        <% }) %>
+        <% if (!m.decidedByPerson) { %>
+          <button class="btn btn--ghost" type="submit" name="state" value="RETHINK">Ask Foundry to look again</button>
+        <% } %>
+      </div>
+    </form>
+  </div>
+  <p class="section-foot t-muted">
+    Foundry cannot write the reply for you yet. Answer from your own mailbox, then say
+    so here so this stops asking for your attention.
+  </p>
+</section>

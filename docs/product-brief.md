@@ -203,9 +203,11 @@ Honest, at the time of writing.
 - Customer-facing documents do not print. Purchase orders do.
 - Customers are told one thing: that their order shipped. A notice is written
   from the shipment's own record the moment a box goes out, and by default the
-  owner sends it. There is no order confirmation, no delay notice, and no
-  reply handling — a customer who answers a shipping notice is answering into
-  a mailbox nothing in Foundry triages yet.
+  owner sends it. There is no order confirmation and no delay notice.
+- Inbound mail is sorted into needs a reply / waiting / handled, and every
+  message says which words put it where. Foundry cannot write a reply: it
+  reads, sorts, and tells you who is waiting. Answering happens in the owner's
+  own mailbox, and they mark it answered here.
 - Reporting is thinner than established inventory systems.
 - Not proven at scale: SQLite, single node.
 

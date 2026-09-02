@@ -116,6 +116,23 @@ const ADDED_COLUMNS = [
   { table: 'supplier_communications', column: 'approved_by_user_id', definition: 'TEXT' },
   { table: 'supplier_communications', column: 'approved_at', definition: 'TEXT' },
   { table: 'accounting_customer_invoices', column: 'payment_status_confirmed_at', definition: 'TEXT' },
+  /*
+   * Mail already captured predates any judgement about replies, so it arrives
+   * as HANDLED. Defaulting the other way would greet an existing workspace
+   * with a year of unanswered email it had in fact already dealt with, which
+   * is the fastest way to make somebody stop trusting an inbox.
+   *
+   * The CHECK is repeated from the CREATE deliberately. Without it a migrated
+   * database would accept any string in this column while a fresh one refused
+   * it — two schemas wearing the same name, which is the kind of difference
+   * that only shows up on somebody else's machine.
+   */
+  { table: 'connection_email_messages',
+    column: 'reply_state',
+    definition: "TEXT NOT NULL DEFAULT 'HANDLED' CHECK (reply_state IN ('NEEDS_REPLY','WAITING','HANDLED'))" },
+  { table: 'connection_email_messages', column: 'reply_reason', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'reply_state_by_user_id', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'reply_state_at', definition: 'TEXT' },
 ];
 
 function addMissingColumns(db) {

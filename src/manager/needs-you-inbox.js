@@ -383,6 +383,51 @@ function fromMailboxInventory(db, workspaceId) {
 }
 
 /** Approved attachments whose rule says "ask me for each attachment". */
+/*
+ * Mail somebody is still waiting on an answer to.
+ *
+ * Its own entry rather than its own inbox: an owner should have one place
+ * that means "your attention", not two. Only the oldest few appear, because
+ * Needs You is a list of decisions and a mailbox is not — the entry exists to
+ * say the drawer is not empty and send somebody to it, not to reproduce it.
+ */
+function fromUnansweredMail(db, workspaceId) {
+  const replyInbox = require('../connections/reply-inbox');
+  const waiting = replyInbox.oldestUnanswered(db, workspaceId, 3);
+  if (!waiting.length) return [];
+  const total = replyInbox.counts(db, workspaceId).NEEDS_REPLY;
+  return waiting.map((message, index) => ({
+    id: `unanswered-mail:${message.id}`,
+    kind: 'decision',
+    title: `Reply to ${message.supplier_name || message.sender}`,
+    happened: `${message.sender} wrote ${message.subject ? `"${message.subject}"` : 'without a subject'}`
+      + ` on ${String(message.received_at).slice(0, 10)}. Nobody has answered it.`,
+    why: message.reply_reason || 'Foundry could not tell that this was finished with.',
+    recommendation: index === 0 && total > waiting.length
+      ? `Answer it, or move it out of the way. ${total} messages are waiting.`
+      : 'Answer it, or move it to handled if it needs nothing.',
+    missing: 'An answer to the person who wrote.',
+    actionLabel: 'Read it',
+    href: `/mail/${message.id}`,
+    at: message.received_at,
+    /*
+     * Age is the urgency here.
+     *
+     * Needs You sorts everything newest-first within a priority, which is
+     * right for events but exactly wrong for mail: the message most likely to
+     * have become a phone call is the one that has been sitting longest, and a
+     * flat priority would bury it under this morning's. So waiting raises it,
+     * a week at a time.
+     *
+     * It starts below a stock mismatch or an approval and is capped short of
+     * Urgent, because however old it is, a late reply costs goodwill and not
+     * money.
+     */
+    priority: 74 + Math.min(8, Math.floor(
+      (Date.now() - new Date(message.received_at).getTime()) / (7 * 24 * 60 * 60 * 1000))),
+  }));
+}
+
 function fromMailboxAttachmentChoices(db, workspaceId) {
   return db.prepare(`SELECT m.id AS message_id, m.connector_id, m.sender, m.subject, m.received_at,
       COUNT(a.id) AS attachment_count,
@@ -726,6 +771,7 @@ function inbox(db, workspaceId) {
     ...safely(fromImports),
     ...safely(fromMailboxRemovedImportChoices),
     ...safely(fromMailboxAttachmentChoices),
+    ...safely(fromUnansweredMail),
     ...safely(fromMailboxInventory),
     ...safely(fromPolicies),
     ...safely(fromAutomationSuggestions),

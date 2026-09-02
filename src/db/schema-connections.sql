@@ -85,6 +85,17 @@ CREATE TABLE IF NOT EXISTS connection_email_messages (
   content_hash        TEXT,
   processing_status   TEXT NOT NULL DEFAULT 'CAPTURED',
   processed_at        TEXT,
+  -- Whether a person still owes this sender an answer.
+  --
+  -- Deliberately separate from processing_status, which only ever meant "did
+  -- Foundry get a document out of this". A supplier can send an order
+  -- acknowledgement that Foundry matches perfectly and that still ends with a
+  -- question nobody has answered. One state cannot carry both facts.
+  reply_state         TEXT NOT NULL DEFAULT 'HANDLED'
+                        CHECK (reply_state IN ('NEEDS_REPLY','WAITING','HANDLED')),
+  reply_reason        TEXT,
+  reply_state_by_user_id TEXT,
+  reply_state_at      TEXT,
   created_at          TEXT NOT NULL,
   UNIQUE (workspace_id, connector_id, external_message_id)
 );
