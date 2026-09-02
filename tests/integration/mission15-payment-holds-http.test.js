@@ -149,3 +149,47 @@ test('terms are agreed on the customer, and the order repeats them word for word
   assert.match(plain((await agent.get(`/sales/customers/${customer.id}`)).text),
     /how much of the order they pay up front/);
 });
+
+test('the order offers to ask for payment, keeps the link, and a reply may use it', async () => {
+  const registry = require('../../src/payments/provider');
+  const env = setup();
+  const undo = registry.register('fake', {
+    async createCustomer() { return { externalCustomerId: 'cus_1' }; },
+    async createInvoice() { return { externalInvoiceId: 'in_1', hostedUrl: 'https://pay.test/in_1' }; },
+    async getHostedPaymentUrl() { return 'https://pay.test/in_1'; },
+    async refundPayment() { return { externalRefundId: 're_1' }; },
+    verifyEvent(raw) { return raw; },
+    readEvent() { return { kind: 'IGNORED' }; },
+  });
+  try {
+    const { customer, order } = invoicedOrder(env);
+    terms.setTerms(env.db, env.ctx, { customerId: customer.id, kind: 'DEPOSIT', depositPercent: 30 });
+
+    const agent = request.agent(env.app);
+    await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+    let page = await agent.get(`/orders/${order.id}`);
+    assert.match(plain(page.text), /Ask for the \$450\.00 deposit/);
+    assert.match(plain(page.text), /never sees a card number/);
+
+    const asked = await agent.post(`/sales/orders/${order.id}/payment-request`)
+      .type('form').send({ _csrf: csrfFrom(page.text), provider: 'fake', purpose: 'DEPOSIT' });
+    assert.equal(asked.status, 303);
+
+    page = await agent.get(`/orders/${order.id}`);
+    assert.match(page.text, /https:\/\/pay\.test\/in_1/, 'the link is on the order, readable and copyable');
+    assert.match(plain(page.text), /\$450\.00 asked for as a deposit/);
+    assert.match(plain(page.text), /updates this order by itself when they do/);
+
+    /*
+     * And a drafted reply may quote it — which is the point of the whole
+     * chain: the customer gets a link without anybody copying it between
+     * systems.
+     */
+    const drafting = require('../../src/connections/reply-drafting');
+    const facts = drafting.factsFor(env.db, env.workspace.workspaceId,
+      { sender: 'orders@abcschool.test', subject: 'Our order', body_text: 'How do we pay?' });
+    assert.ok(facts.some((fact) => fact.includes('https://pay.test/in_1')),
+      'the payment link is a fact a reply is allowed to state');
+  } finally { undo(); }
+});

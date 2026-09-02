@@ -314,6 +314,57 @@
         <span class="t-muted">(<%= money.terms.source %>)</span>
         <a href="/sales/customers/<%= order.customer.id %>#terms">Change</a>
       </p>
+
+      <%
+        /*
+         * Asking them to pay, and the link once there is one.
+         *
+         * The link lives on the order because that is what it is for. It is
+         * shown rather than hidden behind a send button so somebody can read
+         * it, copy it, or put it in a message of their own — Foundry offering
+         * to email it is a convenience, not the only route.
+         */
+        var requests = locals.paymentRequests || [];
+        var live = requests.filter(function (rq) { return rq.status === 'OPEN' && rq.hostedUrl; })[0];
+        var canAsk = (locals.paymentProviders || []).length > 0 && money.outstandingMinor > 0;
+      %>
+      <div id="pay-online">
+        <% if (live) { %>
+          <p class="hint">
+            <strong><%= helpers.money(live.amountMinor, live.currency) %> asked for</strong>
+            <%= live.purpose === 'DEPOSIT' ? 'as a deposit' : '' %> —
+            <a href="<%= live.hostedUrl %>" target="_blank" rel="noopener noreferrer">the page they pay on</a>.
+            Foundry updates this order by itself when they do; nobody has to check.
+          </p>
+          <form method="post" action="/sales/orders/<%= order.id %>/payment-request" class="inline-form">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="requestId" value="<%= live.id %>">
+            <button class="btn btn--ghost btn--sm" type="submit" name="action" value="void">
+              Cancel that link
+            </button>
+          </form>
+        <% } else if (canAsk) { %>
+          <form method="post" action="/sales/orders/<%= order.id %>/payment-request" class="inline-form" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <% if (money.dueNowMinor) { %>
+              <button class="btn btn--primary btn--sm" type="submit" name="purpose" value="DEPOSIT">
+                Ask for the <%= helpers.money(money.dueNowMinor, money.currency) %> deposit
+              </button>
+            <% } %>
+            <button class="btn btn--sm" type="submit" name="purpose" value="BALANCE">
+              Ask for <%= helpers.money(money.outstandingMinor, money.currency) %>
+            </button>
+          </form>
+          <p class="hint">
+            Foundry creates the page they pay on and keeps the link here. It never sees a card number,
+            and it learns they paid without anybody checking.
+          </p>
+        <% } %>
+        <% if (requests.some(function (rq) { return rq.status === 'FAILED' || rq.lastError; })) { %>
+          <% var trouble = requests.filter(function (rq) { return rq.lastError; })[0]; %>
+          <p class="hint t-warn">Last attempt: <%= trouble.lastError %></p>
+        <% } %>
+      </div>
       <% if (money.outstandingMinor) { %>
         <p class="hint">
           Tell Foundry when they pay — “<%= order.customer.name %> paid

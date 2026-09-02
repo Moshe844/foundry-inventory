@@ -215,6 +215,8 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
      * avoid.
      */
     customerNotices: notices.forOrder(req.db, req.ctx.workspaceId, order.id),
+    paymentRequests: require('../../payments/collection').forOrder(req.db, req.ctx.workspaceId, order.id),
+    paymentProviders: require('../../payments/provider').list(),
     skus: catalogue(req.db, req.ctx.workspaceId),
   });
 }));

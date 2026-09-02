@@ -133,6 +133,14 @@ function factsFor(db, workspaceId, message) {
         }
       }
 
+      const live = require('../payments/collection')
+        .openLinkForOrder(db, workspaceId, order.id);
+      if (live) {
+        facts.push(`We have asked them for ${(live.amountMinor / 100).toFixed(2)} `
+          + `${live.purpose === 'DEPOSIT' ? 'as a deposit ' : ''}`
+          + `and the page they pay on is ${live.hostedUrl}`);
+      }
+
       for (const invoice of db.prepare(`SELECT invoice_number, total_minor, balance_minor, currency, due_date
         FROM accounting_customer_invoices
         WHERE workspace_id = ? AND sales_order_id = ?`).all(workspaceId, order.id)) {
