@@ -225,7 +225,7 @@ test('one customer order is one page: the whole story without leaving it', async
 
   const story = plain((await agent.get(`/orders/${order.id}`)).text);
   assert.match(story, /12\s*Units ordered/, 'what was promised');
-  assert.match(story, /12\s*fulfilled/, 'what left');
+  assert.match(story, /12\s*shipped/, 'what left');
   assert.match(story, /SHP-1001/, 'the box it left in');
   assert.match(story, /1Z999AA10123456784/, 'how it is travelling');
   assert.match(story, /Written, not sent|Sent /, 'whether the customer was told');

@@ -284,3 +284,81 @@ test('once the deposit lands the page offers picking, and still holds the parcel
   assert.match(text, /\$1,050\.00/, 'money is written the way the rest of the page writes it');
   assert.doesNotMatch(text, /\$1050\.00/);
 });
+
+test('a finished order stops explaining itself and stops showing empty columns', async () => {
+  /*
+   * Found by walking a shipped order. It was still being taught "Only two
+   * business decisions: reserve when the customer commits, ship when the items
+   * leave" — both already made — above a strip reading "0 committed, 0 waiting
+   * for stock" and a line table with three columns of zeroes and dashes.
+   *
+   * A column, a figure and a paragraph each earn their place by having
+   * something to say about this order, in this state.
+   */
+  const env = setup();
+  const { customer, order, invoiceId } = invoicedOrder(env, 12);
+  payments.record(env.db, env.ctx, env.membership, {
+    direction: 'CUSTOMER_RECEIPT', customerId: customer.id, paymentDate: '2026-09-02',
+    amountMinor: 18000, method: 'card', sourceKey: 'walk:full',
+    allocations: [{ invoiceId, amountMinor: 18000 }],
+  });
+  const shipments = require('../../src/sales/shipment-service');
+  const box = shipments.startPicking(env.db, env.ctx, order.id);
+  shipments.ship(env.db, env.ctx, box.id, {});
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const page = await agent.get(`/orders/${order.id}`);
+  const text = plain(page.text);
+
+  assert.doesNotMatch(text, /Only two business decisions/,
+    'both decisions are behind them');
+  assert.doesNotMatch(text, /committed to this customer/,
+    'nothing is committed on a shipped order, so the figure is not shown');
+  assert.doesNotMatch(text, /waiting for stock/,
+    'and nothing is waiting');
+  assert.match(text, /12\s*shipped/, 'what did happen is still said');
+
+  const columns = [...page.text.slice(page.text.indexOf('Order lines'))
+    .matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1].trim());
+  assert.deepEqual(columns, ['Product', 'Ordered', 'Unit price', 'Line total', 'Shipped'],
+    'a column earns its place by having something in it');
+});
+
+test('a partly shipped order never says nothing was shipped', async () => {
+  /*
+   * Written after breaking exactly this while moving the shortfall notice
+   * above the "do this next" card: the notice read `shipped`, which was
+   * declared further down the template, so it saw undefined and printed the
+   * reassurance meant for an order where nothing had moved.
+   *
+   * The page said "nothing was shipped" beneath a figure saying 34 had. The
+   * comment on that notice already recorded the same bug from the first time,
+   * which is why it is a test now rather than a comment.
+   */
+  const env = setup();
+  const { customer, order } = invoicedOrder(env, 50);
+  const shipments = require('../../src/sales/shipment-service');
+  const line = order.lines[0];
+  const box = shipments.startPicking(env.db, env.ctx, order.id, {
+    lines: [{ lineId: line.id, locationId: env.workspace.main.id, quantity: 34 }],
+  });
+  shipments.ship(env.db, env.ctx, box.id, {});
+  // Take the rest of the stock away so the remainder is genuinely short.
+  const repo = require('../../src/domain/repository');
+  const onHand = repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.main.id);
+  if (onHand) {
+    require('../../src/domain/inventory-engine').issue(env.db, env.ctx, {
+      skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: onHand,
+      reasonCode: 'damaged', notes: 'clearing the shelf so the remainder is genuinely short',
+    });
+  }
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const text = plain((await agent.get(`/orders/${order.id}`)).text);
+
+  assert.match(text, /34\s*shipped/, 'the page records that 34 went');
+  assert.doesNotMatch(text, /nothing was shipped/,
+    'so it must not reassure anybody that nothing did');
+});

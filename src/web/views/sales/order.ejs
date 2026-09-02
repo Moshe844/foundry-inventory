@@ -5,6 +5,20 @@
   var currentStep = order.status === 'DRAFT' ? 1
     : ['CONFIRMED','BACKORDERED'].includes(order.status) ? 2
       : order.status === 'PARTIALLY_FULFILLED' ? 3 : 4;
+
+  /*
+   * How much has actually gone.
+   *
+   * Declared at the top because it is read further up the page than it used
+   * to be. The shortfall notice moved above the old declaration and read it
+   * as undefined, so a page recording that thirty-four units shipped also
+   * said "nothing was shipped" — the exact bug the comment on that notice
+   * was written to record the first time.
+   *
+   * Reassuring somebody that nothing moved, on the screen recording that
+   * something moved, undermines every other number on the page.
+   */
+  var shipped = order.totals.fulfilled || 0;
 %>
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
 <div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= order.order_date %><%= order.needed_by ? ' · customer needs it by ' + order.needed_by : '' %></p></div><span class="badge <%= order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= statusLabels[order.status] || order.status %></span></div>
@@ -46,6 +60,38 @@
   </div>
 <% } %>
 
+
+<%#
+  Why before what.
+
+  This explanation sat below "Do this next: record the items as shipped", so
+  the page offered to ship an order before mentioning that four fifths of it
+  was missing. Same order the payment hold uses: state the situation, then
+  offer the thing to do about it.
+%>
+<% if (order.status !== 'DRAFT' && order.totals.backordered) { %><div class="notice notice--warn sales-outcome">
+  <strong><%= order.totals.backordered %> unit<%= order.totals.backordered === 1 ? '' : 's' %> still short.</strong>
+  <%
+    // Stock is allocated when an order is confirmed and not again, so a
+    // delivery can arrive against this very shortfall and the order still says
+    // the stock is not there. Sixty units in the store room and an order
+    // reading "the rest is not in stock yet" is a straightforward untruth.
+    var available = locals.shortButAvailable || 0;
+  %>
+  <% if (shipped) { %>
+    <p><%= shipped %> unit<%= shipped === 1 ? '' : 's' %> shipped and
+      <%= order.totals.allocated %> held for this customer.
+      <% if (available) { %>
+        <%= available %> <%= available === 1 ? 'is' : 'are' %> on the shelf now and not committed to
+        anyone.
+      <% } else { %>
+        The rest is not in stock yet.
+      <% } %></p>
+  <% } else { %>
+    <p>The customer order is confirmed, but Foundry found only <%= order.totals.allocated %> unit<%= order.totals.allocated === 1 ? '' : 's' %> available to hold. <strong>No on-hand stock changed and nothing was shipped.</strong></p>
+  <% } %>
+  <p>Foundry automatically checked stock at other locations, incoming supplier orders and replenishment. If a decision or missing setup is required, it is in <a href="/needs-you">Needs you</a>.</p>
+</div><% } %>
 
 <% if (order.status === 'DRAFT' && !order.pricing.missingPriceLines) { %>
   <form class="card sales-action-card sales-primary-action" method="post" action="/sales/orders/<%= order.id %>/confirm">
@@ -118,13 +164,32 @@
   </form>
 <% } %>
 
-<div class="notice notice--info sales-order-explanation"><div><strong>Only two business decisions:</strong><br><strong>Reserve</strong> when the customer commits. <strong>Ship</strong> when the items physically leave. Accounting is automatic after shipment—it is not another step for you.</div></div>
+<%#
+  This explains the two decisions somebody is about to make. On an order that
+  has shipped they are both behind them, and it becomes a paragraph of
+  onboarding sitting on top of a finished job. It stays while it is useful and
+  goes when it is not.
+%>
+<% if (!['FULFILLED', 'CANCELLED'].includes(order.status)) { %>
+  <div class="notice notice--info sales-order-explanation"><div><strong>Only two business decisions:</strong><br><strong>Reserve</strong> when the customer commits. <strong>Ship</strong> when the items physically leave. Accounting is automatic after shipment—it is not another step for you.</div></div>
+<% } %>
 
+<%#
+  The same four figures, minus the ones that are only ever zero at this stage.
+  A finished order showing "0 committed, 0 waiting for stock" is three-quarters
+  of a table saying nothing happened, next to the one number that matters.
+%>
 <div class="stats-row">
   <div class="stat"><strong><%= order.totals.ordered %></strong><span>Units ordered</span></div>
-  <div class="stat"><strong><%= order.totals.allocated %></strong><span>committed to this customer</span></div>
-  <div class="stat"><strong><%= order.totals.backordered %></strong><span><%= order.status === 'DRAFT' ? 'not committed yet' : 'waiting for stock' %></span></div>
-  <div class="stat"><strong><%= order.totals.fulfilled %></strong><span>fulfilled (shipped)</span></div>
+  <% if (order.totals.allocated) { %>
+    <div class="stat"><strong><%= order.totals.allocated %></strong><span>committed to this customer</span></div>
+  <% } %>
+  <% if (order.totals.backordered) { %>
+    <div class="stat"><strong class="is-warn"><%= order.totals.backordered %></strong><span><%= order.status === 'DRAFT' ? 'not committed yet' : 'waiting for stock' %></span></div>
+  <% } %>
+  <% if (order.totals.fulfilled || order.totals.ordered === order.totals.fulfilled) { %>
+    <div class="stat"><strong><%= order.totals.fulfilled %></strong><span>shipped</span></div>
+  <% } %>
 </div>
 
 <% if (order.status === 'FULFILLED' || order.status === 'PARTIALLY_FULFILLED') { %>
@@ -139,44 +204,8 @@
   <% } %>
 <% } %>
 
-<%
-  /*
-   * The shortfall notice, written for the state the order is actually in.
-   *
-   * It was written for the moment an order is confirmed — "Foundry found only N
-   * units available to reserve. No on-hand stock changed and nothing was
-   * shipped" — and then re-rendered unchanged after a shipment. Ship 34 of 50
-   * and the page said "nothing was shipped" directly beneath "34 fulfilled
-   * (shipped)", and beneath a flash reading "SO-1001 was partly fulfilled".
-   *
-   * Reassuring somebody that nothing moved, on the screen recording that
-   * something moved, undermines every other number on the page.
-   */
-  var shipped = order.totals.fulfilled || 0;
-%>
-<% if (order.status !== 'DRAFT' && order.totals.backordered) { %><div class="notice notice--warn sales-outcome">
-  <strong><%= order.totals.backordered %> unit<%= order.totals.backordered === 1 ? '' : 's' %> still short.</strong>
-  <%
-    // Stock is allocated when an order is confirmed and not again, so a
-    // delivery can arrive against this very shortfall and the order still says
-    // the stock is not there. Sixty units in the store room and an order
-    // reading "the rest is not in stock yet" is a straightforward untruth.
-    var available = locals.shortButAvailable || 0;
-  %>
-  <% if (shipped) { %>
-    <p><%= shipped %> unit<%= shipped === 1 ? '' : 's' %> shipped and
-      <%= order.totals.allocated %> held for this customer.
-      <% if (available) { %>
-        <%= available %> <%= available === 1 ? 'is' : 'are' %> on the shelf now and not committed to
-        anyone.
-      <% } else { %>
-        The rest is not in stock yet.
-      <% } %></p>
-  <% } else { %>
-    <p>The customer order is confirmed, but Foundry found only <%= order.totals.allocated %> unit<%= order.totals.allocated === 1 ? '' : 's' %> available to hold. <strong>No on-hand stock changed and nothing was shipped.</strong></p>
-  <% } %>
-  <p>Foundry automatically checked stock at other locations, incoming supplier orders and replenishment. If a decision or missing setup is required, it is in <a href="/needs-you">Needs you</a>.</p>
-</div><% } %>
+
+
 
 
 <%
@@ -418,8 +447,22 @@
 
 <div class="card">
   <div class="card-head"><h2>Order lines</h2></div>
-  <div class="table-wrap"><table class="table table--stack sales-table"><thead><tr><th>Product</th><th>Ordered</th><th>Unit price</th><th>Line total</th><th class="num">Committed</th><th class="num">Short</th><th class="num">Shipped</th><th>Held at</th></tr></thead><tbody>
-    <% order.lines.forEach(function(line){ %><tr><td class="cell-main"><strong><%= line.displayName %></strong><small><%= line.code %></small></td><td><%= line.quantity_ordered %></td><td><%= line.unit_price_minor === null ? 'Price not set' : helpers.money(line.unit_price_minor, order.currency) %></td><td><%= line.lineTotalMinor === null ? '—' : helpers.money(line.lineTotalMinor, order.currency) %></td><td><%= line.allocated %></td><td><%= line.backordered %></td><td><%= line.quantity_fulfilled %></td><td><% if (!line.allocations.length) { %>—<% } else { line.allocations.forEach(function(a){ %><span class="pill"><%= a.location_name %> <strong><%= a.quantity %></strong></span><% }) } %></td></tr><% }) %>
+  <%
+    /*
+     * Eight columns, minus the ones that are empty for every line.
+     *
+     * On a shipped order "Committed", "Short" and "Held at" are a zero, a zero
+     * and a dash, repeated down the page — three columns of width spent saying
+     * that nothing is outstanding, which the "Shipped" column already says.
+     * A column earns its place by having something in it.
+     */
+    var showCommitted = order.lines.some(function (line) { return Number(line.allocated) > 0; });
+    var showShort = order.lines.some(function (line) { return Number(line.backordered) > 0; });
+    var showShipped = order.lines.some(function (line) { return Number(line.quantity_fulfilled) > 0; });
+    var showHeldAt = order.lines.some(function (line) { return line.allocations.length > 0; });
+  %>
+  <div class="table-wrap"><table class="table table--stack sales-table"><thead><tr><th>Product</th><th>Ordered</th><th>Unit price</th><th>Line total</th><% if (showCommitted) { %><th class="num">Committed</th><% } %><% if (showShort) { %><th class="num">Short</th><% } %><% if (showShipped) { %><th class="num">Shipped</th><% } %><% if (showHeldAt) { %><th>Held at</th><% } %></tr></thead><tbody>
+    <% order.lines.forEach(function(line){ %><tr><td class="cell-main"><strong><%= line.displayName %></strong><small><%= line.code %></small></td><td data-label="Ordered"><%= line.quantity_ordered %></td><td data-label="Unit price"><%= line.unit_price_minor === null ? 'Price not set' : helpers.money(line.unit_price_minor, order.currency) %></td><td data-label="Line total"><%= line.lineTotalMinor === null ? '—' : helpers.money(line.lineTotalMinor, order.currency) %></td><% if (showCommitted) { %><td class="num" data-label="Committed"><%= line.allocated %></td><% } %><% if (showShort) { %><td class="num" data-label="Short"><% if (line.backordered) { %><strong class="is-warn"><%= line.backordered %></strong><% } else { %><span class="t-muted">—</span><% } %></td><% } %><% if (showShipped) { %><td class="num" data-label="Shipped"><%= line.quantity_fulfilled %></td><% } %><% if (showHeldAt) { %><td data-label="Held at"><% if (!line.allocations.length) { %>—<% } else { line.allocations.forEach(function(a){ %><span class="pill"><%= a.location_name %> <strong><%= a.quantity %></strong></span><% }) } %></td><% } %></tr><% }) %>
   </tbody></table></div>
   <div class="sales-total-block">
     <div><span>Subtotal</span><strong><%= helpers.money(order.pricing.subtotalMinor, order.currency) %></strong></div>

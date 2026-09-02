@@ -86,7 +86,9 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   text = plain(page.text);
   assert.match(text, /partly shipped|partly fulfilled/i);
   assert.match(text, /20 committed/);
-  assert.match(text, /10 fulfilled/);
+  // The stat is labelled 'shipped' now: the word an owner uses, without the
+  // 'fulfilled (shipped)' gloss that was explaining Foundry's vocabulary to them.
+  assert.match(text, /10 shipped/);
 
   const itemPage = plain((await agent.get(`/inventory/${env.item.itemId}`)).text);
   assert.match(itemPage, /40\s+units on hand/i);

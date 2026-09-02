@@ -134,18 +134,15 @@
       </div>
     </div>
 
-    <%# A shortfall is a decision, and it is made on the order itself — where
-        Foundry shows what it can move and what it would have to buy. Saying so
-        here stops somebody going off to Inventory and Purchasing by hand. %>
-    <% if (waiting) { %>
-      <p class="section-foot">
-        <%= waiting %> unit<%= waiting === 1 ? '' : 's' %> across
-        <%= openOrders.filter(function (o) { return o.totals.backordered; }).length %>
-        order<%= openOrders.filter(function (o) { return o.totals.backordered; }).length === 1 ? '' : 's' %>
-        <%= waiting === 1 ? 'is' : 'are' %> short. Open the order and Foundry shows what it can move
-        and what it would have to buy.
-      </p>
-    <% } %>
+    <%#
+      The shortfall used to be announced again here, under the table: "160
+      units across 1 order are short." The row it is about now says exactly
+      that, next to the order it belongs to, so repeating it below was the page
+      telling somebody something they had just read — and further from the
+      thing they would click.
+    %>
+
+    
   <% } %>
 </section>
 

@@ -90,10 +90,31 @@ function nextStep(db, workspaceId, order, options = {}) {
     };
   }
 
-  if (fulfilment.state === 'Waiting for stock') {
-    const short = Number(order.totals ? order.totals.backordered : 0);
+  /*
+   * Short of stock outranks ready to pick, even when some of it is ready.
+   *
+   * The fulfilment state answers "can anything be picked", which is a yes for
+   * an order with forty of two hundred on the shelf. Read as a status that
+   * became "Ready to pick" on an order missing eighty per cent of itself,
+   * sitting in a list beside one that is genuinely complete. The shortfall is
+   * the fact somebody has to act on, so it is the fact that gets said.
+   */
+  const short = Number(order.totals ? order.totals.backordered : 0);
+  if (short > 0) {
+    const ready = Number(order.totals ? order.totals.allocated : 0);
     return {
-      text: short ? `Short ${short} — waiting for stock` : 'Waiting for stock',
+      text: `Short ${short} — waiting for stock`,
+      detail: ready
+        ? `${ready} of ${order.totals.ordered} is held and could go now.`
+        : fulfilment.detail,
+      tone: late ? 'danger' : 'warn',
+      rank: late ? RANK.LATE : RANK.WAITING_ON_STOCK,
+      action: 'See what to do',
+    };
+  }
+  if (fulfilment.state === 'Waiting for stock') {
+    return {
+      text: 'Waiting for stock',
       detail: fulfilment.detail,
       tone: late ? 'danger' : 'warn',
       rank: late ? RANK.LATE : RANK.WAITING_ON_STOCK,
@@ -162,11 +183,13 @@ function decorate(db, workspaceId, orders, options = {}) {
 function summarise(decorated) {
   const open = decorated.filter((order) => order.next.rank > RANK.SETTLED);
   const stuck = decorated.filter((order) => order.next.rank >= RANK.BLOCKED);
+  const short = decorated.filter((order) => order.next.rank === RANK.WAITING_ON_STOCK);
   const ready = decorated.filter((order) => order.next.rank === RANK.READY);
 
   if (!open.length) return 'Nothing is waiting on you.';
   const parts = [];
   if (stuck.length) parts.push(`${stuck.length} ${stuck.length === 1 ? 'order needs' : 'orders need'} you`);
+  if (short.length) parts.push(`${short.length} short of stock`);
   if (ready.length) parts.push(`${ready.length} ready to pick`);
   if (!parts.length) return `${open.length} ${open.length === 1 ? 'order is' : 'orders are'} on their way.`;
   return `${parts.join(', ')}.`;
