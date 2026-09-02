@@ -26,6 +26,7 @@ const { newId, nowIso, trimOrNull } = require('../lib/util');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const orders = require('./sales-order-service');
 const carriers = require('./carriers');
+const paymentTerms = require('./payment-terms');
 
 const OPEN_SHIPMENT = ['PICKING', 'PACKED'];
 const CLOSED_SHIPMENT = ['SHIPPED', 'DELIVERED', 'CANCELLED'];
@@ -161,6 +162,18 @@ function startPicking(db, ctx, orderId, input = {}) {
     if (!orders.OPEN.includes(order.status)) {
       throw new ValidationError('Confirm this sales order before picking it.');
     }
+    /*
+     * Money can hold this before a box is opened.
+     *
+     * Checked here rather than only at shipping because the whole point of
+     * "pays before we pick" is that nobody spends an hour walking a warehouse
+     * for an order that is not going to leave.
+     */
+    const payment = paymentTerms.positionForOrder(db, ctx.workspaceId, order);
+    if (payment.blocksPicking) {
+      throw new ValidationError(`${payment.heldReason.pick} Take the payment, or approve this one order to go anyway.`);
+    }
+
     const offered = pickable(db, ctx.workspaceId, orderId);
     if (!offered.length) {
       throw new ValidationError('Nothing is allocated to this order that is not already in a box.');
@@ -295,6 +308,20 @@ function ship(db, ctx, shipmentId, input = {}) {
   }
   const lines = shipmentLines(db, ctx.workspaceId, shipmentId);
   if (!lines.length) throw new ValidationError('This box is empty. There is nothing to ship.');
+
+  /*
+   * The last gate, and the one that matters.
+   *
+   * Shipping is where the goods stop being ours, so a balance that was allowed
+   * to sit through picking and packing is checked once more here. The box stays
+   * packed and nothing is lost; only the parcel waits.
+   */
+  const order = db.prepare('SELECT * FROM sales_orders WHERE id = ? AND workspace_id = ?')
+    .get(shipment.sales_order_id, ctx.workspaceId);
+  const payment = paymentTerms.positionForOrder(db, ctx.workspaceId, order);
+  if (payment.blocksShipping) {
+    throw new ValidationError(`${payment.heldReason.ship} The box stays packed until it is paid, or until you approve this one order to go anyway.`);
+  }
 
   const trackingNumber = trimOrNull(input.trackingNumber);
   const detected = trackingNumber ? carriers.detect(trackingNumber) : null;

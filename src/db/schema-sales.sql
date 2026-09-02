@@ -256,3 +256,56 @@ CREATE TABLE IF NOT EXISTS customer_communication_policy (
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL
 );
+
+-- What a customer has to pay, and when (Mission 15)
+--
+-- Terms belong to the customer, not to the order. "ABC School pays 30% up
+-- front" is a fact about a relationship somebody agreed once, and re-deciding
+-- it per order is how a business ends up shipping unpaid goods to the one
+-- customer who never pays.
+--
+-- A workspace default exists so a new customer inherits the house rule rather
+-- than nothing at all. Absent both, the answer is the least surprising one:
+-- payment is due, and nothing is held.
+
+CREATE TABLE IF NOT EXISTS customer_payment_terms (
+  id                  TEXT PRIMARY KEY,
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  -- NULL means the house rule for every customer without one of their own.
+  customer_id         TEXT REFERENCES customers(id) ON DELETE CASCADE,
+  kind                TEXT NOT NULL CHECK (kind IN ('ON_ACCOUNT','BEFORE_FULFILMENT','DEPOSIT')),
+  -- DEPOSIT only: how much is wanted up front. A percentage of the order, or a
+  -- flat amount; never both, because two answers to "how much now" is one too
+  -- many.
+  deposit_percent     REAL CHECK (deposit_percent IS NULL OR (deposit_percent > 0 AND deposit_percent <= 100)),
+  deposit_minor       INTEGER CHECK (deposit_minor IS NULL OR deposit_minor > 0),
+  -- ON_ACCOUNT only: days from the invoice date until the balance is due.
+  net_days            INTEGER CHECK (net_days IS NULL OR net_days >= 0),
+  -- Whether the remaining balance blocks the parcel leaving.
+  hold_shipping       INTEGER NOT NULL DEFAULT 0 CHECK (hold_shipping IN (0,1)),
+  -- Credit somebody actually agreed to give, as opposed to credit taken.
+  credit_approved     INTEGER NOT NULL DEFAULT 0 CHECK (credit_approved IN (0,1)),
+  credit_limit_minor  INTEGER CHECK (credit_limit_minor IS NULL OR credit_limit_minor >= 0),
+  note                TEXT,
+  agreed_by_user_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL,
+  CHECK (deposit_percent IS NULL OR deposit_minor IS NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_payment_terms
+  ON customer_payment_terms(workspace_id, IFNULL(customer_id, ''));
+
+-- An owner deciding, in words, to let one order past its own hold.
+--
+-- Kept rather than applied silently: "we shipped this one unpaid" is exactly
+-- the thing somebody asks about three months later, and a hold that can be
+-- lifted without trace is not a hold.
+CREATE TABLE IF NOT EXISTS sales_order_payment_overrides (
+  id                 TEXT PRIMARY KEY,
+  workspace_id       TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  sales_order_id     TEXT NOT NULL REFERENCES sales_orders(id) ON DELETE CASCADE,
+  reason             TEXT,
+  approved_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at         TEXT NOT NULL,
+  UNIQUE (workspace_id, sales_order_id)
+);

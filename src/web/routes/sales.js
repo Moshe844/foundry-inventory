@@ -6,6 +6,7 @@ const salesIntent = require('../../sales/sales-intent');
 const shipments = require('../../sales/shipment-service');
 const carriers = require('../../sales/carriers');
 const notices = require('../../sales/customer-communications');
+const paymentTerms = require('../../sales/payment-terms');
 const connections = require('../../connections/service');
 const repo = require('../../domain/repository');
 const permissions = require('../../actions/permissions');
@@ -46,41 +47,25 @@ function catalogue(db, workspaceId) {
 }
 
 /**
- * What this order is worth, what has been paid, and what is still owed.
+ * What this order is worth, what has been paid, what is still owed — and what
+ * that permits.
  *
- * The order page showed quantities and no money at all: ordered, committed,
- * short, shipped, and nothing about whether the customer had paid. The invoices
- * already carry it — they are linked to the order — so this is a read, not a
- * new record.
- *
- * Amounts come from the invoice rather than the order lines, because an invoice
- * is what the customer was actually asked to pay: it carries the tax and any
- * discount, and it is the balance the payment engine settles.
+ * This used to compute paid and outstanding here, alongside a second copy of
+ * the same arithmetic in the payment-terms engine. Two functions answering "how
+ * much does this customer owe" is one too many: they cannot disagree today and
+ * they certainly will eventually. The engine is the answer, and this shapes it
+ * for the page.
  */
-function moneyForOrder(db, workspaceId, orderId) {
-  const invoices = db.prepare(`SELECT id, invoice_number, status, currency, total_minor,
-      balance_minor, due_date
-    FROM accounting_customer_invoices
-    WHERE workspace_id = ? AND sales_order_id = ? AND status <> 'VOID'
-    ORDER BY issue_date`).all(workspaceId, orderId);
-  if (!invoices.length) return { invoiced: false, invoices: [] };
-
-  const totalMinor = invoices.reduce((sum, row) => sum + Number(row.total_minor), 0);
-  const outstandingMinor = invoices.reduce((sum, row) => sum + Number(row.balance_minor), 0);
-  const paidMinor = totalMinor - outstandingMinor;
-
+function moneyForOrder(db, workspaceId, order) {
+  const paymentTerms = require('../../sales/payment-terms');
+  const position = paymentTerms.positionForOrder(db, workspaceId, order);
   return {
-    invoiced: true,
-    invoices,
-    currency: invoices[0].currency || 'USD',
-    totalMinor,
-    paidMinor,
-    outstandingMinor,
-    // The word an owner would use, not the enum underneath.
-    state: outstandingMinor === 0 ? 'Paid'
-      : paidMinor === 0 ? 'Unpaid'
-        : 'Partly paid',
-    dueDate: invoices.map((row) => row.due_date).filter(Boolean).sort()[0] || null,
+    ...position,
+    invoiced: position.invoiced,
+    // The page's older name for the same figure, kept so its markup reads
+    // the way the panel reads.
+    outstandingMinor: position.remainingMinor,
+    state: position.status,
   };
 }
 
@@ -128,6 +113,10 @@ router.get(['/orders/new', '/sales/new'], requirePermission(permissions.OPERATE,
 router.get('/sales/customers/:id', requirePermission(permissions.VIEW, 'view customers'), asyncRoute(async (req, res) => {
   res.page('sales/customer', {
     title: 'Customer', nav: 'sales', customer: sales.getCustomer(req.db, req.ctx.workspaceId, req.params.id),
+    terms: paymentTerms.forCustomer(req.db, req.ctx.workspaceId, req.params.id),
+    // The same sentence the order page shows, from the same place.
+    termsDescription: paymentTerms.describe(paymentTerms.forCustomer(req.db, req.ctx.workspaceId, req.params.id)),
+    houseTerms: paymentTerms.forCustomer(req.db, req.ctx.workspaceId, null),
   });
 }));
 
@@ -215,7 +204,7 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
     title: 'Order', nav: 'sales', order,
     shortButAvailable,
     accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
-    money: moneyForOrder(req.db, req.ctx.workspaceId, order.id),
+    money: moneyForOrder(req.db, req.ctx.workspaceId, order),
     shipments: shipments.listForOrder(req.db, req.ctx.workspaceId, order.id),
     pickable: order.status === 'DRAFT' ? [] : shipments.pickable(req.db, req.ctx.workspaceId, order.id),
     fulfilment: shipments.fulfilmentState(req.db, req.ctx.workspaceId, order),
@@ -536,6 +525,58 @@ router.post('/fulfilment/settings/notices', requirePermission(permissions.OPERAT
   res.redirect(303, req.body.returnTo || '/fulfilment');
 }));
 
+/*
+ * Payment terms and the holds they create.
+ *
+ * Terms sit on the customer because that is what they are about. The override
+ * sits on the order because that is what it is about — one parcel, once, on the
+ * record.
+ */
+
+router.post('/sales/customers/:id/terms', requirePermission(permissions.OPERATE, 'agree payment terms'), asyncRoute(async (req, res) => {
+  try {
+    if (trimOrNull(req.body.action) === 'clear') {
+      paymentTerms.clearTerms(req.db, req.ctx, req.params.id);
+      req.flash('success', 'Removed. This customer follows your rule for everybody.');
+    } else {
+      const saved = paymentTerms.setTerms(req.db, req.ctx, { ...req.body, customerId: req.params.id });
+      req.flash('success', `Saved. ${paymentTerms.describe(saved)}`);
+    }
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, `/sales/customers/${req.params.id}#terms`);
+}));
+
+router.post('/sales/terms', requirePermission(permissions.OPERATE, 'agree payment terms'), asyncRoute(async (req, res) => {
+  try {
+    const saved = paymentTerms.setTerms(req.db, req.ctx, { ...req.body, customerId: null });
+    req.flash('success', `Saved for every customer without their own terms. ${paymentTerms.describe(saved)}`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, trimOrNull(req.body.returnTo) || '/orders');
+}));
+
+router.post('/sales/orders/:id/payment-hold', requirePermission(permissions.OPERATE, 'release payment holds'), asyncRoute(async (req, res) => {
+  try {
+    if (trimOrNull(req.body.action) === 'restore') {
+      paymentTerms.clearOverride(req.db, req.ctx, req.params.id);
+      req.flash('success', 'The hold is back on. This order will not ship until it is paid.');
+    } else {
+      paymentTerms.overrideHold(req.db, req.ctx, req.params.id, req.body.reason);
+      req.flash('success', 'Approved. This order can go out unpaid, and Foundry has kept a note that you allowed it.');
+    }
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, `/orders/${req.params.id}#payment-hold`);
+}));
+
 module.exports = router;
+
 
 

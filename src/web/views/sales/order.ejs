@@ -233,6 +233,43 @@
    */
   var money = locals.money || { invoiced: false };
 %>
+<% if (money.invoiced && (money.heldReason.pick || money.heldReason.ship)) { %>
+  <div class="notice notice--<%= money.override ? 'info' : 'warn' %>" id="payment-hold">
+    <div>
+      <% if (money.override) { %>
+        <strong>You let this one through unpaid.</strong><br>
+        <%= money.heldReason.ship || money.heldReason.pick %>
+        <% if (money.override.reason) { %><br><em><%= money.override.reason %></em><% } %>
+        <form method="post" action="/sales/orders/<%= order.id %>/payment-hold" class="inline-form" style="margin-top:8px;">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--ghost btn--sm" type="submit" name="action" value="restore">Put the hold back</button>
+        </form>
+      <% } else { %>
+        <strong><%= money.blocksPicking ? 'This order is on hold until it is paid.' : 'This order cannot ship until it is paid.' %></strong><br>
+        <%= money.heldReason.pick || money.heldReason.ship %>
+        <span class="t-xs t-muted">(<%= money.termsText %> — <%= money.terms.source %>.)</span>
+        <details class="disclosure" style="margin-top:10px;">
+          <summary>Let this one order through anyway</summary>
+          <div class="card-body">
+            <form method="post" action="/sales/orders/<%= order.id %>/payment-hold" data-busy>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <label class="field">
+                <span class="field-label">Why <span class="t-muted">(optional)</span></span>
+                <input class="input" type="text" name="reason" placeholder="Long-standing customer, I called them">
+              </label>
+              <button class="btn" type="submit" name="action" value="override">Approve this order to go unpaid</button>
+              <p class="hint">
+                This lifts the hold for this order only, and keeps a note that you did.
+                Their terms are unchanged.
+              </p>
+            </form>
+          </div>
+        </details>
+      <% } %>
+    </div>
+  </div>
+<% } %>
+
 <% if (money.invoiced) { %>
   <div class="panel section" id="money">
     <div class="panel-head">
@@ -265,7 +302,18 @@
           </span>
           <span class="stat-label">still owed</span>
         </div>
+        <% if (money.dueNowMinor) { %>
+          <div>
+            <span class="stat-value stat-value--warn"><%= helpers.money(money.dueNowMinor, money.currency) %></span>
+            <span class="stat-label">due now</span>
+          </div>
+        <% } %>
       </div>
+      <p class="hint">
+        <strong><%= money.termsText %></strong>
+        <span class="t-muted">(<%= money.terms.source %>)</span>
+        <a href="/sales/customers/<%= order.customer.id %>#terms">Change</a>
+      </p>
       <% if (money.outstandingMinor) { %>
         <p class="hint">
           Tell Foundry when they pay — “<%= order.customer.name %> paid

@@ -23,3 +23,98 @@
     <% } %>
   </div>
 </div>
+
+<section class="section" id="terms">
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2>How <%= customer.name %> pays</h2>
+        <span class="t-xs t-muted"><%= terms.isDefault ? 'Following ' + terms.source : terms.source %></span>
+      </div>
+      <span class="spacer"></span>
+      <span class="badge badge--<%= terms.kind === 'ON_ACCOUNT' ? 'info' : 'warn' %>">
+        <%= terms.kind === 'ON_ACCOUNT' ? 'On account' : terms.kind === 'DEPOSIT' ? 'Deposit' : 'Pays first' %>
+      </span>
+    </div>
+    <form method="post" action="/sales/customers/<%= customer.id %>/terms" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="card-body">
+        <p class="lede"><%= termsDescription %></p>
+        <div class="choice-grid">
+          <label class="choice">
+            <input type="radio" name="kind" value="ON_ACCOUNT" <%= terms.kind === 'ON_ACCOUNT' ? 'checked' : '' %>>
+            <span class="choice-body">
+              <strong>On account</strong>
+              <span class="t-xs t-muted">They order, you invoice, they pay by the due date. Nothing waits for money.</span>
+            </span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="kind" value="DEPOSIT" <%= terms.kind === 'DEPOSIT' ? 'checked' : '' %>>
+            <span class="choice-body">
+              <strong>A deposit up front</strong>
+              <span class="t-xs t-muted">Nothing is picked until the deposit arrives. Set the share or the amount below.</span>
+            </span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="kind" value="BEFORE_FULFILMENT" <%= terms.kind === 'BEFORE_FULFILMENT' ? 'checked' : '' %>>
+            <span class="choice-body">
+              <strong>Paid in full first</strong>
+              <span class="t-xs t-muted">Nothing is picked or shipped until the invoice is settled.</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">Deposit, as a share <span class="t-muted">(deposit only)</span></span>
+            <input class="input" type="number" name="depositPercent" min="1" max="100" step="1"
+              value="<%= terms.depositPercent === null || terms.depositPercent === undefined ? '' : terms.depositPercent %>"
+              placeholder="30">
+            <span class="field-hint">Per cent of the order.</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Or a fixed deposit <span class="t-muted">(in cents)</span></span>
+            <input class="input" type="number" name="depositMinor" min="1" step="1"
+              value="<%= terms.depositMinor === null || terms.depositMinor === undefined ? '' : terms.depositMinor %>"
+              placeholder="50000">
+            <span class="field-hint">One or the other, never both.</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Days to pay <span class="t-muted">(on account only)</span></span>
+            <input class="input" type="number" name="netDays" min="0" step="1"
+              value="<%= terms.netDays === null || terms.netDays === undefined ? '' : terms.netDays %>"
+              placeholder="30">
+          </label>
+        </div>
+
+        <label class="choice">
+          <input type="checkbox" name="holdShipping" value="1" <%= terms.holdShipping ? 'checked' : '' %>>
+          <span class="choice-body">
+            <strong>Hold the parcel until the balance is paid</strong>
+            <span class="t-xs t-muted">
+              Picking and packing still happen. Only the shipment waits, and you can always let one order
+              through from the order itself.
+            </span>
+          </span>
+        </label>
+
+        <label class="field">
+          <span class="field-label">Note <span class="t-muted">(optional)</span></span>
+          <input class="input" type="text" name="note" value="<%= terms.note || '' %>"
+            placeholder="Agreed with John on the phone, September">
+        </label>
+      </div>
+      <div class="card-foot">
+        <button class="btn btn--primary" type="submit">Save these terms</button>
+        <% if (!terms.isDefault) { %>
+          <button class="btn btn--ghost" type="submit" name="action" value="clear">
+            Use your rule for everybody instead
+          </button>
+        <% } %>
+      </div>
+    </form>
+  </div>
+  <p class="section-foot t-muted">
+    Foundry applies this to every future order for <%= customer.name %> without being asked again.
+  </p>
+</section>
