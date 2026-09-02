@@ -679,3 +679,67 @@ test('shipping to a customer with no address warns before it goes, not after', a
   assert.match(text, /Foundry has no address for Hendel/,
     'said next to the button, while it can still be fixed');
 });
+
+test('an email typed for a customer already on file is kept, not thrown away', async () => {
+  /*
+   * Reported, and reproduced by driving the real flow: choose an existing
+   * customer from the list, type their email, create the order — and the email
+   * vanished, because the first version of this only filled in a customer
+   * being created. The order then refused a payment link because "there is no
+   * email address for Chavy". The form asked, the person answered, and Foundry
+   * dropped it.
+   */
+  const env = setup();
+  const existing = sales.createCustomer(env.db, env.ctx, { name: 'Chavy' });
+  assert.equal(existing.email, null, 'starts with nothing on file');
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20,
+  });
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const form = await agent.get('/orders/new');
+
+  await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text),
+    customerId: existing.id,
+    customerEmail: 'chavy@example.test',
+    customerShippingAddress: '9 Harbour Road',
+    skuId: env.item.skuId, quantity: '2', currency: 'USD',
+  });
+
+  const after = env.db.prepare('SELECT * FROM customers WHERE id = ?').get(existing.id);
+  assert.equal(after.email, 'chavy@example.test', 'the email is kept');
+  assert.match(after.shipping_address, /9 Harbour Road/, 'and so is the address');
+});
+
+test('a detail already on file is never overwritten from an order form', async () => {
+  /*
+   * The other half of it. Filling a blank is helpful; quietly changing the
+   * address a customer's parcels go to, because somebody typed something while
+   * making an unrelated order, is not. That belongs on the customer page,
+   * where it is the thing being done rather than a side effect.
+   */
+  const env = setup();
+  const existing = sales.createCustomer(env.db, env.ctx, {
+    name: 'Chavy', email: 'real@chavy.test', shippingAddress: '1 Real Street',
+  });
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20,
+  });
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const form = await agent.get('/orders/new');
+  await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text),
+    customerId: existing.id,
+    customerEmail: 'typo@wrong.test',
+    customerShippingAddress: '99 Wrong Road',
+    skuId: env.item.skuId, quantity: '2', currency: 'USD',
+  });
+
+  const after = env.db.prepare('SELECT * FROM customers WHERE id = ?').get(existing.id);
+  assert.equal(after.email, 'real@chavy.test', 'what was on file stands');
+  assert.match(after.shipping_address, /1 Real Street/);
+});

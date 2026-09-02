@@ -104,15 +104,43 @@ function recordEvent(db, ctx, orderId, eventType, detail = {}, idempotencyKey = 
   return db.prepare('SELECT * FROM sales_order_events WHERE id = ?').get(id);
 }
 
+/**
+ * Fill in what Foundry does not know about a customer, and change nothing else.
+ */
+function fillInCustomer(db, ctx, customer, input) {
+  const email = trimOrNull(input.customerEmail);
+  const address = trimOrNull(input.customerShippingAddress);
+  const wantsEmail = email && !customer.email;
+  const wantsAddress = address && !customer.shipping_address;
+  if (!wantsEmail && !wantsAddress) return customer;
+
+  db.prepare(`UPDATE customers SET email = COALESCE(email, ?),
+    shipping_address = COALESCE(shipping_address, ?), updated_at = ?
+    WHERE id = ? AND workspace_id = ?`)
+    .run(wantsEmail ? email : null, wantsAddress ? address : null,
+      nowIso(), customer.id, ctx.workspaceId);
+  return requireCustomer(db, ctx.workspaceId, customer.id);
+}
+
 function createOrder(db, ctx, input) {
   return inTransaction(db, () => {
+    /*
+     * Whatever was entered about the customer is kept, whether they are new or
+     * already on file.
+     *
+     * The first version of this only filled in a customer being created, so
+     * choosing an existing name from the list and typing their email threw the
+     * email away — and the order then refused a payment link because "there is
+     * no email address for Chavy". The form asked, the person answered, and
+     * Foundry dropped it: the worst of the three possible behaviours.
+     *
+     * A blank is filled and an existing value is left alone. Quietly changing
+     * the address a customer's parcels go to, because somebody typed something
+     * while making an unrelated order, is not a thing to do without being
+     * asked — that is what the customer page is for.
+     */
     const customer = input.customerId
-      ? requireCustomer(db, ctx.workspaceId, input.customerId)
-      /*
-       * A customer created alongside an order used to get a name and nothing
-       * else, so the parcel had nowhere to go and the shipping notice had
-       * nobody to reach. Whatever was entered on the form comes with them.
-       */
+      ? fillInCustomer(db, ctx, requireCustomer(db, ctx.workspaceId, input.customerId), input)
       : createCustomer(db, ctx, { name: input.customerName, company: input.company,
         email: input.customerEmail, shippingAddress: input.customerShippingAddress });
     ensureLocation(db, ctx.workspaceId, input.fulfillmentLocationId);
