@@ -2626,3 +2626,11 @@ details > summary { cursor: pointer; }
   .detail-list > div { grid-template-columns: 1fr; gap: 2px; }
 }
 .ship-to { font-style: normal; white-space: pre-line; line-height: 1.5; }
+
+/* A prepared message, shown as the words that will actually leave. */
+.message-body {
+  margin: 0; padding: 14px 16px; white-space: pre-wrap; font: inherit;
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+  border-radius: var(--radius); line-height: 1.55;
+}
+.message-edit { min-height: 260px; font: inherit; line-height: 1.55; resize: vertical; }

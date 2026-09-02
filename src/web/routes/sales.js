@@ -5,6 +5,8 @@ const sales = require('../../sales/sales-order-service');
 const salesIntent = require('../../sales/sales-intent');
 const shipments = require('../../sales/shipment-service');
 const carriers = require('../../sales/carriers');
+const notices = require('../../sales/customer-communications');
+const connections = require('../../connections/service');
 const repo = require('../../domain/repository');
 const permissions = require('../../actions/permissions');
 const { requireAuth, asyncRoute } = require('../middleware');
@@ -348,6 +350,10 @@ router.get('/fulfilment', requirePermission(permissions.VIEW, 'view fulfilment')
   const queue = shipments.workQueue(req.db, req.ctx.workspaceId);
   res.page('sales/fulfilment', {
     title: 'Fulfilment', nav: 'fulfilment', queue,
+    noticePolicy: notices.policy(req.db, req.ctx.workspaceId),
+    waitingNotices: notices.waiting(req.db, req.ctx.workspaceId),
+    mailboxes: connections.list(req.db, req.ctx.workspaceId)
+      .filter((row) => ['gmail', 'microsoft365'].includes(row.provider_type)),
   });
 }));
 
@@ -357,6 +363,10 @@ router.get('/fulfilment/:id', requirePermission(permissions.VIEW, 'view fulfilme
     title: list.shipment.shipment_number, nav: 'fulfilment',
     shipment: shipments.getShipment(req.db, req.ctx.workspaceId, req.params.id),
     pickList: list, carriers: carriers.list(),
+    notices: notices.forShipment(req.db, req.ctx.workspaceId, req.params.id),
+    noticePolicy: notices.policy(req.db, req.ctx.workspaceId),
+    mailboxes: connections.list(req.db, req.ctx.workspaceId)
+      .filter((row) => ['gmail', 'microsoft365'].includes(row.provider_type)),
   });
 }));
 
@@ -417,7 +427,21 @@ router.post('/fulfilment/:id/ship', requirePermission(permissions.OPERATE, 'fulf
     req.flash('warn', err.message);
     return res.redirect(303, `/fulfilment/${req.params.id}`);
   }
-  req.flash('success', `${shipment.shipment_number} has gone. ${shipment.units} left stock and the sale is on the books.`);
+  /*
+   * One sentence covering the parcel and the person waiting for it.
+   *
+   * Sending is attempted here rather than inside the engine because it is slow,
+   * it can fail halfway, and the outcome is something a person needs told in
+   * words. The box shipped either way; only the last clause changes.
+   */
+  let told = '';
+  if (shipment.customerNotice) {
+    const outcome = await notices.autoSend(req.db, req.ctx, shipment.customerNotice);
+    if (outcome.sent) told = ' The customer has been told.';
+    else if (outcome.reason) told = ` The customer has not been told yet — ${outcome.reason}`;
+    else told = ' A note to the customer is written below, ready when you are.';
+  }
+  req.flash('success', `${shipment.shipment_number} has gone. ${shipment.units} left stock and the sale is on the books.${told}`);
   res.redirect(303, `/fulfilment/${shipment.id}`);
 }));
 
@@ -444,5 +468,58 @@ router.post('/fulfilment/:id/cancel', requirePermission(permissions.OPERATE, 'fu
   res.redirect(303, `/sales/orders/${shipment.sales_order_id}`);
 }));
 
+/*
+ * Telling the customer. Preparing is not sending, so each of these is a
+ * separate thing somebody chose to do.
+ */
+
+router.post('/fulfilment/:id/notice', requirePermission(permissions.OPERATE, 'write to customers'), asyncRoute(async (req, res) => {
+  const action = trimOrNull(req.body.action);
+  const messageId = trimOrNull(req.body.messageId);
+  try {
+    if (action === 'save') {
+      notices.updateDraft(req.db, req.ctx.workspaceId, messageId, {
+        subject: req.body.subject, body: req.body.body, connectorId: req.body.connectorId,
+      });
+      req.flash('success', 'Saved. Nothing has been sent.');
+    } else if (action === 'cancel') {
+      notices.cancel(req.db, req.ctx.workspaceId, messageId, 'Not sent by the owner.');
+      req.flash('success', 'That note will not be sent.');
+    } else if (action === 'rewrite') {
+      notices.prepareShippingNotice(req.db, req.ctx, req.params.id);
+      req.flash('success', 'Written again from what Foundry has on record.');
+    } else {
+      // Save whatever is on screen first, so send always sends what was read.
+      notices.updateDraft(req.db, req.ctx.workspaceId, messageId, {
+        subject: req.body.subject, body: req.body.body, connectorId: req.body.connectorId,
+      });
+      const sent = await notices.sendThroughMailbox(req.db, req.ctx.workspaceId, messageId, req.ctx.actorId);
+      req.flash('success', `Sent to ${sent.recipient}.`);
+    }
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, `/fulfilment/${req.params.id}`);
+}));
+
+router.post('/fulfilment/settings/notices', requirePermission(permissions.OPERATE, 'change communication settings'), asyncRoute(async (req, res) => {
+  try {
+    notices.setPolicy(req.db, req.ctx, {
+      shippingNotice: req.body.shippingNotice,
+      connectorId: req.body.connectorId,
+      businessName: req.body.businessName,
+      replyTo: req.body.replyTo,
+      signature: req.body.signature,
+    });
+    req.flash('success', 'Saved how Foundry handles shipping notices.');
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, req.body.returnTo || '/fulfilment');
+}));
+
 module.exports = router;
+
 

@@ -39,7 +39,7 @@
 <% if (s.ship_to_address) { %>
   <section class="section">
     <div class="panel">
-      <div class="panel-head"><div><h2>Where it is going</h2></div></div>
+      <div class="panel-head"><div><h2><%= isOpen ? 'Where it is going' : 'Where it went' %></h2></div></div>
       <div class="card-body">
         <address class="ship-to"><%= s.customer_name %>
 <%= s.ship_to_address %></address>
@@ -77,8 +77,13 @@
         <h2><%= s.status === 'PICKING' ? 'What to collect'
           : s.status === 'PACKED' ? 'What is in the box' : 'What went' %></h2>
         <span class="t-xs t-muted">
-          <%= pickList.stops.length %>
-          <%= pickList.stops.length === 1 ? 'place to visit' : 'places to visit' %>
+          <% if (s.status === 'PICKING') { %>
+            <%= pickList.stops.length %>
+            <%= pickList.stops.length === 1 ? 'place to visit' : 'places to visit' %>
+          <% } else { %>
+            from <%= pickList.stops.length %>
+            <%= pickList.stops.length === 1 ? 'place' : 'places' %>
+          <% } %>
         </span>
       </div>
     </div>
@@ -216,6 +221,109 @@
           </span>
         </div>
       </form>
+    </div>
+  </section>
+<% } %>
+
+<% if (notices && notices.length) { %>
+  <%
+    /*
+     * What the customer was told, or is about to be.
+     *
+     * The words are shown in full and editable, because a shipping notice
+     * leaves the building under the owner's name. Foundry writes the draft
+     * from records; the person who has to answer the reply gets the last read
+     * of it.
+     */
+    var notice = notices[0];
+    var gone = notice.status === 'SENT';
+  %>
+  <section class="section">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2><%= gone ? 'What the customer was told' : 'Tell the customer' %></h2>
+          <span class="t-xs t-muted">
+            <% if (gone) { %>
+              Sent <%= helpers.shortDate(notice.sentAt) %> to <%= notice.recipient %>
+            <% } else if (notice.status === 'CANCELLED') { %>
+              Not sent
+            <% } else if (notice.recipient) { %>
+              Ready to send to <%= notice.recipient %>
+            <% } else { %>
+              No email address on file for this customer
+            <% } %>
+          </span>
+        </div>
+        <span class="spacer"></span>
+        <span class="badge badge--<%= gone ? 'ok' : notice.status === 'FAILED' ? 'warn' : 'info' %>">
+          <%= { PREPARED: 'Written, not sent', QUEUED: 'Waiting', SENDING: 'Sending',
+                SENT: 'Sent', FAILED: 'Did not send', CANCELLED: 'Cancelled' }[notice.status] %>
+        </span>
+      </div>
+
+      <% if (notice.errorMessage && notice.status === 'FAILED') { %>
+        <div class="card-body">
+          <div class="notice notice--warn"><div>
+            <strong>This did not send.</strong><br><%= notice.errorMessage %>
+          </div></div>
+        </div>
+      <% } %>
+
+      <% if (gone || notice.status === 'CANCELLED') { %>
+        <div class="card-body">
+          <p class="t-sm"><strong><%= notice.subject %></strong></p>
+          <pre class="message-body"><%= notice.body %></pre>
+        </div>
+      <% } else { %>
+        <form method="post" action="/fulfilment/<%= s.id %>/notice" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="messageId" value="<%= notice.id %>">
+          <div class="card-body">
+            <label class="field">
+              <span class="field-label">Subject</span>
+              <input class="input" type="text" name="subject" value="<%= notice.subject %>">
+            </label>
+            <label class="field">
+              <span class="field-label">Message</span>
+              <textarea class="input textarea message-edit" name="body" rows="14"><%= notice.body %></textarea>
+              <span class="field-hint">
+                Written from this shipment's own record — the items, the carrier, the tracking
+                number. Foundry states nothing here it cannot show you elsewhere.
+              </span>
+            </label>
+            <% if (mailboxes && mailboxes.length) { %>
+              <label class="field">
+                <span class="field-label">Send from</span>
+                <select class="input" name="connectorId">
+                  <option value="">Choose a mailbox</option>
+                  <% mailboxes.forEach(function (box) { %>
+                    <option value="<%= box.id %>" <%= notice.connectorId === box.id ? 'selected' : '' %>>
+                      <%= box.display_name %>
+                    </option>
+                  <% }) %>
+                </select>
+              </label>
+            <% } else { %>
+              <p class="hint">
+                No mailbox is connected, so Foundry cannot send this for you. Copy the words
+                above into your own email, or
+                <a href="/settings/connections">connect a mailbox</a>.
+              </p>
+            <% } %>
+          </div>
+          <div class="card-foot">
+            <% if (notice.recipient && mailboxes && mailboxes.length) { %>
+              <button class="btn btn--primary" type="submit" name="action" value="send">
+                Send to <%= notice.recipient %>
+              </button>
+            <% } %>
+            <button class="btn" type="submit" name="action" value="save">Save for later</button>
+            <button class="btn btn--ghost" type="submit" name="action" value="rewrite">Start again</button>
+            <button class="btn btn--ghost" type="submit" name="action" value="cancel">Do not send</button>
+          </div>
+        </form>
+      <% } %>
     </div>
   </section>
 <% } %>

@@ -201,6 +201,11 @@ Honest, at the time of writing.
   a shipment delivered is the owner telling Foundry what they know, and the page
   says so. `src/sales/carriers.js` is the seam an integration would fill.
 - Customer-facing documents do not print. Purchase orders do.
+- Customers are told one thing: that their order shipped. A notice is written
+  from the shipment's own record the moment a box goes out, and by default the
+  owner sends it. There is no order confirmation, no delay notice, and no
+  reply handling — a customer who answers a shipping notice is answering into
+  a mailbox nothing in Foundry triages yet.
 - Reporting is thinner than established inventory systems.
 - Not proven at scale: SQLite, single node.
 

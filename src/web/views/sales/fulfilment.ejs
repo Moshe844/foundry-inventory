@@ -122,3 +122,122 @@
     </p>
   </section>
 <% } %>
+
+<% if (waitingNotices && waitingNotices.length) { %>
+  <section class="section">
+    <div class="section-head">
+      <h2>Waiting to be sent</h2>
+      <span class="t-xs t-muted">
+        <%= waitingNotices.length %>
+        <%= waitingNotices.length === 1 ? 'customer has' : 'customers have' %>
+        not been told their order shipped
+      </span>
+    </div>
+    <div class="panel">
+      <table class="table">
+        <thead>
+          <tr><th>Customer</th><th>Order</th><th>Shipment</th><th>State</th><th></th></tr>
+        </thead>
+        <tbody>
+          <% waitingNotices.forEach(function (note) { %>
+            <tr>
+              <td><strong><%= note.customerName || '—' %></strong>
+                <% if (!note.recipient) { %>
+                  <div class="t-xs t-muted">No email address on file</div>
+                <% } %>
+              </td>
+              <td><%= note.orderNumber || '—' %></td>
+              <td><%= note.shipmentNumber || '—' %></td>
+              <td>
+                <%= note.status === 'FAILED' ? 'Did not send' : 'Written, not sent' %>
+                <% if (note.errorMessage && note.status === 'FAILED') { %>
+                  <div class="t-xs t-muted"><%= note.errorMessage %></div>
+                <% } %>
+              </td>
+              <td class="num">
+                <a class="btn btn--sm" href="/fulfilment/<%= note.shipmentId %>">Read it</a>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+<% } %>
+
+<section class="section">
+  <details class="disclosure">
+    <summary>What customers are told when an order ships</summary>
+    <form method="post" action="/fulfilment/settings/notices" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="returnTo" value="/fulfilment">
+      <div class="card-body">
+        <div class="choice-grid">
+          <label class="choice">
+            <input type="radio" name="shippingNotice" value="prepare"
+              <%= noticePolicy.shippingNotice === 'prepare' ? 'checked' : '' %>>
+            <span class="choice-body">
+              <strong>Foundry writes it, you send it</strong>
+              <span class="t-xs t-muted">
+                A note is drafted from the shipment's own record the moment a box goes out.
+                Nothing reaches a customer until you have read it.
+              </span>
+            </span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="shippingNotice" value="send"
+              <%= noticePolicy.shippingNotice === 'send' ? 'checked' : '' %>>
+            <span class="choice-body">
+              <strong>Foundry sends it for me</strong>
+              <span class="t-xs t-muted">
+                Sent as soon as the box is marked shipped. Needs a connected mailbox, and
+                nothing goes out while Foundry is paused.
+              </span>
+            </span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="shippingNotice" value="off"
+              <%= noticePolicy.shippingNotice === 'off' ? 'checked' : '' %>>
+            <span class="choice-body">
+              <strong>Do not write these at all</strong>
+              <span class="t-xs t-muted">I tell customers myself, my own way.</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">Send from</span>
+            <select class="input" name="connectorId">
+              <option value="">No mailbox chosen</option>
+              <% (mailboxes || []).forEach(function (box) { %>
+                <option value="<%= box.id %>" <%= noticePolicy.connectorId === box.id ? 'selected' : '' %>>
+                  <%= box.display_name %>
+                </option>
+              <% }) %>
+            </select>
+            <% if (!mailboxes || !mailboxes.length) { %>
+              <span class="field-hint">
+                <a href="/settings/connections">Connect a mailbox</a> before asking Foundry to send.
+              </span>
+            <% } %>
+          </label>
+          <label class="field">
+            <span class="field-label">Business name <span class="t-muted">(optional)</span></span>
+            <input class="input" type="text" name="businessName" value="<%= noticePolicy.businessName || '' %>"
+              placeholder="How you sign off to customers">
+          </label>
+        </div>
+        <label class="field">
+          <span class="field-label">Sign-off <span class="t-muted">(optional)</span></span>
+          <textarea class="input textarea" name="signature" rows="3"
+            placeholder="Riverside Supply&#10;541-555-0142"><%= noticePolicy.signature || '' %></textarea>
+          <span class="field-hint">Replaces the business name at the foot of every notice.</span>
+        </label>
+      </div>
+      <div class="card-foot">
+        <button class="btn btn--primary" type="submit">Save</button>
+      </div>
+    </form>
+  </details>
+</section>

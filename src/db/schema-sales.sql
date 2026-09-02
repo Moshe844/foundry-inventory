@@ -196,3 +196,63 @@ CREATE TABLE IF NOT EXISTS sales_shipment_lines (
 );
 CREATE INDEX IF NOT EXISTS idx_sales_shipment_lines_line
   ON sales_shipment_lines(workspace_id, sales_order_line_id);
+
+-- Telling the customer (Mission 14.6)
+--
+-- The same outbox shape as supplier communication, for the same reason:
+-- preparing a message is not sending one, and Foundry writes nothing to a
+-- customer that the owner has not seen unless they have said, in a setting,
+-- that it may.
+--
+-- The body is built from records, never from a model. A shipping notice is
+-- read by somebody who is owed goods: a hallucinated tracking number or an
+-- invented delivery date is worse than no notice at all.
+
+CREATE TABLE IF NOT EXISTS customer_communications (
+  id                  TEXT PRIMARY KEY,
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  customer_id         TEXT REFERENCES customers(id) ON DELETE SET NULL,
+  sales_order_id      TEXT REFERENCES sales_orders(id) ON DELETE SET NULL,
+  shipment_id         TEXT REFERENCES sales_shipments(id) ON DELETE SET NULL,
+  channel             TEXT NOT NULL DEFAULT 'email',
+  recipient           TEXT,
+  subject             TEXT NOT NULL,
+  body                TEXT NOT NULL,
+  status              TEXT NOT NULL DEFAULT 'PREPARED'
+                        CHECK (status IN ('PREPARED','QUEUED','SENDING','SENT','FAILED','CANCELLED')),
+  transport           TEXT,
+  external_message_id TEXT,
+  external_thread_id  TEXT,
+  message_kind        TEXT NOT NULL DEFAULT 'shipping_notice',
+  connector_id        TEXT,
+  approved_by_user_id TEXT,
+  approved_at         TEXT,
+  idempotency_key     TEXT NOT NULL,
+  error_message       TEXT,
+  created_at          TEXT NOT NULL,
+  queued_at           TEXT,
+  sent_at             TEXT,
+  updated_at          TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_communications_key
+  ON customer_communications(workspace_id, idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_customer_communications_order
+  ON customer_communications(workspace_id, sales_order_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_communications_shipment
+  ON customer_communications(workspace_id, shipment_id);
+CREATE INDEX IF NOT EXISTS idx_customer_communications_open
+  ON customer_communications(workspace_id, status, created_at);
+
+-- What a workspace has decided customers may be told. One row per workspace;
+-- absent means the defaults below, which prepare a notice and send nothing.
+CREATE TABLE IF NOT EXISTS customer_communication_policy (
+  workspace_id     TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  shipping_notice  TEXT NOT NULL DEFAULT 'prepare'
+                     CHECK (shipping_notice IN ('off','prepare','send')),
+  connector_id     TEXT,
+  business_name    TEXT,
+  reply_to         TEXT,
+  signature        TEXT,
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL
+);

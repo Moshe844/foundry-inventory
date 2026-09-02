@@ -310,7 +310,7 @@ function ship(db, ctx, shipmentId, input = {}) {
     })),
   }, { idempotencyKey: `sales-shipment:${shipmentId}` });
 
-  return inTransaction(db, () => {
+  const result = inTransaction(db, () => {
     const now = nowIso();
     db.prepare(`UPDATE sales_shipments SET status = 'SHIPPED', carrier = ?, service = ?,
       tracking_number = ?, tracking_url = ?, shipping_cost_minor = ?, currency = ?,
@@ -323,6 +323,20 @@ function ship(db, ctx, shipmentId, input = {}) {
         trimOrNull(input.shippedAt) || now, now, trimOrNull(input.notes), now, shipmentId);
     return decorate(db, ctx.workspaceId, requireShipment(db, ctx.workspaceId, shipmentId));
   });
+
+  /*
+   * Tell the customer, and let nothing about that undo this.
+   *
+   * The parcel has physically left; that is now a fact. Writing the notice is
+   * a separate, later thing, and every way it can fail is recorded on the
+   * message rather than thrown from here - a mail problem must never make a
+   * shipped box look unshipped.
+   */
+  result.customerNotice = null;
+  try {
+    result.customerNotice = require('./customer-communications').onShipped(db, ctx, shipmentId);
+  } catch { /* the box went; that is not in question here */ }
+  return result;
 }
 
 function markDelivered(db, ctx, shipmentId, input = {}) {
