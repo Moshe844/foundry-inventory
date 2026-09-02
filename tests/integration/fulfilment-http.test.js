@@ -188,3 +188,46 @@ test('with a box open, the direct ship form stands down and its route refuses', 
     'the refused shortcut must not have issued anything');
   assert.match(plain((await agent.get(refused.headers.location)).text), /is already open on this order/);
 });
+
+test('one customer order is one page: the whole story without leaving it', async () => {
+  /*
+   * The design test, written down.
+   *
+   * If understanding one business event means bouncing between Sales,
+   * Fulfilment, Mail, Purchasing and Accounting, the product is an ERP with an
+   * assistant bolted on. So every stage of a customer order has to be legible
+   * from the order itself: what was promised, what was committed, what left,
+   * how it is travelling, and whether the person waiting for it has been told.
+   */
+  const env = setup();
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 40,
+  });
+  const customer = sales.createCustomer(env.db, env.workspace.ctx, {
+    name: 'ABC School', email: 'orders@abcschool.test',
+  });
+  const order = sales.confirm(env.db, env.workspace.ctx, sales.createOrder(env.db, env.workspace.ctx, {
+    customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 12 }],
+  }).id);
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const page = await agent.get(`/orders/${order.id}`);
+  const url = (await agent.post(`/sales/orders/${order.id}/pick`)
+    .type('form').send({ _csrf: csrfFrom(page.text) })).headers.location;
+  const picking = await agent.get(url);
+  await agent.post(`${url}/packed`).type('form').send({ _csrf: csrfFrom(picking.text) });
+  const packed = await agent.get(url);
+  await agent.post(`${url}/ship`).type('form').send({
+    _csrf: csrfFrom(packed.text), trackingNumber: '1Z999AA10123456784', service: 'Ground',
+  });
+
+  const story = plain((await agent.get(`/orders/${order.id}`)).text);
+  assert.match(story, /12\s*Units ordered/, 'what was promised');
+  assert.match(story, /12\s*fulfilled/, 'what left');
+  assert.match(story, /SHP-1001/, 'the box it left in');
+  assert.match(story, /1Z999AA10123456784/, 'how it is travelling');
+  assert.match(story, /Written, not sent|Sent /, 'whether the customer was told');
+  assert.match(story, /Order activity/, 'and everything that happened to it');
+});

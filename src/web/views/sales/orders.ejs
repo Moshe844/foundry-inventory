@@ -32,17 +32,25 @@
 
 <div class="page-head">
   <div>
-    <h1>Sales</h1>
-    <p class="page-sub">What customers have asked for, what is held for them, and what is still short.</p>
+    <h1>Orders</h1>
+    <p class="page-sub">Every customer order from the promise to the parcel: held, picked, shipped, paid.</p>
   </div>
-  <%# With no orders yet the empty state below is the call to action, and this
-      button says the same thing a few centimetres above it. One of them is
-      enough, and the one attached to the explanation is the useful one. %>
-  <% if (orders.length) { %>
-    <div class="page-actions">
-      <a class="btn btn--primary" href="/sales/new"><%- helpers.icon('plus', { size: 15 }) %> New sales order</a>
-    </div>
-  <% } %>
+  <%#
+    Picking, shipping and customer mail are part of Orders now rather than
+    departments of their own, so this is where somebody finds them — including
+    on the first morning, when there are no orders yet. Hiding them until an
+    order exists would mean consolidating the sidebar had simply lost them.
+
+    "New order" is the exception and stays conditional: with nothing here the
+    empty state below already says it, and one call to action is enough.
+  %>
+  <div class="page-actions">
+    <a class="btn" href="/fulfilment"><%- helpers.icon('box', { size: 15 }) %> Picking and shipping</a>
+    <a class="btn" href="/mail"><%- helpers.icon('send', { size: 15 }) %> Customer mail</a>
+    <% if (orders.length) { %>
+      <a class="btn btn--primary" href="/orders/new"><%- helpers.icon('plus', { size: 15 }) %> New order</a>
+    <% } %>
+  </div>
 </div>
 
 <div class="stat-strip section">

@@ -13,8 +13,17 @@ const { requireAuth, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 const prices = require('../../pricing/price-service');
 
+/*
+ * Two addresses, one page, on purpose.
+ *
+ * The nav now says Orders and Money, so those are the addresses it uses. The
+ * older paths keep serving the same handler rather than redirecting, because
+ * they are in bookmarks, in links across the app and in a year of tests, and a
+ * redirect would still be two addresses with a round trip added. Nothing here
+ * renders differently depending on which one you arrive by.
+ */
 const router = express.Router();
-router.use('/sales', requireAuth);
+router.use(['/sales', '/orders'], requireAuth);
 // Fulfilment lives on its own path because it is its own job, so it needs
 // the same guard stated separately rather than inherited from /sales.
 router.use('/fulfilment', requireAuth);
@@ -93,7 +102,7 @@ function accountingForOrder(db, workspaceId, orderId) {
   return { ...row, outcome };
 }
 
-router.get('/sales', requirePermission(permissions.VIEW, 'view sales orders'), asyncRoute(async (req, res) => {
+router.get(['/orders', '/sales'], requirePermission(permissions.VIEW, 'view sales orders'), asyncRoute(async (req, res) => {
   const status = trimOrNull(req.query.status);
   const sellingConnectionCount = req.db.prepare(
     "SELECT COUNT(*) AS n FROM workspace_connectors WHERE workspace_id = ? AND status = 'connected' AND provider_type IN ('shopify','square','clover','woocommerce','reference_webhook')"
@@ -107,7 +116,7 @@ router.get('/sales', requirePermission(permissions.VIEW, 'view sales orders'), a
   });
 }));
 
-router.get('/sales/new', requirePermission(permissions.OPERATE, 'create sales orders'), asyncRoute(async (req, res) => {
+router.get(['/orders/new', '/sales/new'], requirePermission(permissions.OPERATE, 'create sales orders'), asyncRoute(async (req, res) => {
   const skus = catalogue(req.db, req.ctx.workspaceId);
   res.page('sales/order-new', {
     title: 'New sales order', nav: 'sales', customers: sales.listCustomers(req.db, req.ctx.workspaceId),
@@ -180,7 +189,7 @@ router.post('/sales/orders', requirePermission(permissions.OPERATE, 'create sale
   res.redirect(303, `/sales/orders/${order.id}`);
 }));
 
-router.get('/sales/orders/:id', requirePermission(permissions.VIEW, 'view sales orders'), asyncRoute(async (req, res) => {
+router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.VIEW, 'view sales orders'), asyncRoute(async (req, res) => {
   const order = sales.getOrder(req.db, req.ctx.workspaceId, req.params.id);
 
   /*
@@ -203,13 +212,20 @@ router.get('/sales/orders/:id', requirePermission(permissions.VIEW, 'view sales 
   }
 
   res.page('sales/order', {
-    title: 'Sales order', nav: 'sales', order,
+    title: 'Order', nav: 'sales', order,
     shortButAvailable,
     accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
     money: moneyForOrder(req.db, req.ctx.workspaceId, order.id),
     shipments: shipments.listForOrder(req.db, req.ctx.workspaceId, order.id),
     pickable: order.status === 'DRAFT' ? [] : shipments.pickable(req.db, req.ctx.workspaceId, order.id),
     fulfilment: shipments.fulfilmentState(req.db, req.ctx.workspaceId, order),
+    /*
+     * What this customer has been told, on the same page as the thing they
+     * were told about. Bouncing between the order, the shipment and a mailbox
+     * to answer "does she know it shipped?" is the failure this page exists to
+     * avoid.
+     */
+    customerNotices: notices.forOrder(req.db, req.ctx.workspaceId, order.id),
     skus: catalogue(req.db, req.ctx.workspaceId),
   });
 }));

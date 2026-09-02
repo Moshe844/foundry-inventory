@@ -60,6 +60,31 @@
     <p class="briefing__greeting"><%= greeting %><%= firstName ? ', ' + firstName : '' %></p>
     <h1 class="briefing__verdict"><%= verdict %></h1>
     <p class="briefing__sub"><%= subVerdict %></p>
+
+    <%
+      /*
+       * What is about to happen, in the sentences an employee would say.
+       *
+       * The verdict above answers "is anything wrong". This answers "what is
+       * going on", which is the other half of the question somebody actually
+       * asked when they opened this page. Every line is counted from records
+       * and names a date somebody gave rather than one Foundry worked out.
+       *
+       * It sits inside the briefing rather than below it because it is part of
+       * the same sentence: everything is under control, and here is what today
+       * looks like.
+       */
+      var next = locals.whatsNext || [];
+    %>
+    <% if (next.length && !paused) { %>
+      <ul class="briefing__next">
+        <% next.forEach(function (line) { %>
+          <li class="briefing__next-line <%= line.tone === 'late' ? 'is-late' : '' %>">
+            <a href="<%= line.href %>"><%= line.text %></a>
+          </li>
+        <% }) %>
+      </ul>
+    <% } %>
   </div>
   <div class="briefing__state">
     <span class="briefing__pulse <%= paused ? 'is-paused' : 'is-live' %>">

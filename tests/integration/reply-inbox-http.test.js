@@ -150,11 +150,13 @@ test('unanswered mail reaches Needs You, oldest first, and leaves when answered'
   assert.ok(!entries.some((entry) => entry.id === `unanswered-mail:${older}`));
 });
 
-test('the nav badge counts only what needs a reply, and survives a workspace with no mail', async () => {
+test('unanswered mail is counted by Needs you, not by a mail badge of its own', async () => {
   const env = setup();
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
-  assert.match((await agent.get('/mail')).text, /href="\/mail"/, 'Mail has its own place in the nav');
+  const sidebar = (await agent.get('/mail')).text.split('<nav class="nav"')[1].split('</nav>')[0];
+  assert.ok(!sidebar.includes('href="/mail"'),
+    'Mail is not a department; it reaches the owner through Needs you');
 
   arrive(env, { subject: 'One', body: 'Can you confirm?' });
   arrive(env, { subject: 'Two', body: 'Can you confirm?' });
@@ -164,13 +166,17 @@ test('the nav badge counts only what needs a reply, and survives a workspace wit
   assert.equal(home.status, 200);
   assert.equal(inbox.counts(env.db, env.workspace.workspaceId).NEEDS_REPLY, 2);
   /*
-   * Anchored on the badge itself. An earlier version of this looked for "Mail"
-   * followed by a 2 anywhere nearby and passed against the coordinates inside
-   * the nav icon's SVG path, which proves nothing at all.
+   * The number the owner sees is the Needs you badge, and it has to include
+   * these — otherwise consolidating the sidebar would have made unanswered
+   * mail invisible rather than better placed.
    */
-  const badge = home.text.slice(home.text.indexOf('href="/mail"'));
-  assert.match(badge.slice(0, 400), /<span class="nav-count" aria-label="2 waiting">2<\/span>/,
-    'the badge counts the two that need answering, not the three that arrived');
+  const needsYou = require('../../src/manager/needs-you-inbox').inbox(env.db, env.workspace.workspaceId);
+  const mailEntries = needsYou.filter((entry) => entry.id.startsWith('unanswered-mail:'));
+  assert.equal(mailEntries.length, 2, 'both unanswered messages are decisions waiting on the owner');
+  const nav = home.text.split('<nav class="nav"')[1].split('</nav>')[0];
+  const badge = nav.slice(nav.indexOf('href="/needs-you"'));
+  assert.match(badge.slice(0, 600), new RegExp(`aria-label="${needsYou.length} waiting"`),
+    'the Needs you badge is the one number, and it counts the mail too');
 });
 
 test('a reply is drafted, read, and sent from the message page', async () => {

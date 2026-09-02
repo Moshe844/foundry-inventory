@@ -1,4 +1,4 @@
-<div class="page-head"><div><a class="back-link" href="/accounting">‹ Accounting</a><p class="eyebrow">Accountant control</p><h1>Chart of accounts</h1><p class="lede">Foundry’s control accounts are protected. Owners and accountants can add business-specific accounts without changing posting logic.</p></div></div>
+<div class="page-head"><div><a class="back-link" href="/accounting">‹ Money</a><p class="eyebrow">Accountant control</p><h1>Chart of accounts</h1><p class="lede">Foundry’s control accounts are protected. Owners and accountants can add business-specific accounts without changing posting logic.</p></div></div>
 <section class="card"><div class="card-head"><h2>Accounts</h2></div><div class="card-body"><div class="table-wrap"><table class="table"><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Purpose</th></tr></thead><tbody>
 <% accounts.forEach(function(account){ %><tr><td><%= account.code %></td><td><%= account.name %></td><td><%= account.account_type %></td><td><%= account.is_control ? 'Foundry control account' : (account.subtype || 'Custom account') %></td></tr><% }) %>
 </tbody></table></div></div></section>

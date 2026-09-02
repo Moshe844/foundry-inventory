@@ -1,4 +1,4 @@
-<div class="page-head"><div><a class="back-link" href="/accounting">‹ Accounting</a><p class="eyebrow">Ledger-backed report</p><h1><%= title %></h1>
+<div class="page-head"><div><a class="back-link" href="/accounting">‹ Money</a><p class="eyebrow">Ledger-backed report</p><h1><%= title %></h1>
   <p class="lede"><%= kind === 'inventory-valuation' ? 'Cost value from the inventory cost subledger—not selling prices.' : 'Calculated only from immutable posted journal entries.' %></p></div></div>
 
 <% if (kind !== 'balance-sheet' && kind !== 'inventory-valuation') { %><form class="card card-body form-inline" method="get"><label class="field"><span class="field-label">From</span><input class="input" type="date" name="from" value="<%= from %>"></label><label class="field"><span class="field-label">To</span><input class="input" type="date" name="to" value="<%= to %>"></label><button class="btn btn--sm" type="submit">Update report</button></form><% } %>

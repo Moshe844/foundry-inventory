@@ -86,16 +86,34 @@
             // configured, and the plainer one calls itself 'overview'. That key
             // belongs to Home, which is the page it is: attaching it to
             // Inventory lit the wrong entry for every unconfigured workspace.
+            /*
+             * What the owner does, not what the software contains.
+             *
+             * This list read Inventory, Sales, Fulfilment, Mail, Purchasing,
+             * Accounting, Activity — a department per module, which is the
+             * shape of an ERP and the opposite of the point. Somebody who
+             * hired Keeper to run these things should not have to operate
+             * seven of them.
+             *
+             * So the departments fold into the thing they are part of.
+             * Fulfilment is what happens to an order, so it lives under
+             * Orders. Purchasing is how stock arrives, so it lives under
+             * Inventory. Mail is not a place anybody goes to work — what
+             * needs the owner reaches Needs You, and the rest sits on the
+             * order or the supplier it belongs to. Nothing was removed; each
+             * still has its own address, and the section it now lives in
+             * links to it plainly.
+             */
             { key: 'home', href: '/', icon: 'foundry', label: 'Home', also: ['overview'] },
             { key: 'attention', href: '/needs-you', icon: 'attention', label: 'Needs you', count: attentionCount },
-            { key: 'inventory', href: '/inventory', icon: 'inventory', label: 'Inventory' },
-            { key: 'sales', href: '/sales', icon: 'sales', label: 'Sales' },
-            // Its own entry, because packing boxes is a different person's
-            // whole day rather than a detail of a sales order.
-            { key: 'fulfilment', href: '/fulfilment', icon: 'box', label: 'Fulfilment' },
-            { key: 'mail', href: '/mail', icon: 'send', label: 'Mail', count: mailCount },
-            { key: 'purchasing', href: '/purchasing', icon: 'purchasing', label: 'Purchasing' },
-            { key: 'accounting', href: '/accounting', icon: 'accounting', label: 'Accounting' },
+            // Inventory covers what you have and how more of it arrives.
+            { key: 'inventory', href: '/inventory', icon: 'inventory', label: 'Inventory', also: ['purchasing'] },
+            // Orders covers a customer order end to end: promised, picked,
+            // shipped, paid, and what the customer was told about it.
+            { key: 'sales', href: '/orders', icon: 'sales', label: 'Orders', also: ['fulfilment', 'mail'] },
+            // "Money" rather than "Accounting", because the owner wants to
+            // know how the business is doing; the books are underneath.
+            { key: 'accounting', href: '/money', icon: 'accounting', label: 'Money' },
             { key: 'activity', href: '/activity', icon: 'activity', label: 'Activity' },
           ];
           var navSecondary = [

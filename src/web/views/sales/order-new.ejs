@@ -1,4 +1,4 @@
-<div class="breadcrumb"><a href="/sales">Sales</a> <%- helpers.icon('chevron', { size: 13 }) %> <span>New customer order</span></div>
+<div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span>New customer order</span></div>
 <div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1>What did the customer order?</h1><p>Enter the customer, product, and quantity once. Foundry records customer demand before stock leaves, then you choose whether to reserve it or record that the customer already received it.</p></div></div>
 <% if (locals.formError) { %><div class="notice notice--warn"><strong>This order is not ready.</strong> <%= locals.formError %></div><% } %>
 

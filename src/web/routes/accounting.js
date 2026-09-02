@@ -25,8 +25,17 @@ const pricing = require('../../pricing/price-service');
 const { ValidationError } = require('../../domain/errors');
 const { trimOrNull, newId, nowIso } = require('../../lib/util');
 
+/*
+ * Two addresses, one page, on purpose.
+ *
+ * The nav now says Orders and Money, so those are the addresses it uses. The
+ * older paths keep serving the same handler rather than redirecting, because
+ * they are in bookmarks, in links across the app and in a year of tests, and a
+ * redirect would still be two addresses with a round trip added. Nothing here
+ * renders differently depending on which one you arrive by.
+ */
 const router = express.Router();
-router.use('/accounting', requireAuth);
+router.use(['/accounting', '/money'], requireAuth);
 
 function permit(permission, action) {
   return (req, res, next) => {
@@ -96,7 +105,7 @@ function setupPositions(db, workspaceId) {
     ORDER BY i.name, s.position, l.name`).all(workspaceId);
 }
 
-router.get('/accounting', permit(permissions.VIEW_ACCOUNTING, 'view accounting'), asyncRoute(async (req, res) => {
+router.get(['/money', '/accounting'], permit(permissions.VIEW_ACCOUNTING, 'view accounting'), asyncRoute(async (req, res) => {
   const automatic = automaticAccounting.ensure(req.db, req.ctx.workspaceId, {
     actorId: req.ctx.actorId, recoverCurrent: true,
   });

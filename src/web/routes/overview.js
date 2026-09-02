@@ -81,10 +81,21 @@ router.get(
       } catch {
         // Financial presentation cannot make the operating home unavailable.
       }
+      /*
+       * The forward half of the briefing. Defensive like the financial pulse
+       * beside it: Home is the page somebody lands on, and a query that throws
+       * must cost a paragraph rather than the whole morning.
+       */
+      let whatsNext = [];
+      try {
+        whatsNext = require('../../attention/whats-next').build(req.db, req.ctx.workspaceId);
+      } catch { whatsNext = []; }
+
       return res.page('operator-home', {
         title: 'Foundry',
         nav: 'home',
         home,
+        whatsNext,
         homeSignature: homeSignature(req.db, req.ctx.workspaceId),
         brief,
         stats,

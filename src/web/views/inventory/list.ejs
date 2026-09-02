@@ -5,6 +5,9 @@
     <div class="page-sub"><%= sourceLabel ? 'The exact original product records from this import, whether active or archived.' : filters.archivedOnly ? 'Products kept for history but not currently active.' : 'Everything you track, and how much of it you have.' %></div>
   </div>
   <div class="page-actions">
+      <%# Purchasing is how stock arrives, so it belongs to Inventory rather
+          than to a department of its own in the sidebar. %>
+      <a class="btn" href="/purchasing"><%- helpers.icon('purchasing', { size: 15 }) %> Ordering and suppliers</a>
     <a class="btn btn--primary" href="/inventory/new"><%- helpers.icon('plus', { size: 16 }) %> Add item</a>
   </div>
 </div>

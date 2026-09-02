@@ -76,11 +76,56 @@ test('the sidebar highlights the page you are on, and only that page', async () 
 
   assert.deepEqual(await activeOn('/inventory'), ['Inventory']);
   assert.deepEqual(await activeOn('/needs-you'), ['Needs you']);
-  assert.deepEqual(await activeOn('/purchasing'), ['Purchasing']);
   assert.deepEqual(await activeOn('/activity'), ['Activity']);
   assert.deepEqual(await activeOn('/settings'), ['Settings']);
   assert.deepEqual(await activeOn('/settings/connections'), ['Connections'],
     'Connections is its own destination, not a corner of Settings');
+
+  /*
+   * A page that belongs to a section lights that section.
+   *
+   * The sidebar used to name every department: Sales, Fulfilment, Mail,
+   * Purchasing, Accounting. Each of those is now part of something the owner
+   * recognises as a job rather than a module, and the highlight has to agree
+   * with that, or the nav says one thing and the page says another.
+   */
+  assert.deepEqual(await activeOn('/purchasing'), ['Inventory'],
+    'buying stock is how inventory arrives');
+  assert.deepEqual(await activeOn('/orders'), ['Orders']);
+  assert.deepEqual(await activeOn('/sales'), ['Orders'],
+    'the older address is the same page and lights the same entry');
+  assert.deepEqual(await activeOn('/fulfilment'), ['Orders'],
+    'picking and shipping are what happens to an order');
+  assert.deepEqual(await activeOn('/mail'), ['Orders'],
+    'mail is about an order or a supplier, never a department of its own');
+  assert.deepEqual(await activeOn('/money'), ['Money']);
+  assert.deepEqual(await activeOn('/accounting'), ['Money']);
+});
+
+test('the sidebar offers what an owner does, not what the software contains', async () => {
+  const { db, app } = makeApp();
+  const workspace = seedWorkspace(db);
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  configure(db, workspace.workspaceId);
+
+  const html = (await agent.get('/')).text;
+  const sidebar = html.split('<nav class="nav"')[1].split('</nav>')[0];
+  const labels = (sidebar.match(/<a[^>]*class="nav-item[^"]*"[\s\S]*?<\/a>/g) || [])
+    .map((anchor) => (anchor.match(/<span>([^<]+)<\/span>/) || [])[1])
+    .filter(Boolean);
+
+  assert.deepEqual(labels, ['Home', 'Needs you', 'Inventory', 'Orders', 'Money', 'Activity',
+    'Connections', 'Settings']);
+
+  // The departments that were folded in are gone from the sidebar and still
+  // reachable: consolidating is not the same as removing.
+  for (const gone of ['Sales', 'Fulfilment', 'Mail', 'Purchasing', 'Accounting']) {
+    assert.ok(!labels.includes(gone), `${gone} should no longer be its own department`);
+  }
+  for (const path of ['/fulfilment', '/mail', '/purchasing']) {
+    assert.equal((await agent.get(path)).status, 200, `${path} must still work`);
+  }
 });
 
 /**
@@ -97,4 +142,31 @@ test('every Needs you action names the decision rather than inviting a look', ()
   const labels = (source.match(/actionLabel: [^\n]+/g) || []).join('\n');
   assert.doesNotMatch(labels, /'Review /, 'no generic Review label survives');
   assert.doesNotMatch(labels, /`Review /, 'including the interpolated ones');
+});
+
+test('what was folded into a section is reachable from inside it', async () => {
+  /*
+   * The risk in consolidating a navigation is that it stops being simpler and
+   * starts being emptier: five departments vanish from the sidebar and nobody
+   * can find them again. So each one has to be one click from the entry that
+   * now owns it, on a workspace with no data at all — the first morning is
+   * exactly when somebody is looking for what the product can do.
+   */
+  const { db, app } = makeApp();
+  const workspace = seedWorkspace(db);
+  configure(db, workspace.workspaceId);
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const bodyOf = async (path) => {
+    const html = (await agent.get(path)).text;
+    return html.split('<main')[1] || html;
+  };
+
+  const orders = await bodyOf('/orders');
+  assert.match(orders, /href="\/fulfilment"/, 'picking and shipping live under Orders');
+  assert.match(orders, /href="\/mail"/, 'customer mail lives under Orders');
+
+  assert.match(await bodyOf('/inventory'), /href="\/purchasing"/,
+    'ordering and suppliers live under Inventory');
 });

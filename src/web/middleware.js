@@ -148,7 +148,6 @@ function foundryContext(db) {
     if (!req.user) {
       res.locals.foundry = { configured: false, vocabulary: createVocabulary({}) };
       res.locals.attentionCount = 0;
-      res.locals.mailCount = 0;
       return next();
     }
     const configuration = planApplier.getConfiguration(db, req.ctx.workspaceId);
@@ -168,14 +167,6 @@ function foundryContext(db) {
       );
     } catch {
       res.locals.attentionCount = 0;
-    }
-    // Same bargain as the attention badge: a missing number is cosmetic, a
-    // thrown one takes down every page in the app.
-    try {
-      res.locals.mailCount = require('../connections/reply-inbox')
-        .counts(db, req.ctx.workspaceId).NEEDS_REPLY;
-    } catch {
-      res.locals.mailCount = 0;
     }
     res.locals.term = vocabulary.term;
     req.foundry = res.locals.foundry;

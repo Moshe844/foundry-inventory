@@ -2671,3 +2671,16 @@ details > summary { cursor: pointer; }
   .mail-row { flex-direction: column; gap: 10px; }
   .mail-row-action { justify-content: flex-start; }
 }
+.t-ok { color: var(--ok); }
+
+/* The forward half of the Home briefing.
+ *
+ * Set in the briefing's own voice rather than as a card of statistics: these
+ * are sentences somebody says, so they are typeset as sentences.
+ */
+.briefing__next { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 5px; }
+.briefing__next-line { font-size: 14.5px; line-height: 1.5; }
+.briefing__next-line a { color: inherit; text-decoration: none; border-bottom: 1px solid transparent; }
+.briefing__next-line a:hover { border-bottom-color: currentColor; text-decoration: none; }
+.briefing__next-line::before { content: ""; }
+.briefing__next-line.is-late { font-weight: 600; }

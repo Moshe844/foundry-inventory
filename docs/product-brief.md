@@ -125,7 +125,39 @@ the underlying condition is satisfied.
 
 ---
 
-## 4. The vocabulary
+## 4. What the owner sees
+
+Foundry is one thing pretending to be nothing: an employee who runs the
+operation. So the navigation is what an owner does, not what the software
+contains.
+
+| | |
+| --- | --- |
+| **Home** | The briefing. A verdict — everything is under control, or N things need you — then what is about to happen: what is packed, what is ready to pick, when a customer wants their order, when a supplier's delivery is due. |
+| **Needs you** | The only queue. Anything Foundry cannot settle alone arrives here, including mail somebody is waiting on an answer to. |
+| **Inventory** | What you have, and how more of it arrives. Purchasing lives here. |
+| **Orders** | A customer order end to end: promised, committed, picked, shipped, tracked, paid, and what the customer was told. Fulfilment and customer mail live here. |
+| **Money** | The accountant's briefing first; the books underneath. |
+| **Activity** | Everything that happened, in order. |
+
+Then Connections and Settings, and Tell Foundry from anywhere.
+
+This replaced a sidebar that named every department — Inventory, Sales,
+Fulfilment, Mail, Purchasing, Accounting, Activity — which is the shape of an
+ERP and the opposite of the point. Somebody who hired Keeper to run these
+things should not have to operate seven of them.
+
+**The test that matters:** if understanding one business event means bouncing
+between Sales, Fulfilment, Mail, Purchasing and Accounting, the design has
+failed. One customer order is one page and one story.
+
+Nothing was removed. Every folded-in section keeps its own address, and the
+section it now belongs to links to it plainly — Orders offers picking and
+shipping, Inventory offers ordering and suppliers. Consolidating a navigation
+only works if what went into a section is obvious from inside it; otherwise it
+is not simpler, only emptier.
+
+## 5. The vocabulary
 
 Fixed words. Changing one means changing it everywhere.
 
@@ -141,7 +173,7 @@ Fixed words. Changing one means changing it everywhere.
 
 ---
 
-## 5. Mission ladder
+## 6. Mission ladder
 
 Numbered missions built the product. The last few:
 
@@ -159,7 +191,7 @@ Numbered missions built the product. The last few:
 
 ---
 
-## 6. Testing standard
+## 7. Testing standard
 
 - `npm test` — unit and integration.
 - `npm run test:e2e` — browser, driving real pages.
@@ -187,7 +219,7 @@ Treat a live failure as a question, not a verdict: re-run it before believing
 it, and only investigate a failure that repeats. The other two suites are
 deterministic and a failure there means what it says.
 
-## 7. Known gaps
+## 8. Known gaps
 
 Honest, at the time of writing.
 
