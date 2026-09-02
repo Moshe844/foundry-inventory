@@ -120,8 +120,23 @@ router.get(['/orders/new', '/sales/new'], requirePermission(permissions.OPERATE,
 }));
 
 router.get('/sales/customers/:id', requirePermission(permissions.VIEW, 'view customers'), asyncRoute(async (req, res) => {
+  const customer = sales.getCustomer(req.db, req.ctx.workspaceId, req.params.id);
+  /*
+   * The same sentence per order that the Orders list shows.
+   *
+   * This page had its own vocabulary — raw statuses, "confirmed" and
+   * "fulfilled" in lower case — so the same order read one way in the list and
+   * another here. One order, one description of it.
+   */
+  const history = orderStatus.decorate(req.db, req.ctx.workspaceId, customer.orders);
+  const owed = req.db.prepare(`SELECT COALESCE(SUM(balance_minor), 0) AS owed,
+      COUNT(*) AS invoices, MIN(due_date) AS soonest
+    FROM accounting_customer_invoices
+    WHERE workspace_id = ? AND customer_id = ? AND status IN ('OPEN','PARTIALLY_PAID')`)
+    .get(req.ctx.workspaceId, req.params.id);
   res.page('sales/customer', {
-    title: 'Customer', nav: 'sales', customer: sales.getCustomer(req.db, req.ctx.workspaceId, req.params.id),
+    title: 'Customer', nav: 'sales', customer: { ...customer, orders: history },
+    customerOwes: { minor: Number(owed.owed), invoices: Number(owed.invoices), soonest: owed.soonest },
     terms: paymentTerms.forCustomer(req.db, req.ctx.workspaceId, req.params.id),
     // The same sentence the order page shows, from the same place.
     termsDescription: paymentTerms.describe(paymentTerms.forCustomer(req.db, req.ctx.workspaceId, req.params.id)),
@@ -550,7 +565,16 @@ router.post('/sales/customers/:id/terms', requirePermission(permissions.OPERATE,
       paymentTerms.clearTerms(req.db, req.ctx, req.params.id);
       req.flash('success', 'Removed. This customer follows your rule for everybody.');
     } else {
-      const saved = paymentTerms.setTerms(req.db, req.ctx, { ...req.body, customerId: req.params.id });
+      /*
+       * The form asks for money in money. The engine stores minor units, so
+       * the conversion happens here rather than asking an owner to think in
+       * cents.
+       */
+      const saved = paymentTerms.setTerms(req.db, req.ctx, {
+        ...req.body,
+        depositMinor: req.body.depositAmount ? Math.round(Number(req.body.depositAmount) * 100) : null,
+        customerId: req.params.id,
+      });
       req.flash('success', `Saved. ${paymentTerms.describe(saved)}`);
     }
   } catch (err) {

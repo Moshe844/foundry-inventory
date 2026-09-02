@@ -1,5 +1,25 @@
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= customer.name %></span></div>
-<div class="page-head"><div class="titles"><h1><%= customer.name %></h1><p>Customer details needed to manage inventory commitments and delivery.</p></div><a class="btn btn--primary" href="/sales/new">New sales order</a></div>
+<div class="page-head"><div class="titles"><h1><%= customer.name %><% if (customer.company) { %> <span class="t-muted"><%= customer.company %></span><% } %></h1></div><a class="btn btn--primary" href="/orders/new">New order</a></div>
+
+<%#
+  What this relationship is, in one line.
+
+  The page used to open with a form for their phone number, under "Customer
+  details needed to manage inventory commitments and delivery" — a sentence
+  about the software rather than about them. What somebody wants on opening a
+  customer is what they owe and how they pay.
+%>
+<p class="lede">
+  <% if (customerOwes.minor) { %>
+    Owes <strong><%= helpers.money(customerOwes.minor, 'USD') %></strong>
+    across <%= customerOwes.invoices %> <%= customerOwes.invoices === 1 ? 'invoice' : 'invoices' %><%
+      if (customerOwes.soonest) { %>, the first due <%= helpers.shortDate(customerOwes.soonest) %><% } %>.
+  <% } else { %>
+    Owes nothing.
+  <% } %>
+  <%= termsDescription %>
+  <span class="t-xs t-muted">(<%= terms.source %>)</span>
+</p>
 
 <div class="grid grid--2">
   <form class="card form-card" method="post" action="/sales/customers/<%= customer.id %>">
@@ -19,7 +39,7 @@
   <div class="card">
     <div class="card-head"><h2>Sales-order history</h2><span class="muted"><%= customer.orders.length %> order<%= customer.orders.length === 1 ? '' : 's' %></span></div>
     <% if (!customer.orders.length) { %><div class="empty"><p>No sales orders yet.</p></div><% } else { %>
-      <div class="list-rows"><% customer.orders.forEach(function(order){ %><a class="list-row" href="/sales/orders/<%= order.id %>"><span><strong><%= order.order_number %></strong><small><%= order.order_date %><%= order.needed_by ? ' · needed by ' + order.needed_by : '' %></small></span><span><span class="badge <%= order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= order.status.replace(/_/g,' ').toLowerCase() %></span> <%- helpers.icon('chevron', { size: 13 }) %></span></a><% }) %></div>
+      <div class="list-rows"><% customer.orders.forEach(function(order){ %><a class="list-row" href="/orders/<%= order.id %>"><span><strong><%= order.order_number %></strong><small><%= helpers.shortDate(order.order_date) %><%= order.needed_by ? ' · wanted ' + helpers.shortDate(order.needed_by) : '' %></small></span><span><span class="badge badge--<%= order.next.tone === 'go' ? 'info' : order.next.tone === 'danger' ? 'warn' : order.next.tone %>"><%= order.next.text %></span> <%- helpers.icon('chevron', { size: 13 }) %></span></a><% }) %></div>
     <% } %>
   </div>
 </div>
@@ -39,7 +59,6 @@
     <form method="post" action="/sales/customers/<%= customer.id %>/terms" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="card-body">
-        <p class="lede"><%= termsDescription %></p>
         <div class="choice-grid">
           <label class="choice">
             <input type="radio" name="kind" value="ON_ACCOUNT" <%= terms.kind === 'ON_ACCOUNT' ? 'checked' : '' %>>
@@ -73,10 +92,13 @@
             <span class="field-hint">Per cent of the order.</span>
           </label>
           <label class="field">
-            <span class="field-label">Or a fixed deposit <span class="t-muted">(in cents)</span></span>
-            <input class="input" type="number" name="depositMinor" min="1" step="1"
-              value="<%= terms.depositMinor === null || terms.depositMinor === undefined ? '' : terms.depositMinor %>"
-              placeholder="50000">
+            <span class="field-label">Or a fixed deposit</span>
+            <div class="input-prefix">
+              <span>$</span>
+              <input class="input" type="number" name="depositAmount" min="0.01" step="0.01"
+                value="<%= terms.depositMinor === null || terms.depositMinor === undefined ? '' : (terms.depositMinor / 100).toFixed(2) %>"
+                placeholder="500.00">
+            </div>
             <span class="field-hint">One or the other, never both.</span>
           </label>
           <label class="field">

@@ -177,7 +177,19 @@
                 <td data-label="Where" class="t-muted"><%= sale.locations.join(', ') %></td>
                 <td data-label="When" class="t-muted"><%= helpers.dateTime(sale.occurredAt) %></td>
                 <td class="num cell-end" data-label="Total">
-                  <%= sale.priceComplete ? helpers.money(sale.totalMinor, sale.currency || 'USD') : '—' %>
+                  <%#
+                    A dash on its own is Foundry refusing to state a figure and
+                    not saying why, which is only half of the rule. Foundry
+                    values a sale at the price that was on file when it
+                    happened, so a sale from before a price was recorded has no
+                    value it can support — and says so instead of leaving
+                    somebody wondering whether the total is broken.
+                  %>
+                  <% if (sale.priceComplete) { %>
+                    <%= helpers.money(sale.totalMinor, sale.currency || 'USD') %>
+                  <% } else { %>
+                    <span class="t-muted">No price on file when this sold</span>
+                  <% } %>
                 </td>
               </tr>
             <% }) %>

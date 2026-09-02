@@ -362,3 +362,98 @@ test('a partly shipped order never says nothing was shipped', async () => {
   assert.doesNotMatch(text, /nothing was shipped/,
     'so it must not reassure anybody that nothing did');
 });
+
+test('the customer page opens with the relationship, not a form for their phone number', async () => {
+  /*
+   * It used to open with "Customer details needed to manage inventory
+   * commitments and delivery" over a name/company/email/phone form — a
+   * sentence about the software rather than about them, and no money anywhere.
+   * What somebody wants on opening a customer is what they owe and how they
+   * pay.
+   */
+  const env = setup();
+  const { customer, order } = invoicedOrder(env);
+  terms.setTerms(env.db, env.ctx, { customerId: customer.id, kind: 'DEPOSIT', depositPercent: 30 });
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const text = plain((await agent.get(`/sales/customers/${customer.id}`)).text);
+
+  assert.match(text, /Owes \$1,500\.00 across 1 invoice/);
+  assert.match(text, /Pays 30% of the order up front/);
+  assert.doesNotMatch(text, /Customer details needed to manage inventory commitments/,
+    'the page no longer explains itself to the person using it');
+
+  /*
+   * And the history says what the Orders list says. It used to print raw
+   * statuses in lower case, so one order read two different ways depending on
+   * which page you were looking at.
+   */
+  assert.match(text, /Waiting for a \$450\.00 deposit/);
+  assert.doesNotMatch(text, /\bconfirmed\b/, 'no raw enum values');
+  assert.ok(text.indexOf('SO-') > 0 && order.order_number);
+});
+
+test('a deposit is set in money, and stored in minor units', async () => {
+  const env = setup();
+  const { customer } = invoicedOrder(env);
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const page = await agent.get(`/sales/customers/${customer.id}`);
+  assert.doesNotMatch(plain(page.text), /in cents/, 'an owner does not think in cents');
+
+  await agent.post(`/sales/customers/${customer.id}/terms`).type('form').send({
+    _csrf: csrfFrom(page.text), kind: 'DEPOSIT', depositAmount: '500.00',
+  });
+  const saved = terms.forCustomer(env.db, env.workspace.workspaceId, customer.id);
+  assert.equal(saved.depositMinor, 50000, 'five hundred dollars, stored as fifty thousand cents');
+  assert.equal(terms.describe(saved), 'Pays a fixed deposit up front.');
+});
+
+test('a till sale says why it has no total, rather than showing a bare dash', async () => {
+  /*
+   * Foundry values a sale at the price on file when it happened, so a sale
+   * from before a price was recorded genuinely has no value it can support.
+   * Showing "—" was the refusal without the reason, which is half the rule and
+   * reads like a broken column.
+   */
+  const env = setup();
+  const connections = require('../../src/connections/service');
+  const till = connections.create(env.db, env.ctx, env.membership, {
+    providerType: 'reference_webhook', displayName: 'Downtown POS',
+  });
+  const send = (body) => request(env.app).post('/api/v1/events')
+    .set('Authorization', `Bearer ${till.token}`).send(body);
+
+  const inventory = require('../../src/domain/inventory-engine');
+  inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.store.id, quantity: 50 });
+
+  // Dated before any price existed.
+  const early = await send({
+    eventId: 'sale-early', type: 'sale.completed', version: '1',
+    occurredAt: '2020-01-01T10:00:00.000Z',
+    data: { externalSku: 'p1', skuCode: 'BLACK-S', externalLocationId: 'store-12',
+      locationName: 'Downtown Store', quantity: 3, reference: 'TILL-EARLY' },
+  });
+  assert.equal(early.body.accepted, 1);
+
+  // And one now, when the price is known.
+  const now = await send({
+    eventId: 'sale-now', type: 'sale.completed', version: '1',
+    occurredAt: new Date(Date.now() + 60000).toISOString(),
+    data: { externalSku: 'p1', skuCode: 'BLACK-S', externalLocationId: 'store-12',
+      locationName: 'Downtown Store', quantity: 4, reference: 'TILL-NOW' },
+  });
+  assert.equal(now.body.accepted, 1);
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const text = plain((await agent.get('/orders')).text);
+
+  assert.match(text, /No price on file when this sold/,
+    'the sale from before any price says why it has no total');
+  assert.match(text, /\$60\.00/, 'and the one priced at the time is valued');
+  assert.match(text, /TILL-EARLY/);
+  assert.match(text, /TILL-NOW/);
+});
