@@ -63,7 +63,16 @@ function moneyForOrder(db, workspaceId, order) {
   const position = paymentTerms.positionForOrder(db, workspaceId, order);
   return {
     ...position,
-    invoiced: position.invoiced,
+    /*
+     * The panel appears once an order is a commitment, not once it has an
+     * invoice — Foundry raises the invoice at shipment, so waiting for it left
+     * an order silent about money until after the goods had gone.
+     *
+     * A draft is still silent, because nothing has been promised to anybody
+     * and a figure there reads as a debt that does not exist.
+     */
+    invoiced: position.invoiced || (order.status !== 'DRAFT' && position.totalMinor > 0),
+    hasInvoice: position.invoiced,
     // The page's older name for the same figure, kept so its markup reads
     // the way the panel reads.
     outstandingMinor: position.remainingMinor,
@@ -641,10 +650,11 @@ router.post('/sales/orders/:id/payment-hold', requirePermission(permissions.OPER
  */
 router.post('/sales/orders/:id/payment', requirePermission(permissions.OPERATE, 'record payments'), asyncRoute(async (req, res) => {
   try {
-    const position = paymentTerms.positionForOrder(req.db, req.ctx.workspaceId,
-      req.db.prepare('SELECT * FROM sales_orders WHERE id = ? AND workspace_id = ?')
-        .get(req.params.id, req.ctx.workspaceId));
-    if (!position.invoiced) throw new ValidationError('There is no invoice on this order to pay.');
+    const order = req.db.prepare('SELECT * FROM sales_orders WHERE id = ? AND workspace_id = ?')
+      .get(req.params.id, req.ctx.workspaceId);
+    if (!order) throw new ValidationError('That sales order is not in this inventory.');
+    const position = paymentTerms.positionForOrder(req.db, req.ctx.workspaceId, order);
+    if (!position.totalMinor) throw new ValidationError('This order is not worth anything yet, so there is nothing to pay.');
 
     const amountMinor = Math.round(Number(req.body.amount) * 100);
     if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
@@ -658,6 +668,12 @@ router.post('/sales/orders/:id/payment', requirePermission(permissions.OPERATE, 
      * Spread across the open invoices oldest first, which is what a customer
      * paying "off the account" means and what an accountant would do by hand.
      */
+    /*
+     * Against the open invoices, oldest first — and when there is no invoice
+     * yet, against nothing, which the payment engine records as money held on
+     * the customer's behalf rather than as revenue. A deposit taken before the
+     * goods ship is a liability until they do.
+     */
     let left = amountMinor;
     const allocations = [];
     for (const invoice of position.invoices) {
@@ -669,11 +685,18 @@ router.post('/sales/orders/:id/payment', requirePermission(permissions.OPERATE, 
     const payments = require('../../accounting/payments');
     payments.record(req.db, req.ctx, req.user, {
       direction: 'CUSTOMER_RECEIPT',
-      customerId: position.invoices[0].customer_id,
+      customerId: (position.invoices[0] || order).customer_id,
       paymentDate: trimOrNull(req.body.paymentDate) || undefined,
       amountMinor,
       method: trimOrNull(req.body.method) || 'other',
       reference: trimOrNull(req.body.reference),
+      /*
+       * Where this came from, which is what source_key is used for elsewhere
+       * too ("stripe:evt_x", "sales-order:..."). The first attempt put the
+       * order number in `reference` and silently overwrote the note somebody
+       * had typed there — a link does not belong in a field a person writes in.
+       */
+      sourceKey: `order-payment:${order.id}:${Date.now()}`,
       allocations,
     });
     req.flash('success', `Recorded ${paymentTerms.money(amountMinor, position.currency)}. The balance and the books both moved.`);

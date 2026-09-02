@@ -192,21 +192,42 @@ test('terms that cannot mean anything are refused in words', () => {
     /whole number of days/);
 });
 
-test('an order with no invoice is not held, because nothing has been asked for', () => {
+test('what holds an uninvoiced order is the terms, not the invoice', () => {
+  /*
+   * This used to assert that an order with no invoice is never held, on the
+   * reasoning that refusing to work over a debt that does not exist is worse
+   * than the risk. That was right about a customer with nothing agreed and
+   * wrong about everyone else: Foundry raises the invoice at shipment, so
+   * "pays in full before anything is picked" could never hold anything. The
+   * term described a policy the product did not have.
+   *
+   * Both halves matter, so both are here.
+   */
   const env = setup();
-  const customer = sales.createCustomer(env.db, env.ctx, { name: 'Delta Cleaning' });
-  inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20 });
-  terms.setTerms(env.db, env.ctx, { customerId: customer.id, kind: 'BEFORE_FULFILMENT' });
-  const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
-    customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 5 }],
-  }).id);
+  inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 40 });
 
-  const p = position(env, order);
-  assert.equal(p.invoiced, false);
-  assert.equal(p.status, 'Not invoiced');
-  assert.equal(p.blocksPicking, false,
-    'holding an order nobody has billed for would be refusing to work over a debt that does not exist');
-  assert.equal(shipments.startPicking(env.db, env.ctx, order.id).units, 5);
+  // Nothing agreed: nothing held, which is what a new workspace deserves.
+  const casual = sales.createCustomer(env.db, env.ctx, { name: 'Walk-in' });
+  const casualOrder = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
+    customerId: casual.id, lines: [{ skuId: env.item.skuId, quantity: 5 }],
+  }).id);
+  const free = position(env, casualOrder);
+  assert.equal(free.invoiced, false);
+  assert.equal(free.blocksPicking, false, 'no terms, no hold');
+  assert.equal(shipments.startPicking(env.db, env.ctx, casualOrder.id).units, 5);
+
+  // Agreed to pay first: held, invoice or no invoice.
+  const strict = sales.createCustomer(env.db, env.ctx, { name: 'Delta Cleaning' });
+  terms.setTerms(env.db, env.ctx, { customerId: strict.id, kind: 'BEFORE_FULFILMENT' });
+  const strictOrder = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
+    customerId: strict.id, lines: [{ skuId: env.item.skuId, quantity: 5 }],
+  }).id);
+  const held = position(env, strictOrder);
+  assert.equal(held.invoiced, false, 'still nothing invoiced');
+  assert.equal(held.totalMinor, 7500, 'but the order is worth what its lines are worth');
+  assert.equal(held.blocksPicking, true, 'and what was agreed is what holds it');
+  assert.throws(() => shipments.startPicking(env.db, env.ctx, strictOrder.id),
+    /pays before anything is picked/);
 });
 
 test('a deposit as a fixed amount works the same as a share', () => {
@@ -226,4 +247,53 @@ test('a deposit as a fixed amount works the same as a share', () => {
   pay(env, customer, invoiceId, 30000, 'test:rest-of-deposit');
   assert.equal(position(env, order).dueNowMinor, 0);
   assert.equal(position(env, order).blocksPicking, false);
+});
+
+test('a deposit can be taken before there is an invoice, and holds until it is', () => {
+  /*
+   * Found by walking the flow: Foundry raises the customer invoice when the
+   * goods ship, which is right for revenue and wrong for everything else.
+   * Before that moment an order had no money on it at all — no way to take a
+   * deposit, and the deposit hold this file exists for could never fire,
+   * because it asked whether the order was invoiced, found it was not, and let
+   * everything through.
+   *
+   * A payment before delivery is not revenue. It is money held on the
+   * customer's behalf, which is what the engine records for a receipt with no
+   * invoice to allocate against.
+   */
+  const env = setup();
+  const customer = sales.createCustomer(env.db, env.ctx, { name: 'Chavy', email: 'c@chavy.test' });
+  inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 40 });
+  const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
+    customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 10 }],
+  }).id);
+  terms.setTerms(env.db, env.ctx, { customerId: customer.id, kind: 'DEPOSIT', depositPercent: 30 });
+
+  const row = () => env.db.prepare('SELECT * FROM sales_orders WHERE id = ?').get(order.id);
+  let p = terms.positionForOrder(env.db, env.workspace.workspaceId, row());
+  assert.equal(p.invoiced, false, 'nothing has been invoiced yet');
+  assert.equal(p.totalMinor, 15000, 'but the order is worth what its lines are worth');
+  assert.equal(p.dueNowMinor, 4500, 'so a 30% deposit is due');
+  assert.equal(p.blocksPicking, true, 'and it holds, which it never used to');
+
+  assert.throws(() => shipments.startPicking(env.db, env.ctx, order.id), /deposit of \$45\.00 is due/);
+
+  // Money taken with no invoice to put it against, referenced to the order.
+  payments.record(env.db, env.ctx, env.membership, {
+    direction: 'CUSTOMER_RECEIPT', customerId: customer.id, paymentDate: '2026-09-02',
+    amountMinor: 4500, method: 'cash', reference: 'Cheque 4021',
+    // The same key the order page writes: a link lives in source_key, and the
+    // reference stays whatever the person typed.
+    sourceKey: `order-payment:${order.id}:1`,
+  });
+
+  p = terms.positionForOrder(env.db, env.workspace.workspaceId, row());
+  assert.equal(p.onAccountMinor, 4500, 'held on their behalf');
+  assert.equal(env.db.prepare("SELECT reference FROM accounting_payments WHERE direction = 'CUSTOMER_RECEIPT'")
+    .get().reference, 'Cheque 4021', 'and the note the person wrote is untouched');
+  assert.equal(p.paidMinor, 4500);
+  assert.equal(p.dueNowMinor, 0, 'the deposit is covered');
+  assert.equal(p.blocksPicking, false, 'so the warehouse may start');
+  assert.equal(shipments.startPicking(env.db, env.ctx, order.id).units, 10);
 });

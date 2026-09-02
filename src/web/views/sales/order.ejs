@@ -402,7 +402,12 @@
       <div class="stat-strip">
         <div>
           <span class="stat-value"><%= helpers.money(money.totalMinor, money.currency) %></span>
-          <span class="stat-label">invoiced</span>
+          <%#
+            Before the invoice exists this is what the order is worth, not what
+            anybody has been billed. Calling it "invoiced" would be Foundry
+            stating a document that does not exist.
+          %>
+          <span class="stat-label"><%= money.hasInvoice ? 'invoiced' : 'order value' %></span>
         </div>
         <div>
           <span class="stat-value <%= money.paidMinor ? '' : 'stat-value--quiet' %>">

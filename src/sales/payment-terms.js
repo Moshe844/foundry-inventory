@@ -194,9 +194,38 @@ function positionForOrder(db, workspaceId, order) {
   const override = db.prepare(`SELECT * FROM sales_order_payment_overrides
     WHERE workspace_id = ? AND sales_order_id = ?`).get(workspaceId, order.id);
 
-  const totalMinor = invoices.reduce((sum, row) => sum + Number(row.total_minor), 0);
-  const remainingMinor = invoices.reduce((sum, row) => sum + Number(row.balance_minor), 0);
-  const paidMinor = totalMinor - remainingMinor;
+  /*
+   * Money on an order that has not been invoiced yet.
+   *
+   * Foundry raises the customer invoice when the goods ship, which is right
+   * for revenue and wrong for everything else: before that moment an order had
+   * no money on it at all, so there was no way to take a deposit, and the
+   * deposit hold this file exists for could never fire — it asked whether the
+   * order was invoiced, found it was not, and let everything through.
+   *
+   * A payment taken before delivery is not revenue. It is money held on the
+   * customer's behalf, which the payment engine already records as a customer
+   * deposit when a receipt is not allocated to an invoice. So an uninvoiced
+   * order is valued at what it is worth — its own lines — and paid by whatever
+   * has been received against it.
+   */
+  const deposits = db.prepare(`SELECT COALESCE(SUM(amount_minor), 0) AS taken
+    FROM accounting_payments
+    WHERE workspace_id = ? AND direction = 'CUSTOMER_RECEIPT' AND status = 'POSTED'
+      AND source_key LIKE ?`).get(workspaceId, `order-payment:${order.id}:%`);
+
+  const invoicedTotal = invoices.reduce((sum, row) => sum + Number(row.total_minor), 0);
+  const invoicedRemaining = invoices.reduce((sum, row) => sum + Number(row.balance_minor), 0);
+
+  const orderWorth = Number(order.pricing ? order.pricing.totalMinor : 0)
+    || Number(db.prepare(`SELECT COALESCE(SUM(quantity_ordered * COALESCE(unit_price_minor, 0)), 0) AS worth
+      FROM sales_order_lines WHERE sales_order_id = ? AND workspace_id = ?`)
+      .get(order.id, workspaceId).worth);
+
+  const onAccountMinor = Number(deposits.taken);
+  const totalMinor = invoices.length ? invoicedTotal : orderWorth;
+  const paidMinor = invoices.length ? (invoicedTotal - invoicedRemaining) : onAccountMinor;
+  const remainingMinor = Math.max(0, totalMinor - paidMinor);
   const currency = (invoices[0] && invoices[0].currency) || order.currency || 'USD';
   const dueDate = invoices.map((row) => row.due_date).filter(Boolean).sort()[0] || null;
 
@@ -219,7 +248,7 @@ function positionForOrder(db, workspaceId, order) {
     dueNowMinor = remainingMinor;
   }
 
-  const status = totalMinor === 0 ? 'Not invoiced'
+  const status = totalMinor === 0 ? 'Nothing to pay'
     : remainingMinor === 0 ? 'Paid'
       : paidMinor > 0 ? 'Partly paid' : 'Unpaid';
 
@@ -243,6 +272,9 @@ function positionForOrder(db, workspaceId, order) {
     termsText: describe(terms),
     invoices,
     invoiced: invoices.length > 0,
+    // What has been taken before there was an invoice to put it against.
+    onAccountMinor,
+    orderWorthMinor: orderWorth,
     currency,
     totalMinor,
     paidMinor,
