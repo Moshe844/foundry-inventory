@@ -108,7 +108,13 @@ function createOrder(db, ctx, input) {
   return inTransaction(db, () => {
     const customer = input.customerId
       ? requireCustomer(db, ctx.workspaceId, input.customerId)
-      : createCustomer(db, ctx, { name: input.customerName, company: input.company });
+      /*
+       * A customer created alongside an order used to get a name and nothing
+       * else, so the parcel had nowhere to go and the shipping notice had
+       * nobody to reach. Whatever was entered on the form comes with them.
+       */
+      : createCustomer(db, ctx, { name: input.customerName, company: input.company,
+        email: input.customerEmail, shippingAddress: input.customerShippingAddress });
     ensureLocation(db, ctx.workspaceId, input.fulfillmentLocationId);
     const lines = Array.isArray(input.lines) ? input.lines : [];
     if (!lines.length) throw new ValidationError('Add at least one product to the sales order.');

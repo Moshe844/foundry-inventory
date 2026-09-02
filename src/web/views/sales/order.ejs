@@ -160,6 +160,37 @@
     <p class="eyebrow">Do this next</p><h2>Record the items as shipped</h2>
     <p>Only use this when the items physically leave. Foundry will reduce on-hand once and update Accounting automatically.</p>
     <% order.lines.forEach(function(line){ line.allocations.forEach(function(a){ %><div class="form-row"><input type="hidden" name="lineId" value="<%= line.id %>"><input type="hidden" name="locationId" value="<%= a.location_id %>"><label class="field"><span><%= line.displayName %> from <%= a.location_name %> (maximum <%= a.quantity %>)</span><input type="number" name="quantity" min="0" max="<%= a.quantity %>" value="<%= a.quantity %>"></label></div><% }) }) %>
+    <%#
+      Where it is going, and how.
+
+      This form moved the stock and asked nothing else, so an order could be
+      shipped with no destination and no way to follow it — and the page had no
+      answer when somebody asked where it went. Both are optional, because a
+      customer collecting from the counter needs neither, but they are asked.
+    %>
+    <div class="ship-details">
+      <label class="field">
+        <span>Carrier <small>optional</small></span>
+        <select name="carrier">
+          <option value="">Work it out from the tracking number</option>
+          <% (locals.carriers || []).forEach(function (carrier) { %>
+            <option value="<%= carrier.code %>"><%= carrier.name %></option>
+          <% }) %>
+        </select>
+      </label>
+      <label class="field">
+        <span>Tracking number <small>optional</small></span>
+        <input name="trackingNumber" placeholder="Paste or scan it" autocomplete="off">
+        <small>Becomes a link the customer can follow.</small>
+      </label>
+    </div>
+    <% if (order.customer && !order.customer.shipping_address) { %>
+      <p class="hint">
+        Foundry has no address for <%= order.customer.name %>, so this parcel will not carry one.
+        <a href="/sales/customers/<%= order.customer.id %>">Add it</a> and every parcel after this
+        one will.
+      </p>
+    <% } %>
     <button class="btn btn--primary" type="submit">Ship selected quantities</button>
   </form>
 <% } %>

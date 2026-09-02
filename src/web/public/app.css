@@ -2690,3 +2690,5 @@ details > summary { cursor: pointer; }
 .orders-elsewhere { display: flex; gap: 18px; flex-wrap: wrap; margin: 0 0 18px; font-size: 13.5px; }
 .orders-elsewhere a { display: inline-flex; align-items: center; gap: 6px; color: inherit; text-decoration: none; }
 .orders-elsewhere a:hover { color: var(--accent-dark); text-decoration: none; }
+.ship-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+@media (max-width: 640px) { .ship-details { grid-template-columns: 1fr; } }

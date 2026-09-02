@@ -117,8 +117,34 @@ async function message(credentials, id) {
     receivedAt: row.internalDate ? new Date(Number(row.internalDate)).toISOString() : null, attachments };
 }
 
+/*
+ * How far back to ask, and where to look.
+ *
+ * Two things went wrong here, and both lost mail silently.
+ *
+ * The watermark advances to the moment of the poll whether or not anything was
+ * found, so a message Gmail had not finished indexing when we asked — or one
+ * that arrived while the request was in flight — fell into the gap between one
+ * poll and the next and was never asked for again. Overlapping each window
+ * fixes it, and costs nothing: capture already refuses a message it has seen,
+ * on the provider's own id.
+ */
+const OVERLAP_MS = 15 * 60_000;
+
+/*
+ * And "in:inbox" is not where a stranger's first email lands. Someone writing
+ * to a business for the first time to ask about ordering is exactly what Gmail
+ * files as spam, so the one message a shop most wants to see was the one
+ * Foundry could not see. Spam is included and marked untrusted like any
+ * unknown sender; the owner decides, which is the arrangement everywhere else
+ * in Foundry.
+ */
 async function poll({ credentials, since }) {
-  const query = new URLSearchParams({ maxResults: '50', q: `in:inbox after:${Math.floor(new Date(since || Date.now() - 86400000).getTime() / 1000)}` });
+  const from = new Date(since || Date.now() - 86400000).getTime() - OVERLAP_MS;
+  const query = new URLSearchParams({
+    maxResults: '50',
+    q: `(in:inbox OR in:spam) after:${Math.floor(from / 1000)}`,
+  });
   const list = (await api(credentials, `/gmail/v1/users/me/messages?${query}`)).body.messages || [];
   const messages = [];
   for (const row of list) messages.push(await message(credentials, row.id));

@@ -600,3 +600,82 @@ test('orders that shipped before shipments existed get their record rebuilt', as
   assert.match(boxText, /Foundry has no address for Hendel/,
     'and the page answers "where did it go" instead of showing a blank');
 });
+
+test('a new customer keeps the email and address entered with their first order', async () => {
+  /*
+   * Reported: no option to enter a customer email, and none for shipping
+   * information. The new-order form asked for a name and nothing else, so
+   * every customer created that way had no email and no address — the parcel
+   * had nowhere to go and the shipping notice had nobody to reach.
+   */
+  const env = setup();
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 40,
+  });
+
+  const form = await agent.get('/orders/new');
+  assert.match(form.text, /name="customerEmail"/, 'the form asks for an email');
+  assert.match(form.text, /name="customerShippingAddress"/, 'and for where it ships');
+
+  const created = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'Hendel',
+    customerEmail: 'hendel@example.test',
+    customerShippingAddress: '2 Bridge Street, Riverside',
+    skuId: env.item.skuId, quantity: '7', currency: 'USD',
+  });
+  assert.equal(created.status, 303);
+
+  const customer = env.db.prepare('SELECT * FROM customers WHERE name = ?').get('Hendel');
+  assert.equal(customer.email, 'hendel@example.test', 'kept, not discarded');
+  assert.match(customer.shipping_address, /2 Bridge Street/);
+});
+
+test('the ship form asks where the parcel is going and how it travels', async () => {
+  const env = setup();
+  const customer = sales.createCustomer(env.db, env.ctx, {
+    name: 'Hendel', email: 'h@hendel.test', shippingAddress: '2 Bridge Street',
+  });
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 40,
+  });
+  const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
+    customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 7 }],
+  }).id);
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const page = await agent.get(`/orders/${order.id}`);
+  assert.match(page.text, /name="trackingNumber"/, 'it asks for a tracking number');
+  assert.match(page.text, /name="carrier"/, 'and a carrier');
+
+  await agent.post(`/sales/orders/${order.id}/fulfill`).type('form').send({
+    _csrf: csrfFrom(page.text), lineId: order.lines[0].id,
+    locationId: env.workspace.main.id, quantity: '7',
+    trackingNumber: '1Z999AA10123456784',
+  });
+
+  const shipments = require('../../src/sales/shipment-service');
+  const box = shipments.listForOrder(env.db, env.workspace.workspaceId, order.id)[0];
+  assert.equal(box.tracking_number, '1Z999AA10123456784', 'what was typed is on the parcel');
+  assert.equal(box.carrier, 'ups', 'read off the number, since none was chosen');
+  assert.match(box.ship_to_address, /2 Bridge Street/, 'and it knows where it went');
+});
+
+test('shipping to a customer with no address warns before it goes, not after', async () => {
+  const env = setup();
+  const customer = sales.createCustomer(env.db, env.ctx, { name: 'Hendel' });
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20,
+  });
+  const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
+    customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 5 }],
+  }).id);
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const text = plain((await agent.get(`/orders/${order.id}`)).text);
+  assert.match(text, /Foundry has no address for Hendel/,
+    'said next to the button, while it can still be fixed');
+});

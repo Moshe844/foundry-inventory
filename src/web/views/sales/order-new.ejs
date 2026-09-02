@@ -10,6 +10,17 @@
     <div class="form-grid">
       <label class="field"><span>Existing customer</span><select name="customerId"><option value="">This is a new customer</option><% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= form.customerId === c.id ? 'selected' : '' %>><%= c.name %></option><% }) %></select></label>
       <label class="field"><span>New customer name</span><input name="customerName" value="<%= form.customerName || '' %>" placeholder="Enter only for a new customer"></label>
+      <%#
+        The two things Foundry cannot work without, asked for once.
+
+        A new customer created here got a name and nothing else, so the parcel
+        had nowhere to go and the shipping notice had nobody to reach. Both
+        stay optional — plenty of orders are collected from the counter — but
+        they are asked, which is the difference between "you did not tell me"
+        and "I never asked".
+      %>
+      <label class="field"><span>Their email <small>for a new customer</small></span><input type="email" name="customerEmail" value="<%= form.customerEmail || '' %>" placeholder="Where order and shipping updates go"><small>Foundry cannot tell them anything without this.</small></label>
+      <label class="field field--full"><span>Where it ships <small>for a new customer</small></span><textarea name="customerShippingAddress" rows="2" placeholder="Street, town, postcode"><%= form.customerShippingAddress || '' %></textarea><small>Copied onto every parcel for them. Leave blank if they collect.</small></label>
       <label class="field"><span>Product or variant</span><select name="skuId" required><option value="">Choose a product</option><% skus.forEach(function(s){ %><option value="<%= s.id %>" <%= form.skuId === s.id ? 'selected' : '' %>><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %></option><% }) %></select><small>Foundry copies the current selling price onto this order.</small></label>
       <label class="field"><span>Quantity</span><input type="number" name="quantity" min="1" step="1" value="<%= form.quantity || '' %>" required></label>
       <label class="field"><span>Order price <small>only if the product has no selling price</small></span><input name="unitPrice" inputmode="decimal" value="<%= form.unitPrice || '' %>" placeholder="Leave blank to use the inventory price"><small>Blank never means free. Enter 0 only when intentionally free.</small></label>

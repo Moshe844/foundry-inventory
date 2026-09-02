@@ -162,6 +162,8 @@ router.post('/sales/orders', requirePermission(permissions.OPERATE, 'create sale
     const enteredPrice = prices.toMinor(trimOrNull(req.body.unitPrice), 'Selling price');
     order = sales.createOrder(req.db, req.ctx, {
       customerId: trimOrNull(req.body.customerId), customerName: trimOrNull(req.body.customerName),
+      customerEmail: trimOrNull(req.body.customerEmail),
+      customerShippingAddress: trimOrNull(req.body.customerShippingAddress),
       orderNumber: trimOrNull(req.body.orderNumber), orderDate: trimOrNull(req.body.orderDate),
       neededBy: trimOrNull(req.body.neededBy), fulfillmentLocationId: trimOrNull(req.body.fulfillmentLocationId),
       notes: trimOrNull(req.body.notes), reference: trimOrNull(req.body.reference),
