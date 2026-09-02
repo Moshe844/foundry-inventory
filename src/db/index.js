@@ -415,6 +415,12 @@ function migrate(db) {
   // Accounting consumes durable sales, purchasing, inventory, and manager
   // events. It is additive and never becomes the physical stock authority.
   db.exec(fs.readFileSync(ACCOUNTING_SCHEMA_PATH, 'utf8'));
+
+  /*
+   * Orders that shipped before shipments existed have no record of where the
+   * goods went. Rebuild one from each order's own fulfilment history, once.
+   */
+  require('./backfill-shipments').backfillShipments(db);
   // The connection/feed tables are created by onboarding on a fresh database,
   // so a second additive pass keeps fresh and upgraded databases identical.
   addMissingColumns(db);

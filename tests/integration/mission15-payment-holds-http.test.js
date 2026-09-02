@@ -544,3 +544,59 @@ test('a payment taken in the room is recorded on the order, through the same eng
   assert.equal(tooMuch.status, 303);
   assert.match(plain((await agent.get(`/orders/${order.id}`)).text), /more than the \$0\.00 still owed/);
 });
+
+test('orders that shipped before shipments existed get their record rebuilt', async () => {
+  /*
+   * Reported from a real database: an order reading "7 shipped" and
+   * "0 shipments", with no address. Fixing the code fixed the next order and
+   * did nothing for the one on the screen — so the history is rebuilt from the
+   * order's own fulfilment events, which recorded the line, the location and
+   * the quantity at the time.
+   *
+   * Nothing is invented. A carrier and a tracking number were never captured,
+   * so they stay empty, and the page says why rather than leaving a blank
+   * where an address should be.
+   */
+  const env = setup();
+  const customer = sales.createCustomer(env.db, env.ctx, { name: 'Hendel' });
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 40,
+  });
+  const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
+    customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 7 }],
+  }).id);
+
+  // Exactly what the old fast path did: fulfil, and record nothing else.
+  sales.fulfill(env.db, env.ctx, order.id, {
+    lines: [{ lineId: order.lines[0].id, locationId: env.workspace.main.id, quantity: 7 }],
+  }, { idempotencyKey: 'old-world' });
+
+  const shipments = require('../../src/sales/shipment-service');
+  assert.equal(shipments.listForOrder(env.db, env.workspace.workspaceId, order.id).length, 0,
+    'the state this test exists to repair');
+
+  const { backfillShipments } = require('../../src/db/backfill-shipments');
+  assert.equal(backfillShipments(env.db), 1);
+
+  const rebuilt = shipments.listForOrder(env.db, env.workspace.workspaceId, order.id);
+  assert.equal(rebuilt.length, 1);
+  assert.equal(rebuilt[0].units, 7, 'the quantity that actually went');
+  assert.equal(rebuilt[0].status, 'SHIPPED');
+  assert.equal(rebuilt[0].carrier, null, 'no carrier was captured, so none is claimed');
+  assert.equal(rebuilt[0].tracking_number, null);
+  assert.match(rebuilt[0].notes, /Rebuilt from this order's own fulfilment record/);
+
+  // Running it again changes nothing: it is safe on every start.
+  assert.equal(backfillShipments(env.db), 0);
+  assert.equal(shipments.listForOrder(env.db, env.workspace.workspaceId, order.id).length, 1);
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const orderText = plain((await agent.get(`/orders/${order.id}`)).text);
+  assert.doesNotMatch(orderText, /0 shipments/, 'the order no longer contradicts itself');
+  assert.match(orderText, /SHP-1001/);
+
+  const boxText = plain((await agent.get(`/fulfilment/${rebuilt[0].id}`)).text);
+  assert.match(boxText, /Foundry has no address for Hendel/,
+    'and the page answers "where did it go" instead of showing a blank');
+});

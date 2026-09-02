@@ -53,6 +53,29 @@
       </div>
     </div>
   </section>
+<% } else if (!isOpen) { %>
+  <%#
+    A shipped parcel with no address on file.
+    
+    Saying nothing here leaves the page unable to answer the first question
+    anybody asks of a shipment — where did it go? — and looking like the
+    address is simply missing from the screen rather than from the records.
+  %>
+  <section class="section">
+    <div class="panel">
+      <div class="panel-head"><div><h2>Where it went</h2></div></div>
+      <div class="card-body">
+        <p class="lede">Foundry has no address for <%= s.customer_name || 'this customer' %>.</p>
+        <p class="hint">
+          None was on file when this shipped, so Foundry does not claim one. Add one to the
+          customer and it will be on the next parcel.
+          <% if (s.customer_id) { %>
+            <a href="/sales/customers/<%= s.customer_id %>">Add their address</a>.
+          <% } %>
+        </p>
+      </div>
+    </div>
+  </section>
 <% } else if (isOpen) { %>
   <div class="notice notice--warn">
     <div>
