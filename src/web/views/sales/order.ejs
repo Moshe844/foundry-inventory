@@ -284,7 +284,14 @@
     <% if (boxes.length) { %>
       <table class="table">
         <thead>
-          <tr><th>Shipment</th><th class="num">Units</th><th>State</th><th>Tracking</th><th>Customer told</th></tr>
+          <%#
+            "Where" is the first thing anybody asks of a shipment, and the
+            order page could not answer it: a row saying "Shipped" and a dash
+            for tracking, with the destination nowhere on the page. When
+            Foundry has no address it says so here rather than leaving the
+            question hanging.
+          %>
+          <tr><th>Shipment</th><th class="num">Units</th><th>State</th><th>Where</th><th>Tracking</th><th>Customer told</th></tr>
         </thead>
         <tbody>
           <% boxes.forEach(function (box) { %>
@@ -296,6 +303,13 @@
                       DELIVERED: 'Delivered', CANCELLED: 'Cancelled' }[box.status] %>
                 <% if (box.shipped_at) { %>
                   <span class="t-xs t-muted">· <%= helpers.shortDate(box.shipped_at) %></span>
+                <% } %>
+              </td>
+              <td>
+                <% if (box.ship_to_address) { %>
+                  <span class="cell-sub"><%= String(box.ship_to_address).split('\n')[0] %></span>
+                <% } else { %>
+                  <a class="t-warn" href="/sales/customers/<%= order.customer.id %>">No address on file</a>
                 <% } %>
               </td>
               <td>

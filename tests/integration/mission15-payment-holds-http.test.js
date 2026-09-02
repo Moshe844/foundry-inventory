@@ -743,3 +743,42 @@ test('a detail already on file is never overwritten from an order form', async (
   assert.equal(after.email, 'real@chavy.test', 'what was on file stands');
   assert.match(after.shipping_address, /1 Real Street/);
 });
+
+test('a shipped order says where it went, or that it does not know', async () => {
+  /*
+   * "It shows shipped — shipped where?" The order page listed a shipment, a
+   * state and a dash for tracking, and never mentioned a destination. With no
+   * address on the customer there was nothing to show and nothing said, so the
+   * page read as though it had simply lost the information.
+   */
+  const env = setup();
+  const nowhere = sales.createCustomer(env.db, env.ctx, { name: 'Chavy' });
+  const somewhere = sales.createCustomer(env.db, env.ctx, {
+    name: 'Hendel', shippingAddress: ['2 Bridge Street', 'Riverside'].join('\n'),
+  });
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 40,
+  });
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const ship = async (customer) => {
+    const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
+      customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 3 }],
+    }).id);
+    const page = await agent.get(`/orders/${order.id}`);
+    await agent.post(`/sales/orders/${order.id}/fulfill`).type('form').send({
+      _csrf: csrfFrom(page.text), lineId: order.lines[0].id,
+      locationId: env.workspace.main.id, quantity: '3',
+    });
+    return plain((await agent.get(`/orders/${order.id}`)).text);
+  };
+
+  const unknown = await ship(nowhere);
+  assert.match(unknown, /No address on file/,
+    'the page says it does not know, rather than saying nothing');
+
+  const known = await ship(somewhere);
+  assert.match(known, /2 Bridge Street/, 'and names the destination when it has one');
+});
