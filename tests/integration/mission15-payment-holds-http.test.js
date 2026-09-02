@@ -457,3 +457,90 @@ test('a till sale says why it has no total, rather than showing a bare dash', as
   assert.match(text, /TILL-EARLY/);
   assert.match(text, /TILL-NOW/);
 });
+
+test('the fast ship path leaves a shipment, an address and a notice', async () => {
+  /*
+   * Reported from a real screen: an order reading "7 shipped" beside
+   * "0 shipments", with no address anywhere. The fast path — "record the items
+   * as shipped" — called the sales order's fulfil directly, so the stock moved
+   * and nothing recorded where it went. One click still, and now a record.
+   */
+  const env = setup();
+  const customer = sales.createCustomer(env.db, env.ctx, {
+    name: 'Hendel', email: 'h@hendel.test',
+    shippingAddress: ['2 Bridge Street', 'Riverside, OR 97001'].join('\n'),
+  });
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 40,
+  });
+  const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
+    customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 7 }],
+  }).id);
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const page = await agent.get(`/orders/${order.id}`);
+
+  const shipped = await agent.post(`/sales/orders/${order.id}/fulfill`).type('form').send({
+    _csrf: csrfFrom(page.text), lineId: order.lines[0].id,
+    locationId: env.workspace.main.id, quantity: '7',
+  });
+  assert.equal(shipped.status, 303);
+
+  const shipments = require('../../src/sales/shipment-service');
+  const boxes = shipments.listForOrder(env.db, env.workspace.workspaceId, order.id);
+  assert.equal(boxes.length, 1, 'shipping produced a shipment');
+  assert.equal(boxes[0].units, 7);
+  assert.match(boxes[0].ship_to_address, /2 Bridge Street/, 'and it knows where it went');
+
+  const text = plain((await agent.get(`/orders/${order.id}`)).text);
+  assert.doesNotMatch(text, /0 shipments/, 'the page never says 7 shipped and 0 shipments');
+  assert.match(text, /SHP-1001/);
+
+  const notices = require('../../src/sales/customer-communications');
+  assert.equal(notices.forOrder(env.db, env.workspace.workspaceId, order.id).length, 1,
+    'and the customer has something to be told');
+});
+
+test('a payment taken in the room is recorded on the order, through the same engine', async () => {
+  /*
+   * The money panel offered a payment link and a sentence suggesting you tell
+   * Foundry about anything else. Most of what a small business takes is cash,
+   * a cheque, a transfer or the card machine on the counter, and none of that
+   * has a link.
+   */
+  const env = setup();
+  const { customer, order, invoiceId } = invoicedOrder(env, 7);
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  let page = await agent.get(`/orders/${order.id}`);
+  assert.match(plain(page.text), /They paid me — record it/);
+  assert.match(plain(page.text), /Cash/);
+
+  const recorded = await agent.post(`/sales/orders/${order.id}/payment`).type('form').send({
+    _csrf: csrfFrom(page.text), amount: '105.00', method: 'cash', paymentDate: '2026-09-02',
+    reference: 'Counter, Tuesday',
+  });
+  assert.equal(recorded.status, 303);
+
+  const balance = Number(env.db.prepare('SELECT balance_minor FROM accounting_customer_invoices WHERE id = ?')
+    .get(invoiceId).balance_minor);
+  assert.equal(balance, 0, 'the invoice is settled');
+
+  const receipt = env.db.prepare(`SELECT * FROM accounting_payments
+    WHERE workspace_id = ? AND direction = 'CUSTOMER_RECEIPT'`).get(env.workspace.workspaceId);
+  assert.equal(receipt.method, 'cash');
+  assert.equal(receipt.reference, 'Counter, Tuesday');
+  assert.ok(receipt.journal_entry_id, 'the same journal entry a card payment would make');
+
+  page = await agent.get(`/orders/${order.id}`);
+  assert.match(plain(page.text), /Recorded \$105\.00/);
+  assert.match(plain(page.text), /Paid/);
+
+  // And it will not take more than is owed.
+  const tooMuch = await agent.post(`/sales/orders/${order.id}/payment`).type('form')
+    .send({ _csrf: csrfFrom(page.text), amount: '50.00', method: 'cash' });
+  assert.equal(tooMuch.status, 303);
+  assert.match(plain((await agent.get(`/orders/${order.id}`)).text), /more than the \$0\.00 still owed/);
+});

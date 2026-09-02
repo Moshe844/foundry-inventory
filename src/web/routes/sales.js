@@ -13,6 +13,7 @@ const repo = require('../../domain/repository');
 const permissions = require('../../actions/permissions');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
+const { ValidationError } = require('../../domain/errors');
 const prices = require('../../pricing/price-service');
 
 /*
@@ -355,8 +356,26 @@ router.post('/sales/orders/:id/fulfill', requirePermission(permissions.OPERATE, 
     return res.redirect(303, `/fulfilment/${openBox.id}`);
   }
 
-  const order = sales.fulfill(req.db, req.ctx, req.params.id, { lines },
-    { idempotencyKey: trimOrNull(req.body.idempotencyKey) });
+  /*
+   * Still one click, and now it leaves a record of where the goods went.
+   *
+   * This called the sales order's fulfil directly, which moved stock and made
+   * no shipment — so the page said "7 shipped" and "0 shipments" at once, with
+   * no address and nothing to tell the customer.
+   */
+  let order;
+  try {
+    const shipped = shipments.shipInOneStep(req.db, req.ctx, req.params.id, {
+      lines,
+      trackingNumber: trimOrNull(req.body.trackingNumber),
+      carrier: trimOrNull(req.body.carrier),
+    });
+    order = sales.getOrder(req.db, req.ctx.workspaceId, shipped.sales_order_id);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+    return res.redirect(303, `/orders/${req.params.id}`);
+  }
   req.flash('success', order.status === 'FULFILLED'
     ? `${order.order_number} is fulfilled. Physical stock and commitments were both updated.`
     : `${order.order_number} was partly fulfilled. ${order.totals.allocated} remain committed and ${order.totals.backordered} are waiting for stock.`);
@@ -611,7 +630,60 @@ router.post('/sales/orders/:id/payment-hold', requirePermission(permissions.OPER
   res.redirect(303, `/orders/${req.params.id}#payment-hold`);
 }));
 
+/*
+ * Money that arrived without a payment link.
+ *
+ * Cash, a cheque, a transfer, the card machine on the counter. It goes through
+ * the same engine and produces the same receipt as a payment collected online,
+ * because "paid" has to mean one thing.
+ */
+router.post('/sales/orders/:id/payment', requirePermission(permissions.OPERATE, 'record payments'), asyncRoute(async (req, res) => {
+  try {
+    const position = paymentTerms.positionForOrder(req.db, req.ctx.workspaceId,
+      req.db.prepare('SELECT * FROM sales_orders WHERE id = ? AND workspace_id = ?')
+        .get(req.params.id, req.ctx.workspaceId));
+    if (!position.invoiced) throw new ValidationError('There is no invoice on this order to pay.');
+
+    const amountMinor = Math.round(Number(req.body.amount) * 100);
+    if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+      throw new ValidationError('Enter how much they paid.');
+    }
+    if (amountMinor > position.remainingMinor) {
+      throw new ValidationError(`That is more than the ${paymentTerms.money(position.remainingMinor, position.currency)} still owed on this order.`);
+    }
+
+    /*
+     * Spread across the open invoices oldest first, which is what a customer
+     * paying "off the account" means and what an accountant would do by hand.
+     */
+    let left = amountMinor;
+    const allocations = [];
+    for (const invoice of position.invoices) {
+      if (left <= 0) break;
+      const take = Math.min(left, Number(invoice.balance_minor));
+      if (take > 0) { allocations.push({ invoiceId: invoice.id, amountMinor: take }); left -= take; }
+    }
+
+    const payments = require('../../accounting/payments');
+    payments.record(req.db, req.ctx, req.user, {
+      direction: 'CUSTOMER_RECEIPT',
+      customerId: position.invoices[0].customer_id,
+      paymentDate: trimOrNull(req.body.paymentDate) || undefined,
+      amountMinor,
+      method: trimOrNull(req.body.method) || 'other',
+      reference: trimOrNull(req.body.reference),
+      allocations,
+    });
+    req.flash('success', `Recorded ${paymentTerms.money(amountMinor, position.currency)}. The balance and the books both moved.`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, `/orders/${req.params.id}#money`);
+}));
+
 module.exports = router;
+
 
 
 

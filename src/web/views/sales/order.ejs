@@ -435,11 +435,62 @@
         <% } %>
       </div>
       <% if (money.outstandingMinor) { %>
-        <p class="hint">
-          Tell Foundry when they pay — “<%= order.customer.name %> paid
-          <%= helpers.money(money.outstandingMinor, money.currency) %> toward
-          <%= money.invoices[0].invoice_number %>” — and the balance and the books both move.
-        </p>
+        <%#
+          Money that arrived in the room.
+
+          The panel offered one route — a payment link — and a sentence
+          suggesting you tell Foundry about anything else. But most of the
+          money a small business takes arrives as cash, a cheque, a transfer,
+          or a card machine on the counter, and none of that has a link. So the
+          ordinary case gets an ordinary form, on the page where the balance
+          is, going through exactly the same engine as everything else.
+        %>
+        <details class="disclosure take-payment" <%= money.dueNowMinor ? 'open' : '' %>>
+          <summary>They paid me — record it</summary>
+          <form method="post" action="/sales/orders/<%= order.id %>/payment" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="card-body">
+              <div class="field-row">
+                <label class="field">
+                  <span class="field-label">How much</span>
+                  <div class="input-prefix">
+                    <span>$</span>
+                    <input class="input" type="number" name="amount" step="0.01" min="0.01"
+                      value="<%= ((money.dueNowMinor || money.outstandingMinor) / 100).toFixed(2) %>" required>
+                  </div>
+                  <span class="field-hint">
+                    <%= money.dueNowMinor ? 'The deposit that is due.' : 'The whole balance, or part of it.' %>
+                  </span>
+                </label>
+                <label class="field">
+                  <span class="field-label">How</span>
+                  <select class="input" name="method">
+                    <option value="cash">Cash</option>
+                    <option value="card">Card machine</option>
+                    <option value="bank transfer">Bank transfer</option>
+                    <option value="cheque">Cheque</option>
+                    <option value="other">Something else</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span class="field-label">When</span>
+                  <input class="input" type="date" name="paymentDate" value="<%= helpers.dateInputValue(new Date()) %>">
+                </label>
+              </div>
+              <label class="field">
+                <span class="field-label">Reference <span class="t-muted">(optional)</span></span>
+                <input class="input" type="text" name="reference" placeholder="Cheque number, or what the transfer said">
+              </label>
+            </div>
+            <div class="card-foot">
+              <button class="btn btn--primary" type="submit">Record this payment</button>
+              <span class="hint">
+                This settles the invoice and posts the receipt. It is the same record a card
+                payment through the link makes, so nothing is entered twice.
+              </span>
+            </div>
+          </form>
+        </details>
       <% } %>
     </div>
   </div>

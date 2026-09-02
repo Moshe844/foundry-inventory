@@ -366,6 +366,24 @@ function ship(db, ctx, shipmentId, input = {}) {
   return result;
 }
 
+/**
+ * Ship without opening a box first.
+ *
+ * The order page has always had a fast path — "record the items as shipped" —
+ * for the shop that picks an order in ninety seconds and does not want a
+ * picking screen for it. That path called the sales order's fulfil directly,
+ * which moved the stock and recorded nothing else. The result was an order
+ * reading "7 shipped" beside "0 shipments": no address, no tracking, no notice
+ * to the customer, and no answer to "where did it go?".
+ *
+ * So the fast path is still one click, and it still produces a shipment. The
+ * box is opened and closed in the same breath rather than not existing.
+ */
+function shipInOneStep(db, ctx, orderId, input = {}) {
+  const box = startPicking(db, ctx, orderId, { lines: input.lines });
+  return ship(db, ctx, box.id, input);
+}
+
 function markDelivered(db, ctx, shipmentId, input = {}) {
   return inTransaction(db, () => {
     const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
@@ -474,7 +492,7 @@ function fulfilmentState(db, workspaceId, order) {
 
 module.exports = {
   OPEN_SHIPMENT, CLOSED_SHIPMENT,
-  startPicking, setLineQuantity, markPacked, ship, markDelivered, cancelShipment,
+  startPicking, setLineQuantity, markPacked, ship, shipInOneStep, markDelivered, cancelShipment,
   pickable, pickList, listForOrder, getShipment, workQueue, fulfilmentState,
   nextShipmentNumber,
 };
