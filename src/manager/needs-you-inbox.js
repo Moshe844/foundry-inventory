@@ -428,6 +428,54 @@ function fromUnansweredMail(db, workspaceId) {
   }));
 }
 
+/*
+ * Orders that money is holding up.
+ *
+ * Added because the product contradicted itself on one screen: the Orders page
+ * said "1 order needs you" while the strip above it said "Nothing needs you".
+ * The strip was reading the decision queue, and a held order was not in it.
+ *
+ * The queue was right to be the authority and wrong to be empty. An order
+ * stopped for an unpaid deposit is exactly a decision somebody has to make —
+ * chase the customer, or let this one go anyway — and both of those are things
+ * only a person can decide.
+ */
+function fromHeldOrders(db, workspaceId) {
+  const paymentTerms = require('../sales/payment-terms');
+  const orders = db.prepare(`SELECT so.*, c.name AS customer_name
+    FROM sales_orders so LEFT JOIN customers c ON c.id = so.customer_id
+    WHERE so.workspace_id = ? AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+    ORDER BY so.needed_by IS NULL, so.needed_by, so.order_date`).all(workspaceId);
+
+  const entries = [];
+  for (const order of orders) {
+    let position;
+    try { position = paymentTerms.positionForOrder(db, workspaceId, order); } catch { continue; }
+    if (!position.blocksPicking && !position.blocksShipping) continue;
+
+    const held = position.heldReason.pick || position.heldReason.ship;
+    const owed = position.dueNowMinor || position.remainingMinor;
+    entries.push({
+      id: `order-payment-hold:${order.id}`,
+      kind: 'decision',
+      title: `${order.customer_name || 'A customer'} owes ${paymentTerms.money(owed, position.currency)} before ${order.order_number} can go`,
+      happened: `${order.order_number} is confirmed and stock is held for it, but ${held}`,
+      why: `You agreed with them: ${position.termsText.toLowerCase().replace(/\.$/, '')}.`,
+      recommendation: position.blocksPicking
+        ? 'Ask them to pay, or approve this one order to be picked anyway.'
+        : 'Ask them to pay, or approve this one order to ship anyway.',
+      missing: 'Either the money, or your decision to send it without.',
+      actionLabel: 'Settle it',
+      href: `/orders/${order.id}#payment-hold`,
+      at: order.needed_by || order.order_date,
+      // Above a late reply and below a stock mismatch: real money, and a
+      // customer waiting, but nothing is physically wrong.
+      priority: 84,
+    });
+  }
+  return entries;
+}
+
 function fromMailboxAttachmentChoices(db, workspaceId) {
   return db.prepare(`SELECT m.id AS message_id, m.connector_id, m.sender, m.subject, m.received_at,
       COUNT(a.id) AS attachment_count,
@@ -772,6 +820,7 @@ function inbox(db, workspaceId) {
     ...safely(fromMailboxRemovedImportChoices),
     ...safely(fromMailboxAttachmentChoices),
     ...safely(fromUnansweredMail),
+    ...safely(fromHeldOrders),
     ...safely(fromMailboxInventory),
     ...safely(fromPolicies),
     ...safely(fromAutomationSuggestions),

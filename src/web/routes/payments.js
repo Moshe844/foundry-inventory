@@ -90,7 +90,8 @@ router.post('/sales/orders/:id/payment-request',
           provider: trimOrNull(req.body.provider) || 'stripe',
           purpose: trimOrNull(req.body.purpose) || 'BALANCE',
         });
-        req.flash('success', `Asked ${(asked.amountMinor / 100).toFixed(2)} — the link is on this order, ready to send.`);
+        const amount = require('../../sales/payment-terms').money(asked.amountMinor, asked.currency);
+        req.flash('success', `Asked for ${amount} — the link is on this order, ready to send.`);
       }
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;

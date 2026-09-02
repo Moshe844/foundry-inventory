@@ -59,7 +59,7 @@ test('an order held for payment says so, names the amount, and offers no picking
   const page = await agent.get(`/orders/${order.id}`);
   const text = plain(page.text);
   assert.match(text, /This order is on hold until it is paid/);
-  assert.match(text, /\$1500\.00 is still owed/);
+  assert.match(text, /\$1,500\.00 is still owed/);
   assert.match(text, /Pays in full before anything is picked/);
   assert.match(text, /Let this one order through anyway/);
 
@@ -120,7 +120,7 @@ test('a deposit shows what is due now, and clears once it is paid', async () => 
   text = plain((await agent.get(`/orders/${order.id}`)).text);
   assert.doesNotMatch(text, /due now/, 'the deposit is covered');
   assert.match(text, /cannot ship until it is paid/, 'but the balance still holds the parcel');
-  assert.match(text, /\$1050\.00 is still owed/);
+  assert.match(text, /\$1,050\.00 is still owed/);
 });
 
 test('terms are agreed on the customer, and the order repeats them word for word', async () => {
@@ -192,4 +192,95 @@ test('the order offers to ask for payment, keeps the link, and a reply may use i
     assert.ok(facts.some((fact) => fact.includes('https://pay.test/in_1')),
       'the payment link is a fact a reply is allowed to state');
   } finally { undo(); }
+});
+
+test('the Orders list leads with what is stuck, and says what it is stuck on', async () => {
+  /*
+   * Found by walking the page rather than reading the code. The list showed
+   * seven columns — ordered, committed, short, total — and a badge reading
+   * "Confirmed — stock held" on an order whose deposit had not arrived and
+   * which picking would refuse. Every figure true; the impression false.
+   */
+  const env = setup();
+  const { customer, order } = invoicedOrder(env);
+  terms.setTerms(env.db, env.ctx, { customerId: customer.id, kind: 'DEPOSIT', depositPercent: 30 });
+
+  const second = sales.createCustomer(env.db, env.ctx, { name: 'Delta Cleaning' });
+  sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
+    customerId: second.id, lines: [{ skuId: env.item.skuId, quantity: 20 }],
+  }).id);
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const text = plain((await agent.get('/orders')).text);
+
+  assert.match(text, /1 order needs you, 1 ready to pick\./,
+    'one sentence about the list, not three abstract figures');
+  assert.match(text, /Waiting for a \$450\.00 deposit/,
+    'the row says what it is waiting for, in money');
+  assert.doesNotMatch(text, /Confirmed — stock held/,
+    'and never claims a held order is fine');
+
+  // The stuck one leads, whatever order they were created in.
+  assert.ok(text.indexOf(order.order_number) < text.indexOf('SO-1002'),
+    'what needs a person comes first');
+});
+
+test('a held order never offers what it will refuse, and Needs you agrees with the page', async () => {
+  /*
+   * Two contradictions on one screen, both found by looking at it.
+   *
+   * The order page offered "Record the items as shipped" and "Start picking"
+   * on an order the engine refuses to pick — telling somebody to do the one
+   * thing they cannot. And the strip above said "Nothing needs you" while the
+   * page said an order needed them, because a payment hold was not a decision
+   * in the queue. It is now.
+   */
+  const env = setup();
+  const { customer, order } = invoicedOrder(env);
+  terms.setTerms(env.db, env.ctx, { customerId: customer.id, kind: 'BEFORE_FULFILMENT' });
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const text = plain((await agent.get(`/orders/${order.id}`)).text);
+
+  assert.doesNotMatch(text, /Ship selected quantities/,
+    'the direct ship form stands down while money holds the order');
+  assert.doesNotMatch(text, /Start picking \d+ units/,
+    'and so does the picking button');
+  assert.match(text, /Get the \$1,500\.00/,
+    'what it offers instead is the thing that would actually unblock it');
+  assert.match(text, /Held until paid/,
+    'and the fulfilment badge does not say "Ready to pick" about a refused pick');
+
+  // The queue and the page now agree, because a hold is a decision.
+  const needsYou = require('../../src/manager/needs-you-inbox').inbox(env.db, env.workspace.workspaceId);
+  const held = needsYou.filter((entry) => entry.id.startsWith('order-payment-hold:'));
+  assert.equal(held.length, 1, 'a held order is a decision waiting on a person');
+  assert.match(held[0].title, /ABC School owes \$1,500\.00 before SO-\d+ can go/);
+  assert.match(held[0].href, new RegExp(`/orders/${order.id}`));
+});
+
+test('once the deposit lands the page offers picking, and still holds the parcel', async () => {
+  const env = setup();
+  const { customer, order, invoiceId } = invoicedOrder(env);
+  terms.setTerms(env.db, env.ctx, {
+    customerId: customer.id, kind: 'DEPOSIT', depositPercent: 30, holdShipping: true,
+  });
+  payments.record(env.db, env.ctx, env.membership, {
+    direction: 'CUSTOMER_RECEIPT', customerId: customer.id, paymentDate: '2026-09-03',
+    amountMinor: 45000, method: 'card', sourceKey: 'walk:deposit',
+    allocations: [{ invoiceId, amountMinor: 45000 }],
+  });
+
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const text = plain((await agent.get(`/orders/${order.id}`)).text);
+
+  assert.match(text, /Start picking 100 units/, 'the deposit arrived, so the warehouse may start');
+  assert.doesNotMatch(text, /Ship selected quantities/, 'but shipping is still held');
+  assert.match(text, /Get the \$1,050\.00/);
+  assert.match(text, /picked and packed, but it does not leave until the balance is settled/);
+  assert.match(text, /\$1,050\.00/, 'money is written the way the rest of the page writes it');
+  assert.doesNotMatch(text, /\$1050\.00/);
 });

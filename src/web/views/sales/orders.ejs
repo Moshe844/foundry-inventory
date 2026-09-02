@@ -44,29 +44,35 @@
     "New order" is the exception and stays conditional: with nothing here the
     empty state below already says it, and one call to action is enough.
   %>
+  <%#
+    One action, two directions.
+
+    These were three buttons the same size, so the eye had to read all three to
+    find out that two of them leave the page. Making an order is the thing you
+    do here; picking and mail are where you go next, and they are sized like it.
+  %>
   <div class="page-actions">
-    <a class="btn" href="/fulfilment"><%- helpers.icon('box', { size: 15 }) %> Picking and shipping</a>
-    <a class="btn" href="/mail"><%- helpers.icon('send', { size: 15 }) %> Customer mail</a>
     <% if (orders.length) { %>
       <a class="btn btn--primary" href="/orders/new"><%- helpers.icon('plus', { size: 15 }) %> New order</a>
     <% } %>
   </div>
 </div>
 
-<div class="stat-strip section">
-  <div>
-    <span class="stat-value"><%= openOrders.length %></span>
-    <span class="stat-label">open customer order<%= openOrders.length === 1 ? '' : 's' %></span>
-  </div>
-  <div>
-    <span class="stat-value <%= committed ? '' : 'stat-value--quiet' %>"><%= committed %></span>
-    <span class="stat-label">committed to customer orders</span>
-  </div>
-  <div>
-    <span class="stat-value <%= waiting ? 'stat-value--warn' : 'stat-value--quiet' %>"><%= waiting %></span>
-    <span class="stat-label">units waiting for stock</span>
-  </div>
-</div>
+<%
+  /*
+   * One sentence instead of three numbers.
+   *
+   * "2 open customer orders / 120 committed / 0 units waiting for stock" is
+   * three true figures that between them never say whether anything needs
+   * doing. This says that and stops.
+   */
+%>
+<p class="lede orders-verdict"><%= summary %></p>
+
+<p class="orders-elsewhere t-muted">
+  <a href="/fulfilment"><%- helpers.icon('box', { size: 14 }) %> Picking and shipping</a>
+  <a href="/mail"><%- helpers.icon('send', { size: 14 }) %> Customer mail</a>
+</p>
 
 <%# ------------------------------------------------------------ Customer orders %>
 <section class="section">
@@ -93,40 +99,32 @@
             <tr>
               <th>Order</th>
               <th>Customer</th>
-              <th>Status</th>
-              <th>Needed by</th>
-              <th class="num">Ordered</th>
-              <th class="num">Committed</th>
-              <th class="num">Short</th>
-              <th class="num">Total</th>
+              <th>Waiting for</th>
+              <th class="num">Value</th>
             </tr>
           </thead>
           <tbody>
             <% orders.forEach(function (order) { %>
-              <% var state = STATUS[order.status] || { label: order.status, tone: 'muted' }; %>
               <tr>
                 <td class="cell-main">
-                  <a class="cell-title" href="/sales/orders/<%= order.id %>"><%= order.order_number %></a>
-                  <span class="cell-sub"><%= order.order_date %></span>
+                  <a class="cell-title" href="/orders/<%= order.id %>"><%= order.order_number %></a>
+                  <span class="cell-sub">
+                    <% if (order.needed_by) { %>wanted <%= helpers.shortDate(order.needed_by) %>
+                    <% } else { %><%= helpers.shortDate(order.order_date) %><% } %>
+                  </span>
                 </td>
                 <td data-label="Customer">
                   <%= order.customer.name %>
                   <% if (order.customer.company) { %><span class="cell-sub"><%= order.customer.company %></span><% } %>
                 </td>
-                <td data-label="Status"><span class="badge badge--<%= state.tone %>"><%= state.label %></span></td>
-                <td data-label="Needed by" class="<%= order.needed_by ? '' : 't-muted' %>">
-                  <%= order.needed_by || 'No date' %>
-                </td>
-                <td class="num" data-label="Ordered"><%= order.totals.ordered %></td>
-                <td class="num" data-label="Committed"><%= order.totals.allocated %></td>
-                <td class="num" data-label="Short">
-                  <% if (order.totals.backordered) { %>
-                    <strong class="is-warn"><%= order.totals.backordered %></strong>
-                  <% } else { %>
-                    <span class="t-muted">—</span>
+                <td data-label="Waiting for">
+                  <span class="badge badge--<%= order.next.tone === 'go' ? 'info'
+                    : order.next.tone === 'danger' ? 'warn' : order.next.tone %>"><%= order.next.text %></span>
+                  <% if (order.next.detail) { %>
+                    <div class="cell-sub"><%= order.next.detail %></div>
                   <% } %>
                 </td>
-                <td class="num cell-end" data-label="Total">
+                <td class="num cell-end" data-label="Value">
                   <%= order.pricing.missingPriceLines ? '—' : helpers.money(order.pricing.totalMinor, order.currency) %>
                 </td>
               </tr>
@@ -152,6 +150,7 @@
 </section>
 
 <%# ----------------------------------------------------------- Completed sales %>
+<% if (completedSales.length) { %>
 <section class="section">
   <div class="section-head">
     <h2>Completed sales</h2>
@@ -191,6 +190,7 @@
     </div>
   <% } %>
 </section>
+<% } %>
 
 <%# ---------------------------------------------------------------- Customers %>
 <% if (customers.length) { %>

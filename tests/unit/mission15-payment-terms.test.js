@@ -89,10 +89,10 @@ test('pay before fulfilment holds the picking, and says how much', () => {
 
   const p = position(env, order);
   assert.equal(p.blocksPicking, true);
-  assert.match(p.heldReason.pick, /\$1500\.00 is still owed/);
+  assert.match(p.heldReason.pick, /\$1,500\.00 is still owed/);
 
   assert.throws(() => shipments.startPicking(env.db, env.ctx, order.id),
-    /pays before anything is picked.*\$1500\.00 is still owed/s);
+    /pays before anything is picked.*\$1,500\.00 is still owed/s);
 
   pay(env, customer, invoiceId, 150000, 'test:paid-in-full');
   const after = position(env, order);
@@ -123,12 +123,12 @@ test('a deposit releases picking and the balance holds the shipping', () => {
   assert.equal(p.status, 'Partly paid');
   assert.equal(p.blocksPicking, false, 'deposit paid, so the warehouse may start');
   assert.equal(p.blocksShipping, true, 'but the balance still holds the parcel');
-  assert.match(p.heldReason.ship, /\$1050\.00 is still owed/);
+  assert.match(p.heldReason.ship, /\$1,050\.00 is still owed/);
 
   const box = shipments.startPicking(env.db, env.ctx, order.id);
   shipments.markPacked(env.db, env.ctx, box.id, {});
   assert.throws(() => shipments.ship(env.db, env.ctx, box.id, {}),
-    /\$1050\.00 is still owed.*box stays packed/s);
+    /\$1,050\.00 is still owed.*box stays packed/s);
 
   pay(env, customer, invoiceId, 105000, 'test:balance');
   assert.equal(position(env, order).blocksShipping, false);

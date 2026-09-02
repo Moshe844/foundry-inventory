@@ -104,9 +104,20 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   assert.match(activity, /confirmed and stock allocated/i);
   assert.match(activity, /partly fulfilled/i);
   assert.match(activity, /cancelled and commitments released/i);
-  const salesPage = plain((await agent.get('/sales')).text);
-  assert.match(salesPage, /0\s+Open customer orders\s+0\s+committed to customer orders\s+0\s+Units waiting for stock/i,
-    'cancelled orders must not remain in the live commitment totals');
+  /*
+   * The same guarantee, in the vocabulary the page now uses.
+   *
+   * This used to read the three-figure strip at the top — open orders,
+   * committed, waiting for stock — which was replaced by a sentence saying
+   * whether anything needs a person. The engine-level assertion above still
+   * proves the commitment was released; this proves the page agrees, which is
+   * what it was always really for.
+   */
+  const salesPage = plain((await agent.get('/orders')).text);
+  assert.match(salesPage, /Nothing is waiting on you/i,
+    'a cancelled order leaves nothing waiting for anybody');
+  assert.match(salesPage, /Cancelled/,
+    'and it is still listed, saying what became of it');
   env.db.close();
 });
 

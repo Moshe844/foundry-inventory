@@ -9,6 +9,44 @@
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
 <div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= order.order_date %><%= order.needed_by ? ' · customer needs it by ' + order.needed_by : '' %></p></div><span class="badge <%= order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= statusLabels[order.status] || order.status %></span></div>
 
+<% if (money.invoiced && (money.heldReason.pick || money.heldReason.ship)) { %>
+  <div class="notice notice--<%= money.override ? 'info' : 'warn' %>" id="payment-hold">
+    <div>
+      <% if (money.override) { %>
+        <strong>You let this one through unpaid.</strong><br>
+        <%= money.heldReason.ship || money.heldReason.pick %>
+        <% if (money.override.reason) { %><br><em><%= money.override.reason %></em><% } %>
+        <form method="post" action="/sales/orders/<%= order.id %>/payment-hold" class="inline-form" style="margin-top:8px;">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--ghost btn--sm" type="submit" name="action" value="restore">Put the hold back</button>
+        </form>
+      <% } else { %>
+        <strong><%= money.blocksPicking ? 'This order is on hold until it is paid.' : 'This order cannot ship until it is paid.' %></strong><br>
+        <%= money.heldReason.pick || money.heldReason.ship %>
+        <span class="t-xs t-muted">(<%= money.termsText %> — <%= money.terms.source %>.)</span>
+        <details class="disclosure" style="margin-top:10px;">
+          <summary>Let this one order through anyway</summary>
+          <div class="card-body">
+            <form method="post" action="/sales/orders/<%= order.id %>/payment-hold" data-busy>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <label class="field">
+                <span class="field-label">Why <span class="t-muted">(optional)</span></span>
+                <input class="input" type="text" name="reason" placeholder="Long-standing customer, I called them">
+              </label>
+              <button class="btn" type="submit" name="action" value="override">Approve this order to go unpaid</button>
+              <p class="hint">
+                This lifts the hold for this order only, and keeps a note that you did.
+                Their terms are unchanged.
+              </p>
+            </form>
+          </div>
+        </details>
+      <% } %>
+    </div>
+  </div>
+<% } %>
+
+
 <% if (order.status === 'DRAFT' && !order.pricing.missingPriceLines) { %>
   <form class="card sales-action-card sales-primary-action" method="post" action="/sales/orders/<%= order.id %>/confirm">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -26,6 +64,26 @@
     <p><%= locals.shortButAvailable %> unit<%= locals.shortButAvailable === 1 ? ' is' : 's are' %> free now. Reserving keeps it for <%= order.customer.name %>; nothing ships yet.</p>
     <button class="btn btn--primary" type="submit">Reserve <%= locals.shortButAvailable %> for <%= order.customer.name %></button>
   </form>
+<% } else if (locals.money && (money.blocksPicking || money.blocksShipping)) { %>
+  <%#
+    Offering "record the items as shipped" on an order the engine will refuse
+    to ship is the page telling somebody to do the one thing they cannot. The
+    hold above already says what is wanted; this says what to do about it.
+  %>
+  <div class="card sales-action-card sales-primary-action">
+    <p class="eyebrow">Do this next</p>
+    <h2>Get the <%= helpers.money(money.dueNowMinor || money.outstandingMinor, money.currency) %></h2>
+    <p>
+      <% if (money.blocksPicking) { %>
+        Nothing is picked or shipped for <%= order.customer.name %> until this arrives.
+      <% } else { %>
+        <%= order.customer.name %> can have this picked and packed, but it does not leave
+        until the balance is settled.
+      <% } %>
+      Ask them to pay from the money panel below, or approve this one order to go without.
+    </p>
+    <a class="btn btn--primary" href="#payment-hold">Settle the hold</a>
+  </div>
 <% } else if (!['FULFILLED','CANCELLED'].includes(order.status) && (locals.shipments || [])
     .some(function (box) { return box.status === 'PICKING' || box.status === 'PACKED'; })) { %>
   <%
@@ -141,14 +199,26 @@
       <div>
         <h2>Fulfilment</h2>
         <span class="t-xs t-muted">
-          <% if (fulfilment.detail) { %><%= fulfilment.detail %><% } else { %>
+          <% if (locals.money && money.blocksPicking) { %>Waiting on payment
+          <% } else if (fulfilment.detail) { %><%= fulfilment.detail %><% } else { %>
             <%= boxes.length %> <%= boxes.length === 1 ? 'shipment' : 'shipments' %>
           <% } %>
         </span>
       </div>
       <span class="spacer"></span>
-      <span class="badge badge--<%= ['Shipped', 'Delivered'].indexOf(fulfilment.state) >= 0 ? 'ok'
-        : fulfilment.state === 'Waiting for stock' ? 'warn' : 'info' %>"><%= fulfilment.state %></span>
+      <%
+        /*
+         * Money outranks stock in this word. An order with everything on the
+         * shelf is not "ready to pick" when picking it would be refused, and a
+         * badge saying so beside a sentence saying the opposite is the kind of
+         * thing that makes somebody stop believing the screen.
+         */
+        var fulfilmentWord = (locals.money && money.blocksPicking && fulfilment.state === 'Ready to pick')
+          ? 'Held until paid' : fulfilment.state;
+      %>
+      <span class="badge badge--<%= ['Shipped', 'Delivered'].indexOf(fulfilmentWord) >= 0 ? 'ok'
+        : ['Waiting for stock', 'Held until paid'].indexOf(fulfilmentWord) >= 0 ? 'warn'
+        : 'info' %>"><%= fulfilmentWord %></span>
     </div>
 
     <% if (boxes.length) { %>
@@ -196,7 +266,14 @@
       </table>
     <% } %>
 
-    <% if (freeUnits) { %>
+    <% if (freeUnits && locals.money && money.blocksPicking) { %>
+      <div class="card-body">
+        <p class="hint">
+          <%= freeUnits %> <%= freeUnits === 1 ? 'unit is' : 'units are' %> committed and ready,
+          but this order is held until it is paid. Picking it is refused until then.
+        </p>
+      </div>
+    <% } else if (freeUnits) { %>
       <div class="card-foot">
         <form method="post" action="/sales/orders/<%= order.id %>/pick" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -233,43 +310,6 @@
    */
   var money = locals.money || { invoiced: false };
 %>
-<% if (money.invoiced && (money.heldReason.pick || money.heldReason.ship)) { %>
-  <div class="notice notice--<%= money.override ? 'info' : 'warn' %>" id="payment-hold">
-    <div>
-      <% if (money.override) { %>
-        <strong>You let this one through unpaid.</strong><br>
-        <%= money.heldReason.ship || money.heldReason.pick %>
-        <% if (money.override.reason) { %><br><em><%= money.override.reason %></em><% } %>
-        <form method="post" action="/sales/orders/<%= order.id %>/payment-hold" class="inline-form" style="margin-top:8px;">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn btn--ghost btn--sm" type="submit" name="action" value="restore">Put the hold back</button>
-        </form>
-      <% } else { %>
-        <strong><%= money.blocksPicking ? 'This order is on hold until it is paid.' : 'This order cannot ship until it is paid.' %></strong><br>
-        <%= money.heldReason.pick || money.heldReason.ship %>
-        <span class="t-xs t-muted">(<%= money.termsText %> — <%= money.terms.source %>.)</span>
-        <details class="disclosure" style="margin-top:10px;">
-          <summary>Let this one order through anyway</summary>
-          <div class="card-body">
-            <form method="post" action="/sales/orders/<%= order.id %>/payment-hold" data-busy>
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <label class="field">
-                <span class="field-label">Why <span class="t-muted">(optional)</span></span>
-                <input class="input" type="text" name="reason" placeholder="Long-standing customer, I called them">
-              </label>
-              <button class="btn" type="submit" name="action" value="override">Approve this order to go unpaid</button>
-              <p class="hint">
-                This lifts the hold for this order only, and keeps a note that you did.
-                Their terms are unchanged.
-              </p>
-            </form>
-          </div>
-        </details>
-      <% } %>
-    </div>
-  </div>
-<% } %>
-
 <% if (money.invoiced) { %>
   <div class="panel section" id="money">
     <div class="panel-head">

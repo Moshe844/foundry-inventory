@@ -260,8 +260,15 @@ function positionForOrder(db, workspaceId, order) {
   };
 }
 
+/*
+ * Written the way the rest of the app writes money.
+ *
+ * Without the grouping this produced "$1050.00" beside the page's own
+ * "$1,500.00", which reads as two different systems talking.
+ */
 function money(minor, currency = 'USD') {
-  const amount = (Number(minor) / 100).toFixed(2);
+  const amount = (Number(minor) / 100).toLocaleString('en-US',
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return currency === 'USD' ? `$${amount}` : `${currency} ${amount}`;
 }
 

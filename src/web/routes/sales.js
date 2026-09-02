@@ -7,6 +7,7 @@ const shipments = require('../../sales/shipment-service');
 const carriers = require('../../sales/carriers');
 const notices = require('../../sales/customer-communications');
 const paymentTerms = require('../../sales/payment-terms');
+const orderStatus = require('../../sales/order-status');
 const connections = require('../../connections/service');
 const repo = require('../../domain/repository');
 const permissions = require('../../actions/permissions');
@@ -92,10 +93,18 @@ router.get(['/orders', '/sales'], requirePermission(permissions.VIEW, 'view sale
   const sellingConnectionCount = req.db.prepare(
     "SELECT COUNT(*) AS n FROM workspace_connectors WHERE workspace_id = ? AND status = 'connected' AND provider_type IN ('shopify','square','clover','woocommerce','reference_webhook')"
   ).get(req.ctx.workspaceId).n;
+  /*
+   * The list arrives already knowing what each order is waiting for, and in
+   * the order somebody should deal with them. Sorting in the view would put
+   * the judgement in a template, where it cannot be tested.
+   */
+  const ranked = orderStatus.decorate(req.db, req.ctx.workspaceId,
+    sales.listOrders(req.db, req.ctx.workspaceId, { status, limit: 200 }));
   res.page('sales/orders', {
-    title: 'Sales', nav: 'sales', status,
+    title: 'Orders', nav: 'sales', status,
     sellingConnectionCount,
-    orders: sales.listOrders(req.db, req.ctx.workspaceId, { status, limit: 200 }),
+    orders: ranked,
+    summary: orderStatus.summarise(ranked),
     completedSales: sales.listCompletedSales(req.db, req.ctx.workspaceId, { limit: 200 }),
     customers: sales.listCustomers(req.db, req.ctx.workspaceId),
   });
