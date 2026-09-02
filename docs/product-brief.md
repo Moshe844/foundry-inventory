@@ -205,9 +205,11 @@ Honest, at the time of writing.
   from the shipment's own record the moment a box goes out, and by default the
   owner sends it. There is no order confirmation and no delay notice.
 - Inbound mail is sorted into needs a reply / waiting / handled, and every
-  message says which words put it where. Foundry cannot write a reply: it
-  reads, sorts, and tells you who is waiting. Answering happens in the owner's
-  own mailbox, and they mark it answered here.
+  message says which words put it where. Foundry drafts the reply too, from
+  facts it gathers first — the sender's orders, shipments, tracking and
+  balances — and a draft that names a figure or a date those facts do not
+  carry is thrown away before the owner sees it, with the reason shown. The
+  owner reads and sends; nothing reaches anybody on its own.
 - Reporting is thinner than established inventory systems.
 - Not proven at scale: SQLite, single node.
 

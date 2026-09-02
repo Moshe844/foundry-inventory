@@ -73,6 +73,82 @@
 
 <section class="section">
   <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2><%= draft ? 'The reply' : 'Reply to this' %></h2>
+        <% if (draft && draft.sentAt) { %>
+          <span class="t-xs t-muted">Sent <%= helpers.dateTime(draft.sentAt) %></span>
+        <% } else if (draft) { %>
+          <span class="t-xs t-muted">
+            <%= draft.source === 'model' ? 'Written by Foundry from your records'
+              : draft.source === 'person' ? 'Your words'
+              : 'Built from your records' %> · nothing has been sent
+          </span>
+        <% } %>
+      </div>
+    </div>
+
+    <% if (draft && draft.rejected) { %>
+      <div class="card-body">
+        <div class="notice notice--warn"><div>
+          <strong>Foundry wrote a reply and threw it away.</strong><br>
+          It was rejected because <%= draft.rejected %>. What is below uses your records only,
+          so it is duller and it is true. Edit it however you like before sending.
+        </div></div>
+      </div>
+    <% } %>
+
+    <% if (draft && draft.sentAt) { %>
+      <div class="card-body">
+        <p class="t-sm"><strong><%= draft.subject %></strong></p>
+        <pre class="message-body"><%= draft.body %></pre>
+      </div>
+    <% } else if (draft) { %>
+      <form method="post" action="/mail/<%= m.id %>/draft" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="card-body">
+          <label class="field">
+            <span class="field-label">Subject</span>
+            <input class="input" type="text" name="subject" value="<%= draft.subject %>">
+          </label>
+          <label class="field">
+            <span class="field-label">Reply</span>
+            <textarea class="input textarea message-edit" name="body" rows="14"><%= draft.body %></textarea>
+            <span class="field-hint">
+              Foundry may only use figures and dates that are already in your records. Anything
+              it wrote that was not is gone before you saw it — but you are the one sending this,
+              so read it.
+            </span>
+          </label>
+        </div>
+        <div class="card-foot">
+          <button class="btn btn--primary" type="submit" name="action" value="send">
+            Send to <%= m.sender %>
+          </button>
+          <button class="btn" type="submit" name="action" value="save">Save for later</button>
+          <button class="btn btn--ghost" type="submit" name="action" value="write">Write it again</button>
+        </div>
+      </form>
+    <% } else { %>
+      <div class="card-body">
+        <p class="lede">Foundry can draft this from what it holds about <%= m.sender %>.</p>
+        <p class="hint">
+          It reads their orders, shipments, tracking and balances first, and may only use
+          figures and dates that are already there. Nothing is sent until you send it.
+        </p>
+      </div>
+      <div class="card-foot">
+        <form method="post" action="/mail/<%= m.id %>/draft" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--primary" type="submit" name="action" value="write">Draft a reply</button>
+        </form>
+      </div>
+    <% } %>
+  </div>
+</section>
+
+<section class="section">
+  <div class="panel">
     <div class="panel-head"><div><h2>Where this belongs</h2></div></div>
     <form method="post" action="/mail/<%= m.id %>/state" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -104,7 +180,7 @@
     </form>
   </div>
   <p class="section-foot t-muted">
-    Foundry cannot write the reply for you yet. Answer from your own mailbox, then say
-    so here so this stops asking for your attention.
+    Sending a reply moves this to waiting on them by itself. These are for when you
+    answered somewhere else, or when nothing is owed.
   </p>
 </section>

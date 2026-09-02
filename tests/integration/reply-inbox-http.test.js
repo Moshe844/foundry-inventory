@@ -102,8 +102,8 @@ test('a message page shows what arrived and offers only the three drawers', asyn
   assert.match(text, /Needs a reply/);
   assert.match(text, /I answered — waiting on them/);
   assert.match(text, /Handled, nothing needed/);
-  assert.match(text, /Foundry cannot write the reply for you yet/,
-    'the page admits what it cannot do rather than leaving somebody hunting');
+  assert.match(text, /Foundry can draft this from what it holds about/,
+    'the page offers the draft rather than leaving somebody hunting');
 
   // Giving a reason keeps it with the message.
   const moved = await agent.post(`/mail/${id}/state`).type('form').send({
@@ -171,4 +171,48 @@ test('the nav badge counts only what needs a reply, and survives a workspace wit
   const badge = home.text.slice(home.text.indexOf('href="/mail"'));
   assert.match(badge.slice(0, 400), /<span class="nav-count" aria-label="2 waiting">2<\/span>/,
     'the badge counts the two that need answering, not the three that arrived');
+});
+
+test('a reply is drafted, read, and sent from the message page', async () => {
+  const env = setup();
+  const id = arrive(env, { subject: 'Our order', body: 'Can you confirm the date?' });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  let page = await agent.get(`/mail/${id}`);
+  assert.match(plain(page.text), /Draft a reply/);
+
+  const written = await agent.post(`/mail/${id}/draft`)
+    .type('form').send({ _csrf: csrfFrom(page.text), action: 'write' });
+  assert.equal(written.status, 303);
+
+  page = await agent.get(`/mail/${id}`);
+  let text = plain(page.text);
+  assert.match(text, /The reply/);
+  assert.match(text, /nothing has been sent/);
+  /*
+   * Whether a model wrote this or the records alone did, the same two things
+   * must hold: there is a reply, and it is editable before it goes. Which of
+   * the two produced it is a unit-test concern, and asserting on the wording
+   * here would make this test depend on a model being reachable.
+   */
+  assert.match(page.text, /name="body"/, 'it is editable before it goes');
+  const drafted = require('../../src/connections/reply-drafting')
+    .getDraft(env.db, env.workspace.workspaceId, id);
+  assert.ok(drafted.body && drafted.body.trim().length > 20, 'a reply was actually written');
+  assert.equal(drafted.sentAt, null, 'and it has not gone anywhere');
+  assert.doesNotMatch(drafted.body, /SO-\d/, 'this sender has no order, so none is named');
+
+  // Editing it is saving, not sending.
+  const saved = await agent.post(`/mail/${id}/draft`).type('form').send({
+    _csrf: csrfFrom(page.text), action: 'save',
+    subject: 'Re: Our order', body: 'It is going out today and I will send tracking.',
+  });
+  assert.equal(saved.status, 303);
+  const stored = require('../../src/connections/reply-drafting')
+    .getDraft(env.db, env.workspace.workspaceId, id);
+  assert.match(stored.body, /going out today/);
+  assert.equal(stored.source, 'person');
+  assert.equal(stored.sentAt, null, 'saving is not sending');
+  assert.equal(inbox.get(env.db, env.workspace.workspaceId, id).reply_state, 'NEEDS_REPLY');
 });

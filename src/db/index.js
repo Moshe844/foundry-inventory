@@ -133,6 +133,13 @@ const ADDED_COLUMNS = [
   { table: 'connection_email_messages', column: 'reply_reason', definition: 'TEXT' },
   { table: 'connection_email_messages', column: 'reply_state_by_user_id', definition: 'TEXT' },
   { table: 'connection_email_messages', column: 'reply_state_at', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'draft_subject', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'draft_body', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'draft_source', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'draft_rejected_because', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'draft_at', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'reply_sent_at', definition: 'TEXT' },
+  { table: 'connection_email_messages', column: 'reply_external_message_id', definition: 'TEXT' },
 ];
 
 function addMissingColumns(db) {

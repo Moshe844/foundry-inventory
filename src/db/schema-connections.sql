@@ -96,6 +96,15 @@ CREATE TABLE IF NOT EXISTS connection_email_messages (
   reply_reason        TEXT,
   reply_state_by_user_id TEXT,
   reply_state_at      TEXT,
+  -- A reply Foundry wrote and nobody has sent. Kept on the message because a
+  -- draft only means anything next to what it answers.
+  draft_subject       TEXT,
+  draft_body          TEXT,
+  draft_source        TEXT,
+  draft_rejected_because TEXT,
+  draft_at            TEXT,
+  reply_sent_at       TEXT,
+  reply_external_message_id TEXT,
   created_at          TEXT NOT NULL,
   UNIQUE (workspace_id, connector_id, external_message_id)
 );
