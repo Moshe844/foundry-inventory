@@ -555,3 +555,65 @@ CREATE TABLE IF NOT EXISTS accounting_inventory_openings (
   UNIQUE (opening_set_id, sku_id, location_id),
   CHECK (quantity_units > 0 OR total_cost_minor = 0)
 );
+
+-- Collecting money online (Mission 15)
+--
+-- A request is Foundry asking a customer to pay something, through somebody
+-- else's payment surface. Foundry never sees a card number: it holds the
+-- provider's identifiers and the hosted URL, and learns what happened from
+-- events the provider sends back.
+--
+-- Deliberately provider-shaped only in the columns that have to be. Everything
+-- above this table talks about a request, an amount and a link; which company
+-- processed it is a detail, so that a second provider is a new row value rather
+-- than a new concept.
+
+CREATE TABLE IF NOT EXISTS payment_requests (
+  id                   TEXT PRIMARY KEY,
+  workspace_id         TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  invoice_id           TEXT REFERENCES accounting_customer_invoices(id) ON DELETE CASCADE,
+  sales_order_id       TEXT REFERENCES sales_orders(id) ON DELETE SET NULL,
+  customer_id          TEXT REFERENCES customers(id) ON DELETE SET NULL,
+  provider             TEXT NOT NULL,
+  purpose              TEXT NOT NULL DEFAULT 'BALANCE'
+                         CHECK (purpose IN ('DEPOSIT','BALANCE','FULL')),
+  amount_minor         INTEGER NOT NULL CHECK (amount_minor > 0),
+  currency             TEXT NOT NULL,
+  status               TEXT NOT NULL DEFAULT 'DRAFT'
+                         CHECK (status IN ('DRAFT','OPEN','PAID','VOID','FAILED')),
+  external_customer_id TEXT,
+  external_invoice_id  TEXT,
+  hosted_url           TEXT,
+  paid_minor           INTEGER NOT NULL DEFAULT 0 CHECK (paid_minor >= 0),
+  last_error           TEXT,
+  created_by_user_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at           TEXT NOT NULL,
+  updated_at           TEXT NOT NULL,
+  opened_at            TEXT,
+  paid_at              TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_payment_requests_invoice
+  ON payment_requests(workspace_id, invoice_id, status);
+CREATE INDEX IF NOT EXISTS idx_payment_requests_external
+  ON payment_requests(provider, external_invoice_id);
+
+-- Every event a provider sent, kept before it is acted on.
+--
+-- The unique key is the provider's own event id, which is what makes a
+-- redelivered webhook harmless: providers retry, and a payment recorded twice
+-- is worse than one recorded late.
+CREATE TABLE IF NOT EXISTS payment_provider_events (
+  id                TEXT PRIMARY KEY,
+  workspace_id      TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  provider          TEXT NOT NULL,
+  external_event_id TEXT NOT NULL,
+  event_type        TEXT NOT NULL,
+  payload           TEXT NOT NULL,
+  request_id        TEXT REFERENCES payment_requests(id) ON DELETE SET NULL,
+  payment_id        TEXT REFERENCES accounting_payments(id) ON DELETE SET NULL,
+  outcome           TEXT,
+  received_at       TEXT NOT NULL,
+  processed_at      TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_provider_events
+  ON payment_provider_events(workspace_id, provider, external_event_id);

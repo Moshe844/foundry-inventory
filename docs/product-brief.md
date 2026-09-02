@@ -227,6 +227,11 @@ Honest, at the time of writing.
 
 - No barcode scanning, mobile receiving, or label printing. Barcodes are now
   *captured* on import so the data exists when scanning arrives.
+- Stripe is written, not proven. The payment-provider seam is exercised end to
+  end through a stub — request, hosted link, webhook, receipt, hold released —
+  but the Stripe adapter itself has never run against a live Stripe account,
+  because there is no key on this machine. The seam is proven; the wire format
+  is not. Treat the first real call as the test it is.
 - No carrier account. Fulfilment records a shipment, holds a carrier, service
   and tracking number, and turns that number into a working tracking link — but
   Foundry cannot buy a label, quote a real rate, or see a delivery scan. Marking

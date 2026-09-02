@@ -29,6 +29,9 @@ const purchasingRoutes = require('./web/routes/purchasing');
 const managerRoutes = require('./web/routes/manager');
 const salesRoutes = require('./web/routes/sales');
 const mailRoutes = require('./web/routes/mail');
+const paymentRoutes = require('./web/routes/payments');
+// Registers the payment providers this build ships with.
+require('./payments');
 const pricingRoutes = require('./web/routes/pricing');
 const connectionRoutes = require('./web/routes/connections');
 const accountingRoutes = require('./web/routes/accounting');
@@ -62,6 +65,18 @@ function createApp(options = {}) {
   // Uploads are parsed before anything else reads the body, so a file arrives
   // as an ordinary form: same CSRF check, same flash messages, same everything.
   app.use(multipart({ limit: 32 * 1024 * 1024 }));
+  /*
+   * Before the body parsers on purpose: a payment webhook authenticates by a
+   * signature over the exact bytes it sent, and a parser replaces them. After
+   * the database handle, because it still has to write what it is told.
+   *
+   * Everything between the two — sessions, CSRF, the signed-in context — is
+   * deliberately skipped: a provider arrives with no cookie and no token, and
+   * its signature is the whole authentication.
+   */
+  app.use((req, res, next) => { req.db = db; next(); });
+  app.use(paymentRoutes.webhooks);
+
   app.use(express.urlencoded({ extended: true, limit: '256kb' }));
   app.use(express.json({ limit: '256kb', verify(req, res, buffer) { req.rawBody = Buffer.from(buffer); } }));
 
@@ -123,6 +138,7 @@ function createApp(options = {}) {
   app.use(managerRoutes);
   app.use(salesRoutes);
   app.use(mailRoutes);
+  app.use(paymentRoutes.actions);
   app.use(pricingRoutes);
   app.use(connectionRoutes);
   app.use(accountingRoutes);
