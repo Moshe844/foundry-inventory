@@ -9,6 +9,8 @@ const { newId, nowIso, requireText } = require('../lib/util');
 const connections = require('./service');
 const credentialsStore = require('./credentials');
 const providers = require('./providers/registry');
+const mailRelevance = require('./mail-relevance');
+const setAside = require('./mail-set-aside');
 
 const stateHash = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 
@@ -331,6 +333,60 @@ async function sync(db, workspaceId, connectorId, actorId, options = {}) {
   }
 }
 
+/**
+ * Write an answer to a customer and leave it unsent.
+ *
+ * Only once per message, and never over a draft somebody has already touched
+ * or a reply that has already gone. Foundry re-writing the owner's own words
+ * on the next poll would be worse than not writing anything.
+ */
+async function prepareReply(db, auth, messageId) {
+  const row = db.prepare(`SELECT draft_at, draft_source, reply_sent_at FROM connection_email_messages
+    WHERE workspace_id = ? AND id = ?`).get(auth.workspaceId, messageId);
+  if (!row || row.draft_at || row.reply_sent_at) return null;
+  return require('./reply-drafting').draft(db, auth, messageId);
+}
+
+/**
+ * A person disagrees with the gate, so the message comes in.
+ *
+ * The envelope is all Foundry kept, so the message itself is fetched from the
+ * provider again and put through exactly the pipeline it would have gone
+ * through in the first place. The set-aside row stays as the record that this
+ * was once turned away and who overruled it.
+ */
+async function bringInSetAside(db, ctx, setAsideId, options = {}) {
+  const row = setAside.get(db, ctx.workspaceId, setAsideId);
+  if (row.brought_in_message_id) return { messageId: row.brought_in_message_id, replayed: true };
+  const connection = connections.get(db, ctx.workspaceId, row.connector_id);
+  const adapter = options.adapter || providers.get(connection.provider_type);
+  if (!adapter?.fetchMessage) {
+    throw new ValidationError('This mailbox cannot fetch a single message back, so it cannot be brought in.');
+  }
+  const providerCredentials = await loadProviderCredentials(db, connection, adapter);
+  const message = await adapter.fetchMessage({ credentials: providerCredentials,
+    messageId: row.external_message_id, connection });
+  if (!message) throw new NotFoundError('That message is no longer in the mailbox.');
+  const auth = actorAuth(db, connection);
+  require('./event-ingestion').ingest(db, auth, {
+    eventId: mailboxEventId(connection.provider_type, message.messageId),
+    type: 'supplier_document.received', occurredAt: message.receivedAt, data: message,
+  });
+  const captured = db.prepare(`SELECT id, classification FROM connection_email_messages
+    WHERE workspace_id = ? AND connector_id = ? AND external_message_id = ?`)
+    .get(ctx.workspaceId, row.connector_id, message.messageId);
+  if (captured) {
+    setAside.markBroughtIn(db, ctx.workspaceId, setAsideId, captured.id, ctx.actorId);
+    if (captured.classification === 'customer_order_request') {
+      const orders = require('../sales/order-from-email');
+      try { await orders.draft(db, auth, captured.id); }
+      catch (error) { orders.noteReason(db, auth, captured.id,
+        `Foundry could not draft an order from this: ${error.message}`); }
+    }
+  }
+  return { messageId: captured?.id || null, replayed: false };
+}
+
 async function syncMailbox(db, workspaceId, connectorId, options = {}) {
   const connection = connections.get(db, workspaceId, connectorId);
   const adapter = options.adapter || providers.get(connection.provider_type);
@@ -342,14 +398,45 @@ async function syncMailbox(db, workspaceId, connectorId, options = {}) {
     since: options.since || connection.last_synced_at || new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
     connection });
   const auth = actorAuth(db, connection);
+  /*
+   * A connected mailbox is not permission to act on the owner's whole inbox,
+   * but refusing to read anything from an unknown sender meant a customer
+   * writing for the first time did not exist. Their order was fetched from
+   * Gmail and dropped here, and the owner saw nothing at all.
+   *
+   * So the gate moved rather than opened. An unapproved sender is captured
+   * UNTRUSTED, which is a resting place, not an instruction: nothing is
+   * extracted from it, no purchasing evidence is read, no stock moves. It can
+   * be read and answered, and the owner can approve the sender. An owner who
+   * wants the older behaviour turns this off on the connection.
+   */
+  let openToStrangers = true;
+  try {
+    // connections.get already parses this column; a raw row would not have.
+    const config = typeof connection.config === 'string'
+      ? JSON.parse(connection.config || '{}') : (connection.config || {});
+    if (config.captureUnknownSenders === false) openToStrangers = false;
+  } catch { /* Unreadable config is not consent to change behaviour; the default stands. */ }
   const results = [];
   for (const message of found.messages || []) {
     const rule = require('./email-ingestion').matchingRule(db, auth, message.sender || message.from || '');
-    // A connected mailbox is not permission to ingest the owner's whole
-    // inbox. Provider polling reads only enough envelope data to match an
-    // approved sender; everything else is ignored and never becomes a
-    // Foundry message, issue, or purchasing record.
-    if (!rule) continue;
+    if (!rule && !openToStrangers) continue;
+    /*
+     * A connected mailbox is the business's mailbox, not Foundry's inbox.
+     *
+     * Everything that arrived used to become a record here — newsletters, bank
+     * alerts, the owner's personal mail — and then be triaged, listed, and
+     * counted as work. The gate asks the only question that matters: is this
+     * about the business Foundry runs. What it turns away is not deleted and
+     * not silently dropped; the envelope and the reason are kept so the owner
+     * can find it and overrule the decision.
+     */
+    const verdict = mailRelevance.judge(db, workspaceId, connectorId, message);
+    const overruled = setAside.alreadySeen(db, workspaceId, connectorId, message.messageId);
+    if (!verdict.keep && !overruled) {
+      setAside.record(db, workspaceId, connectorId, message, verdict.reason);
+      continue;
+    }
     // Capturing an approved sender and interpreting a document are separate
     // permissions. Only purchasing rules extract purchasing evidence here;
     // inventory rules go through the preview builder below, and review_each
@@ -373,7 +460,7 @@ async function syncMailbox(db, workspaceId, connectorId, options = {}) {
       eventId: mailboxEventId(connection.provider_type, message.messageId),
       type: 'supplier_document.received', occurredAt: message.receivedAt, data: message,
     }));
-    const captured = db.prepare(`SELECT m.id, r.document_mode FROM connection_email_messages m
+    const captured = db.prepare(`SELECT m.id, m.classification, r.document_mode FROM connection_email_messages m
       LEFT JOIN connection_email_rules r ON r.workspace_id = m.workspace_id AND r.connector_id = m.connector_id
         AND r.is_active = 1 AND (LOWER(r.sender_pattern) = LOWER(m.sender)
           OR (r.sender_pattern LIKE '@%' AND LOWER(m.sender) LIKE '%' || LOWER(r.sender_pattern)))
@@ -391,7 +478,44 @@ async function syncMailbox(db, workspaceId, connectorId, options = {}) {
         }
       }
     }
+    /*
+     * A customer asking to buy something becomes a draft order, and stops
+     * there. Drafting is the whole point of capturing a stranger's mail: the
+     * owner asked to be handed a prepared order to approve, not a mailbox to
+     * read. Failure is quiet on purpose — the message is already captured and
+     * already shows as needing an answer, so a model that could not read it
+     * costs the owner an email to answer, not a lost customer.
+     */
+    if (captured?.id && captured.classification === 'customer_order_request') {
+      const orders = require('../sales/order-from-email');
+      try { await orders.draft(db, auth, captured.id); }
+      catch (error) {
+        // The message stands on its own; a draft is an improvement on it, not
+        // a condition of it. But the reason is written down, because a
+        // customer's order that silently produced nothing is the one failure
+        // the owner most needs to hear about.
+        orders.noteReason(db, auth, captured.id, `Foundry could not draft an order from this: ${error.message}`);
+      }
+    }
+    /*
+     * A customer writing about anything else gets an answer prepared, and
+     * that is where it stops.
+     *
+     * The owner asked for an assistant that has already done the work by the
+     * time they look, not one that waits to be told to start. Drafting is
+     * safe to do unasked because sending is a separate act with a separate
+     * button: nothing leaves the building without a person reading it. The
+     * facts in the reply come from the records before a word is written, so
+     * a draft nobody sends has still cost nothing but the writing.
+     */
+    if (captured?.id && captured.classification === 'customer_message') {
+      try { await prepareReply(db, auth, captured.id); }
+      catch { /* The message is captured and shows as needing an answer; a missing draft is not a lost customer. */ }
+    }
   }
+  // Anything from an earlier check that still has neither an order nor a reason.
+  try { await require('../sales/order-from-email').draftPending(db, auth); }
+  catch { /* Each message records its own reason; a sweep that fails leaves them for the next one. */ }
   const now = nowIso();
   require('./mailbox-inventory').reconcileStatuses(db, workspaceId, connectorId);
   db.prepare(`UPDATE workspace_connectors SET status = 'connected', setup_status = 'CONNECTED',
@@ -556,7 +680,8 @@ async function createSandboxCheckout(db, workspaceId, connectorId, input, option
   return adapter.createSandboxCheckout({ credentials: providerCredentials, externalSku, externalLocationId, quantity });
 }
 
-module.exports = { beginAuthorization, completeOAuth, completeWooCallback, sync, syncMailbox, maintainMailboxWatch, sendMailboxMessage,
+module.exports = { beginAuthorization, completeOAuth, completeWooCallback, sync, syncMailbox,
+  bringInSetAside, prepareReply, maintainMailboxWatch, sendMailboxMessage,
   reviewHistory, setSelectedLocations,
   createSandboxCheckout, ignoreExternal, webhookContext, readState, stateConnection, providerOrigin,
   deactivateDuplicateProviderAccounts };

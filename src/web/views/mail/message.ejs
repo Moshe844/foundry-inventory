@@ -71,6 +71,51 @@
   </div>
 </section>
 
+<% if (prepared && (prepared.order || prepared.because)) { %>
+  <%
+    /*
+     * What Foundry did about this before anybody read it.
+     *
+     * A draft order is not a decision — it is the work done, waiting for one.
+     * And when there is no draft, the reason belongs here just as much: an
+     * order email that quietly produced nothing is the failure the owner most
+     * needs to hear about.
+     */
+  %>
+  <section class="section">
+    <div class="panel">
+      <div class="panel-head"><div><h2>What Foundry prepared</h2></div></div>
+      <div class="card-body">
+        <% if (prepared.order) { %>
+          <p class="lede">
+            <a href="/sales/orders/<%= prepared.order.id %>"><%= prepared.order.order_number %></a>
+            for <%= prepared.order.customer_name %>, read out of this email.
+          </p>
+          <p class="hint">
+            <% if (prepared.order.status === 'DRAFT') { %>
+              It is a draft. Nothing is committed, no stock is held and no reply has been sent —
+              approve it, change it, or throw it away.
+            <% } else { %>
+              You have since taken this order to <%= prepared.order.status.toLowerCase() %>.
+            <% } %>
+          </p>
+        <% } else { %>
+          <p class="lede">Foundry did not turn this into an order.</p>
+          <p class="hint"><%= prepared.because %></p>
+        <% } %>
+      </div>
+      <% if (!prepared.order && m.classification === 'customer_order_request') { %>
+        <div class="card-foot">
+          <form method="post" action="/mail/<%= m.id %>/reread" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn" type="submit">Read it as an order again</button>
+          </form>
+        </div>
+      <% } %>
+    </div>
+  </section>
+<% } %>
+
 <section class="section">
   <div class="panel">
     <div class="panel-head">

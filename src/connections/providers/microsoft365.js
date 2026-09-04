@@ -95,26 +95,42 @@ async function renewWebhooks({ credentials, webhookUrl }) {
   }
 }
 
+const SELECT_FIELDS = 'id,conversationId,internetMessageId,subject,from,toRecipients,receivedDateTime,body,hasAttachments';
+const TEXT_BODY = { Prefer: 'outlook.body-content-type="text"' };
+
+async function mapMessage(credentials, row) {
+  const attachments = row.hasAttachments ? ((await graph(credentials,
+    // `contentBytes` belongs to the derived fileAttachment type, not the
+    // base attachment type. Graph rejects selecting it on `/attachments`
+    // even though it includes the bytes for file attachments in the normal
+    // response. Asking for the attachment normally supports PDFs and sheets
+    // without turning a valid webhook into an HTTP 400.
+    `/me/messages/${encodeURIComponent(row.id)}/attachments`)).body.value || []) : [];
+  return { messageId: row.id, threadId: row.conversationId, internetMessageId: row.internetMessageId,
+    sender: row.from?.emailAddress?.address, recipients: (row.toRecipients || []).map((entry) => entry.emailAddress?.address).filter(Boolean),
+    subject: row.subject, bodyText: row.body?.content, receivedAt: row.receivedDateTime,
+    attachments: attachments.filter((entry) => entry.contentBytes).map((entry) => ({ id: entry.id,
+      filename: entry.name, mimeType: entry.contentType, contentBase64: entry.contentBytes })) };
+}
+
 async function poll({ credentials, since }) {
   const filter = since ? `&$filter=receivedDateTime ge ${new Date(since).toISOString()}` : '';
-  const path = `/me/mailFolders/inbox/messages?$top=50&$orderby=receivedDateTime desc&$select=id,conversationId,internetMessageId,subject,from,toRecipients,receivedDateTime,body,hasAttachments${filter}`;
-  const rows = (await graph(credentials, path, { headers: { Prefer: 'outlook.body-content-type="text"' } })).body.value || [];
+  const path = `/me/mailFolders/inbox/messages?$top=50&$orderby=receivedDateTime desc&$select=${SELECT_FIELDS}${filter}`;
+  const rows = (await graph(credentials, path, { headers: TEXT_BODY })).body.value || [];
   const messages = [];
-  for (const row of rows) {
-    const attachments = row.hasAttachments ? ((await graph(credentials,
-      // `contentBytes` belongs to the derived fileAttachment type, not the
-      // base attachment type. Graph rejects selecting it on `/attachments`
-      // even though it includes the bytes for file attachments in the normal
-      // response. Asking for the attachment normally supports PDFs and sheets
-      // without turning a valid webhook into an HTTP 400.
-      `/me/messages/${encodeURIComponent(row.id)}/attachments`)).body.value || []) : [];
-    messages.push({ messageId: row.id, threadId: row.conversationId, internetMessageId: row.internetMessageId,
-      sender: row.from?.emailAddress?.address, recipients: (row.toRecipients || []).map((entry) => entry.emailAddress?.address).filter(Boolean),
-      subject: row.subject, bodyText: row.body?.content, receivedAt: row.receivedDateTime,
-      attachments: attachments.filter((entry) => entry.contentBytes).map((entry) => ({ id: entry.id,
-        filename: entry.name, mimeType: entry.contentType, contentBase64: entry.contentBytes })) });
-  }
+  for (const row of rows) messages.push(await mapMessage(credentials, row));
   return { messages, cursor: messages[0]?.messageId || null };
+}
+
+/*
+ * One message, asked for by name — see the Gmail adapter. Foundry keeps only
+ * the envelope of mail it set aside, so bringing one in goes back to Graph.
+ */
+async function fetchMessage({ credentials, messageId }) {
+  const row = (await graph(credentials,
+    `/me/messages/${encodeURIComponent(messageId)}?$select=${SELECT_FIELDS}`,
+    { headers: TEXT_BODY })).body;
+  return row && row.id ? mapMessage(credentials, row) : null;
 }
 
 async function send({ credentials, message }) {
@@ -131,4 +147,4 @@ function verifyWebhook({ body, credentials }) {
 }
 
 module.exports = { metadata, authorizationUrl, exchangeAuthorization, refreshCredentials, discover,
-  registerWebhooks, renewWebhooks, poll, send, verifyWebhook, graph };
+  registerWebhooks, renewWebhooks, poll, fetchMessage, send, verifyWebhook, graph };

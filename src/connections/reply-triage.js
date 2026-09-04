@@ -39,7 +39,7 @@ const ASKING = [
   'any news', 'following up', 'follow up on', 'chasing', 'checking in',
   'do you have', 'do you still', 'is it possible', 'would it be possible',
   'what is the', 'what are the', 'how much', 'how many', 'how long',
-  'we need', 'i need', 'we would like', 'i would like', 'looking for',
+  'we need', 'i need', 'we would like', 'i would like', 'we want', 'i want', 'looking for',
   'confirm receipt', 'confirm that', 'advise on', 'quote for', 'quote on',
 ];
 
@@ -75,7 +75,15 @@ const PLEASE = /\bplease\b(?!\s+(?:find|note|see|be advised|disregard|ignore|do 
  * is no person at the other end. Sending these to a reply queue is how a queue
  * fills with things that cannot be replied to.
  */
-const NO_REPLY_SENDER = /(^|[.@_-])(no-?reply|do-?not-?reply|donotreply|notifications?|mailer-daemon|postmaster|bounce|automated|auto-?confirm)([.@_-]|$)/i;
+/*
+ * An address no human reads.
+ *
+ * The separator inside each phrase has to be as loose as the one between
+ * words: Chase writes 'no.reply.alerts@chase.com', and a pattern that only
+ * allowed a hyphen filed four of its security alerts as mail somebody was
+ * waiting on an answer to.
+ */
+const NO_REPLY_SENDER = /(^|[.@_-])(no[._-]?reply|do[._-]?not[._-]?reply|donotreply|notifications?|no[._-]?response|mailer-daemon|postmaster|bounce|automated|auto[._-]?confirm|alerts?)([.@_-]|$)/i;
 const AUTOMATIC_SUBJECT = /\b(out of office|automatic reply|undeliverable|delivery status notification|read receipt|unsubscribe)\b/i;
 
 // Statuses that mean Foundry got what it needed out of this message.
@@ -106,6 +114,28 @@ function prose(bodyText) {
  * Returns { state, reason }. The reason is shown to the owner verbatim, so it
  * says what was actually observed rather than naming a rule.
  */
+/*
+ * Does the text actually say this phrase, rather than merely contain it?
+ *
+ * "Nothing about purchasing" was being read as somebody chasing an order, and
+ * a message about detergent as an urgent one, because the match was a plain
+ * substring. The list is words people write, so it has to be compared as
+ * words people write.
+ *
+ * The boundary is required at the start only, deliberately. "refund" should
+ * still find "refunded" and "incorrect" should still find "incorrectly" — a
+ * suffix does not change who is asking for what. It is the prefix that turns
+ * one word into a different word.
+ */
+function saysPhrase(text, phrase) {
+  for (let from = 0; ; from += 1) {
+    const at = text.indexOf(phrase, from);
+    if (at < 0) return false;
+    if (at === 0 || !/[a-z0-9]/i.test(text[at - 1])) return true;
+    from = at;
+  }
+}
+
 function judge(message = {}) {
   const sender = String(message.sender || '');
   const subject = String(message.subject || '');
@@ -118,7 +148,38 @@ function judge(message = {}) {
     return { state: 'HANDLED', reason: 'This came from an automatic address, so there is nobody to reply to.' };
   }
 
-  const asked = ASKING.find((phrase) => text.includes(phrase));
+  /*
+   * Somebody asking to buy something is always waiting on an answer.
+   *
+   * A real customer wrote "I want to order size 36, 2 pieces" — no question
+   * mark, no phrase on the asking list, four lines long — and it was filed as
+   * handled, nothing needed. Foundry had already read it as an order request
+   * and then decided nobody was waiting on it. Whether the words scan as a
+   * question is beside the point next to what the message is: an order that
+   * nobody answers is a customer who buys somewhere else.
+   */
+  if (String(message.classification || '') === 'customer_order_request') {
+    return { state: 'NEEDS_REPLY', reason: 'They are asking to buy something, so they are waiting on you.' };
+  }
+
+  /*
+   * Bulk mail, which nobody is waiting on an answer to.
+   *
+   * This became load-bearing the moment Foundry started capturing senders the
+   * owner had not approved. On the owner's real mailbox that is newsletters,
+   * marketing blasts and bank alerts, and the first run marked most of them
+   * "needs a reply" — which would turn the one screen they are supposed to
+   * trust into a second inbox.
+   *
+   * An unsubscribe link is the honest signal: mail sent to a list carries one
+   * by law and by convention, and a customer writing to a shop does not.
+   */
+  if (/\bunsubscribe\b|\bmanage (?:your )?(?:email )?preferences\b|\bview (?:this|it) in your browser\b/i.test(body)) {
+    return { state: 'HANDLED',
+      reason: 'This was sent to a mailing list — it carries an unsubscribe link — so nobody is waiting on a reply.' };
+  }
+
+  const asked = ASKING.find((phrase) => saysPhrase(text, phrase));
   const question = /\?/.test(subject) || /\?/.test(body);
 
   if (asked || question) {
@@ -130,7 +191,7 @@ function judge(message = {}) {
     };
   }
 
-  const trouble = PROBLEM.find((phrase) => text.includes(phrase));
+  const trouble = PROBLEM.find((phrase) => saysPhrase(text, phrase));
   if (trouble) {
     return {
       state: 'NEEDS_REPLY',
@@ -161,4 +222,4 @@ function judge(message = {}) {
   return { state: 'HANDLED', reason: 'Nothing in this asks for an answer.' };
 }
 
-module.exports = { judge, prose, ASKING, PROBLEM, PLEASE, NO_REPLY_SENDER, AUTOMATIC_SUBJECT, FILED };
+module.exports = { judge, prose, saysPhrase, ASKING, PROBLEM, PLEASE, NO_REPLY_SENDER, AUTOMATIC_SUBJECT, FILED };

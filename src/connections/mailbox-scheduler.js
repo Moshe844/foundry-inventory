@@ -35,6 +35,31 @@ async function runDue(db, options = {}) {
     WHERE provider_type IN ('gmail','microsoft365') AND status = 'connected' AND paused_at IS NULL`).all();
   const results = [];
   for (const row of rows) {
+    /*
+     * Mail captured before the relevance gate existed is judged again by the
+     * same rule, and this happens before anything is asked of the network.
+     *
+     * Deliberately not inside syncMailbox. Reviewing records Foundry already
+     * holds needs no provider at all, and on the mailbox that prompted this
+     * work the provider is exactly what is unreliable — so tying the tidy-up
+     * to a successful poll would mean the owner's screen stayed wrong for
+     * precisely as long as their connection was down.
+     */
+    try { require('./mail-relevance').sweepCaptured(db, row.workspace_id, row.id); }
+    catch (error) { console.error('[supplier-mailbox] could not review captured mail', error); }
+    /*
+     * And the same for order conversations, for the same reason.
+     *
+     * A customer's answer to Foundry's question is already captured by the
+     * time this matters; turning it into an order needs the catalogue and the
+     * reader, not the mailbox. Tying it to a successful poll would leave an
+     * order unmade because a connection was down, which is the one moment it
+     * costs a customer.
+     */
+    try {
+      await require('../sales/order-from-email').draftPending(db,
+        { workspaceId: row.workspace_id, actorId: row.authorized_by_user_id });
+    } catch (error) { console.error('[supplier-mailbox] could not read pending orders', error); }
     // Subscription maintenance is independent of whether another mailbox poll
     // is due. A quiet inbox must not be the reason its webhook expires.
     await providerService.maintainMailboxWatch(db, row.workspace_id, row.id, { now });
@@ -60,6 +85,52 @@ async function runDue(db, options = {}) {
       results.push({ connectorId: row.id, ok: false, error: String(error.message || error) });
     } finally { running.delete(row.id); }
   }
+  /*
+   * Parcels the carrier has gone quiet about.
+   *
+   * The recovery path, not the main one. Webhooks are how tracking is meant to
+   * work: the carrier knows the instant a parcel is scanned and says so, while
+   * polling means being wrong for up to six hours about every parcel and
+   * asking about hundreds that have not moved. This exists for the webhook
+   * that was missed while the machine was asleep, and for a number somebody
+   * typed in by hand that no webhook was ever registered for.
+   */
+  const shipping = require('../shipping');
+  if (shipping.provider.configured()) {
+    const shipped = db.prepare(`SELECT DISTINCT workspace_id FROM sales_shipments
+      WHERE status = 'SHIPPED' AND tracking_number IS NOT NULL
+        AND (tracking_status IS NULL OR tracking_status NOT IN ('DELIVERED','RETURNED','CANCELLED'))`)
+      .all().map((row) => row.workspace_id);
+    for (const workspaceId of shipped) {
+      try { await shipping.tracking.sweep(db, { workspaceId, actorId: null }, { now }); }
+      catch (error) { console.error('[shipping] tracking sweep failed', error.message); }
+      /*
+       * And the message for anything that has gone wrong, written and left
+       * unsent. Writing costs nothing and commits nobody; sending is a
+       * separate act under the owner's communication authority, and this
+       * never performs it. The point is that when they open the decision, the
+       * message they would have had to write is already written.
+       */
+      try { shipping.delayNotice.prepareAll(db, { workspaceId, actorId: null }); }
+      catch (error) { console.error('[shipping] delay notices were not prepared', error.message); }
+    }
+
+    /*
+     * And parcels that are packed and covered by a rule.
+     *
+     * The whole point of a rule is that nobody has to be at a screen for it to
+     * apply. Every check is inside shipWithinAuthority — the mode, the
+     * capability, and the rule against fresh rates — so a workspace that has
+     * granted none of that does nothing here but a cheap query.
+     */
+    const waiting = db.prepare(`SELECT DISTINCT workspace_id FROM sales_shipments
+      WHERE status = 'PACKED' AND tracking_number IS NULL`).all().map((row) => row.workspace_id);
+    for (const workspaceId of waiting) {
+      try { await shipping.service.sweep(db, { workspaceId, actorId: null }, {}); }
+      catch (error) { console.error('[shipping] label sweep failed', error.message); }
+    }
+  }
+
   const workspaceIds = db.prepare(`SELECT DISTINCT workspace_id FROM purchase_orders
     WHERE status IN ('ORDERED','PARTIALLY_RECEIVED')`).all().map((row) => row.workspace_id);
   for (const workspaceId of workspaceIds) {

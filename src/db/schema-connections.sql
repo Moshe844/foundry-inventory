@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS connection_email_messages (
   internet_message_id TEXT,
   content_hash        TEXT,
   processing_status   TEXT NOT NULL DEFAULT 'CAPTURED',
+  -- Why a customer's order email produced no draft order; NULL until tried.
+  order_draft_reason  TEXT,
   processed_at        TEXT,
   -- Whether a person still owes this sender an answer.
   --
@@ -193,3 +195,35 @@ CREATE TABLE IF NOT EXISTS connection_sync_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_connection_sync_runs_connection
   ON connection_sync_runs(workspace_id, connector_id, started_at DESC);
+
+-- Mail Foundry looked at and did not take.
+--
+-- Connecting a mailbox is not handing over an inbox. A message that is not
+-- about the business never becomes a connection_email_messages row at all, so
+-- nothing reads it, nothing is extracted from it, and it appears on no screen
+-- the owner works from.
+--
+-- What is kept is the smallest thing that makes the decision auditable and
+-- reversible: who it was from, what it was called, when it arrived, and why it
+-- was set aside. Deliberately no body and no attachments — storing the
+-- contents of the owner's personal mail is the thing this table exists to
+-- avoid. If they bring one in, Foundry fetches that single message from the
+-- provider again.
+CREATE TABLE IF NOT EXISTS connection_email_set_aside (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  connector_id          TEXT NOT NULL REFERENCES workspace_connectors(id) ON DELETE CASCADE,
+  external_message_id   TEXT NOT NULL,
+  sender                TEXT NOT NULL,
+  subject               TEXT,
+  received_at           TEXT NOT NULL,
+  reason                TEXT NOT NULL,
+  -- Set when a person overruled the decision, with the message it became.
+  brought_in_message_id TEXT REFERENCES connection_email_messages(id) ON DELETE SET NULL,
+  brought_in_by_user_id TEXT,
+  brought_in_at         TEXT,
+  created_at            TEXT NOT NULL,
+  UNIQUE (workspace_id, connector_id, external_message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_connection_email_set_aside_recent
+  ON connection_email_set_aside(workspace_id, received_at DESC);

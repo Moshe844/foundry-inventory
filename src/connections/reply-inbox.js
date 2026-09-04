@@ -99,6 +99,7 @@ function rejudge(db, ctx, messageId) {
     sender: current.sender, subject: current.subject, bodyText: current.body_text,
     attachmentCount: Number(current.attachment_count || 0),
     processingStatus: current.processing_status,
+    classification: current.classification,
   });
   db.prepare(`UPDATE connection_email_messages SET reply_state = ?, reply_reason = ?, reply_state_at = ?
     WHERE id = ? AND workspace_id = ?`)
@@ -114,7 +115,11 @@ function rejudge(db, ctx, messageId) {
  * quietly buries last Tuesday.
  */
 function oldestUnanswered(db, workspaceId, limit = 5) {
+  // A message we have written back to is answered, whatever drawer it is
+  // sitting in. Sending moves it to waiting by itself; this is the guard that
+  // makes the decision queue independent of that having happened.
   return db.prepare(`${SELECT} WHERE m.workspace_id = ? AND m.reply_state = 'NEEDS_REPLY'
+      AND m.reply_sent_at IS NULL
     ORDER BY m.received_at ASC, m.rowid ASC LIMIT ?`)
     .all(workspaceId, Math.min(Number(limit) || 5, 50)).map(hydrate);
 }

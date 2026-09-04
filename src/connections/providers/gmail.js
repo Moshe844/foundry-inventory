@@ -151,6 +151,16 @@ async function poll({ credentials, since }) {
   return { messages, cursor: messages[0]?.messageId || null };
 }
 
+/*
+ * One message, asked for by name.
+ *
+ * Foundry only keeps the envelope of mail it set aside, so bringing one in
+ * means going back to Gmail for it rather than to a copy we chose not to make.
+ */
+async function fetchMessage({ credentials, messageId }) {
+  return message(credentials, messageId);
+}
+
 async function send({ credentials, message: outgoing }) {
   const raw = [`To: ${outgoing.recipient}`, `Subject: ${outgoing.subject}`, 'Content-Type: text/plain; charset="UTF-8"',
     '', outgoing.body].join('\r\n');
@@ -161,4 +171,4 @@ async function send({ credentials, message: outgoing }) {
 }
 
 module.exports = { metadata, authorizationUrl, exchangeAuthorization, refreshCredentials, discover,
-  registerWebhooks, renewWebhooks, poll, send, api, message };
+  registerWebhooks, renewWebhooks, poll, send, api, message, fetchMessage };
