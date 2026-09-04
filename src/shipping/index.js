@@ -21,6 +21,7 @@ provider.register('shippo', require('./providers/shippo'));
 
 module.exports = {
   provider,
+  accounts: require('./accounts'),
   address: require('./address'),
   service: require('./service'),
   rules: require('./rules'),

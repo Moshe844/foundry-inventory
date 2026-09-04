@@ -69,11 +69,24 @@ webhooks.post('/webhooks/shipping/:provider/:workspaceId?',
     if (!shipping.provider.has(name)) return res.status(404).json({ error: 'No such shipping provider.' });
 
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''), 'utf8');
+
+    /*
+     * Whose secret verifies this, found before anything is believed.
+     *
+     * Each workspace connects its own carrier account and sets its own webhook
+     * secret, so there is no one secret that verifies every message. The
+     * address carries the workspace id — which is why it is registered per
+     * merchant — and that names the secret to check against. Falling back to
+     * the server's own only for a single-tenant install with no id in the path.
+     */
+    const named = req.params.workspaceId
+      ? shipping.accounts.forWorkspace(req.db, req.params.workspaceId) : null;
+    const webhookSecret = (named && named.webhookSecret)
+      || process.env[`${name.toUpperCase()}_WEBHOOK_SECRET`];
+
     let event;
     try {
-      event = shipping.provider.get(name).verifyEvent(raw, req.headers, {
-        webhookSecret: process.env[`${name.toUpperCase()}_WEBHOOK_SECRET`],
-      });
+      event = shipping.provider.get(name).verifyEvent(raw, req.headers, { webhookSecret });
     } catch (error) {
       // Refused, not failed: a retry would be refused identically.
       return res.status(400).json({ error: error.message });
@@ -108,7 +121,10 @@ router.get('/settings/shipping', requirePermission(permissions.VIEW, 'view shipp
     res.page('shipping/rules', {
       title: 'Shipping rules', nav: 'settings',
       rules: shipping.rules.list(req.db, req.ctx.workspaceId, { activeOnly: false }),
-      provider: shipping.provider.configured(),
+      account: shipping.accounts.describe(req.db, req.ctx.workspaceId),
+      providers: shipping.accounts.PROVIDERS,
+      webhookUrl: `${process.env.FOUNDRY_PUBLIC_URL || ''}/webhooks/shipping/`
+        + `<provider>/${req.ctx.workspaceId}`,
       carriers: require('../../sales/carriers').list(),
       backTo: { href: '/settings', label: 'Settings' },
     });
@@ -126,6 +142,43 @@ router.post('/settings/shipping', requirePermission(permissions.OPERATE, 'set sh
         maxDeliveryDays: trimOrNull(req.body.maxDeliveryDays),
       });
       req.flash('success', 'Saved. Foundry will use this when a parcel is ready and it fits.');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, '/settings/shipping');
+  }));
+
+/*
+ * Connecting a workspace's own carrier account.
+ *
+ * Admin only, because it is the thing that decides who is billed for postage.
+ * The key goes straight to the encrypted credential store; nothing about it is
+ * kept on the connector row, echoed back to the page, or written to a log.
+ */
+router.post('/settings/shipping/account', requirePermission(permissions.ADMIN, 'connect a shipping account'),
+  asyncRoute(async (req, res) => {
+    try {
+      const account = shipping.accounts.connect(req.db, req.ctx, req.user, {
+        provider: trimOrNull(req.body.provider),
+        apiKey: req.body.apiKey,
+        webhookSecret: req.body.webhookSecret,
+      });
+      req.flash('success', `Connected. This inventory now ships on its own ${account.provider} account`
+        + `${account.testMode ? ', in test mode' : ''}, and its labels are billed to it.`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, '/settings/shipping');
+  }));
+
+router.post('/settings/shipping/account/remove', requirePermission(permissions.ADMIN, 'disconnect a shipping account'),
+  asyncRoute(async (req, res) => {
+    try {
+      shipping.accounts.disconnect(req.db, req.ctx, req.user);
+      req.flash('success', 'Disconnected. Foundry will not get rates or buy labels for this inventory, '
+        + 'and parcels handed over by hand are recorded exactly as they always were.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);

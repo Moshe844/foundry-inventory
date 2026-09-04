@@ -152,7 +152,8 @@ function readiness(db, workspaceId, shipmentId) {
         : 'Nobody has said what this parcel weighs.',
       href: null });
   }
-  const provider = providers.configured();
+  const account = require('./accounts').forWorkspace(db, workspaceId);
+  const provider = account ? account.provider : null;
   if (!provider) {
     blocked.push({ key: 'provider',
       what: 'No shipping account is connected, so Foundry cannot get live rates or buy a label. '
@@ -184,8 +185,14 @@ async function quote(db, ctx, shipmentId, options = {}) {
   if (!state.ready) {
     return { rates: [], blocked: state.blocked, promisedDate: promisedDate(db, ctx.workspaceId, state.shipment) };
   }
+  /*
+   * The workspace's own key, not the process's. Every adapter reads its key
+   * off ctx before falling back to the environment, so this is the whole of
+   * what multi-tenancy costs at a call site.
+   */
+  const held = require('./accounts').contextFor(db, ctx);
   const provider = options.provider || providers.get(state.provider);
-  const answer = await provider.quote(ctx, {
+  const answer = await provider.quote(held ? held.ctx : ctx, {
     to: state.to, from: state.from,
     packages: state.boxes.map((box) => ({ weightGrams: box.weightGrams,
       lengthMm: box.lengthMm, widthMm: box.widthMm, heightMm: box.heightMm })),
@@ -256,8 +263,10 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
     .get(rateId, ctx.workspaceId, shipmentId);
   if (!rate) throw new ValidationError('That rate is not one Foundry quoted for this parcel. Get rates again.');
 
-  const provider = options.provider || providers.get(shipment.provider || providers.configured());
-  const bought = await provider.buy(ctx, {
+  const held = require('./accounts').contextFor(db, ctx);
+  const provider = options.provider
+    || providers.get(shipment.provider || (held && held.account.provider));
+  const bought = await provider.buy(held ? held.ctx : ctx, {
     providerShipmentIds: String(shipment.provider_shipment_id || '').split(',').filter(Boolean),
     rateIds: String(rate.provider_rate_id || '').split(',').filter(Boolean),
   });
@@ -407,7 +416,9 @@ async function sweep(db, ctx, options = {}) {
   const capabilities = require('../autopilot/capabilities');
   const allowed = capabilities.may(db, ctx.workspaceId, 'shipping_labels');
   if (!allowed.allowed) return { considered: 0, bought: 0, because: allowed.because };
-  if (!providers.configured()) return { considered: 0, bought: 0, because: 'No shipping account is connected.' };
+  if (!require('./accounts').forWorkspace(db, ctx.workspaceId)) {
+    return { considered: 0, bought: 0, because: 'No shipping account is connected.' };
+  }
 
   const packed = db.prepare(`SELECT id FROM sales_shipments
     WHERE workspace_id = ? AND status = 'PACKED' AND tracking_number IS NULL

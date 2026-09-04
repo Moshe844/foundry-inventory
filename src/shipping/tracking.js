@@ -159,9 +159,11 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
  * answer to.
  */
 async function sweep(db, ctx, options = {}) {
-  const providerName = options.providerName || providers.configured();
+  const held = require('./accounts').contextFor(db, ctx);
+  const providerName = options.providerName || (held && held.account.provider);
   if (!providerName) return { checked: 0, updated: 0, reason: 'no shipping account is connected' };
   const provider = options.provider || providers.get(providerName);
+  const withKey = held ? held.ctx : ctx;
   const quietFor = Number(options.quietForMs || 6 * 60 * 60_000);
   const cutoff = new Date(Date.now() - quietFor).toISOString();
 
@@ -174,7 +176,7 @@ async function sweep(db, ctx, options = {}) {
   let updated = 0;
   for (const shipment of rows) {
     try {
-      const read = await provider.track(ctx, {
+      const read = await provider.track(withKey, {
         trackingNumber: shipment.tracking_number,
         carrier: shipment.carrier,
         providerShipmentId: shipment.provider_shipment_id,
@@ -225,7 +227,8 @@ async function trackNumber(db, ctx, trackingNumber, options = {}) {
         + 'and add it there, so the number is attached to goods and a customer rather than to nothing.' };
   }
 
-  const providerName = options.providerName || providers.configured();
+  const held = require('./accounts').contextFor(db, ctx);
+  const providerName = options.providerName || (held && held.account.provider);
   if (!providerName) {
     return { tracked: true, shipmentId: shipment.id, live: false,
       carrier: detected ? detected.name : carriers.displayName(shipment.carrier),
@@ -233,7 +236,8 @@ async function trackNumber(db, ctx, trackingNumber, options = {}) {
         + 'automatically without a shipping account connected.' };
   }
   const provider = options.provider || providers.get(providerName);
-  const read = await provider.track(ctx, { trackingNumber: number, carrier: shipment.carrier });
+  const read = await provider.track(held ? held.ctx : ctx,
+    { trackingNumber: number, carrier: shipment.carrier });
   if (!read) {
     return { tracked: true, shipmentId: shipment.id, live: false,
       because: 'The carrier has nothing for that number yet.' };

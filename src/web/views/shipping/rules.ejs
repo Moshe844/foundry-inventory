@@ -24,14 +24,94 @@
   </div>
 </div>
 
-<% if (!provider) { %>
-  <div class="notice notice--warn"><div>
-    <strong>No shipping account is connected.</strong><br>
-    Foundry can hold these rules, but it cannot get a rate or buy a label until a carrier account is
-    connected. Nothing about shipping stops working meanwhile — parcels handed over by hand are
-    recorded exactly as they always were.
+<%
+  /*
+   * Whose account this inventory ships on.
+   *
+   * Shown before the rules, because a rule is a permission to spend and the
+   * first thing worth knowing is whose money. A key set on the server is
+   * shared by every inventory on it — fine for one shop, wrong for two — so
+   * that state is stated rather than shown as a green tick.
+   */
+%>
+<section class="card section" id="account">
+  <div class="card-head"><div>
+    <h2>Carrier account</h2>
+    <p class="hint">Rates and labels come from this account, and its labels are billed to it.</p>
   </div></div>
-<% } %>
+
+  <% if (account.connected && account.source === 'workspace') { %>
+    <div class="card-body">
+      <p class="lede">
+        Connected to <%= account.provider === 'easypost' ? 'EasyPost' : 'Shippo' %><% if (account.testMode) { %>
+          <span class="badge badge--warn">test mode</span><% } %>
+      </p>
+      <p class="hint">
+        Key ending <%= account.keyEndsWith %>.
+        <%= account.hasWebhookSecret
+          ? 'Tracking updates arrive by webhook.'
+          : 'No webhook secret is set, so tracking updates rely on the slower scheduled check.' %>
+      </p>
+      <p class="t-xs t-muted">Webhook address for this inventory: <code><%= webhookUrl %></code></p>
+    </div>
+    <div class="card-foot">
+      <form method="post" action="/settings/shipping/account/remove" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--ghost" type="submit">Disconnect</button>
+      </form>
+    </div>
+  <% } else { %>
+    <% if (account.connected && account.source === 'server') { %>
+      <div class="card-body">
+        <div class="notice notice--warn"><div>
+          <strong>This inventory is using the key set on the server.</strong><br>
+          <%= account.because %>
+        </div></div>
+      </div>
+    <% } else { %>
+      <div class="card-body">
+        <p class="lede">No carrier account is connected.</p>
+        <p class="hint">
+          Foundry can hold these rules, but it cannot get a rate or buy a label until there is an
+          account to ask. Nothing about shipping stops working meanwhile — parcels handed over by
+          hand are recorded exactly as they always were.
+        </p>
+      </div>
+    <% } %>
+    <form method="post" action="/settings/shipping/account" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="card-body stack">
+        <label class="field">
+          <span class="field-label">Provider</span>
+          <select class="select" name="provider">
+            <% providers.forEach(function (name) { %>
+              <option value="<%= name %>"><%= name === 'easypost' ? 'EasyPost' : 'Shippo' %></option>
+            <% }) %>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">API key</span>
+          <input class="input" type="password" name="apiKey" autocomplete="off" required>
+          <span class="field-hint">
+            Start with the provider's test key. It returns real rates and issues labels without
+            charging anybody or moving anything. Stored encrypted, and never shown back to you.
+          </span>
+        </label>
+        <label class="field">
+          <span class="field-label">Webhook secret <span class="t-muted">(optional)</span></span>
+          <input class="input" type="password" name="webhookSecret" autocomplete="off">
+          <span class="field-hint">
+            The string you set on the provider's webhook. Without it Foundry still tracks parcels,
+            just on the slower scheduled check rather than the instant a carrier scans one.
+          </span>
+        </label>
+      </div>
+      <div class="card-foot">
+        <button class="btn btn--primary" type="submit">Connect this inventory's account</button>
+      </div>
+    </form>
+  <% } %>
+</section>
 
 <section class="card section">
   <div class="card-head"><div>
