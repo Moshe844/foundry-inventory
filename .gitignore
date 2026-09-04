@@ -4,3 +4,12 @@ artifacts/
 *.log
 .env
 .DS_Store
+
+# A stray SQLite database left by a mistyped command — real business data, and
+# version control is not where a copy of the books belongs.
+x
+x-shm
+x-wal
+
+# Local tool permissions, specific to one machine.
+.claude/settings.local.json

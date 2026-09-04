@@ -1,0 +1,117 @@
+<%
+  /*
+   * The rule, as three conditions and a choice.
+   *
+   * Written as a form rather than a sentence box on purpose. A sentence has to
+   * be re-read every time a parcel is ready, and a reader that is right
+   * ninety-nine times in a hundred is wrong about one parcel a week — which,
+   * for a rule that spends money, is not a rounding error. The sentence
+   * underneath each rule is Foundry saying back what it will do, so an owner
+   * can see it understood them.
+   */
+  const money = function (minor) { return '$' + (Number(minor || 0) / 100).toFixed(2); };
+%>
+
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Foundry · A Keeper product</p>
+    <h1>Shipping rules</h1>
+    <p class="lede">
+      When a parcel is ready, Foundry gets live rates from the carriers. A rule here says which of
+      them it may buy on its own. Anything a rule does not cover becomes a question rather than a
+      guess.
+    </p>
+  </div>
+</div>
+
+<% if (!provider) { %>
+  <div class="notice notice--warn"><div>
+    <strong>No shipping account is connected.</strong><br>
+    Foundry can hold these rules, but it cannot get a rate or buy a label until a carrier account is
+    connected. Nothing about shipping stops working meanwhile — parcels handed over by hand are
+    recorded exactly as they always were.
+  </div></div>
+<% } %>
+
+<section class="card section">
+  <div class="card-head"><div>
+    <h2>Rules you have set</h2>
+    <p class="hint">Checked in order. The first one that covers a parcel is the one used.</p>
+  </div></div>
+  <div class="card-body stack">
+    <% if (!rules.filter(function (r) { return r.active; }).length) { %>
+      <p class="planning-item">
+        No rule yet, so Foundry asks about every parcel. That is a reasonable place to stay —
+        a rule is worth setting when you notice yourself answering the same way each time.
+      </p>
+    <% } %>
+    <% rules.filter(function (r) { return r.active; }).forEach(function (rule) { %>
+      <article class="planning-item">
+        <strong><%= rule.name %></strong>
+        <p class="t-muted">
+          <%= rule.carrier ? rule.carrier.toUpperCase() : 'Any carrier' %>
+          <%= rule.service || '' %>
+          <% if (rule.maxCostMinor) { %> · under <%= money(rule.maxCostMinor) %><% } %>
+          <% if (rule.requireByPromised) { %> · must arrive by the promised date<% } %>
+          <% if (rule.maxDeliveryDays) { %> · within <%= rule.maxDeliveryDays %> days<% } %>
+        </p>
+        <% if (rule.statedText) { %><p class="t-xs t-muted">You said: “<%= rule.statedText %>”</p><% } %>
+        <form method="post" action="/settings/shipping/<%= rule.id %>/remove" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--sm btn--ghost" type="submit">Stop using this</button>
+        </form>
+      </article>
+    <% }) %>
+  </div>
+</section>
+
+<section class="card section">
+  <div class="card-head"><div>
+    <h2>Add a rule</h2>
+    <p class="hint">
+      Leave the carrier empty to mean “whatever is cheapest that qualifies”, which is what most
+      shops actually want.
+    </p>
+  </div></div>
+  <form method="post" action="/settings/shipping">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="card-body stack">
+      <label class="field">
+        <span class="field-label">Carrier <span class="t-muted">(optional)</span></span>
+        <select class="select" name="carrier">
+          <option value="">Any — cheapest that qualifies</option>
+          <% carriers.forEach(function (carrier) { %>
+            <option value="<%= carrier.code %>"><%= carrier.name %></option>
+          <% }) %>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">Service <span class="t-muted">(optional)</span></span>
+        <input class="input" type="text" name="service" placeholder="Ground">
+        <span class="field-hint">Exactly as the carrier names it. Empty means any service.</span>
+      </label>
+      <label class="field">
+        <span class="field-label">Only when it costs less than</span>
+        <input class="input" type="text" name="maxCost" placeholder="25.00">
+        <span class="field-hint">Empty means no limit, which is a lot of trust to give postage.</span>
+      </label>
+      <label class="field field--check">
+        <input type="checkbox" name="requireByPromised" checked>
+        <span>Only when it arrives by the date the customer was promised</span>
+      </label>
+      <label class="field">
+        <span class="field-label">Or within this many days <span class="t-muted">(optional)</span></span>
+        <input class="input" type="number" name="maxDeliveryDays" min="1" max="30">
+      </label>
+    </div>
+    <div class="card-foot">
+      <button class="btn btn--primary" type="submit">Save this rule</button>
+    </div>
+  </form>
+</section>
+
+<p class="money-foot">
+  Foundry only ever chooses between rates a carrier has actually quoted for the parcel in front of
+  it. A rule cannot make it buy something nobody offered, and a rate with no delivery date never
+  counts as arriving on time — a carrier that declines to say is not a carrier promising.
+</p>
