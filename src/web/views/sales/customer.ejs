@@ -120,6 +120,32 @@
           </span>
         </label>
 
+        <%#
+          The permission and its size, together, because neither means anything
+          alone. Off for everybody until somebody says otherwise: automation
+          that arrives switched on is how a customer gets invoiced by a system
+          nobody authorised to invoice them.
+        %>
+        <label class="choice">
+          <input type="checkbox" name="autoRequestEnabled" value="1" <%= terms.autoRequestEnabled ? 'checked' : '' %>>
+          <span class="choice-body">
+            <strong>Let Foundry ask this customer for money on its own</strong>
+            <span class="t-xs t-muted">
+              When a deposit or a balance falls due, Foundry makes the payment link and emails it,
+              then tells you it did. Above the limit below — or if Foundry is set to ask first — it
+              still writes the message and leaves it on the order for you to send.
+            </span>
+          </span>
+        </label>
+
+        <label class="field">
+          <span class="field-label">Most Foundry may ask for without you</span>
+          <input class="input" type="number" name="autoRequestLimit" min="0" step="0.01"
+            value="<%= terms.autoRequestLimitMinor ? (terms.autoRequestLimitMinor / 100).toFixed(2) : '' %>"
+            placeholder="500.00">
+          <span class="field-hint">Leave this empty and Foundry asks for nothing by itself, whatever the switch says.</span>
+        </label>
+
         <label class="field">
           <span class="field-label">Note <span class="t-muted">(optional)</span></span>
           <input class="input" type="text" name="note" value="<%= terms.note || '' %>"

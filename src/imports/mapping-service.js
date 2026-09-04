@@ -154,7 +154,24 @@ function reconcile(proposed, { columns, deterministic, confident, profilesByInde
     if (!fields.FIELD_IDS.includes(entry.field) && entry.field !== 'ignore') continue;
 
     const held = fieldAt(index);
-    if (held && confident.includes(held)) continue;   // settled by its heading
+    if (held && confident.includes(held)) {
+      /*
+       * Settled by its own heading, so the model does not get to move it.
+       *
+       * Reported rather than dropped in silence: the preview lists what the
+       * model suggested and what Foundry did not take, and a suggestion that
+       * vanishes without a line is the one nobody can argue with later.
+       */
+      if (held !== entry.field) {
+        rejected.push({
+          column: column.name,
+          field: entry.field,
+          because: `Foundry had already matched “${column.name}” to `
+            + `${fields.FIELD_LABEL[held]} from its own heading.`,
+        });
+      }
+      continue;
+    }
     if (held && held !== entry.field) {
       // Held only on a catch-all wording, and the model — which saw the values
       // — reads it differently. Releasing it is the point of asking.
@@ -299,6 +316,21 @@ async function proposeMappings(sheet, options = {}) {
     profilesByIndex,
   });
 
+  /*
+   * The model gets the last word on which column is which, and then this gets
+   * the last word on whether a product can be identified at all.
+   *
+   * On a real supplier invoice the deterministic pass had already worked out
+   * that "Shoe / Description" was the product name — the assumption said so on
+   * screen — and the model then filed the same column as a description, which
+   * silently undid it. Nothing named a product, and every row was rejected
+   * underneath Foundry's own note explaining what the column was.
+   */
+  const recovered = fields.ensureIdentity(reconciled.mappings, {
+    columns: sheet.columns,
+    profilesByIndex: profilesByIndex,
+  });
+
   const claimed = new Set(Object.values(reconciled.mappings));
   const detectedType = fields.DETECTED_TYPES.includes(result.data.detectedType)
     ? result.data.detectedType
@@ -306,6 +338,7 @@ async function proposeMappings(sheet, options = {}) {
 
   return {
     ...base,
+    assumptions: [...(base.assumptions || []), ...recovered],
     mappings: reconciled.mappings,
     // The model may only refine the type, never contradict what the columns
     // plainly are: a file with no quantity column is not an inventory file.

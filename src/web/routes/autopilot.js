@@ -10,6 +10,7 @@
 
 const express = require('express');
 const modes = require('../../autopilot/modes');
+const capabilities = require('../../autopilot/capabilities');
 const policyService = require('../../autopilot/policy-service');
 const workItems = require('../../autopilot/work-items');
 const runner = require('../../autopilot/runner');
@@ -36,9 +37,11 @@ router.get(
   asyncRoute(async (req, res) => {
     const workspaceId = req.ctx.workspaceId;
     res.page('autopilot/settings', {
+      backTo: { href: '/settings', label: 'Settings' },
       title: 'What Foundry does',
       nav: 'autopilot',
       state: modes.get(req.db, workspaceId),
+      capabilities: capabilities.list(req.db, workspaceId),
       limits: modes.limits(req.db, workspaceId),
       policies: policyService.list(req.db, workspaceId),
       routine: policyService.routineSetup(req.db, workspaceId),
@@ -120,6 +123,8 @@ router.get(
   asyncRoute(async (req, res) => {
     const items = workItems.list(req.db, req.ctx.workspaceId, { limit: 100 });
     res.page('autopilot/history', {
+      backTo: { href: '/autopilot', label: 'Automatic work' },
+
       title: 'What Foundry has done',
       nav: 'history',
       groups: {
@@ -153,6 +158,8 @@ router.get(
       return res.redirect(303, `/purchasing/supplier-for/${explanation.item.recommendedAction.skuId}`);
     }
     res.page('autopilot/work', {
+      backTo: { href: '/autopilot', label: 'Automatic work' },
+
       // Named, so the browser tab and the heading say which product is being
       // decided rather than only what kind of decision it is.
       title: explanation.approvalCopy
@@ -225,6 +232,32 @@ router.post(
 
 // --- authority ---------------------------------------------------------------
 
+/*
+ * One job at a time.
+ *
+ * Separate from the mode on purpose: the mode says how much authority Foundry
+ * has in general, and these say which jobs it may use it for. Changing one
+ * must never move another, which was the whole complaint.
+ */
+router.post(
+  '/autopilot/capability',
+  asyncRoute(async (req, res) => {
+    try {
+      const capability = trimOrNull(req.body.capability);
+      const granted = req.body.granted === 'on' || req.body.granted === '1';
+      const after = capabilities.set(req.db, req.ctx, req.user, capability, granted);
+      const job = after.find((entry) => entry.capability === capability);
+      req.flash('success', granted
+        ? `Foundry may now ${job.label.toLowerCase()} on its own. Nothing else changed.`
+        : `Foundry will ask before it ${job.label.toLowerCase().replace(/^move/, 'moves').replace(/^reorder/, 'reorders').replace(/^email/, 'emails').replace(/^answer/, 'answers').replace(/^ask/, 'asks').replace(/^tell/, 'tells')}. Nothing else changed.`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, '/autopilot/settings#jobs');
+  })
+);
+
 router.post(
   '/autopilot/mode',
   asyncRoute(async (req, res) => {
@@ -261,6 +294,19 @@ router.post(
   asyncRoute(async (req, res) => {
     try {
       const routine = policyService.configureRoutine(req.db, req.ctx, req.user, req.body);
+      /*
+       * The guided setup is the grant.
+       *
+       * These two switches already say "Foundry may automatically move stock"
+       * and "may automatically approve supplier orders" — which is exactly
+       * what the job permissions mean. Keeping them apart would give the owner
+       * two switches for one decision and a way to set them against each
+       * other, so ticking the box here authorises the job underneath it.
+       */
+      capabilities.apply(req.db, req.ctx, req.user, {
+        inventory_transfers: Boolean(routine.transfer.enabled),
+        replenishment: Boolean(routine.purchasing.enabled),
+      });
       react(req, { change: 'routine_authority', transfer: routine.transfer, purchasing: routine.purchasing });
       const allowed = [];
       if (routine.transfer.enabled) {
@@ -379,6 +425,8 @@ router.get(
   asyncRoute(async (req, res) => {
     const policy = policyService.get(req.db, req.ctx.workspaceId, req.params.id);
     res.page('autopilot/policy', {
+      backTo: { href: '/autopilot', label: 'Automatic work' },
+
       title: policy.name,
       nav: 'autopilot',
       policy,

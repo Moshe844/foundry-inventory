@@ -27,6 +27,9 @@ const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('.
 
 test.after(cleanupAll);
 
+// The books open the day the test runs; a date before that is refused, so fixtures are dated today.
+const TODAY = new Date().toISOString().slice(0, 10);
+
 function setup() {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Riverside Supply' });
@@ -45,7 +48,7 @@ function orderWorth1500(env) {
     customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 100 }],
   }).id);
   const { invoice } = receivables.createDraft(env.db, env.ctx, env.membership, {
-    customerId: customer.id, salesOrderId: order.id, issueDate: '2026-09-02', dueDate: '2026-10-02',
+    customerId: customer.id, salesOrderId: order.id, issueDate: TODAY, dueDate: '2026-10-02',
     lines: [{ description: '100 Black Small Shirt', quantity: 100, unitPriceMinor: 1500 }],
   });
   receivables.open(env.db, env.ctx, env.membership, invoice.id);
@@ -62,7 +65,7 @@ function orderWorth1500(env) {
  */
 const pay = (env, customer, invoiceId, minor, key) => payments.record(env.db, env.ctx, env.membership, {
   direction: 'CUSTOMER_RECEIPT', customerId: customer.id,
-  paymentDate: '2026-09-03', amountMinor: minor, method: 'card', sourceKey: key,
+  paymentDate: TODAY, amountMinor: minor, method: 'card', sourceKey: key,
   allocations: [{ invoiceId, amountMinor: minor }],
 });
 
@@ -132,7 +135,7 @@ test('a deposit releases picking and the balance holds the shipping', () => {
 
   pay(env, customer, invoiceId, 105000, 'test:balance');
   assert.equal(position(env, order).blocksShipping, false);
-  const shipped = shipments.ship(env.db, env.ctx, box.id, {});
+  const shipped = shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
   assert.equal(shipped.status, 'SHIPPED', 'paid in full, so it goes');
 });
 
@@ -150,7 +153,7 @@ test('the owner can let one order past, and it is on the record', () => {
 
   const box = shipments.startPicking(env.db, env.ctx, order.id);
   shipments.markPacked(env.db, env.ctx, box.id, {});
-  assert.equal(shipments.ship(env.db, env.ctx, box.id, {}).status, 'SHIPPED');
+  assert.equal(shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' }).status, 'SHIPPED');
 
   terms.clearOverride(env.db, env.ctx, order.id);
   assert.equal(position(env, order).blocksPicking, true, 'lifting it once does not lift it forever');
@@ -281,7 +284,7 @@ test('a deposit can be taken before there is an invoice, and holds until it is',
 
   // Money taken with no invoice to put it against, referenced to the order.
   payments.record(env.db, env.ctx, env.membership, {
-    direction: 'CUSTOMER_RECEIPT', customerId: customer.id, paymentDate: '2026-09-02',
+    direction: 'CUSTOMER_RECEIPT', customerId: customer.id, paymentDate: TODAY,
     amountMinor: 4500, method: 'cash', reference: 'Cheque 4021',
     // The same key the order page writes: a link lives in source_key, and the
     // reference stays whatever the person typed.

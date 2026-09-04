@@ -320,6 +320,24 @@ router.get(
           provider: req.app.locals.aiProvider || undefined,
           context: briefingContext(req.db, req.ctx.workspaceId),
         });
+        /*
+         * An instruction typed into the question box.
+         *
+         * Foundry has one understanding of what somebody said; which box they
+         * typed it in should not change whether it understands them. So this
+         * hands the sentence to the part that carries instructions out rather
+         * than explaining, from here, what Foundry supposedly cannot do —
+         * which is how "please delete my entire inventory" got answered with
+         * "Foundry cannot delete or wipe an entire inventory". It can.
+         */
+        if (result && result.plan && result.plan.intent === 'action') {
+          req.session.pendingActionQuestion = {
+            instruction: question,
+            question: 'That is something to do rather than something to look up, '
+              + 'so Foundry brought it here. Press Continue and it will work out what changes.',
+          };
+          return res.redirect(303, '/actions');
+        }
       } catch (err) {
         if (err.status && err.status < 500) error = err.message;
         else throw err;

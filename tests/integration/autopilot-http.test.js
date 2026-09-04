@@ -21,6 +21,7 @@ const policyService = require('../../src/autopilot/policy-service');
 const policyEngine = require('../../src/autopilot/policy-engine');
 const preferences = require('../../src/autopilot/preferences');
 const modes = require('../../src/autopilot/modes');
+const capabilities = require('../../src/autopilot/capabilities');
 const runner = require('../../src/autopilot/runner');
 const engine = require('../../src/domain/inventory-engine');
 const reevaluate = require('../../src/attention/reevaluate');
@@ -234,6 +235,8 @@ test('the guided routine setup versions changes and can remove its authority', a
   const env = setup();
   const agent = await ownerAgent(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+  // The mode is a ceiling; the jobs are granted separately.
+  capabilities.apply(env.db, env.ctx, env.membership, { inventory_transfers: true, replenishment: true });
 
   await post(agent, '/autopilot/routine-authority', { enableTransfers: '1', maximumQuantity: '5' });
   const first = policyService.activeFor(env.db, env.workspace.workspaceId, 'transfer')[0];
@@ -258,6 +261,8 @@ test('guided purchasing requires an explicit limit and selected supplier in the 
   });
   const agent = await ownerAgent(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+  // The mode is a ceiling; the jobs are granted separately.
+  capabilities.apply(env.db, env.ctx, env.membership, { inventory_transfers: true, replenishment: true });
 
   const page = plain((await agent.get('/autopilot')).text);
   assert.match(page, /Approve routine purchase orders/);
@@ -391,6 +396,8 @@ test('taking authority away is available to anyone who can operate the inventory
     role: 'staff',
   });
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+  // The mode is a ceiling; the jobs are granted separately.
+  capabilities.apply(env.db, env.ctx, env.membership, { inventory_transfers: true, replenishment: true });
 
   const agent = request.agent(env.app);
   await signIn(agent, 'sam2@autopilot.test', 'autopilot-co-2026');

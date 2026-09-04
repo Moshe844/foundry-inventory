@@ -149,7 +149,18 @@
          var duplicateResult = duplicateAttachment ? duplicateAttachment.documentResult || {} : {};
          var duplicateWasRemoved = Boolean(duplicateResult.removedAt)
            && (!duplicateResult.restoredAt || String(duplicateResult.removedAt) > String(duplicateResult.restoredAt));
-         var outcome = message.trust_status !== 'TRUSTED' ? 'Ignored sender'
+         /*
+          * A customer's order comes first. Before this, a message that had
+          * produced a draft order was labelled "Ignored sender" because the
+          * sender was not an approved supplier — true, and beside the point.
+          */
+         var outcome = message.drafted_order_number
+             ? (message.drafted_order_status === 'DRAFT'
+               ? 'Order ' + message.drafted_order_number + ' drafted · Needs your approval'
+               : 'Order ' + message.drafted_order_number + ' ' + String(message.drafted_order_status || '').toLowerCase().replace(/_/g, ' '))
+           : message.classification === 'customer_order_request' && message.order_draft_reason
+             ? (/^Same request as /.test(message.order_draft_reason) ? 'Same request as an earlier email' : 'Order not drafted · Needs you')
+           : message.trust_status !== 'TRUSTED' ? 'Unapproved sender'
            : message.processing_status === 'INVENTORY_RESTORED' ? 'Removed import restored'
            : message.processing_status === 'DUPLICATE_IGNORED' && duplicateWasRemoved ? 'Previously imported — later removed'
            : message.processing_status === 'DUPLICATE_IGNORED' ? 'Exact duplicate — already imported'
@@ -208,6 +219,20 @@
               <% if (duplicateWasRemoved) { %><p><strong>What happens now:</strong> Choose whether to restore the exact original products and quantities or keep them removed. Nothing changes until you approve the review.</p><div class="form-actions"><a class="btn btn--primary btn--sm" href="/settings/connections/<%= connection.id %>/email-messages/<%= message.id %>/restore-import">Review and re-import</a><% if (duplicateAttachment.understanding_id) { %><a class="btn btn--sm" href="/foundry/proposal/<%= duplicateAttachment.understanding_id %>">View original import</a><% } %><% if (duplicateAttachment.document_id) { %><a class="btn btn--sm" href="/inventory?sourceDocument=<%= duplicateAttachment.document_id %>&amp;fromConnection=<%= connection.id %>&amp;fromMessage=<%= message.id %>">View these products</a><% } %></div>
               <% } else { %><p>Foundry compared the file contents—not merely its name—and prevented the same stock from being added twice.</p><p><strong>Why it is not in Needs You:</strong> there is no unresolved choice. Importing identical contents again would duplicate inventory.</p><a class="btn btn--sm" href="/inventory">See current inventory</a><% } %>
             </div></div>
+          <% } else if (message.drafted_order_number) { %>
+            <p><strong>Message</strong></p><p style="white-space:pre-wrap"><%= message.body_text %></p>
+            <div class="notice notice--info"><div>
+              <strong>Foundry read this as an order and drafted <%= message.drafted_order_number %>.</strong>
+              <p>Nothing is committed, no stock is held and the customer has not been answered until you approve it.</p>
+              <a class="btn btn--primary btn--sm" href="/orders/<%= message.drafted_order_id %>">Review <%= message.drafted_order_number %></a>
+            </div></div>
+          <% } else if (message.classification === 'customer_order_request' && message.order_draft_reason) { %>
+            <p><strong>Message</strong></p><p style="white-space:pre-wrap"><%= message.body_text %></p>
+            <div class="notice notice--warn"><div>
+              <strong>Foundry read this as somebody trying to buy, and did not draft an order.</strong>
+              <p><%= message.order_draft_reason %></p>
+              <a class="btn btn--sm" href="/mail/<%= message.id %>">Read and answer it</a>
+            </div></div>
           <% } else if (message.body_text) { %>
             <p><strong>Message</strong></p><p style="white-space:pre-wrap"><%= message.body_text %></p>
             <p class="muted">Saved for history. It did not change purchasing or inventory.</p>
@@ -247,6 +272,22 @@
     <% if (currentUser.role === 'owner' && ['gmail','microsoft365'].includes(connection.provider_type)) { %>
       <form method="post" action="/settings/connections/<%= connection.id %>/sync-mailbox"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Check <%= connection.provider_type === 'microsoft365' ? 'Microsoft' : 'Gmail' %> now</button></form>
       <form method="post" action="/settings/connections/<%= connection.id %>/mailbox-cadence" class="form-actions"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Check automatically</span><select class="select" name="minutes"><% [1,5,10,15,30].forEach(function(n) { %><option value="<%= n %>" <%= Number(connection.config.mailboxCheckMinutes || 5) === n ? 'selected' : '' %>>Every <%= n %> minute<%= n === 1 ? '' : 's' %></option><% }) %></select></label><button class="btn btn--sm" type="submit">Save timing</button></form>
+      <form method="post" action="/settings/connections/<%= connection.id %>/unknown-senders" class="form-actions">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="field">
+          <span class="field-label">People you have not approved</span>
+          <select class="select" name="captureUnknownSenders">
+            <option value="on" <%= connection.config.captureUnknownSenders === false ? '' : 'selected' %>>Read their mail, and file it as untrusted</option>
+            <option value="off" <%= connection.config.captureUnknownSenders === false ? 'selected' : '' %>>Ignore them completely</option>
+          </select>
+          <span class="field-hint">
+            Reading it is not acting on it: nothing is extracted, no purchasing record is made, no stock moves.
+            An order in it becomes a draft for you to approve. Ignoring them is more private, and it means a
+            customer writing to you for the first time will not be seen at all.
+          </span>
+        </label>
+        <button class="btn btn--sm" type="submit">Save</button>
+      </form>
     <% } %>
     <div class="form-actions"><% if (currentUser.role === 'owner') { %>
       <% if (connection.paused_at) { %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Resume mailbox</button></form><% } else { %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Pause mailbox</button></form><% } %>

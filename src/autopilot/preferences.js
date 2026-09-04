@@ -60,6 +60,53 @@ const KEYS = {
     kind: 'boolean',
     describe: (v) => (v ? 'Move stock between locations before buying more.' : 'Buy without trying to move stock first.'),
   },
+  SERVICE_LEVEL: {
+    key: 'service_level',
+    label: 'What matters more',
+    kind: 'choice',
+    choices: [
+      { id: 'lean', label: 'Keep stock lean' },
+      { id: 'balanced', label: 'Balanced' },
+      { id: 'protective', label: 'Avoid stockouts' },
+    ],
+    describe: (v) => (v === 'protective'
+      ? 'Carry more stock so customers are rarely turned away.'
+      : v === 'lean'
+        ? 'Accept the occasional stockout in order to hold less stock.'
+        : 'Balance availability against the money tied up in stock.'),
+  },
+  MAX_DAYS_OF_SUPPLY: {
+    key: 'max_days_of_supply',
+    label: 'Never keep more than',
+    kind: 'number',
+    min: 7,
+    max: 730,
+    describe: (v) => `Do not keep more than about ${v} days of supply without a reason.`,
+  },
+  INVENTORY_CAP: {
+    key: 'inventory_cap_minor',
+    label: 'Keep inventory investment under',
+    kind: 'money',
+    min: 0,
+    max: 1_000_000_000_00,
+    describe: (v) => `Try to keep the money tied up in stock under $${(v / 100).toFixed(2)}.`,
+  },
+  PRIORITISE_CORE_PRODUCTS: {
+    key: 'prioritise_core_products',
+    label: 'Protect availability of core products',
+    kind: 'boolean',
+    describe: (v) => (v
+      ? 'Keep the products that sell most reliably available before anything else.'
+      : 'Treat every product the same when choosing what to protect.'),
+  },
+  CONSERVATIVE_SEASONAL: {
+    key: 'conservative_seasonal',
+    label: 'Be careful with seasonal products',
+    kind: 'boolean',
+    describe: (v) => (v
+      ? 'Be cautious about reading a seasonal rise as a lasting one.'
+      : 'Treat seasonal products like everything else.'),
+  },
   NEVER_AUTOMATE_SERIALIZED: {
     key: 'never_automate_serialized',
     label: 'Never move serialised items automatically',
@@ -73,6 +120,27 @@ const BY_KEY = new Map(Object.values(KEYS).map((def) => [def.key, def]));
 const SOURCES = ['instruction', 'policy', 'configuration'];
 
 function parse(def, raw) {
+  if (def.kind === 'choice') {
+    const text = String(raw).trim().toLowerCase();
+    if (!def.choices.some((choice) => choice.id === text)) {
+      throw new ValidationError(`“${def.label}” has to be one of: `
+        + def.choices.map((choice) => choice.label).join(', ') + '.');
+    }
+    return text;
+  }
+  if (def.kind === 'money') {
+    // Stored in minor units so no preference ever holds a rounded pound.
+    const cleaned = String(raw).replace(/[^0-9.-]/g, '');
+    const amount = Number(cleaned);
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new ValidationError(`“${def.label}” has to be an amount of money.`);
+    }
+    const minor = Math.round(amount * 100);
+    if (minor < def.min || minor > def.max) {
+      throw new ValidationError(`“${def.label}” looks out of range.`);
+    }
+    return minor;
+  }
   if (def.kind === 'boolean') {
     if (typeof raw === 'boolean') return raw;
     const text = String(raw).trim().toLowerCase();
@@ -167,6 +235,8 @@ function list(db, workspaceId) {
       return {
         key: row.key,
         label: def.label,
+        kind: def.kind,
+        choices: def.choices || null,
         value,
         description: def.describe(value),
         statedAs: row.stated_as,

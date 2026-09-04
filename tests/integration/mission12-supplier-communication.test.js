@@ -12,6 +12,7 @@ const poService = require('../../src/purchasing/po-service');
 const connections = require('../../src/connections/service');
 const ingestion = require('../../src/connections/event-ingestion');
 const needsYou = require('../../src/manager/needs-you-inbox');
+const setAside = require('../../src/connections/mail-set-aside');
 const gmail = require('../../src/connections/providers/gmail');
 const microsoft365 = require('../../src/connections/providers/microsoft365');
 const operatingInstructions = require('../../src/manager/operating-instructions');
@@ -31,6 +32,7 @@ const reactions = require('../../src/manager/reactions');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, signIn, csrfFrom, plain } = require('../helpers');
 
 test.after(cleanupAll);
+
 
 test('the mailbox scheduler wakes often enough to honor a one-minute cadence', () => {
   assert.ok(mailboxScheduler.DEFAULT_WAKE_MS <= 15_000);
@@ -426,18 +428,107 @@ test('a review-each attachment can be explicitly processed as purchasing evidenc
   env.db.close();
 });
 
-test('mailbox polling ignores every sender the owner did not approve', async () => {
+test('mail that is not the business is not taken, and a stranger who is trading still gets in', async () => {
+  /*
+   * This assertion has now moved twice, and the second move is the owner's.
+   *
+   * It first said an unapproved sender was dropped entirely — connecting a
+   * mailbox is not permission to ingest an inbox. That lost a first-time
+   * customer's order, so it was changed to capture everything and act on
+   * nothing: the line moved from "may this be read" to "may this be acted on".
+   *
+   * Which was right about the customer and wrong about the inbox. Capturing
+   * everything meant the owner's newsletters, bank alerts and personal mail
+   * became rows in Foundry, were triaged, listed and counted as work — and
+   * they said so: only mail about the business should reach Foundry.
+   *
+   * So the question is no longer who the sender is. It is whether the message
+   * is about the business, and both halves of that are asserted here.
+   */
   const env = setup();
   const connectorId = connectTestGmail(env);
-  const result = await providerService.syncMailbox(env.db, env.workspace.workspaceId, connectorId, { adapter: {
+  const stranger = { adapter: {
     refreshCredentials: async (current) => ({ credentials: current, refreshed: false }),
     poll: async () => ({ messages: [{ messageId: 'unrelated-1', sender: 'newsletter@example.test',
       subject: 'Weekly news', bodyText: 'Nothing about purchasing.', receivedAt: new Date().toISOString(), attachments: [] }] }),
+  } };
+  await providerService.syncMailbox(env.db, env.workspace.workspaceId, connectorId, stranger);
+
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_email_messages
+    WHERE workspace_id = ? AND external_message_id = ?`).get(env.workspace.workspaceId, 'unrelated-1').n, 0,
+  'a newsletter does not become a record in Foundry');
+
+  // But it is not silently dropped either: the envelope and the reason stay.
+  const aside = setAside.list(env.db, env.workspace.workspaceId);
+  assert.equal(aside.length, 1);
+  assert.equal(aside[0].sender, 'newsletter@example.test');
+  assert.match(aside[0].reason, /nothing in it mentions an order/i,
+    'and the reason is written for the owner, not for a log');
+  assert.equal(aside[0].subject, 'Weekly news');
+  assert.ok(!('body_text' in aside[0]), 'the contents of mail that is not ours are not kept');
+  assert.ok(!needsYou.inbox(env.db, env.workspace.workspaceId).some((entry) => /newsletter/i.test(entry.title)),
+    'and a newsletter is not somebody the owner has to answer for');
+
+  // A stranger with no rule, no account and no history, who is plainly trading.
+  await providerService.syncMailbox(env.db, env.workspace.workspaceId, connectorId, { adapter: {
+    refreshCredentials: async (current) => ({ credentials: current, refreshed: false }),
+    poll: async () => ({ messages: [{ messageId: 'buyer-1', sender: 'chavy@example.test',
+      subject: 'Question', bodyText: 'Do you have the black ones in stock? We would like to order 20.',
+      receivedAt: new Date().toISOString(), attachments: [] }] }),
+  } });
+  const buyer = env.db.prepare(`SELECT * FROM connection_email_messages
+    WHERE workspace_id = ? AND external_message_id = ?`).get(env.workspace.workspaceId, 'buyer-1');
+  assert.ok(buyer, 'somebody trying to buy is the business, whoever they are');
+  assert.equal(buyer.trust_status, 'UNTRUSTED', 'and is still filed as a stranger');
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM supplier_documents WHERE message_id = ?`)
+    .get(buyer.id).n, 0, 'no purchasing evidence is extracted from an unapproved sender');
+
+  // An owner who wants the older behaviour can still have it.
+  env.db.prepare(`UPDATE workspace_connectors SET config = ? WHERE id = ?`)
+    .run(JSON.stringify({ captureUnknownSenders: false }), connectorId);
+  const result = await providerService.syncMailbox(env.db, env.workspace.workspaceId, connectorId, { adapter: {
+    refreshCredentials: async (current) => ({ credentials: current, refreshed: false }),
+    poll: async () => ({ messages: [{ messageId: 'unrelated-2', sender: 'other@example.test',
+      subject: 'Also unrelated', bodyText: 'Nothing here either.', receivedAt: new Date().toISOString(), attachments: [] }] }),
   } });
   assert.equal(result.messages, 0);
   assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_email_messages
-    WHERE workspace_id = ? AND external_message_id = ?`).get(env.workspace.workspaceId, 'unrelated-1').n, 0);
-  assert.ok(!needsYou.inbox(env.db, env.workspace.workspaceId).some((entry) => /newsletter/i.test(entry.title)));
+    WHERE workspace_id = ? AND external_message_id = ?`).get(env.workspace.workspaceId, 'unrelated-2').n, 0);
+  env.db.close();
+});
+
+test('the owner can overrule the gate, and Foundry fetches the message it did not keep', async () => {
+  /*
+   * A filter nobody can overrule is a filter nobody can trust. Foundry kept
+   * the envelope and the reason and nothing else, so bringing one in means
+   * going back to Gmail for the message rather than to a copy it deliberately
+   * did not make.
+   */
+  const env = setup();
+  const connectorId = connectTestGmail(env);
+  const arrived = { messageId: 'aside-1', sender: 'accountant@example.test', subject: 'Hello again',
+    bodyText: 'Just checking in about lunch.', receivedAt: new Date().toISOString(), attachments: [] };
+  await providerService.syncMailbox(env.db, env.workspace.workspaceId, connectorId, { adapter: {
+    refreshCredentials: async (current) => ({ credentials: current, refreshed: false }),
+    poll: async () => ({ messages: [arrived] }),
+  } });
+
+  const [row] = setAside.list(env.db, env.workspace.workspaceId);
+  assert.ok(row, 'it was set aside rather than dropped');
+
+  let askedFor = null;
+  const result = await providerService.bringInSetAside(env.db, env.workspace.ctx, row.id, { adapter: {
+    refreshCredentials: async (current) => ({ credentials: current, refreshed: false }),
+    fetchMessage: async ({ messageId }) => { askedFor = messageId; return arrived; },
+  } });
+  assert.equal(askedFor, 'aside-1', 'the provider is asked for that one message by its own id');
+  assert.ok(result.messageId, 'and it becomes an ordinary message');
+
+  const captured = env.db.prepare(`SELECT * FROM connection_email_messages WHERE id = ?`).get(result.messageId);
+  assert.equal(captured.body_text, 'Just checking in about lunch.');
+  assert.equal(setAside.count(env.db, env.workspace.workspaceId), 0, 'and it leaves the set-aside drawer');
+  assert.equal(setAside.get(env.db, env.workspace.workspaceId, row.id).brought_in_message_id, result.messageId,
+    'while the record that it was once turned away, and by whom, stays');
   env.db.close();
 });
 
@@ -771,6 +862,8 @@ function connectTestGmail(env, supplierChanges = {}) {
     autoSendLimit: 500, ...supplierChanges,
   });
   modes.setMode(env.db, env.workspace.ctx, env.membership, modes.MODES.POLICY_AUTOMATED);
+  // The mode is a ceiling; emailing suppliers is its own grant underneath it.
+  require('../../src/autopilot/capabilities').set(env.db, env.workspace.ctx, env.membership, 'supplier_emails', true);
   return connectorId;
 }
 

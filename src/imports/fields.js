@@ -29,6 +29,18 @@ const FIELDS = [
   { id: 'variant3', label: 'Variant (3)' },
   { id: 'quantity', label: 'Quantity' },
   { id: 'sellingPrice', label: 'Selling price' },
+  /*
+   * What the stock cost, as opposed to what it sells for.
+   *
+   * This was deliberately ignored — "Foundry does not track supplier cost" —
+   * and the consequence was a supplier invoice importing 250 pairs of shoes
+   * that were worth nothing at all. The books showed stock with no value, and
+   * the first sale of any of it would stop dead on "Foundry has no recorded
+   * cost for this product". A cost the supplier wrote on their own invoice is
+   * not a figure Foundry is guessing at; it is the one number that makes the
+   * inventory it just created mean anything.
+   */
+  { id: 'unitCost', label: 'Unit cost' },
   { id: 'currency', label: 'Currency' },
   { id: 'location', label: 'Location' },
   { id: 'serial', label: 'Serial number' },
@@ -80,6 +92,21 @@ const PATTERNS = {
   ],
   code: [
     /\b(?:sku|mpn)\b/,
+    /*
+     * "Style #" is how a shoe or garment supplier writes a product code, and
+     * it was being read as a variation because the word "style" also names an
+     * axis. A real invoice arrived with Style #, Colour and Size; the style
+     * number became a third variant, nothing named a product, and all 65 rows
+     * came back "No product name or code in this row" — with SH-1001 sitting
+     * in every one of them.
+     *
+     * The number marker is what separates the two meanings. Bare "Style" is
+     * still an axis; "Style #", "Style No" and "Style Code" are the code.
+     */
+    // The trailing boundary sits inside each alternative on purpose: "#" is
+    // not a word character, so a \b after it never matches at the end of a
+    // heading — and "Style #" is exactly where a heading ends.
+    /\b(?:style|art(?:icle)?|model|design|pattern)\s*(?:#|nos?\.?\b|num(?:ber)?\b|code\b|id\b)/,
     /\b(?:item|product|part|catalog(?:ue)?|stock|material)\s*(?:code|no\.?|num(?:ber)?|id|#)\b/,
     /\b(?:code|part\s*#|ref(?:erence)?)\b/,
   ],
@@ -89,6 +116,12 @@ const PATTERNS = {
     /^(?:item|product|part)$/,
   ],
   description: [/\b(?:description|descr?\.?|details?|long\s*desc)\b/],
+  unitCost: [
+    /\b(?:unit\s*cost|cost\s*(?:price|each|per\s*unit)|wholesale\s*(?:cost|price)|buy(?:ing)?\s*price|purchase\s*price|landed\s*cost)\b/,
+    // A bare "Cost" usually is one, but "Line Cost" and "Total Cost" are the
+    // row's arithmetic rather than the price of one unit, so they rank below.
+    /^costs?$/,
+  ],
   quantity: [
     /\b(?:qty|quantity)\b/,
     /\b(?:on\s*hand|onhand|in\s*stock|stock\s*(?:level|count)|available|balance|count(?:ed)?)\b/,
@@ -123,6 +156,36 @@ PATTERNS.variant3 = PATTERNS.variant1;
  * left out — Foundry does not track those" is honest, where silently dropping
  * them looks like a bug and mapping them somewhere would be a lie.
  */
+/*
+ * Money a supplier charges that is not the goods.
+ *
+ * Shipping, handling, insurance, duty, a fuel surcharge, a restocking fee.
+ * These were read as "supplier cost or calculated pricing" and dropped, so a
+ * real invoice put $702.50 of freight and fees nowhere at all: the Money page
+ * showed an empty Expenses section beside stock that had genuinely cost more
+ * than it said.
+ *
+ * Recognised as charges rather than mapped to a field, because they do not
+ * belong to a product. They belong to the document, and each is kept in the
+ * supplier's own wording.
+ */
+const CHARGE_PATTERNS = [
+  { kind: 'freight', pattern: /\b(?:shipping|freight|carriage|delivery|postage|fuel\s*surcharge)\b/ },
+  { kind: 'insurance', pattern: /\binsurance\b/ },
+  { kind: 'duty', pattern: /\b(?:duty|duties|customs|import|tariff|brokerage)\b/ },
+  { kind: 'tax', pattern: /\b(?:vat|gst|hst|tax)\b/ },
+  { kind: 'discount', pattern: /\b(?:discount|credit|allowance|rebate)\b/ },
+  { kind: 'other', pattern: /\b(?:handling|surcharge|processing|warehouse|packaging|packing|fee)\b/ },
+];
+
+/** Which kind of charge a heading or a label names, or null. */
+function chargeKindFor(text) {
+  const clean = normalise(text);
+  if (!clean) return null;
+  const hit = CHARGE_PATTERNS.find((entry) => entry.pattern.test(clean));
+  return hit ? hit.kind : null;
+}
+
 const IGNORED_PATTERNS = [
   { label: 'supplier cost or calculated pricing', pattern: /\b(?:unit\s*cost|purchase\s*price|cost|wholesale|margin|value|amount|total|tax|vat)\b/ },
   { label: 'suppliers', pattern: /\b(?:supplier|vendor|manufacturer|brand|purchase\s*order|\bpo\b)\b/ },
@@ -196,6 +259,69 @@ function profileColumn(rows, index) {
 }
 
 /**
+ * Values that are codes rather than words.
+ *
+ * A letter and a digit together: SH-1001, AB12, 7L665-1. Deliberately not
+ * "anything with a digit in it", because a size column of 10.5 and 11 would
+ * qualify and become a product code, which is a worse failure than the one
+ * this recovers from.
+ */
+function looksLikeCodes(samples = []) {
+  const values = samples.map((value) => String(value || '').trim()).filter(Boolean);
+  if (values.length < 2) return false;
+  return values.every((value) => /^[a-z0-9][a-z0-9._/-]{2,}$/i.test(value)
+    && /[a-z]/i.test(value) && /\d/.test(value));
+}
+
+/**
+ * Every row must be able to say which product it is about.
+ *
+ * Foundry refused a whole spreadsheet — 65 rows, every one of them — for
+ * having "no product name or code", while every row carried SH-1001 and a
+ * description of the shoe. The columns were there; they had been filed under
+ * headings that do not identify a product, and nothing looked again.
+ *
+ * So this looks again, and only ever at what the file already contains. A
+ * description is a name when there is no name. A code-shaped column is a code
+ * when nothing else identifies anything. Neither invents a value, and each one
+ * is stated as an assumption, because a reader has to be able to disagree.
+ */
+function ensureIdentity(mappings, { columns, profilesByIndex }) {
+  const assumptions = [];
+  const named = (index) => {
+    const column = columns.find((entry) => entry.index === index);
+    return column ? column.name : `column ${index + 1}`;
+  };
+
+  // Very common shape: one "Description" column and no name at all. That column
+  // *is* the product name, and refusing to import until someone renames a
+  // header would be Foundry making its own problem the customer's.
+  if (mappings.name === undefined && mappings.description !== undefined) {
+    mappings.name = mappings.description;
+    delete mappings.description;
+    assumptions.push(`“${named(mappings.name)}” read as the product name — the file has no separate name column.`);
+  }
+
+  if (mappings.name !== undefined || mappings.code !== undefined) return assumptions;
+
+  /*
+   * Still nothing to identify a product by, and the import would import
+   * nothing at all. A variation whose values are codes is the code.
+   */
+  for (const field of VARIANT_FIELDS) {
+    const index = mappings[field];
+    if (index === undefined) continue;
+    const profile = profilesByIndex ? profilesByIndex[index] : null;
+    if (!profile || !looksLikeCodes(profile.samples)) continue;
+    mappings.code = index;
+    delete mappings[field];
+    assumptions.push(`“${named(index)}” read as the product code — its values look like codes, and nothing else in the file names a product.`);
+    break;
+  }
+  return assumptions;
+}
+
+/**
  * The deterministic mapping: header wording, with column contents settling ties.
  *
  * One column per field and one field per column. Anything left unclaimed is
@@ -255,19 +381,8 @@ function guessMappings(columns, rows) {
     confident.add(VARIANT_FIELDS[position]);
   });
 
-  const assumptions = [];
-
-  // Very common shape: one "Description" column and no name at all. That column
-  // *is* the product name, and refusing to import until someone renames a
-  // header would be Foundry making its own problem the customer's.
-  if (mappings.name === undefined && mappings.description !== undefined) {
-    mappings.name = mappings.description;
-    delete mappings.description;
-    // Inferred rather than read off a header, so the model may still disagree.
-    confident.delete('description');
-    const column = columns.find((c) => c.index === mappings.name);
-    assumptions.push(`“${column ? column.name : 'Description'}” read as the product name — the file has no separate name column.`);
-  }
+  if (mappings.name === undefined && mappings.description !== undefined) confident.delete('description');
+  const assumptions = ensureIdentity(mappings, { columns, profilesByIndex: profiles });
 
   const ignored = columns
     .filter((column) => !usedColumns.has(column.index))
@@ -299,6 +414,8 @@ function detectType(mappings) {
 }
 
 module.exports = {
+  CHARGE_PATTERNS, chargeKindFor,
+  ensureIdentity, looksLikeCodes,
   FIELDS,
   FIELD_IDS,
   FIELD_LABEL,

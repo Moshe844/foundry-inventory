@@ -20,6 +20,9 @@ const prices = require('../pricing/price-service');
 const MAX_FUZZY_ROWS = 2000;
 
 const PROBLEM = {
+  // Not a fault in the row: the row is not a product.
+  TRAILER: 'document_trailer',
+  BAD_COST: 'bad_cost',
   NO_PRODUCT: 'no_product',
   BAD_QUANTITY: 'bad_quantity',
   NEGATIVE_QUANTITY: 'negative_quantity',
@@ -228,6 +231,54 @@ const cell = (row, index) => (index === undefined ? '' : String(row.cells[index]
  * @param {object} plan { mappings, axisNames, detectedType, defaultLocationId, locationMappings }
  * @returns {{ rows, summary, locationsNeeded, dateOrder }}
  */
+/**
+ * Where the data stops and the paperwork starts.
+ *
+ * A supplier invoice does not end with its last line item. Under it come the
+ * subtotal, the freight, the tax, the payment terms, the return policy and the
+ * invoice total — and Foundry imported every one of them as a product. A real
+ * upload produced "INVOICE TOTAL", "Sales/Use Tax", "ACH / Business Check /
+ * Wire" and "Defects reported within 7 days…" sitting in the catalogue beside
+ * twelve genuine shoes.
+ *
+ * The signal is structural rather than a list of words, because the words are
+ * different on every supplier's paper and the shape is not: a blank row ends
+ * the data block, and nothing after it carries a quantity. Both halves matter.
+ * A blank row in the middle of real data is common, so a tail that still
+ * counts stock is still data; and a file that never counted anything has no
+ * data block for a trailer to follow.
+ *
+ * Returns the position the trailer starts at, or -1 when the file has none.
+ */
+function trailerStartsAt(sheet, mappings) {
+  // Only a file that counts stock has a data block that can end.
+  if (!mappings || mappings.quantity === undefined) return -1;
+  const rows = sheet.rows || [];
+  if (rows.length < 2) return -1;
+
+  /*
+   * A quantity means a number. The trailer of a real invoice puts labels in
+   * whatever column they land in — "Gross Margin $" sat in the Qty column —
+   * and treating any non-empty cell as a count let one label vouch for the
+   * whole block being data.
+   */
+  const counted = (row) => /^-?\d+(?:[.,]\d+)?$/
+    .test(String((row.cells || [])[mappings.quantity] ?? '').trim());
+
+  let gap = -1;
+  for (let index = 1; index < rows.length; index += 1) {
+    const previous = Number(rows[index - 1].sourceRow);
+    const here = Number(rows[index].sourceRow);
+    if (Number.isFinite(previous) && Number.isFinite(here) && here > previous + 1) gap = index;
+  }
+  if (gap <= 0) return -1;
+
+  // There has to be a data block before it, and nothing countable after it.
+  if (!rows.slice(0, gap).some(counted)) return -1;
+  if (rows.slice(gap).some(counted)) return -1;
+  return gap;
+}
+
 function validateRows(db, workspaceId, sheet, plan) {
   const context = plan.context || loadContext(db, workspaceId);
   const mappings = plan.mappings || {};
@@ -274,9 +325,33 @@ function validateRows(db, workspaceId, sheet, plan) {
     plan.detectedType
   );
 
+  const trailerAt = trailerStartsAt(sheet, mappings);
+
   sheet.rows.forEach((row, position) => {
     const problems = [];
     const parsed = {};
+
+    /*
+     * Below the last line item. Left out rather than refused: there is nothing
+     * wrong with these rows, they are simply not products, and calling them
+     * errors would put the invoice's own footer in a list of things to fix.
+     */
+    if (trailerAt >= 0 && position >= trailerAt) {
+      out.push({
+        rowNumber: row.sourceRow,
+        position,
+        raw: row.cells,
+        parsed: { name: cell(row, mappings.name), code: cell(row, mappings.code) },
+        problems: [{
+          code: PROBLEM.TRAILER,
+          message: 'Below the last product on the sheet, so Foundry read this as part of the '
+            + 'document rather than as stock — a subtotal, a fee, a note or the invoice total. '
+            + 'Nothing will be created from it.',
+        }],
+        status: 'EXCLUDED',
+      });
+      return;
+    }
 
     const name = cell(row, mappings.name);
     const code = cell(row, mappings.code);
@@ -289,6 +364,25 @@ function validateRows(db, workspaceId, sheet, plan) {
     parsed.unitLabel = cell(row, mappings.unitLabel);
     parsed.notes = cell(row, mappings.notes);
     parsed.currency = (cell(row, mappings.currency) || 'USD').toUpperCase();
+    /*
+     * What this stock cost. Kept separate from the selling price in every
+     * direction: one values the inventory, the other prices it for a customer,
+     * and a file that carries both must never let either stand in for the other.
+     */
+    const rawCost = cell(row, mappings.unitCost);
+    parsed.unitCostMinor = null;
+    if (rawCost) {
+      try {
+        parsed.unitCostMinor = prices.toMinor(rawCost, 'Unit cost');
+      } catch {
+        // Not a blocking fault: the stock is still real, it simply arrives
+        // without a value, and Foundry says so rather than inventing one.
+        problems.push({ code: PROBLEM.BAD_COST,
+          message: 'This row\'s unit cost is not an amount Foundry can read. The stock can still '
+            + 'import, but it will have no value until a cost is recorded.' });
+      }
+    }
+
     const rawPrice = cell(row, mappings.sellingPrice);
     parsed.sellingPriceMinor = null;
     if (rawPrice) {
@@ -507,6 +601,8 @@ function validateRows(db, workspaceId, sheet, plan) {
 
   const summary = {
     total: out.length,
+    // The invoice's own footer is not a row somebody has to do something about.
+    excluded: out.filter((row) => row.status === 'EXCLUDED').length,
     valid: out.filter((row) => row.status === 'VALID').length,
     needsReview: out.filter((row) => row.status === 'NEEDS_REVIEW').length,
     invalid: out.filter((row) => row.status === 'INVALID').length,
@@ -532,6 +628,7 @@ function looksClose(a, b) {
 }
 
 module.exports = {
+  trailerStartsAt,
   PROBLEM,
   BLOCKING,
   REVIEWABLE,

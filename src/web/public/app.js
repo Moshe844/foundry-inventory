@@ -707,6 +707,219 @@
     })[ch]);
   }
 
+  /*
+   * Copy a payment link without leaving the order.
+   *
+   * The link used to be a word inside a sentence, which meant getting it into
+   * a text message was a right-click, a menu, and a hope. It is the thing the
+   * customer needs, so taking it should be one press that says it worked.
+   */
+  function initCopyButtons() {
+    document.addEventListener('click', function (event) {
+      var button = event.target.closest('[data-copy]');
+      if (!button) return;
+      event.preventDefault();
+      var value = button.getAttribute('data-copy');
+      var said = button.textContent;
+      var done = function () {
+        button.textContent = 'Copied';
+        setTimeout(function () { button.textContent = said; }, 2000);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(value).then(done, function () { window.prompt('Copy this link', value); });
+      } else {
+        // No clipboard permission, so show it rather than silently doing nothing.
+        window.prompt('Copy this link', value);
+      }
+    });
+  }
+
+  /*
+   * Taking a payment without losing the order.
+   *
+   * The page the customer pays on is Stripe's, and it has to stay Stripe's:
+   * Foundry never sees a card number and never will. The question is only
+   * where it appears. A plain link threw the merchant into whatever browser
+   * the operating system felt like opening — a fresh window, signed out,
+   * three windows away, with a customer standing at the counter.
+   *
+   * Embedding it was tried first and does not work: Stripe's hosted invoice
+   * page declines to render inside a frame, and a blank rectangle is worse
+   * than the link was. So it opens as a payment window sized like a card
+   * terminal, over the order, and the order stays underneath waiting for it —
+   * saying what is being paid, and closing itself when the window closes.
+   *
+   * Some browsers refuse to open a window at all. That is not an error to
+   * report; it is the same job done one click differently, so the panel says
+   * so plainly and hands over a button that opens the page instead. Either
+   * way the order is still on screen behind it, and either way Foundry learns
+   * about the payment from Stripe rather than from anybody remembering.
+   */
+  /* A receipt is printed from the page it is shown on. */
+  function initPrintButtons() {
+    document.addEventListener('click', function (event) {
+      if (!event.target.closest('[data-print]')) return;
+      event.preventDefault();
+      window.print();
+    });
+  }
+
+  function initPaymentWindow() {
+    var modal = document.getElementById('pay-window');
+    if (!modal) return;
+    var blocked = document.getElementById('pay-window-blocked');
+    var watching = document.getElementById('pay-window-watching');
+    var front = document.getElementById('pay-window-front');
+    var tab = document.getElementById('pay-window-tab');
+    var done = document.getElementById('pay-window-done');
+    var doneAmount = document.getElementById('pay-window-done-amount');
+    var receipt = document.getElementById('pay-window-receipt');
+    var sheet = modal.querySelector('[data-order]');
+    var orderId = sheet && sheet.getAttribute('data-order');
+    var paying = null;
+    var watch = null;
+    var asking = null;
+    var settled = false;
+
+    function popup(url) {
+      var width = 520;
+      var height = Math.min(820, Math.max(560, window.screen.availHeight - 120));
+      var left = Math.max(0, window.screenX + (window.outerWidth - width) / 2);
+      var top = Math.max(0, window.screenY + (window.outerHeight - height) / 2);
+      return window.open(url, 'foundry-payment',
+        'popup=yes,width=' + width + ',height=' + height + ',left=' + Math.round(left) + ',top=' + Math.round(top));
+    }
+
+    function open(url) {
+      if (!url) return;
+      tab.href = url;
+      modal.hidden = false;
+      document.body.classList.add('is-paying');
+      // A window if the browser allows one, a tab if it does not, and if it
+      // allows neither the panel offers the page as a button.
+      // Deliberately no 'noopener': that makes window.open return nothing, and
+      // then Foundry cannot tell when the payment window is closed again.
+      paying = popup(url) || window.open(url, '_blank');
+      blocked.hidden = Boolean(paying);
+      watching.hidden = !paying;
+      // Nothing to bring forward when nothing opened.
+      front.hidden = !paying;
+
+      /*
+       * Asked every few seconds while the panel is open, whichever way the
+       * customer is paying — a window Foundry can watch, a tab it cannot, or
+       * a link they opened on their phone.
+       */
+      asking = setInterval(ask, 3000);
+      window.setTimeout(ask, 1200);
+
+      if (!paying) return;
+      watch = setInterval(function () {
+        if (paying.closed) close();
+      }, 700);
+    }
+
+    function money(minor) {
+      return '$' + (Number(minor || 0) / 100).toFixed(2);
+    }
+
+    /*
+     * Waiting for the money, and knowing when it has arrived.
+     *
+     * The merchant is standing at the counter with the customer. Before this,
+     * the panel could only say "the window is open" and the person had to
+     * guess when to close it, then reload and hope. Foundry asks the payment
+     * provider directly, so the answer arrives whether or not a webhook does.
+     */
+    function finish(state) {
+      settled = true;
+      clearInterval(asking);
+      clearInterval(watch);
+      asking = null;
+      watch = null;
+      if (paying && !paying.closed) paying.close();
+      paying = null;
+
+      watching.hidden = true;
+      blocked.hidden = true;
+      front.hidden = true;
+      tab.hidden = true;
+      doneAmount.textContent = money(state.paidMinor) + ' paid.';
+      done.hidden = false;
+      if (state.receipt) {
+        receipt.href = state.receipt.href;
+        receipt.hidden = false;
+      }
+      // The order underneath is now out of date, so it is re-read quietly
+      // behind the panel rather than on the way out of it.
+      window.setTimeout(function () {
+        var here = new URL(window.location.href);
+        here.searchParams.delete('pay');
+        window.location.replace(here.toString());
+      }, 15000);
+    }
+
+    function ask() {
+      if (!orderId || settled) return;
+      window.fetch('/sales/orders/' + orderId + '/payment-state', {
+        headers: { Accept: 'application/json' },
+        credentials: 'same-origin',
+      }).then(function (response) {
+        return response.ok ? response.json() : null;
+      }).then(function (state) {
+        if (state && state.paid) finish(state);
+      }).catch(function () {
+        // Not being able to ask is not news about the customer. The next tick
+        // asks again, and Done still checks before it closes.
+      });
+    }
+
+    function close() {
+      clearInterval(asking);
+      asking = null;
+      clearInterval(watch);
+      watch = null;
+      if (paying && !paying.closed) paying.close();
+      paying = null;
+      modal.hidden = true;
+      document.body.classList.remove('is-paying');
+      /*
+       * Whether they actually paid is Stripe's to tell Foundry, over the
+       * webhook. Reading the order again shows whatever arrived while the
+       * window was open, rather than leaving a paid order saying it is owed.
+       */
+      var here = new URL(window.location.href);
+      if (here.searchParams.has('pay')) {
+        here.searchParams.delete('pay');
+        window.location.replace(here.toString());
+      } else {
+        window.location.reload();
+      }
+    }
+
+    document.addEventListener('click', function (event) {
+      var opener = event.target.closest('[data-pay-open]');
+      if (opener) {
+        event.preventDefault();
+        open(opener.getAttribute('data-pay-open'));
+        return;
+      }
+      if (event.target.closest('[data-pay-front]')) {
+        event.preventDefault();
+        if (paying && !paying.closed) paying.focus();
+        return;
+      }
+      // Opening it from here is the same job; the panel stays up, waiting.
+      if (event.target.closest('#pay-window-tab')) return;
+      if (event.target.closest('[data-pay-close]') || event.target === modal) close();
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && !modal.hidden) close();
+    });
+
+    open(modal.getAttribute('data-open-now'));
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     initNavigationLanding();
     initSearch();
@@ -727,5 +940,8 @@
     initLiveMailbox();
     initScopeWarnings();
     initSelectionGroups();
+    initCopyButtons();
+    initPaymentWindow();
+    initPrintButtons();
   });
 })();

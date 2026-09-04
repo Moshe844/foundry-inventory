@@ -135,12 +135,20 @@ test('a preference never grants Foundry anything new', () => {
   // Every key is a number or a yes/no about how work is sized — none of them
   // name an action, a location, or an amount Foundry may move unattended. That
   // is a policy's job, and this is the test that keeps the two apart.
+  const permission = /allow|permit|authoris|authoriz|grant|enable_|automate_transfer/;
   for (const definition of Object.values(preferences.KEYS)) {
-    assert.ok(['number', 'boolean'].includes(definition.kind));
+    assert.ok(['number', 'boolean', 'choice', 'money'].includes(definition.kind),
+      `${definition.key} has an unexpected kind of answer`);
     assert.ok(
-      !/allow|permit|authorise|authorize|automate_transfer/.test(definition.key),
+      !permission.test(definition.key),
       `${definition.key} sounds like permission, which belongs in a policy`
     );
+    // A choice is still a preference, so none of its options may read as one
+    // either — "let Foundry order" hiding inside a dropdown is the same bug.
+    for (const choice of definition.choices || []) {
+      assert.ok(!permission.test(choice.id),
+        `${definition.key}.${choice.id} sounds like permission`);
+    }
   }
 });
 

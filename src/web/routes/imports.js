@@ -262,7 +262,12 @@ router.post(
       planService.cancel(req.db, req.ctx, req.user, req.params.id);
       req.flash('success', 'That import was cancelled. Nothing was created.');
     }
-    return res.redirect(`/imports/${req.params.id}`);
+    /*
+     * Back to where the decision was made. Pressed from Needs you, the plan's
+     * own page is a cancelled import nobody asked to look at.
+     */
+    const returnTo = String(req.body.returnTo || '');
+    return res.redirect(returnTo === '/needs-you' ? '/needs-you' : `/imports/${req.params.id}`);
   })
 );
 

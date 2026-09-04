@@ -13,8 +13,8 @@
     <div class="modal-body">
       <p><%= scopeWarning.message %></p>
       <div class="scope-warning__compare">
-        <div><span>Already here</span><strong><%= scopeWarning.currentExamples.join(', ') %></strong></div>
-        <div><span>In this file</span><strong><%= scopeWarning.incomingExamples.join(', ') %></strong></div>
+        <div><span>Already here<% if (scopeWarning.currentProductCount > scopeWarning.currentExamples.length) { %> — showing 4 of <%= scopeWarning.currentProductCount %><% } %></span><strong><%= scopeWarning.currentExamples.join(', ') %></strong></div>
+        <div><span>In this file<% if (scopeWarning.incomingProductCount > scopeWarning.incomingExamples.length) { %> — showing 4 of <%= scopeWarning.incomingProductCount %><% } %></span><strong><%= scopeWarning.incomingExamples.join(', ') %></strong></div>
       </div>
       <p class="muted">Foundry has read the file, but nothing has been imported. Continue only if these records belong in the inventory currently open.</p>
     </div>

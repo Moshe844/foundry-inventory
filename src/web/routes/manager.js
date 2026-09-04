@@ -29,6 +29,7 @@ const permissions = require('../../actions/permissions');
 const priceChanges = require('../../pricing/price-changes');
 const connectionTell = require('../../connections/tell');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
+const actionHandoff = require('../action-handoff');
 const { trimOrNull } = require('../../lib/util');
 
 const router = express.Router();
@@ -574,6 +575,24 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       managerContext.remember(req.db, req.ctx, { entities: { actionId: related } });
       return res.redirect(303, target);
     }
+    // A message to send, a supplier payment to confirm: understood, and
+    // shown on the page that can carry it out.
+    const handed = actionHandoff.handOff(req, result);
+    if (handed) {
+      intentRouter.markRouted(req.db, req.ctx, intent.id, handed.routedTo, handed.related);
+      return res.redirect(303, handed.target);
+    }
+    // Deleting the whole inventory is done on its own page, by name. Foundry
+    // says so and points at it, rather than asking "which item?" again.
+    if (result.kind === 'delete_inventory') {
+      req.session.pendingActionQuestion = {
+        unsupported: result.message,
+        where: result.where || null,
+        instruction: message,
+      };
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
+      return res.redirect(303, '/actions');
+    }
     if (result.kind === 'missing_location') {
       req.session.pendingLocationTransfer = {
         locationName: result.locationName,
@@ -618,7 +637,14 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         result.blocked ? 'REFUSED' : 'NEEDS_CLARIFICATION');
       return res.redirect(303, '/actions');
     }
-    req.flash('error', result.message || 'Foundry needs more detail.');
+    /*
+     * Every kind the reader can return is handled above. If one is not, that
+     * is a fault in Foundry, and it is reported as one — not as a request for
+     * the person to explain a sentence that was already clear.
+     */
+    console.error('[tell] interpret returned a kind this route does not show', { kind: result.kind });
+    req.flash('error', result.message
+      || 'Foundry understood that but has no screen for it yet. That is a fault on our side, not in what you wrote. Nothing was changed.');
     return res.redirect(303, '/#tell-foundry');
   }
   if (intent.handler === 'physical_event' || intent.intentClass === 'PHYSICAL_EVENT') {
@@ -658,6 +684,12 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         managerContext.remember(req.db, req.ctx, { entities: { actionId: related } });
         req.flash('info', 'No open order matches that delivery, so Foundry prepared it as a receipt. Nothing changes until you approve it.');
         return res.redirect(303, actionTarget);
+      }
+      const handedOn = actionHandoff.handOff(req, asAction);
+      if (handedOn) {
+        physicalEvents.complete(req.db, req.ctx.workspaceId, event.id);
+        intentRouter.markRouted(req.db, req.ctx, intent.id, handedOn.routedTo, handedOn.related);
+        return res.redirect(303, handedOn.target);
       }
       // A question about the delivery is still better asked than filed away.
       if (asAction.kind === 'question' && asAction.question) {
@@ -732,6 +764,32 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     // “Everything” is not a bounded instruction. It can only open the guided
     // review; it can never be translated into broad authority or approved in
     // one step.
+    /*
+     * A shipping rule is a policy change with a shape Foundry can read exactly.
+     *
+     * Tried before the general path because the general path produces a
+     * proposal for a person to approve, and this one does not need to: every
+     * value in it came out of the owner's own characters by pattern, so there
+     * is nothing for them to check that they did not just type. What it cannot
+     * read cleanly falls through to the ordinary proposal, which is the right
+     * place for anything uncertain about what Foundry may do.
+     */
+    const shippingRule = require('../../shipping/rule-intent').read(message);
+    if (shippingRule.understood) {
+      const saved = require('../../shipping/rule-intent').applySentence(req.db, req.ctx, message);
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'shipping_rule', saved.saved.id);
+      req.flash('success', `Saved: ${saved.because} Foundry still needs permission to buy labels `
+        + 'before it acts on this by itself.');
+      return res.redirect(303, '/settings/shipping');
+    }
+    if (shippingRule.needs) {
+      // Understood the subject, not the limits. Say what is missing rather
+      // than sending a shipping sentence off to a generic policy proposal.
+      req.flash('warn', shippingRule.because);
+      return res.redirect(303, '/settings/shipping');
+    }
+
+    // “Everything” is not a bounded instruction.
     if (/handle\s+everything|everything\s+you\s+(?:safely\s+)?can/i.test(message)) {
       req.session.policyReviewAll = true;
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'policy_settings');

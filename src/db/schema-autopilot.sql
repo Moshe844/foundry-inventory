@@ -56,6 +56,23 @@ CREATE TABLE IF NOT EXISTS workspace_autopilot (
 -- Deterministic operational limits. Deliberately per-workspace rather than
 -- global: a business moving forty units a day and one moving four thousand do
 -- not share a sensible ceiling.
+/*
+ * What Foundry may do on its own, one job at a time.
+ *
+ * The mode is a ceiling; these are the grants underneath it. A row exists only
+ * once somebody has had an opinion about that job, and its absence means no —
+ * authority is something given, not something defaulted into.
+ */
+CREATE TABLE IF NOT EXISTS autopilot_capabilities (
+  workspace_id       TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  capability         TEXT NOT NULL,
+  granted            INTEGER NOT NULL DEFAULT 0 CHECK (granted IN (0,1)),
+  granted_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, capability)
+);
+
 CREATE TABLE IF NOT EXISTS autopilot_limits (
   workspace_id            TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
   max_actions_per_day     INTEGER NOT NULL DEFAULT 20,

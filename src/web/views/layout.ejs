@@ -184,6 +184,11 @@
       <% if (typeof screenGuide !== 'undefined' && screenGuide) { %>
         <%- include('partials/screen-guide', { screenGuide: screenGuide }) %>
       <% } %>
+      <% if (typeof backTo !== 'undefined' && backTo && backTo.href) { %>
+        <a class="page-back" href="<%= backTo.href %>">
+          <span class="page-back-arrow" aria-hidden="true">&#8592;</span><span>Back to <%= backTo.label %></span>
+        </a>
+      <% } %>
       <%- body %>
     </main>
   </div>

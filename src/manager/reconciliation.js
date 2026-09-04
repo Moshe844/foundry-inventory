@@ -200,6 +200,15 @@ function scanWorkspace(db, workspaceId) {
   for (const order of orders) records.push(reconcilePurchaseOrder(db, workspaceId, order.id));
   records.push(...reconcileFailedImports(db, workspaceId));
   records.push(...reconcileUnifiedBusinessState(db, workspaceId));
+  /*
+   * Money the business is holding against an invoice that still says it is
+   * owed. A customer paid a link, the receipt posted against their order, and
+   * nothing applied it — so the order read "still owed" about money already in
+   * the bank. Fixed where it happens now; this settles the records written
+   * while it was not, and does nothing at all once there are none.
+   */
+  try { require('../accounting/receivables').settleUnappliedReceipts(db, { workspaceId, actorId: null }); }
+  catch (error) { console.error('[reconciliation] unapplied receipts were not settled', error.message); }
   return { checked: records.length, failed: records.filter((entry) => entry && entry.status === 'FAILED').length, records };
 }
 

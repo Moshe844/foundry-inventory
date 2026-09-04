@@ -28,13 +28,17 @@ const autopilotRoutes = require('./web/routes/autopilot');
 const purchasingRoutes = require('./web/routes/purchasing');
 const managerRoutes = require('./web/routes/manager');
 const salesRoutes = require('./web/routes/sales');
+const messageRoutes = require('./web/routes/messages');
 const mailRoutes = require('./web/routes/mail');
 const paymentRoutes = require('./web/routes/payments');
+const shippingRoutes = require('./web/routes/shipping');
 // Registers the payment providers this build ships with.
 require('./payments');
+require('./shipping');
 const pricingRoutes = require('./web/routes/pricing');
 const connectionRoutes = require('./web/routes/connections');
 const accountingRoutes = require('./web/routes/accounting');
+const planningRoutes = require('./web/routes/planning');
 const { createFeedApi } = require('./web/routes/feed-api');
 const { createConnectionsApi } = require('./web/routes/connections-api');
 const { createProviderWebhooks } = require('./web/routes/provider-webhooks');
@@ -76,6 +80,8 @@ function createApp(options = {}) {
    */
   app.use((req, res, next) => { req.db = db; next(); });
   app.use(paymentRoutes.webhooks);
+  // Same treatment, same reason: the carrier signs the raw bytes.
+  app.use(shippingRoutes.webhooks);
 
   app.use(express.urlencoded({ extended: true, limit: '256kb' }));
   app.use(express.json({ limit: '256kb', verify(req, res, buffer) { req.rawBody = Buffer.from(buffer); } }));
@@ -137,8 +143,10 @@ function createApp(options = {}) {
   app.use(authRoutes);
   app.use(managerRoutes);
   app.use(salesRoutes);
+  app.use(messageRoutes);
   app.use(mailRoutes);
   app.use(paymentRoutes.actions);
+  app.use(shippingRoutes.router);
   app.use(pricingRoutes);
   app.use(connectionRoutes);
   app.use(accountingRoutes);
@@ -149,6 +157,8 @@ function createApp(options = {}) {
   app.use(onboardingRoutes);
   app.use(autopilotRoutes);
   app.use(purchasingRoutes);
+  // Reads everything above it, writes only replenishment levels.
+  app.use(planningRoutes);
   app.use(attentionRoutes);
   app.use(overviewRoutes);
   app.use(inventoryRoutes);

@@ -91,11 +91,32 @@ router.get(
         whatsNext = require('../../attention/whats-next').build(req.db, req.ctx.workspaceId);
       } catch { whatsNext = []; }
 
+      /*
+       * What Foundry expects to go wrong.
+       *
+       * Read from what the planning pass has already worked out, never
+       * forecast here: Home is the page somebody lands on, and predicting four
+       * hundred products before it renders would make it the page they stop
+       * landing on. Same defensive treatment as everything else on this
+       * screen — a planning table that cannot be read costs a paragraph.
+       */
+      let noticed = [];
+      try {
+        noticed = req.db.prepare(`SELECT r.id, r.kind, r.headline, r.why, r.confidence, r.sku_id,
+            r.authority_verdict
+          FROM planning_recommendations r
+          WHERE r.workspace_id = ? AND r.status = 'OPEN'
+          ORDER BY CASE r.kind WHEN 'order_now' THEN 0 WHEN 'transfer' THEN 1 ELSE 2 END,
+            r.created_at DESC
+          LIMIT 4`).all(req.ctx.workspaceId);
+      } catch { noticed = []; }
+
       return res.page('operator-home', {
         title: 'Foundry',
         nav: 'home',
         home,
         whatsNext,
+        noticed,
         homeSignature: homeSignature(req.db, req.ctx.workspaceId),
         brief,
         stats,

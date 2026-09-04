@@ -849,16 +849,18 @@ test('an instruction typed into the question box is handed over, not refused', a
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
 
   const res = await agent.get('/ask').query({ q: 'Move banana to Mornoe' });
-  const page = plain(res.text);
-
-  assert.match(page, /something Foundry can carry out/);
-  assert.match(page, /This is a change, not a question/);
-  assert.match(page, /Work out this change/);
+  /*
+   * Handed over means handed over: the question box does not explain the
+   * change itself, it sends the sentence to the action path with a note
+   * saying why it went there.
+   */
+  assert.equal(res.status, 303, 'sent to the action path');
+  assert.equal(res.headers.location, '/actions');
+  const handed = await agent.get('/actions');
+  const page = plain(handed.text);
+  assert.match(page, /something to do rather than something to look up/);
+  assert.match(handed.text, /value="Move banana to Mornoe"/, 'the instruction travels with it, ready to continue');
   assert.ok(!page.includes('cannot move'), 'never claims it is impossible');
-
-  // The hand-off carries the instruction to the action path.
-  assert.match(res.text, /action="\/actions\/ask"/);
-  assert.match(res.text, /name="instruction" value="Move banana to Mornoe"/);
 });
 
 test('a question typed into the action box points back at Ask Foundry', async () => {

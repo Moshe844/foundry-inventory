@@ -167,13 +167,13 @@ test('with a box open, the direct ship form stands down and its route refuses', 
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
 
   let page = await agent.get(`/sales/orders/${order.id}`);
-  assert.match(plain(page.text), /Record the items as shipped/,
+  assert.match(plain(page.text), /Record what physically left/,
     'with no box open the direct form is the fast path and should be offered');
 
   await agent.post(`/sales/orders/${order.id}/pick`).type('form').send({ _csrf: csrfFrom(page.text) });
 
   page = await agent.get(`/sales/orders/${order.id}`);
-  assert.doesNotMatch(plain(page.text), /Record the items as shipped/,
+  assert.doesNotMatch(plain(page.text), /Record what physically left/,
     'a box already claims this stock, so the second door closes');
   assert.match(plain(page.text), /already holds 6 units/);
 

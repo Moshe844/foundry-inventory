@@ -128,7 +128,7 @@ test('a shipped box cannot be cancelled or re-picked', () => {
   const order = confirmedOrder(env, 5);
   const shipment = shipments.startPicking(env.db, env.ctx, order.id);
   const line = shipment.lines[0];
-  shipments.ship(env.db, env.ctx, shipment.id, {});
+  shipments.ship(env.db, env.ctx, shipment.id, { handover: 'CARRIER' });
 
   assert.throws(() => shipments.cancelShipment(env.db, env.ctx, shipment.id), /Record a return/);
   assert.throws(() => shipments.setLineQuantity(env.db, env.ctx, shipment.id,
@@ -153,7 +153,7 @@ test('a part shipment leaves the order partly shipped and the rest still pickabl
 
   const second = shipments.startPicking(env.db, env.ctx, order.id);
   assert.equal(second.units, 12);
-  shipments.ship(env.db, env.ctx, second.id, {});
+  shipments.ship(env.db, env.ctx, second.id, { handover: 'CARRIER' });
   const done = sales.getOrder(env.db, env.workspace.workspaceId, order.id);
   assert.equal(done.status, 'FULFILLED');
   assert.equal(shipments.fulfilmentState(env.db, env.workspace.workspaceId, done).state, 'Shipped');
@@ -180,7 +180,7 @@ test('the fulfilment state is derived, and names what the order is waiting for',
   assert.equal(state(ready), 'Picking');
   shipments.markPacked(env.db, env.ctx, shipment.id, {});
   assert.equal(state(ready), 'Packed');
-  shipments.ship(env.db, env.ctx, shipment.id, {});
+  shipments.ship(env.db, env.ctx, shipment.id, { handover: 'CARRIER' });
   assert.equal(state(sales.getOrder(env.db, env.workspace.workspaceId, order.id)), 'Shipped');
   shipments.markDelivered(env.db, env.ctx, shipment.id, {});
   assert.equal(state(sales.getOrder(env.db, env.workspace.workspaceId, order.id)), 'Delivered');
@@ -230,7 +230,7 @@ test('the work queue separates boxes needing a person from orders needing a box'
   assert.equal(queue.open[0].order_number, first.order_number);
   assert.equal(queue.ready.length, 1, 'an order fully claimed by a box is no longer waiting for one');
 
-  shipments.ship(env.db, env.ctx, box.id, {});
+  shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
   queue = shipments.workQueue(env.db, env.workspace.workspaceId);
   assert.equal(queue.open.length, 0, 'a shipped box needs nobody');
   assert.equal(queue.ready[0].order_number, secondOrder.order_number);

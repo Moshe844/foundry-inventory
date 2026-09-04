@@ -138,7 +138,16 @@ test('missing cost evidence becomes reviewable and never invents a journal entry
     WHERE workspace_id = ? AND event_type = 'sales_order.fulfilled'`)
     .get(env.workspace.workspaceId);
   assert.equal(accountingEvent.status, 'NEEDS_REVIEW');
-  assert.match(accountingEvent.error_message, /cost was established|inventory movement/i);
+  /*
+   * The message is read by somebody who has already shipped the goods, so it
+   * has to say which product, how many units, and what to do — not just that
+   * a cost was never established, which was the old wording and told them
+   * nothing they could act on.
+   */
+  assert.match(accountingEvent.error_message, /no recorded cost/i);
+  assert.match(accountingEvent.error_message, /Black Shirt/i, 'it names the product');
+  assert.match(accountingEvent.error_message, /Record what these units cost/i, 'and what would fix it');
+  assert.match(accountingEvent.error_message, /No amount was guessed/i);
   assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM accounting_journal_entries
     WHERE workspace_id = ?`).get(env.workspace.workspaceId).n, 0);
 });

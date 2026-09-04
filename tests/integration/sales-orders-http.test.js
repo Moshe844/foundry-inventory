@@ -13,6 +13,9 @@ const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, makeVariantIt
 
 test.after(cleanupAll);
 
+// The books open the day the test runs; a date before that is refused, so fixtures are dated today.
+const TODAY = new Date().toISOString().slice(0, 10);
+
 function setup(provider = { complete: async () => ({ data: {} }) }) {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Mission 10 Browser Co' });
@@ -57,7 +60,7 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   let text = plain(page.text);
   assert.match(page.text, /class="stats-row"/);
   assert.match(page.text, /class="card sales-action-card sales-primary-action"/);
-  assert.match(text, /Do this next.*Record the items as shipped/i);
+  assert.match(text, /Do this next.*Record what physically left/i);
   assert.match(page.text, /<details class="card advanced-settings sales-secondary-actions"/);
   assert.match(text, /30 committed/);
   assert.match(text, /Only use this when the items physically leave.*reduce on-hand once/i);
@@ -79,12 +82,12 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   const line = order.lines[0];
   const fulfilled = await agent.post(`${created.headers.location}/fulfill`).type('form').send({
     _csrf: csrfFrom(page.text), idempotencyKey: `browser-partial:${order.id}`,
-    lineId: line.id, locationId: env.workspace.main.id, quantity: 10,
+    lineId: line.id, locationId: env.workspace.main.id, quantity: 10, handover: 'CARRIER',
   });
   assert.equal(fulfilled.status, 303);
   page = await agent.get(created.headers.location);
   text = plain(page.text);
-  assert.match(text, /partly shipped|partly fulfilled/i);
+  assert.match(text, /partly shipped|partly fulfilled|partly gone/i);
   assert.match(text, /20 committed/);
   // The stat is labelled 'shipped' now: the word an owner uses, without the
   // 'fulfilled (shipped)' gloss that was explaining Foundry's vocabulary to them.
@@ -141,7 +144,7 @@ test('the short manual flow can reserve an order or complete an in-stock sale in
   assert.equal(order.totals.allocated, 5);
   assert.equal(env.db.prepare("SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ? AND operation = 'issue'")
     .get(env.workspace.workspaceId).n, 0, 'reserving an order does not remove stock');
-  assert.match(plain((await agent.get(reserved.headers.location)).text), /Record the items as shipped/i);
+  assert.match(plain((await agent.get(reserved.headers.location)).text), /Record what physically left/i);
 
   form = await agent.get('/sales/new').expect(200);
   const completed = await agent.post('/sales/orders').type('form').send({
@@ -153,7 +156,7 @@ test('the short manual flow can reserve an order or complete an in-stock sale in
   assert.equal(order.totals.fulfilled, 3);
   assert.equal(env.db.prepare("SELECT SUM(-quantity_delta) AS n FROM movements WHERE workspace_id = ? AND operation = 'issue'")
     .get(env.workspace.workspaceId).n, 3, 'the completed-sale choice removes stock exactly once');
-  assert.match(plain((await agent.get(completed.headers.location)).text), /Shipped.*Accounting/i);
+  assert.match(plain((await agent.get(completed.headers.location)).text), /(Shipped|Gone|Collected|Delivered).*Accounting/i);
   env.db.close();
 });
 
@@ -248,7 +251,7 @@ test('Tell Foundry completes a named whole order immediately without AI routing 
     WHERE workspace_id = ? AND stated_as = ? ORDER BY created_at DESC LIMIT 1`)
     .get(env.workspace.workspaceId, 'Can you complete the sales order for Hendel');
   assert.deepEqual(routed, { status: 'ROUTED', routed_to: 'sales_order', related_record_id: draft.id });
-  assert.match(plain((await agent.get(response.headers.location)).text), /Shipped.*Accounting/i);
+  assert.match(plain((await agent.get(response.headers.location)).text), /(Shipped|Gone|Collected|Delivered).*Accounting/i);
   env.db.close();
 });
 
@@ -440,7 +443,7 @@ test('a partly shipped order does not claim nothing was shipped', async () => {
   const line = order.lines[0];
   await agent.post(`${created.headers.location}/fulfill`).type('form').send({
     _csrf: csrfFrom(page.text), idempotencyKey: `short-ship:${order.id}`,
-    lineId: line.id, locationId: env.workspace.main.id, quantity: 34,
+    lineId: line.id, locationId: env.workspace.main.id, quantity: 34, handover: 'CARRIER',
   });
 
   const after = plain((await agent.get(created.headers.location)).text);
@@ -590,7 +593,7 @@ test('an order with an invoice shows what was invoiced, paid and still owed', as
 
   payments.record(env.db, env.workspace.ctx, membership, {
     direction: 'CUSTOMER_RECEIPT', customerId: order.customer.id,
-    paymentDate: '2026-09-02', amountMinor: 50_000, sourceKey: 'receipt:1',
+    paymentDate: TODAY, amountMinor: 50_000, sourceKey: 'receipt:1',
     allocations: [{ invoiceId: invoice.id, amountMinor: 50_000 }],
   });
 

@@ -40,12 +40,52 @@ const LINE_SCHEMA = {
   },
 };
 
+/*
+ * Freight, duty, insurance, a credit for samples: everything on the document
+ * that is money but is not a product.
+ *
+ * These used to be thrown away — the prompt said so in as many words — which
+ * is why an invoice totalling $26,604 imported as $21,390 and the owner could
+ * not see where the difference went. They are not inventory lines and they are
+ * not noise; they are what the goods actually cost to get here.
+ */
+const CHARGE_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['label', 'kind', 'amount'],
+  properties: {
+    label: { type: 'string' },
+    kind: { type: 'string', enum: ['freight', 'insurance', 'duty', 'tax', 'discount', 'deposit', 'other'] },
+    amount: { type: 'number' },
+  },
+};
+
 const DOCUMENT_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['documentType', 'businessDescription', 'unitLabel', 'supplierName', 'supplierCodeLabel', 'supplierEmail', 'documentNumber',
-    'documentDate', 'paymentTerms', 'currency', 'destinationName', 'destinationAddress', 'lines', 'warnings'],
+  required: ['documentType', 'goodsHaveArrived', 'referencedOrderNumber', 'businessDescription', 'unitLabel', 'supplierName',
+    'supplierCodeLabel', 'supplierEmail', 'documentNumber', 'documentDate', 'paymentTerms', 'currency',
+    'destinationName', 'destinationAddress', 'lines', 'charges', 'documentTotal', 'warnings'],
   properties: {
-    documentType: { type: 'string', enum: ['invoice', 'purchase_order', 'stock_report', 'catalogue', 'other'] },
+    /*
+     * A proforma invoice had no place in this list, so the reader had to pick
+     * one of these — and every one of them means the goods exist. An entire
+     * shipment still in the factory was imported as stock on the shelf.
+     */
+    documentType: { type: 'string',
+      enum: ['invoice', 'proforma_invoice', 'quote', 'order_confirmation',
+        'purchase_order', 'stock_report', 'catalogue', 'other'] },
+    /*
+     * The load-bearing question, asked outright rather than inferred from the
+     * word at the top of the page. Nothing creates stock unless this is true.
+     */
+    goodsHaveArrived: { type: 'boolean' },
+    /*
+     * The purchase order this document is about, in the document's own words.
+     * A supplier invoice almost always quotes it, and it is the difference
+     * between a bill Foundry can match and one somebody has to hunt down.
+     */
+    referencedOrderNumber: { type: 'string' },
+    charges: { type: 'array', maxItems: 30, items: CHARGE_SCHEMA },
+    documentTotal: { type: 'number' },
     businessDescription: { type: 'string' }, unitLabel: { type: 'string' },
     supplierName: { type: 'string' }, supplierCodeLabel: { type: 'string' }, supplierEmail: { type: 'string' },
     documentNumber: { type: 'string' }, documentDate: { type: 'string' }, paymentTerms: { type: 'string' },
@@ -57,7 +97,15 @@ const DOCUMENT_SCHEMA = {
 
 const SYSTEM = `Read a business inventory source document into structured setup evidence.
 
-Do not invent values. Use an empty string for missing text, -1 for missing unit cost, and 0 only when a line explicitly says zero quantity. Include only real inventory lines, never freight, tax, discounts, fees, totals, headings or notes.
+Do not invent values. Use an empty string for missing text, -1 for missing unit cost, and 0 only when a line explicitly says zero quantity. lines holds real inventory lines only — never freight, tax, discounts, fees, totals, headings or notes.
+
+goodsHaveArrived is the most important field here. It is true only when this document is evidence that the goods have physically arrived: a supplier invoice for a delivery, a packing slip, a goods-received note, or a stock report of what is on the shelf. It is false for a proforma invoice, a quotation, an order confirmation, a purchase order not yet delivered, or anything describing goods still to be made or shipped. A document promising future delivery, stating a lead time, or asking for a deposit before production has not delivered anything. When it is not clear, use false and say why in warnings — inventing stock that does not exist is far worse than making somebody confirm a delivery.
+
+referencedOrderNumber is the purchase order, order number or job number this document says it is against — the "Your PO", "Order No." or "Ref" the supplier quotes back at you. It is not this document's own number, which belongs in documentNumber. Empty when none is quoted.
+
+charges holds every money line that is not a product: freight, shipping, insurance, import duty, tax, a discount, a sample credit, a deposit already paid. Copy the document's own wording into label and the amount exactly as shown, negative for a credit or discount. Do not convert, allocate or spread these across the products. documentTotal is the final total the document itself states, -1 when it states none. These are not noise: they are the difference between what the goods cost and what the owner actually pays.
+
+When a document lays out one product across a row of sizes — a size run, with the sizes as column headings and a quantity under each — return one line per size that has a quantity, each with the same styleName and supplierSku, variantDimension "Size", and size set to that column's heading. Never collapse a size run into a single line, and never assign a quantity to a size the document did not put it under. If the columns cannot be read reliably, return one line for the row with the stated row total and say so in warnings.
 
 styleName is the reusable inventory product without its line-level variant value. Put colour in color when it is explicit. variantDimension is the business name for the value in size: for example Size, Model, Grade, Length, or Pack. The size field holds that value; leave both strings empty when there is no variant. Preserve supplier SKU exactly. quantity is the inventory units on that exact line. unitCost is supplier purchase cost per inventory unit. sellingPrice is the customer retail/list price only when the source explicitly labels it as retail, selling, list, MSRP or RRP; otherwise use -1. Never copy invoice unit cost into sellingPrice.
 
@@ -71,7 +119,7 @@ supplierName is the seller's actual company or trading name. When a branded head
 
 supplierCodeLabel is the exact heading this document uses for the supplier's identifier for a product, such as "Style #", "Item No.", "Vendor SKU", or "Supplier Code". Use an empty string only when no such heading is present. Regardless of its wording, put the identifier value in supplierSku.
 
-For an invoice or fulfilled supplier order, destinationName is the ship-to inventory location. For a stock report it is the row location only when one common location is explicit. Use a concise operational location name, preserving a real name from the document. Return ISO YYYY-MM-DD for an unambiguous date; otherwise empty.`;
+destinationName is the name of a PLACE the stock is kept — a warehouse, a store, a branch, a unit, a bay: "Main Warehouse", "Downtown Store", "Unit 4". It is not the buyer's company name. A supplier document is addressed to the business that is buying, so the ship-to is usually the reader's own company and their street address, and neither is the name of a place inside their business. When the document names no such place, leave it empty; Foundry has a sensible default and a company name used as a warehouse reads like a mistake to the person who owns it. For a stock report it is the row location only when one common location is explicit. Use a concise operational location name, preserving a real name from the document. Return ISO YYYY-MM-DD for an unambiguous date; otherwise empty.`;
 
 function clean(value) { return String(value || '').replace(/\u0000/g, '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim(); }
 
@@ -152,8 +200,31 @@ function normalise(raw) {
       quantity: Math.max(0, Math.trunc(Number(entry.quantity) || 0)),
     })).filter((entry) => entry.locationName),
   })).filter((line) => line.styleName && line.quantity > 0);
+  /*
+   * Charges keep the document's own wording and its own signs. Foundry does
+   * not net them off, allocate them across products, or decide which of them
+   * are "real" — that is the owner's call once they can see them, and they
+   * could not see them at all while these were being discarded.
+   */
+  const charges = (raw.charges || []).map((charge) => ({
+    label: clean(charge.label).slice(0, 160),
+    kind: ['freight', 'insurance', 'duty', 'tax', 'discount', 'deposit', 'other'].includes(charge.kind)
+      ? charge.kind : 'other',
+    amountMinor: Number.isFinite(Number(charge.amount)) ? Math.round(Number(charge.amount) * 100) : null,
+  })).filter((charge) => charge.label && charge.amountMinor !== null && charge.amountMinor !== 0);
+
   return {
-    documentType: raw.documentType, businessDescription: clean(raw.businessDescription), unitLabel: clean(raw.unitLabel) || 'unit',
+    documentType: raw.documentType,
+    /*
+     * Missing means no. A reader that did not answer has not established that
+     * anything arrived, and defaulting the other way is how 800 pairs still in
+     * a factory ended up on the balance sheet.
+     */
+    goodsHaveArrived: raw.goodsHaveArrived === true,
+    referencedOrderNumber: clean(raw.referencedOrderNumber),
+    charges,
+    documentTotalMinor: Number(raw.documentTotal) >= 0 ? Math.round(Number(raw.documentTotal) * 100) : null,
+    businessDescription: clean(raw.businessDescription), unitLabel: clean(raw.unitLabel) || 'unit',
     supplierName: clean(raw.supplierName), supplierCodeLabel: clean(raw.supplierCodeLabel) || 'Supplier code',
     supplierEmail: clean(raw.supplierEmail),
     documentNumber: clean(raw.documentNumber), documentDate: clean(raw.documentDate),
@@ -395,7 +466,94 @@ function matchPreview(db, workspaceId, interpretation) {
   });
 }
 
-function apply(db, ctx, membership, understandingId, planId) {
+/*
+ * What the owner said this document is.
+ *
+ * A proforma invoice proves nothing on its own, but the person who uploaded
+ * it knows why they did. Three answers cover it, and each leads somewhere
+ * different: place the order, keep only the prices, or — the one that was
+ * missing — "this is what I already have", which is somebody using a supplier
+ * document as the opening count of a business they are setting up.
+ *
+ * The decision only ever widens what a document may establish, never narrows
+ * what it already proved: an owner cannot say a delivered invoice did not
+ * arrive by choosing a different button.
+ */
+const INTENTS = {
+  'Place the order': { orders: true, opening: false },
+  'Just keep the prices': { orders: false, opening: false },
+  'This is what I already have in stock': { orders: false, opening: true },
+};
+
+/**
+ * Opening stock: what the business already had, on the day it started using
+ * Foundry.
+ *
+ * This does not go through supplier receiving, and that is the whole point.
+ * Receiving posts inventory against Received-Not-Invoiced — a debt to the
+ * supplier — which is correct for a delivery and completely wrong here. An
+ * owner uploading a document to say "this is what I have" would have been
+ * told they owed a factory in Chongqing $21,390 for shoes they already owned.
+ *
+ * Opening stock has no supplier transaction behind it. The goods are already
+ * yours, so the other side of the entry is opening equity: this is what the
+ * business was worth when the books began. No purchase order, no bill, no
+ * money owed to anybody.
+ *
+ * It is also why nobody is asked for an adjustment reason on each line. The
+ * reason is inherent and the same for every one of them — this is where the
+ * business started.
+ */
+function openTheBooks(db, ctx, membership, { orderLines, interpretation, sourceName, startDate }) {
+  const engine = require('../domain/inventory-engine');
+  const perSku = new Map();
+
+  for (const line of orderLines) {
+    const key = `${line.skuId}|${line.destinationLocationId}`;
+    const costMinor = Math.round(Number(line.unitCost || 0) * 100) * Number(line.quantityUnits || 0);
+    const existing = perSku.get(key)
+      || { skuId: line.skuId, locationId: line.destinationLocationId, quantityUnits: 0, totalCostMinor: 0 };
+    existing.quantityUnits += Number(line.quantityUnits || 0);
+    existing.totalCostMinor += costMinor;
+    perSku.set(key, existing);
+  }
+
+  let units = 0;
+  for (const row of perSku.values()) {
+    engine.receive(db, ctx, {
+      skuId: row.skuId, locationId: row.locationId, quantity: row.quantityUnits,
+      reasonCode: 'opening', notes: `Opening stock from ${sourceName}`,
+      reference: interpretation.documentNumber || sourceName,
+    });
+    units += row.quantityUnits;
+  }
+
+  /*
+   * The ledger half, only when the workspace keeps books at all. Stock is a
+   * physical fact and does not wait on accounting being switched on.
+   */
+  const settings = db.prepare('SELECT enabled FROM accounting_settings WHERE workspace_id = ?')
+    .get(ctx.workspaceId);
+  const valued = [...perSku.values()].filter((row) => row.totalCostMinor > 0);
+  const totalMinor = valued.reduce((sum, row) => sum + row.totalCostMinor, 0);
+  if (!settings?.enabled || !totalMinor) return { units, journalEntryId: null, totalMinor };
+
+  const openingBalances = require('../accounting/opening-balances');
+  const prepared = openingBalances.prepare(db, ctx, membership, {
+    startDate: startDate || interpretation.documentDate || nowIso().slice(0, 10),
+    currency: interpretation.currency || 'USD',
+    sourceDescription: `Opening stock from ${sourceName}`,
+    lines: [
+      { accountKey: 'INVENTORY_ASSET', debitMinor: totalMinor, memo: `Opening stock from ${sourceName}` },
+      { accountKey: 'OPENING_BALANCE_EQUITY', creditMinor: totalMinor, memo: `Opening stock from ${sourceName}` },
+    ],
+    inventory: valued,
+  });
+  const posted = openingBalances.approve(db, ctx, membership, prepared.id, prepared.integrity_hash);
+  return { units, journalEntryId: posted.opening.journal_entry_id, totalMinor };
+}
+
+function apply(db, ctx, membership, understandingId, planId, options = {}) {
   const row = db.prepare('SELECT * FROM setup_documents WHERE workspace_id = ? AND understanding_id = ?').get(ctx.workspaceId, understandingId);
   if (!row) return null;
   if (row.status === 'APPLIED') {
@@ -486,32 +644,178 @@ function apply(db, ctx, membership, understandingId, planId) {
       }
     }
 
-    let order = poService.createOrder(db, ctx, membership, {
-      supplierId: supplier.id, poNumber: interpretation.documentNumber || undefined,
-      orderDate: interpretation.documentDate || undefined, destinationLocationId: location.id,
-      source: 'instruction', sourceDetail: { setupDocumentId: row.id, sourceName: row.source_name },
-      notes: `Imported from ${row.source_name}`, lines: orderLines,
-    });
-    order = poService.approve(db, ctx, membership, order.id, { expectedHash: order.integrityHash, markOrdered: true });
-    const received = receivingService.receive(db, ctx, membership, order.id, {
-      idempotencyKey: `setup-document:${row.id}`, receivedAt: interpretation.documentDate || undefined,
-      reference: interpretation.documentNumber || row.source_name,
-      note: `Opening inventory received from ${row.source_name}`,
-      lines: order.lines.map((line) => ({ lineId: line.id, quantityUnits: line.quantityUnits,
-        locationId: line.destinationLocationId || location.id })),
-    });
+    const intent = INTENTS[options.documentIntent] || null;
+    const opensTheBooks = Boolean(intent?.opening);
+
+    /*
+     * A quotation somebody wanted only for its prices leads to no order.
+     * Creating one anyway would put money on a supplier's account that
+     * nobody committed to, and leave a purchase to chase that does not exist.
+     */
+    /*
+     * Opening stock has no supplier transaction behind it, so it gets no
+     * purchase order either. Creating one would leave a delivery to chase for
+     * goods already on the shelf, and a bill for goods already owned.
+     */
+    const wantsOrder = intent ? intent.orders : true;
+
+    /*
+     * A supplier invoice is money, not merchandise.
+     *
+     * It gets its own path because everything about it is different: the
+     * order it is billing usually already exists, so making another would
+     * double the business's commitments, and the goods it lists have not
+     * necessarily moved an inch. What it establishes is that somebody is owed.
+     */
+    const invoiceIntake = require('./supplier-invoice-intake');
+    const isSupplierInvoice = require('./document-meaning').kindOf(interpretation) === 'supplier_invoice';
+    const matchedOrder = isSupplierInvoice
+      ? invoiceIntake.findOrder(db, ctx.workspaceId, interpretation, supplier.id)
+      : null;
+    /*
+     * "Are these expected to arrive?" — the one question a bill with no order
+     * behind it needs answered. Foundry will record what is owed either way;
+     * what it will not do is invent a purchase nobody told it about.
+     */
+    const expectsGoods = options.documentIntent === 'Yes, they are coming';
+    const billsOnly = isSupplierInvoice && (Boolean(matchedOrder) || !expectsGoods);
+
+    let order = matchedOrder;
+    if (wantsOrder && !billsOnly && !matchedOrder) {
+      order = poService.createOrder(db, ctx, membership, {
+        supplierId: supplier.id, poNumber: interpretation.documentNumber || undefined,
+        orderDate: interpretation.documentDate || undefined, destinationLocationId: location.id,
+        source: 'instruction', sourceDetail: { setupDocumentId: row.id, sourceName: row.source_name },
+        notes: `Imported from ${row.source_name}`, lines: orderLines,
+      });
+      order = poService.approve(db, ctx, membership, order.id, { expectedHash: order.integrityHash, markOrdered: true });
+    }
+
+    /*
+     * Receiving only what has actually been received.
+     *
+     * This used to run unconditionally: every document imported became a
+     * goods receipt. A proforma invoice for 800 pairs of shoes still being
+     * made in Chongqing arrived as 800 pairs on the shelf and $21,390 debited
+     * to Inventory Asset — a balance sheet asserting ownership of goods that
+     * did not exist, on the owner's first day using the product.
+     *
+     * An order that has not arrived is still worth importing. The catalogue,
+     * the supplier, the prices and the purchase order are all real and all
+     * useful. What is not real is the stock, so the order simply stays on
+     * order until somebody receives it, which is the same path every other
+     * delivery takes.
+     */
+    /*
+     * Opening stock is the one case where a person may establish physical
+     * quantities from a document that does not itself evidence a delivery.
+     * It is confined to a business being set up: there is no prior truth to
+     * contradict, and the reason for every 0 -> quantity is inherent.
+     */
+    /*
+     * The money. Recorded whether or not there was an order to match — a bill
+     * is owed regardless of how tidy Foundry's purchasing records are — and
+     * compared against the order when there is one, so a supplier billing for
+     * more than they were asked for is a fact somebody sees rather than a
+     * silent adjustment.
+     */
+    let billing = null;
+    let billMatch = null;
+    if (isSupplierInvoice) {
+      if (matchedOrder) billMatch = invoiceIntake.compare(db, ctx.workspaceId, matchedOrder, interpretation);
+      try {
+        billing = invoiceIntake.bill(db, ctx, membership, {
+          interpretation, supplierId: supplier.id, order: order || null, sourceName: row.source_name,
+          expectGoods: expectsGoods,
+        });
+      } catch (error) {
+        billing = { billed: false, because: String(error.message || error) };
+      }
+    }
+
+    const opened = opensTheBooks
+      ? openTheBooks(db, ctx, membership, { orderLines, interpretation,
+        sourceName: row.source_name, startDate: interpretation.documentDate })
+      : null;
+    const received = order && interpretation.goodsHaveArrived
+      ? receivingService.receive(db, ctx, membership, order.id, {
+        idempotencyKey: `setup-document:${row.id}`, receivedAt: interpretation.documentDate || undefined,
+        reference: interpretation.documentNumber || row.source_name,
+        note: `Opening inventory received from ${row.source_name}`,
+        lines: order.lines.map((line) => ({ lineId: line.id, quantityUnits: line.quantityUnits,
+          locationId: line.destinationLocationId || location.id })),
+      })
+      : null;
+    /*
+     * The charges go onto the order, not into the product costs.
+     *
+     * Kept as the document stated them so the owner can see the whole bill:
+     * goods, then freight, then duty, then whatever credit was given. Spreading
+     * them over the units would produce a unit cost nobody agreed to and would
+     * make the document impossible to reconcile against.
+     */
+    for (const charge of (order ? interpretation.charges || [] : [])) {
+      db.prepare(`INSERT INTO purchase_order_charges
+          (id, workspace_id, purchase_order_id, label, kind, amount_minor, source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(newId('pochg'), ctx.workspaceId, order.id, charge.label, charge.kind,
+          charge.amountMinor, row.source_name, nowIso());
+    }
+
+    const orderedUnits = orderLines.reduce((sum, entry) => sum + Number(entry.quantityUnits || 0), 0);
     const result = { products: groups.size, variants: new Set(orderLines.map((entry) => entry.skuId)).size,
-      units: received.result.unitsReceived,
+      goodsHaveArrived: Boolean(interpretation.goodsHaveArrived),
+      documentIntent: options.documentIntent || null,
+      openingStock: opensTheBooks,
+      units: opened ? opened.units : (received ? received.result.unitsReceived : 0),
+      openingValueMinor: opened ? opened.totalMinor : null,
+      billedNumber: billing?.bill ? billing.bill.bill_number : null,
+      billedMinor: billing?.bill ? Number(billing.bill.total_minor || 0) : null,
+      billedAgainstOrder: matchedOrder ? matchedOrder.po_number : null,
+      billDifferences: billMatch ? billMatch.differences : [],
+      billNotRecorded: billing && !billing.billed ? billing.because : null,
+      unitsOnOrder: (received || opened) ? 0 : orderedUnits,
+      charges: interpretation.charges || [],
+      documentTotalMinor: interpretation.documentTotalMinor ?? null,
       unitLabel: interpretation.unitLabel,
       supplier: supplier.name, location: [...locationsByName.values()].map((entry) => entry.name).join(', '),
-      poNumber: order.poNumber, purchaseOrderId: order.id,
+      poNumber: order ? order.poNumber : null, purchaseOrderId: order ? order.id : null,
       createdItemIds,
       detectedSupplierCodeLabel: interpretation.supplierCodeLabel || 'Product code', itemCodeLabel };
+    /*
+     * And kept whichever way the document was read.
+     *
+     * The loop above only reaches a charge when the document created a
+     * purchase order. An owner saying "this is stock I already have" creates
+     * none, so a proforma's $5,411 of sea freight was read, shown on the
+     * proposal, and then silently dropped — leaving the Money page an empty
+     * Expenses section beside an inventory value five thousand dollars short
+     * of what had actually been paid. These are kept for every path, outside
+     * the books until somebody says what they are.
+     */
+    require('../accounting/document-costs').record(db, ctx, {
+      setupDocumentId: row.id,
+      purchaseOrderId: order ? order.id : null,
+      documentNumber: interpretation.documentNumber || null,
+      supplierName: supplier.name,
+      currency: interpretation.currency || 'USD',
+      charges: interpretation.charges || [],
+      // The goods belong to the document, not to what was chosen to do with
+      // it. Reading this from the opening value meant a proforma answered
+      // with "Place the order" recorded its freight and forgot the goods the
+      // freight was on — and the reconciliation then blamed Foundry for a
+      // misread that never happened.
+      goodsMinor: require('../accounting/document-costs').goodsValueOf(interpretation)
+        || result.openingValueMinor || 0,
+      documentTotalMinor: result.documentTotalMinor ?? interpretation.documentTotalMinor ?? null,
+      openedBooks: opensTheBooks,
+    });
+
     const appliedAt = nowIso();
     db.prepare(
       `UPDATE setup_documents SET status = 'APPLIED', applied_plan_id = ?, purchase_order_id = ?,
         result = ?, applied_at = ? WHERE id = ?`
-    ).run(planId, order.id, JSON.stringify(result), appliedAt, row.id);
+    ).run(planId, order ? order.id : null, JSON.stringify(result), appliedAt, row.id);
     markMailboxDocumentApplied(db, row.id, appliedAt);
     return getByUnderstanding(db, ctx.workspaceId, understandingId);
   });

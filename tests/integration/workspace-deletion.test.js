@@ -352,3 +352,55 @@ test('deleting your only inventory leaves the app usable', async () => {
   const console_ = await agent.get('/');
   assert.ok([200, 302, 303].includes(console_.status), `landing page returned ${console_.status}`);
 });
+
+test('an inventory with posted books can still be deleted, and the guards come back', () => {
+  /*
+   * This failed in the owner's hands with "Something went wrong on our side".
+   * The real error was a database trigger: "inventory cost history cannot be
+   * deleted". The deletion lifted one immutability guard by name — the one on
+   * movements — and there are four. Nothing above accounting had ever been
+   * furnished in a test, so the other three were never met.
+   *
+   * The guards exist because a posted ledger is not editable. Removing the
+   * whole inventory is the one case that is not an edit: nothing is being
+   * rewritten, it is all going.
+   */
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db, { workspaceName: 'Books Kept' });
+  const survivor = seedAnotherWorkspace(db, workspace.accountId, 'Still Here');
+  require('../../src/accounting/automatic').ensure(db, workspace.workspaceId, { actorId: workspace.ctx.actorId });
+
+  // Real cost history and a real posted entry, which is what the guards protect.
+  const item = makeQuantityItem(db, workspace.ctx);
+  const received = engine.receive(db, workspace.ctx, {
+    skuId: item.skuId, locationId: workspace.main.id, quantity: 20,
+  });
+  require('../../src/accounting/costing').receive(db, workspace.ctx, {
+    movementIds: received.movementIds,
+    totalCostMinor: 4000, sourceType: 'test_receipt', sourceRecordId: 'receipt-1',
+  });
+
+  assert.ok(db.prepare('SELECT COUNT(*) AS n FROM accounting_inventory_cost_movements WHERE workspace_id = ?')
+    .get(workspace.workspaceId).n > 0, 'there is cost history to trip over');
+
+  const guards = () => db.prepare(`SELECT COUNT(*) AS n FROM sqlite_master
+    WHERE type = 'trigger' AND sql LIKE '%BEFORE DELETE%' AND sql LIKE '%RAISE%'`).get().n;
+  const before = guards();
+  assert.ok(before >= 4, 'more than one guard exists, which was the whole problem');
+
+  deletion.deleteWorkspace(db, workspace.accountId, workspace.workspaceId, { confirmName: 'Books Kept' });
+
+  assert.equal(db.prepare('SELECT id FROM workspaces WHERE id = ?').get(workspace.workspaceId), undefined);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM accounting_inventory_cost_movements WHERE workspace_id = ?')
+    .get(workspace.workspaceId).n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM accounting_journal_lines WHERE workspace_id = ?')
+    .get(workspace.workspaceId).n, 0);
+  assert.equal(guards(), before, 'every guard is back, not just the one that was named');
+
+  // And they still bite, which a trigger restored in name only would not.
+  engine.receive(db, survivor.ctx, { skuId: makeQuantityItem(db, survivor.ctx).skuId,
+    locationId: survivor.main.id, quantity: 5 });
+  assert.throws(() => db.prepare('DELETE FROM movements WHERE workspace_id = ?').run(survivor.workspaceId),
+    /movements are immutable/);
+  db.close();
+});

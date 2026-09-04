@@ -16,6 +16,8 @@ const MANAGER_SCHEMA_PATH = path.join(__dirname, 'schema-manager.sql');
 const SALES_SCHEMA_PATH = path.join(__dirname, 'schema-sales.sql');
 const CONNECTIONS_SCHEMA_PATH = path.join(__dirname, 'schema-connections.sql');
 const ACCOUNTING_SCHEMA_PATH = path.join(__dirname, 'schema-accounting.sql');
+const FORECASTING_SCHEMA_PATH = path.join(__dirname, 'schema-forecasting.sql');
+const SHIPPING_SCHEMA_PATH = path.join(__dirname, 'schema-shipping.sql');
 
 /**
  * Opens (and initialises) a SQLite database.
@@ -107,6 +109,12 @@ const ADDED_COLUMNS = [
   { table: 'connection_email_messages', column: 'content_hash', definition: 'TEXT' },
   { table: 'connection_email_messages', column: 'processing_status', definition: "TEXT NOT NULL DEFAULT 'CAPTURED'" },
   { table: 'connection_email_messages', column: 'processed_at', definition: 'TEXT' },
+  // Why a customer's order email produced no draft order. NULL until a
+  // draft has been attempted; the owner sees this rather than silence.
+  { table: 'connection_email_messages', column: 'order_draft_reason', definition: 'TEXT' },
+  // When Foundry last asked the provider what happened to this request,
+  // so an order can be right about money without an inbound webhook.
+  { table: 'payment_requests', column: 'checked_at', definition: 'TEXT' },
   { table: 'connection_email_attachments', column: 'extracted_text', definition: 'TEXT' },
   { table: 'connection_email_attachments', column: 'setup_document_id', definition: 'TEXT' },
   { table: 'connection_email_rules', column: 'document_mode', definition: "TEXT NOT NULL DEFAULT 'review_each'" },
@@ -133,6 +141,45 @@ const ADDED_COLUMNS = [
   { table: 'connection_email_messages', column: 'reply_reason', definition: 'TEXT' },
   { table: 'connection_email_messages', column: 'reply_state_by_user_id', definition: 'TEXT' },
   { table: 'connection_email_messages', column: 'reply_state_at', definition: 'TEXT' },
+  /*
+   * The email a draft order was read out of.
+   *
+   * It is a link, not a note. The order's own `reference` field is where a
+   * person writes "phoned Tuesday", so putting a message id there would
+   * overwrite what they typed — a mistake already made once with payments.
+   * It also makes the draft idempotent: a mailbox re-polled is not a second
+   * order for the same request.
+   */
+  { table: 'sales_orders', column: 'source_email_message_id', definition: 'TEXT' },
+  /*
+   * How the goods left: by carrier, collected, or taken round by us.
+   *
+   * No CHECK here, unlike the fresh schema. Shipments that predate the
+   * question have no answer to it, and a constraint that rejects NULL would
+   * refuse to migrate a database that is telling the truth about not knowing.
+   */
+  { table: 'sales_shipments', column: 'handover', definition: 'TEXT' },
+  /*
+   * Whether Foundry may ask this customer for money without being told to.
+   *
+   * Off for every existing customer, deliberately. Automation that arrives
+   * switched on for people who never agreed to it is how an upgrade sends
+   * invoices nobody authorised.
+   */
+  { table: 'customer_payment_terms', column: 'auto_request_enabled', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'customer_payment_terms', column: 'auto_request_limit_minor', definition: 'INTEGER' },
+  /*
+   * Which order a receipt was taken against.
+   *
+   * A deposit paid before the goods ship has no invoice to be allocated to, so
+   * the order it belongs to has to be recorded somewhere of its own. Without
+   * it, a customer who had paid their deposit through Stripe still showed as
+   * owing the whole order, and Foundry went on holding their goods.
+   *
+   * Not the reference field, which is where a person writes "cheque 4021", and
+   * not the source key, which has to stay unique per provider event.
+   */
+  { table: 'accounting_payments', column: 'sales_order_id', definition: 'TEXT' },
   { table: 'connection_email_messages', column: 'draft_subject', definition: 'TEXT' },
   { table: 'connection_email_messages', column: 'draft_body', definition: 'TEXT' },
   { table: 'connection_email_messages', column: 'draft_source', definition: 'TEXT' },
@@ -140,6 +187,37 @@ const ADDED_COLUMNS = [
   { table: 'connection_email_messages', column: 'draft_at', definition: 'TEXT' },
   { table: 'connection_email_messages', column: 'reply_sent_at', definition: 'TEXT' },
   { table: 'connection_email_messages', column: 'reply_external_message_id', definition: 'TEXT' },
+
+  /*
+   * Shipping through a real carrier.
+   *
+   * A shipment already recorded which goods went where and that they left.
+   * These are the facts a carrier owns: what it charged, which label it sold,
+   * and where the parcel is now. `tracking_status` is the carrier's word, kept
+   * apart from `status`, which stays Foundry's own account of the box — a
+   * parcel can be "in transit" for a week while the shipment is simply shipped.
+   */
+  { table: 'sales_shipments', column: 'provider', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'provider_shipment_id', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'provider_rate_id', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'label_url', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'label_format', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'tracking_status', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'tracking_status_detail', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'tracked_at', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'exception_reason', definition: 'TEXT' },
+  // What the customer was told to expect, kept on the shipment so a rate can
+  // be judged against it after the fact and not only while choosing.
+  { table: 'sales_shipments', column: 'promised_date', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'bought_by_rule_id', definition: 'TEXT' },
+
+  // A parcel's weight comes from what is in it. Nullable, and a shipment says
+  // when it had to guess rather than quietly pricing on a number nobody knows.
+  { table: 'skus', column: 'weight_grams', definition: 'INTEGER' },
+
+  // Where a parcel leaves from. A carrier cannot quote a rate without it, and
+  // Foundry cannot invent it — so it is asked for once, per location.
+  { table: 'locations', column: 'address', definition: 'TEXT' },
 ];
 
 function addMissingColumns(db) {
@@ -282,6 +360,68 @@ function dropLegacyUserLogin(db) {
   }
 }
 
+/**
+ * Charges kept against a document, whichever kind of document it was.
+ *
+ * The table was built for PDFs and named its owner setup_document_id, with a
+ * foreign key to prove it. A spreadsheet invoice carries exactly the same
+ * freight and duty, and has no setup document to point at — so the column
+ * becomes a kind and an id, and the rows already stored are simply labelled
+ * with the kind they always were.
+ */
+function migrateDocumentCharges(db) {
+  if (!tableExists(db, 'document_charges')) return;
+  if (!hasColumn(db, 'document_charges', 'setup_document_id')) return;
+
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    db.exec('ALTER TABLE document_charges RENAME TO document_charges_old');
+    db.exec(`CREATE TABLE document_charges (
+      id                   TEXT PRIMARY KEY,
+      workspace_id         TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      source_kind          TEXT NOT NULL DEFAULT 'setup_document'
+                             CHECK (source_kind IN ('setup_document','import_plan')),
+      source_id            TEXT NOT NULL,
+      purchase_order_id    TEXT,
+      document_number      TEXT,
+      supplier_name        TEXT,
+      label                TEXT NOT NULL,
+      kind                 TEXT NOT NULL
+                             CHECK (kind IN ('freight','insurance','duty','tax','discount','deposit','other')),
+      amount_minor         INTEGER NOT NULL,
+      currency             TEXT NOT NULL DEFAULT 'USD',
+      goods_minor          INTEGER NOT NULL DEFAULT 0,
+      document_total_minor INTEGER,
+      opened_books         INTEGER NOT NULL DEFAULT 0,
+      status               TEXT NOT NULL DEFAULT 'UNRECORDED'
+                             CHECK (status IN ('UNRECORDED','IN_STOCK_VALUE','EXPENSED')),
+      journal_entry_id     TEXT,
+      decided_at           TEXT,
+      created_at           TEXT NOT NULL
+    )`);
+    db.exec(`INSERT INTO document_charges
+      (id, workspace_id, source_kind, source_id, purchase_order_id, document_number, supplier_name,
+       label, kind, amount_minor, currency, goods_minor, document_total_minor, opened_books,
+       status, journal_entry_id, decided_at, created_at)
+      SELECT id, workspace_id, 'setup_document', setup_document_id, purchase_order_id,
+        document_number, supplier_name, label, kind, amount_minor, currency, goods_minor,
+        document_total_minor, opened_books, status, journal_entry_id, decided_at, created_at
+      FROM document_charges_old`);
+    db.exec('DROP TABLE document_charges_old');
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_document_charges
+      ON document_charges(workspace_id, source_kind, source_id, label, amount_minor)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_document_charges_status
+      ON document_charges(workspace_id, status)`);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+}
+
 function migrateMailboxDocumentPurpose(db) {
   if (!tableExists(db, 'connection_email_rules') || !tableExists(db, 'schema_meta')) return;
   const now = new Date().toISOString();
@@ -415,12 +555,37 @@ function migrate(db) {
   // Accounting consumes durable sales, purchasing, inventory, and manager
   // events. It is additive and never becomes the physical stock authority.
   db.exec(fs.readFileSync(ACCOUNTING_SCHEMA_PATH, 'utf8'));
+  // Forecasting reads everything above it and writes to none of it. Last on
+  // purpose: its tables reference skus, locations and suppliers, and it must
+  // never be something the operational schema depends on.
+  db.exec(fs.readFileSync(FORECASTING_SCHEMA_PATH, 'utf8'));
+  // Shipping hangs off sales_shipments, so it follows sales. It holds what a
+  // carrier said — rates, labels, scans — and never what Foundry decided.
+  db.exec(fs.readFileSync(SHIPPING_SCHEMA_PATH, 'utf8'));
 
   /*
    * Orders that shipped before shipments existed have no record of where the
    * goods went. Rebuild one from each order's own fulfilment history, once.
    */
+  // The charge table has to be its current shape before anything repairs
+  // into it, or the repair writes into a table that no longer matches and the
+  // failure is swallowed as "this file had no charges".
+  migrateDocumentCharges(db);
+
   require('./backfill-shipments').backfillShipments(db);
+
+  /*
+   * Stock imported from a file that carried its cost, and stored worth zero.
+   *
+   * Imports used to discard the supplier's cost column, so a spreadsheet
+   * invoice created inventory the books could not value — and the first sale
+   * of any of it would stop on "no recorded cost". The import path now
+   * attaches the cost as it creates the stock; this gives the same value to
+   * everything that came in before it did, from the figure still stored on the
+   * row it was read from. Idempotent: stock that already has a cost is left
+   * exactly as it is.
+   */
+  require('../imports/backfill-costs').backfillImportCosts(db);
   // The connection/feed tables are created by onboarding on a fresh database,
   // so a second additive pass keeps fresh and upgraded databases identical.
   addMissingColumns(db);

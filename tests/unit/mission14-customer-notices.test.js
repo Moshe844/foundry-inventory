@@ -76,7 +76,7 @@ test('a notice states nothing Foundry was not given', () => {
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10 });
   const { order } = orderFor(env, 4);
   const box = shipments.startPicking(env.db, env.ctx, order.id);
-  const shipped = shipments.ship(env.db, env.ctx, box.id, {});
+  const shipped = shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
 
   const body = shipped.customerNotice.body;
   assert.match(body, /is on its way/);
@@ -93,11 +93,11 @@ test('a part shipment tells the customer what is still coming', () => {
   const box = shipments.startPicking(env.db, env.ctx, order.id, {
     lines: [{ lineId: order.lines[0].id, locationId: env.workspace.main.id, quantity: 12 }],
   });
-  const shipped = shipments.ship(env.db, env.ctx, box.id, {});
+  const shipped = shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
   assert.match(shipped.customerNotice.body, /6 items on this order have not shipped yet/);
 
   const rest = shipments.startPicking(env.db, env.ctx, order.id);
-  const second = shipments.ship(env.db, env.ctx, rest.id, {});
+  const second = shipments.ship(env.db, env.ctx, rest.id, { handover: 'CARRIER' });
   assert.doesNotMatch(second.customerNotice.body, /have not shipped yet/);
   assert.equal(notices.forOrder(env.db, env.workspace.workspaceId, order.id).length, 2,
     'two boxes, two notices');
@@ -108,8 +108,8 @@ test('one box gets one notice, however many times it is shipped', () => {
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10 });
   const { order } = orderFor(env, 3);
   const box = shipments.startPicking(env.db, env.ctx, order.id);
-  shipments.ship(env.db, env.ctx, box.id, {});
-  shipments.ship(env.db, env.ctx, box.id, {});
+  shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
+  shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
   assert.equal(notices.forShipment(env.db, env.workspace.workspaceId, box.id).length, 1);
 });
 
@@ -118,7 +118,7 @@ test('a customer with no email still gets a notice written, and it says why it c
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10 });
   const { order } = orderFor(env, 2, { email: null });
   const box = shipments.startPicking(env.db, env.ctx, order.id);
-  const shipped = shipments.ship(env.db, env.ctx, box.id, {});
+  const shipped = shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
 
   assert.ok(shipped.customerNotice, 'the words are still worth having, to copy or read aloud');
   assert.equal(shipped.customerNotice.recipient, null);
@@ -133,7 +133,7 @@ test('a workspace can switch notices off, and then none are written', () => {
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10 });
   const { order } = orderFor(env, 2);
   const box = shipments.startPicking(env.db, env.ctx, order.id);
-  const shipped = shipments.ship(env.db, env.ctx, box.id, {});
+  const shipped = shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
   assert.equal(shipped.customerNotice, null);
   assert.equal(notices.forShipment(env.db, env.workspace.workspaceId, box.id).length, 0);
   assert.equal(shipped.status, 'SHIPPED', 'the box still went');
@@ -159,7 +159,7 @@ test('a broken notice cannot unship a box that physically left', () => {
   const original = notices.onShipped;
   notices.onShipped = () => { throw new Error('mail subsystem is on fire'); };
   try {
-    const shipped = shipments.ship(env.db, env.ctx, box.id, {});
+    const shipped = shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
     assert.equal(shipped.status, 'SHIPPED');
     assert.equal(shipped.customerNotice, null, 'no notice, and no exception');
     assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.main.id), 5,
@@ -174,7 +174,7 @@ test('an owner can correct the words before they go, but not after', () => {
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10 });
   const { order } = orderFor(env, 3);
   const box = shipments.startPicking(env.db, env.ctx, order.id);
-  const shipped = shipments.ship(env.db, env.ctx, box.id, {});
+  const shipped = shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
   const id = shipped.customerNotice.id;
 
   const edited = notices.updateDraft(env.db, env.workspace.workspaceId, id, {
@@ -195,7 +195,7 @@ test('the waiting list is what Foundry has written and not yet sent', () => {
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20 });
   const { order } = orderFor(env, 4);
   const box = shipments.startPicking(env.db, env.ctx, order.id);
-  const shipped = shipments.ship(env.db, env.ctx, box.id, {});
+  const shipped = shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
 
   let queue = notices.waiting(env.db, env.workspace.workspaceId);
   assert.equal(queue.length, 1);
@@ -216,7 +216,7 @@ test('one inventory never sees another inventory customer notices', () => {
     inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10 });
     const { order } = orderFor(env, 2);
     const box = shipments.startPicking(env.db, env.ctx, order.id);
-    shipments.ship(env.db, env.ctx, box.id, {});
+    shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
   }
 
   const mine = notices.waiting(first.db, first.workspace.workspaceId);
@@ -291,7 +291,7 @@ test('a paused Foundry sends nothing to customers, and says why', async () => {
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10 });
   const { order } = orderFor(env, 2);
   const box = shipments.startPicking(env.db, env.ctx, order.id);
-  const shipped = shipments.ship(env.db, env.ctx, box.id, {});
+  const shipped = shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
 
   modes.pause(env.db, env.ctx, membership, 'Testing the stop boundary.');
   await assert.rejects(

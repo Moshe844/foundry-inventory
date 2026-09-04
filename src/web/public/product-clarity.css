@@ -125,3 +125,524 @@
   .capability-grid, .authority-legend { grid-template-columns: 1fr; }
   .topbar-help { display: none; }
 }
+
+/*
+ * The customer's own words, on the order Foundry read out of them.
+ *
+ * Set apart from Foundry's prose deliberately: the owner is approving a
+ * reading of this text, so the text has to be visibly the source rather than
+ * more of the system talking.
+ */
+.quoted-source {
+  margin: 0.75rem 0;
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--line, #d5d8de);
+  background: var(--surface-sunken, #f6f7f9);
+  white-space: pre-wrap;
+  font-size: 0.925rem;
+  color: var(--ink-2, #444a54);
+}
+
+/*
+ * How the goods left — asked before Foundry will say they went.
+ *
+ * Laid out as three equal choices rather than a dropdown with a default,
+ * because a default is what let an order report itself shipped when nobody
+ * had said anything of the kind.
+ */
+.ship-method {
+  margin: 0.75rem 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line, #d5d8de);
+  border-radius: 8px;
+}
+.ship-method legend {
+  padding: 0 0.4rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.ship-method .choice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  cursor: pointer;
+}
+.ship-method .choice input { margin: 0; }
+
+/*
+ * Taking money: the two things a shop does, side by side and hard to miss.
+ *
+ * These were a sentence with a link inside it and a form hidden under a
+ * disclosure. The owner's complaint was that nothing on the page opened
+ * Stripe or produced something they could send, which was true — the link
+ * was there and looked like prose.
+ */
+.pay-actions { margin: 0.75rem 0; }
+.pay-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.5rem 0;
+}
+.pay-buttons form { display: contents; }
+.pay-live {
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line, #d5d8de);
+  border-radius: 8px;
+  background: var(--surface-sunken, #f6f7f9);
+}
+.pay-live-head { margin: 0 0 0.5rem; }
+
+/*
+ * One row per job Foundry might do on its own.
+ *
+ * Deliberately a flat list rather than a nested disclosure: the owner's
+ * objection was that one switch quietly carried six unrelated permissions, so
+ * all six are visible at once with their consequence written next to them.
+ */
+.authority-jobs .job-list { list-style: none; margin: 0; padding: 0; }
+.authority-jobs .job {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.8rem 1rem;
+  border-top: 1px solid var(--line, #e3e5ea);
+}
+.authority-jobs .job:first-child { border-top: 0; }
+.authority-jobs .job-body { flex: 1 1 auto; display: flex; flex-direction: column; gap: 0.15rem; }
+.authority-jobs .job-action { flex: 0 0 auto; }
+.authority-jobs .job-state {
+  flex: 0 0 auto;
+  min-width: 6.5rem;
+  text-align: right;
+  font-size: 0.8rem;
+  color: var(--ink-3, #6b7280);
+}
+.authority-jobs .job-state.is-on { color: var(--ok, #157347); font-weight: 600; }
+@media (max-width: 640px) {
+  .authority-jobs .job { flex-wrap: wrap; }
+  .authority-jobs .job-state { min-width: 0; text-align: left; }
+}
+
+/*
+ * What a document means, above what Foundry would build from it.
+ *
+ * Given its own block at the top of the proposal because the summary below it
+ * looks identical whether the goods exist or not — which is how a proforma
+ * invoice for unmade shoes was approved as stock on the shelf.
+ */
+.doc-meaning {
+  margin: 0 0 1.5rem;
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--line, #d5d8de);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+}
+.doc-meaning h2 { margin: 0.1rem 0 0.35rem; }
+.doc-meaning-because { margin: 0 0 1rem; color: var(--ink-2, #444a54); }
+.doc-meaning-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 1rem;
+}
+.doc-panel h3 { margin: 0 0 0.4rem; font-size: 0.9rem; }
+.doc-panel ul { margin: 0; padding-left: 1.1rem; }
+.doc-panel li { margin-bottom: 0.3rem; }
+.doc-panel li span { display: block; }
+.doc-panel--wont li strong { font-weight: 600; }
+.doc-panel--wont { color: var(--ink-2, #444a54); }
+.doc-money { margin: 1rem 0 0; }
+.doc-money-total td { border-top: 1px solid var(--line, #d5d8de); }
+.doc-panel--asks {
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line, #d5d8de);
+}
+.doc-ask { margin-bottom: 0.85rem; }
+.doc-ask-q { margin: 0 0 0.2rem; font-weight: 600; }
+.doc-ask-options { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.45rem; }
+
+
+/*
+ * A page with one thing to do on it.
+ *
+ * The order page had grown to six full panels stacked down the screen —
+ * fulfilment, money, lines, activity, all open, all the time — so the single
+ * action somebody came to take was one screen among many and the rest was
+ * scrolling. A fold keeps the heading and the one figure that answers the
+ * question from the doorway, and opens when that is not enough.
+ */
+.fold { overflow: hidden; }
+.fold + .fold, .fold + .card, .card + .fold { margin-top: 12px; }
+.fold > summary { cursor: pointer; list-style: none; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::after {
+  content: 'Open'; margin-left: auto; padding-left: 14px;
+  color: var(--accent, #0b7); font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.fold[open] > summary::after { content: 'Close'; }
+.fold > summary:hover { background: var(--surface-2, #f6f7f9); }
+.fold-note { color: var(--muted, #6b7280); font-size: 12.5px; font-weight: 400; }
+
+/*
+ * Paying without leaving Foundry.
+ *
+ * "Take payment now" was a link with target=_blank, so on the desktop app it
+ * threw the merchant into a different browser — a fresh window, no session,
+ * and a customer standing at the counter watching it fail. The page they pay
+ * on belongs to Stripe and always will; it does not have to be somewhere else.
+ */
+.pay-modal { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center;
+  justify-content: center; padding: 24px; background: rgba(16, 20, 26, 0.55); }
+.pay-modal[hidden] { display: none; }
+.pay-modal__sheet { display: flex; flex-direction: column; width: min(460px, 100%);
+  background: var(--surface, #fff); border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3); overflow: hidden; }
+.pay-modal__head { display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+  border-bottom: 1px solid var(--line, #d5d8de); }
+.pay-modal__head .spacer { margin-left: auto; }
+.pay-modal__head strong { display: block; }
+.pay-modal__body { display: grid; gap: 12px; padding: 18px; }
+.pay-modal__body p { margin: 0; }
+.pay-modal__amount { font-size: 26px; font-weight: 700; }
+.pay-modal__buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.pay-modal__blocked[hidden] { display: none; }
+body.is-paying { overflow: hidden; }
+
+/*
+ * Saying no, in the same place as saying yes.
+ *
+ * Every card in Needs you offered one button and it was always the one that
+ * goes ahead. The refusal sits directly under it, quieter, so a decision reads
+ * as a decision rather than as an instruction.
+ */
+.need__dismiss { margin: 0; width: 100%; }
+.need__dismiss .btn { width: 100%; }
+
+/*
+ * A receipt somebody can hand to a customer.
+ *
+ * Printed from the same figures the order shows: a receipt that disagrees with
+ * the record it came from is worse than no receipt at all.
+ */
+.receipt { max-width: 640px; margin: 0 auto; padding: 28px 32px; background: var(--surface, #fff);
+  border: 1px solid var(--line, #d5d8de); border-radius: 10px; }
+.receipt__head { display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 20px; border-bottom: 1px solid var(--line, #d5d8de); padding-bottom: 14px; }
+.receipt__head h1 { margin: 0; font-size: 22px; }
+.receipt__number { margin: 2px 0 0; color: var(--muted, #6b7280); }
+.receipt__from { text-align: right; display: grid; gap: 2px; }
+.receipt__facts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; margin: 18px 0; }
+.receipt__facts div { display: grid; gap: 2px; }
+.receipt__facts dt { color: var(--muted, #6b7280); font-size: 12.5px; }
+.receipt__facts dd { margin: 0; font-weight: 600; }
+.receipt__lines { margin-top: 8px; }
+.receipt__totals { margin-top: 16px; display: grid; gap: 6px; }
+.receipt__totals div { display: flex; justify-content: space-between; gap: 20px; }
+.receipt__paid { border-top: 1px solid var(--line, #d5d8de); padding-top: 8px; font-size: 18px; }
+.receipt__foot { margin-top: 22px; border-top: 1px solid var(--line, #d5d8de); padding-top: 12px; }
+.receipt-actions { display: flex; gap: 8px; justify-content: flex-end; margin-bottom: 14px; }
+@media print {
+  .receipt-actions, .no-print { display: none !important; }
+  .receipt { border: 0; padding: 0; max-width: none; }
+}
+
+
+/* Paid for, and still on the shelf — the one state the tiles cannot show. */
+.accounting-cost-not-price { border-left: 3px solid var(--accent, #2f6feb); }
+.accounting-paid-not-gone { display: grid; gap: 6px; margin: 0 0 14px;
+  padding: 12px 14px; border: 1px solid var(--line, #d5d8de); border-radius: 8px;
+  background: var(--surface, #fff); color: var(--ink-soft, #384152); font-size: 13.5px; }
+
+/* ---------------------------------------------------------------------------
+   The document proposal, folded
+
+   This page has to carry a lot — what a file says, what Foundry would build
+   from it, and what it deliberately will not do — to somebody who has never
+   seen it before and is deciding whether to trust it with their stock. The
+   answer is not less information. It is one visible decision and everything
+   else one click away, so the page reads as a paragraph rather than a contract.
+   --------------------------------------------------------------------------- */
+
+.foundry-quote-fold { max-width: 640px; margin: 10px auto 0; text-align: center; }
+.foundry-quote-fold > summary {
+  cursor: pointer; font-size: 12.5px; color: var(--ink-soft, #5b6472);
+  list-style: none; display: inline-flex; gap: 6px; align-items: center;
+}
+.foundry-quote-fold > summary::-webkit-details-marker { display: none; }
+.foundry-quote-fold > summary::after { content: '▾'; font-size: 10px; opacity: .7; }
+.foundry-quote-fold[open] > summary::after { content: '▴'; }
+.foundry-quote-fold > summary:hover { color: var(--ink, #1d2430); }
+.foundry-quote-fold .foundry-quote { margin-top: 10px; }
+
+.doc-lines-fold > summary,
+.proposal-caveats > summary {
+  cursor: pointer; padding: 12px 14px; font-weight: 600; font-size: 13.5px;
+  color: var(--ink, #1d2430);
+}
+.doc-lines-fold > summary { padding-left: 0; }
+.doc-lines-fold > summary:hover,
+.proposal-caveats > summary:hover { color: var(--accent, #2f6feb); }
+.proposal-caveats { padding: 0; }
+.proposal-caveats[open] > summary { border-bottom: 1px solid var(--line, #e3e6ea); }
+
+/* The decision row. One primary, and the alternatives beside it rather than
+   scattered up the page. */
+.foundry-confirm .btn-row { flex-wrap: wrap; gap: 8px; }
+
+/* ---------------------------------------------------------------------------
+   A way back out
+
+   Settings is a hub with a dozen doors and none of them had a handle on the
+   inside: getting from one sub-page to the next meant the sidebar, Settings,
+   and finding your place again. One link, top left, above whatever the page
+   is — placed in the layout so a page opts in rather than growing its own.
+   --------------------------------------------------------------------------- */
+.page-back {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin: 0 0 14px; padding: 5px 10px 5px 8px;
+  border: 1px solid var(--line, #d5d8de); border-radius: 999px;
+  background: var(--surface, #fff); color: var(--ink-soft, #5b6472);
+  font-size: 12.5px; font-weight: 500; text-decoration: none;
+}
+.page-back:hover { color: var(--ink, #1d2430); border-color: var(--accent-line, #9db8f0); }
+.page-back-arrow { font-size: 14px; line-height: 1; }
+
+/* ---------------------------------------------------------------------------
+   Choices that look like choices
+
+   Two cards, one outlined, and the reported symptom was that the unselected
+   one "is not even clickable". It was — it submitted and the mode changed —
+   but nothing about it said so before the click and little said so after.
+   --------------------------------------------------------------------------- */
+.authority-choice { position: relative; transition: border-color .12s, background .12s; }
+.authority-choice:not(.is-selected)::after {
+  content: 'Choose this';
+  position: absolute; right: 14px; bottom: 12px;
+  font-size: 11.5px; font-weight: 600; color: var(--accent, #2f6feb);
+  opacity: 0; transition: opacity .12s;
+}
+.authority-choice:not(.is-selected):hover::after,
+.authority-choice:not(.is-selected):focus-visible::after { opacity: 1; }
+.authority-choice.is-selected::after {
+  content: 'Current';
+  position: absolute; right: 14px; top: 12px;
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent, #2f6feb);
+}
+.authority-choice.is-selected strong { padding-right: 68px; }
+.authority-choice:focus-visible { outline: 2px solid var(--accent, #2f6feb); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------------------
+   Getting around a long page
+
+   Some pages are legitimately long — the Money page answers eleven different
+   questions and every one of them is somebody's first question. Folding them
+   away moves the problem: what an owner relied on finding last week is now
+   behind a click they have to remember. So the sections stay where they are
+   and become reachable in one jump, with the row following you down the page.
+   --------------------------------------------------------------------------- */
+.page-jump {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 0 0 16px; padding: 10px 0;
+  background: var(--bg, #f6f7f9);
+}
+.page-jump a {
+  padding: 5px 11px; border: 1px solid var(--line, #d5d8de); border-radius: 999px;
+  background: var(--surface, #fff); color: var(--ink-soft, #5b6472);
+  font-size: 12.5px; text-decoration: none; white-space: nowrap;
+}
+.page-jump a:hover { color: var(--ink, #1d2430); border-color: var(--accent-line, #9db8f0); }
+
+/* Anchored sections must not land under the sticky row. */
+.accounting-owner-section, .accounting-needs { scroll-margin-top: 60px; }
+
+@media (max-width: 700px) {
+  .page-jump { overflow-x: auto; flex-wrap: nowrap; }
+}
+
+/*
+ * The jobs card's own heading.
+ *
+ * `.card-head` is a flex row — right for a title with a badge pushed to the
+ * far end, wrong for a title with a paragraph after it: the heading collapsed
+ * into a four-word-wide column with the explanation crammed beside it.
+ */
+.authority-jobs > .card-head {
+  display: block;
+  padding: 14px 16px 10px;
+}
+.authority-jobs > .card-head h3 { margin: 0 0 6px; font-size: 15px; }
+.authority-jobs > .card-head p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink-soft, #5b6472); }
+.authority-jobs { margin-top: 18px; }
+
+/* ---------------------------------------------------------------------------
+   A block of reasoning
+
+   These carry a headline, an explanation, a confidence badge and sometimes two
+   buttons. They were reusing `.quiet-note`, which is `display: flex` built for
+   a single line beside an icon — so a shortage rendered as five narrow columns
+   with the product name broken across four lines. Its own class, because it is
+   its own thing.
+   --------------------------------------------------------------------------- */
+.planning-item {
+  display: block;
+  padding: 14px 16px;
+  border: 1px solid var(--line, #e3e6ea);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  color: var(--ink, #1d2430);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.planning-item + .planning-item { margin-top: 10px; }
+.planning-item > strong { display: inline-block; margin-bottom: 4px; font-size: 14px; }
+.planning-item p { margin: 6px 0 0; }
+.planning-item .badge { margin-left: 6px; vertical-align: middle; }
+.planning-item .button-row { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+.planning-item details { margin-top: 10px; }
+.planning-item details > summary { cursor: pointer; font-size: 12.5px; color: var(--accent, #2f6feb); }
+.planning-item--nested { margin-top: 10px; background: var(--surface-2, #f7f8fa); }
+
+/* ---------------------------------------------------------------------------
+   Answers that say what they do
+
+   A row of three short labels asked the reader to infer the difference between
+   ordering goods, keeping only the prices, and declaring stock they already
+   own — three very different outcomes, one of which puts 800 pairs on a shelf.
+   Each answer now carries its consequence, and they stack so the sentences are
+   readable rather than squeezed into a button.
+   --------------------------------------------------------------------------- */
+.doc-answers { display: grid; gap: 10px; margin-top: 14px; }
+.doc-answer {
+  display: grid; gap: 4px; width: 100%; padding: 14px 16px;
+  border: 1px solid var(--line, #d5d8de); border-radius: 10px;
+  background: var(--surface, #fff); color: var(--ink, #1d2430);
+  text-align: left; cursor: pointer; font: inherit;
+}
+.doc-answer:hover { border-color: var(--accent, #2f6feb); background: var(--accent-soft, #f2f6ff); }
+.doc-answer:focus-visible { outline: 2px solid var(--accent, #2f6feb); outline-offset: 2px; }
+.doc-answer strong { font-size: 14.5px; }
+.doc-answer span { font-size: 13px; line-height: 1.5; color: var(--ink-soft, #5b6472); }
+.doc-answer.is-primary { border-color: var(--accent, #2f6feb); box-shadow: 0 0 0 1px var(--accent, #2f6feb); }
+@media (min-width: 820px) { .doc-answers { grid-template-columns: repeat(3, 1fr); } }
+
+/* ---------------------------------------------------------------------------
+   The Money page, folded
+
+   Eleven sections, each of them somebody's first question, and all of them open
+   at once — so the answer to any one of them was somewhere down a page nobody
+   could hold in their head. The complaint was "boring, confusing, long".
+
+   The fix is the same one that worked on the order page: the answer at the top,
+   everything else shut. Each section's own heading already carries its figure
+   ("$0.00 still uncollected", "2,855 units · $76,447.20"), so a closed page is
+   still a full set of answers — it is the working underneath that folds away.
+   Nothing is hidden that was not already a click from view; what changes is
+   that a reader chooses the one they came for instead of scrolling past ten.
+   --------------------------------------------------------------------------- */
+.accounting-fold { padding: 0; }
+.accounting-fold > summary {
+  cursor: pointer; list-style: none; display: block; position: relative;
+  padding-right: 40px;
+}
+.accounting-fold > summary::-webkit-details-marker { display: none; }
+.accounting-fold > summary::after {
+  content: '▾'; position: absolute; right: 18px; top: 50%;
+  transform: translateY(-50%); font-size: 12px; color: var(--ink-soft, #6b7280);
+  transition: transform .12s;
+}
+.accounting-fold[open] > summary::after { transform: translateY(-50%) rotate(180deg); }
+.accounting-fold > summary:hover { background: var(--accent-soft, #f2f6ff); }
+.accounting-fold > summary .card-head { border-bottom: 0; }
+.accounting-fold[open] > summary .card-head { border-bottom: 1px solid var(--line, #e3e6ea); }
+
+/* The heading is the summary now, so its hint can wait until the fold is open:
+   a closed row should read as one line, not three. */
+.accounting-fold:not([open]) > summary .card-head .hint { display: none; }
+
+/* ---------------------------------------------------------------------------
+   Money, as a briefing
+
+   The owner's brief was exact: it should feel like hiring an elite senior
+   accountant, not like operating accounting software. So the page opens with
+   whether the books are straight, then where the money is, then what moved and
+   why — and the chart of accounts, journals and ledger live behind one link for
+   the person who actually wants them.
+   --------------------------------------------------------------------------- */
+.money-status {
+  padding: 16px 18px; border-radius: 12px; margin-bottom: 18px;
+  border: 1px solid var(--line, #d5d8de); background: var(--surface, #fff);
+}
+.money-status.is-good { border-left: 4px solid var(--ok, #157347); }
+.money-status.is-waiting { border-left: 4px solid var(--warn, #b45309); }
+.money-status strong { display: block; font-size: 17px; margin-bottom: 4px; }
+.money-status p { margin: 0; color: var(--ink-soft, #5b6472); font-size: 13.5px; }
+
+.money-position {
+  display: grid; gap: 12px; margin-bottom: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.money-figure {
+  padding: 14px 16px; border: 1px solid var(--line, #e3e6ea); border-radius: 10px;
+  background: var(--surface, #fff);
+}
+.money-figure span { display: block; font-size: 12.5px; color: var(--ink-soft, #5b6472); }
+.money-figure strong { display: block; font-size: 24px; margin: 4px 0 4px; letter-spacing: -0.01em; }
+.money-figure small { color: var(--ink-soft, #6b7280); font-size: 12px; }
+
+/* The feed. A date, then a sentence — the shape of a statement rather than a
+   table, because the owner is reading it, not reconciling it. */
+.money-feed { list-style: none; margin: 0; padding: 0; }
+.money-feed-item {
+  display: flex; gap: 14px; align-items: baseline;
+  padding: 10px 0; border-top: 1px solid var(--line, #eef0f3);
+}
+.money-feed-item:first-child { border-top: 0; }
+.money-feed-when {
+  flex: 0 0 62px; font-size: 12px; color: var(--ink-soft, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+.money-feed-what { flex: 1 1 auto; }
+.money-feed-what a { font-weight: 600; text-decoration: none; color: var(--ink, #1d2430); }
+.money-feed-what a:hover { color: var(--accent, #2f6feb); }
+.money-feed-what small { display: block; color: var(--ink-soft, #6b7280); font-size: 12.5px; }
+.money-feed-item.is-in .money-feed-when { color: var(--ok, #157347); }
+.money-feed-item.is-out .money-feed-when { color: var(--danger, #b91c1c); }
+
+.money-why { margin-top: 14px; }
+.money-why p { margin: 0 0 6px; font-size: 13.5px; color: var(--ink-soft, #4b5563); }
+.money-why p:first-child { color: var(--ink, #1d2430); font-weight: 600; }
+
+.money-fee-group td { background: var(--surface-2, #f7f8fa); }
+.money-asks { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.money-asks a {
+  display: inline-block; padding: 5px 11px; border-radius: 999px; font-size: 12.5px;
+  border: 1px solid var(--line, #d5d8de); background: var(--surface, #fff);
+  color: var(--ink-soft, #5b6472); text-decoration: none;
+}
+.money-asks a:hover { color: var(--ink, #1d2430); border-color: var(--accent-line, #9db8f0); }
+.money-foot { margin: 24px 0 0; font-size: 12.5px; color: var(--ink-soft, #6b7280); max-width: 760px; }
+
+/* --------------------------------------------------- carrier rates ------- */
+/*
+ * A list of prices somebody chooses between. Deliberately not a table: the
+ * three things that matter — who, how much, when — read as a sentence, and a
+ * table would make the reader assemble them from columns.
+ */
+.rate-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
+.rate-row {
+  border: 1px solid var(--line, #e3e6ea);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--surface, #fff);
+}
+.rate-row .choice { display: flex; gap: 10px; align-items: flex-start; margin: 0; }
+.rate-row .choice > span { line-height: 1.45; }
+.rate-row.is-pick {
+  border-color: var(--accent, #0f766e);
+  background: var(--accent-wash, #f0fdfa);
+}

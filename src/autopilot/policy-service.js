@@ -264,6 +264,24 @@ function approve(db, ctx, membership, policyId, { expectedHash = null } = {}) {
       WHERE id = ? AND workspace_id = ?`
   ).run(ctx.actorId, now, now, policyId, ctx.workspaceId);
 
+  /*
+   * Approving a policy is what authorises the job it is about.
+   *
+   * The job permissions were added so that letting Foundry chase an invoice
+   * could not also let it spend money. But a policy already says which
+   * actions it allows, and approving one is an owner saying "yes, do this
+   * kind of work" in the most explicit way the product offers. Making them
+   * find a second switch afterwards would be asking the same question twice
+   * and leaving a policy that authorises nothing if they missed it.
+   */
+  const capabilities = require('./capabilities');
+  const jobs = {};
+  for (const actionType of policy.allowedActionTypes || []) {
+    const job = capabilities.CAPABILITY_FOR_ACTION[actionType];
+    if (job) jobs[job] = true;
+  }
+  if (Object.keys(jobs).length) capabilities.apply(db, ctx, membership, jobs);
+
   // Approving a replacement retires what it replaced, so two versions can
   // never both be authorising work.
   if (policy.supersedesPolicyId) {

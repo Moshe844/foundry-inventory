@@ -39,6 +39,37 @@ const ACTION_TYPES = [
   // delivery opens the receiving screen for the orders it might be.
   'purchase',
   'receive_shipment',
+  /*
+   * Money going out to a supplier. Separate from receiving on purpose: paying
+   * for goods does not deliver them and receiving them does not pay for them,
+   * and a system that treats either as the other will eventually tell somebody
+   * their shelves are full because the invoice was settled.
+   */
+  'pay_supplier',
+  /*
+   * Getting rid of the whole inventory.
+   *
+   * Every other operation here is about stock, and until this existed the
+   * reader had nothing correct to choose for "remove the entire inventory".
+   * It did what anybody would with the wrong vocabulary: picked the nearest
+   * thing — issue, or adjust — and asked which item was meant. Somebody who
+   * had just said "the entire inventory" was asked which item they meant,
+   * twice.
+   *
+   * The reader was not misreading. Foundry did not have the concept. This is
+   * the concept.
+   */
+  'delete_inventory',
+  /*
+   * Writing to somebody.
+   *
+   * Foundry has three working paths for this — replies to customers, supplier
+   * messages, and shipping and payment notices — and it sent a real one
+   * today. None of that was in this list, so a reader asked to email somebody
+   * had no correct option and said "Foundry cannot send emails to customers
+   * or suppliers". It can. It just could not say so from here.
+   */
+  'send_message',
   'clarify',
   'unsupported',
 ];
@@ -72,6 +103,8 @@ const LINE_SCHEMA = {
     'terminologyKey', 'terminologyValue',
     'productName', 'productCode', 'variantAxes', 'unitLabel',
     'supplier', 'purchaseUnit',
+    'amount', 'reference',
+    'recipient', 'messageBody',
   ],
   properties: {
     actionType: { type: 'string', enum: ACTION_TYPES },
@@ -106,11 +139,37 @@ const LINE_SCHEMA = {
     variantAxes: { type: 'string' },
     // purchase / receive_shipment only: the supplier they named, verbatim.
     supplier: { type: 'string' },
+    // pay_supplier only: how much left the account, in the currency they typed.
+    // -1 when they gave no figure.
+    amount: { type: 'number' },
+    // The invoice or bill number they named, exactly as written. '' when none.
+    reference: { type: 'string' },
+    // send_message only: who it goes to, and what they want said. Their
+    // words, not a composed version of them.
+    recipient: { type: 'string' },
+    messageBody: { type: 'string' },
     // The unit they counted in, when it was not the item itself: "cases",
     // "boxes", "pallets". '' when they just said a number of items.
     purchaseUnit: { type: 'string' },
     unitLabel: { type: 'string' },
   },
+};
+
+/*
+ * Fields that must be on the wire, and may be missing on the way back.
+ *
+ * The schema sent to the model lists amount, reference, recipient and
+ * messageBody as required, because a reader told they are optional leaves
+ * them out — and a message with no recipient is a question, not a draft. But
+ * an answer that omits them is still a perfectly good answer about a stock
+ * movement, and rejecting it turned every older scripted reply into
+ * "Foundry could not work out what that meant". So the wire demands them and
+ * the check on the way back does not; normaliseLine fills the blanks.
+ */
+const OPTIONAL_ON_READ = ['amount', 'reference', 'recipient', 'messageBody'];
+const ACCEPTED_LINE_SCHEMA = {
+  ...LINE_SCHEMA,
+  required: LINE_SCHEMA.required.filter((key) => !OPTIONAL_ON_READ.includes(key)),
 };
 
 const INTENT_SCHEMA = {
@@ -121,6 +180,14 @@ const INTENT_SCHEMA = {
     lines: { type: 'array', maxItems: MAX_LINES, items: LINE_SCHEMA },
     clarifyingQuestion: { type: 'string' },
     unsupportedReason: { type: 'string' },
+  },
+};
+
+const ACCEPTED_INTENT_SCHEMA = {
+  ...INTENT_SCHEMA,
+  properties: {
+    ...INTENT_SCHEMA.properties,
+    lines: { ...INTENT_SCHEMA.properties.lines, items: ACCEPTED_LINE_SCHEMA },
   },
 };
 
@@ -159,6 +226,28 @@ Operations you may choose:
   they counted in ("cases", "boxes") in purchaseUnit. Leave quantity -1 if
   they did not say a number; Foundry works out how many from its own figures.
   This creates a draft order for them to approve, never an actual purchase.
+- send_message: write to somebody — "email motty@example.com that the order
+  is delayed", "tell ABC we need the shipment by Friday", "let the customer
+  know it shipped". Put who it is going to in recipient: an email address
+  exactly as written, or the customer or supplier name they used. Put what
+  they want said in messageBody, in their own words — do not compose, expand
+  or improve it. Foundry writes the message and shows it before anything is
+  sent. Never refuse this; sending messages is something Foundry does.
+- delete_inventory: the whole inventory is to go — the workspace itself, not
+  a product in it and not a stock count. Every way of saying that belongs
+  here: remove/delete/wipe/erase/scrap/bin/destroy/throw away the inventory,
+  this workspace, everything, the whole thing, all of it, the data; wanting to
+  start over, start fresh, begin again, or shut it down. Asking HOW to delete
+  it is the same request. Never read it as issue, adjust or archive_item, and
+  never ask which item or location was meant — they told you, it is all of it.
+  Choose this whenever that is what was asked for, whatever Foundry then does
+  about it; it is a classification, not a promise to carry it out.
+- pay_supplier: money was paid to a supplier — "I paid ABC $100 toward
+  invoice 9281", "paid the remaining 140", "we sent Langchi the deposit". Put
+  the supplier in supplier, the figure in amount, and any invoice or bill
+  number they named in reference. Foundry records what was paid and what is
+  still owed. Paying for goods is NEVER receiving them: it changes no stock,
+  and an instruction that only mentions money is only ever this.
 - receive_shipment: a delivery has arrived — "ABC's shipment arrived", "the
   order from XYZ came in". Put the supplier in supplier. This opens the
   receiving screen; it does not book anything in by itself.
@@ -210,7 +299,15 @@ Rules:
   detail and put it in its proper field — "sold 85 House Blend 250g from the
   Roastery. — R-2603" is lotCode "R-2603", not part of the product name and not
   a second line. Never ask the same question back.
-- Choose 'unsupported' for anything needing accounting or manufacturing, and
+- Never state what Foundry cannot do beyond "that is not one of the operations
+  listed above". You are shown a list of operations, not a list of Foundry's
+  abilities, and it does far more than this list — it emails customers and
+  suppliers, keeps books, deletes inventories, takes payments. Three times a
+  reader with no matching operation invented a limitation instead: "Foundry
+  cannot send emails", "Foundry cannot delete an inventory", "Foundry does not
+  handle payments". All three were false and all three were read by the owner
+  as fact. If nothing here matches, say only that, and say it in one line.
+- Choose 'unsupported' for anything Foundry has no operation for, and
   say in one line what Foundry cannot do.
 - You do not need to ask whether something is counted by quantity, by serial
   number or by lot. Foundry already knows how this business tracks stock and
@@ -272,6 +369,16 @@ function normaliseLine(raw) {
     productCode: String(raw.productCode || '').trim(),
     supplier: String(raw.supplier || '').trim(),
     purchaseUnit: String(raw.purchaseUnit || '').trim(),
+    /*
+     * What was paid, kept in minor units from here on so no later step has to
+     * guess whether "140" meant dollars or cents. -1 when no figure was given,
+     * matching every other number on this line.
+     */
+    amountMinor: Number.isFinite(Number(raw.amount)) && Number(raw.amount) >= 0
+      ? Math.round(Number(raw.amount) * 100) : -1,
+    reference: String(raw.reference || '').trim(),
+    recipient: String(raw.recipient || '').trim(),
+    messageBody: String(raw.messageBody || '').trim(),
     variantAxes: String(raw.variantAxes || '').trim(),
     unitLabel: String(raw.unitLabel || '').trim(),
     assumptions: [],
@@ -509,7 +616,7 @@ async function readInstruction(instruction, options = {}) {
   };
   const response = await provider.complete(request);
 
-  const result = validate(toWireSchema(INTENT_SCHEMA), response.data, { key: 'action-intent-wire' });
+  const result = validate(toWireSchema(ACCEPTED_INTENT_SCHEMA), response.data, { key: 'action-intent-wire' });
   if (!result.ok) {
     return {
       lines: [],

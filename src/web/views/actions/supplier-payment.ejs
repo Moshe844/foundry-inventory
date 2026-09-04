@@ -1,0 +1,53 @@
+<%
+  var money = function (minor) { return payment.currency + ' ' + (Number(minor || 0) / 100).toFixed(2); };
+  var today = new Date().toISOString().slice(0, 10);
+%>
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/#tell-foundry">Tell Foundry</a><span>›</span><span>Supplier payment</span>
+</nav>
+
+<section class="section">
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h1 style="font-size:1.25rem; margin:0;">Record what you paid <%= payment.supplierName %></h1>
+        <span class="t-xs t-muted">
+          <% if (payment.instruction) { %>Read from “<%= payment.instruction %>”. <% } %>
+          Nothing has been recorded yet.
+        </span>
+      </div>
+      <span class="spacer"></span>
+      <span class="badge badge--info">Waiting for you</span>
+    </div>
+    <form method="post" action="/accounting/payables/<%= payment.billId %>/payment" data-busy>
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="idempotencyKey" value="told-foundry-<%= payment.billId %>-<%= Date.now() %>">
+      <input type="hidden" name="method" value="bank_transfer">
+      <div class="card-body">
+        <dl class="detail-list">
+          <div><dt>Bill</dt><dd><%= payment.billNumber %></dd></div>
+          <div><dt>Supplier</dt><dd><%= payment.supplierName %></dd></div>
+          <div><dt>Outstanding now</dt><dd><%= money(payment.balanceMinor) %></dd></div>
+          <div><dt>Left after this</dt><dd><%= money(payment.remainingAfterMinor) %></dd></div>
+        </dl>
+        <label class="field">
+          <span class="field-label">Amount actually paid</span>
+          <input class="input" name="amount" inputmode="decimal" value="<%= (Number(payment.amountMinor) / 100).toFixed(2) %>" required>
+        </label>
+        <label class="field">
+          <span class="field-label">Payment date</span>
+          <input class="input" type="date" name="paymentDate" value="<%= today %>" required>
+        </label>
+        <label class="field">
+          <span class="field-label">Reference</span>
+          <input class="input" name="reference" placeholder="Transfer, cheque, card">
+        </label>
+        <p class="hint">This reduces what you owe on <%= payment.billNumber %>. It does not touch stock, and it does not create the expense again.</p>
+      </div>
+      <div class="card-foot">
+        <button class="btn btn--primary" type="submit">Record this payment</button>
+        <a class="btn btn--ghost" href="/#tell-foundry">Not this</a>
+      </div>
+    </form>
+  </div>
+</section>

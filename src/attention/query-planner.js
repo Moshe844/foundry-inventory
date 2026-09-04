@@ -123,11 +123,15 @@ Intents:
   "why did you order that". Put what they named in entityQuery.
 - stop_automation: they want Foundry to stop doing something by itself —
   "stop moving stock", "don't do that automatically any more".
-- action: they are telling Foundry to DO something to their stock — move,
-  transfer, receive, issue, remove, adjust, correct a count, add a location.
-  Not a question about records; a request to change them. Only things that
-  change stock. Supplier communication requests are handled through the
-  supplier and purchase-order workflows, not this stock-action intent.
+- action: they are telling Foundry to DO something rather than asking it
+  something — move, transfer, receive, issue, adjust, correct a count, add a
+  location, pay a supplier, email a customer, delete the whole inventory.
+  Anything phrased as an instruction belongs here, even when it is polite or
+  begins "can you". This used to be limited to things that change stock, so a
+  request to delete an inventory or send an email had nowhere to go and came
+  back as "Foundry cannot do that" — which was untrue both times. Foundry has
+  a separate reader for carrying instructions out; your job is only to notice
+  that this is one.
 - unsupported: anything else.
 
 Rules:
@@ -141,6 +145,14 @@ Rules:
 - Foundry now keeps suppliers, purchase orders and replenishment, so questions
   about buying, incoming stock, lead times, what something cost and who sells
   it all have real answers. Use the purchasing intents for those.
+- Never state what Foundry cannot do beyond "that is not one of the operations
+  listed above". You are shown a list of operations, not a list of Foundry's
+  abilities, and it does far more than this list — it emails customers and
+  suppliers, keeps books, deletes inventories, takes payments. Three times a
+  reader with no matching operation invented a limitation instead: "Foundry
+  cannot send emails", "Foundry cannot delete an inventory", "Foundry does not
+  handle payments". All three were false and all three were read by the owner
+  as fact. If nothing here matches, say only that, and say it in one line.
 - Choose 'unsupported' only for things Foundry genuinely cannot do at all:
   tax filing, payroll, automatic bill payment without authority, or forecasting beyond available evidence. Foundry can answer
   financial questions from its posted ledger and can prepare, send and
@@ -171,6 +183,40 @@ async function plan(question, options = {}) {
   }
   if (/\b(?:enough|sufficient) (?:stock|inventory)\b.*\b(?:cover|fulfill|fulfil)|\bcover\b.*\b(?:customer orders?|demand)\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'stock_coverage' });
+  }
+
+  if (/\bout\s+of\s+stock\b|\bnothing\s+in\s+stock\b|\b(?:everything|all).*\bshow(?:s|ing)?\s+(?:as\s+)?empty\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'out_of_stock' });
+  }
+  if (/\b(run(ning)?\s+out|stock\s*out|about\s+to\s+run|likely\s+to\s+run)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'likely_stockouts' });
+  }
+  if (/\bwhat\s+(should|do)\s+i\s+(order|buy|purchase)\b|\border\s+this\s+(week|month)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'what_to_order' });
+  }
+  if (/\b(overstock|over\s*stocked|too\s+much\s+stock|excess\s+(stock|inventory))\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'overstocked' });
+  }
+  if (/\breduce\s+(inventory|stock)\b|\b(free\s+up|less)\s+(cash|stock|inventory)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'reduce_inventory' });
+  }
+  if (/\b(most\s+reliable|best)\s+supplier\b|\bwhich\s+supplier\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'most_reliable_supplier' });
+  }
+  if (/\breorder\s+(settings?|points?|rules?)\b|\bare\s+my\s+(settings|levels)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'reorder_settings_review' });
+  }
+  if (/\bwhy\b.*\bdemand\b|\bdemand\b.*\b(increasing|rising|falling|dropping|changing)\b/i.test(clean)) {
+    const entityQuery = clean
+      .replace(/\b(?:why|do|you|think|that|the|is|are|for|our|my|demand|increasing|rising|falling|dropping|changing|going|up|down)\b/gi, ' ')
+      .replace(/[?.!]+$/g, '').replace(/\s+/g, ' ').trim();
+    return queryService.normalisePlan({ intent: 'demand_explanation', entityQuery });
+  }
+  if (/\bhow\s+much\s+stock\s+should\b|\b(rebalance|move\s+stock|transfer)\b/i.test(clean)) {
+    const entityQuery = clean
+      .replace(/\b(?:how|much|stock|inventory|should|shall|does|do|need|needs|to|keep|hold|carry|at|in|the|a|we|i|move|transfer|rebalance|between|from)\b/gi, ' ')
+      .replace(/[?.!]+$/g, '').replace(/\s+/g, ' ').trim();
+    return queryService.normalisePlan({ intent: 'location_stock_advice', entityQuery });
   }
   if (/\bwhich suppliers?\b.*\b(?:problem|risk|late|delay)|\bsuppliers?\b.*\bcausing problems?\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'supplier_risk' });

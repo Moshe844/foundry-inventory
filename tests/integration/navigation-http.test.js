@@ -170,3 +170,69 @@ test('what was folded into a section is reachable from inside it', async () => {
   assert.match(await bodyOf('/inventory'), /href="\/purchasing"/,
     'ordering and suppliers live under Inventory');
 });
+
+/*
+ * Settings is a hub, and a hub you cannot come back from is a dead end.
+ *
+ * Nine pages open out of Settings and none of them led back, so returning
+ * meant clicking Settings in the sidebar again, every time. The obvious fix —
+ * a fixed "Back to Settings" on each of those pages — would be wrong half the
+ * time: Locations is also reached from a product, Suppliers from a purchase
+ * order. So the link follows where somebody actually came from, and these are
+ * the two halves of that.
+ */
+test('a page opened from Settings offers the way back, and one opened elsewhere does not', async () => {
+  const { db, app } = makeApp();
+  const workspace = seedWorkspace(db);
+  /*
+   * One listening server for the whole test, not supertest's default of a
+   * fresh ephemeral port per request. The referer a browser sends is absolute
+   * and the same-origin check is real, so every request here has to arrive on
+   * the host the previous page was served from — which is exactly what a
+   * browser does and what supertest, left alone, does not.
+   */
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const agent = request.agent(server);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  configure(db, workspace.workspaceId);
+
+  const origin = `${base}/settings`;
+  for (const path of ['/locations', '/suppliers', '/imports', '/foundry', '/purchasing/setup']) {
+    const opened = (await agent.get(path).set('Referer', origin)).text;
+    assert.match(opened, /class="page-back" href="\/settings"/,
+      `${path} opened from Settings should lead back to Settings`);
+    assert.match(opened, /Back to Settings/);
+  }
+
+  // Reached from a purchase order instead, it must not claim they came from
+  // Settings — including after an earlier visit that did.
+  const elsewhere = (await agent.get('/suppliers').set('Referer', `${base}/purchasing`)).text;
+  assert.ok(!/class="page-back"/.test(elsewhere),
+    'a back link to a page somebody has not been is worse than none');
+
+  // Settings itself never offers to go back to itself.
+  const settings = (await agent.get('/settings').set('Referer', origin)).text;
+  assert.ok(!/class="page-back" href="\/settings"/.test(settings));
+  server.close();
+});
+
+test('saving on a page opened from Settings keeps the way back', async () => {
+  /*
+   * A form post redirects to the same page, so the referer becomes the page
+   * itself and the trail from Settings would be lost — at the exact moment
+   * somebody has finished what they came to do.
+   */
+  const { db, app } = makeApp();
+  const workspace = seedWorkspace(db);
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const agent = request.agent(server);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  configure(db, workspace.workspaceId);
+
+  await agent.get('/locations').set('Referer', `${base}/settings`);
+  const afterSaving = (await agent.get('/locations').set('Referer', `${base}/locations`)).text;
+  assert.match(afterSaving, /class="page-back" href="\/settings"/);
+  server.close();
+});

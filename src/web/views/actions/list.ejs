@@ -107,6 +107,18 @@
                * land here is a product that does exist under a different name.
                */
             %>
+            <%#
+              Where the thing they asked for actually lives.
+
+              "Please remove the entire inventory" is a clear request that this
+              screen cannot carry out. Sending somebody to the right page beats
+              a question they have already answered.
+            %>
+            <% if (locals.where) { %>
+              <p class="act-elsewhere">
+                <a class="btn btn--primary btn--sm" href="<%= where.href %>"><%= where.label %></a>
+              </p>
+            <% } %>
             <% if (locals.notFound) { %>
               <div class="act-create">
                 <p>Foundry has no record of <strong><%= locals.notFound %></strong> yet.</p>
@@ -214,10 +226,24 @@
         <span class="att-rec-icon"><%- helpers.icon('alert', { size: 15 }) %></span>
         <div class="act-question-body">
           <p><%= unsupported %></p>
-          <p class="muted" style="font-size:12.5px; margin-top:6px;">
-            If you were asking about your stock rather than changing it,
-            <a href="/ask?q=<%= encodeURIComponent(instruction) %>">Foundry can look that up</a>.
-          </p>
+          <%#
+            Where the thing they asked for is actually done.
+
+            A request Foundry understood but does not carry out from here is
+            not a dead end, and sending somebody back to rephrase a sentence
+            that was already clear is how "remove the entire inventory" got
+            asked "which item did you mean?" twice.
+          %>
+          <% if (locals.where) { %>
+            <p style="margin-top:8px;">
+              <a class="btn btn--primary btn--sm" href="<%= where.href %>"><%= where.label %></a>
+            </p>
+          <% } else { %>
+            <p class="muted" style="font-size:12.5px; margin-top:6px;">
+              If you were asking about your stock rather than changing it,
+              <a href="/ask?q=<%= encodeURIComponent(instruction) %>">Foundry can look that up</a>.
+            </p>
+          <% } %>
         </div>
       </div>
     <% } %>

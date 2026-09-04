@@ -66,6 +66,40 @@
   </div>
 <% } %>
 
+<%#
+  What the current position cannot show.
+
+  The list below answers "what is below its reorder point today". This answers
+  "what will be a problem before it can be fixed", which is a different and
+  usually earlier question. Only the lines nothing is already covering.
+%>
+<% var exposed = (locals.ahead && ahead.shortages || []).filter(function (row) {
+     return !row.coveredByIncoming;
+   }); %>
+<% if (exposed.length) { %>
+<section class="section">
+  <div class="section-head">
+    <h2>Coming up short</h2>
+    <a class="section-more" href="/planning">See how I worked this out</a>
+  </div>
+  <div class="panel"><div class="stack">
+    <% exposed.slice(0, 6).forEach(function (row) { %>
+      <article class="planning-item">
+        <strong><%= row.displayName %></strong>
+        <% if (row.breaksCommitment) { %><span class="badge badge--warn">A customer is waiting</span><% } %>
+        <span class="badge"><%= row.confidence === 'high' ? 'High confidence'
+          : row.confidence === 'moderate' ? 'Moderate confidence' : 'Still learning' %></span>
+        <p class="muted"><%= row.explanation %></p>
+        <% if (row.purchase && row.purchase.order) { %>
+          <p><strong><%= row.purchase.headline %></strong></p>
+          <% if (row.purchase.tradeoff) { %><p class="muted"><%= row.purchase.tradeoff.text %></p><% } %>
+        <% } %>
+      </article>
+    <% }) %>
+  </div></div>
+</section>
+<% } %>
+
 <%# ------------------------------------------------------------ What to order %>
 <section class="section">
   <div class="section-head">

@@ -201,6 +201,33 @@ router.get(
       understandingId: stored.id,
       understanding: stored.understanding,
       setupDocument,
+      /*
+       * What this document proves, worked out before the page describes what
+       * Foundry would build from it. The order matters: somebody approving an
+       * import should read what Foundry thinks the paper means before they
+       * read a summary of products and quantities, because the summary looks
+       * the same whether the goods exist or not.
+       */
+      documentMeaning: setupDocument
+        ? require('../../foundry/document-meaning').meaningOf(setupDocument.interpretation, {
+          isNewWorkspace: !planApplier.isConfigured(req.db, req.ctx.workspaceId),
+          /*
+           * The order this bill is about, if Foundry can find it. With one,
+           * the page says "it matches PO-1055 and nothing needs you"; without
+           * one it has to ask whether goods are expected, because a business
+           * buying outside Foundry is normal and inventing the purchase would
+           * not be.
+           */
+          matchedPurchaseOrder: (() => {
+            const invoices = require('../../foundry/supplier-invoice-intake');
+            const supplier = req.db.prepare('SELECT id FROM suppliers WHERE workspace_id = ? AND name = ? COLLATE NOCASE')
+              .get(req.ctx.workspaceId, setupDocument.interpretation.supplierName);
+            const found = invoices.findOrder(req.db, req.ctx.workspaceId,
+              setupDocument.interpretation, supplier ? supplier.id : null);
+            return found ? { poNumber: found.po_number, id: found.id } : null;
+          })(),
+        })
+        : null,
       documentMatches: setupDocument
         ? documentIntake.matchPreview(req.db, req.ctx.workspaceId, setupDocument.interpretation)
         : [],
@@ -258,7 +285,15 @@ router.post(
         // A later supplier invoice adds evidenced records to the operation; it
         // must not replace the inventory model the owner already configured.
         if (!alreadyConfigured) planApplier.applyPlan(req.db, req.ctx, built.planId);
-        documentIntake.apply(req.db, req.ctx, req.user, req.params.id, built.planId);
+        /*
+         * Which button the owner pressed. The document says what it is; this
+         * says what they want done about it, and the two are different
+         * questions — a proforma is still a proforma whether they are placing
+         * the order or using it as the opening count of a new business.
+         */
+        documentIntake.apply(req.db, req.ctx, req.user, req.params.id, built.planId, {
+          documentIntent: trimOrNull(req.body.documentIntent),
+        });
         return built.planId;
       });
       res.redirect(303, `/foundry/ready/${planId}`);

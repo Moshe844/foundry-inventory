@@ -353,6 +353,17 @@ function fromImports(db, workspaceId) {
             ? `A decision on ${problems} row(s) it could not place, then your approval.`
             : 'Your approval to bring these rows in.',
         actionLabel: plan.approvalStatus === 'APPROVED' ? 'Bring it in' : 'Approve the import',
+        /*
+         * Nothing has been created from this file, so throwing it away costs
+         * nothing and is a perfectly ordinary answer — the same file uploaded
+         * twice leaves two of these, and there was no way to be rid of either
+         * without opening it and looking for the cancel.
+         */
+        dismiss: {
+          label: 'Throw this file away',
+          action: `/imports/${plan.id}/cancel`,
+          confirm: `Throw away ${plan.sourceName || 'this file'}? Nothing has been created from it.`,
+        },
         href: `/imports/${plan.id}`,
         at: plan.createdAt,
         priority: 75,
@@ -395,8 +406,24 @@ function fromUnansweredMail(db, workspaceId) {
   const replyInbox = require('../connections/reply-inbox');
   const waiting = replyInbox.oldestUnanswered(db, workspaceId, 3);
   if (!waiting.length) return [];
+  /*
+   * Not the mail that is already here as an order.
+   *
+   * One customer email produced two cards on a real screen: "Read the order
+   * from motty… yourself" and "Reply to motty…", the same sender, the same
+   * message, the same Read it button, one above the other. Both were true and
+   * only one is a decision — the order card says what Foundry stopped on and
+   * what it needs. The general dedupe below could not catch it because the
+   * titles differ, and they differ because the two rows were written by
+   * different parts of Foundry about the same piece of paper.
+   */
+  const alreadyAnOrder = new Set([
+    ...require('../sales/order-from-email').unreadable(db, workspaceId).map((row) => row.id),
+    ...db.prepare(`SELECT source_email_message_id AS id FROM sales_orders
+      WHERE workspace_id = ? AND source_email_message_id IS NOT NULL`).all(workspaceId).map((row) => row.id),
+  ]);
   const total = replyInbox.counts(db, workspaceId).NEEDS_REPLY;
-  return waiting.map((message, index) => ({
+  return waiting.filter((message) => !alreadyAnOrder.has(message.id)).map((message, index) => ({
     id: `unanswered-mail:${message.id}`,
     kind: 'decision',
     title: `Reply to ${message.supplier_name || message.sender}`,
@@ -474,6 +501,362 @@ function fromHeldOrders(db, workspaceId) {
     });
   }
   return entries;
+}
+
+/*
+ * An order a customer placed by email, drafted and waiting.
+ *
+ * Found on a real mailbox: a customer wrote "I'd like to order bike toe lace
+ * size 36 2 pieces", Foundry drafted SO-1001 from it, and told nobody. The
+ * mailbox page said "Ignored sender", Needs you said nothing, and the owner
+ * concluded the feature did not exist. Drafting the order is the easy half;
+ * the whole point is the approval, and that is a decision only a person makes.
+ */
+function fromEmailOrders(db, workspaceId) {
+  const orderFromEmail = require('../sales/order-from-email');
+  const entries = orderFromEmail.waitingForApproval(db, workspaceId).map((order) => {
+    const what = order.lines.map((line) =>
+      `${line.quantity} × ${line.item_name}${line.variant_label ? ` ${line.variant_label}` : ''}`).join(', ');
+    const unpriced = order.lines.filter((line) => line.unit_price_minor === null)
+      .map((line) => `${line.item_name}${line.variant_label ? ` ${line.variant_label}` : ''}`);
+    return {
+      id: `email-order:${order.id}`,
+      kind: 'decision',
+      title: `Approve ${order.order_number} for ${order.customer_name}: ${what}`,
+      happened: `${order.customer_email} wrote${order.subject ? ` "${order.subject}"` : ''} asking to buy this. `
+        + 'Foundry drafted the order from their words. Nothing is committed and nobody has been answered.',
+      why: 'An order placed by email is still an order you have to accept: the price, the stock and the customer are yours to check.',
+      // A product with no selling price is the first thing the owner will be
+      // asked for on the order, so it is said here rather than discovered there.
+      recommendation: unpriced.length
+        ? `Open it, give ${unpriced.join(' and ')} a selling price, and confirm it — or throw it away.`
+        : 'Open it, check the lines and the price, then confirm it or throw it away.',
+      missing: unpriced.length
+        ? `A selling price for ${unpriced.join(' and ')}, and your approval of the order.`
+        : 'Your approval of the order.',
+      // Not 'Review': that tells somebody to go and look, which is the one
+      // thing they already know. The decision is whether to accept the order.
+      actionLabel: 'Approve this order',
+      href: `/orders/${order.id}`,
+      at: order.received_at || order.created_at,
+      // A customer is waiting and it is real money, above a late reply.
+      priority: 88,
+    };
+  });
+  for (const message of orderFromEmail.unreadable(db, workspaceId)) {
+    entries.push({
+      id: `email-order-unread:${message.id}`,
+      kind: 'decision',
+      title: `Read the order from ${message.sender} yourself`,
+      happened: `${message.sender} wrote${message.subject ? ` "${message.subject}"` : ''} asking to buy something, `
+        + 'and Foundry could not turn it into a draft order.',
+      why: message.order_draft_reason,
+      // When Foundry could not choose between products it has already written
+      // the question to send them, so the decision is smaller than it looks.
+      recommendation: message.draft_at
+        ? 'Foundry has written the question to ask them. Read it, send it, or enter the order yourself.'
+        : 'Read the email and enter the order, or reply and ask what they meant.',
+      missing: 'An order, or an answer to the customer.',
+      actionLabel: 'Read it',
+      href: `/mail/${message.id}`,
+      at: message.received_at,
+      priority: 84,
+    });
+  }
+  return entries;
+}
+
+/*
+ * A customer's money on an order that is not going to happen.
+ *
+ * Take $300.00, then cancel the order: the money stays in the bank, no invoice
+ * exists, nothing is owed to anybody — and nothing anywhere says the customer
+ * is owed it back. Every figure on the Money page is correct and a person is
+ * owed three hundred dollars that no screen mentions.
+ *
+ * Foundry does not send it back on its own. Money leaving is the one direction
+ * that always needs a person, and there are honest reasons to hold it — a
+ * restocking fee, a replacement order, a credit for next time. So it is put
+ * where decisions live, with the figure, and somebody decides.
+ */
+/*
+ * Trouble that has not happened yet.
+ *
+ * Everything else in this inbox is about something that already went wrong: a
+ * payment with no invoice, an order nobody approved, stock that arrived without
+ * a bill. This one is about the week after next — a product whose stock runs
+ * out before its supplier can possibly deliver, a rule that has drifted away
+ * from the demand it was set for, stock sitting in the wrong shop.
+ *
+ * It reads a table rather than forecasting anything. Prediction is a background
+ * job; a Needs You page that forecast four hundred products before it rendered
+ * would be a page nobody opens, and slow pages are how good warnings get
+ * missed. What appears here has already been worked out, written down with its
+ * evidence, and put through the same authority gate as every other automatic
+ * action — including the ones that were refused, because "Foundry wanted to do
+ * this and was not allowed" is something an owner is entitled to know.
+ *
+ * Only decisions reach this list. A prediction Foundry may act on by itself is
+ * not a decision anybody has to take, and an anomaly that changes nothing is
+ * not either.
+ */
+/*
+ * Parcels that are not going to arrive when somebody was told they would.
+ *
+ * The one thing a customer always finds out before the shop does. A carrier
+ * scan saying the parcel came back, or a promised date that has passed with
+ * the thing still moving, is not a status to display — it is a conversation
+ * somebody has to have, and it is worth more than most of what is on this
+ * page because the customer is already wondering.
+ *
+ * Foundry does not write to them on its own here. What to say about a late
+ * parcel depends on things it cannot see — whether this customer is owed an
+ * apology, a refund, or a replacement sent today — so it brings the facts and
+ * a person decides.
+ */
+function fromLateShipments(db, workspaceId) {
+  const tracking = require('../shipping/tracking');
+  const written = new Set(db.prepare(`SELECT shipment_id FROM customer_communications
+    WHERE workspace_id = ? AND status = 'PREPARED' AND message_kind LIKE 'delay_notice_%'
+      AND shipment_id IS NOT NULL`).all(workspaceId).map((row) => row.shipment_id));
+  return tracking.troubled(db, workspaceId).slice(0, 5).map((row) => {
+    const who = row.customer_name || 'the customer';
+    const where = row.tracking_status
+      ? row.tracking_status.toLowerCase().replace(/_/g, ' ') : 'not reported by the carrier';
+    return {
+      id: `shipment-trouble:${row.id}`,
+      kind: 'decision',
+      title: row.wrong
+        ? `${row.shipment_number} did not reach ${who}`
+        : `${row.shipment_number} is late for ${who}`,
+      happened: row.wrong
+        ? `The carrier reports this parcel as ${where}${row.exception_reason ? ` — ${row.exception_reason}` : ''}.`
+        : `This was expected ${row.expected_delivery_date} and the carrier last reported it as ${where}.`,
+      why: 'A customer who was told a date and does not have their parcel finds out before you do.',
+      /*
+       * The message is already written by the time this is read.
+       *
+       * Saying where a parcel is needs no judgement — it is the carrier's own
+       * scans and the order's own dates. What to *do* about it does, and that
+       * is what is being asked here. So the card says the words exist and
+       * sends them to where they can be read and sent.
+       */
+      recommendation: written.has(row.id)
+        ? `Foundry has written ${who} a note saying where it is. Read it, send it, or decide `
+          + 'something else first.'
+        : row.customer_email
+          ? `Tell ${who} where it is, or open the shipment and check the tracking first.`
+          : 'Check the tracking, and decide whether to send another.',
+      missing: 'A decision about the parcel, and what to tell the customer.',
+      actionLabel: written.has(row.id) ? 'Read what Foundry wrote' : 'Open the shipment',
+      href: `/fulfilment/${row.id}`,
+      at: row.expected_delivery_date || row.shipped_at,
+      // Above a late reply and below money: a customer is waiting on goods
+      // they have often already paid for.
+      priority: row.wrong ? 86 : 82,
+    };
+  });
+}
+
+function fromPredictedTrouble(db, workspaceId) {
+  const rows = db.prepare(`SELECT r.*, i.name AS item_name, s.variant_label
+    FROM planning_recommendations r
+    LEFT JOIN skus s ON s.id = r.sku_id
+    LEFT JOIN items i ON i.id = s.item_id
+    WHERE r.workspace_id = ? AND r.status = 'OPEN'
+      AND (r.authority_verdict IS NULL OR r.authority_verdict <> 'authorized')
+    ORDER BY r.created_at DESC LIMIT 40`).all(workspaceId);
+
+  return rows.map((row) => {
+    const evidence = (() => {
+      try { return JSON.parse(row.evidence) || {}; } catch { return {}; }
+    })();
+    const shape = SHAPES[row.kind] || SHAPES[row.kind.split(':')[0]] || SHAPES.default;
+    const confidence = row.confidence && row.confidence !== 'high'
+      ? ` Foundry's read on this is ${row.confidence === 'learning' ? 'still forming' : 'moderately confident'}.`
+      : '';
+
+    return {
+      id: `planning:${row.id}`,
+      kind: 'decision',
+      title: row.headline,
+      happened: `${row.why}${confidence}`,
+      why: shape.why,
+      recommendation: shape.recommendation(row, evidence),
+      missing: shape.missing,
+      actionLabel: shape.actionLabel,
+      href: row.sku_id ? `/inventory/skus/${row.sku_id}#planning` : '/purchasing',
+      at: row.created_at,
+      priority: shape.priority(row, evidence),
+    };
+  });
+}
+
+/*
+ * How each kind of prediction should read to somebody who has thirty seconds.
+ *
+ * Priorities are not a scale of importance in the abstract — they are a claim
+ * about what should be looked at first this morning. A promise already made to
+ * a customer outranks everything, because it is the only one where the damage
+ * is certain rather than likely.
+ */
+const SHAPES = {
+  order_now: {
+    why: 'Stock is heading for zero sooner than the supplier can replace it.',
+    missing: 'Your approval to place the order.',
+    actionLabel: 'Place the order',
+    recommendation: (row, evidence) => evidence.orderBy
+      ? `Order ${row.recommended_value} by ${evidence.orderBy} so it arrives before stock runs out around ${evidence.stockoutDate}.`
+      : `Order ${row.recommended_value} now.`,
+    priority: (row, evidence) => (evidence.breaksCommitment ? 95 : 88),
+  },
+  reorder_point: {
+    why: 'A reorder rule set for an older pace of trade is still being followed.',
+    missing: 'Whether to move to the new level or keep the one you set.',
+    actionLabel: 'Choose a level',
+    recommendation: (row) => `Use ${row.recommended_value}, or keep ${row.current_value} if you had a reason for it.`,
+    priority: () => 62,
+  },
+  target_stock: {
+    why: 'A stock target that no longer matches how fast this sells.',
+    missing: 'Whether to move to the new target or keep the one you set.',
+    actionLabel: 'Choose a target',
+    recommendation: (row) => `Use ${row.recommended_value}, or keep ${row.current_value} if you had a reason for it.`,
+    priority: () => 55,
+  },
+  safety_stock: {
+    why: 'The buffer no longer matches how much demand and deliveries actually vary.',
+    missing: 'Whether to move to the new buffer.',
+    actionLabel: 'Choose a buffer',
+    recommendation: (row) => `Use ${row.recommended_value}, or keep ${row.current_value}.`,
+    priority: () => 50,
+  },
+  transfer: {
+    why: 'The stock exists. It is in the wrong place.',
+    missing: 'Your approval to move it.',
+    actionLabel: 'Move the stock',
+    recommendation: (row, evidence) => `Move ${row.recommended_value} from ${evidence.fromLocationName} to ${evidence.toLocationName}.`,
+    priority: () => 72,
+  },
+  anomaly: {
+    why: 'Something changed enough to alter what should be done next.',
+    missing: 'A look at whether this changes the plan.',
+    actionLabel: 'Decide what to do',
+    recommendation: () => 'Worth a look before the next order for this goes out.',
+    priority: () => 58,
+  },
+  default: {
+    why: 'Foundry expects this to become a problem.',
+    missing: 'Your decision.',
+    actionLabel: 'Decide what to do',
+    recommendation: () => 'Worth a look.',
+    priority: () => 45,
+  },
+};
+
+function fromMoneyHeldOnCancelledOrders(db, workspaceId) {
+  /*
+   * What is held is what was taken and never applied to anything.
+   *
+   * Measured from the payments themselves rather than by comparing totals:
+   * an allocation is the record of money doing its job, so money with no
+   * allocation is money still sitting here. A receipt somebody voided is not
+   * money at all and never appears.
+   */
+  const rows = db.prepare(`SELECT so.id, so.order_number, so.currency, so.cancelled_at,
+      c.name AS customer_name,
+      COALESCE((SELECT SUM(p.amount_minor) FROM accounting_payments p
+        WHERE p.workspace_id = so.workspace_id AND p.sales_order_id = so.id
+          AND p.direction = 'CUSTOMER_RECEIPT' AND p.status = 'POSTED'), 0) AS received_minor,
+      COALESCE((SELECT SUM(a.amount_minor) FROM accounting_payment_allocations a
+        JOIN accounting_payments p2 ON p2.id = a.payment_id
+        WHERE p2.workspace_id = so.workspace_id AND p2.sales_order_id = so.id
+          AND p2.direction = 'CUSTOMER_RECEIPT' AND p2.status = 'POSTED'), 0) AS applied_minor
+    FROM sales_orders so
+    LEFT JOIN customers c ON c.id = so.customer_id
+    WHERE so.workspace_id = ? AND so.status = 'CANCELLED'`).all(workspaceId);
+
+  return rows
+    .map((row) => ({ ...row,
+      heldMinor: Number(row.received_minor) - Number(row.applied_minor) }))
+    .filter((row) => row.heldMinor > 0)
+    .map((row) => {
+      const amount = `${row.currency || 'USD'} ${(row.heldMinor / 100).toFixed(2)}`;
+      const who = row.customer_name || 'the customer';
+      return {
+        id: `refund-held:${row.id}`,
+        kind: 'decision',
+        title: `${who} paid ${amount} for ${row.order_number}, which was cancelled`,
+        happened: `${amount} was taken for ${row.order_number} and the order was cancelled. `
+          + 'The money is still here and nothing has been invoiced against it.',
+        why: 'Money going back out is the one direction Foundry never takes by itself.',
+        recommendation: `Refund ${amount} to ${who}, or keep it against something else and say so.`,
+        missing: 'Your decision about money that is not yours to keep by default.',
+        actionLabel: 'Settle the money',
+        href: `/orders/${row.id}#money`,
+        at: row.cancelled_at,
+        // Somebody else's money, held with nothing owed for it. Above a late
+        // reply and an approval; below stock that is physically wrong.
+        priority: 89,
+      };
+    });
+}
+
+/*
+ * A supplier who has been paid, and a bill from them that still says it is owed.
+ *
+ * Pay a supplier before their invoice arrives — a deposit, a proforma settled
+ * up front, a transfer somebody sent early — and the money sits as an advance.
+ * When the bill then arrives it is raised unpaid, so Foundry shows a debt to a
+ * supplier who already has the money.
+ *
+ * Deliberately not applied automatically, unlike the customer side. A payment
+ * against a customer's order names the order it belongs to; a payment to a
+ * supplier names only the supplier, so Foundry cannot tell a deposit for next
+ * month from an early settlement of the bill in front of it. Guessing there
+ * would be Foundry deciding where somebody else's money went.
+ */
+function fromSupplierMoneyNotOnAnyBill(db, workspaceId) {
+  const rows = db.prepare(`SELECT s.id, s.name,
+      COALESCE((SELECT SUM(p.amount_minor) FROM accounting_payments p
+        WHERE p.workspace_id = s.workspace_id AND p.supplier_id = s.id
+          AND p.direction = 'SUPPLIER_PAYMENT' AND p.status = 'POSTED'), 0) AS paid_minor,
+      COALESCE((SELECT SUM(a.amount_minor) FROM accounting_payment_allocations a
+        JOIN accounting_payments p2 ON p2.id = a.payment_id
+        WHERE p2.workspace_id = s.workspace_id AND p2.supplier_id = s.id
+          AND p2.direction = 'SUPPLIER_PAYMENT' AND p2.status = 'POSTED'), 0) AS applied_minor,
+      COALESCE((SELECT SUM(b.balance_minor) FROM accounting_supplier_bills b
+        WHERE b.workspace_id = s.workspace_id AND b.supplier_id = s.id
+          AND b.status IN ('OPEN','PARTIALLY_PAID')), 0) AS owed_minor,
+      (SELECT COUNT(*) FROM accounting_supplier_bills b2
+        WHERE b2.workspace_id = s.workspace_id AND b2.supplier_id = s.id
+          AND b2.status IN ('OPEN','PARTIALLY_PAID')) AS bill_count
+    FROM suppliers s WHERE s.workspace_id = ?`).all(workspaceId);
+
+  const amount = (minor) => `USD ${(Number(minor) / 100).toFixed(2)}`;
+
+  return rows
+    .map((row) => ({ ...row, spareMinor: Number(row.paid_minor) - Number(row.applied_minor) }))
+    // Only a decision when there is money spare *and* a bill it could go on.
+    .filter((row) => row.spareMinor > 0 && Number(row.owed_minor) > 0)
+    .map((row) => ({
+      id: `supplier-advance:${row.id}`,
+      kind: 'decision',
+      title: `${row.name} has ${amount(row.spareMinor)} of yours that is not against any bill`,
+      happened: `You have paid ${row.name} ${amount(row.spareMinor)} that no bill has been `
+        + `matched to, and ${amount(row.owed_minor)} of their bills still says it is owed.`,
+      why: 'A payment to a supplier names the supplier and not the order, so Foundry cannot '
+        + 'tell an early settlement from a deposit for something else.',
+      recommendation: Number(row.bill_count) === 1
+        ? 'Put it against that bill if it was paying for it, or leave it as money on account.'
+        : `Choose which of the ${row.bill_count} bills it was paying, or leave it on account.`,
+      missing: 'Which bill that money was for.',
+      actionLabel: 'Match it to a bill',
+      href: '/accounting/payables',
+      at: null,
+      // Real money against a real debt, and the two are not talking.
+      priority: 86,
+    }));
 }
 
 function fromMailboxAttachmentChoices(db, workspaceId) {
@@ -819,6 +1202,11 @@ function inbox(db, workspaceId) {
     ...safely(fromImports),
     ...safely(fromMailboxRemovedImportChoices),
     ...safely(fromMailboxAttachmentChoices),
+    ...safely(fromMoneyHeldOnCancelledOrders),
+    ...safely(fromSupplierMoneyNotOnAnyBill),
+    ...safely(fromPredictedTrouble),
+    ...safely(fromLateShipments),
+    ...safely(fromEmailOrders),
     ...safely(fromUnansweredMail),
     ...safely(fromHeldOrders),
     ...safely(fromMailboxInventory),
@@ -865,6 +1253,11 @@ function inbox(db, workspaceId) {
 
 module.exports = {
   inbox,
+  fromEmailOrders,
+  fromMoneyHeldOnCancelledOrders,
+  fromSupplierMoneyNotOnAnyBill,
+  fromPredictedTrouble,
+  fromLateShipments,
   missingFromEvent,
   fromPhysicalEvents,
   fromInvestigations,

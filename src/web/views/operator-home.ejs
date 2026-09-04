@@ -248,6 +248,40 @@
   <% } %>
 </section>
 
+<%# --------------------------------------------------------- Foundry noticed %>
+<%
+  // Trouble that has not happened yet. Deliberately above "Foundry handled":
+  // what went right yesterday is reassuring, and what is about to go wrong is
+  // the reason to be on this page at all.
+%>
+<% if (locals.noticed && noticed.length) { %>
+<section class="section">
+  <div class="section-head">
+    <h2>Foundry noticed</h2>
+    <a class="section-more" href="/needs-you">Open Needs you</a>
+  </div>
+  <div class="panel"><div class="stack">
+    <% noticed.forEach(function (item) { %>
+      <article class="planning-item">
+        <strong><%= item.headline %></strong>
+        <p class="t-muted"><%= item.why %></p>
+        <p class="t-muted">
+          <% if (item.confidence === 'learning') { %>
+            Foundry is still learning this product's demand, so it is going on what is already ordered.
+          <% } else if (item.confidence === 'moderate') { %>
+            Moderate confidence — the history behind this is short or uneven.
+          <% } %>
+          <% if (item.authority_verdict === 'refused') { %>
+            Foundry is not authorised to do this itself.
+          <% } %>
+        </p>
+        <% if (item.sku_id) { %><a href="/inventory/skus/<%= item.sku_id %>">Open the product</a><% } %>
+      </article>
+    <% }) %>
+  </div></div>
+</section>
+<% } %>
+
 <%# ------------------------------------------------------------ Foundry handled %>
 <section class="section">
   <div class="section-head">

@@ -22,6 +22,7 @@ const physicalEvents = require('../../manager/physical-events');
 const operatingGuidance = require('../../manager/guidance');
 const importPlans = require('../../imports/plan-service');
 const { requireAuth, asyncRoute } = require('../middleware');
+const actionHandoff = require('../action-handoff');
 const repo = require('../../domain/repository');
 const { trimOrNull } = require('../../lib/util');
 
@@ -91,6 +92,7 @@ router.get(
       examples: exampleInstructions(req.db, req.ctx.workspaceId),
       question: (handed && handed.question) || null,
       unsupported: (handed && handed.unsupported) || null,
+      where: (handed && handed.where) || null,
       // A refusal an inventory rule produced carries its numbers, so the page
       // can name the rule and offer the ways out rather than restate the prose.
       blocked: (handed && handed.blocked) || null,
@@ -218,6 +220,11 @@ router.post(
       };
       return res.redirect(303, '/actions/location-required');
     }
+    const handedOn = actionHandoff.handOff(req, result);
+    if (handedOn) {
+      settleEvent();
+      return res.redirect(303, handedOn.target);
+    }
 
     let continuationId = null;
     if (result.kind === 'question' && result.continuation) {
@@ -238,7 +245,12 @@ router.post(
       // The product name Foundry could not place, so the page can offer to
       // create it rather than only offering a box to type an answer into.
       notFound: result.kind === 'question' ? (result.notFound || null) : null,
-      unsupported: result.kind === 'unsupported' ? result.message : null,
+      where: result.where || null,
+      /*
+       * A request Foundry understood and does not carry out from here. Shown
+       * as an answer with a way onward, not as a failure.
+       */
+      unsupported: ['unsupported', 'delete_inventory'].includes(result.kind) ? result.message : null,
       blocked: (result.kind === 'unsupported' && result.blocked) || null,
       physicalEventId: trimOrNull(req.body.physicalEventId) || null,
       choices: result.choices || null,
@@ -248,6 +260,30 @@ router.post(
       workflow: null,
       workflowKind: null,
       workflowStep: null,
+    });
+  })
+);
+
+/**
+ * A supplier payment read from a sentence, waiting to be confirmed.
+ *
+ * "I paid the remaining $140 to ABC" names a bill, an amount and what will
+ * be left. All three are shown, and the recording itself goes through the
+ * same route a payment typed into the accounting page uses.
+ */
+router.get(
+  '/actions/supplier-payment',
+  asyncRoute(async (req, res) => {
+    const payment = req.session.pendingSupplierPayment || null;
+    if (!payment || !payment.billId) {
+      req.flash('info', 'There is no supplier payment waiting to be recorded.');
+      return res.redirect(303, '/#tell-foundry');
+    }
+    delete req.session.pendingSupplierPayment;
+    res.page('actions/supplier-payment', {
+      title: `Payment to ${payment.supplierName}`,
+      nav: 'actions',
+      payment,
     });
   })
 );

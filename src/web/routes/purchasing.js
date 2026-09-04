@@ -77,10 +77,19 @@ router.get(
     guard(req, permissions.VIEW_PURCHASING, 'see purchasing');
     const plan = replenishment.evaluateWorkspace(req.db, req.ctx.workspaceId);
 
+    let ahead = { shortages: [], purchases: [] };
+    try {
+      const planning = require('../../forecasting/planning-service');
+      ahead = planning.sweep(req.db, req.ctx.workspaceId, { limit: 10 });
+    } catch {
+      // Purchasing has always worked without a forecast and still must.
+    }
+
     res.page('purchasing/plan', {
       title: 'Purchasing',
       nav: 'purchasing',
       plan,
+      ahead,
       open: position.openOrders(req.db, req.ctx.workspaceId),
       late: position.lateOrders(req.db, req.ctx.workspaceId),
       arriving: position.arrivingSoon(req.db, req.ctx.workspaceId, { days: 7 }),
@@ -469,6 +478,20 @@ router.get(
       title: `${order.poNumber} · ${order.supplierName}`,
       nav: 'purchasing',
       order,
+      /*
+       * Freight, duty and the rest, as the supplier stated them. Read here
+       * rather than folded into the line costs so the page can show the whole
+       * bill and still reconcile against the document it came from.
+       */
+      charges: req.db.prepare(`SELECT label, kind, amount_minor AS amountMinor
+        FROM purchase_order_charges WHERE workspace_id = ? AND purchase_order_id = ?
+        ORDER BY rowid`).all(req.ctx.workspaceId, order.id),
+      documentTotalMinor: (() => {
+        const doc = req.db.prepare(`SELECT result FROM setup_documents
+          WHERE workspace_id = ? AND purchase_order_id = ? AND status = 'APPLIED'`)
+          .get(req.ctx.workspaceId, order.id);
+        try { return doc ? JSON.parse(doc.result).documentTotalMinor ?? null : null; } catch { return null; }
+      })(),
       events: poService.eventsFor(req.db, req.ctx.workspaceId, order.id),
       receipts: receiving.receiptsFor(req.db, req.ctx.workspaceId, order.id),
       locations: locations(req.db, req.ctx.workspaceId),
@@ -822,6 +845,12 @@ router.get(
         JOIN workspace_connectors wc ON wc.id = r.connector_id
         WHERE r.workspace_id = ? AND r.supplier_id = ? AND r.is_active = 1 ORDER BY r.sender_pattern COLLATE NOCASE`)
         .all(req.ctx.workspaceId, supplier.id),
+      reliability: (() => {
+        try {
+          return require('../../forecasting/planning-service')
+            .supplierView(req.db, req.ctx.workspaceId, supplier.id);
+        } catch { return null; }
+      })(),
       priceHistory: req.db.prepare(`SELECT h.*, s.code AS sku_code, i.name AS item_name
         FROM supplier_price_history h JOIN skus s ON s.id = h.sku_id JOIN items i ON i.id = s.item_id
         WHERE h.workspace_id = ? AND h.supplier_id = ? ORDER BY h.observed_at DESC LIMIT 20`)

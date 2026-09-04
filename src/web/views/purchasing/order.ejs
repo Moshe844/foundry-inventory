@@ -132,12 +132,52 @@
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="2"><strong>Total</strong></td>
+          <td colspan="2"><strong>Goods</strong></td>
           <td class="num"><strong><%= order.orderedUnits %></strong></td>
           <td class="num"><strong><%= order.receivedUnits %></strong></td>
           <td></td>
           <td class="num"><strong><%= order.hasCosts ? order.subtotal.toFixed(2) : '—' %></strong></td>
         </tr>
+        <%#
+          What the goods cost to get here, beside what the goods cost.
+
+          These used to be discarded at import, so a document totalling
+          $26,604 arrived as $21,390 and the missing $5,214 was nowhere on
+          the page. Shown in the document's own wording, unallocated: how to
+          spread freight across units has several defensible answers and
+          picking one silently would invent a cost nobody agreed to.
+        %>
+        <% (locals.charges || []).forEach(function (charge) { %>
+          <tr class="po-charge">
+            <td colspan="4">
+              <%= charge.label %>
+              <span class="t-xs t-muted">· <%= charge.kind %></span>
+            </td>
+            <td></td>
+            <td class="num"><%= (charge.amountMinor / 100).toFixed(2) %></td>
+          </tr>
+        <% }) %>
+        <% if ((locals.charges || []).length) { %>
+          <tr class="po-total">
+            <td colspan="4"><strong>What this order costs in total</strong></td>
+            <td></td>
+            <td class="num"><strong>
+              <%= (((order.hasCosts ? order.subtotal : 0) * 100
+                    + charges.reduce(function (s, c) { return s + c.amountMinor; }, 0)) / 100).toFixed(2) %>
+            </strong></td>
+          </tr>
+          <% if (locals.documentTotalMinor) { %>
+            <tr>
+              <td colspan="4" class="t-xs t-muted">
+                The document itself states <%= (documentTotalMinor / 100).toFixed(2) %><%
+                  var reckoned = Math.round((order.hasCosts ? order.subtotal : 0) * 100)
+                    + charges.reduce(function (s, c) { return s + c.amountMinor; }, 0);
+                  if (reckoned !== documentTotalMinor) { %>, which is <%= ((documentTotalMinor - reckoned) / 100).toFixed(2)
+                  %> away from the lines above. Foundry has not adjusted anything to make them agree.<% } else { %>, and the lines above come to the same.<% } %>
+              </td>
+            </tr>
+          <% } %>
+        <% } %>
       </tfoot>
     </table>
   </div>

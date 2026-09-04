@@ -138,23 +138,33 @@ function deleteWorkspace(db, accountId, workspaceId, options = {}) {
   const tables = deletionOrder(db, scopedTables(db));
 
   inTransaction(db, () => {
-    // The ledger's immutability guard, lifted only for this and only in here.
-    // Every statement below is in the same transaction, so any failure rolls
-    // the trigger back into place along with the data.
-    db.exec('DROP TRIGGER IF EXISTS movements_no_delete');
+    /*
+     * Every immutability guard, lifted only for this and only in here.
+     *
+     * This used to name one trigger — the one on movements — and deleting an
+     * inventory then failed on the next guard it met: "inventory cost history
+     * cannot be deleted". There are four of these, and a list written by hand
+     * is a list that goes stale the moment somebody adds a fifth.
+     *
+     * So they are read out of the database, dropped, and put back from their
+     * own definitions. Every statement is inside one transaction, so a failure
+     * anywhere rolls the guards back into place along with the data they were
+     * guarding.
+     *
+     * The guards exist because a posted ledger is not editable. Removing the
+     * whole inventory is the one case that is not an edit: nothing is being
+     * corrected or rewritten, it is all going.
+     */
+    const guards = db.prepare(`SELECT name, sql FROM sqlite_master
+      WHERE type = 'trigger' AND sql LIKE '%BEFORE DELETE%' AND sql LIKE '%RAISE%'`).all();
+    for (const guard of guards) db.exec(`DROP TRIGGER IF EXISTS ${guard.name}`);
     try {
       for (const table of tables) {
         db.prepare(`DELETE FROM ${table} WHERE workspace_id = ?`).run(workspaceId);
       }
       db.prepare('DELETE FROM workspaces WHERE id = ?').run(workspaceId);
     } finally {
-      db.exec(
-        `CREATE TRIGGER IF NOT EXISTS movements_no_delete
-         BEFORE DELETE ON movements
-         BEGIN
-           SELECT RAISE(ABORT, 'movements are immutable');
-         END`
-      );
+      for (const guard of guards) db.exec(guard.sql);
     }
 
     // Accounts pointing at the inventory they were last in need somewhere else.

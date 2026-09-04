@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const modes = require('../../src/autopilot/modes');
+const capabilities = require('../../src/autopilot/capabilities');
 const planner = require('../../src/autopilot/planner');
 const policyService = require('../../src/autopilot/policy-service');
 const runner = require('../../src/autopilot/runner');
@@ -24,6 +25,12 @@ function scenario(requiredQuantity = 5) {
 }
 
 function enableRunIt(env) {
+  /*
+   * Two permissions now, not one. The mode says how much authority Foundry
+   * has in general; the jobs say what it may use it for. These tests are
+   * about moving stock, so they authorise moving stock.
+   */
+  capabilities.apply(env.db, env.ctx, env.membership, { inventory_transfers: true, replenishment: true });
   return modes.setMode(env.db, env.ctx, env.membership, modes.MODES.POLICY_AUTOMATED);
 }
 

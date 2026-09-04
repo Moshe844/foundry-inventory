@@ -27,6 +27,7 @@ const engine = require('../domain/inventory-engine');
 const entitlements = require('../entitlements/service');
 const planService = require('./plan-service');
 const prices = require('../pricing/price-service');
+const costing = require('../accounting/costing');
 
 const BATCH_SIZE = 50;
 const IMPORT_NOTE = 'Initial inventory import';
@@ -436,6 +437,32 @@ function importGroup(db, ctx, plan, group, executionId) {
         }
       }
 
+      /*
+       * What the stock cost, attached to the movement that created it.
+       *
+       * A supplier invoice imported 250 pairs of shoes and gave them no value
+       * at all: the inventory was worth nothing in the books, and the first
+       * sale of any of it would have stopped on "Foundry has no recorded cost
+       * for this product". The cost is the supplier's own figure off their own
+       * invoice, so this is reading it rather than deciding it.
+       *
+       * Attached through the same costing engine a purchase receipt uses, so
+       * there is one way inventory acquires a value and one place it can be
+       * wrong. It is skipped silently when the file carried no cost, because
+       * plenty of files legitimately do not.
+       */
+      if (movement && parsed.unitCostMinor !== null && parsed.unitCostMinor !== undefined
+        && movement.movementIds && movement.movementIds.length) {
+        costing.receive(db, ctx, {
+          movementIds: movement.movementIds,
+          unitCostMinor: parsed.unitCostMinor,
+          // Where this value came from, so the cost history can be traced back
+          // to the file and the row it was read off.
+          sourceType: 'import',
+          sourceRecordId: row.id,
+        });
+      }
+
       db.prepare(
         `UPDATE import_rows
             SET status = 'IMPORTED', item_id = ?, sku_id = ?, lot_id = ?, location_id = ?,
@@ -599,6 +626,49 @@ function execute(db, ctx, membership, importId, options = {}) {
     rowsSkipped: planService.countsFor(db, importId).INVALID || 0,
     unitsEstablished: counters.units_established,
   };
+
+  /*
+   * And the books are told what that stock is worth.
+   *
+   * The costing engine records the value of each unit; without this the ledger
+   * never hears about it, and Foundry's own reconciliation reports inventory
+   * worth one figure on one screen and another on the next. Posted once per
+   * run, against opening balance equity, because a file is not a purchase:
+   * nothing is owed to anybody and no money moved.
+   */
+  try {
+    const valued = db.prepare(`SELECT COALESCE(SUM(icm.cost_delta_minor), 0) AS total
+      FROM accounting_inventory_cost_movements icm
+      JOIN import_rows r ON r.id = icm.cost_source_record_id
+      WHERE icm.workspace_id = ? AND icm.cost_source_type = 'import' AND r.import_id = ?`)
+      .get(ctx.workspaceId, importId).total;
+    require('./inventory-value').post(db, ctx.workspaceId, {
+      totalCostMinor: valued,
+      sourceKey: `import-inventory-value:${execution.id}`,
+      sourceRecordId: importId,
+      description: `Inventory brought in from ${plan.sourceName || 'a file'}`,
+      actorId: ctx.actorId || null,
+    });
+  } catch (error) {
+    /*
+     * The stock is in and correctly valued either way. A ledger that cannot
+     * take the entry is a separate problem, and failing the whole import over
+     * it would throw away work that is already right.
+     */
+    console.error('[import] stock was valued but the ledger entry did not post', error.message);
+  }
+
+  /*
+   * And what the file charged beyond the goods — shipping, duty, a fuel
+   * surcharge. Recorded, not posted: whether freight is part of what the stock
+   * cost or an expense of its own is the owner's decision, and it waits for
+   * them on the Money page rather than being decided here.
+   */
+  try {
+    require('./document-money').recordForPlan(db, importId);
+  } catch (error) {
+    console.error('[import] the charges on that file were not recorded', error.message);
+  }
 
   db.prepare(
     `UPDATE import_executions SET status = ?, stage = 'finished', result = ?, finished_at = ? WHERE id = ?`

@@ -23,6 +23,9 @@ const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, signIn, csrfF
 
 test.after(cleanupAll);
 
+// The books open the day the test runs; a date before that is refused, so fixtures are dated today.
+const TODAY = new Date().toISOString().slice(0, 10);
+
 function setup() {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Riverside Supply' });
@@ -41,7 +44,7 @@ function invoicedOrder(env, quantity = 100) {
     customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity }],
   }).id);
   const { invoice } = receivables.createDraft(env.db, env.ctx, env.membership, {
-    customerId: customer.id, salesOrderId: order.id, issueDate: '2026-09-02',
+    customerId: customer.id, salesOrderId: order.id, issueDate: TODAY,
     lines: [{ description: 'Shirts', quantity, unitPriceMinor: 1500 }],
   });
   receivables.open(env.db, env.ctx, env.membership, invoice.id);
@@ -112,7 +115,7 @@ test('a deposit shows what is due now, and clears once it is paid', async () => 
   assert.match(text, /deposit of \$450\.00 is due before this is picked/);
 
   payments.record(env.db, env.ctx, env.membership, {
-    direction: 'CUSTOMER_RECEIPT', customerId: customer.id, paymentDate: '2026-09-03',
+    direction: 'CUSTOMER_RECEIPT', customerId: customer.id, paymentDate: TODAY,
     amountMinor: 45000, method: 'card', sourceKey: 'http:deposit',
     allocations: [{ invoiceId, amountMinor: 45000 }],
   });
@@ -169,8 +172,9 @@ test('the order offers to ask for payment, keeps the link, and a reply may use i
     await signIn(agent, env.workspace.account.email, env.workspace.account.password);
 
     let page = await agent.get(`/orders/${order.id}`);
-    assert.match(plain(page.text), /Ask for the \$450\.00 deposit/);
-    assert.match(plain(page.text), /never sees a card number/);
+    assert.match(plain(page.text), /Take \$450\.00 now/);
+    assert.match(plain(page.text), /Send .* a payment link/);
+    assert.match(plain(page.text), /is what the terms say is due now/);
 
     const asked = await agent.post(`/sales/orders/${order.id}/payment-request`)
       .type('form').send({ _csrf: csrfFrom(page.text), provider: 'fake', purpose: 'DEPOSIT' });
@@ -179,7 +183,7 @@ test('the order offers to ask for payment, keeps the link, and a reply may use i
     page = await agent.get(`/orders/${order.id}`);
     assert.match(page.text, /https:\/\/pay\.test\/in_1/, 'the link is on the order, readable and copyable');
     assert.match(plain(page.text), /\$450\.00 asked for as a deposit/);
-    assert.match(plain(page.text), /updates this order by itself when they do/);
+    assert.match(plain(page.text), /(updates this order by itself when they pay|wrote the email to)/);
 
     /*
      * And a drafted reply may quote it — which is the point of the whole
@@ -268,7 +272,7 @@ test('once the deposit lands the page offers picking, and still holds the parcel
     customerId: customer.id, kind: 'DEPOSIT', depositPercent: 30, holdShipping: true,
   });
   payments.record(env.db, env.ctx, env.membership, {
-    direction: 'CUSTOMER_RECEIPT', customerId: customer.id, paymentDate: '2026-09-03',
+    direction: 'CUSTOMER_RECEIPT', customerId: customer.id, paymentDate: TODAY,
     amountMinor: 45000, method: 'card', sourceKey: 'walk:deposit',
     allocations: [{ invoiceId, amountMinor: 45000 }],
   });
@@ -298,13 +302,13 @@ test('a finished order stops explaining itself and stops showing empty columns',
   const env = setup();
   const { customer, order, invoiceId } = invoicedOrder(env, 12);
   payments.record(env.db, env.ctx, env.membership, {
-    direction: 'CUSTOMER_RECEIPT', customerId: customer.id, paymentDate: '2026-09-02',
+    direction: 'CUSTOMER_RECEIPT', customerId: customer.id, paymentDate: TODAY,
     amountMinor: 18000, method: 'card', sourceKey: 'walk:full',
     allocations: [{ invoiceId, amountMinor: 18000 }],
   });
   const shipments = require('../../src/sales/shipment-service');
   const box = shipments.startPicking(env.db, env.ctx, order.id);
-  shipments.ship(env.db, env.ctx, box.id, {});
+  shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
 
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
@@ -343,7 +347,7 @@ test('a partly shipped order never says nothing was shipped', async () => {
   const box = shipments.startPicking(env.db, env.ctx, order.id, {
     lines: [{ lineId: line.id, locationId: env.workspace.main.id, quantity: 34 }],
   });
-  shipments.ship(env.db, env.ctx, box.id, {});
+  shipments.ship(env.db, env.ctx, box.id, { handover: 'CARRIER' });
   // Take the rest of the stock away so the remainder is genuinely short.
   const repo = require('../../src/domain/repository');
   const onHand = repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.main.id);
@@ -483,7 +487,7 @@ test('the fast ship path leaves a shipment, an address and a notice', async () =
 
   const shipped = await agent.post(`/sales/orders/${order.id}/fulfill`).type('form').send({
     _csrf: csrfFrom(page.text), lineId: order.lines[0].id,
-    locationId: env.workspace.main.id, quantity: '7',
+    locationId: env.workspace.main.id, quantity: '7', handover: 'CARRIER',
   });
   assert.equal(shipped.status, 303);
 
@@ -498,7 +502,8 @@ test('the fast ship path leaves a shipment, an address and a notice', async () =
   assert.match(text, /SHP-1001/);
 
   const notices = require('../../src/sales/customer-communications');
-  assert.equal(notices.forOrder(env.db, env.workspace.workspaceId, order.id).length, 1,
+  // Shipping also makes the balance due, so a payment email may be written beside the notice.
+  assert.equal(notices.forOrder(env.db, env.workspace.workspaceId, order.id).filter((n) => n.messageKind === 'shipping_notice').length, 1,
     'and the customer has something to be told');
 });
 
@@ -515,11 +520,11 @@ test('a payment taken in the room is recorded on the order, through the same eng
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   let page = await agent.get(`/orders/${order.id}`);
-  assert.match(plain(page.text), /They paid me — record it/);
+  assert.match(plain(page.text), /Record another payment/);
   assert.match(plain(page.text), /Cash/);
 
   const recorded = await agent.post(`/sales/orders/${order.id}/payment`).type('form').send({
-    _csrf: csrfFrom(page.text), amount: '105.00', method: 'cash', paymentDate: '2026-09-02',
+    _csrf: csrfFrom(page.text), amount: '105.00', method: 'cash', paymentDate: TODAY,
     reference: 'Counter, Tuesday',
   });
   assert.equal(recorded.status, 303);
@@ -652,7 +657,7 @@ test('the ship form asks where the parcel is going and how it travels', async ()
 
   await agent.post(`/sales/orders/${order.id}/fulfill`).type('form').send({
     _csrf: csrfFrom(page.text), lineId: order.lines[0].id,
-    locationId: env.workspace.main.id, quantity: '7',
+    locationId: env.workspace.main.id, quantity: '7', handover: 'CARRIER',
     trackingNumber: '1Z999AA10123456784',
   });
 

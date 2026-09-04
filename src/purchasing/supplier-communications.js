@@ -133,7 +133,16 @@ async function dispatchAutomaticForOrder(db, workspaceId, purchaseOrderId) {
   const order = require('./po-service').get(db, workspaceId, purchaseOrderId);
   const supplier = supplierService.getSupplier(db, workspaceId, order.supplierId);
   const state = require('../autopilot/modes').get(db, workspaceId);
-  if (!supplier.autoSendEnabled || !supplier.watchedConnectorId || !state.canAutomate) return forOrder(db, workspaceId, purchaseOrderId);
+  /*
+   * Three separate permissions: this supplier's own switch, a mailbox to send
+   * from, and the workspace having authorised supplier email as a job. The
+   * last one used to be "may Foundry act at all", which meant authorising any
+   * automation authorised this one.
+   */
+  const mayEmailSuppliers = require('../autopilot/capabilities').may(db, workspaceId, 'supplier_emails');
+  if (!supplier.autoSendEnabled || !supplier.watchedConnectorId || !mayEmailSuppliers.allowed) {
+    return forOrder(db, workspaceId, purchaseOrderId);
+  }
   const amountMinor = Math.round(Number(order.subtotal || 0) * 100);
   const connection = require('../connections/service').get(db, workspaceId, supplier.watchedConnectorId);
   if (!order.hasCosts) {

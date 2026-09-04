@@ -143,6 +143,32 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
     dueAt: bucket,
   }, { source: 'clock', idempotencyKey: `${managerEvents.TYPES.TIME_REEVALUATION_DUE}:${bucket}` });
   const triggerEventId = published.event.id;
+
+  /*
+   * Look ahead before doing anything else.
+   *
+   * Deliberately above the paused and watching-only branches. Pausing Foundry
+   * stops it acting, not thinking — an owner who pauses for a stock take still
+   * wants to be told on Monday that something is about to run out, and a
+   * system that goes blind the moment it is told to keep its hands still is one
+   * people stop pausing. Every recommendation this writes still has to pass the
+   * authority gate before it can become an action, and while paused that gate
+   * refuses everything.
+   *
+   * Wrapped, and the wrapping is the point: a forecast is an opinion about the
+   * future and must never be able to stop the loop that runs the business.
+   */
+  let planned = null;
+  try {
+    planned = require('../forecasting/planning-service').sweepAndRecord(db, workspaceId, { now });
+  } catch {
+    planned = null;
+  }
+  try {
+    require('../forecasting/outcomes').scoreDue(db, workspaceId, { now });
+  } catch {
+    // Marking old predictions is housekeeping. It never blocks a turn.
+  }
   const complete = (result) => {
     const current = managerEvents.get(db, workspaceId, triggerEventId);
     if (current && current.status !== managerEvents.STATUS.PROCESSED) {
@@ -159,6 +185,7 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
     return complete({
       workspaceId,
       readOnly: true,
+      predicted: planned ? planned.recorded.length : 0,
       because: state.paused
         ? 'paused'
         : state.suspended
@@ -167,6 +194,26 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
       opened: refreshed.opened,
       resolved: refreshed.resolved,
     });
+  }
+
+  /*
+   * Levels Foundry has actually been authorised to keep current.
+   *
+   * Below the paused and watching-only branches on purpose — those return
+   * before reaching here, so a paused workspace predicts and reports but
+   * changes nothing. Each one is re-judged at the moment of applying rather
+   * than trusting the verdict stored when the sweep ran, because hours may
+   * have passed and permission can be taken back in seconds.
+   */
+  const applyAuthority = authorityFor(db, workspaceId);
+  if (applyAuthority) {
+    try {
+      require('../forecasting/apply').applyAuthorised(
+        db, applyAuthority.ctx, applyAuthority.membership, { now }
+      );
+    } catch {
+      // A level that could not be updated is not a reason to abandon the turn.
+    }
   }
 
   const authority = authorityFor(db, workspaceId);

@@ -29,6 +29,57 @@
         </button>
       </div>
     </form>
+    <%#
+      Which jobs Foundry may do on its own.
+
+      Separate from the mode above it, because the mode used to be both: the
+      switch that let Foundry email a payment request also let it place
+      supplier orders and move stock. One authority, six unrelated
+      consequences, and no way to want one without the others.
+
+      Each of these is granted on its own and starts off. Raising the mode
+      grants none of them; granting one does nothing while the mode is below
+      it. Both have to agree.
+    %>
+    <section id="jobs" class="card authority-jobs">
+      <div class="card-head">
+        <h3>Which jobs Foundry may do on its own</h3>
+        <p>
+          Each is separate. Authorising Foundry to chase an invoice never authorises it to spend money.
+          <% if (state.mode !== 'POLICY_AUTOMATED') { %>
+            <strong>While Foundry is set to “<%= state.modeLabel %>”, none of these run</strong> — it prepares
+            the work and waits for you. The grants are kept, so they take effect if you change the mode.
+          <% } %>
+        </p>
+      </div>
+      <ul class="job-list">
+        <% capabilities.forEach(function (job) { %>
+          <li class="job">
+            <div class="job-body">
+              <strong><%= job.label %></strong>
+              <span class="t-xs t-muted"><%= job.blurb %></span>
+              <span class="t-xs t-muted"><em><%= job.consequence %></em></span>
+            </div>
+            <form method="post" action="/autopilot/capability" class="job-action" data-busy>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="capability" value="<%= job.capability %>">
+              <input type="hidden" name="granted" value="<%= job.granted ? '0' : '1' %>">
+              <button class="btn btn--sm <%= job.granted ? '' : 'btn--primary' %>" type="submit" <%= canOperate ? '' : 'disabled' %>>
+                <%= job.granted ? 'Take this back' : 'Let Foundry do this' %>
+              </button>
+            </form>
+            <span class="job-state <%= job.granted ? 'is-on' : '' %>">
+              <%= job.granted ? 'Authorised' : 'Asks first' %>
+            </span>
+          </li>
+        <% }) %>
+      </ul>
+      <p class="hint t-muted">
+        You can also just say it: “Automatically send payment requests to customers, but always ask me
+        before placing supplier orders.” Foundry sets exactly these switches and leaves the rest alone.
+      </p>
+    </section>
+
     <% if (state.mode === 'POLICY_AUTOMATED') { %>
       <form method="post" action="/autopilot/routine-authority" class="routine-setup" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">

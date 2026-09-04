@@ -173,6 +173,20 @@ router.get(
       }
     }
 
+    /*
+     * Which of these has ever actually moved. Without it, a product that has
+     * never been stocked is indistinguishable from one that sold out this
+     * morning, and only the second is worth alarming anybody about.
+     */
+    const everMoved = new Set();
+    if (allSkuIds.length) {
+      const placeholders = allSkuIds.map(() => '?').join(',');
+      for (const row of req.db.prepare(`SELECT DISTINCT sku_id FROM movements
+        WHERE workspace_id = ? AND sku_id IN (${placeholders})`).all(req.ctx.workspaceId, ...allSkuIds)) {
+        everMoved.add(row.sku_id);
+      }
+    }
+
     const items = result.items.map((item) => {
       const skuIds = skuIdsByItem.get(item.id) || [];
       const committed = skuIds.reduce((total, id) => total + (committedBySku.get(id) || 0), 0);
@@ -181,6 +195,7 @@ router.get(
         ...item,
         committed,
         onOrder,
+        hasHistory: skuIds.some((id) => everMoved.has(id)),
         // Never below zero: a promise beyond what is held is a shortfall to
         // explain elsewhere, not a negative number to print in a column.
         available: Math.max(0, (item.on_hand || 0) - committed),
@@ -320,6 +335,47 @@ router.get(
       policy: purchasingPolicy.effectivePolicy(req.db, req.ctx.workspaceId, sku.id),
       suppliers: supplierService.suppliersForSku(req.db, req.ctx.workspaceId, sku.id),
     }));
+    /*
+     * Where this product is heading.
+     *
+     * Computed live rather than read from the planning table, because this is
+     * the one page where somebody is asking about this product specifically and
+     * a stale answer would be worse than a slow one. Bounded to the variants of
+     * a single item, so the cost is a handful of forecasts rather than a sweep.
+     *
+     * Wrapped, like everything else forecasting touches: a prediction that
+     * cannot be made must cost a panel, never the product page.
+     */
+    let outlook = [];
+    try {
+      const planning = require('../../forecasting/planning-service');
+      outlook = detail.skus.map((sku) => {
+        const view = planning.forSku(req.db, req.ctx.workspaceId, sku.id);
+        if (!view) return null;
+        /*
+         * The advice is recomputed live, but the buttons need the stored
+         * recommendation the sweep raised — that row is what carries the
+         * authority verdict and what a decision gets recorded against.
+         */
+        const raised = req.db.prepare(`SELECT id, kind, current_value, recommended_value
+          FROM planning_recommendations
+          WHERE workspace_id = ? AND sku_id = ? AND status = 'OPEN'`)
+          .all(req.ctx.workspaceId, sku.id);
+        return {
+          skuId: sku.id,
+          label: sku.variant_label || detail.item.name,
+          decisions: Object.fromEntries(raised.map((row) => [row.kind, row])),
+          forecast: view.forecast,
+          projection: view.projection,
+          leadTime: view.leadTime,
+          purchase: view.purchase,
+          advice: view.advice,
+          transfers: view.transfers,
+          anomalies: view.anomalies,
+        };
+      }).filter(Boolean);
+    } catch { outlook = []; }
+
     res.page('inventory/item', {
       title: detail.item.name,
       nav: 'inventory',
@@ -327,6 +383,8 @@ router.get(
       attention: presentItemFindings(req.db, req.ctx.workspaceId, findings),
       purchasingLines,
       commitments,
+      outlook,
+      canOperate: permissions.can(req.user, permissions.OPERATE),
     });
   })
 );

@@ -400,3 +400,40 @@ test('a spreadsheet handed to the Ask Foundry box becomes an import preview', as
   // Read, not imported.
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items').get().n, 0);
 });
+
+test('a file waiting in Needs you can be thrown away from there', async () => {
+  /*
+   * Every card in Needs you offered one button, and it was always the one
+   * that goes ahead. The same file uploaded twice sat there twice with no way
+   * to be rid of either copy except by opening it and hunting for the cancel.
+   * A decision you can only agree to is not a decision.
+   */
+  const env = setup();
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const plan = await planService.analyse(env.db, env.workspace.ctx,
+    authService.getMembership(env.db, env.workspace.workspaceId, env.workspace.accountId), {
+      text: CSV, filename: 'stock.csv', defaultLocationId: env.workspace.main.id,
+    });
+  const planId = plan.plan ? plan.plan.id : plan.id;
+
+  let page = await agent.get('/needs-you');
+  assert.equal(page.status, 200);
+  assert.match(plain(page.text), /Throw this file away/);
+  assert.match(page.text, new RegExp(`action="/imports/${planId}/cancel"`));
+
+  const thrown = await agent.post(`/imports/${planId}/cancel`).type('form')
+    .send({ _csrf: csrfFrom(page.text), returnTo: '/needs-you' });
+  assert.equal(thrown.status, 302);
+  assert.equal(thrown.headers.location, '/needs-you',
+    'back where the decision was made, not on a cancelled import nobody asked to see');
+
+  page = await agent.get('/needs-you');
+  const text = plain(page.text);
+  assert.match(text, /That import was cancelled\. Nothing was created\./);
+  assert.doesNotMatch(text, /stock\.csv is read and waiting/, 'and it is gone from the queue');
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 0, 'nothing was created by throwing it away');
+  env.db.close();
+});

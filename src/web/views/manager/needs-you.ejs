@@ -114,6 +114,22 @@
             <p class="need__ask"><span>Your decision</span><%= decision %></p>
           <% } %>
           <a class="btn btn--primary" href="<%= entry.href %>"><%= entry.actionLabel %></a>
+          <%#
+            Saying no, in the same place as saying yes.
+
+            Every decision on this page offered one button, and it was always
+            the one that goes ahead. A file uploaded twice sat here twice with
+            no way to get rid of either copy except by opening it and hunting
+            for the cancel. A decision you can only agree to is not a decision.
+          %>
+          <% if (entry.dismiss) { %>
+            <form method="post" action="<%= entry.dismiss.action %>" class="need__dismiss"
+              <%= entry.dismiss.confirm ? 'data-confirm="' + entry.dismiss.confirm + '"' : '' %>>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="returnTo" value="/needs-you">
+              <button class="btn btn--ghost btn--sm" type="submit"><%= entry.dismiss.label %></button>
+            </form>
+          <% } %>
         </div>
       </article>
     <% }) %>

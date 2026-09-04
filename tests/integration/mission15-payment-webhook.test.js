@@ -24,6 +24,9 @@ const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('.
 
 test.after(cleanupAll);
 
+// The books open the day the test runs; a date before that is refused, so fixtures are dated today.
+const TODAY = new Date().toISOString().slice(0, 10);
+
 const SECRET = 'whsec_for_tests';
 
 function setup() {
@@ -69,7 +72,7 @@ async function invoicedOrder(env) {
     customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 100 }],
   }).id);
   const { invoice } = receivables.createDraft(env.db, env.ctx, env.membership, {
-    customerId: customer.id, salesOrderId: order.id, issueDate: '2026-09-02',
+    customerId: customer.id, salesOrderId: order.id, issueDate: TODAY,
     lines: [{ description: 'Shirts', quantity: 100, unitPriceMinor: 1500 }],
   });
   receivables.open(env.db, env.ctx, env.membership, invoice.id);
@@ -138,7 +141,7 @@ test('a redelivered webhook answers 200 and changes nothing', async () => {
   } finally { undo(); }
 });
 
-test('an event for an inventory or a provider that does not exist is a plain 404', async () => {
+test('an unknown provider is a 404; an unknown inventory never is', async () => {
   const env = setup();
   const undo = registry.register('signed', signedProvider());
   try {
@@ -148,10 +151,19 @@ test('an event for an inventory or a provider that does not exist is a plain 404
       .set('stripe-signature', sign(body)).set('content-type', 'application/json').send(body);
     assert.equal(wrongProvider.status, 404);
 
+    /*
+     * An inventory named in the address is only ever a hint now. It used to be
+     * the answer, and when the inventory it named was deleted every event
+     * about live money got a 404 and was thrown away. A verified event is
+     * placed by the invoice it names, and one nobody owns is answered rather
+     * than retried for days.
+     */
     const wrongWorkspace = await request(env.app)
       .post('/webhooks/payments/signed/wsp_does_not_exist')
       .set('stripe-signature', sign(body)).set('content-type', 'application/json').send(body);
-    assert.equal(wrongWorkspace.status, 404);
+    assert.equal(wrongWorkspace.status, 200);
+    assert.equal(wrongWorkspace.body.applied, false);
+    assert.match(wrongWorkspace.body.outcome, /No inventory owns that invoice/);
   } finally { undo(); }
 });
 

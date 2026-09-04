@@ -1,0 +1,103 @@
+<%
+  var gone = message.status === 'SENT';
+  var over = gone || message.status === 'CANCELLED';
+  var label = { PREPARED: 'Written, not sent', QUEUED: 'Waiting', SENDING: 'Sending',
+                SENT: 'Sent', FAILED: 'Did not send', CANCELLED: 'Not sent' }[message.status];
+%>
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/#tell-foundry">Tell Foundry</a><span>›</span><span>Message</span>
+</nav>
+
+<section class="section">
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h1 style="font-size:1.25rem; margin:0;"><%= gone ? 'What was sent' : 'Read it before it goes' %></h1>
+        <span class="t-xs t-muted">
+          <% if (gone) { %>
+            Sent <%= helpers.shortDate(message.sentAt) %> to <%= message.recipient %>
+          <% } else if (message.status === 'CANCELLED') { %>
+            Not sent
+          <% } else { %>
+            Ready to send to <%= message.recipient %>
+          <% } %>
+        </span>
+      </div>
+      <span class="spacer"></span>
+      <span class="badge badge--<%= gone ? 'ok' : message.status === 'FAILED' ? 'warn' : 'info' %>"><%= label %></span>
+    </div>
+
+    <% if (message.errorMessage && message.status === 'FAILED') { %>
+      <div class="card-body">
+        <div class="notice notice--warn"><div>
+          <strong>This did not send.</strong><br><%= message.errorMessage %>
+        </div></div>
+      </div>
+    <% } %>
+
+    <% if (over) { %>
+      <div class="card-body">
+        <p class="t-sm"><strong>To:</strong> <%= message.recipient %></p>
+        <p class="t-sm"><strong><%= message.subject %></strong></p>
+        <pre class="message-body"><%= message.body %></pre>
+      </div>
+    <% } else { %>
+      <form method="post" action="/messages/<%= message.id %>" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="card-body">
+          <label class="field">
+            <span class="field-label">To</span>
+            <input class="input" type="email" name="recipient" value="<%= message.recipient %>" required>
+          </label>
+          <label class="field">
+            <span class="field-label">Subject</span>
+            <input class="input" type="text" name="subject" value="<%= message.subject %>">
+          </label>
+          <label class="field">
+            <span class="field-label">Message</span>
+            <textarea class="input textarea message-edit" name="body" rows="10"><%= message.body %></textarea>
+            <span class="field-hint">
+              <% if (message.messageKind === 'owner_message') { %>
+                These are your words as you typed them. Foundry has not added, expanded or
+                reworded anything. Change whatever you like before it goes.
+              <% } else if (message.messageKind === 'payment_request') { %>
+                Written from the order's own record: the amount owed and the page they pay on.
+                Foundry states nothing here it cannot show you on the order.
+              <% } else { %>
+                Written from the shipment's own record. Foundry states nothing here it cannot
+                show you elsewhere. Change whatever you like before it goes.
+              <% } %>
+            </span>
+          </label>
+          <% if (mailboxes && mailboxes.length) { %>
+            <label class="field">
+              <span class="field-label">Send from</span>
+              <select class="input" name="connectorId">
+                <% mailboxes.forEach(function (box) { %>
+                  <option value="<%= box.id %>" <%= message.connectorId === box.id ? 'selected' : '' %>>
+                    <%= box.display_name %>
+                  </option>
+                <% }) %>
+              </select>
+            </label>
+          <% } else { %>
+            <p class="hint">
+              No mailbox is connected, so Foundry cannot send this for you. Copy the words
+              above into your own email, or
+              <a href="/settings/connections">connect a mailbox</a>.
+            </p>
+          <% } %>
+        </div>
+        <div class="card-foot">
+          <% if (canSend && mailboxes && mailboxes.length) { %>
+            <button class="btn btn--primary" type="submit" name="action" value="send">
+              Send to <%= message.recipient %>
+            </button>
+          <% } %>
+          <button class="btn" type="submit" name="action" value="save">Save for later</button>
+          <button class="btn btn--ghost" type="submit" name="action" value="cancel">Do not send</button>
+        </div>
+      </form>
+    <% } %>
+  </div>
+</section>

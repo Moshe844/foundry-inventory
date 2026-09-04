@@ -14,6 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const modes = require('../../src/autopilot/modes');
+const capabilities = require('../../src/autopilot/capabilities');
 const policyService = require('../../src/autopilot/policy-service');
 const runner = require('../../src/autopilot/runner');
 const queryService = require('../../src/attention/query-service');
@@ -89,6 +90,8 @@ test('"what did you do today" is answered from the work records', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+  // The mode is a ceiling; the jobs are granted separately.
+  capabilities.apply(env.db, env.ctx, env.membership, { inventory_transfers: true, replenishment: true });
   runner.run(env.db, env.ctx, env.membership, { trigger: 'test' });
 
   const answer = ask(env, { intent: 'foundry_activity' });
@@ -141,6 +144,8 @@ test('"why did you move the tights" gives the measurements, not a story', () => 
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+  // The mode is a ceiling; the jobs are granted separately.
+  capabilities.apply(env.db, env.ctx, env.membership, { inventory_transfers: true, replenishment: true });
   runner.run(env.db, env.ctx, env.membership, { trigger: 'test' });
 
   const answer = ask(env, { intent: 'foundry_why', entityQuery: 'kids tights' });
@@ -156,6 +161,8 @@ test('asking why about something Foundry never touched admits it', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+  // The mode is a ceiling; the jobs are granted separately.
+  capabilities.apply(env.db, env.ctx, env.membership, { inventory_transfers: true, replenishment: true });
   runner.run(env.db, env.ctx, env.membership, { trigger: 'test' });
 
   const answer = ask(env, { intent: 'foundry_why', entityQuery: 'garden hoses' });
@@ -170,6 +177,8 @@ test('"stop doing that" names the policy and hands over — it does not silently
   const env = tights();
   const policy = balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+  // The mode is a ceiling; the jobs are granted separately.
+  capabilities.apply(env.db, env.ctx, env.membership, { inventory_transfers: true, replenishment: true });
 
   const answer = ask(env, { intent: 'stop_automation' });
 
@@ -224,6 +233,8 @@ test('once it is done, it says so in the past tense', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+  // The mode is a ceiling; the jobs are granted separately.
+  capabilities.apply(env.db, env.ctx, env.membership, { inventory_transfers: true, replenishment: true });
   runner.run(env.db, env.ctx, env.membership, { trigger: 'test' });
 
   const presenter = require('../../src/autopilot/presenter');

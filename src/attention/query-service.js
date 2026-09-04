@@ -17,6 +17,10 @@ const attention = require('./attention-engine');
 const { round } = require('../signals/signal-engine');
 
 const INTENTS = [
+  // Questions about what is going to happen rather than what is. Their
+  // executors live in src/forecasting/questions.js, so that the chat answer
+  // and the recommendation on the purchasing page come from one brain.
+  ...require('../forecasting/questions').INTENTS,
   'inventory_summary',
   'stock_level',
   'stock_by_location',
@@ -521,6 +525,7 @@ const PURCHASING_EXECUTORS = {
 };
 
 const EXECUTORS = {
+  ...require('../forecasting/questions').EXECUTORS,
   foundry_activity: foundryActivity,
   foundry_why: foundryWhy,
   stop_automation: stopAutomation,
@@ -1094,7 +1099,19 @@ const EXECUTORS = {
     const selected = terms.length
       ? all.find((row) => terms.every((term) => row.display_name.toLowerCase().includes(term)))
       : all[0];
-    if (!selected) return { rows: [], answer: 'No matching connection is configured.' };
+    if (!selected) {
+      /*
+       * A dead end that said the same sentence twice — once as the headline and
+       * once as the body — so it read as an error stuttering. Worse, questions
+       * about stock were reaching this branch, and being told a connection was
+       * missing when they had asked about shoes.
+       */
+      return { rows: [], columns: [],
+        handoff: { href: '/settings/connections', label: 'Open Connections' },
+        answer: 'No shop or marketplace connection is set up in this inventory, so there is no '
+          + 'connection activity to explain. If you meant stock rather than a connection, ask '
+          + 'again naming the product.' };
+    }
     const event = db.prepare(`SELECT external_event_id, event_type, status, occurred_at, received_at, action_type, error_message
       FROM connector_feed_events WHERE workspace_id = ? AND connector_id = ? ORDER BY received_at DESC, rowid DESC LIMIT 1`)
       .get(workspaceId, selected.id);
@@ -1114,7 +1131,19 @@ const EXECUTORS = {
       const text = `${row.display_name} ${row.provider_type}`.toLowerCase();
       return terms.every((term) => text.includes(term));
     }) : connections[0];
-    if (!selected) return { rows: [], answer: 'No matching connection is configured.' };
+    if (!selected) {
+      /*
+       * A dead end that said the same sentence twice — once as the headline and
+       * once as the body — so it read as an error stuttering. Worse, questions
+       * about stock were reaching this branch, and being told a connection was
+       * missing when they had asked about shoes.
+       */
+      return { rows: [], columns: [],
+        handoff: { href: '/settings/connections', label: 'Open Connections' },
+        answer: 'No shop or marketplace connection is set up in this inventory, so there is no '
+          + 'connection activity to explain. If you meant stock rather than a connection, ask '
+          + 'again naming the product.' };
+    }
     const rows = db.prepare(`SELECT entity_type AS type, display_name AS externalRecord, code,
       external_id AS externalId FROM connection_external_records WHERE workspace_id = ? AND connector_id = ?
       AND selected = 1 AND mapping_status = 'UNMAPPED' ORDER BY entity_type, display_name COLLATE NOCASE`)
@@ -1132,7 +1161,19 @@ const EXECUTORS = {
       const text = `${row.display_name} ${row.provider_type}`.toLowerCase();
       return terms.every((term) => text.includes(term));
     }) : all[0];
-    if (!selected) return { rows: [], answer: 'No matching connection is configured.' };
+    if (!selected) {
+      /*
+       * A dead end that said the same sentence twice — once as the headline and
+       * once as the body — so it read as an error stuttering. Worse, questions
+       * about stock were reaching this branch, and being told a connection was
+       * missing when they had asked about shoes.
+       */
+      return { rows: [], columns: [],
+        handoff: { href: '/settings/connections', label: 'Open Connections' },
+        answer: 'No shop or marketplace connection is set up in this inventory, so there is no '
+          + 'connection activity to explain. If you meant stock rather than a connection, ask '
+          + 'again naming the product.' };
+    }
     const last = db.prepare(`SELECT event_type, status, received_at, error_message FROM connector_feed_events
       WHERE workspace_id = ? AND connector_id = ? ORDER BY received_at DESC, rowid DESC LIMIT 1`)
       .get(workspaceId, selected.id);

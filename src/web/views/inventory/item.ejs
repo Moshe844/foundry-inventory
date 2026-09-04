@@ -401,6 +401,128 @@
       <div class="card-foot">Selling price is charged to customers. Supplier cost is kept separately for purchasing and margin reporting.</div>
     </div>
 
+    <%#
+      Where this product is heading.
+
+      Placed immediately above the reorder settings on purpose: the settings are
+      the rule, this is what the rule is currently producing, and an owner
+      deciding whether to change one should be able to see the other without
+      scrolling. Every figure here is a prediction and says so; the confidence
+      is never buried behind a tooltip.
+    %>
+    <% if (locals.outlook && outlook.length) { %>
+    <div class="card" id="planning">
+      <div class="card-head">
+        <h2>What happens next</h2>
+        <span class="spacer"></span>
+        <span class="t-xs t-muted">Foundry's read on where this is heading</span>
+      </div>
+      <div class="card-body stack">
+        <% outlook.forEach(function (line) { %>
+          <article class="planning-item">
+            <% if (outlook.length > 1) { %><strong><%= line.label %></strong><% } %>
+
+            <p>
+              <% if (line.forecast.dailyRate === null) { %>
+                Foundry cannot estimate how fast this sells yet
+                <span class="badge">Still learning</span>.
+                <% if (line.forecast.committedUnits > 0) { %>
+                  Customers have ordered <%= line.forecast.committedUnits %> that have not shipped,
+                  which is what it is going on.
+                <% } %>
+              <% } else { %>
+                Selling about <strong><%= line.forecast.dailyRate %></strong> a day
+                <span class="badge"><%= line.forecast.confidenceLabel %></span>.
+                <%= line.projection.explanation %>
+              <% } %>
+            </p>
+
+            <% if (line.forecast.committedUnits > 0 && line.forecast.dailyRate !== null) { %>
+              <p class="t-muted">
+                Separately, <strong><%= line.forecast.committedUnits %></strong> are already promised to
+                customers. That is known demand, not a forecast.
+              </p>
+            <% } %>
+
+            <% if (line.leadTime && line.leadTime.material) { %>
+              <p class="t-muted"><%= line.leadTime.explanation %></p>
+            <% } %>
+
+            <% if (line.purchase) { %>
+              <p><strong><%= line.purchase.headline %></strong> — <%= line.purchase.explanation %></p>
+              <% if (line.purchase.tradeoff) { %>
+                <p class="t-muted"><%= line.purchase.tradeoff.text %></p>
+              <% } %>
+            <% } %>
+
+            <% line.advice.recommendations.forEach(function (change) { %>
+              <div class="planning-item planning-item--nested">
+                <strong><%= change.headline %></strong>
+                <p class="t-muted"><%= change.why %></p>
+                <%
+                  // Only a recommendation Foundry has actually written down can
+                  // be decided: the row is what carries the evidence and the
+                  // authority verdict, and a decision has to attach to it.
+                  var raised = line.decisions && line.decisions[change.kind];
+                %>
+                <% if (raised && canOperate) { %>
+                  <div class="button-row">
+                    <form method="post" action="/planning/recommendations/<%= raised.id %>/accept">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <input type="hidden" name="returnTo" value="/inventory/<%= item.id %>#planning">
+                      <button class="btn btn--primary" type="submit"><%= change.actionLabel %></button>
+                    </form>
+                    <form method="post" action="/planning/recommendations/<%= raised.id %>/decline">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <input type="hidden" name="returnTo" value="/inventory/<%= item.id %>#planning">
+                      <button class="btn btn--ghost" type="submit"><%= change.keepLabel %></button>
+                    </form>
+                  </div>
+                <% } else { %>
+                  <p class="t-xs t-muted">
+                    <%= change.actionLabel %> · <%= change.keepLabel %> — set either on the reorder
+                    settings below.
+                  </p>
+                <% } %>
+              </div>
+            <% }) %>
+
+            <% line.transfers.forEach(function (move) { %>
+              <p class="t-muted"><strong>Move <%= move.units %> from <%= move.fromLocationName %>
+                to <%= move.toLocationName %>.</strong> <%= move.why %></p>
+            <% }) %>
+
+            <% line.anomalies.forEach(function (finding) { %>
+              <p class="t-muted"><strong><%= finding.headline %></strong> <%= finding.detail %>
+                <% if (finding.recommendation) { %><%= finding.recommendation %><% } %></p>
+            <% }) %>
+
+            <details>
+              <summary>See how I worked this out</summary>
+              <ul class="t-xs t-muted">
+                <% line.forecast.calculation.forEach(function (step) { %>
+                  <li><%= step.detail %></li>
+                <% }) %>
+                <% line.advice.calculation.forEach(function (step) { %>
+                  <li><%= step.detail %></li>
+                <% }) %>
+                <% if (line.forecast.backtest && line.forecast.backtest.ran) { %>
+                  <li><%= line.forecast.backtest.reason %></li>
+                <% } %>
+                <li>Confidence: <%= line.forecast.confidenceLabel %> —
+                  <%= line.forecast.confidenceReasons.join('; ') %>.</li>
+              </ul>
+            </details>
+          </article>
+        <% }) %>
+      </div>
+      <div class="card-foot">
+        These are predictions from your own trading history. Foundry never changes a reorder setting
+        you configured without being told to.
+      </div>
+    </div>
+    <% } %>
+
     <div class="card" id="reorder-settings">
       <div class="card-head">
         <h2>Reorder settings</h2>

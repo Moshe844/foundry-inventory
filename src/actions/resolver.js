@@ -371,6 +371,81 @@ function skuAmbiguity(db, rows) {
  * safety net for a reader that returned an empty item/variant field: it cannot
  * invent a record, and it still refuses whenever more than one remains.
  */
+/*
+ * Words that are an instruction, not the name of anything.
+ *
+ * "Please remove the entire inventory" was read as a product called "please
+ * remove entire", and Foundry offered to create it. Nobody has ever called a
+ * product that, and offering to create one out of somebody's own sentence is
+ * the moment a person stops believing the software understands them.
+ *
+ * The leftover-words heuristic below is fine for finding a product nobody has
+ * added yet. It has no way of telling a name it has not seen from a sentence
+ * that never contained a name at all — so that judgement is made here, before
+ * the leftovers are handed on as if they were one.
+ */
+const COMMANDING = new Set([
+  'please', 'kindly', 'can', 'could', 'would', 'want', 'need', 'let', 'make',
+  'remove', 'delete', 'clear', 'empty', 'wipe', 'erase', 'destroy', 'drop',
+  'reset', 'start', 'restart', 'cancel', 'undo', 'stop', 'fix', 'change',
+  'show', 'tell', 'give', 'help', 'explain', 'find', 'list', 'everything',
+  'all', 'entire', 'whole', 'inventory', 'workspace', 'account', 'business',
+  'data', 'records', 'again',
+  // Pronouns and vague nouns. Nobody sells a product called "my stuff", and
+  // treating one as a name is how a request to wipe an account became an
+  // offer to add a product.
+  'my', 'our', 'your', 'their', 'its', 'this', 'that', 'it', 'them', 'everything',
+  'anything', 'something', 'stuff', 'thing', 'things', 'item', 'items', 'product',
+  'products', 'sku', 'skus',
+]);
+
+/**
+ * Could these leftover words plausibly be something somebody sells?
+ *
+ * A name has to have at least one word in it that is not pure instruction. A
+ * request made entirely of command words named no product, and saying "there
+ * is nothing called X" about it — then offering to create X — is worse than
+ * admitting the sentence was not understood.
+ */
+function couldBeAName(tokens) {
+  return tokens.some((token) => !COMMANDING.has(comparableWord(token)));
+}
+
+/**
+ * Did this sentence name a product, or is Foundry about to invent one?
+ *
+ * The word list above was the wrong shape of answer and it showed: six of
+ * eight phrasings nobody had thought to add still came back as products.
+ * "get rid of this whole thing" became a product called "get rid thi whole
+ * thing". Enumerating the ways people phrase things is a losing game.
+ *
+ * The general rule needs no list. A person names a product Foundry has never
+ * heard of when they are putting stock in — "receive 10 navy socks", "we
+ * counted 40 blue mugs". Nobody introduces a product in order to get rid of
+ * it, and no sentence about deleting everything carries a quantity. So the
+ * offer to create requires the one thing that separates the two: a number.
+ *
+ * This is deliberately stricter than it needs to be. Refusing to offer
+ * creation on "remove the blue widget" costs a click, because removing
+ * something Foundry does not have was never going to work anyway. Offering to
+ * create "nuke it" costs the person's belief that the software can read.
+ */
+function namesSomethingCountable(instruction) {
+  return [...String(instruction || '')].some((ch) => ch >= '0' && ch <= '9');
+}
+
+function notUnderstood(instruction) {
+  return {
+    ok: false,
+    reason: 'not_understood',
+    message: 'Foundry did not understand that as something it can do. '
+      + 'Say what should change and which product or place it affects.',
+    subject: null,
+    candidates: [],
+    instruction: String(instruction || '').slice(0, 200),
+  };
+}
+
 function clarifySkuFromInstruction(db, workspaceId, instruction) {
   const rows = db
     .prepare(
@@ -399,6 +474,12 @@ function clarifySkuFromInstruction(db, workspaceId, instruction) {
       .flatMap((row) => words(row.name).map(comparableWord))
   );
   const actionWords = new Set([
+    // Verbs and courtesies are things people do to products, never products.
+    // Leaving them in meant 'remove the blue widget' looked for a product
+    // called 'remove blue widget'.
+    'please', 'kindly', 'remove', 'removed', 'delete', 'deleted', 'archive',
+    'archived', 'deactivate', 'discontinue', 'drop', 'clear', 'cancel', 'add',
+    'counted', 'counting', 'put', 'putting', 'place', 'placed', 'bought', 'buy',
     'a', 'actually', 'after', 'all', 'and', 'at', 'before', 'by', 'correct', 'count',
     'did', 'downtown', 'for', 'from', 'has', 'have', 'in', 'into', 'inventory',
     'issue', 'issued', 'left', 'main', 'move', 'moved', 'now', 'of', 'off', 'on',
@@ -419,6 +500,12 @@ function clarifySkuFromInstruction(db, workspaceId, instruction) {
     && !optionWords.has(token)
   );
   if (!mentionsItem && unexplained.length) {
+    /*
+     * Two questions, and the second is the one that generalises: were these
+     * words plausibly a name at all, and did the sentence count anything?
+     */
+    if (!couldBeAName(unexplained)) return notUnderstood(instruction);
+    if (!namesSomethingCountable(instruction)) return notUnderstood(instruction);
     return none(`There is nothing called “${unexplained.join(' ')}” in this inventory.`, unexplained.join(' '));
   }
 
@@ -442,7 +529,22 @@ function clarifySkuFromInstruction(db, workspaceId, instruction) {
  * has several, and naming only the product is genuinely ambiguous — which is a
  * question, not something to resolve to the first row.
  */
+/**
+ * Which product somebody meant.
+ *
+ * The wrapper exists only to carry `ignored` — words that appear nowhere in
+ * the catalogue and were dropped so the rest of the search could run — out
+ * past however the match finally resolved. A caller explaining itself to a
+ * customer needs to know that "size" was set aside; the matching itself does
+ * not care, and threading it through every return inside would be noise.
+ */
 function resolveSku(db, workspaceId, itemText, variantText, options = {}) {
+  const trace = { ignored: [] };
+  const result = resolveSkuWith(db, workspaceId, itemText, variantText, options, trace);
+  return trace.ignored.length ? { ...result, ignored: trace.ignored } : result;
+}
+
+function resolveSkuWith(db, workspaceId, itemText, variantText, options = {}, trace = { ignored: [] }) {
   // "Move 15 Navy 4 to the store" names no product at all — "Navy 4" is the
   // whole identifier. Searching on the variant wording when that is all there
   // is beats refusing to look, and the narrowing below still applies.
@@ -513,6 +615,46 @@ function resolveSku(db, workspaceId, itemText, variantText, options = {}) {
     )
     .all(workspaceId, ...params);
 
+  /*
+   * Search on the words the catalogue actually contains, when the first pass
+   * found nothing.
+   *
+   * A customer wrote "size 36". Two things then went wrong at once, and
+   * together they threw away the only part of the request that identified
+   * anything. Search terms discard tokens shorter than three characters — so
+   * "36", the size itself, was dropped — and the terms are ANDed, so what was
+   * left asked for a row containing the word "size". No column holds that
+   * word: it is the name of an option axis, not a value. The answer came back
+   * "There is nothing called 'size 36' in this inventory", while "36" alone
+   * correctly offered the four shoes that come in a 36.
+   *
+   * So a failed search is retried against every token the request contained,
+   * however short, keeping only the ones the catalogue can match. A query of
+   * nothing but words nobody sells still finds nothing, which is the answer
+   * it should have. What was set aside travels back as `ignored`, because a
+   * word Foundry could not place is worth saying out loud rather than quietly
+   * pretending was never written.
+   */
+  if (rows.length === 0) {
+    const canMatch = db.prepare(`SELECT 1 FROM skus s JOIN items i ON i.id = s.item_id
+      WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1 AND ${columns} LIMIT 1`);
+    const tokens = [...new Set(String(query).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean))].slice(0, 8);
+    const usable = tokens.filter((token) =>
+      canMatch.get(workspaceId, like(token), like(token), like(token), like(token)));
+    if (usable.length && usable.length < tokens.length) {
+      trace.ignored = tokens.filter((token) => !usable.includes(token));
+      rows = db
+        .prepare(
+          `SELECT s.*, i.name AS item_name, i.tracking_mode, i.unit_label, i.has_variants
+             FROM skus s JOIN items i ON i.id = s.item_id
+            WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
+              AND ${usable.map(() => columns).join(' AND ')}
+            ORDER BY i.name, s.position`
+        )
+        .all(workspaceId, ...usable.flatMap((t) => [like(t), like(t), like(t), like(t)]));
+    }
+  }
+
   if (rows.length === 0) {
     const items = db
       .prepare(
@@ -556,7 +698,7 @@ function resolveSku(db, workspaceId, itemText, variantText, options = {}) {
       )
     );
 
-    return candidates.filter((row) => {
+    const satisfies = (row, wanted) => {
       const label = `${row.variant_label || ''} ${row.code || ''} ${optionText(db, row.id)}`.toLowerCase();
       const labelTokens = label.split(/[^a-z0-9]+/).filter(Boolean);
       const nameTokens = String(row.item_name || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
@@ -570,7 +712,7 @@ function resolveSku(db, workspaceId, itemText, variantText, options = {}) {
       // product "Children's t-shirt" contains the token "s", which would
       // otherwise discard the size S and match every white shirt in the range.
       // What the catalogue calls an option beats what the name happens to spell.
-      const meaningful = terms.filter((term) => vocabulary.has(term) || !nameTokens.includes(term));
+      const meaningful = wanted.filter((term) => vocabulary.has(term) || !nameTokens.includes(term));
       if (!meaningful.length) return true;
 
       // A short token must match a whole token; a longer one may match inside.
@@ -585,7 +727,25 @@ function resolveSku(db, workspaceId, itemText, variantText, options = {}) {
         const abbreviation = SIZE_WORDS[term];
         return Boolean(abbreviation) && labelTokens.includes(abbreviation);
       });
-    });
+    };
+
+    const narrowed = candidates.filter((row) => satisfies(row, terms));
+    if (narrowed.length || terms.length < 2) return narrowed;
+
+    /*
+     * Narrow by the words that can actually narrow.
+     *
+     * "Moc toe lace, size 36" matched the product and was then thrown away
+     * for not containing the word "size" — which is the name of the axis, not
+     * a value, and which no row could ever satisfy. A term that excludes every
+     * candidate on its own is not distinguishing between them; it is a word
+     * like "size", "pair" or "pcs" that a person put in because that is how
+     * people write. Retried without those, and only when the strict reading
+     * left nothing, so a genuine mismatch still comes back empty.
+     */
+    const live = terms.filter((term) => candidates.some((row) => satisfies(row, [term])));
+    if (!live.length || live.length === terms.length) return narrowed;
+    return candidates.filter((row) => satisfies(row, live));
   };
 
   const variant = String(variantText || '').trim();

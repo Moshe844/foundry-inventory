@@ -212,6 +212,32 @@ CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier ON purchase_orders(works
 -- supplier's units because that is what was ordered, and in inventory units
 -- because that is what will arrive. Deriving either on the fly would let a
 -- later change to the pack size silently rewrite history.
+/*
+ * What the goods cost to get here, as distinct from what the goods cost.
+ *
+ * Freight, duty, insurance, a credit for samples. A supplier document that
+ * totals $26,604 usually has only $21,390 of product on it, and the owner has
+ * to be able to see where the rest went. These were previously discarded at
+ * extraction — the reader was told in as many words to skip "freight, tax,
+ * discounts, fees, totals" — so the difference simply vanished.
+ *
+ * Held as the document stated them, in the document's own wording and signs.
+ * Foundry does not spread them across the products: allocating freight is a
+ * decision with several defensible answers, and picking one silently would be
+ * inventing a unit cost nobody agreed to.
+ */
+CREATE TABLE IF NOT EXISTS purchase_order_charges (
+  id                TEXT PRIMARY KEY,
+  workspace_id      TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  purchase_order_id TEXT NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  label             TEXT NOT NULL,
+  kind              TEXT NOT NULL CHECK (kind IN ('freight','insurance','duty','tax','discount','deposit','other')),
+  amount_minor      INTEGER NOT NULL,
+  source            TEXT,
+  created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_po_charges ON purchase_order_charges(workspace_id, purchase_order_id);
+
 CREATE TABLE IF NOT EXISTS purchase_order_lines (
   id                        TEXT PRIMARY KEY,
   workspace_id              TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

@@ -191,8 +191,36 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     // A model can notice that an identity is incomplete without knowing which
     // catalogue dimension is actually unresolved. Ground generic identity
     // questions against real SKUs before showing them to the person.
-    if (/\b(product|item|variant|version|which|colour|color|size|grade|material)\b/i.test(intent.clarifyingQuestion)) {
+    /*
+     * Only a question too vague to act on.
+     *
+     * This used to fire on any question mentioning "item", "product" or
+     * "which" — nearly all of them, including the good ones. A reader that
+     * asked "do you want to archive the item, or set its count to zero?"
+     * had that thrown away and replaced with "there is nothing called
+     * please remove entire", and a button offering to create it.
+     *
+     * The reader is given the catalogue and asked to understand the
+     * sentence. It is better at that than anything kept here, so its
+     * question stands unless it named nothing at all to ask about.
+     */
+    const named = /(which|what)[^?]*(product|item|variant|sku)[^?]*\?\s*$/i;
+    if (named.test(String(intent.clarifyingQuestion).trim())) {
       const grounded = resolver.clarifySkuFromInstruction(db, ctx.workspaceId, text);
+      /*
+       * A sentence that named no product at all. Saying so — and pointing at
+       * where the thing they asked for actually lives — beats inventing a
+       * product out of their own words and offering to create it.
+       */
+      /*
+       * The sentence named no product to go looking for. The reader had
+       * already asked something sensible about it, and replacing that with
+       * "there is nothing called <their own words>" is what produced a
+       * screen offering to create a product called "please remove entire".
+       */
+      if (grounded && !grounded.ok && grounded.reason === 'not_understood') {
+        return { kind: 'question', question: intent.clarifyingQuestion };
+      }
       if (grounded && !grounded.ok && grounded.reason === 'not_found') {
         // The name it could not place comes with the question, so the screen
         // can offer to create that product instead of stopping dead.
@@ -269,6 +297,32 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
         };
       }
     }
+    /*
+     * Before shrugging, ask an easier question.
+     *
+     * The first read has to pick an operation and fill in a product, a
+     * location, a quantity and more, all at once, and a reader unsure of any
+     * part of that can come back with nothing. The person then saw "could you
+     * say a little more" after a sentence that was perfectly clear.
+     *
+     * This asks only which operation was meant — no fields, no records. A
+     * reader that could not build a whole instruction can still answer that.
+     */
+    const second = await require('./second-read').whichOperation(
+      text, intentService.ACTION_TYPES.filter((name) => !['clarify', 'unsupported'].includes(name)),
+      { provider: options.provider }
+    );
+    if (second && second.operation === 'delete_inventory') {
+      const workspace = db.prepare('SELECT name FROM workspaces WHERE id = ?').get(ctx.workspaceId);
+      return {
+        kind: 'delete_inventory',
+        workspaceName: workspace ? workspace.name : 'this inventory',
+        message: `Deleting ${workspace ? workspace.name : 'this inventory'} removes its products, stock, `
+          + 'orders and books. It cannot be undone, and Foundry will ask you to type the name first.',
+        where: { label: 'Delete this inventory', href: `/inventories/${ctx.workspaceId}/delete` },
+      };
+    }
+
     return {
       kind: 'question',
       question: modelQuestion || 'Could you say a little more about what you want Foundry to do?',
@@ -301,6 +355,64 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   const shipment = usable.find((line) => line.actionType === 'receive_shipment');
   if (shipment) {
     return { kind: 'receive_shipment', supplier: shipment.supplier || '', instruction: text };
+  }
+
+  /*
+   * Money going out. Never a stock movement, which is why it leaves before
+   * anything below builds one — a sentence about paying an invoice must not
+   * be able to produce a proposal that moves goods.
+   *
+   * What Foundry works out here is which bill was meant, not whether to pay
+   * it. The person already did that; they are telling Foundry it happened.
+   */
+  /*
+   * The whole inventory, going.
+   *
+   * Foundry does not carry this out from here: it needs the person to type
+   * the inventory's name, and that guard belongs on the page that owns it.
+   * What matters is that the request is understood and answered — being asked
+   * "which item did you mean?" after saying "the entire inventory" is what
+   * this exists to stop.
+   */
+  const wipe = usable.find((line) => line.actionType === 'delete_inventory');
+  if (wipe) {
+    const workspace = db.prepare('SELECT name FROM workspaces WHERE id = ?').get(ctx.workspaceId);
+    return {
+      kind: 'delete_inventory',
+      workspaceName: workspace ? workspace.name : 'this inventory',
+      message: `Deleting ${workspace ? workspace.name : 'this inventory'} removes its products, stock, `
+        + 'orders and books. It cannot be undone, and Foundry will ask you to type the name first.',
+      where: { label: 'Delete this inventory', href: `/inventories/${ctx.workspaceId}/delete` },
+    };
+  }
+
+  /*
+   * Writing to somebody. Prepared, shown, and sent only when approved.
+   *
+   * Nothing is sent from here. A message leaving in the owner's name is the
+   * kind of thing that has to be read first, and the same rule applies
+   * whether Foundry wrote it because somebody asked or because a parcel
+   * shipped.
+   */
+  const message = usable.find((line) => line.actionType === 'send_message');
+  if (message) {
+    const outbound = require('./outbound-message');
+    return outbound.prepare(db, ctx, {
+      recipientText: message.recipient || '',
+      body: message.messageBody || '',
+      instruction: text,
+    });
+  }
+
+  const payment = usable.find((line) => line.actionType === 'pay_supplier');
+  if (payment) {
+    const supplierPayments = require('./supplier-payment');
+    return supplierPayments.plan(db, ctx, {
+      supplierText: payment.supplier || '',
+      amountMinor: Number(payment.amountMinor) >= 0 ? Number(payment.amountMinor) : null,
+      reference: payment.reference || '',
+      instruction: text,
+    });
   }
 
   return inTransaction(db, () => {

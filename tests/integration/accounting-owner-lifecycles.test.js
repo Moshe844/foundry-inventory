@@ -25,6 +25,9 @@ const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('.
 
 test.after(cleanupAll);
 
+// The books open the day the test runs; a date before that is refused, so fixtures are dated today.
+const TODAY = new Date().toISOString().slice(0, 10);
+
 test('Mission 14 owner accounting proves all twenty required lifecycle scenarios', async (t) => {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Twenty Lifecycle Company' });
@@ -69,7 +72,7 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   });
   await t.test('05 supplier invoice entered but unpaid', () => {
     const draft = payables.createDraft(db, workspace.ctx, membership, { supplierId: supplier.id,
-      purchaseOrderId: po.id, supplierInvoiceNumber: 'LIFE-INV-1', issueDate: '2026-09-02',
+      purchaseOrderId: po.id, supplierInvoiceNumber: 'LIFE-INV-1', issueDate: TODAY,
       dueDate: '2026-09-20', sourceKey: 'life-bill-1', lines: [{ description: '100 Lifecycle Shirts',
         quantity: 100, unitCostMinor: 1000, itemId: product.itemId, skuId: product.skuId,
         purchaseOrderLineId: po.lines[0].id }] });
@@ -78,7 +81,7 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   });
   await t.test('06 supplier invoice partially paid', () => {
     payments.record(db, workspace.ctx, membership, { direction: 'SUPPLIER_PAYMENT',
-      supplierId: supplier.id, paymentDate: '2026-09-03', amountMinor: 40_000,
+      supplierId: supplier.id, paymentDate: TODAY, amountMinor: 40_000,
       sourceKey: 'life-supplier-pay-1', allocations: [{ billId: bill.id, amountMinor: 40_000 }] });
     bill = payables.requireBill(db, workspace.workspaceId, bill.id);
     assert.equal(bill.status, 'PARTIALLY_PAID'); assert.equal(bill.balance_minor, 60_000);
@@ -167,7 +170,7 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
     assert.equal(pnl.netIncomeMinor, 200);
   });
   await t.test('18 cash movement calculated independently from profit', () => {
-    const cash = reports.cashFlow(db, workspace.workspaceId, { from: '2026-09-02', to: '2026-09-30' });
+    const cash = reports.cashFlow(db, workspace.workspaceId, { from: TODAY, to: '2026-09-30' });
     assert.equal(cash.netCashChangeMinor, -82_000);
     assert.notEqual(cash.netCashChangeMinor, reports.profitAndLoss(db, workspace.workspaceId,
       { from: '2026-09-01', to: '2026-09-30' }).netIncomeMinor);

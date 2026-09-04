@@ -51,6 +51,38 @@
   <% } %>
 </section>
 
+<%#
+  Whether this supplier actually delivers. Measured from orders sent and goods
+  received, never from an impression — and silent when there is too little to
+  say, because a rate built on two deliveries is a rumour with a percent sign.
+%>
+<% if (locals.reliability && reliability.orderCount) { %>
+  <div class="card">
+    <div class="card-head"><div><h2>Do they turn up?</h2>
+      <p class="muted"><%= reliability.summary %></p></div></div>
+    <div class="card-body">
+      <div class="accounting-equation">
+        <p><span>Delivered orders on record</span><strong><%= reliability.orderCount %></strong></p>
+        <p><span>Arrived when promised</span><strong>
+          <%= reliability.onTimeRate === null ? 'not stated on the orders' : reliability.onTimeRate + '%' %>
+        </strong></p>
+        <p><span>Usually takes</span><strong>
+          <%= reliability.timing.measured ? reliability.timing.measured.meanDays + ' days' : '—' %>
+        </strong></p>
+        <p><span>All of it arrived</span><strong>
+          <%= reliability.fillRate === null ? '—' : reliability.fillRate + '%' %>
+        </strong></p>
+      </div>
+      <% if (reliability.timing.material) { %>
+        <p class="muted"><%= reliability.timing.explanation %></p>
+      <% } %>
+      <% if (!reliability.enoughEvidence) { %>
+        <p class="muted">Too few delivered orders for Foundry to call this a pattern yet.</p>
+      <% } %>
+    </div>
+  </div>
+<% } %>
+
 <% if (priceHistory.length) { %>
   <div class="card section">
     <div class="card-head"><div><h2>Price evidence</h2><p class="muted">Trusted supplier documents, kept as purchasing history—not accounting entries.</p></div></div>

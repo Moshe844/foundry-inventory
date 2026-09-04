@@ -232,6 +232,62 @@ function requireOwner(req, res, next) {
   return next();
 }
 
+/*
+ * The way back to the page you came from.
+ *
+ * Settings is a hub: nine things open out of it and none of them led back, so
+ * returning meant clicking Settings in the sidebar again — every time, for
+ * every one of them. The obvious fix, a fixed "Back to Settings" on each of
+ * those pages, would be a lie half the time: Locations is also reached from a
+ * product, Suppliers from a purchase order, Imports from setup. A back link
+ * that points somewhere the reader has never been is worse than none.
+ *
+ * So it is read from where they actually came from. Only same-origin, only
+ * hubs that behave like hubs, and only when it is not the page itself — a
+ * reload, or a redirect after saving, must not offer to take you back to
+ * where you already are. A page that sets its own `backTo` keeps it.
+ */
+const HUBS = [
+  { path: '/settings', label: 'Settings' },
+  { path: '/planning', label: 'What happens next' },
+];
+
+function cameFrom(req) {
+  const here = String(req.path || '');
+  const session = req.session;
+  const remembered = session && session.backTo && session.backTo.path === here
+    ? { href: session.backTo.href, label: session.backTo.label } : null;
+
+  const referer = req.get('referer');
+  let from = null;
+  if (referer) { try { from = new URL(referer); } catch { from = null; } }
+  if (!from || from.host !== req.get('host')) return remembered;
+
+  const hub = HUBS.find((entry) => from.pathname === entry.path);
+  if (hub) {
+    if (here === hub.path) return null;
+    // Remembered, because saving something sends you back to this same page and
+    // the referer is then the page itself. Losing the way out at the exact
+    // moment somebody has finished a task is how a hub stops being a hub.
+    if (session) session.backTo = { path: here, href: hub.path, label: hub.label };
+    return { href: hub.path, label: hub.label };
+  }
+
+  // The same page again: a redirect after saving. The trail still holds.
+  if (from.pathname === here) return remembered;
+
+  /*
+   * Arrived from somewhere else entirely, so this is a different journey.
+   *
+   * Suppliers is reached from Settings and also from a purchase order. Coming
+   * in the second way and being offered "Back to Settings" — because of a
+   * visit ten minutes ago — sends somebody somewhere they were not, which is
+   * the failure this whole mechanism exists to avoid.
+   */
+  if (session) session.backTo = null;
+  return null;
+}
+
 /** Renders a view inside the application shell. */
 function pageRenderer(req, res, next) {
   res.page = (view, data = {}) => {
@@ -263,6 +319,7 @@ function pageRenderer(req, res, next) {
         body: html,
         title: data.title || 'Foundry',
         nav: data.nav || null,
+        backTo: data.backTo || cameFrom(req),
         workspaceGuidance,
         screenGuide,
         // Absolute base for anything that cannot be a relative path — social

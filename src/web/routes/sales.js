@@ -80,6 +80,21 @@ function moneyForOrder(db, workspaceId, order) {
   };
 }
 
+/*
+ * The email this order was read out of, when it was read out of one.
+ *
+ * An order the owner did not type has to say where it came from, or it is
+ * indistinguishable from one Foundry invented. The sender, the subject and
+ * the message itself are all one click away, so "approve" is a decision made
+ * against the customer's own words rather than against a form.
+ */
+function cameFromEmail(db, workspaceId, order) {
+  if (!order.source_email_message_id) return null;
+  return db.prepare(`SELECT id, sender, subject, body_text, received_at
+    FROM connection_email_messages WHERE workspace_id = ? AND id = ?`)
+    .get(workspaceId, order.source_email_message_id) || null;
+}
+
 function accountingForOrder(db, workspaceId, orderId) {
   const configured = db.prepare('SELECT enabled FROM accounting_settings WHERE workspace_id = ?').get(workspaceId);
   if (!configured?.enabled) return { status: 'DISABLED' };
@@ -236,9 +251,23 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
     }
   }
 
+  /*
+   * Before showing what is owed, ask the provider what has happened.
+   *
+   * A webhook needs a public address the provider can reach, and on a laptop
+   * that address is a tunnel which is sometimes not running. Waiting to be
+   * told meant an order could sit saying "unpaid" while Stripe had already
+   * recorded the payment — or the decline. Asking is bounded to once a minute
+   * per request and never blocks the page from rendering.
+   */
+  try { await require('../../payments/collection').refreshForOrder(req.db, req.ctx, order.id); }
+  catch { /* The page shows what is recorded; being unable to ask is not news about the customer. */ }
+  const askedFor = require('../../payments/collection').forOrder(req.db, req.ctx.workspaceId, order.id);
   res.page('sales/order', {
     title: 'Order', nav: 'sales', order,
     shortButAvailable,
+    cameFromEmail: cameFromEmail(req.db, req.ctx.workspaceId, order),
+    goneWord: shipments.wordForOrder(req.db, req.ctx.workspaceId, order.id),
     accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
     money: moneyForOrder(req.db, req.ctx.workspaceId, order),
     shipments: shipments.listForOrder(req.db, req.ctx.workspaceId, order.id),
@@ -251,24 +280,159 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
      * avoid.
      */
     customerNotices: notices.forOrder(req.db, req.ctx.workspaceId, order.id),
-    paymentRequests: require('../../payments/collection').forOrder(req.db, req.ctx.workspaceId, order.id),
+    customerReceipts: req.db.prepare(`SELECT id, payment_number, amount_minor, payment_date, method
+      FROM accounting_payments
+      WHERE workspace_id = ? AND sales_order_id = ? AND direction = 'CUSTOMER_RECEIPT'
+        AND status = 'POSTED'
+      ORDER BY payment_date, created_at`).all(req.ctx.workspaceId, order.id),
+    paymentRequests: askedFor,
+    /*
+     * A payment to open the moment the page arrives. Asking for money and
+     * taking it are one motion when the customer is at the counter, so the
+     * request that was just made opens its own payment panel here rather than
+     * leaving somebody to find the button they only just pressed.
+     */
+    openPaymentUrl: (function () {
+      const wanted = trimOrNull(req.query.pay);
+      if (!wanted) return null;
+      const found = askedFor.find((row) => row.id === wanted && row.hostedUrl && row.status === 'OPEN');
+      return found ? found.hostedUrl : null;
+    }()),
     paymentProviders: require('../../payments/provider').list(),
     skus: catalogue(req.db, req.ctx.workspaceId),
   });
 }));
 
+/**
+ * What to add to the flash when Foundry has been at the money by itself.
+ *
+ * Silence would be the wrong answer either way. If it asked and sent, the
+ * owner needs to know a customer of theirs has just been emailed. If it got
+ * everything ready and stopped, they need to know why, or the prepared link
+ * looks like something they forgot to do rather than something waiting on a
+ * permission they never gave.
+ */
+async function moneyChased(req, orderId, customerName) {
+  const outcome = await require('../../sales/payment-automation').onMoneyDue(req.db, req.ctx, orderId);
+  if (outcome.sent) {
+    const amount = require('../../sales/payment-terms').money(outcome.request.amountMinor, outcome.request.currency);
+    return ` Foundry asked ${customerName} for ${amount} and emailed the link.`;
+  }
+  if (outcome.asked) {
+    const amount = require('../../sales/payment-terms').money(outcome.request.amountMinor, outcome.request.currency);
+    return ` Foundry made a ${amount} payment link and wrote the email — ${outcome.because} It is on the order, ready to send.`;
+  }
+  return outcome.because ? ` Nothing was asked for: ${outcome.because}` : '';
+}
+
+/**
+ * Whether the money has arrived, for a page that is waiting on it.
+ *
+ * Answered by asking the provider, not by hoping a webhook turned up — the
+ * merchant is standing at the counter with the customer, and "we will know
+ * shortly" is not an answer. Bounded to one question a second per order so a
+ * page that polls cannot become a way to hammer Stripe.
+ */
+router.get('/sales/orders/:id/payment-state',
+  requirePermission(permissions.VIEW, 'view sales orders'),
+  asyncRoute(async (req, res) => {
+    const collection = require('../../payments/collection');
+    try {
+      await collection.refreshForOrder(req.db, req.ctx, req.params.id, { staleAfterMs: 1000 });
+    } catch { /* answered from what is recorded */ }
+
+    const order = sales.getOrder(req.db, req.ctx.workspaceId, req.params.id);
+    if (!order) return res.status(404).json({ error: 'No such order.' });
+    const money = moneyForOrder(req.db, req.ctx.workspaceId, order);
+    const requests = collection.forOrder(req.db, req.ctx.workspaceId, order.id);
+    const open = requests.find((request) => request.status === 'OPEN');
+    const settled = requests.filter((request) => request.status === 'PAID')
+      .sort((a, b) => String(b.paidAt || '').localeCompare(String(a.paidAt || '')))[0];
+
+    /*
+     * The receipt for the money that just arrived, so the page can offer to
+     * print it the moment it does rather than sending somebody to find it.
+     */
+    const receipt = req.db.prepare(`SELECT p.id, p.payment_number, p.amount_minor
+      FROM accounting_payments p
+      WHERE p.workspace_id = ? AND p.sales_order_id = ? AND p.direction = 'CUSTOMER_RECEIPT'
+        AND p.status = 'POSTED'
+      ORDER BY p.created_at DESC LIMIT 1`).get(req.ctx.workspaceId, order.id);
+
+    return res.json({
+      paid: Number(money.outstandingMinor) <= 0,
+      paidMinor: Number(money.paidMinor || 0),
+      outstandingMinor: Number(money.outstandingMinor || 0),
+      currency: money.currency,
+      lastError: open ? open.lastError : (settled ? null : null),
+      justPaidMinor: settled ? Number(settled.paidMinor || 0) : 0,
+      receipt: receipt
+        ? { id: receipt.id, number: receipt.payment_number, href: `/orders/${order.id}/receipt/${receipt.id}` }
+        : null,
+    });
+  }));
+
+/**
+ * A receipt somebody can hand to a customer.
+ *
+ * Every figure on it is read from the payment and the order it belongs to.
+ * Nothing is restated, rounded or summarised differently from the order page,
+ * because a receipt that disagrees with the record it came from is worse than
+ * no receipt at all.
+ */
+router.get('/orders/:id/receipt/:paymentId',
+  requirePermission(permissions.VIEW, 'view sales orders'),
+  asyncRoute(async (req, res) => {
+    const order = sales.getOrder(req.db, req.ctx.workspaceId, req.params.id);
+    if (!order) {
+      req.flash('error', 'That order is not in this inventory.');
+      return res.redirect(303, '/orders');
+    }
+    const payment = require('../../accounting/payments')
+      .hydrate(req.db, req.ctx.workspaceId, req.params.paymentId);
+    if (!payment || payment.sales_order_id !== order.id) {
+      req.flash('error', 'That receipt does not belong to this order.');
+      return res.redirect(303, `/orders/${order.id}`);
+    }
+    const money = moneyForOrder(req.db, req.ctx.workspaceId, order);
+    const workspace = req.db.prepare('SELECT name FROM workspaces WHERE id = ?').get(req.ctx.workspaceId);
+    return res.page('sales/receipt', {
+      title: `Receipt ${payment.payment_number}`,
+      nav: 'sales',
+      order,
+      payment,
+      outstandingMinor: Number(money.outstandingMinor || 0),
+      businessName: require('../../sales/customer-communications')
+        .policy(req.db, req.ctx.workspaceId).businessName || (workspace ? workspace.name : 'Us'),
+    });
+  }));
+
 router.post('/sales/orders/:id/confirm', requirePermission(permissions.OPERATE, 'confirm sales orders'), asyncRoute(async (req, res) => {
   let order;
   try {
+    /*
+     * A price given with the approval. It is the owner's number, recorded on
+     * the product like any other selling price, and the draft's blank lines
+     * pick it up before the order is confirmed. Foundry never fills a blank
+     * price itself; it only carries the one it was just given.
+     */
+    const given = req.body.price && typeof req.body.price === 'object' ? req.body.price : {};
+    const draft = sales.getOrder(req.db, req.ctx.workspaceId, req.params.id);
+    for (const [skuId, amount] of Object.entries(given)) {
+      if (String(amount || '').trim() === '') continue;
+      prices.setPrice(req.db, req.ctx, { skuId, amount, currency: draft.currency,
+        source: 'owner', sourceDetail: { givenWhileConfirming: draft.id } });
+    }
     order = sales.confirm(req.db, req.ctx, req.params.id, { idempotencyKey: `web-confirm:${req.params.id}` });
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
     req.flash('warn', err.message);
     return res.redirect(303, `/sales/orders/${req.params.id}`);
   }
-  req.flash(order.totals.backordered ? 'warn' : 'success', order.totals.backordered
+  const chased = await moneyChased(req, order.id, order.customer.name);
+  req.flash(order.totals.backordered ? 'warn' : 'success', (order.totals.backordered
     ? `${order.order_number} is confirmed. ${order.totals.allocated} allocated; ${order.totals.backordered} waiting for stock.`
-    : `${order.order_number} is confirmed and ${order.totals.allocated} unit(s) are committed.`);
+    : `${order.order_number} is confirmed and ${order.totals.allocated} unit(s) are committed.`) + chased);
   res.redirect(303, `/sales/orders/${order.id}`);
 }));
 
@@ -380,6 +544,7 @@ router.post('/sales/orders/:id/fulfill', requirePermission(permissions.OPERATE, 
       lines,
       trackingNumber: trimOrNull(req.body.trackingNumber),
       carrier: trimOrNull(req.body.carrier),
+      handover: trimOrNull(req.body.handover),
     });
     order = sales.getOrder(req.db, req.ctx.workspaceId, shipped.sales_order_id);
   } catch (err) {
@@ -387,9 +552,10 @@ router.post('/sales/orders/:id/fulfill', requirePermission(permissions.OPERATE, 
     req.flash('warn', err.message);
     return res.redirect(303, `/orders/${req.params.id}`);
   }
-  req.flash('success', order.status === 'FULFILLED'
+  const chasedFast = await moneyChased(req, order.id, order.customer.name);
+  req.flash('success', (order.status === 'FULFILLED'
     ? `${order.order_number} is fulfilled. Physical stock and commitments were both updated.`
-    : `${order.order_number} was partly fulfilled. ${order.totals.allocated} remain committed and ${order.totals.backordered} are waiting for stock.`);
+    : `${order.order_number} was partly fulfilled. ${order.totals.allocated} remain committed and ${order.totals.backordered} are waiting for stock.`) + chasedFast);
   res.redirect(303, `/sales/orders/${order.id}`);
 }));
 
@@ -420,9 +586,36 @@ router.get('/fulfilment', requirePermission(permissions.VIEW, 'view fulfilment')
 
 router.get('/fulfilment/:id', requirePermission(permissions.VIEW, 'view fulfilment'), asyncRoute(async (req, res) => {
   const list = shipments.pickList(req.db, req.ctx.workspaceId, req.params.id);
+  /*
+   * What a carrier would do with this box, if there is one connected.
+   *
+   * Rates already quoted are shown rather than re-fetched: asking a carrier is
+   * a network call and a page load is not a reason to make one. The button
+   * asks for fresh ones.
+   */
+  const shipping = require('../../shipping');
+  const state = shipping.service.readiness(req.db, req.ctx.workspaceId, req.params.id);
+  const rates = shipping.service.ratesFor(req.db, req.ctx.workspaceId, req.params.id);
+  const promised = shipping.service.promisedDate(req.db, req.ctx.workspaceId, state.shipment);
+  const ruled = rates.length ? shipping.rules.decide(req.db, req.ctx.workspaceId, rates, { promisedDate: promised }) : null;
+
   res.page('sales/shipment', {
     title: list.shipment.shipment_number, nav: 'fulfilment',
     shipment: shipments.getShipment(req.db, req.ctx.workspaceId, req.params.id),
+    shipping: {
+      ready: state.ready,
+      blocked: state.blocked,
+      provider: state.provider,
+      to: state.to,
+      from: state.from,
+      boxes: state.boxes,
+      rates,
+      promised,
+      ruled,
+      recommended: rates.length ? shipping.rules.recommend(rates, promised) : null,
+      rules: shipping.rules.list(req.db, req.ctx.workspaceId),
+      events: shipping.tracking.eventsFor(req.db, req.ctx.workspaceId, req.params.id),
+    },
     pickList: list, carriers: carriers.list(),
     notices: notices.forShipment(req.db, req.ctx.workspaceId, req.params.id),
     noticePolicy: notices.policy(req.db, req.ctx.workspaceId),
@@ -472,10 +665,64 @@ router.post('/fulfilment/:id/packed', requirePermission(permissions.OPERATE, 'fu
   res.redirect(303, `/fulfilment/${shipment.id}`);
 }));
 
+/* ------------------------------------------------------ shipping by carrier */
+
+router.post('/fulfilment/:id/packages', requirePermission(permissions.OPERATE, 'fulfill sales orders'),
+  asyncRoute(async (req, res) => {
+    const shipping = require('../../shipping');
+    const weights = [].concat(req.body.weightGrams || []);
+    try {
+      shipping.service.setPackages(req.db, req.ctx, req.params.id,
+        weights.filter((value) => String(value).trim()).map((value) => ({ weightGrams: value })));
+      req.flash('success', 'Saved. Get rates to see what the carriers would charge.');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, `/fulfilment/${req.params.id}`);
+  }));
+
+router.post('/fulfilment/:id/rates', requirePermission(permissions.OPERATE, 'fulfill sales orders'),
+  asyncRoute(async (req, res) => {
+    const shipping = require('../../shipping');
+    try {
+      const quoted = await shipping.service.quote(req.db, req.ctx, req.params.id);
+      if (quoted.blocked.length) req.flash('warn', quoted.blocked[0].what);
+      else if (!quoted.rates.length) req.flash('warn', 'No carrier quoted a rate for this parcel.');
+      else req.flash('success', `${quoted.rates.length} rates. Nothing has been bought.`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, `/fulfilment/${req.params.id}`);
+  }));
+
+/*
+ * Buying the label. The one click here that spends money, so it is the one
+ * the permission is about.
+ */
+router.post('/fulfilment/:id/label', requirePermission(permissions.OPERATE, 'fulfill sales orders'),
+  asyncRoute(async (req, res) => {
+    const shipping = require('../../shipping');
+    try {
+      const bought = await shipping.service.buyLabel(req.db, req.ctx, req.params.id,
+        trimOrNull(req.body.rateId));
+      req.flash('success', bought.replayed
+        ? 'That label was already bought.'
+        : `Label bought — ${carriers.displayName(bought.carrier) || bought.carrier} ${bought.service || ''}`
+          + `, tracking ${bought.trackingNumber}. The customer's notice is ready.`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, `/fulfilment/${req.params.id}`);
+  }));
+
 router.post('/fulfilment/:id/ship', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
   let shipment;
   try {
     shipment = shipments.ship(req.db, req.ctx, req.params.id, {
+      handover: trimOrNull(req.body.handover),
       carrier: trimOrNull(req.body.carrier),
       service: trimOrNull(req.body.service),
       trackingNumber: trimOrNull(req.body.trackingNumber),
@@ -502,7 +749,13 @@ router.post('/fulfilment/:id/ship', requirePermission(permissions.OPERATE, 'fulf
     else if (outcome.reason) told = ` The customer has not been told yet — ${outcome.reason}`;
     else told = ' A note to the customer is written below, ready when you are.';
   }
-  req.flash('success', `${shipment.shipment_number} has gone. ${shipment.units} left stock and the sale is on the books.${told}`);
+  /*
+   * The balance falls due the moment the goods go, so this is where Foundry
+   * asks for it — after the shipment is a fact, never before, and never in a
+   * way that could undo it.
+   */
+  const chasedBox = await moneyChased(req, shipment.sales_order_id, shipment.customer_name || 'the customer');
+  req.flash('success', `${shipment.shipment_number} has gone. ${shipment.units} left stock and the sale is on the books.${told}${chasedBox}`);
   res.redirect(303, `/fulfilment/${shipment.id}`);
 }));
 
@@ -603,6 +856,8 @@ router.post('/sales/customers/:id/terms', requirePermission(permissions.OPERATE,
       const saved = paymentTerms.setTerms(req.db, req.ctx, {
         ...req.body,
         depositMinor: req.body.depositAmount ? Math.round(Number(req.body.depositAmount) * 100) : null,
+        autoRequestLimitMinor: req.body.autoRequestLimit
+          ? Math.round(Number(req.body.autoRequestLimit) * 100) : null,
         customerId: req.params.id,
       });
       req.flash('success', `Saved. ${paymentTerms.describe(saved)}`);

@@ -56,6 +56,7 @@ router.get('/settings/connections', (req, res, next) => {
   const token = req.session.newConnectionToken || null;
   delete req.session.newConnectionToken;
   res.page('connections/index', { title: 'Connections', nav: 'connections', connections: rows,
+    backTo: { href: '/settings', label: 'Settings' },
     providerCatalog: providers.catalog(), newConnectionToken: token });
 }));
 
@@ -138,6 +139,12 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
       ORDER BY r.created_at DESC LIMIT 1) AS restoration_status
     ,(SELECT r.result FROM document_restore_reviews r WHERE r.message_id = m.id AND r.workspace_id = m.workspace_id
       ORDER BY r.created_at DESC LIMIT 1) AS restoration_result
+    ,(SELECT so.id FROM sales_orders so WHERE so.source_email_message_id = m.id AND so.workspace_id = m.workspace_id
+      LIMIT 1) AS drafted_order_id
+    ,(SELECT so.order_number FROM sales_orders so WHERE so.source_email_message_id = m.id AND so.workspace_id = m.workspace_id
+      LIMIT 1) AS drafted_order_number
+    ,(SELECT so.status FROM sales_orders so WHERE so.source_email_message_id = m.id AND so.workspace_id = m.workspace_id
+      LIMIT 1) AS drafted_order_status
     FROM connection_email_messages m WHERE m.workspace_id = ? AND m.connector_id = ?
     ORDER BY received_at DESC LIMIT 50`).all(req.ctx.workspaceId, connection.id).map((row) => ({
       ...row,
@@ -186,6 +193,7 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
     : connection.provider_type === 'square' && provider.sandboxMode
       ? 'connections/detail-square-sandbox' : 'connections/detail';
   res.page(view, { title: connection.display_name, nav: 'connections', connection, token,
+    backTo: { href: '/settings/connections', label: 'Connections' },
     issues, events, mappings, reconciliations, messages, messageAttachments, emailRules, externalRecords, syncRuns, canBootstrapShopify,
     provider, mailboxSignature: isMailbox
       ? mailboxStateSignature(req.db, req.ctx.workspaceId, connection.id) : null,
@@ -225,6 +233,32 @@ router.post('/settings/connections/:id/mailbox-cadence', requireOwner, asyncRout
     WHERE workspace_id = ? AND id = ?`).run(JSON.stringify(next), Math.max(15, minutes * 3),
       new Date().toISOString(), req.ctx.workspaceId, connection.id);
   req.flash('success', `Foundry will check this mailbox automatically every ${minutes} minute${minutes === 1 ? '' : 's'}.`);
+  res.redirect(303, `/settings/connections/${connection.id}`);
+}));
+
+/*
+ * Whether Foundry reads mail from people the owner has not approved.
+ *
+ * On, a stranger's message is captured UNTRUSTED: it can be read and
+ * answered, and an order in it becomes a draft. Nothing is extracted from it
+ * and no purchasing record comes out of it — that still needs a rule.
+ *
+ * Off, Foundry sees only approved senders, which is what it used to do. That
+ * is the more private setting and it is also why a customer writing for the
+ * first time did not exist, so the choice is the owner's and it is here
+ * rather than buried in a config file.
+ */
+router.post('/settings/connections/:id/unknown-senders', requireOwner, asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  if (!['gmail', 'microsoft365'].includes(connection.provider_type)) throw new Error('This is not a connected mailbox.');
+  const capture = req.body.captureUnknownSenders === 'on';
+  const next = { ...connection.config, captureUnknownSenders: capture };
+  req.db.prepare(`UPDATE workspace_connectors SET config = ?, updated_at = ?
+    WHERE workspace_id = ? AND id = ?`)
+    .run(JSON.stringify(next), new Date().toISOString(), req.ctx.workspaceId, connection.id);
+  req.flash('success', capture
+    ? 'Foundry will read mail from senders you have not approved, and file them as untrusted.'
+    : 'Foundry will only read mail from senders you have approved. A new customer writing in will not be seen.');
   res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 

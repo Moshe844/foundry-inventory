@@ -17,11 +17,111 @@
 <div class="foundry-hero foundry-hero--tight">
   <span class="foundry-mark"><%- helpers.icon('foundry', { size: 22 }) %></span>
   <h1><%= addingToExisting ? "Here's what Foundry read from your file" : "Here's how I'd organize your inventory" %></h1>
-  <p class="foundry-quote">“<%= u.businessDescription %>”</p>
+  <% if (u.businessDescription) { %>
+    <details class="foundry-quote-fold">
+      <summary>How Foundry described this file</summary>
+      <p class="foundry-quote">“<%= u.businessDescription %>”</p>
+    </details>
+  <% } %>
 </div>
 
 <form method="post" action="/foundry/proposal/<%= understandingId %>/configure">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+  <%#
+    What this document means, before anything about what Foundry would build.
+
+    The order is the point. A summary of products and quantities looks identical
+    whether the goods exist or not, so somebody approving an import read one and
+    assumed the other — a proforma invoice for shoes still being made became 800
+    pairs on the shelf and $21,390 of inventory asset.
+
+    So the page says what the paper proves, what Foundry will change, and what it
+    is deliberately leaving alone, and only then describes the catalogue.
+  %>
+  <% if (locals.documentMeaning) { var dm = documentMeaning; %>
+    <section class="doc-meaning">
+      <p class="eyebrow">What I think this is</p>
+      <h2><%= dm.headline %></h2>
+      <p class="doc-meaning-because"><%= dm.means %>.</p>
+
+      <div class="doc-meaning-grid">
+        <div class="doc-panel">
+          <h3>What I found</h3>
+          <ul>
+            <% dm.found.forEach(function (f) { %><li><%= f %></li><% }) %>
+          </ul>
+        </div>
+
+        <div class="doc-panel doc-panel--will">
+          <h3>What I'll do</h3>
+          <% if (dm.willDo.length) { %>
+            <ul>
+              <% dm.willDo.forEach(function (d) { %><li><%= d %></li><% }) %>
+            </ul>
+          <% } else { %>
+            <p class="t-muted">Nothing yet — see what I need from you.</p>
+          <% } %>
+        </div>
+
+        <% if (dm.wontDo.length) { %>
+          <div class="doc-panel doc-panel--wont">
+            <h3>What I will <em>not</em> do</h3>
+            <ul>
+              <% dm.wontDo.forEach(function (d) { %>
+                <li><strong><%= d.what %></strong><span class="t-xs t-muted"><%= d.why %></span></li>
+              <% }) %>
+            </ul>
+          </div>
+        <% } %>
+      </div>
+
+      <% if (dm.totals.goodsMinor || dm.totals.chargesMinor) { %>
+        <%#
+          The whole bill, not just the products. These figures used to be thrown
+          away at extraction, so a document totalling one number imported as
+          another and the difference was nowhere on the page.
+        %>
+        <table class="table doc-money">
+          <tbody>
+            <tr><td>Goods</td><td class="num"><%= helpers.money(dm.totals.goodsMinor, dm.totals.currency) %></td></tr>
+            <% (setupDocument.interpretation.charges || []).forEach(function (c) { %>
+              <tr><td><%= c.label %> <span class="t-xs t-muted">· <%= c.kind %></span></td>
+                <td class="num"><%= helpers.money(c.amountMinor, dm.totals.currency) %></td></tr>
+            <% }) %>
+            <tr class="doc-money-total">
+              <td><strong>Total on this document</strong></td>
+              <td class="num"><strong><%= helpers.money(dm.totals.goodsMinor + dm.totals.chargesMinor, dm.totals.currency) %></strong></td>
+            </tr>
+            <% if (dm.totals.statedTotalMinor !== null) {
+                 var reckoned = dm.totals.goodsMinor + dm.totals.chargesMinor; %>
+              <tr>
+                <td colspan="2" class="t-xs t-muted">
+                  The document itself states <%= helpers.money(dm.totals.statedTotalMinor, dm.totals.currency) %><%
+                    if (reckoned !== dm.totals.statedTotalMinor) { %> — <%= helpers.money(Math.abs(dm.totals.statedTotalMinor - reckoned), dm.totals.currency)
+                    %> away from the lines above. Foundry has not adjusted anything to make them agree.<% } else { %>, and these lines come to the same.<% } %>
+                </td>
+              </tr>
+            <% } %>
+          </tbody>
+        </table>
+      <% } %>
+
+      <% if (dm.needsYou.length) { %>
+        <div class="doc-panel doc-panel--asks">
+          <h3>What I need from you</h3>
+          <% dm.needsYou.forEach(function (n) { %>
+            <div class="doc-ask">
+              <p class="doc-ask-q"><%= n.question %></p>
+              <% if (n.because) { %><p class="t-xs t-muted"><%= n.because %></p><% } %>
+            </div>
+          <% }) %>
+          <p class="t-xs t-muted">The answer is at the bottom of this page, once you have seen what it would do.</p>
+        </div>
+      <% } %>
+    </section>
+  <% } %>
+
 
   <% if (doc && scopeWarning && scopeWarning.needsConfirmation && !setupDocument.scopeConfirmedAt) { %>
     <dialog class="modal scope-warning" open data-scope-warning aria-labelledby="scope-warning-title">
@@ -29,8 +129,8 @@
       <div class="modal-body">
         <p><%= scopeWarning.message %></p>
         <div class="scope-warning__compare">
-          <div><span>Already here</span><strong><%= scopeWarning.currentExamples.join(', ') %></strong></div>
-          <div><span>In this file</span><strong><%= scopeWarning.incomingExamples.join(', ') %></strong></div>
+          <div><span>Already here<% if (scopeWarning.currentProductCount > scopeWarning.currentExamples.length) { %> — showing 4 of <%= scopeWarning.currentProductCount %><% } %></span><strong><%= scopeWarning.currentExamples.join(', ') %></strong></div>
+          <div><span>In this file<% if (scopeWarning.incomingProductCount > scopeWarning.incomingExamples.length) { %> — showing 4 of <%= scopeWarning.incomingProductCount %><% } %></span><strong><%= scopeWarning.incomingExamples.join(', ') %></strong></div>
         </div>
         <p class="muted">Foundry has read the file, but nothing has been added. Continue only if these records belong in the inventory currently open.</p>
       </div>
@@ -69,6 +169,16 @@
           <input class="input" type="text" name="supplierCodeLabel" value="<%= docCodeLabel %>" maxlength="60" required data-vendor-code-label-input>
           <span class="field-help">Examples: Style #, Item No., Vendor SKU, or Catalogue number. Set it once. Future documents from this vendor may use different headings; Foundry will recognize them as the same field and keep showing your chosen name.</span>
         </label>
+        <%#
+          Forty-one rows of size run is a reference table, not a thing anybody
+          reads top to bottom. The totals above already say what it comes to;
+          this is here for the person who wants to check a line.
+        %>
+        <details class="doc-lines-fold" <%= docLines.length <= 8 ? 'open' : '' %>>
+          <summary>
+            <%= docLines.length %> line<%= docLines.length === 1 ? '' : 's' %> read from the file
+            — <%= docUnits %> <%= docUnitText %>, <%= docStyles %> style<%= docStyles === 1 ? '' : 's' %>
+          </summary>
         <div class="table-wrap" style="margin-top:16px;">
           <table class="table table--stack table--tight">
             <thead><tr><th>Style</th><th>Color</th><th>Size</th><th data-vendor-code-label><%= docCodeLabel %></th><th>Foundry action</th><th class="right">Qty</th><th class="right">Unit cost</th></tr></thead>
@@ -89,9 +199,7 @@
             </tbody>
           </table>
         </div>
-        <% if (doc.warnings && doc.warnings.length) { %>
-          <div class="notice notice--warn" style="margin-top:14px;"><%- helpers.icon('alert', { size: 16 }) %><span><%= doc.warnings.join(' ') %></span></div>
-        <% } %>
+        </details>
       </div>
     </section>
   <% } %>
@@ -173,7 +281,13 @@
 
   <% if (!addingToExisting) { %>
     <section class="card section">
-      <div class="card-head"><div><p class="eyebrow">The whole business stays connected</p><h2>What starts working after this setup</h2><p class="hint">This page chooses how stock is organized. The rest of Foundry is already built in and updates from the same verified activity.</p></div></div>
+      <%#
+        True, and not a decision. It was six paragraphs of what Foundry can do
+        sitting between somebody and the button they came here to press.
+      %>
+      <div class="card-head"><div><p class="eyebrow">The whole business stays connected</p>
+        <h2>What starts working after this setup</h2>
+        <p class="hint">This page chooses how stock is organized. The rest of Foundry is already built in and updates from the same verified activity.</p></div></div>
       <div class="card-body">
         <div class="explain-grid">
           <div><strong>Inventory</strong><p>Receipts, sales, transfers and counts keep physical stock current.</p></div>
@@ -268,33 +382,87 @@
     </div>
   <% } %>
 
-  <% if (u.assumptions.length) { %>
-    <div class="card section">
-      <div class="card-head"><h2>What I assumed</h2></div>
+  <%
+    var caveats = [];
+    (u.assumptions || []).forEach(function (line) { caveats.push(String(line).trim()); });
+    ((doc && doc.warnings) || []).forEach(function (line) {
+      var clean = String(line).trim();
+      // The extractor's warnings and the understanding's assumptions are the
+      // same sentences more often than not. One copy is a caveat; two is noise.
+      if (caveats.indexOf(clean) === -1) caveats.push(clean);
+    });
+    caveats = caveats.filter(Boolean);
+  %>
+  <% if (caveats.length) { %>
+    <details class="card section proposal-caveats">
+      <summary>
+        <%= caveats.length %> thing<%= caveats.length === 1 ? '' : 's' %> Foundry had to assume
+        or could not read cleanly
+      </summary>
       <div class="card-body">
         <ul class="proposal-list">
-          <% u.assumptions.forEach(function (assumption) { %><li><%= assumption %></li><% }) %>
+          <% caveats.forEach(function (caveat) { %><li><%= caveat %></li><% }) %>
         </ul>
       </div>
-    </div>
+    </details>
   <% } %>
 
+  <%
+    // Does approving this actually put stock on a shelf? The document says so
+    // or it does not, and the button has to agree with the answer.
+    var arrivesAsStock = Boolean(doc) && (locals.documentMeaning
+      ? Boolean(documentMeaning.establishes && documentMeaning.establishes.onHand)
+      : Boolean(doc.goodsHaveArrived));
+    var askedOptions = (locals.documentMeaning && documentMeaning.needsYou.length
+      && documentMeaning.needsYou[0].options) || [];
+  %>
   <div class="foundry-confirm">
     <div>
-      <strong>Ready when you are.</strong>
-      <% if (doc) { %>
-        <span class="muted"><%= addingToExisting ? 'This approval adds the shown products and supplier records, then records ' : 'This approval creates the shown structure and records ' %><%= docUnits %> <%= docUnitText %> from <%= setupDocument.sourceName %> as received inventory.</span>
+      <strong><%= askedOptions.length ? 'What should Foundry do with this?' : 'Ready when you are.' %></strong>
+      <% if (askedOptions.length) { %>
+        <span class="muted">Three different answers, and they do different things. Nothing happens
+          until you pick one.</span>
+      <% } else if (!doc) { %>
+        <span class="muted">Foundry sets up structure only — no products, stock or serial numbers are invented.</span>
+      <% } else if (arrivesAsStock) { %>
+        <span class="muted"><%= addingToExisting ? 'This adds the shown products and supplier records, then puts ' : 'This creates the shown structure and puts ' %><%= docUnits %> <%= docUnitText %> from <%= setupDocument.sourceName %> into stock, because the file is evidence they arrived.</span>
       <% } else { %>
-      <span class="muted">Foundry sets up structure only — no products, stock or serial numbers are invented.</span>
+        <span class="muted">This creates the products<%= doc.supplierName ? ' and records ' + doc.supplierName + ' as a supplier' : '' %>. <strong>No stock is added and no money is recorded as owed</strong> — <%= locals.documentMeaning ? documentMeaning.means : 'this file is not evidence that anything arrived' %>.</span>
       <% } %>
     </div>
     <div class="btn-row">
       <a class="btn" href="/foundry">Start over</a>
-      <% if (currentUser.role === 'owner') { %>
-        <button class="btn btn--primary btn--lg" type="submit"><%= doc ? (addingToExisting ? 'Add ' : 'Configure and add ') + docUnits + ' ' + docUnitText : 'Configure my inventory' %></button>
-      <% } else { %>
+      <% if (currentUser.role !== 'owner') { %>
         <span class="muted">Only an owner can apply this.</span>
+      <% } else if (askedOptions.length) { %>
+        <%# Nothing here; the answers are laid out below with what each one does. %>
+      <% } else { %>
+        <button class="btn btn--primary btn--lg" type="submit"><%= doc
+          ? (arrivesAsStock ? (addingToExisting ? 'Add ' : 'Set up and add ') + docUnits + ' ' + docUnitText + ' to stock'
+             : 'Set up these products')
+          : 'Configure my inventory' %></button>
       <% } %>
     </div>
   </div>
+
+  <%#
+    The answers, each saying what it does.
+
+    Three bare buttons in a row asked somebody to guess the difference between
+    "Place the order" and "This is what I already have in stock" — and the one
+    sentence above them was true of two answers and flatly wrong about the
+    third, which puts stock on the shelf. A choice this consequential gets its
+    consequence written next to it.
+  %>
+  <% if (askedOptions.length && currentUser.role === 'owner') { %>
+    <div class="doc-answers">
+      <% askedOptions.forEach(function (option, index) { %>
+        <button class="doc-answer <%= index === 0 ? 'is-primary' : '' %>"
+          type="submit" name="documentIntent" value="<%= option.label || option %>">
+          <strong><%= option.label || option %></strong>
+          <% if (option.does) { %><span><%= option.does %></span><% } %>
+        </button>
+      <% }) %>
+    </div>
+  <% } %>
 </form>

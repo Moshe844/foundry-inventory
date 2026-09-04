@@ -1,0 +1,77 @@
+<%
+  var when = payment.payment_date || (payment.created_at || '').slice(0, 10);
+  var method = { card: 'Card', cash: 'Cash', cheque: 'Cheque', check: 'Cheque',
+    bank_transfer: 'Bank transfer', transfer: 'Bank transfer' }[payment.method] || payment.method || 'Payment';
+%>
+<div class="receipt-actions no-print">
+  <a class="btn" href="/orders/<%= order.id %>">Back to <%= order.order_number %></a>
+  <button class="btn btn--primary" type="button" data-print>Print this receipt</button>
+</div>
+
+<article class="receipt">
+  <header class="receipt__head">
+    <div>
+      <h1><%= payment.status === 'VOID' ? 'Cancelled receipt' : 'Receipt' %></h1>
+      <p class="receipt__number"><%= payment.payment_number %></p>
+    </div>
+    <div class="receipt__from">
+      <strong><%= businessName %></strong>
+      <span><%= when %></span>
+    </div>
+  </header>
+
+  <% if (payment.status === 'VOID') { %>
+    <p class="notice notice--warn">
+      <strong>This receipt was cancelled.</strong>
+      It is kept so the record of what happened stays complete, and it counts for nothing.
+    </p>
+  <% } %>
+
+  <dl class="receipt__facts">
+    <div><dt>Received from</dt><dd><%= payment.customer_name || order.customer.name %></dd></div>
+    <div><dt>For</dt><dd><%= order.order_number %></dd></div>
+    <div><dt>Paid by</dt><dd><%= method %></dd></div>
+    <% if (payment.reference) { %><div><dt>Reference</dt><dd><%= payment.reference %></dd></div><% } %>
+    <div><dt>Date</dt><dd><%= when %></dd></div>
+  </dl>
+
+  <table class="table receipt__lines">
+    <thead><tr><th>What was bought</th><th class="num">Quantity</th><th class="num">Each</th><th class="num">Amount</th></tr></thead>
+    <tbody>
+      <% order.lines.forEach(function (line) { %>
+        <tr>
+          <td><%= line.displayName %><% if (line.code) { %> <small><%= line.code %></small><% } %></td>
+          <td class="num"><%= line.quantity_ordered %></td>
+          <td class="num"><%= line.unit_price_minor === null ? '—' : helpers.money(line.unit_price_minor, order.currency) %></td>
+          <td class="num"><%= line.lineTotalMinor === null || line.lineTotalMinor === undefined
+            ? '—' : helpers.money(line.lineTotalMinor, order.currency) %></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+
+  <div class="receipt__totals">
+    <div><span>Order total</span><strong><%= helpers.money(order.pricing.totalMinor, order.currency) %></strong></div>
+    <div class="receipt__paid">
+      <span><%= payment.status === 'VOID' ? 'This receipt was for' : 'Paid' %></span>
+      <strong><%= helpers.money(payment.amount_minor, payment.currency || order.currency) %></strong>
+    </div>
+    <% if (outstandingMinor > 0) { %>
+      <div><span>Still owed on this order</span><strong><%= helpers.money(outstandingMinor, order.currency) %></strong></div>
+    <% } else { %>
+      <div><span>Still owed on this order</span><strong>Nothing</strong></div>
+    <% } %>
+  </div>
+
+  <%#
+    Every figure above is read from the payment and the order it belongs to.
+    A receipt is what somebody hands a customer, so there is nothing on it
+    Foundry cannot show them elsewhere in the same words.
+  %>
+  <footer class="receipt__foot">
+    <p>Thank you.</p>
+    <p class="t-xs t-muted">
+      Recorded by Foundry on <%= (payment.created_at || '').slice(0, 10) %>.
+    </p>
+  </footer>
+</article>

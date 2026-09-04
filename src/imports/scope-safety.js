@@ -40,6 +40,33 @@ function uniqueRecords(records) {
   });
 }
 
+/**
+ * A few products, named once each.
+ *
+ * The list shown to a person is drawn from rows that are one per SKU, so an
+ * inventory whose first product came in seven sizes introduced itself as
+ * "loafer, loafer, loafer, loafer". Four slots spent saying one word, on the
+ * one screen whose whole job is to let somebody recognise their own data.
+ *
+ * De-duplicated on the name as a reader sees it, not on the identity used for
+ * matching, because two SKUs of the same product are two records and one
+ * product.
+ */
+function examples(records, limit = 4) {
+  const seen = new Set();
+  const shown = [];
+  for (const record of records) {
+    const label = record.name || record.code;
+    if (!label) continue;
+    const identity = key(label) || label.toLowerCase();
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    shown.push(label);
+    if (shown.length >= limit) break;
+  }
+  return shown;
+}
+
 function evaluate(db, workspaceId, incomingRecords) {
   const incoming = uniqueRecords(incomingRecords);
   const current = uniqueRecords(db.prepare(`SELECT i.name, s.code FROM items i
@@ -68,8 +95,15 @@ function evaluate(db, workspaceId, incomingRecords) {
     workspaceName: workspace ? workspace.name : 'this inventory',
     incomingCount: incoming.length,
     matches,
-    incomingExamples: incoming.slice(0, 4).map((record) => record.name || record.code),
-    currentExamples: current.slice(0, 4).map((record) => record.name || record.code),
+    incomingExamples: examples(incoming),
+    currentExamples: examples(current),
+    /*
+     * How many distinct products each side actually has. "4 of 5" is the
+     * difference between "this is the wrong inventory" and "this file adds to
+     * it", and the counts above are per SKU, which cannot say either.
+     */
+    currentProductCount: examples(current, Infinity).length,
+    incomingProductCount: examples(incoming, Infinity).length,
     message: `The file's products do not appear to match the products already in ${workspace ? workspace.name : 'this inventory'}.`,
   };
 }

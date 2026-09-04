@@ -8,6 +8,7 @@
       <%# Purchasing is how stock arrives, so it belongs to Inventory rather
           than to a department of its own in the sidebar. %>
       <a class="btn" href="/purchasing"><%- helpers.icon('purchasing', { size: 15 }) %> Ordering and suppliers</a>
+      <a class="btn" href="/planning">What happens next</a>
     <a class="btn btn--primary" href="/inventory/new"><%- helpers.icon('plus', { size: 16 }) %> Add item</a>
   </div>
 </div>
@@ -92,12 +93,19 @@
         <tbody>
           <% items.forEach(function (item) { %>
             <%
-              // One status word per row, in the order that matters: out of
-              // stock beats everything, then nothing free to sell, then coming.
+              /*
+                One status word per row. Zero on hand is not one situation but
+                three, and only one of them is bad news: a product can have run
+                out, or have an order on the way, or simply never have been
+                stocked at all. Saying "Out of stock" in red to all three made
+                a correctly-imported proforma look like a catastrophe.
+              */
               var status = !item.is_active ? { label: 'Archived', tone: 'muted' }
-                : item.on_hand === 0 ? { label: 'Out of stock', tone: 'danger' }
-                : item.available === 0 ? { label: 'All committed', tone: 'warn' }
-                : { label: 'In stock', tone: 'ok' };
+                : item.on_hand > 0 && item.available === 0 ? { label: 'All committed', tone: 'warn' }
+                : item.on_hand > 0 ? { label: 'In stock', tone: 'ok' }
+                : item.onOrder > 0 ? { label: 'On the way', tone: 'muted' }
+                : item.hasHistory === false ? { label: 'None yet', tone: 'muted' }
+                : { label: 'Out of stock', tone: 'danger' };
               var tracking = helpers.TRACKING_MODES[item.tracking_mode];
               var tracksUnits = item.tracking_mode !== 'quantity';
             %>

@@ -154,6 +154,17 @@ function recentActionsForSku(db, workspaceId, skuId, { now = Date.now() } = {}) 
  *
  * @param {object} plan { actionType, skuId, quantity, fromLocationId, toLocationId, value, evidence }
  */
+/*
+ * Which job each kind of action belongs to.
+ *
+ * Moving stock and buying stock are different decisions with different
+ * consequences, and the owner should be able to authorise one without the
+ * other. An action type with no entry here is not covered by any grant and so
+ * is never authorised automatically — new kinds of action have to be
+ * deliberately added, rather than inheriting somebody else's permission.
+ */
+const { CAPABILITY_FOR_ACTION } = require('./capabilities');
+
 function evaluate(db, workspaceId, plan, options = {}) {
   const now = options.now || Date.now();
   const checks = [];
@@ -163,6 +174,32 @@ function evaluate(db, workspaceId, plan, options = {}) {
   checks.push(check('Foundry is able to act', execution.allowed, execution.because || null));
   if (!execution.allowed) {
     return { decision: 'refused', reason: execution.because, checks, policy: null };
+  }
+
+  /*
+   * 1b. Has this particular job been authorised?
+   *
+   * The mode is a ceiling, not a grant. It used to be both, so authorising
+   * Foundry to do anything authorised it to do everything — a customer
+   * payment request and a purchase order came out of the same switch.
+   *
+   * A job nobody has granted is prepared and waits for a person, which is the
+   * same shape as any other missing approval rather than a refusal.
+   */
+  const job = CAPABILITY_FOR_ACTION[plan.actionType];
+  const authorised = job && require('./capabilities').granted(db, workspaceId, job);
+  const jobReason = job
+    ? `Nobody has authorised Foundry to ${require('./capabilities').CAPABILITIES[job].label.toLowerCase()} on its own.`
+    : `Nobody has authorised Foundry to do "${plan.actionType}" on its own.`;
+  checks.push(check('This job has been authorised', Boolean(authorised), authorised ? null : jobReason));
+  /*
+   * Only the job is judged here. Whether Foundry may act at all is the mode's
+   * question and it was answered above — reporting this reason when the mode
+   * is the real blocker would tell somebody to grant a permission that would
+   * change nothing.
+   */
+  if (!authorised && modes.get(db, workspaceId).canAutomate) {
+    return { decision: 'needs_approval', reason: jobReason, checks, policy: null };
   }
 
   // 2. Are these records the ones that count?

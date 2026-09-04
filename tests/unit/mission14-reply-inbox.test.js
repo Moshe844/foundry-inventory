@@ -246,3 +246,55 @@ test('no pattern in the judgement carries a stray control character', () => {
   }
   assert.match(triage.PLEASE.source, /\\bplease\\b/, 'the word boundaries survived');
 });
+
+test('a phrase has to be a word, not a run of letters inside another one', () => {
+  /*
+   * "Nothing about purchasing." was filed as somebody chasing an order,
+   * because the match was a plain substring and "chasing" lives inside
+   * "purchasing". Read a whole inbox and that misfires constantly, which
+   * turns the one screen the owner is supposed to trust into noise.
+   */
+  assert.equal(triage.judge({ sender: 'news@example.test', subject: 'Weekly news',
+    bodyText: 'Nothing about purchasing.' }).state, 'HANDLED');
+  assert.equal(triage.judge({ sender: 'news@example.test', subject: 'Stock',
+    bodyText: 'We stock detergent in bulk.' }).state, 'HANDLED', 'detergent is not urgent');
+  assert.equal(triage.judge({ sender: 'news@example.test', subject: 'Note',
+    bodyText: 'She was dismissing the idea.' }).state, 'HANDLED', 'dismissing is not missing');
+
+  // And the words themselves still count, including with a suffix on the end.
+  assert.equal(triage.judge({ sender: 'jo@abcschool.test', subject: 'Order',
+    bodyText: 'Just chasing the order from Tuesday.' }).state, 'NEEDS_REPLY');
+  assert.equal(triage.judge({ sender: 'jo@abcschool.test', subject: 'Payment',
+    bodyText: 'We were refunded twice.' }).state, 'NEEDS_REPLY', 'refunded still finds refund');
+});
+
+test('bulk mail does not become work, however it is addressed', () => {
+  /*
+   * Once Foundry started capturing senders the owner had not approved, this
+   * stopped being a nicety. The first real run over their mailbox marked
+   * eight of ten captured messages "needs a reply": four bank alerts, two
+   * marketing blasts, two newsletters. Needs You only works if being in it
+   * means something.
+   */
+
+  // An automatic address separates its words with dots as readily as hyphens.
+  assert.equal(triage.judge({ sender: 'no.reply.alerts@chase.com',
+    subject: 'Chase security alert: You signed in', bodyText: 'Please review this activity.' }).state,
+    'HANDLED', 'no.reply is no-reply');
+  assert.equal(triage.judge({ sender: 'noreply@example.test', subject: 'Receipt', bodyText: 'Thanks.' }).state,
+    'HANDLED');
+
+  // And mail sent to a list says so, in the footer, every time.
+  const blast = triage.judge({ sender: 'hello@mails.example.test',
+    subject: "Happening TONIGHT! You're invited",
+    bodyText: 'Come along. Please let us know. Unsubscribe at any time.' });
+  assert.equal(blast.state, 'HANDLED', 'an unsubscribe link outranks a marketing "please let us know"');
+  assert.match(blast.reason, /mailing list/);
+
+  assert.equal(triage.judge({ sender: 'news@example.test', subject: 'August round-up',
+    bodyText: 'Everything we shipped. Manage your preferences here.' }).state, 'HANDLED');
+
+  // A person writing to the shop is untouched by any of it.
+  assert.equal(triage.judge({ sender: 'jo@abcschool.test', subject: 'Our order',
+    bodyText: 'Can you confirm the delivery date?' }).state, 'NEEDS_REPLY');
+});

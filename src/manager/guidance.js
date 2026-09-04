@@ -384,11 +384,37 @@ function nextBestAction(db, workspaceId, state) {
     return { kind: 'setup', eyebrow: 'Do this next', ...COPY[stage], ...action };
   }
   if (!state.movementCount) {
+    /*
+     * Say what is already known before asking for what is not.
+     *
+     * An owner who had just imported an order for 800 pairs was asked "tell
+     * Foundry how much you have now", with no sign that Foundry knew anything
+     * at all. It did: five products, a supplier, and 800 pairs on order. Being
+     * asked a question by something that has just read your paperwork and says
+     * nothing about it is what makes software feel like a form.
+     */
+    const incoming = db.prepare(`SELECT COALESCE(SUM(pol.quantity_units - COALESCE(pol.quantity_received_units, 0)), 0) AS units,
+        COUNT(DISTINCT po.id) AS orders, MIN(s.name) AS supplier
+      FROM purchase_order_lines pol
+      JOIN purchase_orders po ON po.id = pol.purchase_order_id
+      JOIN suppliers s ON s.id = po.supplier_id
+      WHERE pol.workspace_id = ? AND po.status IN ('ORDERED','PARTIALLY_RECEIVED')`).get(workspaceId);
+
+    const onOrder = Number(incoming?.units || 0);
     return {
       kind: 'setup', eyebrow: 'Do this next', title: 'Tell Foundry how much you have now.',
-      what: 'Your products are ready, but no opening quantities have been recorded.',
-      why: 'Until the starting amount is known, later sales and receipts cannot produce a truthful balance.',
-      recommendation: 'Enter current quantities or attach the inventory file that contains them.',
+      what: onOrder
+        ? `Your products are ready and ${onOrder} unit${onOrder === 1 ? '' : 's'} are on order from `
+          + `${incoming.supplier}, but nothing has been recorded as being on the shelf yet.`
+        : 'Your products are ready, but no opening quantities have been recorded.',
+      why: onOrder
+        ? 'What is on order is not what you have. Until the starting amount is known, '
+          + 'later sales and receipts cannot produce a truthful balance.'
+        : 'Until the starting amount is known, later sales and receipts cannot produce a truthful balance.',
+      recommendation: onOrder
+        ? 'Enter what is physically there now — if the answer is none, say none and Foundry will '
+          + 'start from zero and add the order when it arrives.'
+        : 'Enter current quantities or attach the inventory file that contains them.',
       action: 'Add opening inventory', href: state.first ? `/foundry/quantities/${state.first.id}` : '/foundry/quantities',
     };
   }
