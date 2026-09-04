@@ -1,0 +1,286 @@
+<%
+  const money = function (minor) { return '$' + (Number(minor || 0) / 100).toFixed(2); };
+  const decide = function (id, label, path, extra) {
+    return { id: id, label: label, path: path, extra: extra };
+  };
+%>
+
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Foundry · A Keeper product</p>
+    <h1>What happens next</h1>
+    <p class="lede">
+      Everything here is a prediction from your own trading history, and every one of them says how
+      sure Foundry is. You should not need this page — what matters turns up on Home, in Needs you,
+      and on the product itself. It is here for when you want the whole picture at once.
+    </p>
+  </div>
+  <span class="badge"><%= sweep.scanned %> products looked at</span>
+</div>
+
+<%# ------------------------------------------------------------- running out %>
+<section class="card" id="shortages">
+  <div class="card-head">
+    <div>
+      <h2>Heading for zero</h2>
+      <p class="hint">Ordered by how soon, with anything already on its way taken off first.</p>
+    </div>
+  </div>
+  <div class="card-body stack">
+    <% if (!sweep.shortages.length) { %>
+      <p class="planning-item">
+        Nothing Foundry can measure a sales rate for runs out inside the period it can see.
+        Products with too little history to forecast are not counted here, and never guessed at.
+      </p>
+    <% } %>
+    <% sweep.shortages.forEach(function (row) { %>
+      <article class="planning-item">
+        <strong><%= row.displayName %></strong>
+        <% if (row.breaksCommitment) { %><span class="badge badge--warn">A customer is waiting</span><% } %>
+        <% if (row.coveredByIncoming) { %><span class="badge">Covered by an order</span><% } %>
+        <span class="badge"><%= row.confidence === 'high' ? 'High confidence'
+          : row.confidence === 'moderate' ? 'Moderate confidence' : 'Still learning' %></span>
+        <p><%= row.explanation %></p>
+        <% if (row.purchase && row.purchase.order) { %>
+          <p><strong><%= row.purchase.headline %></strong></p>
+          <% if (row.purchase.tradeoff) { %><p class="t-muted"><%= row.purchase.tradeoff.text %></p><% } %>
+        <% } %>
+        <a href="/inventory/<%= row.skuId %>">Open the product</a>
+      </article>
+    <% }) %>
+  </div>
+</section>
+
+<%# ----------------------------------------------------------- rules drifted %>
+<section class="card" id="rules">
+  <div class="card-head">
+    <div>
+      <h2>Rules that no longer match the trade</h2>
+      <p class="hint">
+        Foundry never changes a level you configured without being told to. Each of these is a
+        question with two answers.
+      </p>
+    </div>
+  </div>
+  <div class="card-body stack">
+    <% var changes = open.filter(function (row) {
+         return ['reorder_point', 'target_stock', 'safety_stock'].indexOf(row.kind) !== -1;
+       }); %>
+    <% if (!changes.length) { %>
+      <p class="planning-item">Your reorder settings still match the demand and delivery times Foundry measures.</p>
+    <% } %>
+    <% changes.forEach(function (row) { %>
+      <article class="planning-item">
+        <strong><%= row.headline %></strong>
+        <p class="t-muted"><%= row.why %></p>
+        <% if (row.confidence && row.confidence !== 'high') { %>
+          <p class="t-xs t-muted">
+            <%= row.confidence === 'learning' ? 'Foundry is still learning this product.'
+              : 'Moderate confidence — the history behind this is short or uneven.' %>
+          </p>
+        <% } %>
+        <% if (canOperate) { %>
+          <div class="button-row">
+            <form method="post" action="/planning/recommendations/<%= row.id %>/accept">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="returnTo" value="/planning#rules">
+              <button class="btn btn--primary" type="submit">Use <%= row.recommendedValue %></button>
+            </form>
+            <form method="post" action="/planning/recommendations/<%= row.id %>/decline">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="returnTo" value="/planning#rules">
+              <button class="btn btn--ghost" type="submit">
+                <%= row.currentValue === null ? 'Leave it unset' : 'Keep ' + row.currentValue %>
+              </button>
+            </form>
+          </div>
+        <% } %>
+      </article>
+    <% }) %>
+  </div>
+</section>
+
+<%# ---------------------------------------------------------- wrong location %>
+<% if (sweep.transfers.length) { %>
+<section class="card" id="transfers">
+  <div class="card-head">
+    <div>
+      <h2>Stock in the wrong place</h2>
+      <p class="hint">Moving stock you already own is the cheapest way to fix a shortage.</p>
+    </div>
+  </div>
+  <div class="card-body stack">
+    <% sweep.transfers.forEach(function (move) { %>
+      <article class="planning-item">
+        <strong>Move <%= move.units %> <%= move.displayName %> from <%= move.fromLocationName %>
+          to <%= move.toLocationName %></strong>
+        <p class="t-muted"><%= move.why %></p>
+      </article>
+    <% }) %>
+  </div>
+</section>
+<% } %>
+
+<%# ----------------------------------------------------------------- excess %>
+<section class="card" id="excess">
+  <div class="card-head">
+    <div>
+      <h2>Money asleep on a shelf</h2>
+      <p class="hint"><%= excess.headline %></p>
+    </div>
+  </div>
+  <% if (excess.rows.length) { %>
+  <div class="table-wrap">
+    <table class="table table--stack">
+      <thead>
+        <tr><th>Product</th><th>Problem</th><th>On hand</th><th>Days of supply</th>
+          <th>Tied up</th><th>What to do</th></tr>
+      </thead>
+      <tbody>
+        <% excess.rows.slice(0, 25).forEach(function (row) { %>
+          <tr>
+            <td><a href="/inventory/<%= row.skuId %>"><%= row.displayName %></a></td>
+            <td><%= row.label %></td>
+            <td><%= row.onHand %></td>
+            <td><%= row.daysOfSupply === null ? '—' : Math.round(row.daysOfSupply) %></td>
+            <td><%= row.excessValueMinor > 0 ? money(row.excessValueMinor) : '—' %></td>
+            <td class="t-muted"><%= row.recommendation %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+  <% } %>
+  <div class="card-foot">
+    Foundry recommends operational answers — stop ordering, move it, lower the target. What to charge
+    for it is a merchandising decision it cannot see enough to have an opinion about.
+  </div>
+</section>
+
+<%# ------------------------------------------------------------- anomalies %>
+<% if (sweep.decisions.length || sweep.informational.length) { %>
+<section class="card" id="noticed">
+  <div class="card-head">
+    <div>
+      <h2>Changes worth knowing about</h2>
+      <p class="hint">Split by whether they change what anybody should do.</p>
+    </div>
+  </div>
+  <div class="card-body stack">
+    <% sweep.decisions.forEach(function (row) { %>
+      <article class="planning-item">
+        <strong><%= row.headline %></strong>
+        <p class="t-muted"><%= row.detail %></p>
+        <% if (row.recommendation) { %><p><%= row.recommendation %></p><% } %>
+      </article>
+    <% }) %>
+    <% if (sweep.informational.length) { %>
+      <details>
+        <summary>True, and changes nothing (<%= sweep.informational.length %>)</summary>
+        <ul class="t-muted">
+          <% sweep.informational.forEach(function (row) { %>
+            <li><strong><%= row.headline %></strong> — <%= row.detail %></li>
+          <% }) %>
+        </ul>
+      </details>
+    <% } %>
+  </div>
+</section>
+<% } %>
+
+<%# ----------------------------------------------------------------- goals %>
+<section class="card" id="goals">
+  <div class="card-head">
+    <div>
+      <h2>What matters to you</h2>
+      <p class="hint">
+        These choose between answers Foundry was already allowed to give. None of them grants it
+        permission to do anything new — that stays with the jobs you authorise.
+      </p>
+    </div>
+  </div>
+  <form method="post" action="/planning/goals">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="card-body stack">
+      <label class="field">
+        <span class="field-label">When availability and stock held pull against each other</span>
+        <select class="select" name="serviceLevel">
+          <option value="lean" <%= goals.serviceLevel === 'lean' ? 'selected' : '' %>>
+            Keep stock lean — accept the occasional stockout</option>
+          <option value="balanced" <%= goals.serviceLevel === 'balanced' ? 'selected' : '' %>>
+            Balanced</option>
+          <option value="protective" <%= goals.serviceLevel === 'protective' ? 'selected' : '' %>>
+            Avoid stockouts — carry more so customers are rarely turned away</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">Never keep more than (days of supply)</span>
+        <input class="input" type="number" name="maxDaysOfSupply" min="7" max="730"
+          value="<%= goals.maxDaysOfSupply === null ? '' : goals.maxDaysOfSupply %>"
+          placeholder="leave empty for no limit">
+      </label>
+      <label class="field">
+        <span class="field-label">Try to keep inventory investment under</span>
+        <input class="input" type="text" name="inventoryCap"
+          value="<%= goals.inventoryCapMinor ? (goals.inventoryCapMinor / 100).toFixed(2) : '' %>"
+          placeholder="leave empty for no limit">
+      </label>
+      <label class="field field--check">
+        <input type="checkbox" name="prioritiseCoreProducts" <%= goals.prioritiseCoreProducts ? 'checked' : '' %>>
+        <span>Protect availability of the products that sell most reliably first</span>
+      </label>
+      <label class="field field--check">
+        <input type="checkbox" name="conservativeSeasonal" <%= goals.conservativeSeasonal ? 'checked' : '' %>>
+        <span>Be careful about reading a seasonal rise as a lasting one</span>
+      </label>
+      <% if (inventoryPosition.capMinor) { %>
+        <p class="planning-item">
+          <%= money(inventoryPosition.heldMinor) %> is currently tied up in stock, against your
+          limit of <%= money(inventoryPosition.capMinor) %>.
+          <% if (!inventoryPosition.within) { %>
+            That is <%= money(inventoryPosition.overBy) %> over. Foundry reports this rather than
+            refusing to reorder — a limit is a preference between reasonable plans, not a reason to
+            let a customer down.
+          <% } %>
+        </p>
+      <% } %>
+    </div>
+    <div class="card-foot">
+      <button class="btn btn--primary" type="submit">Save what matters</button>
+    </div>
+  </form>
+  <% if (statedGoals.length) { %>
+    <div class="card-body">
+      <p class="t-xs t-muted">In your own words, where you used any:</p>
+      <ul class="t-muted">
+        <% statedGoals.forEach(function (goal) { %><li><%= goal.text %></li><% }) %>
+      </ul>
+    </div>
+  <% } %>
+</section>
+
+<%# -------------------------------------------------------------- accuracy %>
+<section class="card" id="accuracy">
+  <div class="card-head">
+    <div>
+      <h2>Has Foundry been right?</h2>
+      <p class="hint"><%= accuracy.summary %></p>
+    </div>
+  </div>
+  <div class="card-body">
+    <% if (accuracy.comparable) { %>
+      <div class="accounting-equation">
+        <p><span>Forecasts scored</span><strong><%= accuracy.comparable %></strong></p>
+        <p><span>Out by, on average</span><strong><%= accuracy.meanAbsoluteError %> units</strong></p>
+        <p><span>Leaning</span><strong>
+          <%= accuracy.bias === null ? '—' : accuracy.bias > 0 ? 'high by ' + accuracy.bias
+            : accuracy.bias < 0 ? 'low by ' + Math.abs(accuracy.bias) : 'neither way' %>
+        </strong></p>
+      </div>
+    <% } %>
+    <p class="t-xs t-muted">
+      Forecasts made over a period that was spent out of stock are not scored. Demand had nowhere to
+      happen, so marking against it would teach Foundry that running short was accurate.
+    </p>
+  </div>
+</section>
