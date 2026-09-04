@@ -10,6 +10,7 @@
  */
 
 const reports = require('./reports');
+const ledger = require('./ledger');
 
 function number(value) { return Number(value || 0); }
 
@@ -256,7 +257,7 @@ function expenses(db, workspaceId, from, to) {
     LEFT JOIN suppliers s ON s.id = l.supplier_id
     LEFT JOIN accounting_supplier_bills b ON b.id = e.source_record_id AND e.source_type = 'supplier_bill'
     WHERE e.workspace_id = ? AND e.status = 'POSTED' AND e.posting_date BETWEEN ? AND ?
-      AND a.account_type = 'EXPENSE'
+      AND a.account_type = 'EXPENSE' AND ${ledger.notCancelled('e')}
     ORDER BY e.posting_date DESC, e.entry_number DESC, l.line_number`)
     .all(workspaceId, from, to).map((row) => ({ ...row,
       amountMinor: number(row.amount_minor), paidMinor: row.bill_id

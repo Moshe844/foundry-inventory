@@ -63,6 +63,13 @@ function hydrate(row, source) {
     holdShipping: Boolean(row.hold_shipping),
     creditApproved: Boolean(row.credit_approved),
     creditLimitMinor: row.credit_limit_minor,
+    /*
+     * Permission and its size, kept together because neither means anything
+     * alone. A switch with no limit would be an open cheque, so the position
+     * below treats a missing limit as no permission at all.
+     */
+    autoRequestEnabled: Boolean(row.auto_request_enabled),
+    autoRequestLimitMinor: row.auto_request_limit_minor,
     note: row.note,
     isDefault: !row.customer_id,
     source,
@@ -137,18 +144,22 @@ function setTerms(db, ctx, input = {}) {
     kind === 'ON_ACCOUNT' ? netDays : null,
     input.holdShipping ? 1 : 0, input.creditApproved ? 1 : 0,
     input.creditLimitMinor ? Math.round(Number(input.creditLimitMinor)) : null,
-    trimOrNull(input.note)];
+    trimOrNull(input.note),
+    input.autoRequestEnabled ? 1 : 0,
+    input.autoRequestLimitMinor ? Math.round(Number(input.autoRequestLimitMinor)) : null];
 
   if (existing) {
     db.prepare(`UPDATE customer_payment_terms SET kind = ?, deposit_percent = ?, deposit_minor = ?,
       net_days = ?, hold_shipping = ?, credit_approved = ?, credit_limit_minor = ?, note = ?,
+      auto_request_enabled = ?, auto_request_limit_minor = ?,
       agreed_by_user_id = ?, updated_at = ? WHERE id = ?`)
       .run(...values, ctx.actorId || null, now, existing.id);
   } else {
     db.prepare(`INSERT INTO customer_payment_terms
       (id, workspace_id, customer_id, kind, deposit_percent, deposit_minor, net_days,
-       hold_shipping, credit_approved, credit_limit_minor, note, agreed_by_user_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       hold_shipping, credit_approved, credit_limit_minor, note,
+       auto_request_enabled, auto_request_limit_minor, agreed_by_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(newId('cpt'), ctx.workspaceId, customerId, ...values, ctx.actorId || null, now, now);
   }
   return forCustomer(db, ctx.workspaceId, customerId);
@@ -212,7 +223,8 @@ function positionForOrder(db, workspaceId, order) {
   const deposits = db.prepare(`SELECT COALESCE(SUM(amount_minor), 0) AS taken
     FROM accounting_payments
     WHERE workspace_id = ? AND direction = 'CUSTOMER_RECEIPT' AND status = 'POSTED'
-      AND source_key LIKE ?`).get(workspaceId, `order-payment:${order.id}:%`);
+      AND (sales_order_id = ? OR source_key LIKE ?)`)
+    .get(workspaceId, order.id, `order-payment:${order.id}:%`);
 
   const invoicedTotal = invoices.reduce((sum, row) => sum + Number(row.total_minor), 0);
   const invoicedRemaining = invoices.reduce((sum, row) => sum + Number(row.balance_minor), 0);

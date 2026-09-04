@@ -1,7 +1,7 @@
 'use strict';
 
 const { ValidationError } = require('../domain/errors');
-const { dateOnly, settings } = require('./ledger');
+const { dateOnly, settings, notCancelled } = require('./ledger');
 
 function range(input = {}) {
   const from = dateOnly(input.from || '1900-01-01', 'Report start date');
@@ -139,6 +139,7 @@ function cashFlow(db, workspaceId, input = {}) {
     JOIN accounting_journal_lines cash ON cash.entry_id = e.id
     JOIN accounting_accounts ca ON ca.id = cash.account_id AND ca.system_key = 'CASH'
     WHERE e.workspace_id = ? AND e.status = 'POSTED' AND e.posting_date BETWEEN ? AND ?
+      AND ${notCancelled('e')}
     ORDER BY e.posting_date, e.entry_number`).all(workspaceId, dates.from, dates.to);
   const sections = { operating: 0, investing: 0, financing: 0 };
   for (const row of rows) {

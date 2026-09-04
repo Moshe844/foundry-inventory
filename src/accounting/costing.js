@@ -130,7 +130,28 @@ function issue(db, ctx, input) {
       const quantity = Math.abs(Number(row.quantity_delta));
       const before = state(db, ctx.workspaceId, row.sku_id, row.location_id);
       if (Number(before.quantity_units) < quantity) {
-        throw new ValidationError('Inventory was issued before its opening or receipt cost was established.');
+        /*
+         * Name the product, the place and the numbers.
+         *
+         * The old sentence was "Inventory was issued before its opening or
+         * receipt cost was established." True of the situation and useless to
+         * the person reading it: which product, how many, and what should they
+         * do about it? It appears on a shipment that has already happened, so
+         * the reader is not deciding whether to ship — they are trying to find
+         * out what Foundry wants from them.
+         */
+        const named = db.prepare(`SELECT s.code, i.name, l.name AS location
+          FROM skus s JOIN items i ON i.id = s.item_id
+          LEFT JOIN locations l ON l.id = ?
+          WHERE s.id = ?`).get(row.location_id, row.sku_id);
+        const product = named ? `${named.name}${named.code ? ` (${named.code})` : ''}` : 'this product';
+        const place = named?.location ? ` at ${named.location}` : '';
+        const have = Number(before.quantity_units);
+        throw new ValidationError(`Foundry has no recorded cost for ${product}${place}. `
+          + `${quantity} unit${quantity === 1 ? '' : 's'} left stock and `
+          + `${have === 0 ? (quantity === 1 ? 'it has no' : 'none of them have a') : `only ${have} have a`} cost on file, so product cost and `
+          + `inventory value cannot be posted for this sale. Record what these units cost — their opening `
+          + `value, or the purchase they arrived on — and Foundry will finish the entry. No amount was guessed.`);
       }
       const cost = quantity === Number(before.quantity_units)
         ? Number(before.total_cost_minor)

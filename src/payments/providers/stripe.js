@@ -86,19 +86,24 @@ async function createCustomer(ctx, { name, email }) {
  * rather than an attempt to charge a saved card, which is the whole point: the
  * customer is being asked, not billed.
  */
-async function createInvoice(ctx, { externalCustomerId, amountMinor, currency, description, reference, dueDate }) {
-  const idempotency = `foundry-invoice:${reference}:${amountMinor}`;
+async function createInvoice(ctx, { externalCustomerId, amountMinor, currency, description, reference, dueDate, attemptId }) {
+  // One attempt, one key. The reference falls back for callers that predate it.
+  const idempotency = attemptId ? `foundry-invoice:${attemptId}` : `foundry-invoice:${reference}:${amountMinor}`;
 
-  await call(ctx, '/invoiceitems', {
-    values: {
-      customer: externalCustomerId,
-      amount: Math.round(Number(amountMinor)),
-      currency: String(currency || 'usd').toLowerCase(),
-      description,
-    },
-    idempotencyKey: `${idempotency}:item`,
-  });
-
+  /*
+   * The invoice is created first, empty, and the line is attached to it by id.
+   *
+   * The obvious order — create the item, then the invoice, and let Stripe
+   * sweep up the customer's pending items — is how this was written, and it
+   * silently stopped working. Newer API versions do not pull pending items in
+   * by default, so Stripe built a $0.00 invoice, finalised it, decided a $0.00
+   * invoice was already settled, and sent invoice.paid. Foundry was told an
+   * order had been paid when not a cent had moved, and the $10.00 line item
+   * was still sitting on the customer attached to nothing.
+   *
+   * Naming the invoice on the item removes the guesswork from both ends. It
+   * behaves the same on every API version, which is the point.
+   */
   const invoice = await call(ctx, '/invoices', {
     values: {
       customer: externalCustomerId,
@@ -106,14 +111,36 @@ async function createInvoice(ctx, { externalCustomerId, amountMinor, currency, d
       days_until_due: dueDate ? undefined : 30,
       due_date: dueDate ? Math.floor(new Date(`${dueDate}T00:00:00Z`).getTime() / 1000) : undefined,
       description,
+      pending_invoice_items_behavior: 'exclude',
       'metadata[foundry_reference]': reference,
     },
     idempotencyKey: idempotency,
   });
 
+  await call(ctx, '/invoiceitems', {
+    values: {
+      customer: externalCustomerId,
+      invoice: invoice.id,
+      amount: Math.round(Number(amountMinor)),
+      currency: String(currency || 'usd').toLowerCase(),
+      description,
+    },
+    idempotencyKey: `${idempotency}:item`,
+  });
+
   const finalised = await call(ctx, `/invoices/${invoice.id}/finalize`, {
     idempotencyKey: `${idempotency}:finalize`,
   });
+
+  /*
+   * What Stripe finalised has to be what Foundry asked for. If it is not, the
+   * invoice is wrong and sending it to a customer is worse than failing here.
+   */
+  const total = Number(finalised.total);
+  if (total !== Math.round(Number(amountMinor))) {
+    throw new ValidationError(`Stripe finalised this invoice for ${(total / 100).toFixed(2)} `
+      + `when Foundry asked for ${(Number(amountMinor) / 100).toFixed(2)}. Nothing was sent.`);
+  }
 
   return {
     externalInvoiceId: finalised.id,
@@ -125,6 +152,64 @@ async function createInvoice(ctx, { externalCustomerId, amountMinor, currency, d
 async function getHostedPaymentUrl(ctx, { externalInvoiceId }) {
   const invoice = await call(ctx, `/invoices/${externalInvoiceId}`, { method: 'GET' });
   return invoice.hosted_invoice_url || null;
+}
+
+/**
+ * What Stripe currently says about an invoice.
+ *
+ * A webhook is an accelerator, not the source of truth. It needs a public
+ * address Stripe can reach, and on a laptop behind a company network that
+ * address is a tunnel that is sometimes simply not running — which is exactly
+ * how an order sat saying "unpaid" while Stripe had already recorded a
+ * decline. Asking is always possible, and the answer is the same answer.
+ *
+ * Returns the invoice as Stripe states it, and on a failed attempt the
+ * decline the bank actually gave, because "the payment failed" is not
+ * something an owner can act on.
+ */
+async function readInvoice(ctx, { externalInvoiceId }) {
+  const invoice = await call(ctx, `/invoices/${externalInvoiceId}?expand[]=payments`, { method: 'GET' });
+  if (invoice.status === 'paid' || !invoice.attempted || Number(invoice.attempt_count || 0) === 0) {
+    return invoice;
+  }
+  /*
+   * Why the bank said no.
+   *
+   * "The payment failed" is not something an owner can act on, and the useful
+   * sentence is two hops away: the invoice names a payment intent, and the
+   * charge under it carries the message Stripe writes for the merchant. A
+   * charge does not carry the invoice id in this API version, so the intent is
+   * what joins them.
+   */
+  const intentIds = (invoice.payments?.data || [])
+    .map((entry) => entry.payment?.payment_intent).filter(Boolean);
+  const reasons = [];
+  try {
+    if (intentIds.length) {
+      const charges = await call(ctx, '/charges?limit=25', { method: 'GET' });
+      const failed = (charges.data || []).find((charge) => charge.status === 'failed'
+        && intentIds.includes(charge.payment_intent));
+      if (failed) reasons.push(failed.outcome?.seller_message || failed.failure_message);
+      if (!reasons.length) {
+        const intent = await call(ctx, `/payment_intents/${intentIds[0]}`, { method: 'GET' });
+        if (intent.last_payment_error?.message) reasons.push(intent.last_payment_error.message);
+      }
+    }
+  } catch { /* The invoice's own state is enough; the reason is a courtesy. */ }
+
+  /*
+   * And the fact that explains most declines on a new account: a real card
+   * cannot succeed against a sandbox key, however valid it is. Foundry knows
+   * which mode the invoice was created in, so it says so rather than leaving
+   * somebody to test their own card again.
+   */
+  if (invoice.livemode === false) {
+    reasons.push('This Stripe account is in test mode, so only Stripe test card numbers '
+      + 'can succeed — a real card is always declined. 4242 4242 4242 4242 with any future '
+      + 'expiry and any CVC will go through.');
+  }
+  if (reasons.length) invoice.foundryDeclineReason = reasons.filter(Boolean).join(' ');
+  return invoice;
 }
 
 async function refundPayment(ctx, { externalPaymentId, amountMinor }) {
@@ -173,8 +258,49 @@ function verifyEvent(raw, headers = {}, options = {}) {
 /**
  * Stripe's vocabulary, translated into the four facts Foundry acts on.
  */
+/**
+ * An invoice Foundry asked about, in the shape an event would have arrived in.
+ *
+ * Deliberately not a second way of understanding a payment. It builds the
+ * event Stripe would have sent and hands it to the same reader, so a payment
+ * learned by asking and a payment learned by webhook travel one code path and
+ * cannot disagree. The id is derived from what is being reported, so asking
+ * twice about an unchanged invoice is the same event twice and is ignored.
+ */
+function eventFromInvoice(invoice) {
+  const id = invoice?.id;
+  if (!id) return null;
+  if (invoice.status === 'paid' || Number(invoice.amount_paid || 0) > 0) {
+    return { id: `refresh:${id}:paid:${invoice.amount_paid}`,
+      type: 'invoice.payment_succeeded', data: { object: invoice } };
+  }
+  if (invoice.status === 'void') {
+    return { id: `refresh:${id}:void`, type: 'invoice.voided', data: { object: invoice } };
+  }
+  if (invoice.attempted && Number(invoice.attempt_count || 0) > 0) {
+    return { id: `refresh:${id}:failed:${invoice.attempt_count}`,
+      type: 'invoice.payment_failed',
+      data: { object: { ...invoice,
+        last_finalization_error: invoice.foundryDeclineReason
+          ? { message: invoice.foundryDeclineReason } : invoice.last_finalization_error } } };
+  }
+  // Nothing has happened to it yet, which is not an event.
+  return null;
+}
+
 function readEvent(event) {
-  const type = String(event?.type || '');
+  /*
+   * Stripe has started naming events with a version prefix — the Workbench
+   * lists "v1.billing.meter.no_meter_found" — and the invoice events can
+   * arrive either way depending on the API version the endpoint was created
+   * against.
+   *
+   * Matching the exact string meant an endpoint set up on a newer version
+   * would verify its signature, return 200, and do nothing at all: the worst
+   * shape of failure, because Stripe reports it as delivered and the money
+   * never reaches the books. The prefix is not information we use, so it goes.
+   */
+  const type = String(event?.type || '').replace(/^v\d+\./, '');
   const object = event?.data?.object || {};
 
   if (type === 'invoice.payment_succeeded' || type === 'invoice.paid') {
@@ -210,6 +336,7 @@ function readEvent(event) {
 }
 
 module.exports = {
+  readInvoice, eventFromInvoice,
   createCustomer, createInvoice, getHostedPaymentUrl, refundPayment, verifyEvent, readEvent,
   // Exported for tests; nothing above this file should reach for them.
   __internal: { call, form, credentials },

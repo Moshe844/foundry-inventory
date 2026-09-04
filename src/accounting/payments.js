@@ -106,14 +106,15 @@ function record(db, ctx, membership, input) {
     const now = nowIso();
     db.prepare(`INSERT INTO accounting_payments
       (id, workspace_id, payment_number, direction, customer_id, supplier_id,
-       payment_date, amount_minor, currency, method, reference, status, cash_account_id,
+       payment_date, amount_minor, currency, method, reference, sales_order_id, status, cash_account_id,
        journal_entry_id, source_key, created_by_user_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'POSTED', ?, ?, ?, ?, ?)`)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'POSTED', ?, ?, ?, ?, ?)`)
       .run(id, ctx.workspaceId, input.paymentNumber || nextNumber(db, ctx.workspaceId), direction,
         direction === 'CUSTOMER_RECEIPT' ? counterpartyId : null,
         direction === 'SUPPLIER_PAYMENT' ? counterpartyId : null,
         date, amount, ledger.settings(db, ctx.workspaceId).currency, input.method || null,
-        input.reference || null, cash.id, posted.entry.id, sourceKey, ctx.actorId, now);
+        input.reference || null, input.salesOrderId || null,
+        cash.id, posted.entry.id, sourceKey, ctx.actorId, now);
     const insert = db.prepare(`INSERT INTO accounting_payment_allocations
       (id, workspace_id, payment_id, customer_invoice_id, supplier_bill_id, amount_minor, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)`);
@@ -132,6 +133,41 @@ function record(db, ctx, membership, input) {
           paid_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
           .run(balance, balance === 0 ? 'PAID' : 'PARTIALLY_PAID', balance === 0 ? now : null,
             now, allocation.bill.id, ctx.workspaceId);
+      }
+    }
+
+    /*
+     * Money taken against an order pays that order's invoice.
+     *
+     * A customer was sent a payment link, paid it, and the order went on
+     * saying "$100.00 still owed / Unpaid". Nothing was lost: Stripe charged
+     * them, the webhook arrived, the receipt posted to the ledger against the
+     * right order. It was simply never applied to the invoice, so every screen
+     * that asks "what does this customer owe" answered from an untouched
+     * balance.
+     *
+     * Two halves of this already existed and each covered one order of events.
+     * A payment link raised against an invoice carries its id and allocates
+     * here. An invoice raised after the money arrived sweeps up what the order
+     * has already paid, in operational-adapter. Neither covered the ordinary
+     * case in between — invoice first, then a link raised against the *order*,
+     * which has no invoice id to carry — and that is the case a shop is in
+     * every time it invoices a customer and then asks them to pay.
+     *
+     * So it happens at the door every payment comes through, rather than in a
+     * third place that would have the same shape of hole. Only the unapplied
+     * part, never more than the invoice is for, and anything left over stays
+     * on the order as the customer's money.
+     */
+    if (direction === 'CUSTOMER_RECEIPT' && input.salesOrderId && !allocations.length) {
+      const receivables = require('./receivables');
+      const open = db.prepare(`SELECT id FROM accounting_customer_invoices
+        WHERE workspace_id = ? AND sales_order_id = ? AND status NOT IN ('VOID', 'PAID')
+          AND balance_minor > 0
+        ORDER BY issue_date, created_at`).all(ctx.workspaceId, input.salesOrderId);
+      for (const row of open) {
+        receivables.applyMoneyAlreadyPaid(db, ctx,
+          receivables.requireInvoice(db, ctx.workspaceId, row.id));
       }
     }
     return { payment: requirePayment(db, ctx.workspaceId, id), replayed: false };

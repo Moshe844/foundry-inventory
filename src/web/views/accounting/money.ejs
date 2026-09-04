@@ -1,0 +1,251 @@
+<%
+  const currency = story.currency;
+  const money = function (minor) {
+    const amount = Number(minor || 0) / 100;
+    const sign = amount < 0 ? '-' : '';
+    return sign + (currency === 'USD' ? '$' : currency + ' ')
+      + Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  const day = function (value) {
+    if (!value) return '';
+    const d = new Date(value + 'T00:00:00Z');
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  };
+%>
+
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Foundry · A Keeper product · <%= workspace.name %></p>
+    <h1>Money</h1>
+    <p class="lede">
+      What your books say, in the words your accountant would use. You do not record anything here —
+      sales, deliveries, bills and payments arrive from the work itself.
+    </p>
+  </div>
+  <a class="btn" href="/accounting/books">Books &amp; accounting detail</a>
+</div>
+
+<%# ------------------------------------------------------------ 1. status %>
+<section class="money-status <%= story.status.caughtUp ? 'is-good' : 'is-waiting' %>">
+  <strong><%= story.status.headline %></strong>
+  <p><%= story.status.detail %></p>
+</section>
+
+<%# ---------------------------------------------------------- 2. position %>
+<section class="money-position" aria-label="Where the money is">
+  <div class="money-figure">
+    <span>Cash</span>
+    <strong><%= money(story.position.cashMinor) %></strong>
+    <small>What Foundry can prove you hold.</small>
+  </div>
+  <div class="money-figure">
+    <span>Customers owe you</span>
+    <strong><%= money(story.position.customersOweMinor) %></strong>
+    <small>Completed sales not yet paid.</small>
+  </div>
+  <div class="money-figure">
+    <span>You owe suppliers</span>
+    <strong><%= money(story.position.suppliersCommittedMinor) %></strong>
+    <small>
+      <% if (story.position.supplierChargesCommittedMinor) { %>
+        <%= money(story.position.suppliersOwedMinor) %> invoiced,
+        plus <%= money(story.position.supplierChargesCommittedMinor) %> of freight and charges
+        agreed on your orders.
+      <% } else { %>
+        Approved bills not yet paid.
+      <% } %>
+    </small>
+  </div>
+  <div class="money-figure">
+    <span>Stock you own</span>
+    <strong><%= money(story.position.inventoryMinor) %></strong>
+    <small><%= story.position.inventoryUnits %> units, at what they cost you.</small>
+  </div>
+</section>
+
+<%# ------------------------------------------------------ 3. needs attention %>
+<% if (story.attention.length) { %>
+<section class="card section" id="attention">
+  <div class="card-head"><div>
+    <h2>What needs you</h2>
+    <p class="hint">Largest first. Each one names the thing that settles it.</p>
+  </div></div>
+  <div class="card-body stack">
+    <% story.attention.forEach(function (item) { %>
+      <article class="planning-item">
+        <strong><%= item.title %></strong>
+        <p class="t-muted"><%= item.why %></p>
+        <a class="btn btn--sm" href="<%= item.href %>"><%= item.actionLabel %></a>
+      </article>
+    <% }) %>
+  </div>
+</section>
+<% } %>
+
+<%# ------------------------------------------------------------- 4. profit %>
+<section class="card section" id="profit">
+  <div class="card-head"><div>
+    <p class="eyebrow">Are you making money?</p>
+    <h2><%= money(story.profit.netMinor) %> <%= story.profit.netMinor < 0 ? 'lost' : 'earned' %>
+      · <%= day(story.from) %> to <%= day(story.to) %></h2>
+  </div></div>
+  <div class="card-body">
+    <div class="accounting-equation">
+      <p><span>Sales</span><strong><%= money(story.profit.revenueMinor) %></strong></p>
+      <p><span>Cost of what you sold</span><strong>− <%= money(story.profit.cogsMinor) %></strong></p>
+      <p><span>Gross profit<%= story.profit.marginPct === null ? '' : ' (' + story.profit.marginPct + '% margin)' %></span><strong><%= money(story.profit.grossMinor) %></strong></p>
+      <p><span>Other expenses</span><strong>− <%= money(story.profit.expensesMinor) %></strong></p>
+      <p class="total"><span>Net profit</span><strong><%= money(story.profit.netMinor) %></strong></p>
+    </div>
+    <div class="money-why">
+      <% story.profit.why.forEach(function (line) { %><p><%= line %></p><% }) %>
+    </div>
+  </div>
+</section>
+
+<%# ------------------------------------------------------- 5. what changed %>
+<section class="card section" id="changed">
+  <div class="card-head"><div>
+    <h2>What changed</h2>
+    <p class="hint">Newest first. Every line is something that happened, not a balance.</p>
+  </div></div>
+  <div class="card-body">
+    <% if (!story.changed.length) { %>
+      <p class="quiet-note">Nothing moved in this period.</p>
+    <% } %>
+    <ul class="money-feed">
+      <% story.changed.forEach(function (row) { %>
+        <li class="money-feed-item is-<%= row.direction %>">
+          <span class="money-feed-when"><%= day(row.at) %></span>
+          <span class="money-feed-what">
+            <a href="<%= row.href %>"><%= row.headline %></a>
+            <small><%= row.detail %></small>
+          </span>
+        </li>
+      <% }) %>
+    </ul>
+  </div>
+</section>
+
+<%# --------------------------------------------------------- 6. coming up %>
+<% if (story.comingUp.length) { %>
+<section class="card section" id="coming-up">
+  <div class="card-head"><div>
+    <h2>Coming up</h2>
+    <p class="hint">Money with a date on it, in both directions.</p>
+  </div></div>
+  <div class="card-body">
+    <ul class="money-feed">
+      <% story.comingUp.forEach(function (row) { %>
+        <li class="money-feed-item is-<%= row.direction %>">
+          <span class="money-feed-when"><%= day(row.date) %></span>
+          <span class="money-feed-what">
+            <a href="<%= row.href %>"><%= row.what %> <%= money(row.amountMinor) %></a>
+            <small><%= row.detail %></small>
+          </span>
+        </li>
+      <% }) %>
+    </ul>
+  </div>
+</section>
+<% } %>
+
+<%# ----------------------------------------------------- 7. Foundry noticed %>
+<% if (story.noticed.length) { %>
+<section class="card section" id="noticed">
+  <div class="card-head"><div>
+    <p class="eyebrow">Foundry noticed</p>
+    <h2>Worth knowing without being asked</h2>
+  </div></div>
+  <div class="card-body stack">
+    <% story.noticed.forEach(function (item) { %>
+      <article class="planning-item">
+        <strong><%= item.headline %></strong>
+        <% if (item.detail) { %><p class="t-muted"><%= item.detail %></p><% } %>
+      </article>
+    <% }) %>
+  </div>
+</section>
+<% } %>
+
+<%# ---------------------------------------------------------------- 8. fees %>
+<% if (story.fees.totalMinor) { %>
+<section class="card section" id="fees">
+  <div class="card-head"><div>
+    <p class="eyebrow">Shipping, duty and every other charge</p>
+    <h2><%= money(story.fees.totalMinor) %> billed on top of the goods</h2>
+    <p class="hint">
+      Exactly as each supplier stated them. Foundry never spreads a charge across the units —
+      freight divided by 800 is a unit cost nobody agreed to.
+    </p>
+  </div></div>
+  <div class="card-body">
+    <div class="table-wrap">
+      <table class="table table--stack">
+        <thead><tr><th>Charge</th><th>On</th><th>Where it sits</th><th class="right">Amount</th></tr></thead>
+        <tbody>
+          <% story.fees.kinds.forEach(function (kind) { %>
+            <tr class="money-fee-group">
+              <td colspan="3"><strong><%= kind.label %></strong></td>
+              <td class="right"><strong><%= money(kind.totalMinor) %></strong></td>
+            </tr>
+            <% kind.lines.forEach(function (line) { %>
+              <tr>
+                <td><%= line.label %></td>
+                <td class="t-muted"><%= line.document || '—' %><%= line.supplier ? ' · ' + line.supplier : '' %></td>
+                <td class="t-muted"><%= line.where %></td>
+                <td class="right"><%= money(line.amountMinor) %></td>
+              </tr>
+            <% }) %>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <% if (story.fees.awaitingBillMinor) { %>
+      <p class="quiet-note">
+        <%= money(story.fees.awaitingBillMinor) %> of this is carried on a purchase order and becomes
+        money owed when the supplier actually invoices it. Nothing is waiting on you.
+      </p>
+    <% } %>
+    <% if (story.fees.needsPlacingMinor) { %>
+      <p class="quiet-note">
+        <%= money(story.fees.needsPlacingMinor) %> is waiting for you to say whether it is part of what
+        the stock cost, or an expense of its own. The two give different profit on every sale.
+        <a href="/accounting/books#document-costs">Decide</a>
+      </p>
+    <% } %>
+  </div>
+</section>
+<% } %>
+
+<%# ------------------------------------------------------------ 9. ask %>
+<section class="card section" id="ask">
+  <div class="card-head"><div>
+    <h2>Ask Foundry</h2>
+    <p class="hint">Answered from these same records — never a second opinion.</p>
+  </div></div>
+  <div class="card-body">
+    <form method="get" action="/ask">
+      <label class="field">
+        <span class="visually-hidden">Ask about the money</span>
+        <input class="input" type="text" name="q" placeholder="Why is profit down?" maxlength="200">
+      </label>
+      <div class="button-row" style="margin-top:10px;">
+        <button class="btn btn--primary" type="submit">Ask</button>
+      </div>
+    </form>
+    <ul class="money-asks">
+      <li><a href="/ask?q=<%= encodeURIComponent('Why is profit down?') %>">Why is profit down?</a></li>
+      <li><a href="/ask?q=<%= encodeURIComponent('Who owes me money?') %>">Who owes me money?</a></li>
+      <li><a href="/ask?q=<%= encodeURIComponent('What bills do we need to pay?') %>">What do I owe, and when?</a></li>
+      <li><a href="/ask?q=<%= encodeURIComponent('Are we overstocked on anything?') %>">Are we overstocked on anything?</a></li>
+    </ul>
+  </div>
+</section>
+
+<p class="money-foot">
+  Everything above is posted automatically from the work itself: a sale records revenue and the cost
+  of what went out, a delivery records what you own, a supplier invoice records what you owe, and a
+  payment settles it. If you want the chart of accounts, journals, ledger and reconciliation, they are
+  all in <a href="/accounting/books">Books &amp; accounting detail</a>.
+</p>

@@ -97,6 +97,36 @@ function setPolicy(db, ctx, input = {}) {
   return policy(db, ctx.workspaceId);
 }
 
+/**
+ * Which mailbox Foundry sends from.
+ *
+ * There is a setting for this, and almost nobody sets it — there is no reason
+ * to choose between mailboxes when you only have one. Reading the setting
+ * alone meant Foundry told an owner "no mailbox is connected for sending"
+ * while their Gmail sat on the Connections page marked Connected.
+ *
+ * So the setting is honoured when it is set, and otherwise the connected
+ * mailbox is simply used. A choice is only worth asking for when there is
+ * genuinely a choice to make.
+ */
+function sendingMailbox(db, workspaceId) {
+  const chosen = policy(db, workspaceId).connectorId;
+  const usable = db.prepare(`SELECT id, provider_type, provider_account_name, display_name
+    FROM workspace_connectors
+    WHERE workspace_id = ? AND status = 'connected' AND paused_at IS NULL
+      AND provider_type IN ('gmail', 'microsoft365')
+    ORDER BY created_at`).all(workspaceId);
+
+  if (chosen) {
+    const still = usable.find((row) => row.id === chosen);
+    if (still) return { connectorId: still.id, mailbox: still, chosen: true, options: usable };
+  }
+  if (usable.length === 1) {
+    return { connectorId: usable[0].id, mailbox: usable[0], chosen: false, options: usable };
+  }
+  return { connectorId: null, mailbox: null, chosen: false, options: usable };
+}
+
 function get(db, workspaceId, id) {
   return hydrate(db.prepare('SELECT * FROM customer_communications WHERE id = ? AND workspace_id = ?')
     .get(id, workspaceId));
@@ -246,6 +276,123 @@ function prepareShippingNotice(db, ctx, shipmentId) {
   return get(db, workspaceId, id);
 }
 
+/**
+ * The message that carries a payment link.
+ *
+ * Every figure in it is read back out of the payment request and the order —
+ * the amount asked for, the order number, the link itself. Nothing here
+ * decides what is owed; that was decided by the customer's terms long before
+ * this ran, and repeating the decision in prose is how a message ends up
+ * disagreeing with the order it is about.
+ */
+function composePaymentLink(db, workspaceId, requestId) {
+  const request = db.prepare(`SELECT pr.*, so.order_number, c.name AS customer_name, c.email AS customer_email
+    FROM payment_requests pr
+    JOIN sales_orders so ON so.id = pr.sales_order_id
+    JOIN customers c ON c.id = pr.customer_id
+    WHERE pr.workspace_id = ? AND pr.id = ?`).get(workspaceId, requestId);
+  if (!request) throw new NotFoundError('That payment request is not in this inventory.');
+  if (!request.hosted_url) {
+    throw new ValidationError('There is no payment page for this request yet, so there is nothing to send.');
+  }
+
+  const settings = policy(db, workspaceId);
+  const businessName = settings.businessName
+    || db.prepare('SELECT name FROM workspaces WHERE id = ?').get(workspaceId).name;
+  const amount = `${request.currency} ${(Number(request.amount_minor) / 100).toFixed(2)}`;
+  const deposit = request.purpose === 'DEPOSIT';
+
+  const body = [
+    `Hello ${request.customer_name},`,
+    '',
+    deposit
+      ? `Here is the link to pay the ${amount} deposit on order ${request.order_number}.`
+      : `Here is the link to pay ${amount} on order ${request.order_number}.`,
+    '',
+    request.hosted_url,
+    '',
+    'The page is secure and handled by our payment provider.',
+    '',
+    'Thank you.',
+    settings.signature || businessName,
+  ].join('\n');
+
+  return {
+    request,
+    customerId: request.customer_id,
+    salesOrderId: request.sales_order_id,
+    recipient: trimOrNull(request.customer_email),
+    subject: deposit
+      ? `Deposit for order ${request.order_number}`
+      : `Payment for order ${request.order_number}`,
+    body,
+  };
+}
+
+/** Write it down. One request, one message, however many times this is called. */
+function preparePaymentLink(db, ctx, requestId) {
+  const workspaceId = ctx.workspaceId;
+  const key = `payment-request:${requestId}`;
+  const existing = db.prepare('SELECT * FROM customer_communications WHERE workspace_id = ? AND idempotency_key = ?')
+    .get(workspaceId, key);
+  const draft = composePaymentLink(db, workspaceId, requestId);
+  const settings = policy(db, workspaceId);
+  const now = nowIso();
+
+  if (existing) {
+    if (existing.status === 'PREPARED') {
+      db.prepare(`UPDATE customer_communications SET recipient = ?, subject = ?, body = ?,
+        connector_id = ?, updated_at = ? WHERE id = ?`)
+        .run(draft.recipient, draft.subject, draft.body, settings.connectorId, now, existing.id);
+    }
+    return get(db, workspaceId, existing.id);
+  }
+
+  const id = newId('ccom');
+  db.prepare(`INSERT INTO customer_communications
+      (id, workspace_id, customer_id, sales_order_id, channel, recipient, subject, body,
+       status, message_kind, connector_id, idempotency_key, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'email', ?, ?, ?, 'PREPARED', 'payment_request', ?, ?, ?, ?)`)
+    .run(id, workspaceId, draft.customerId, draft.salesOrderId,
+      draft.recipient, draft.subject, draft.body, settings.connectorId, key, now, now);
+  return get(db, workspaceId, id);
+}
+
+/**
+ * A message the owner asked for, in their own words.
+ *
+ * The shipping notice and the payment link are written from records; this
+ * one was written by a person, through the Tell Foundry box. It lands in the
+ * same table under the same statuses and leaves through the same mailbox,
+ * because a message going out over the owner's name has one path out of the
+ * building — not one for the messages Foundry thought of and another for the
+ * ones they did.
+ */
+function prepareOwnerMessage(db, ctx, input = {}) {
+  const workspaceId = ctx.workspaceId;
+  const recipient = trimOrNull(input.recipient);
+  const body = String(input.body || '').trim();
+  if (!recipient) throw new ValidationError('A message needs somebody to go to.');
+  if (!body) throw new ValidationError('A message needs something in it.');
+
+  // A heading is needed to send an email at all. This one is shown on the
+  // page, editable, before anything goes — it is proposed, not slipped in.
+  const settings = policy(db, workspaceId);
+  const workspace = db.prepare('SELECT name FROM workspaces WHERE id = ?').get(workspaceId);
+  const subject = trimOrNull(input.subject)
+    || `A message from ${settings.businessName || (workspace && workspace.name) || 'us'}`;
+
+  const id = newId('ccom');
+  const now = nowIso();
+  db.prepare(`INSERT INTO customer_communications
+      (id, workspace_id, customer_id, sales_order_id, channel, recipient, subject, body,
+       status, message_kind, connector_id, idempotency_key, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'email', ?, ?, ?, 'PREPARED', 'owner_message', ?, ?, ?, ?)`)
+    .run(id, workspaceId, trimOrNull(input.customerId), trimOrNull(input.salesOrderId),
+      recipient, subject, body, trimOrNull(input.connectorId), `owner-message:${id}`, now, now);
+  return get(db, workspaceId, id);
+}
+
 function updateDraft(db, workspaceId, id, input = {}) {
   const message = get(db, workspaceId, id);
   if (!message) throw new NotFoundError('That message is not in this inventory.');
@@ -350,6 +497,13 @@ function onShipped(db, ctx, shipmentId) {
 async function autoSend(db, ctx, message) {
   if (!message || message.status !== 'PREPARED') return { sent: false, reason: null };
   if (policy(db, ctx.workspaceId).shippingNotice !== 'send') return { sent: false, reason: null };
+  /*
+   * Telling a customer their parcel has gone is its own authority. It is the
+   * least consequential thing on the list and it is still mail leaving in the
+   * owner's name, so it is granted separately from everything else.
+   */
+  const permitted = require('../autopilot/capabilities').may(db, ctx.workspaceId, 'shipping_notices');
+  if (!permitted.allowed) return { sent: false, reason: permitted.because };
   try {
     const sent = await sendThroughMailbox(db, ctx.workspaceId, message.id, ctx.actorId || null);
     return { sent: sent.status === 'SENT', reason: null, message: sent };
@@ -359,8 +513,9 @@ async function autoSend(db, ctx, message) {
 }
 
 module.exports = {
-  DEFAULT_POLICY, policy, setPolicy,
+  composePaymentLink, preparePaymentLink,
+  DEFAULT_POLICY, policy, setPolicy, sendingMailbox,
   get, forShipment, forOrder, waiting,
-  composeShippingNotice, prepareShippingNotice, updateDraft, cancel,
+  composeShippingNotice, prepareShippingNotice, prepareOwnerMessage, updateDraft, cancel,
   sendThroughMailbox, onShipped, autoSend,
 };

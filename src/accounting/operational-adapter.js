@@ -350,6 +350,29 @@ function recordSalesOrderReceivable(db, event, order, fulfilledLines, journalEnt
       .run(grossMinor, discountMinor, taxMinor, totalMinor, totalMinor,
         journalEntryId, now, invoiceId, event.workspaceId);
   }
+  /*
+   * Money this order was already paid belongs on the invoice that has just
+   * been raised for it.
+   *
+   * A sale's invoice only exists once the goods go, so a deposit, a
+   * prepayment and a pay-before-you-ship all arrive before there is anything
+   * to apply them to. Raising the invoice here without looking left a customer
+   * who had paid in full reading "Shipped — $300.00 still owed".
+   *
+   * Deliberately here rather than in receivables.open(): this path inserts the
+   * invoice as OPEN directly and never calls it, which is exactly why the same
+   * fix made there did nothing.
+   */
+  try {
+    const receivables = require('./receivables');
+    receivables.applyMoneyAlreadyPaid(db, { workspaceId: event.workspaceId, actorId: null },
+      receivables.requireInvoice(db, event.workspaceId, invoiceId));
+  } catch (error) {
+    // The sale itself is recorded either way; money left unapplied is visible
+    // as a deposit rather than silently lost.
+    console.error('[accounting] money already paid was not applied to the new invoice', error.message);
+  }
+
   const revenueAccount = ledger.accountBySystemKey(db, event.workspaceId, 'SALES_REVENUE');
   let lineNumber = Number(db.prepare(`SELECT COALESCE(MAX(line_number), 0) AS n
     FROM accounting_customer_invoice_lines WHERE invoice_id = ?`).get(invoiceId).n);

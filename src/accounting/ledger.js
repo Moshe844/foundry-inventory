@@ -281,8 +281,31 @@ function reverse(db, ctx, membership, entryId, input = {}) {
   });
 }
 
+/*
+ * A posting that was reversed, together with the reversal that undid it.
+ *
+ * Their amounts already cancel, so no total needs help from this: the books
+ * balance either way. What does need help is the story. Listed as activity the
+ * pair reads as two more things the business did — money arriving from nowhere
+ * and the same money leaving to nowhere — when what actually happened is one
+ * mistake and its correction. A duplicate card receipt is the everyday case,
+ * and it made the cash page report $300 received from an unnamed source and
+ * $300 paid to one.
+ *
+ * Written as a SQL fragment because the readers are hand-written queries, and
+ * an alias so each can name its own entries table. The audit trail deliberately
+ * does not use it: showing both halves is the whole point of an audit trail.
+ */
+function notCancelled(alias = 'e') {
+  return `(${alias}.reversal_of_entry_id IS NULL AND NOT EXISTS (
+    SELECT 1 FROM accounting_journal_entries undone
+     WHERE undone.workspace_id = ${alias}.workspace_id
+       AND undone.status = 'POSTED'
+       AND undone.reversal_of_entry_id = ${alias}.id))`;
+}
+
 module.exports = {
   ENGINE_VERSION, settings, configure, ensureDefaultChart, listAccounts,
   accountBySystemKey, createAccount, ensurePeriod, closePeriod, listPeriods, getEntry,
-  post, reverse, dateOnly, currencyCode,
+  post, reverse, dateOnly, currencyCode, notCancelled,
 };

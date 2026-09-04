@@ -399,6 +399,12 @@ CREATE TABLE IF NOT EXISTS accounting_payments (
   currency TEXT NOT NULL,
   method TEXT,
   reference TEXT,
+  -- The order a receipt was taken against.
+  --
+  -- A deposit paid before the goods ship has no invoice to be allocated to, so
+  -- without this the order could not see its own money: the customer had paid
+  -- and Foundry still held their goods against the full balance.
+  sales_order_id TEXT REFERENCES sales_orders(id) ON DELETE SET NULL,
   status TEXT NOT NULL DEFAULT 'POSTED' CHECK (status IN ('POSTED', 'VOID')),
   cash_account_id TEXT NOT NULL REFERENCES accounting_accounts(id),
   journal_entry_id TEXT NOT NULL REFERENCES accounting_journal_entries(id),
@@ -590,7 +596,10 @@ CREATE TABLE IF NOT EXISTS payment_requests (
   created_at           TEXT NOT NULL,
   updated_at           TEXT NOT NULL,
   opened_at            TEXT,
-  paid_at              TEXT
+  paid_at              TEXT,
+  -- When Foundry last asked the provider what happened to this request, so an
+  -- order can be right about money even when no webhook can reach it.
+  checked_at           TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_payment_requests_invoice
   ON payment_requests(workspace_id, invoice_id, status);
@@ -617,3 +626,45 @@ CREATE TABLE IF NOT EXISTS payment_provider_events (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_provider_events
   ON payment_provider_events(workspace_id, provider, external_event_id);
+
+/*
+ * What a supplier document charged for, beyond the goods on it.
+ *
+ * Freight, insurance, duty, a sample credit. Kept exactly as the document
+ * stated them and never spread across the products, because freight divided
+ * by eight hundred is a unit cost nobody agreed to. A charge sits here
+ * UNRECORDED — read, visible, and honestly outside the books — until the
+ * owner says whether it is part of what the stock cost or an expense of its
+ * own. That is their decision and their accountant's, not a default.
+ */
+CREATE TABLE IF NOT EXISTS document_charges (
+  id                   TEXT PRIMARY KEY,
+  workspace_id         TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  -- A supplier's paperwork arrives as a PDF or as a spreadsheet, and the money
+  -- on it is the same money either way. No foreign key: the two sources live
+  -- in different tables, and a charge outliving the row it was read from is
+  -- better than a charge that silently disappears with it.
+  source_kind          TEXT NOT NULL DEFAULT 'setup_document'
+                         CHECK (source_kind IN ('setup_document','import_plan')),
+  source_id            TEXT NOT NULL,
+  purchase_order_id    TEXT,
+  document_number      TEXT,
+  supplier_name        TEXT,
+  label                TEXT NOT NULL,
+  kind                 TEXT NOT NULL
+                         CHECK (kind IN ('freight','insurance','duty','tax','discount','deposit','other')),
+  amount_minor         INTEGER NOT NULL,
+  currency             TEXT NOT NULL DEFAULT 'USD',
+  goods_minor          INTEGER NOT NULL DEFAULT 0,
+  document_total_minor INTEGER,
+  opened_books         INTEGER NOT NULL DEFAULT 0,
+  status               TEXT NOT NULL DEFAULT 'UNRECORDED'
+                         CHECK (status IN ('UNRECORDED','IN_STOCK_VALUE','EXPENSED')),
+  journal_entry_id     TEXT,
+  decided_at           TEXT,
+  created_at           TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_document_charges
+  ON document_charges(workspace_id, source_kind, source_id, label, amount_minor);
+CREATE INDEX IF NOT EXISTS idx_document_charges_status
+  ON document_charges(workspace_id, status);

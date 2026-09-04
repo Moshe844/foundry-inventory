@@ -147,7 +147,13 @@ test('automatic setup carries forward exact PO receipt costs and a shipped Sales
   assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM movements
     WHERE workspace_id = ? AND operation = 'issue'`).get(env.workspace.workspaceId).n, 1);
   const orderPage = await env.agent.get(`/sales/orders/${order.id}`).expect(200);
-  assert.match(plain(orderPage.text), /Shipped.*Accounting updated automatically.*Revenue, the customer receivable, product cost, and inventory value/i);
+  /*
+   * This order was fulfilled without a shipment record, so nobody ever said
+   * how the goods left. The page used to call that "Shipped"; it now says
+   * "Gone", which is the most Foundry can honestly claim. The accounting
+   * sentence — the thing this test is actually about — is unchanged.
+   */
+  assert.match(plain(orderPage.text), /Gone.*Accounting updated automatically.*Revenue, the customer receivable, product cost, and inventory value/i);
   const dashboard = await env.agent.get('/accounting').expect(200);
   const dashboardText = plain(dashboard.text);
   assert.match(dashboardText, /No cash profit is proven yet.*Customers still owe you \$70\.00/i);

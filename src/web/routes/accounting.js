@@ -105,7 +105,58 @@ function setupPositions(db, workspaceId) {
     ORDER BY i.name, s.position, l.name`).all(workspaceId);
 }
 
-router.get(['/money', '/accounting'], permit(permissions.VIEW_ACCOUNTING, 'view accounting'), asyncRoute(async (req, res) => {
+/**
+ * What the freight on a supplier document actually was.
+ *
+ * Foundry will not choose between "part of what the stock cost" and "an
+ * expense of its own": both are honest answers and the difference belongs to
+ * the owner and their accountant. It records whichever they pick, in one
+ * entry, against the same equity account the goods on that document went to.
+ */
+router.post('/accounting/document-costs/:id',
+  permit(permissions.MANAGE_ACCOUNTING, 'record what a document charged'),
+  asyncRoute(async (req, res) => {
+    const documentCosts = require('../../accounting/document-costs');
+    try {
+      const done = documentCosts.settle(req.db, req.ctx, req.user, {
+        documentId: req.params.id, treatment: trimOrNull(req.body.treatment),
+      });
+      req.flash('success', done.treatment === 'stock_value'
+        ? `${documentCosts.money(done.netMinor)} added to what this stock cost. Inventory value now includes it.`
+        : `${documentCosts.money(done.netMinor)} recorded as expenses. It is in Other business expenses now.`);
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    return res.redirect(303, '/accounting#document-costs');
+  }));
+
+router.get(['/money', '/money/briefing'], permit(permissions.VIEW_ACCOUNTING, 'view accounting'),
+  asyncRoute(async (req, res) => {
+    // Keeps the books switched on and recovers anything half-configured, the
+    // same as the detail page does, so landing here is never a worse start.
+    automaticAccounting.ensure(req.db, req.ctx.workspaceId, {
+      actorId: req.ctx.actorId, recoverCurrent: true,
+    });
+    const configured = ledger.settings(req.db, req.ctx.workspaceId);
+    // The same window the detail page uses, worked out the same way, so the two
+    // never quietly disagree about what "this month" means.
+    const latestPosting = req.db.prepare(`SELECT MAX(posting_date) AS date
+      FROM accounting_journal_entries WHERE workspace_id = ? AND status = 'POSTED'`)
+      .get(req.ctx.workspaceId).date;
+    const throughDate = [today(), latestPosting, configured.startDate]
+      .filter(Boolean).sort().at(-1);
+    const period = ownerPeriod(req.query, throughDate, configured.startDate);
+    const story = require('../../accounting/money-story').build(req.db, req.ctx.workspaceId, {
+      from: period.from, to: period.to, currency: configured.currency,
+    });
+    return res.page('accounting/money', {
+      title: 'Money', nav: 'accounting', story, configured, period,
+    });
+  }));
+
+router.get(['/accounting', '/accounting/books', '/money/books'],
+  permit(permissions.VIEW_ACCOUNTING, 'view accounting'), asyncRoute(async (req, res) => {
   const automatic = automaticAccounting.ensure(req.db, req.ctx.workspaceId, {
     actorId: req.ctx.actorId, recoverCurrent: true,
   });
@@ -140,14 +191,35 @@ router.get(['/money', '/accounting'], permit(permissions.VIEW_ACCOUNTING, 'view 
     FROM purchase_order_receipt_lines prl
     JOIN purchase_order_lines pol ON pol.id = prl.purchase_order_line_id
     WHERE prl.workspace_id = ? AND pol.unit_cost IS NOT NULL`).get(req.ctx.workspaceId);
+  /*
+   * Inventory value that arrived without a purchase order behind it: stock the
+   * owner already had at setup, and stock brought in from a file afterwards.
+   *
+   * This used to name the two source types it knew about, so the day imports
+   * started carrying cost the money simply stopped being counted — the page
+   * said $21,390.00 of inventory had been recorded while $31,720.50 of it sat
+   * in stock. Named the other way round now: everything debited to inventory
+   * counts, except the movements that shuffle stock rather than bring it in,
+   * and purchase receipts, which are counted separately just below. A new way
+   * of acquiring stock is therefore included by default instead of vanishing.
+   *
+   * Cost that arrived on a purchase order is excluded by both of its spellings.
+   * A receipt posts its own cost, and a receipt whose cost was confirmed later
+   * posts again as purchase_receipt_evidence — the same goods, counted just
+   * below from the receipt lines themselves. Naming only the first spelling
+   * made setup stock appear twice.
+   */
   const openingInventory = req.db.prepare(`SELECT
-      COALESCE(SUM(jl.debit_minor - jl.credit_minor), 0) AS cost_minor
+      COALESCE(SUM(jl.debit_minor), 0) AS cost_minor
     FROM accounting_journal_lines jl
     JOIN accounting_journal_entries je ON je.id = jl.entry_id
     JOIN accounting_accounts aa ON aa.id = jl.account_id
     WHERE jl.workspace_id = ? AND je.status = 'POSTED'
       AND aa.system_key = 'INVENTORY_ASSET'
-      AND (je.source_type = 'opening_balance' OR je.source_record_type = 'supplier_item_cost')`)
+      AND je.source_type NOT IN ('purchase_receipt', 'inventory_transfer',
+        'inventory_removal', 'sales_fulfillment', 'connector_sale', 'refund')
+      AND COALESCE(je.source_record_type, '') <> 'purchase_receipt_evidence'
+      AND ${ledger.notCancelled('je')}`)
     .get(req.ctx.workspaceId);
   const supplierPaid = req.db.prepare(`SELECT COALESCE(SUM(amount_minor), 0) AS amount_minor
     FROM accounting_payments WHERE workspace_id = ? AND direction = 'SUPPLIER_PAYMENT'
@@ -178,7 +250,8 @@ router.get(['/money', '/accounting'], permit(permissions.VIEW_ACCOUNTING, 'view 
     JOIN accounting_journal_entries je ON je.id = jl.entry_id
     JOIN accounting_accounts aa ON aa.id = jl.account_id
     WHERE jl.workspace_id = ? AND je.status = 'POSTED' AND je.posting_date <= ?
-      AND aa.account_type = 'ASSET' AND aa.subtype = 'CASH'`)
+      AND aa.account_type = 'ASSET' AND aa.subtype = 'CASH'
+      AND ${ledger.notCancelled('je')}`)
     .get(req.ctx.workspaceId, throughDate);
   const cashMinor = balance.assets.filter((a) => a.subtype === 'CASH').reduce((sum, a) => sum + a.net_minor, 0);
   const review = req.db.prepare(`SELECT * FROM accounting_event_inbox
@@ -195,8 +268,42 @@ router.get(['/money', '/accounting'], permit(permissions.VIEW_ACCOUNTING, 'view 
   const owner = ownerAccounting.ownerDashboard(req.db, req.ctx.workspaceId, {
     from: periodStart, to: periodEnd, asOf: throughDate,
   });
+
+  /*
+   * Money in for goods that have not gone out.
+   *
+   * The least obvious state a sale can be in, and the five figures above
+   * cannot say it between them: the customer has paid, so they owe nothing;
+   * the goods are still on the shelf, so inventory has not moved and no cost
+   * of sale exists. Every number is right and the situation is invisible.
+   */
+  const paidNotGone = req.db.prepare(`SELECT so.id, so.order_number, so.currency,
+      COALESCE(SUM(DISTINCT p.amount_minor), 0) AS paid_minor,
+      (SELECT COALESCE(SUM(quantity_ordered), 0) FROM sales_order_lines
+        WHERE sales_order_id = so.id) AS ordered,
+      (SELECT COALESCE(SUM(quantity_fulfilled), 0) FROM sales_order_lines
+        WHERE sales_order_id = so.id) AS gone
+    FROM accounting_payments p
+    JOIN sales_orders so ON so.id = p.sales_order_id
+    WHERE p.workspace_id = ? AND p.direction = 'CUSTOMER_RECEIPT' AND p.status = 'POSTED'
+      AND so.status NOT IN ('CANCELLED')
+    GROUP BY so.id
+    HAVING gone < ordered AND paid_minor > 0
+    ORDER BY so.order_number`).all(req.ctx.workspaceId);
+  /*
+   * Costs read off supplier documents. Recovered first for documents applied
+   * before Foundry had anywhere to keep them, which is why this runs here:
+   * the figures already exist on the document's own record, so showing them
+   * is recovery rather than a new claim about anybody's money.
+   */
+  const documentCosts = require('../../accounting/document-costs');
+  try { documentCosts.backfill(req.db, req.ctx.workspaceId); } catch { /* shown from what is stored */ }
   return res.page('accounting/index', {
-    title: 'Accounting', nav: 'accounting', configured, pnl, lifetimePnl, balance, ar, ap,
+    backTo: { href: '/money', label: 'Money' },
+    title: 'Books & accounting detail', nav: 'accounting', configured, pnl, lifetimePnl, balance, ar, ap,
+    paidNotGone,
+    documentCosts: documentCosts.forWorkspace(req.db, req.ctx.workspaceId),
+    unrecordedCosts: documentCosts.unrecordedTotal(req.db, req.ctx.workspaceId),
     valuation, controls, inventoryControl, inventoryEconomics, workflowFinance,
     automatic, cashMinor, review, recentEntries, cashActivity: {
       customerReceivedMinor: Number(cashActivity.customer_received_minor),

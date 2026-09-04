@@ -87,20 +87,31 @@ function openLinkForOrder(db, workspaceId, orderId) {
  * How much to ask for, from what the customer's terms already say.
  *
  * Never a new opinion about the amount: the deposit and the balance both come
- * out of the payment position, which comes out of the invoice.
+ * out of the payment position, which comes out of the order and its invoices.
+ *
+ * This used to refuse any order without an invoice — and Foundry only raises
+ * an invoice at shipment, so a deposit before anything was picked was
+ * impossible, which is the single most ordinary reason a shop asks for money
+ * up front. The provider's own invoice is the document the customer pays
+ * against; Foundry does not need to have written one first to ask.
+ *
+ * A receipt that arrives with no invoice to allocate against is already
+ * handled: it becomes a customer deposit, a liability, until there is
+ * something to set it against.
  */
 function amountToRequest(db, workspaceId, order, purpose) {
   const position = paymentTerms.positionForOrder(db, workspaceId, order);
-  if (!position.invoiced) {
-    throw new ValidationError('There is no invoice on this order yet, so there is nothing to ask them to pay.');
-  }
   if (purpose === 'DEPOSIT') {
     if (!position.dueNowMinor) {
       throw new ValidationError('No deposit is outstanding on this order.');
     }
     return { amountMinor: position.dueNowMinor, position };
   }
-  if (!position.remainingMinor) throw new ValidationError('This order is already paid in full.');
+  if (!position.remainingMinor) {
+    throw new ValidationError(position.totalMinor
+      ? 'This order is already paid in full.'
+      : 'This order is worth nothing yet, so there is nothing to ask them to pay.');
+  }
   return { amountMinor: position.remainingMinor, position };
 }
 
@@ -141,7 +152,7 @@ async function request(db, ctx, orderId, input = {}) {
     (id, workspace_id, invoice_id, sales_order_id, customer_id, provider, purpose,
      amount_minor, currency, status, external_customer_id, created_by_user_id, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?)`)
-    .run(id, ctx.workspaceId, invoice.id, orderId, customer.id, providerName, purpose,
+    .run(id, ctx.workspaceId, invoice ? invoice.id : null, orderId, customer.id, providerName, purpose,
       amountMinor, position.currency, previous ? previous.external_customer_id : null,
       ctx.actorId || null, now, now);
 
@@ -151,13 +162,26 @@ async function request(db, ctx, orderId, input = {}) {
 
     const created = await provider.createInvoice(ctx, {
       externalCustomerId,
+      /*
+       * This row is one attempt to collect, and the provider should treat it
+       * as one. Keying on the invoice number and amount instead meant a
+       * second attempt on the same invoice — after the first was voided —
+       * collided with the first key and Stripe refused it outright. That is
+       * not idempotency; it is a reference that can only ever be billed once.
+       */
+      attemptId: id,
       amountMinor,
       currency: position.currency,
       description: purpose === 'DEPOSIT'
         ? `Deposit for ${order.order_number}`
         : `${order.order_number}`,
-      reference: invoice.invoice_number,
-      dueDate: invoice.due_date || null,
+      /*
+       * An order paid before it ships has no Foundry invoice to name, so the
+       * order number is the reference. It is what the customer recognises on
+       * their statement either way.
+       */
+      reference: invoice ? invoice.invoice_number : order.order_number,
+      dueDate: invoice ? invoice.due_date || null : null,
     });
 
     db.prepare(`UPDATE payment_requests SET status = 'OPEN', external_customer_id = ?,
@@ -239,9 +263,31 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
       outcome: record('A refund was reported. Foundry recorded it and did not post it.', matched.id) };
   }
 
-  const amountMinor = read.amountMinor && read.amountMinor > 0
-    ? read.amountMinor
-    : Number(matched.amount_minor);
+  /*
+   * What the provider says arrived, and nothing else.
+   *
+   * This used to fall back to the amount Foundry had asked for whenever the
+   * reported figure was missing or zero. Stripe then finalised an invoice for
+   * $0.00 — a separate bug, since fixed — reported amount_paid: 0, and Foundry
+   * wrote a $10.00 receipt into the books off the back of it. Twice.
+   *
+   * Zero is an answer. It means no money arrived, and the one thing Foundry
+   * must never do is state a figure no one gave it. So an event that reports
+   * nothing arriving records nothing, and says so where the owner will see it.
+   */
+  const reported = read.amountMinor;
+  if (reported === null || reported === undefined || Number.isNaN(Number(reported))) {
+    return { applied: false, request: get(db, ctx.workspaceId, matched.id),
+      outcome: record(`${providerName} reported a payment without an amount. `
+        + 'Nothing was recorded, because Foundry will not supply the figure itself.', matched.id) };
+  }
+  const amountMinor = Number(reported);
+  if (amountMinor <= 0) {
+    return { applied: false, request: get(db, ctx.workspaceId, matched.id),
+      outcome: record(`${providerName} reported this as settled with nothing paid. `
+        + 'Nothing was recorded. Check the invoice on the provider before treating this as money in.',
+      matched.id) };
+  }
 
   /*
    * Who Foundry is acting as when a provider tells it money arrived.
@@ -257,6 +303,29 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
    * only for an event matched to a request Foundry itself created. The receipt
    * records no user, which is true: no user did this.
    */
+  /*
+   * What the provider reports is the invoice's running total, not this
+   * instalment.
+   *
+   * Stripe sends two events for one payment — invoice.paid and
+   * invoice.payment_succeeded — with different event ids and the same
+   * amount_paid. Foundry deduplicated on the event id, so both got through,
+   * and each added the full figure again: one $300.00 card payment became
+   * $600.00 in the books and a request marked as paid twice over.
+   *
+   * So the arithmetic changes rather than the guard. Foundry records the
+   * difference between what the provider says has been paid and what it has
+   * already recorded, which is the same number for a first report, zero for a
+   * repeat of it, and exactly the instalment for a genuine second payment.
+   */
+  const alreadyRecordedMinor = Number(matched.paid_minor || 0);
+  const newlyPaidMinor = amountMinor - alreadyRecordedMinor;
+  if (newlyPaidMinor <= 0) {
+    return { applied: false, request: get(db, ctx.workspaceId, matched.id),
+      outcome: record(`${providerName} reported ${(amountMinor / 100).toFixed(2)} paid, which `
+        + 'Foundry has already recorded. Nothing was added.', matched.id) };
+  }
+
   const authority = options.membership || ctx.membership
     || { role: 'system', permissions: JSON.stringify(['RECORD_PAYMENTS']) };
 
@@ -271,30 +340,110 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
       direction: 'CUSTOMER_RECEIPT',
       customerId: matched.customer_id,
       paymentDate: (read.paidAt || now).slice(0, 10),
-      amountMinor,
+      amountMinor: newlyPaidMinor,
       method: read.method || 'card',
       reference: read.externalPaymentId || externalEventId,
-      sourceKey: `${providerName}:${externalEventId}`,
-      allocations: matched.invoice_id ? [{ invoiceId: matched.invoice_id, amountMinor }] : [],
+      /*
+       * Named for the money, not for the message that carried it. Two events
+       * describing one payment produce one key, so the payment engine refuses
+       * the second even if it were reached with a stale balance.
+       */
+      sourceKey: `${providerName}:${matched.id}:paid:${amountMinor}`,
+      /*
+       * Which order this was taken against, so a deposit paid before there is
+       * anything to allocate it to still counts on the order it belongs to.
+       */
+      salesOrderId: matched.sales_order_id,
+      allocations: matched.invoice_id
+        ? [{ invoiceId: matched.invoice_id, amountMinor: newlyPaidMinor }] : [],
     });
 
-    const paid = Number(matched.paid_minor) + amountMinor;
+    // The provider's own total, not an accumulation of Foundry's arithmetic.
+    const paid = amountMinor;
     db.prepare(`UPDATE payment_requests SET paid_minor = ?, status = ?, paid_at = ?, updated_at = ?
       WHERE id = ?`)
       .run(paid, paid >= Number(matched.amount_minor) ? 'PAID' : 'OPEN',
         paid >= Number(matched.amount_minor) ? now : null, now, matched.id);
 
     const payment = receipt && receipt.payment ? receipt.payment : receipt;
-    record(`Recorded ${(amountMinor / 100).toFixed(2)} against ${matched.invoice_id ? 'the invoice' : 'the customer'}.`,
+    record(`Recorded ${(newlyPaidMinor / 100).toFixed(2)} against ${matched.invoice_id ? 'the invoice' : 'the customer'}.`,
       matched.id, payment && payment.id ? payment.id : null);
-    return { applied: true, amountMinor, paymentId: payment && payment.id };
+    return { applied: true, amountMinor: newlyPaidMinor, paymentId: payment && payment.id };
   });
 
   return { ...outcome, request: get(db, ctx.workspaceId, matched.id),
-    outcome: `Recorded ${(amountMinor / 100).toFixed(2)}.` };
+    outcome: `Recorded ${(newlyPaidMinor / 100).toFixed(2)}.` };
+}
+
+/**
+ * Ask the provider what happened, and record whatever it says.
+ *
+ * Foundry knew about a payment only if a webhook arrived, and a webhook needs
+ * a public address the provider can reach. On a machine behind a company
+ * network that address is a tunnel, and a tunnel that is not running is
+ * silence that looks exactly like "nobody has paid". Meanwhile Stripe held a
+ * declined charge and an unpaid invoice and would have said so to anybody who
+ * asked.
+ *
+ * So this asks. It changes nothing itself: the answer is turned into the
+ * event the provider would have sent and handed to the same engine, which
+ * already refuses to record the same thing twice.
+ */
+async function refresh(db, ctx, requestId, options = {}) {
+  const request = get(db, ctx.workspaceId, requestId);
+  if (!request) return { checked: false, because: 'That payment request is not in this inventory.' };
+  if (request.status !== 'OPEN' || !request.externalInvoiceId) {
+    return { checked: false, because: 'There is nothing outstanding on that request.' };
+  }
+  const provider = providerRegistry.get(request.provider);
+  if (typeof provider.readInvoice !== 'function' || typeof provider.eventFromInvoice !== 'function') {
+    return { checked: false, because: `${request.provider} cannot be asked; it can only report.` };
+  }
+
+  let invoice;
+  try {
+    // The same context every other provider call is given.
+    invoice = await provider.readInvoice({ ...ctx, ...(options.providerContext || {}) },
+      { externalInvoiceId: request.externalInvoiceId });
+  } catch (error) {
+    /*
+     * Not being able to reach the provider is not news about the customer.
+     * The request is left exactly as it was, and the reason is returned
+     * rather than written onto the order as though the payment had failed.
+     */
+    return { checked: false, because: String(error.message || error) };
+  }
+
+  db.prepare('UPDATE payment_requests SET checked_at = ? WHERE id = ?').run(nowIso(), request.id);
+  const event = provider.eventFromInvoice(invoice);
+  if (!event) return { checked: true, applied: false, because: 'Nothing has happened to it yet.' };
+  const outcome = receiveEvent(db, ctx, request.provider, event);
+  return { checked: true, ...outcome, request: get(db, ctx.workspaceId, request.id) };
+}
+
+/**
+ * Every open request on one order, asked about at most once a minute.
+ *
+ * Bounded on purpose: this runs when somebody opens the order, and an order
+ * page must not become as slow as the network on a bad day. A minute is far
+ * inside the time it takes anybody to wonder whether the money arrived.
+ */
+async function refreshForOrder(db, ctx, orderId, options = {}) {
+  const since = new Date(Date.now() - (options.staleAfterMs ?? 60_000)).toISOString();
+  const open = db.prepare(`SELECT id FROM payment_requests
+    WHERE workspace_id = ? AND sales_order_id = ? AND status = 'OPEN'
+      AND external_invoice_id IS NOT NULL
+      AND (checked_at IS NULL OR checked_at < ?)
+    ORDER BY created_at DESC LIMIT 3`).all(ctx.workspaceId, orderId, since);
+  const results = [];
+  for (const row of open) {
+    try { results.push(await refresh(db, ctx, row.id, options)); }
+    catch (error) { results.push({ checked: false, because: String(error.message || error) }); }
+  }
+  return results;
 }
 
 module.exports = {
   get, forInvoice, forOrder, openLinkForOrder, amountToRequest,
-  request, voidRequest, receiveEvent,
+  request, voidRequest, receiveEvent, refresh, refreshForOrder,
 };

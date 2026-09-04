@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS sales_orders (
   fulfillment_location_id  TEXT REFERENCES locations(id) ON DELETE RESTRICT,
   notes                    TEXT,
   reference                TEXT,
+  -- The email this order was read out of, when Foundry drafted it from one.
+  source_email_message_id  TEXT REFERENCES connection_email_messages(id) ON DELETE SET NULL,
   currency                 TEXT NOT NULL DEFAULT 'USD',
   discount_minor           INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
   tax_minor                INTEGER NOT NULL DEFAULT 0 CHECK (tax_minor >= 0),
@@ -161,6 +163,8 @@ CREATE TABLE IF NOT EXISTS sales_shipments (
   status                 TEXT NOT NULL CHECK (status IN ('PICKING','PACKED','SHIPPED','DELIVERED','CANCELLED')),
   ship_from_location_id  TEXT REFERENCES locations(id) ON DELETE RESTRICT,
   ship_to_address        TEXT,
+  -- How the goods actually left. Foundry says "shipped" only when they were.
+  handover               TEXT CHECK (handover IN ('CARRIER','COLLECTED','DELIVERED_BY_US')),
   carrier                TEXT,
   service                TEXT,
   tracking_number        TEXT,
@@ -285,6 +289,11 @@ CREATE TABLE IF NOT EXISTS customer_payment_terms (
   hold_shipping       INTEGER NOT NULL DEFAULT 0 CHECK (hold_shipping IN (0,1)),
   -- Credit somebody actually agreed to give, as opposed to credit taken.
   credit_approved     INTEGER NOT NULL DEFAULT 0 CHECK (credit_approved IN (0,1)),
+  -- Whether Foundry may ask this customer for money on its own, and up to what.
+  -- Both are needed: the switch is the permission, the limit is its size. A
+  -- switch with no limit is an open cheque, so an absent limit means no.
+  auto_request_enabled     INTEGER NOT NULL DEFAULT 0 CHECK (auto_request_enabled IN (0,1)),
+  auto_request_limit_minor INTEGER CHECK (auto_request_limit_minor IS NULL OR auto_request_limit_minor > 0),
   credit_limit_minor  INTEGER CHECK (credit_limit_minor IS NULL OR credit_limit_minor >= 0),
   note                TEXT,
   agreed_by_user_id   TEXT REFERENCES users(id) ON DELETE SET NULL,

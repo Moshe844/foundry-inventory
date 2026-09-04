@@ -70,6 +70,46 @@ function shipmentLines(db, workspaceId, shipmentId) {
     ORDER BY l.name, i.name, s.variant_label`).all(shipmentId, workspaceId);
 }
 
+/**
+ * What actually happened to this box, in words that match the record.
+ *
+ * A parcel with a courier and a tracking number was shipped. A box the
+ * customer put in their own car was collected, and calling that "shipped to"
+ * an address nobody entered is how Foundry ended up asserting a delivery that
+ * never took place. Shipments recorded before the question existed say the
+ * only true thing left to say about them.
+ */
+function wentBy(row) {
+  if (!['SHIPPED', 'DELIVERED'].includes(row.status)) return null;
+  if (row.handover === 'COLLECTED') return 'Collected by the customer';
+  if (row.handover === 'DELIVERED_BY_US') return 'Delivered by us';
+  if (row.handover === 'CARRIER' || row.carrier || row.tracking_number) {
+    const named = carriers.displayName(row.carrier);
+    return named ? `Sent by ${named}` : 'Sent by carrier';
+  }
+  return 'Left stock — how it went was not recorded';
+}
+
+/**
+ * One word for what happened to everything that has left this order.
+ *
+ * The order page has to finish a sentence — "34 units ___" — and there is no
+ * single word that is true of every order. Goods a customer collected were
+ * not shipped; goods with no method recorded were not necessarily shipped
+ * either. "Gone" is the word that is true when the others are not, and it is
+ * deliberately less flattering than the one Foundry used to reach for.
+ */
+function wordForOrder(db, workspaceId, orderId) {
+  const rows = db.prepare(`SELECT DISTINCT handover FROM sales_shipments
+    WHERE workspace_id = ? AND sales_order_id = ? AND status IN ('SHIPPED','DELIVERED')`)
+    .all(workspaceId, orderId).map((row) => row.handover);
+  if (!rows.length) return 'gone';
+  if (rows.every((how) => how === 'COLLECTED')) return 'collected';
+  if (rows.every((how) => how === 'DELIVERED_BY_US')) return 'delivered';
+  if (rows.every((how) => how === 'CARRIER')) return 'shipped';
+  return 'gone';
+}
+
 function decorate(db, workspaceId, row) {
   const lines = shipmentLines(db, workspaceId, row.id);
   return {
@@ -77,6 +117,7 @@ function decorate(db, workspaceId, row) {
     lines,
     units: lines.reduce((sum, line) => sum + Number(line.quantity), 0),
     carrierName: carriers.displayName(row.carrier),
+    wentBy: wentBy(row),
     trackingUrl: row.tracking_url || carriers.trackingUrlFor(row.carrier, row.tracking_number),
   };
 }
@@ -298,6 +339,36 @@ function markPacked(db, ctx, shipmentId, input = {}) {
  * first: if the stock cannot actually be issued, nothing about this shipment
  * should read as though it went.
  */
+/*
+ * How the goods left, in the three ways goods actually leave a small business.
+ *
+ * Foundry used to accept a shipment with nothing said about it, and then tell
+ * the owner the order was "shipped". Shipped where? By whom? Nobody had said,
+ * and Foundry had not asked — it had simply moved the stock and picked the
+ * most flattering word for what it had done.
+ *
+ * So the method is required and has no default. It is one click either way,
+ * and now the click means something.
+ */
+const HANDOVER = {
+  CARRIER: { label: 'Sent by carrier', past: 'shipped', needsAddress: true },
+  COLLECTED: { label: 'Collected by the customer', past: 'collected', needsAddress: false },
+  DELIVERED_BY_US: { label: 'Delivered by us', past: 'delivered', needsAddress: true },
+};
+
+function requireHandover(input) {
+  const given = trimOrNull(input.handover);
+  if (given && HANDOVER[given]) return given;
+  /*
+   * A tracking number is somebody telling us it went with a carrier, so it
+   * answers the question on its own. Nothing else is inferred: a shipment with
+   * no method stated is a shipment nobody has described, and Foundry says so
+   * rather than choosing on their behalf.
+   */
+  if (trimOrNull(input.trackingNumber) || trimOrNull(input.carrier)) return 'CARRIER';
+  throw new ValidationError('Say how these goods left: sent by carrier, collected by the customer, or delivered by us. Foundry will not record a shipment it cannot describe.');
+}
+
 function ship(db, ctx, shipmentId, input = {}) {
   const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
   if (shipment.status === 'SHIPPED' || shipment.status === 'DELIVERED') {
@@ -323,6 +394,7 @@ function ship(db, ctx, shipmentId, input = {}) {
     throw new ValidationError(`${payment.heldReason.ship} The box stays packed until it is paid, or until you approve this one order to go anyway.`);
   }
 
+  const handover = requireHandover(input);
   const trackingNumber = trimOrNull(input.trackingNumber);
   const detected = trackingNumber ? carriers.detect(trackingNumber) : null;
   const carrierCode = trimOrNull(input.carrier) || (detected ? detected.code : null);
@@ -339,12 +411,12 @@ function ship(db, ctx, shipmentId, input = {}) {
 
   const result = inTransaction(db, () => {
     const now = nowIso();
-    db.prepare(`UPDATE sales_shipments SET status = 'SHIPPED', carrier = ?, service = ?,
+    db.prepare(`UPDATE sales_shipments SET status = 'SHIPPED', handover = ?, carrier = ?, service = ?,
       tracking_number = ?, tracking_url = ?, shipping_cost_minor = ?, currency = ?,
       expected_delivery_date = ?, shipped_at = ?, packed_at = COALESCE(packed_at, ?),
       package_count = COALESCE(package_count, 1), notes = COALESCE(?, notes), updated_at = ?
       WHERE id = ?`)
-      .run(carrierCode, trimOrNull(input.service), trackingNumber,
+      .run(handover, carrierCode, trimOrNull(input.service), trackingNumber,
         carriers.trackingUrlFor(carrierCode, trackingNumber), cost,
         trimOrNull(input.currency) || 'USD', trimOrNull(input.expectedDeliveryDate),
         trimOrNull(input.shippedAt) || now, now, trimOrNull(input.notes), now, shipmentId);
@@ -475,12 +547,21 @@ function fulfilmentState(db, workspaceId, order) {
 
   if (allGone) {
     if (count('SHIPPED') === 0 && count('DELIVERED') > 0) return { state: 'Delivered', detail: null };
-    return { state: 'Shipped', detail: null };
+    /*
+     * The state is a key the rest of the product compares against; the label
+     * is what a person reads. They differ because goods a customer collected
+     * were never shipped, and the page should not say they were just because
+     * the state machine calls this step SHIPPED.
+     */
+    const word = wordForOrder(db, workspaceId, order.id);
+    return { state: 'Shipped', detail: null,
+      label: word === 'collected' ? 'Collected' : word === 'delivered' ? 'Delivered'
+        : word === 'shipped' ? 'Shipped' : 'Gone' };
   }
   if (count('PACKED')) return { state: 'Packed', detail: 'Boxed and waiting for a carrier.' };
   if (count('PICKING')) return { state: 'Picking', detail: 'Someone is walking this one now.' };
   if (Number(totals.fulfilled) > 0) {
-    return { state: 'Partly shipped', detail: 'Some of this order has gone; the rest has not.' };
+    return { state: 'Partly shipped', label: 'Partly gone', detail: 'Some of this order has gone; the rest has not.' };
   }
   const free = pickable(db, workspaceId, order.id);
   if (free.length) {
@@ -490,7 +571,7 @@ function fulfilmentState(db, workspaceId, order) {
   return { state: 'Waiting for stock', detail: 'Nothing is allocated to this order yet.' };
 }
 
-module.exports = {
+module.exports = { HANDOVER, wentBy, wordForOrder,
   OPEN_SHIPMENT, CLOSED_SHIPMENT,
   startPicking, setLineQuantity, markPacked, ship, shipInOneStep, markDelivered, cancelShipment,
   pickable, pickList, listForOrder, getShipment, workQueue, fulfilmentState,

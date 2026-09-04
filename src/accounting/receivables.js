@@ -94,6 +94,122 @@ function createDraft(db, ctx, membership, input) {
   });
 }
 
+/**
+ * Money the customer already paid, against the invoice that has just appeared.
+ *
+ * A customer paid $300.00 for an order up front. There was no invoice yet — an
+ * invoice for a sale is created when the goods go — so the receipt was recorded
+ * against the order and allocated to nothing. Then shipping raised the invoice,
+ * and it was raised unpaid: the Orders list read "Shipped — $300.00 still
+ * owed" about an order whose money was already in the bank.
+ *
+ * A deposit, a prepayment and a pay-before-you-ship are all the same shape, and
+ * all of them arrive before there is anything to apply them to. So when the
+ * invoice appears, whatever that order has already paid is applied to it.
+ *
+ * Only ever what is genuinely unapplied, and never more than the invoice is
+ * for: any excess stays on the order as the customer's money, which is what it
+ * is, rather than being written off against an invoice that does not owe it.
+ */
+function applyMoneyAlreadyPaid(db, ctx, invoice) {
+  if (!invoice.sales_order_id) return 0;
+
+  const receipts = db.prepare(`SELECT p.id, p.amount_minor,
+      COALESCE((SELECT SUM(a.amount_minor) FROM accounting_payment_allocations a
+        WHERE a.payment_id = p.id), 0) AS allocated_minor
+    FROM accounting_payments p
+    WHERE p.workspace_id = ? AND p.sales_order_id = ? AND p.direction = 'CUSTOMER_RECEIPT'
+      AND p.status = 'POSTED'
+    ORDER BY p.payment_date, p.created_at`).all(ctx.workspaceId, invoice.sales_order_id);
+
+  let remaining = Number(invoice.balance_minor);
+  let applied = 0;
+  const now = nowIso();
+
+  for (const receipt of receipts) {
+    if (remaining <= 0) break;
+    const spare = Number(receipt.amount_minor) - Number(receipt.allocated_minor);
+    if (spare <= 0) continue;
+    const amount = Math.min(spare, remaining);
+    db.prepare(`INSERT INTO accounting_payment_allocations
+        (id, workspace_id, payment_id, customer_invoice_id, amount_minor, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(newId('payalloc'), ctx.workspaceId, receipt.id, invoice.id, amount, now);
+    remaining -= amount;
+    applied += amount;
+  }
+
+  if (applied > 0) {
+    db.prepare(`UPDATE accounting_customer_invoices
+      SET balance_minor = ?, status = ?, paid_at = ?, updated_at = ?
+      WHERE id = ? AND workspace_id = ?`)
+      .run(remaining, remaining <= 0 ? 'PAID' : 'OPEN', remaining <= 0 ? now : null,
+        now, invoice.id, ctx.workspaceId);
+
+    /*
+     * And the same movement in the books.
+     *
+     * Money received against no invoice is a liability: the business holds it
+     * and owes goods for it, so it sits in customer deposits. Applying it to
+     * an invoice does not create or destroy anything — it stops being money
+     * held and becomes money that settles a debt. Marking the invoice paid
+     * without this leaves the invoice saying nothing is owed while receivables
+     * still says it is, and the deposit still on the books as well.
+     */
+    ledger.post(db, ctx, {
+      postingDate: invoice.issue_date || now.slice(0, 10),
+      description: `${(applied / 100).toFixed(2)} already paid applied to ${invoice.invoice_number}`,
+      sourceType: 'customer_invoice',
+      sourceRecordType: 'customer_invoice',
+      sourceRecordId: invoice.id,
+      sourceKey: `deposit-applied:${invoice.id}:${applied}`,
+      createdByType: ctx.actorId ? 'USER' : 'SYSTEM',
+      approvedByUserId: ctx.actorId || null,
+      lines: [
+        { accountKey: 'CUSTOMER_DEPOSITS', debitMinor: applied, customerId: invoice.customer_id,
+          memo: 'Money the customer had already paid' },
+        { accountKey: 'ACCOUNTS_RECEIVABLE', creditMinor: applied, customerId: invoice.customer_id,
+          memo: `Applied to ${invoice.invoice_number}` },
+      ],
+    });
+  }
+  return applied;
+}
+
+/**
+ * Money the business is holding that settles an invoice nobody applied it to.
+ *
+ * The repair for the hole above, over records that were written while it was
+ * open. A customer paid a link, the receipt posted against their order, and
+ * the invoice went on saying the money was owed — so this looks for exactly
+ * that shape: a posted receipt against an order, some of it unapplied, and an
+ * open invoice for the same order.
+ *
+ * It invents nothing. Every allocation it makes is one `applyMoneyAlreadyPaid`
+ * would have made at the time, capped by the invoice balance and by what the
+ * customer actually paid, and the ledger movement it posts is keyed so running
+ * it again changes nothing.
+ */
+function settleUnappliedReceipts(db, ctx) {
+  const invoices = db.prepare(`SELECT i.id FROM accounting_customer_invoices i
+    WHERE i.workspace_id = ? AND i.sales_order_id IS NOT NULL
+      AND i.status NOT IN ('VOID', 'PAID') AND i.balance_minor > 0
+      AND EXISTS (SELECT 1 FROM accounting_payments p
+        WHERE p.workspace_id = i.workspace_id AND p.sales_order_id = i.sales_order_id
+          AND p.direction = 'CUSTOMER_RECEIPT' AND p.status = 'POSTED'
+          AND p.amount_minor > COALESCE((SELECT SUM(a.amount_minor)
+            FROM accounting_payment_allocations a WHERE a.payment_id = p.id), 0))
+    ORDER BY i.issue_date, i.created_at`).all(ctx.workspaceId);
+
+  const settled = [];
+  for (const row of invoices) {
+    const invoice = requireInvoice(db, ctx.workspaceId, row.id);
+    const applied = applyMoneyAlreadyPaid(db, ctx, invoice);
+    if (applied > 0) settled.push({ invoiceId: invoice.id, invoiceNumber: invoice.invoice_number, appliedMinor: applied });
+  }
+  return settled;
+}
+
 function open(db, ctx, membership, id) {
   permissions.assertCan(membership, permissions.MANAGE_ACCOUNTING, 'approve customer invoices');
   const invoice = requireInvoice(db, ctx.workspaceId, id);
@@ -125,6 +241,9 @@ function open(db, ctx, membership, id) {
   db.prepare(`UPDATE accounting_customer_invoices SET status = 'OPEN', journal_entry_id = ?,
     opened_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND status = 'DRAFT'`)
     .run(posted && posted.entry ? posted.entry.id : null, nowIso(), nowIso(), id, ctx.workspaceId);
+
+  // Whatever this order has already been paid belongs to this invoice.
+  applyMoneyAlreadyPaid(db, ctx, requireInvoice(db, ctx.workspaceId, id));
   return requireInvoice(db, ctx.workspaceId, id);
 }
 
@@ -136,4 +255,5 @@ function list(db, workspaceId, { status = null, customerId = null } = {}) {
     ORDER BY issue_date DESC, invoice_number DESC`).all(...params).map((row) => hydrate(db, workspaceId, row.id));
 }
 
-module.exports = { nextNumber, hydrate, requireInvoice, createDraft, open, list };
+module.exports = { nextNumber, hydrate, requireInvoice, createDraft, open, list,
+  applyMoneyAlreadyPaid, settleUnappliedReceipts };
