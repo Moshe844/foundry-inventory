@@ -45,7 +45,14 @@ function catalogue(db, workspaceId) {
     FROM skus s JOIN items i ON i.id = s.item_id
     WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
     ORDER BY i.name COLLATE NOCASE, s.position`).all(workspaceId)
-    .map((sku) => ({ ...sku, price: prices.currentForSku(db, workspaceId, sku.id) }));
+    .map((sku) => ({
+      ...sku,
+      price: prices.currentForSku(db, workspaceId, sku.id),
+      // The order form must reveal the promise it is about to make. "On
+      // hand" alone is misleading because some of it may already belong to
+      // another customer; available is the amount this order can reserve.
+      stock: sales.availabilityForSku(db, workspaceId, sku.id),
+    }));
 }
 
 /**
@@ -90,7 +97,8 @@ function moneyForOrder(db, workspaceId, order) {
  */
 function cameFromEmail(db, workspaceId, order) {
   if (!order.source_email_message_id) return null;
-  return db.prepare(`SELECT id, sender, subject, body_text, received_at
+  return db.prepare(`SELECT id, sender, subject, body_text, received_at,
+      draft_subject, draft_body, draft_at, reply_sent_at
     FROM connection_email_messages WHERE workspace_id = ? AND id = ?`)
     .get(workspaceId, order.source_email_message_id) || null;
 }
@@ -144,6 +152,26 @@ router.get(['/orders/new', '/sales/new'], requirePermission(permissions.OPERATE,
   });
 }));
 
+router.get('/sales/customers/new', requirePermission(permissions.OPERATE, 'create customers'), asyncRoute(async (req, res) => {
+  res.page('sales/customer-new', { title: 'New customer', nav: 'sales', form: {}, formError: null });
+}));
+
+router.post('/sales/customers', requirePermission(permissions.OPERATE, 'create customers'), asyncRoute(async (req, res) => {
+  try {
+    const customer = sales.createCustomer(req.db, req.ctx, {
+      name: req.body.name, company: req.body.company, email: req.body.email,
+      phone: req.body.phone, shippingAddress: req.body.shippingAddress, notes: req.body.notes,
+    });
+    req.flash('success', `${customer.name} is ready. You can create an order now or leave the customer with no order.`);
+    return res.redirect(303, `/sales/customers/${customer.id}`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    return res.status(err.status).page('sales/customer-new', {
+      title: 'New customer', nav: 'sales', form: req.body, formError: err.message,
+    });
+  }
+}));
+
 router.get('/sales/customers/:id', requirePermission(permissions.VIEW, 'view customers'), asyncRoute(async (req, res) => {
   const customer = sales.getCustomer(req.db, req.ctx.workspaceId, req.params.id);
   /*
@@ -188,6 +216,9 @@ router.post('/sales/orders', requirePermission(permissions.OPERATE, 'create sale
       customerId: trimOrNull(req.body.customerId), customerName: trimOrNull(req.body.customerName),
       customerEmail: trimOrNull(req.body.customerEmail),
       customerShippingAddress: trimOrNull(req.body.customerShippingAddress),
+      saveCustomerAddress: req.body.saveCustomerAddress === '1',
+      deliveryMethod: trimOrNull(req.body.deliveryMethod) || 'SHIP',
+      requireDeliveryDecision: true,
       orderNumber: trimOrNull(req.body.orderNumber), orderDate: trimOrNull(req.body.orderDate),
       neededBy: trimOrNull(req.body.neededBy), fulfillmentLocationId: trimOrNull(req.body.fulfillmentLocationId),
       notes: trimOrNull(req.body.notes), reference: trimOrNull(req.body.reference),
@@ -206,7 +237,7 @@ router.post('/sales/orders', requirePermission(permissions.OPERATE, 'create sale
     });
   }
   const nextStep = ['confirm', 'fulfill'].includes(req.body.nextStep) ? req.body.nextStep : 'draft';
-  if (nextStep !== 'draft') {
+  if (nextStep !== 'draft' && !order.delivery_decision_required) {
     order = sales.confirm(req.db, req.ctx, order.id, { idempotencyKey: `web-create-confirm:${order.id}` });
   }
   if (nextStep === 'fulfill' && !order.totals.backordered) {
@@ -219,6 +250,8 @@ router.post('/sales/orders', requirePermission(permissions.OPERATE, 'create sale
       : `${order.order_number} is complete and stock was updated. Accounting needs one evidence decision; the sale will not be posted with guessed amounts.`);
   } else if (nextStep === 'fulfill' && order.totals.backordered) {
     req.flash('warn', `${order.order_number} could not be completed because ${order.totals.backordered} unit(s) are not available. ${order.totals.allocated} available unit(s) are held; nothing shipped.`);
+  } else if (order.delivery_decision_required) {
+    req.flash('warn', `${order.order_number} is saved, but nothing is reserved or shipped yet. Choose customer pickup or enter the full delivery address.`);
   } else if (nextStep === 'confirm') {
     req.flash(order.totals.backordered ? 'warn' : 'success', order.totals.backordered
       ? `${order.order_number} is confirmed. ${order.totals.allocated} held; ${order.totals.backordered} waiting for stock.`
@@ -228,6 +261,37 @@ router.post('/sales/orders', requirePermission(permissions.OPERATE, 'create sale
   }
   res.redirect(303, `/sales/orders/${order.id}`);
 }));
+
+router.post('/sales/orders/:id/resolve-customer',
+  requirePermission(permissions.OPERATE, 'resolve customers from email'), asyncRoute(async (req, res) => {
+    try {
+      const order = sales.resolveEmailCustomer(req.db, req.ctx, req.params.id, {
+        action: trimOrNull(req.body.action) || 'create', customerId: trimOrNull(req.body.customerId),
+      });
+      req.flash('success', order.delivery_decision_required
+        ? `${order.customer.name} is now the customer. Next, confirm shipping or pickup.`
+        : `${order.customer.name} is now the customer. The order is ready for your approval.`);
+    } catch (err) {
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, `/orders/${req.params.id}`);
+  }));
+
+router.post('/sales/orders/:id/resolve-delivery',
+  requirePermission(permissions.OPERATE, 'resolve delivery details'), asyncRoute(async (req, res) => {
+    try {
+      const order = sales.resolveDelivery(req.db, req.ctx, req.params.id, {
+        deliveryMethod: req.body.deliveryMethod, shippingAddress: req.body.shippingAddress,
+        saveCustomerAddress: req.body.saveCustomerAddress === '1',
+      });
+      req.flash('success', order.delivery_method === 'PICKUP'
+        ? 'Customer pickup confirmed. The order is ready for the next step.'
+        : 'Delivery address confirmed. The order is ready for the next step.');
+    } catch (err) {
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, `/orders/${req.params.id}`);
+  }));
 
 router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.VIEW, 'view sales orders'), asyncRoute(async (req, res) => {
   const order = sales.getOrder(req.db, req.ctx.workspaceId, req.params.id);
@@ -243,11 +307,25 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
    * it was confirmed.
    */
   let shortButAvailable = 0;
+  const shortageDetails = [];
   if (order && order.status !== 'DRAFT' && order.totals.backordered) {
     for (const line of order.lines) {
       if (!line.backordered) continue;
-      const free = sales.availabilityForSku(req.db, req.ctx.workspaceId, line.sku_id).available || 0;
+      const availability = sales.availabilityForSku(req.db, req.ctx.workspaceId, line.sku_id);
+      const free = availability.available || 0;
       shortButAvailable += Math.min(Number(line.backordered), Math.max(0, free));
+      const suppliers = require('../../purchasing/supplier-service')
+        .suppliersForSku(req.db, req.ctx.workspaceId, line.sku_id);
+      shortageDetails.push({
+        skuId: line.sku_id,
+        displayName: line.displayName,
+        missing: Number(line.backordered),
+        availableNow: Math.min(Number(line.backordered), Math.max(0, free)),
+        actionHref: suppliers.length
+          ? `/purchasing/why/${line.sku_id}`
+          : `/purchasing/supplier-for/${line.sku_id}`,
+        actionLabel: suppliers.length ? 'Review replenishment for this product' : 'Add a supplier for this product',
+      });
     }
   }
 
@@ -265,7 +343,12 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
   const askedFor = require('../../payments/collection').forOrder(req.db, req.ctx.workspaceId, order.id);
   res.page('sales/order', {
     title: 'Order', nav: 'sales', order,
+    // A focused order already has one state-derived next action. The generic
+    // Sales strip can point at an unrelated product price or connector and
+    // make the page appear to have two competing instructions.
+    screenGuide: null,
     shortButAvailable,
+    shortageDetails,
     cameFromEmail: cameFromEmail(req.db, req.ctx.workspaceId, order),
     goneWord: shipments.wordForOrder(req.db, req.ctx.workspaceId, order.id),
     accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
@@ -286,6 +369,7 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
         AND status = 'POSTED'
       ORDER BY payment_date, created_at`).all(req.ctx.workspaceId, order.id),
     paymentRequests: askedFor,
+    paymentCompleted: req.query.payment === 'paid',
     /*
      * A payment to open the moment the page arrives. Asking for money and
      * taking it are one motion when the customer is at the counter, so the
@@ -299,6 +383,7 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
       return found ? found.hostedUrl : null;
     }()),
     paymentProviders: require('../../payments/provider').list(),
+    customers: sales.listCustomers(req.db, req.ctx.workspaceId),
     skus: catalogue(req.db, req.ctx.workspaceId),
   });
 }));
@@ -338,7 +423,11 @@ router.get('/sales/orders/:id/payment-state',
   asyncRoute(async (req, res) => {
     const collection = require('../../payments/collection');
     try {
-      await collection.refreshForOrder(req.db, req.ctx, req.params.id, { staleAfterMs: 1000 });
+      // This endpoint is called only while a person is actively taking a
+      // payment. Always ask Stripe: the customer can pay and close its window
+      // between two polls, and a one-second cache was enough to preserve the
+      // stale "Unpaid" state at exactly that moment.
+      await collection.refreshForOrder(req.db, req.ctx, req.params.id, { staleAfterMs: 0 });
     } catch { /* answered from what is recorded */ }
 
     const order = sales.getOrder(req.db, req.ctx.workspaceId, req.params.id);
@@ -368,6 +457,9 @@ router.get('/sales/orders/:id/payment-state',
       justPaidMinor: settled ? Number(settled.paidMinor || 0) : 0,
       receipt: receipt
         ? { id: receipt.id, number: receipt.payment_number, href: `/orders/${order.id}/receipt/${receipt.id}` }
+        : null,
+      invoice: settled && settled.hostedUrl
+        ? { href: settled.hostedUrl }
         : null,
     });
   }));
@@ -710,7 +802,7 @@ router.post('/fulfilment/:id/label', requirePermission(permissions.OPERATE, 'ful
       req.flash('success', bought.replayed
         ? 'That label was already bought.'
         : `Label bought — ${carriers.displayName(bought.carrier) || bought.carrier} ${bought.service || ''}`
-          + `, tracking ${bought.trackingNumber}. The customer's notice is ready.`);
+          + `, tracking ${bought.trackingNumber}. Print it now; stock remains on hand until the parcel is handed to the carrier.`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);

@@ -15,12 +15,15 @@
    * goes where it belongs: onto what is already connected and whether it is
    * working.
    */
+  var shippingProviderTypes = ['shipengine', 'easypost', 'shippo'];
   var activeConnections = connections.filter(function (connection) {
-    return connection.credential_ref || connection.provider_account_id
-      || !['AUTHORIZING', 'AUTHORIZATION_FAILED'].includes(connection.setup_status);
+    return !shippingProviderTypes.includes(connection.provider_type) && (
+      connection.credential_ref || connection.provider_account_id
+      || !['AUTHORIZING', 'AUTHORIZATION_FAILED'].includes(connection.setup_status));
   });
   var setupAttempts = connections.filter(function (connection) {
-    return !activeConnections.includes(connection);
+    return !shippingProviderTypes.includes(connection.provider_type)
+      && !activeConnections.includes(connection);
   });
 
   var providerGroups = [
@@ -61,20 +64,28 @@
   <div class="panel">
     <%# ----------------------------------- an account granted, not a key given %>
     <% if (pay.connected && pay.source === 'connect') { %>
+      <% var rejectedHostedSetup = !pay.chargesEnabled && grant0 && grant0.unfinished; %>
       <div class="card-body">
         <p class="lede">
-          Connected to <%= pay.displayName || 'Stripe' %><% if (!pay.liveMode) { %>
-            <span class="badge badge--warn">test mode</span><% } %><% if (!pay.chargesEnabled) { %>
+          <%= rejectedHostedSetup ? 'Unfinished Stripe setup' : 'Connected to ' + (pay.displayName || 'Stripe') %><% if (!pay.liveMode) { %>
+            <span class="badge badge--warn">test mode</span><% } %><% if (rejectedHostedSetup) { %>
+            <span class="badge badge--warn">not connected</span><% } else if (!pay.chargesEnabled) { %>
             <span class="badge badge--warn">not taking charges</span>
           <% } else { %> <span class="badge badge--ok">live</span><% } %>
         </p>
         <p class="hint">
-          This business granted Foundry permission on Stripe's own page. Foundry holds no key for
-          this account and cannot be made to reveal one, and the business can withdraw the
-          permission from its own Stripe dashboard at any time.
+          <% if (rejectedHostedSetup) { %>
+            An earlier attempt started Stripe's new-account onboarding. It did not finish and
+            cannot take payments. Foundry will not treat it as the existing Stripe account you
+            wanted to connect.
+          <% } else { %>
+            This business granted Foundry permission on Stripe's own page. Foundry holds no key for
+            this account and cannot be made to reveal one, and the business can withdraw the
+            permission from its own Stripe dashboard at any time.
+          <% } %>
         </p>
         <p class="t-xs t-muted">Stripe account <code><%= pay.accountId %></code></p>
-        <% if (!pay.chargesEnabled) { %>
+        <% if (!pay.chargesEnabled && !rejectedHostedSetup) { %>
           <div class="notice notice--warn"><div>
             <strong>Stripe is not accepting charges on this account yet.</strong><br>
             <%= pay.because %>
@@ -92,43 +103,16 @@
            * which throws away the account rather than completing it.
            */
         %>
-        <% if (!pay.chargesEnabled && !(grant0 && grant0.embedded)) { %>
-          <a class="btn btn--primary" href="/settings/connections/payments/refresh">
-            Finish setting up on Stripe
-          </a>
+        <% if (rejectedHostedSetup && grant0.available) { %>
+          <a class="btn btn--primary" href="/settings/connections/payments/start"
+            target="_blank" data-stripe-connect>Connect existing Stripe account</a>
         <% } %>
         <form method="post" action="/settings/connections/payments/remove" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn btn--ghost" type="submit">Disconnect</button>
+          <button class="btn btn--ghost" type="submit"><%= rejectedHostedSetup
+            ? 'Discard unfinished setup' : 'Disconnect' %></button>
         </form>
       </div>
-
-    <%
-      /*
-       * Stripe's own form, inside this page.
-       *
-       * The questions are Stripe's identity checks and no integration can
-       * shorten them — they are what has to be answered before money may be
-       * moved into anybody's bank. What this removes is the handoff: no
-       * leaving Foundry, no page that looks like somebody else's software, no
-       * link back. Most of what makes the process feel long is that.
-       *
-       * If the script will not load, or no publishable key is set, the button
-       * above still opens the same form on Stripe. Nobody is ever stuck behind
-       * our JavaScript.
-       */
-    %>
-    <% if (!pay.chargesEnabled && grant0 && grant0.embedded) { %>
-      <div class="card-body">
-        <div id="stripe-onboarding" data-account="<%= pay.accountId %>"></div>
-        <p class="t-xs t-muted" id="stripe-onboarding-said">Loading the setup form…</p>
-        <noscript>
-          <a class="btn btn--primary" href="/settings/connections/payments/refresh">
-            Finish setting up on Stripe
-          </a>
-        </noscript>
-      </div>
-    <% } %>
 
     <% } else if (pay.connected && pay.source === 'workspace') { %>
       <div class="card-body">
@@ -163,91 +147,93 @@
           <p class="hint"><%= pay.because %></p>
         </div>
       <% } %>
-      <%
-        /*
-         * Two ways to the same account, in the order that serves people.
-         *
-         * Granting is first and is the plain button, because a secret key is
-         * total access to somebody's Stripe — refunds, payouts, every customer
-         * — and a business should not have to hand that over to be invoiced
-         * for. Pasting a key stays for a merchant whose setup needs it, and is
-         * behind a disclosure rather than gone.
-         */
-        var grant = typeof paymentConnect === 'undefined' ? null : paymentConnect;
-      %>
+      <% var grant = typeof paymentConnect === 'undefined' ? null : paymentConnect; %>
       <% if (grant && grant.available && !grant.connected) { %>
-        <form method="post" action="/settings/connections/payments/connect" data-busy>
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div>
           <div class="card-body stack">
-            <h3>Connect this business's Stripe</h3>
+            <h3>Connect Stripe</h3>
+            <% if (grant.testMode) { %>
+              <div class="notice notice--warn"><div>
+                <strong>This is Stripe sandbox—not your live Stripe account.</strong><br>
+                Foundry is currently using Stripe test credentials. Stripe may ask you to create
+                or finish a sandbox account even when the same email already owns a live Stripe
+                account. Live existing-account connection requires Foundry's live Stripe client
+                ID and live secret key.
+              </div></div>
+            <% } %>
             <p class="hint">
-              Stripe opens, this business signs in or creates an account, and approves. Nothing is
-              typed into Foundry — no key to copy, none stored here, and the business can withdraw
-              the permission from Stripe at any time.
+              Stripe opens in its own secure window. Sign in and choose the Stripe account this
+              business already uses. When
+              Stripe is finished, that tab closes and Foundry shows the account as connected. You
+              never copy an API key into Foundry.
             </p>
           </div>
           <div class="card-foot">
-            <button class="btn btn--primary" type="submit">Connect with Stripe</button>
+            <a class="btn btn--primary" href="/settings/connections/payments/start"
+              target="_blank" data-stripe-connect>Connect Stripe</a>
           </div>
-        </form>
-      <% } %>
-
-      <%
-        /*
-         * The key form is folded away only when there is something better to
-         * fold it behind. Where Connect is not set up on this server it is the
-         * only way in, and burying the only way in behind a Show link is worse
-         * than the screen that existed before this feature.
-         */
-        var offerGrant = Boolean(grant && grant.available && !grant.connected);
-      %>
-      <% if (offerGrant) { %>
-        <details class="disclose">
-          <summary>
-            <span>Paste a secret key instead</span>
-            <span class="disclose__cue">Show</span>
-          </summary>
-          <div class="disclose__body">
-      <% } %>
-      <form method="post" action="/settings/connections/payments" data-busy>
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <div class="card-body stack">
-          <% if (grant && grant.available) { %>
-            <p class="hint">
-              A secret key gives Foundry full access to the Stripe account, including refunds and
-              payouts. Connecting above grants only what taking a payment needs. Use this where a
-              setup calls for it.
-            </p>
-          <% } %>
-          <label class="field">
-            <span class="field-label">Stripe secret key</span>
-            <input class="input" type="password" name="secretKey" autocomplete="off"
-              placeholder="sk_test_…" required>
-            <span class="field-hint">
-              The one Stripe keeps hidden until you reveal it, not the publishable key beginning pk_.
-              Start with a test key. Stored encrypted, and never shown back to you.
-            </span>
-          </label>
-          <label class="field">
-            <span class="field-label">Webhook signing secret <span class="t-muted">(optional)</span></span>
-            <input class="input" type="password" name="webhookSecret" autocomplete="off"
-              placeholder="whsec_…">
-            <span class="field-hint">
-              From the webhook you add in Stripe, pointing at the address shown once this is connected.
-              Without it Foundry finds out about a payment by asking rather than by being told.
-            </span>
-          </label>
         </div>
-        <div class="card-foot">
-          <button class="btn <%= offerGrant ? '' : 'btn--primary' %>"
-            type="submit">Connect this inventory's Stripe</button>
+      <% } else if (grant && !grant.connected) { %>
+        <div class="card-body">
+          <div class="notice notice--warn"><div>
+            <strong>Stripe account sign-in is not ready on this installation.</strong><br>
+            Foundry's administrator must finish the Stripe Connect OAuth setup. Foundry will not
+            replace account sign-in with a new-account application or ask you to paste an API key.
+          </div></div>
         </div>
-      </form>
-      <% if (offerGrant) { %>
-          </div>
-        </details>
       <% } %>
     <% } %>
+  </div>
+</section>
+<% } %>
+
+<%# -------------------------------------------------------------- Shipping %>
+<%
+  var shipping = typeof shippingAccount === 'undefined' ? null : shippingAccount;
+  var shippingSetup = typeof shippingPlatform === 'undefined' ? null : shippingPlatform;
+%>
+<% if (shipping) { %>
+<section class="section" aria-labelledby="shipping-heading">
+  <div class="section-head">
+    <h2 id="shipping-heading">Shipping labels</h2>
+    <p class="section-sub">Compare carrier rates, buy and print labels, and keep tracking on the Sales Order.</p>
+  </div>
+  <div class="panel">
+    <div class="card-body">
+      <% if (shipping.connected && shipping.source === 'platform') { %>
+        <p class="lede">
+          ShipEngine <span class="badge badge--<%= shipping.billingReady ? 'ok' : 'warn' %>">
+            <%= shipping.billingReady ? 'ready' : 'finish setup' %>
+          </span>
+        </p>
+        <p class="hint">
+          This workspace has its own seller account. Its payment method pays for its labels;
+          Foundry never charges Keeper's developer account for this business's postage.
+        </p>
+      <% } else if (shipping.connected) { %>
+        <p class="lede">Connected to <%= shipping.provider === 'shipengine' ? 'ShipEngine'
+          : shipping.provider === 'easypost' ? 'EasyPost' : 'Shippo' %></p>
+        <p class="hint"><%= shipping.testMode ? 'Test labels only right now.'
+          : 'Live rates and labels are available from this account.' %></p>
+      <% } else { %>
+        <p class="lede">Shipping is not set up yet.</p>
+        <p class="hint">
+          One-time setup connects a carrier, confirms where parcels leave from, and adds this
+          business's payment method. Foundry then handles rates, labels and tracking from Orders.
+        </p>
+        <% if (shippingSetup && !shippingSetup.available) { %>
+          <p class="t-xs t-muted">ShipEngine partner credentials still need to be configured by Keeper.</p>
+        <% } %>
+      <% } %>
+    </div>
+    <div class="card-foot">
+      <a class="btn <%= shipping.connected && shipping.billingReady ? '' : 'btn--primary' %>"
+        href="/settings/shipping<%= shipping.connected && shipping.source === 'platform' && !shipping.billingReady
+          ? '?setup=shipengine' : '' %>">
+        <%= shipping.connected && shipping.billingReady ? 'Manage shipping'
+          : shipping.connected ? 'Finish shipping setup' : 'Set up shipping' %>
+      </a>
+    </div>
   </div>
 </section>
 <% } %>
@@ -404,79 +390,56 @@
   </section>
 <% }) %>
 
-<% if (typeof paymentAccount !== 'undefined' && paymentAccount && paymentAccount.connected
-     && paymentAccount.source === 'connect' && !paymentAccount.chargesEnabled
-     && typeof paymentConnect !== 'undefined' && paymentConnect && paymentConnect.embedded) { %>
 <script>
-/*
- * Stripe's setup form, running here.
- *
- * Loaded only when there is an account waiting to be finished, so the page
- * does not pull a third-party script it has no use for. The client secret is
- * fetched from Foundry, short-lived, and scoped to one account and one
- * component — it cannot act on the merchant's account, which is why it is safe
- * to hand to a browser.
- *
- * Every failure path ends at the same place: the same form, on Stripe's own
- * page, through the address below. A merchant must never be stuck because our
- * JavaScript did not load.
- */
 (function () {
-  var mount = document.getElementById('stripe-onboarding');
-  var said = document.getElementById('stripe-onboarding-said');
-  if (!mount) return;
+  /*
+   * A plain target=_blank is treated as `noopener` by modern browsers. That
+   * made the Stripe return page unable to notify/close itself, leaving the
+   * owner stranded in the popup. Open it directly from the user's click so
+   * the window keeps its opener and behaves like a normal Connect popup.
+   */
+  document.querySelectorAll('[data-stripe-connect]').forEach(function (link) {
+    link.addEventListener('click', function (event) {
+      event.preventDefault();
+      var popup = window.open(link.href, 'foundry-stripe-connect',
+        'popup=yes,width=620,height=760,resizable=yes,scrollbars=yes');
+      if (!popup) {
+        window.location.assign(link.href);
+        return;
+      }
+      popup.focus();
 
-  function fallBack(why) {
-    said.innerHTML = '';
-    said.appendChild(document.createTextNode(why + ' '));
-    var link = document.createElement('a');
-    link.href = '/settings/connections/payments/refresh';
-    link.className = 'btn btn--primary';
-    link.textContent = 'Finish setting up on Stripe';
-    said.appendChild(link);
-  }
-
-  function script() {
-    if (window.StripeConnect && window.StripeConnect.init) return Promise.resolve();
-    return new Promise(function (resolve, reject) {
-      var tag = document.createElement('script');
-      tag.src = 'https://connect-js.stripe.com/v1.0/connect.js';
-      tag.onload = resolve;
-      tag.onerror = function () { reject(new Error('The setup form could not be loaded.')); };
-      document.head.appendChild(tag);
+      var checks = 0;
+      var poll = window.setInterval(function () {
+        checks += 1;
+        fetch('/settings/connections/payments/state', {
+          credentials: 'same-origin', headers: { accept: 'application/json' }
+        }).then(function (response) {
+          if (!response.ok) throw new Error('Stripe status could not be checked.');
+          return response.json();
+        }).then(function (status) {
+          if (!status.connected) return;
+          window.clearInterval(poll);
+          try { popup.close(); } catch (_) { /* The parent still updates. */ }
+          window.location.replace('/settings/connections#payments');
+        }).catch(function () {
+          /* A temporary network failure is not a failed Stripe connection. */
+        });
+        if (checks >= 600) window.clearInterval(poll);
+      }, 1000);
     });
-  }
+  });
 
-  fetch('/settings/connections/payments/session', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-csrf-token': '<%= csrfToken %>' },
-    body: JSON.stringify({ _csrf: '<%= csrfToken %>' }),
-  }).then(function (response) { return response.json(); }).then(function (session) {
-    if (!session.ok) throw new Error(session.error || 'Stripe would not open the setup form.');
-    return script().then(function () {
-      var connect = window.StripeConnect.init({
-        publishableKey: session.publishableKey,
-        fetchClientSecret: function () { return Promise.resolve(session.clientSecret); },
-      });
-      var form = connect.create('account-onboarding');
-      /*
-       * "Done" from the component means the merchant closed it, not that
-       * Stripe will take a card. So Foundry asks Stripe and reloads on the
-       * answer — the same rule as every other way back from this.
-       */
-      form.setOnExit(function () {
-        said.textContent = 'Checking with Stripe…';
-        fetch('/settings/connections/payments/settled', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-csrf-token': '<%= csrfToken %>' },
-          body: JSON.stringify({ _csrf: '<%= csrfToken %>' }),
-        }).then(function () { window.location.reload(); })
-          .catch(function () { window.location.reload(); });
-      });
-      mount.appendChild(form);
-      said.textContent = '';
-    });
-  }).catch(function (error) { fallBack(error.message); });
+  var trustedStripeReturnOrigins = [window.location.origin];
+  var configuredStripeReturnOrigin = <%- JSON.stringify(paymentReturnOrigin || '') %>;
+  if (configuredStripeReturnOrigin
+      && trustedStripeReturnOrigins.indexOf(configuredStripeReturnOrigin) === -1) {
+    trustedStripeReturnOrigins.push(configuredStripeReturnOrigin);
+  }
+  window.addEventListener('message', function (event) {
+    if (trustedStripeReturnOrigins.indexOf(event.origin) === -1) return;
+    if (!event.data || event.data.type !== 'foundry:stripe-return') return;
+    window.location.replace('/settings/connections#payments');
+  });
 }());
 </script>
-<% } %>

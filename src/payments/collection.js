@@ -140,7 +140,7 @@ async function request(db, ctx, orderId, input = {}) {
    * arriving in the wrong bank. The adapter reads its key off ctx before
    * falling back to the environment, so this is the whole of the change here.
    */
-  const withKey = require('./accounts').contextFor(db, ctx);
+  const withKey = require('./accounts').contextFor(db, ctx, providerName);
 
   const customer = db.prepare('SELECT * FROM customers WHERE id = ? AND workspace_id = ?')
     .get(order.customer_id, ctx.workspaceId);
@@ -413,7 +413,7 @@ async function refresh(db, ctx, requestId, options = {}) {
   try {
     // The same context every other provider call is given.
     invoice = await provider.readInvoice(
-      { ...require('./accounts').contextFor(db, ctx), ...(options.providerContext || {}) },
+      { ...require('./accounts').contextFor(db, ctx, request.provider), ...(options.providerContext || {}) },
       { externalInvoiceId: request.externalInvoiceId });
   } catch (error) {
     /*

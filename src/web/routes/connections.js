@@ -18,7 +18,50 @@ const { ValidationError } = require('../../domain/errors');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 
 const router = express.Router();
-router.use('/settings/connections', requireAuth);
+
+/*
+ * Stripe can return to a different registered local hostname than the one the
+ * owner used to open Foundry (`127.0.0.1` versus `localhost`). Browser cookies
+ * cannot cross that boundary. The OAuth return is still authenticated by its
+ * random, single-use, fifteen-minute state; let that one endpoint reach the
+ * state verifier without first demanding an unrelated browser cookie.
+ */
+function isStripeStateReturn(req) {
+  const path = String(req.originalUrl || '').split('?')[0];
+  return req.method === 'GET'
+    && path === '/settings/connections/payments/return'
+    && typeof req.query.state === 'string' && req.query.state.length > 0;
+}
+
+router.use('/settings/connections', (req, res, next) => (
+  isStripeStateReturn(req) ? next() : requireAuth(req, res, next)
+));
+
+function configuredPublicOrigin() {
+  if (!process.env.FOUNDRY_PUBLIC_URL) return '';
+  try {
+    return new URL(process.env.FOUNDRY_PUBLIC_URL).origin;
+  } catch (_) {
+    return '';
+  }
+}
+
+function stripeConnectOrigin(req) {
+  const requested = `${req.protocol}://${req.get('host')}`;
+  if (process.env.STRIPE_CONNECT_REDIRECT_ORIGIN) {
+    try {
+      return new URL(process.env.STRIPE_CONNECT_REDIRECT_ORIGIN).origin;
+    } catch (_) {
+      // Fall through to the safe environment-specific default below.
+    }
+  }
+  // Stripe explicitly permits localhost callbacks for a Sandbox client ID.
+  // Keeping development on the origin already open in the browser removes a
+  // tunnel from the interactive sign-in path. Production still returns only
+  // through Foundry's configured public HTTPS origin.
+  if ((process.env.NODE_ENV || 'development') !== 'production') return requested;
+  return configuredPublicOrigin() || requested;
+}
 
 function mailboxStateSignature(db, workspaceId, connectorId) {
   const connection = db.prepare(`SELECT status, paused_at, last_error FROM workspace_connectors
@@ -61,6 +104,9 @@ router.get('/settings/connections', (req, res, next) => {
     // than on Money, because it is a connection and not an accounting figure.
     paymentAccount: require('../../payments/accounts').describe(req.db, req.ctx.workspaceId),
     paymentConnect: require('../../payments/connect').describe(req.db, req.ctx.workspaceId),
+    shippingAccount: require('../../shipping/accounts').describe(req.db, req.ctx.workspaceId),
+    shippingPlatform: require('../../shipping/shipengine-platform').describe(req.db, req.ctx.workspaceId),
+    paymentReturnOrigin: stripeConnectOrigin(req),
     workspaceName: req.workspace ? req.workspace.name : '',
     paymentWebhookUrl: `${process.env.FOUNDRY_PUBLIC_URL || ''}/webhooks/payments/stripe/${req.ctx.workspaceId}`,
     providerCatalog: providers.catalog(), newConnectionToken: token });
@@ -88,6 +134,25 @@ router.post('/settings/connections/payments', requireOwner, asyncRoute(async (re
 }));
 
 /*
+ * Give the browser something useful to paint before any Stripe API call.
+ *
+ * The old form posted into a newly-created popup. That window stayed white
+ * while Foundry created/read the connected account and asked Stripe for the
+ * next URL. Worse, Stripe's Google login then had to open a popup from inside
+ * our popup. A normal top-level tab avoids that nested-window failure and this
+ * tiny interstitial makes the wait explicit rather than looking frozen.
+ */
+router.get('/settings/connections/payments/start', requireOwner, (req, res) => {
+  const resume = String(req.query.resume || '') === '1';
+  return res.page('connections/payment-start', {
+    title: 'Opening Stripe', layout: false,
+    postPath: resume
+      ? '/settings/connections/payments/refresh'
+      : '/settings/connections/payments/connect',
+  });
+});
+
+/*
  * Connecting without handing over a key.
  *
  * Sends the merchant to Stripe's own page, where they sign in or sign up and
@@ -97,38 +162,24 @@ router.post('/settings/connections/payments', requireOwner, asyncRoute(async (re
 router.post('/settings/connections/payments/connect', requireOwner, asyncRoute(async (req, res) => {
   const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
   try {
-    const origin = process.env.FOUNDRY_PUBLIC_URL
-      || `${req.protocol}://${req.get('host')}`;
+    const origin = stripeConnectOrigin(req);
     const grant = require('../../payments/connect');
     const where = {
       returnUrl: `${origin}/settings/connections/payments/return`,
       refreshUrl: `${origin}/settings/connections/payments/refresh`,
       businessName: req.workspace ? req.workspace.name : undefined,
-      email: req.user ? req.user.email : undefined,
     };
     /*
-     * Hosted onboarding where the dashboard offers it, OAuth where it does
-     * not. The merchant sees one button either way; which road it takes is a
-     * fact about the platform's Stripe account, not a choice for a shop owner.
+     * This button means exactly one thing: sign in to an existing Stripe
+     * account and grant it to Foundry. Hosted onboarding creates/completes a
+     * platform-controlled account and must never be substituted here.
      */
-    /*
-     * Three roads, one button.
-     *
-     * Where Stripe's form can run inside Foundry, the account is created and
-     * the merchant stays exactly where they are — the form appears under the
-     * button they just pressed. Otherwise they go to Stripe's own page, by
-     * hosted onboarding or by OAuth depending on the dashboard. Which road is
-     * taken is a fact about the platform's Stripe account and never a question
-     * put to a shop owner.
-     */
-    if (grant.usesEmbedded()) {
-      await grant.openOnboarding(req.db, req.ctx, membership, { ...where, link: false });
-      return res.redirect(303, '/settings/connections#payments');
+    if (grant.preferredFlow() !== 'oauth') {
+      throw new ValidationError('Stripe existing-account sign-in is not configured. Add the '
+        + 'Stripe Connect OAuth client ID for this Foundry installation, then try again.');
     }
-    const begun = grant.usesHostedOnboarding()
-      ? await grant.openOnboarding(req.db, req.ctx, membership, where)
-      : grant.authorizeUrl(req.db, req.ctx, membership,
-        { ...where, returnUri: where.returnUrl });
+    const begun = grant.authorizeUrl(req.db, req.ctx, membership,
+      { ...where, returnUri: where.returnUrl });
     return res.redirect(303, begun.url);
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
@@ -145,7 +196,11 @@ router.post('/settings/connections/payments/connect', requireOwner, asyncRoute(a
  * and stored hashed — it is what says which inventory this belongs to, and a
  * code arriving without a valid one is not acted on at all.
  */
-router.get('/settings/connections/payments/return', requireOwner, asyncRoute(async (req, res) => {
+router.get('/settings/connections/payments/return', (req, res, next) => (
+  isStripeStateReturn(req) ? next() : requireOwner(req, res, next)
+), asyncRoute(async (req, res) => {
+  let outcome = { connected: false, chargesEnabled: false,
+    message: 'Stripe did not finish the connection.' };
   try {
     const grant = require('../../payments/connect');
     /*
@@ -160,22 +215,44 @@ router.get('/settings/connections/payments/return', requireOwner, asyncRoute(asy
     const done = req.query && (req.query.state || req.query.code)
       ? await grant.complete(req.db, req.query)
       : { ...await grant.refresh(req.db, req.ctx.workspaceId) };
-    if (!done.connected) req.flash('warn', done.because);
-    else if (!done.chargesEnabled) {
+    if (!done.connected) {
+      outcome = { connected: false, chargesEnabled: false, message: done.because };
+      req.flash('warn', done.because);
+    } else if (!done.chargesEnabled) {
+      outcome = { connected: true, chargesEnabled: false,
+        message: `Stripe still needs information before ${done.displayName || 'this account'} can take payments.` };
       req.flash('warn', `Connected to ${done.displayName || 'Stripe'}, but Stripe is not accepting `
         + 'charges on that account yet — it usually wants more details from the business. '
         + 'Payment links will fail until it is satisfied.');
     } else {
+      outcome = { connected: true, chargesEnabled: true,
+        message: `${done.displayName || 'Stripe'} is connected and ready to take payments.` };
       req.flash('success', `Connected. Money from this inventory arrives in `
         + `${done.displayName || 'this business'}'s own Stripe account`
         + `${done.liveMode ? '' : ', in test mode'}. Foundry holds no key for it.`);
     }
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
+    outcome = { connected: false, chargesEnabled: false, message: err.message };
     req.flash('warn', err.message);
   }
-  res.redirect(303, '/settings/connections');
+  return res.page('connections/payment-return', {
+    title: 'Stripe connection', layout: false, outcome,
+  });
 }));
+
+/*
+ * The popup message is a convenience, not the source of truth. Google and
+ * Stripe can change popup relationships while authenticating, so the opener
+ * also asks Foundry directly whether the grant has landed. This makes the
+ * Connections page update without a manual refresh even when a browser drops
+ * window.opener somewhere inside the third-party sign-in chain.
+ */
+router.get('/settings/connections/payments/state', requireOwner, (req, res) => {
+  const grant = require('../../payments/connect').describe(req.db, req.ctx.workspaceId);
+  return res.json({ connected: Boolean(grant.connected),
+    chargesEnabled: Boolean(grant.chargesEnabled) });
+});
 
 /*
  * A session for Stripe's form, running inside this page.
@@ -218,7 +295,7 @@ router.post('/settings/connections/payments/settled', requireOwner, asyncRoute(a
  * Stripe asks for this address. Showing an error instead would strand somebody
  * who did nothing wrong except take longer than the link lasted.
  */
-router.get('/settings/connections/payments/refresh', requireOwner, asyncRoute(async (req, res) => {
+const refreshStripeOnboarding = asyncRoute(async (req, res) => {
   try {
     const origin = process.env.FOUNDRY_PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
     const again = await require('../../payments/connect').relink(req.db, req.ctx, {
@@ -231,7 +308,9 @@ router.get('/settings/connections/payments/refresh', requireOwner, asyncRoute(as
     req.flash('warn', err.message);
     return res.redirect(303, '/settings/connections');
   }
-}));
+});
+router.get('/settings/connections/payments/refresh', requireOwner, refreshStripeOnboarding);
+router.post('/settings/connections/payments/refresh', requireOwner, refreshStripeOnboarding);
 
 router.post('/settings/connections/payments/remove', requireOwner, asyncRoute(async (req, res) => {
   const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);

@@ -519,6 +519,38 @@ function fromEmailOrders(db, workspaceId) {
       `${line.quantity} × ${line.item_name}${line.variant_label ? ` ${line.variant_label}` : ''}`).join(', ');
     const unpriced = order.lines.filter((line) => line.unit_price_minor === null)
       .map((line) => `${line.item_name}${line.variant_label ? ` ${line.variant_label}` : ''}`);
+    if (order.customer_decision_required) return {
+      id: `email-order:${order.id}`,
+      kind: 'decision',
+      title: `Is ${order.customer_email} a new customer?`,
+      happened: `${order.customer_email} sent ${order.order_number}${order.subject ? ` — “${order.subject}”` : ''}. Foundry prepared the order but did not silently create or merge a customer record.`,
+      why: 'The sender address does not match a confirmed customer in Foundry.',
+      recommendation: 'Create this sender as a customer, or match the order to the correct existing customer. Then Foundry will show the next required step.',
+      missing: 'Your decision about who this customer is.',
+      actionLabel: 'Choose the customer',
+      href: `/orders/${order.id}#customer-decision`,
+      at: order.received_at || order.created_at,
+      priority: 94,
+    };
+    if (order.delivery_decision_required) return {
+      id: `email-order:${order.id}`,
+      kind: 'decision',
+      title: `Where should ${order.order_number} go?`,
+      happened: `${order.customer_name} ordered ${what}, but the email did not provide a complete shipping address or confirm pickup.`,
+      why: order.reply_sent_at
+        ? `Foundry already emailed ${order.customer_email} asking for the missing answer.`
+        : order.draft_at
+          ? 'Foundry prepared the question, but the connected mailbox did not send it.'
+          : 'Foundry cannot safely ship without a destination.',
+      recommendation: order.reply_sent_at
+        ? 'Wait for their answer, or enter the shipping address or pickup choice if they tell you another way.'
+        : 'Open the order and choose pickup or enter the full shipping address.',
+      missing: 'A complete shipping address or customer pickup confirmation.',
+      actionLabel: 'Set shipping or pickup',
+      href: `/orders/${order.id}#delivery-decision`,
+      at: order.received_at || order.created_at,
+      priority: 91,
+    };
     return {
       id: `email-order:${order.id}`,
       kind: 'decision',
@@ -537,7 +569,7 @@ function fromEmailOrders(db, workspaceId) {
       // Not 'Review': that tells somebody to go and look, which is the one
       // thing they already know. The decision is whether to accept the order.
       actionLabel: 'Approve this order',
-      href: `/orders/${order.id}`,
+      href: `/orders/${order.id}#approve-order`,
       at: order.received_at || order.created_at,
       // A customer is waiting and it is real money, above a late reply.
       priority: 88,
@@ -1036,7 +1068,14 @@ function fromSalesOrders(db, workspaceId) {
           ? `Whether to hold the ${freeNow} now in stock for ${order.customer.name}.`
           : 'A decision about the uncovered customer demand and any requested-date commitment.',
         actionLabel: freeNow ? `Commit stock to ${order.order_number}` : `Cover ${order.order_number}`,
-        href: `/sales/orders/${order.id}`,
+        // Never send the owner to a generic order page that only repeats the
+        // shortage. If stock arrived, open the reserve action on the order.
+        // Otherwise open the exact product's replenishment or supplier setup.
+        href: freeNow
+          ? `/orders/${order.id}#stock-shortage`
+          : suppliers.length
+            ? `/purchasing/why/${line.sku_id}`
+            : `/purchasing/supplier-for/${line.sku_id}`,
         at: order.updated_at,
         priority: dateMiss ? 92 : 82,
       });
@@ -1062,6 +1101,14 @@ function fromConnections(db, workspaceId) {
       .filter((entry) => entry.type === 'unknown_sku' && entry.supplierSku)
       .map((entry) => entry.supplierSku))];
     const purchaseOrderId = candidates.find((entry) => entry.purchaseOrderId)?.purchaseOrderId;
+    const unknownEntity = /^UNKNOWN_(SKU|LOCATION)$/.test(row.issue_type)
+      ? row.issue_type.slice(8).toLowerCase() : null;
+    const unknownExternalId = unknownEntity ? String(row.fingerprint || '').split(':').slice(-1)[0] : null;
+    const hasFocusedExternalRecord = unknownExternalId && db.prepare(`SELECT 1
+      FROM connection_external_records
+      WHERE workspace_id = ? AND connector_id = ? AND entity_type = ? AND external_id = ?
+        AND mapping_status = 'UNMAPPED' AND selected = 1`)
+      .get(workspaceId, row.connector_id, unknownEntity, unknownExternalId);
     return {
       id: `connection:${row.id}`,
       kind: procurement || documentReview ? 'decision' : 'connection',
@@ -1087,7 +1134,11 @@ function fromConnections(db, workspaceId) {
         : row.issue_type === 'SUPPLIER_SEND_APPROVAL' ? 'Approve & send order'
           : documentReview ? 'Review supplier document' : `Fix ${row.display_name}`,
       href: procurement && purchaseOrderId ? `/purchasing/orders/${purchaseOrderId}`
-        : `/settings/connections/${row.connector_id}${documentReview ? '#needs-you' : ''}`,
+        : `/settings/connections/${row.connector_id}${documentReview
+          ? '#needs-you'
+          : hasFocusedExternalRecord
+            ? `#mapping-${unknownEntity}-${encodeURIComponent(unknownExternalId)}`
+            : `#issue-${row.id}`}`,
       at: row.updated_at,
       priority: row.issue_type === 'CONNECTION_STALE' ? 86 : 90,
     };

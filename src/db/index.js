@@ -84,6 +84,14 @@ const ADDED_COLUMNS = [
   { table: 'sales_orders', column: 'currency', definition: "TEXT NOT NULL DEFAULT 'USD'" },
   { table: 'sales_orders', column: 'discount_minor', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'sales_orders', column: 'tax_minor', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  // A Sales Order owns the address agreed for that order. Customer addresses
+  // are defaults only; they are not mutable pointers for parcels already sold.
+  { table: 'sales_orders', column: 'delivery_method', definition: "TEXT NOT NULL DEFAULT 'SHIP'" },
+  { table: 'sales_orders', column: 'ship_to_address', definition: 'TEXT' },
+  { table: 'sales_orders', column: 'ship_to_source', definition: 'TEXT' },
+  { table: 'customers', column: 'record_state', definition: "TEXT NOT NULL DEFAULT 'ACTIVE'" },
+  { table: 'sales_orders', column: 'customer_decision_required', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'sales_orders', column: 'delivery_decision_required', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'sales_order_lines', column: 'unit_price_minor', definition: 'INTEGER' },
   { table: 'sales_order_lines', column: 'price_source_id', definition: 'TEXT' },
   { table: 'workspace_connectors', column: 'provider_type', definition: "TEXT NOT NULL DEFAULT 'reference_webhook'" },
@@ -228,6 +236,64 @@ function addMissingColumns(db) {
     if (info.some((c) => c.name === column)) continue;
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+}
+
+/**
+ * Email orders created before customer and delivery review were first-class
+ * states looked complete even when the sender was new or the destination was
+ * unknown. Recover those facts from their immutable source message.
+ */
+function backfillEmailOrderSetup(db) {
+  if (!hasColumn(db, 'sales_orders', 'customer_decision_required')
+      || !hasColumn(db, 'customers', 'record_state')) return;
+  db.exec(`
+    UPDATE sales_orders
+       SET customer_decision_required = 0,
+           delivery_decision_required = 0
+     WHERE status IN ('PARTIALLY_FULFILLED', 'FULFILLED', 'CANCELLED');
+
+    UPDATE sales_orders
+       SET delivery_decision_required = 1
+     WHERE source_email_message_id IS NOT NULL
+       AND status IN ('DRAFT', 'CONFIRMED', 'BACKORDERED')
+       AND delivery_method = 'SHIP'
+       AND (ship_to_address IS NULL OR TRIM(ship_to_address) = '');
+
+    UPDATE sales_orders
+       SET customer_decision_required = 1
+     WHERE source_email_message_id IS NOT NULL
+       AND status IN ('DRAFT', 'CONFIRMED', 'BACKORDERED')
+       AND customer_id IN (
+         SELECT c.id
+           FROM customers c
+           JOIN connection_email_messages m
+             ON m.id = sales_orders.source_email_message_id
+            AND m.workspace_id = sales_orders.workspace_id
+          WHERE c.id = sales_orders.customer_id
+            AND LOWER(COALESCE(c.email, '')) = LOWER(COALESCE(m.sender, ''))
+            AND c.created_at >= m.received_at
+       );
+
+    UPDATE customers
+       SET record_state = 'PROVISIONAL'
+     WHERE id IN (SELECT customer_id FROM sales_orders WHERE customer_decision_required = 1)
+       AND NOT EXISTS (
+         SELECT 1 FROM sales_orders accepted
+          WHERE accepted.customer_id = customers.id
+            AND accepted.customer_decision_required = 0
+            AND accepted.status <> 'CANCELLED'
+       );
+
+    UPDATE customers
+       SET record_state = 'ACTIVE'
+     WHERE record_state = 'PROVISIONAL'
+       AND EXISTS (
+         SELECT 1 FROM sales_orders accepted
+          WHERE accepted.customer_id = customers.id
+            AND accepted.customer_decision_required = 0
+            AND accepted.status <> 'CANCELLED'
+       );
+  `);
 }
 
 function tableExists(db, name) {
@@ -530,6 +596,7 @@ function migrate(db) {
   // new columns, and CREATE INDEX on a column an older table does not have yet
   // fails outright. Widen the table first, then let the schema fill in the rest.
   addMissingColumns(db);
+  backfillEmailOrderSetup(db);
 
   // Enum CHECKs are relaxed before the schema files that own those tables, so
   // the CREATE INDEX statements in them restore the indexes a rebuild drops.

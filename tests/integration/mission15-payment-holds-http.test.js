@@ -681,7 +681,7 @@ test('shipping to a customer with no address warns before it goes, not after', a
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const text = plain((await agent.get(`/orders/${order.id}`)).text);
-  assert.match(text, /Foundry has no address for Hendel/,
+  assert.match(text, /Sales Order has no delivery address/,
     'said next to the button, while it can still be fixed');
 });
 
@@ -781,7 +781,7 @@ test('a shipped order says where it went, or that it does not know', async () =>
   };
 
   const unknown = await ship(nowhere);
-  assert.match(unknown, /No address on file/,
+  assert.match(unknown, /No delivery address on this order/,
     'the page says it does not know, rather than saying nothing');
 
   const known = await ship(somewhere);

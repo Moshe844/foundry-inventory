@@ -100,7 +100,7 @@ function forWorkspace(db, workspaceId) {
    * reasonable things being true at once, and the first anybody would know is
    * a shop's takings arriving somewhere else.
    */
-  if (require('./connect').available()) return null;
+  if (require('./connect').platformModeEnabled()) return null;
 
   return {
     provider: 'stripe',
@@ -118,9 +118,27 @@ function forWorkspace(db, workspaceId) {
  * the environment, so — as with shipping — multi-tenancy costs nothing at the
  * call sites beyond building ctx from the workspace rather than the process.
  */
-function contextFor(db, ctx) {
+function contextFor(db, ctx, providerName = 'stripe') {
+  // Test and future non-Stripe providers own their credential model. Do not
+  // make them depend on a Stripe connection merely because collection uses
+  // one provider registry.
+  if (providerName !== 'stripe') return ctx;
   const account = forWorkspace(db, ctx.workspaceId);
-  if (!account) return ctx;
+  if (!account) {
+    /*
+     * In Connect mode the process key identifies Foundry itself. Returning the
+     * unchanged context here used to let the Stripe adapter fall back to that
+     * key, which created a merchant's customer invoice on the developer's
+     * account. Refuse the request before Stripe sees it. A single-tenant
+     * install with no configured key retains its ordinary "not connected"
+     * state; the adapter will produce its existing configuration error.
+     */
+    if (require('./connect').platformModeEnabled()) {
+      throw new ValidationError("Connect this business's Stripe account before taking a customer payment. "
+        + "Foundry will never put a business's customer payment through the developer account.");
+    }
+    return ctx;
+  }
   /*
    * A granted account travels as an id beside the platform's key. The adapter
    * turns that into Stripe's own "act on behalf of" header, which is how the

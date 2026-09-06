@@ -200,6 +200,9 @@ function startPicking(db, ctx, orderId, input = {}) {
     const order = db.prepare('SELECT * FROM sales_orders WHERE id = ? AND workspace_id = ?')
       .get(orderId, ctx.workspaceId);
     if (!order) throw new NotFoundError('That sales order is not in this inventory.');
+    if (order.customer_decision_required || order.delivery_decision_required) {
+      throw new ValidationError('Resolve the customer and delivery details before picking this order.');
+    }
     if (!orders.OPEN.includes(order.status)) {
       throw new ValidationError('Confirm this sales order before picking it.');
     }
@@ -248,6 +251,7 @@ function startPicking(db, ctx, orderId, input = {}) {
         .get(order.customer_id, ctx.workspaceId)
       : null;
     const shipTo = trimOrNull(input.shipToAddress)
+      || trimOrNull(order.ship_to_address)
       || (customer ? trimOrNull(customer.shipping_address) : null);
     db.prepare(`INSERT INTO sales_shipments
       (id, workspace_id, sales_order_id, shipment_number, status, ship_from_location_id,
@@ -395,11 +399,12 @@ function ship(db, ctx, shipmentId, input = {}) {
   }
 
   const handover = requireHandover(input);
-  const trackingNumber = trimOrNull(input.trackingNumber);
+  const trackingNumber = trimOrNull(input.trackingNumber) || trimOrNull(shipment.tracking_number);
   const detected = trackingNumber ? carriers.detect(trackingNumber) : null;
-  const carrierCode = trimOrNull(input.carrier) || (detected ? detected.code : null);
+  const carrierCode = trimOrNull(input.carrier) || trimOrNull(shipment.carrier)
+    || (detected ? detected.code : null);
   const cost = input.shippingCostMinor === undefined || input.shippingCostMinor === null
-    || input.shippingCostMinor === '' ? null : Math.round(Number(input.shippingCostMinor));
+    || input.shippingCostMinor === '' ? shipment.shipping_cost_minor : Math.round(Number(input.shippingCostMinor));
 
   orders.fulfill(db, ctx, shipment.sales_order_id, {
     lines: lines.map((line) => ({
@@ -411,14 +416,17 @@ function ship(db, ctx, shipmentId, input = {}) {
 
   const result = inTransaction(db, () => {
     const now = nowIso();
+    const trackingUrl = trimOrNull(shipment.tracking_url)
+      || carriers.trackingUrlFor(carrierCode, trackingNumber);
     db.prepare(`UPDATE sales_shipments SET status = 'SHIPPED', handover = ?, carrier = ?, service = ?,
       tracking_number = ?, tracking_url = ?, shipping_cost_minor = ?, currency = ?,
       expected_delivery_date = ?, shipped_at = ?, packed_at = COALESCE(packed_at, ?),
       package_count = COALESCE(package_count, 1), notes = COALESCE(?, notes), updated_at = ?
       WHERE id = ?`)
-      .run(handover, carrierCode, trimOrNull(input.service), trackingNumber,
-        carriers.trackingUrlFor(carrierCode, trackingNumber), cost,
-        trimOrNull(input.currency) || 'USD', trimOrNull(input.expectedDeliveryDate),
+      .run(handover, carrierCode, trimOrNull(input.service) || trimOrNull(shipment.service), trackingNumber,
+        trackingUrl, cost,
+        trimOrNull(input.currency) || trimOrNull(shipment.currency) || 'USD',
+        trimOrNull(input.expectedDeliveryDate) || trimOrNull(shipment.expected_delivery_date),
         trimOrNull(input.shippedAt) || now, now, trimOrNull(input.notes), now, shipmentId);
     return decorate(db, ctx.workspaceId, requireShipment(db, ctx.workspaceId, shipmentId));
   });

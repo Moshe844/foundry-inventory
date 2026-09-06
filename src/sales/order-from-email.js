@@ -60,6 +60,7 @@ const SCHEMA = {
      * anything else: a street nobody wrote is a parcel nobody receives.
      */
     shippingAddress: { type: 'string' },
+    deliveryMethod: { type: 'string', enum: ['SHIP', 'PICKUP', 'UNKNOWN'] },
     lines: {
       type: 'array',
       items: {
@@ -81,6 +82,8 @@ quantity must be the number written in the email. If a quantity is not written, 
 rather than choosing a number. contactName and phone are only the ones the email gives; otherwise empty.
 shippingAddress is the postal address written in the email, copied exactly as it appears, including the
 line breaks. Leave it empty when the email gives no address. Never complete or correct an address.
+Set deliveryMethod to PICKUP only when the customer explicitly says they will collect or pick up the order,
+SHIP only when they explicitly ask for delivery/shipping, and UNKNOWN when they do not say.
 Set isAnOrder to false when the message is not asking to buy anything. Never add a product that is not
 named in the email. Return only the schema.`;
 
@@ -181,8 +184,11 @@ function customerFor(db, ctx, message, told) {
    * to an existing customer's account. A new address is a new customer, and
    * the owner can merge them if they are in fact the same person.
    */
-  const name = String(told?.contactName || '').trim() || sender;
-  return sales.createCustomer(db, ctx, { name, email: sender });
+  let name = String(told?.contactName || '').trim() || sender;
+  const sameName = db.prepare(`SELECT id FROM customers
+    WHERE workspace_id = ? AND name = ? COLLATE NOCASE`).get(ctx.workspaceId, name);
+  if (sameName) name = `${name} (${sender})`;
+  return sales.createCustomer(db, ctx, { name, email: sender, recordState: 'PROVISIONAL' });
 }
 
 /*
@@ -214,15 +220,17 @@ function addressFromEmail(db, ctx, message, told, customerId) {
 
   const parsed = require('../shipping/address').parse(written);
   if (!parsed.complete) {
-    return { attached: false, parsed,
-      because: `The address in the email is missing the ${parsed.missing.join(', ')}, so Foundry left it for you.` };
+    return { attached: true, parsed, address: written, incomplete: true,
+      because: `The address in the email is missing the ${parsed.missing.join(', ')}. Foundry copied exactly what the customer wrote, but a carrier cannot use it yet.` };
   }
 
   const existing = db.prepare('SELECT shipping_address FROM customers WHERE id = ? AND workspace_id = ?')
     .get(customerId, ctx.workspaceId);
   if (existing && String(existing.shipping_address || '').trim()) {
-    return { attached: false, parsed,
-      because: 'This customer already has an address on file, and an email does not silently replace it.' };
+    return { attached: true, parsed, address: written,
+      because: String(existing.shipping_address).trim() === written
+        ? 'The email confirms the customer address already on file.'
+        : 'This order uses the address written in the email. The customer default was not silently changed.' };
   }
 
   db.prepare('UPDATE customers SET shipping_address = ?, updated_at = ? WHERE id = ? AND workspace_id = ?')
@@ -348,25 +356,56 @@ async function draft(db, ctx, messageId, options = {}) {
     told.phone ? `Phone given: ${told.phone}` : null,
   ].filter(Boolean).join('\n');
 
+  const knownCustomer = db.prepare(`SELECT id FROM customers
+    WHERE workspace_id = ? AND LOWER(email) = LOWER(?) AND record_state = 'ACTIVE'`)
+    .get(ctx.workspaceId, message.sender);
   const customer = customerFor(db, ctx, message, told);
   // Before the order, so the order is created with somewhere to send it.
   const shipTo = addressFromEmail(db, ctx, message, told, customer.id);
   const order = sales.createOrder(db, ctx, {
     customerId: customer.id,
     lines,
+    deliveryMethod: told.deliveryMethod === 'PICKUP' ? 'PICKUP' : 'SHIP',
+    customerDecisionRequired: !knownCustomer,
+    deliveryDecisionRequired: told.deliveryMethod !== 'PICKUP' && (!shipTo.address || shipTo.incomplete),
+    // A grounded address is preserved even when incomplete, so the order asks
+    // for the missing part instead of silently inheriting an older address.
+    // An ungrounded model claim is an explicit null for the same reason.
+    ...(String(told.shippingAddress || '').trim()
+      ? { shipToAddress: shipTo.attached ? shipTo.address : null, shipToSource: 'EMAIL' }
+      : {}),
     notes: shipTo.attached ? `${notes}
-Delivery address read from their email.` : notes,
+Delivery address copied from their email.${shipTo.incomplete ? ` ${shipTo.because}` : ''}`
+      : `${notes}${shipTo.because && String(told.shippingAddress || '').trim() ? `\n${shipTo.because}` : ''}`,
   });
   db.prepare(`UPDATE sales_orders SET source_email_message_id = ? WHERE workspace_id = ? AND id = ?`)
     .run(messageId, ctx.workspaceId, order.id);
+  let deliveryQuestion = null;
+  let deliveryQuestionSent = false;
+  if (told.deliveryMethod !== 'PICKUP' && (!shipTo.address || shipTo.incomplete)) {
+    deliveryQuestion = orderReply.askDeliveryDetails(db, ctx.workspaceId, messageId, message, order.orderNumber, lines);
+    if (deliveryQuestion) {
+      try {
+        await require('../connections/reply-drafting').send(db, ctx, messageId);
+        deliveryQuestionSent = true;
+      } catch {
+        // The deterministic reply stays prepared on the source email. A mail
+        // outage must not lose the order or pretend the question was sent.
+      }
+    }
+  }
   noteReason(db, ctx, messageId, null);
   /*
    * An order Foundry cannot fill is still an order, and the customer should
    * hear it from us rather than from the delivery that never comes. Drafted,
    * never sent — what to promise a customer who is short is the owner's call.
    */
-  const shortfall = orderReply.tellThemAboutStock(db, ctx.workspaceId, messageId, message, lines, order.orderNumber);
-  return { order, because: null, unmatched, shortfall: Boolean(shortfall), shipTo };
+  const shortfall = deliveryQuestion
+    ? deliveryQuestion.shortfall
+    : orderReply.tellThemAboutStock(db, ctx.workspaceId, messageId, message, lines, order.orderNumber);
+  return { order: sales.getOrder(db, ctx.workspaceId, order.id), because: null, unmatched,
+    shortfall: Boolean(shortfall), shipTo, newCustomer: !knownCustomer,
+    deliveryQuestion: Boolean(deliveryQuestion), deliveryQuestionSent };
 }
 
 /**
@@ -455,6 +494,49 @@ function adoptThreadReplies(db, ctx) {
   return stranded.length;
 }
 
+/**
+ * Apply a customer's answer to the delivery question to the order that asked
+ * it. The thread id and sender must both match: an address in an unrelated
+ * message is never permission to change an order.
+ */
+async function applyPendingDeliveryReply(db, ctx, messageId, options = {}) {
+  const message = db.prepare(`SELECT * FROM connection_email_messages
+    WHERE workspace_id = ? AND id = ?`).get(ctx.workspaceId, messageId);
+  if (!message?.external_thread_id) return null;
+
+  const pending = db.prepare(`SELECT so.id, so.order_number, so.customer_id
+    FROM sales_orders so
+    JOIN connection_email_messages source ON source.id = so.source_email_message_id
+      AND source.workspace_id = so.workspace_id
+    WHERE so.workspace_id = ? AND so.delivery_decision_required = 1
+      AND source.external_thread_id = ? AND LOWER(source.sender) = LOWER(?)
+      AND source.id <> ?
+    ORDER BY so.created_at DESC LIMIT 1`)
+    .get(ctx.workspaceId, message.external_thread_id, message.sender, message.id);
+  if (!pending) return null;
+
+  const conversation = conversationWith(db, ctx.workspaceId, message);
+  const told = await read(message, { ...options, conversation });
+  if (!told) return null;
+
+  let order = null;
+  if (told.deliveryMethod === 'PICKUP') {
+    order = sales.resolveDelivery(db, ctx, pending.id, { deliveryMethod: 'PICKUP' });
+  } else if (String(told.shippingAddress || '').trim()) {
+    const asWritten = { subject: message.subject, body_text: conversation.join('\n') };
+    const address = addressFromEmail(db, ctx, asWritten, told, pending.customer_id);
+    if (!address.attached || address.incomplete || !address.address) return null;
+    order = sales.resolveDelivery(db, ctx, pending.id, {
+      deliveryMethod: 'SHIP', shippingAddress: address.address, saveCustomerAddress: true,
+    });
+  }
+  if (!order) return null;
+
+  noteReason(db, ctx, message.id,
+    `Used this answer to set ${pending.order_number} to ${order.delivery_method === 'PICKUP' ? 'customer pickup' : 'shipping to the address the customer supplied'}.`);
+  return { handled: true, order };
+}
+
 async function draftPending(db, ctx, options = {}) {
   collapseTwins(db, ctx);
   adoptThreadReplies(db, ctx);
@@ -481,11 +563,14 @@ async function draftPending(db, ctx, options = {}) {
 /** Draft orders read from email, with their lines, for the owner to approve. */
 function waitingForApproval(db, workspaceId) {
   const orders = db.prepare(`SELECT so.id, so.order_number, so.created_at,
-      c.name AS customer_name, c.email AS customer_email, m.subject, m.received_at
+      so.status, so.customer_decision_required, so.delivery_decision_required,
+      c.name AS customer_name, c.email AS customer_email, c.record_state,
+      m.subject, m.received_at, m.draft_at, m.reply_sent_at
     FROM sales_orders so
     JOIN customers c ON c.id = so.customer_id
     LEFT JOIN connection_email_messages m ON m.id = so.source_email_message_id
-    WHERE so.workspace_id = ? AND so.status = 'DRAFT' AND so.source_email_message_id IS NOT NULL
+    WHERE so.workspace_id = ? AND so.source_email_message_id IS NOT NULL
+      AND (so.status = 'DRAFT' OR so.customer_decision_required = 1 OR so.delivery_decision_required = 1)
     ORDER BY so.created_at`).all(workspaceId);
   const lines = db.prepare(`SELECT sol.quantity_ordered AS quantity, sol.unit_price_minor, i.name AS item_name,
       s.variant_label, i.unit_label
@@ -530,4 +615,5 @@ function unreadable(db, workspaceId) {
 }
 
 module.exports = { SCHEMA, SYSTEM, read, draft, draftPending, collapseTwins, noteReason,
-  waitingForApproval, unreadable, customerFor, saidInTheEmail, conversationWith, adoptThreadReplies, addressFromEmail };
+  waitingForApproval, unreadable, customerFor, saidInTheEmail, conversationWith, adoptThreadReplies,
+  applyPendingDeliveryReply, addressFromEmail };

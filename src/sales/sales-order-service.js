@@ -31,17 +31,20 @@ function createCustomer(db, ctx, input) {
   const id = newId('cus');
   const now = nowIso();
   db.prepare(`INSERT INTO customers
-    (id, workspace_id, name, company, email, phone, shipping_address, notes, created_by_user_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    (id, workspace_id, name, company, email, phone, shipping_address, record_state,
+     notes, created_by_user_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, ctx.workspaceId, name, trimOrNull(input.company), trimOrNull(input.email), trimOrNull(input.phone),
-      trimOrNull(input.shippingAddress), trimOrNull(input.notes), ctx.actorId, now, now);
+      trimOrNull(input.shippingAddress), input.recordState === 'PROVISIONAL' ? 'PROVISIONAL' : 'ACTIVE',
+      trimOrNull(input.notes), ctx.actorId, now, now);
   return requireCustomer(db, ctx.workspaceId, id);
 }
 
 function listCustomers(db, workspaceId) {
   return db.prepare(`SELECT c.*,
       (SELECT COUNT(*) FROM sales_orders so WHERE so.customer_id = c.id) AS order_count
-    FROM customers c WHERE c.workspace_id = ? ORDER BY c.name COLLATE NOCASE`).all(workspaceId);
+    FROM customers c WHERE c.workspace_id = ? AND c.record_state = 'ACTIVE'
+    ORDER BY c.name COLLATE NOCASE`).all(workspaceId);
 }
 
 function getCustomer(db, workspaceId, customerId) {
@@ -122,6 +125,32 @@ function fillInCustomer(db, ctx, customer, input) {
   return requireCustomer(db, ctx.workspaceId, customer.id);
 }
 
+function destinationFor(customer, input = {}) {
+  const method = String(input.deliveryMethod || 'SHIP').trim().toUpperCase();
+  if (!['SHIP', 'PICKUP'].includes(method)) {
+    throw new ValidationError('Choose whether this order ships or the customer collects it.');
+  }
+  if (method === 'PICKUP') {
+    return { method, address: null, source: 'PICKUP' };
+  }
+
+  /*
+   * `shipToAddress` is an order-specific instruction. Its presence matters:
+   * null means "the source explicitly supplied no usable address", so falling
+   * through to an old customer default would send the parcel somewhere the
+   * current order never named. Manual entry uses customerShippingAddress and
+   * may safely fall back to the customer's saved default when left blank.
+   */
+  const explicit = Object.prototype.hasOwnProperty.call(input, 'shipToAddress');
+  const orderAddress = explicit
+    ? trimOrNull(input.shipToAddress)
+    : trimOrNull(input.customerShippingAddress);
+  const address = orderAddress || (!explicit ? trimOrNull(customer.shipping_address) : null);
+  const source = trimOrNull(input.shipToSource)
+    || (orderAddress ? 'ORDER' : address ? 'CUSTOMER_DEFAULT' : 'MISSING');
+  return { method, address, source };
+}
+
 function createOrder(db, ctx, input) {
   return inTransaction(db, () => {
     /*
@@ -139,10 +168,17 @@ function createOrder(db, ctx, input) {
      * while making an unrelated order, is not a thing to do without being
      * asked — that is what the customer page is for.
      */
-    const customer = input.customerId
+    let customer = input.customerId
       ? fillInCustomer(db, ctx, requireCustomer(db, ctx.workspaceId, input.customerId), input)
       : createCustomer(db, ctx, { name: input.customerName, company: input.company,
         email: input.customerEmail, shippingAddress: input.customerShippingAddress });
+    if (input.saveCustomerAddress && trimOrNull(input.customerShippingAddress)
+        && trimOrNull(customer.shipping_address) !== trimOrNull(input.customerShippingAddress)) {
+      db.prepare('UPDATE customers SET shipping_address = ?, updated_at = ? WHERE id = ? AND workspace_id = ?')
+        .run(trimOrNull(input.customerShippingAddress), nowIso(), customer.id, ctx.workspaceId);
+      customer = requireCustomer(db, ctx.workspaceId, customer.id);
+    }
+    const destination = destinationFor(customer, input);
     ensureLocation(db, ctx.workspaceId, input.fulfillmentLocationId);
     const lines = Array.isArray(input.lines) ? input.lines : [];
     if (!lines.length) throw new ValidationError('Add at least one product to the sales order.');
@@ -182,10 +218,17 @@ function createOrder(db, ctx, input) {
     const orderNumber = trimOrNull(input.orderNumber) || nextOrderNumber(db, ctx.workspaceId);
     db.prepare(`INSERT INTO sales_orders
       (id, workspace_id, customer_id, order_number, order_date, needed_by, fulfillment_location_id,
-       notes, reference, currency, discount_minor, tax_minor, status, created_by_user_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?)`)
+       delivery_method, ship_to_address, ship_to_source, customer_decision_required,
+       delivery_decision_required, notes, reference, currency,
+       discount_minor, tax_minor, status, created_by_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?)`)
       .run(id, ctx.workspaceId, customer.id, orderNumber, trimOrNull(input.orderDate) || now.slice(0, 10),
-        trimOrNull(input.neededBy), input.fulfillmentLocationId || null, trimOrNull(input.notes),
+        trimOrNull(input.neededBy), input.fulfillmentLocationId || null,
+        destination.method, destination.address, destination.source,
+        input.customerDecisionRequired ? 1 : 0,
+        (input.deliveryDecisionRequired
+          || (input.requireDeliveryDecision && destination.method === 'SHIP' && !destination.address)) ? 1 : 0,
+        trimOrNull(input.notes),
         trimOrNull(input.reference), currency, discountMinor, taxMinor, ctx.actorId, now, now);
     for (const line of pricedLines) {
       db.prepare(`INSERT INTO sales_order_lines
@@ -195,7 +238,10 @@ function createOrder(db, ctx, input) {
         .run(newId('sol'), ctx.workspaceId, id, line.skuId, line.quantity,
           line.price.isSet ? line.price.amount_minor : null, line.price.isSet ? line.price.id : null, now, now);
     }
-    recordEvent(db, ctx, id, 'CREATED', { orderNumber, customerId: customer.id }, `sales-order-created:${id}`);
+    recordEvent(db, ctx, id, 'CREATED', {
+      orderNumber, customerId: customer.id, deliveryMethod: destination.method,
+      shipToSource: destination.source, hasShipToAddress: Boolean(destination.address),
+    }, `sales-order-created:${id}`);
     return getOrder(db, ctx.workspaceId, id);
   });
 }
@@ -282,6 +328,12 @@ function confirm(db, ctx, orderId, options = {}) {
   const outcome = inTransaction(db, () => {
     const order = requireOrderRow(db, ctx.workspaceId, orderId);
     if (order.status !== 'DRAFT') return { order: getOrder(db, ctx.workspaceId, orderId), event: null, replayed: true };
+    if (order.customer_decision_required) {
+      throw new ValidationError('First decide whether this new email sender is a new customer or matches a customer already in Foundry.');
+    }
+    if (order.delivery_decision_required) {
+      throw new ValidationError('First confirm whether this order will be shipped or collected. A carrier shipment also needs its delivery address.');
+    }
     const missingPrices = db.prepare(`SELECT sol.sku_id, i.name AS item_name, s.variant_label
       FROM sales_order_lines sol JOIN skus s ON s.id = sol.sku_id JOIN items i ON i.id = s.item_id
       WHERE sol.sales_order_id = ? AND sol.workspace_id = ? AND sol.unit_price_minor IS NULL`)
@@ -500,6 +552,9 @@ function fulfill(db, ctx, orderId, input = {}, options = {}) {
   const outcome = inTransaction(db, () => {
     const order = requireOrderRow(db, ctx.workspaceId, orderId);
     if (!OPEN.includes(order.status)) throw new ValidationError('Confirm this sales order before fulfilling it.');
+    if (order.customer_decision_required || order.delivery_decision_required) {
+      throw new ValidationError('Resolve the customer and delivery details before any stock leaves for this order.');
+    }
     const eventKey = options.idempotencyKey || `sales-order-fulfillment:${orderId}:${newId('run')}`;
     const prior = db.prepare('SELECT * FROM sales_order_events WHERE workspace_id = ? AND idempotency_key = ?')
       .get(ctx.workspaceId, eventKey);
@@ -657,6 +712,66 @@ function listOrders(db, workspaceId, { status = null, customerId = null, limit =
   return db.prepare(`SELECT so.id FROM sales_orders so WHERE ${where.join(' AND ')}
     ORDER BY CASE WHEN so.needed_by IS NULL THEN 1 ELSE 0 END, so.needed_by, so.created_at DESC LIMIT ?`)
     .all(...params, limit).map((row) => getOrder(db, workspaceId, row.id));
+}
+
+/** Accept a first-time email sender, or attach their order to a known customer. */
+function resolveEmailCustomer(db, ctx, orderId, input = {}) {
+  return inTransaction(db, () => {
+    const order = requireOrderRow(db, ctx.workspaceId, orderId);
+    if (!order.source_email_message_id) throw new ValidationError('This order did not come from an email sender review.');
+    if (!order.customer_decision_required) return getOrder(db, ctx.workspaceId, orderId);
+    const provisional = requireCustomer(db, ctx.workspaceId, order.customer_id);
+    if (input.action === 'match') {
+      const matched = requireCustomer(db, ctx.workspaceId, trimOrNull(input.customerId));
+      if (matched.record_state !== 'ACTIVE') throw new ValidationError('Choose an existing confirmed customer.');
+      db.prepare(`UPDATE sales_orders SET customer_id = ?, customer_decision_required = 0,
+        updated_at = ?, version = version + 1 WHERE id = ? AND workspace_id = ?`)
+        .run(matched.id, nowIso(), orderId, ctx.workspaceId);
+      const stillUsed = db.prepare('SELECT 1 FROM sales_orders WHERE customer_id = ? LIMIT 1').get(provisional.id);
+      if (!stillUsed && provisional.record_state === 'PROVISIONAL') {
+        db.prepare('DELETE FROM customers WHERE id = ? AND workspace_id = ?').run(provisional.id, ctx.workspaceId);
+      }
+      recordEvent(db, ctx, orderId, 'CUSTOMER_MATCHED', { customerId: matched.id });
+    } else {
+      db.prepare(`UPDATE customers SET record_state = 'ACTIVE', updated_at = ?
+        WHERE id = ? AND workspace_id = ?`).run(nowIso(), provisional.id, ctx.workspaceId);
+      db.prepare(`UPDATE sales_orders SET customer_decision_required = 0,
+        updated_at = ?, version = version + 1 WHERE id = ? AND workspace_id = ?`)
+        .run(nowIso(), orderId, ctx.workspaceId);
+      recordEvent(db, ctx, orderId, 'CUSTOMER_CREATED_FROM_EMAIL', { customerId: provisional.id });
+    }
+    return getOrder(db, ctx.workspaceId, orderId);
+  });
+}
+
+/** Record the destination decision on the order itself, never as a mutable guess. */
+function resolveDelivery(db, ctx, orderId, input = {}) {
+  return inTransaction(db, () => {
+    const order = requireOrderRow(db, ctx.workspaceId, orderId);
+    const method = String(input.deliveryMethod || '').toUpperCase();
+    if (!['SHIP', 'PICKUP'].includes(method)) {
+      throw new ValidationError('Choose ship to an address or customer pickup.');
+    }
+    let address = null;
+    let source = 'PICKUP';
+    if (method === 'SHIP') {
+      address = trimOrNull(input.shippingAddress) || trimOrNull(order.ship_to_address);
+      if (!address) throw new ValidationError('Enter the delivery address, or choose customer pickup.');
+      const parsed = require('../shipping/address').parse(address);
+      if (!parsed.complete) throw new ValidationError(`The delivery address still needs ${parsed.missing.join(', ')}.`);
+      source = 'OWNER_CONFIRMED';
+    }
+    db.prepare(`UPDATE sales_orders SET delivery_method = ?, ship_to_address = ?, ship_to_source = ?,
+      delivery_decision_required = 0, updated_at = ?, version = version + 1
+      WHERE id = ? AND workspace_id = ?`)
+      .run(method, address, source, nowIso(), orderId, ctx.workspaceId);
+    if (method === 'SHIP' && input.saveCustomerAddress) {
+      db.prepare(`UPDATE customers SET shipping_address = ?, updated_at = ?
+        WHERE id = ? AND workspace_id = ?`).run(address, nowIso(), order.customer_id, ctx.workspaceId);
+    }
+    recordEvent(db, ctx, orderId, 'DELIVERY_CONFIRMED', { method, hasAddress: Boolean(address) });
+    return getOrder(db, ctx.workspaceId, orderId);
+  });
 }
 
 /**
@@ -819,6 +934,7 @@ function react(db, workspaceId, salesEvent, type, order) {
 module.exports = {
   OPEN, createCustomer, listCustomers, getCustomer, updateCustomer, requireCustomer,
   createOrder, confirm, allocateAvailable, addLine, setLineQuantity, fulfill, cancel, cancelLine,
+  resolveEmailCustomer, resolveDelivery,
   getOrder, listOrders, listCompletedSales, waitingForStock, committedByPosition, availabilityForSku,
   commitmentsForSku, reconcileForSkus,
 };

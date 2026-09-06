@@ -224,7 +224,67 @@ test('the mailbox page says an order was drafted from the email, not "Ignored se
   assert.doesNotMatch(text, /It did not change purchasing or inventory/);
 
   const needs = await env.agent.get('/needs-you');
-  assert.match(plain(needs.text), new RegExp(`Approve ${order.order_number} for Moshe Ekstein`), 'and Needs you asks for the approval');
+  assert.match(plain(needs.text), /Is arye6700@gmail\.com a new customer\?/, 'and Needs you asks who the new sender is');
+  env.db.close();
+});
+
+test('an unknown email order presents one clear customer and delivery path before fulfilment', async () => {
+  const env = await setup([]);
+  const connectorId = connectMailbox(env);
+  makeQuantityItem(env.db, env.ctx, { name: 'bike toe lace', baseCode: 'TBD-36' });
+  const ingestion = require('../../src/connections/email-ingestion');
+  const orderFromEmail = require('../../src/sales/order-from-email');
+  const captured = ingestion.capture(env.db, { workspaceId: env.workspace.workspaceId, connectorId },
+    { occurredAt: new Date().toISOString(), data: { messageId: 'new-customer-path', sender: 'firstorder@example.test',
+      subject: 'New order', bodyText: "I'd like to order bike toe lace 3 pieces", attachments: [] } });
+  const { order } = await orderFromEmail.draft(env.db, env.ctx, captured.actionRecordId, {
+    provider: { complete: async () => ({ data: { isAnOrder: true, contactName: 'First Buyer', phone: '',
+      deliveryMethod: 'UNKNOWN', lines: [{ itemText: 'bike toe lace', variantText: '', quantity: 3 }] } }) },
+  });
+
+  let page = await env.agent.get(`/orders/${order.id}`);
+  let text = plain(page.text);
+  assert.match(text, /Is this a new customer\?/);
+  assert.match(text, /Create First Buyer as a customer/);
+  assert.doesNotMatch(text, /Record what physically left/);
+  assert.doesNotMatch(text, /Do now: Connect where sales happen/,
+    'a focused order does not compete with unrelated workspace guidance');
+
+  let response = await env.agent.post(`/sales/orders/${order.id}/resolve-customer`).type('form')
+    .send({ _csrf: csrfFrom(page.text), action: 'create' });
+  assert.equal(response.status, 303);
+  page = await env.agent.get(`/orders/${order.id}`);
+  text = plain(page.text);
+  assert.match(text, /Where should this order go\?/);
+  assert.match(text, /Foundry already emailed|Foundry wrote the exact question|did not provide a usable destination/);
+  assert.doesNotMatch(text, /Record what physically left/);
+
+  response = await env.agent.post(`/sales/orders/${order.id}/resolve-delivery`).type('form')
+    .send({ _csrf: csrfFrom(page.text), deliveryMethod: 'PICKUP' });
+  assert.equal(response.status, 303);
+  page = await env.agent.get(`/orders/${order.id}`);
+  assert.match(plain(page.text), /Confirm this order and reserve stock|Give the selling price, then confirm this order/);
+  env.db.close();
+});
+
+test('a customer can be created directly without first creating an order', async () => {
+  const env = await setup([]);
+  let page = await env.agent.get('/sales/customers/new');
+  assert.equal(page.status, 200);
+  const text = plain(page.text);
+  assert.match(text, /Who is the customer\?/);
+  assert.match(text, /Only the name is required/);
+
+  const response = await env.agent.post('/sales/customers').type('form').send({
+    _csrf: csrfFrom(page.text), name: 'Walk-in Customer', email: 'walkin@example.test',
+  });
+  assert.equal(response.status, 303);
+  const customer = env.db.prepare("SELECT * FROM customers WHERE email = 'walkin@example.test'").get();
+  assert.ok(customer);
+  assert.equal(response.headers.location, `/sales/customers/${customer.id}`);
+
+  page = await env.agent.get('/orders');
+  assert.match(page.text, /href="\/sales\/customers\/new"[^>]*>Add customer</);
   env.db.close();
 });
 
@@ -238,13 +298,15 @@ test('an order whose product has no selling price can still be approved: the pri
   const env = await setup([]);
   const connectorId = connectMailbox(env);
   const item = makeQuantityItem(env.db, env.ctx, { name: 'bike toe lace', baseCode: 'TBD-36' });
+  require('../../src/sales/sales-order-service').createCustomer(env.db, env.ctx,
+    { name: 'Moshe Ekstein', email: 'arye6700@gmail.com' });
   const ingestion = require('../../src/connections/email-ingestion');
   const orderFromEmail = require('../../src/sales/order-from-email');
   const captured = ingestion.capture(env.db, { workspaceId: env.workspace.workspaceId, connectorId },
     { occurredAt: new Date().toISOString(), data: { messageId: 'g-2', sender: 'arye6700@gmail.com',
       subject: 'bike toe lace', bodyText: "I'd like to order bike toe lace 2 pieces", attachments: [] } });
   const { order } = await orderFromEmail.draft(env.db, env.ctx, captured.actionRecordId, {
-    provider: { complete: async () => ({ data: { isAnOrder: true, contactName: 'Moshe Ekstein', phone: '',
+    provider: { complete: async () => ({ data: { isAnOrder: true, contactName: 'Moshe Ekstein', phone: '', deliveryMethod: 'PICKUP',
       lines: [{ itemText: 'bike toe lace', variantText: '', quantity: 2 }] } }) },
   });
 
@@ -301,18 +363,26 @@ test('the payment email Foundry wrote is on the order, readable, with the send b
    * The owner asked where the email was. Fair question.
    */
   const registry = require('../../src/payments/provider');
-  const undo = registry.register('fake', {
+  const fakePaymentProvider = {
     async createCustomer() { return { externalCustomerId: 'cus_1' }; },
     async createInvoice() { return { externalInvoiceId: 'in_1', hostedUrl: 'https://pay.test/in_1' }; },
     async getHostedPaymentUrl() { return 'https://pay.test/in_1'; },
     async refundPayment() { return { externalRefundId: 're_1' }; },
     verifyEvent(raw) { return raw; },
     readEvent() { return { kind: 'IGNORED' }; },
-  });
+  };
+  let undo = () => {};
   try {
     const env = await setup([]);
+    // createApp installs the normal adapter, so replace it only after the app
+    // exists. This test verifies the order/email flow, not Stripe's network.
+    undo = registry.register('stripe', fakePaymentProvider);
+    require('../../src/payments/accounts').connect(env.db, env.ctx, env.membership,
+      { secretKey: 'sk_test_halfi_messages_0000' });
     const connectorId = connectMailbox(env);
     const item = makeQuantityItem(env.db, env.ctx, { name: 'bike toe lace', baseCode: 'TBD-36' });
+    require('../../src/sales/sales-order-service').createCustomer(env.db, env.ctx,
+      { name: 'Moshe Ekstein', email: 'arye6700@gmail.com' });
     require('../../src/pricing/price-service').setPrice(env.db, env.ctx, { skuId: item.skuId, amount: '150.00', currency: 'USD' });
     const ingestion = require('../../src/connections/email-ingestion');
     const orderFromEmail = require('../../src/sales/order-from-email');
@@ -320,7 +390,7 @@ test('the payment email Foundry wrote is on the order, readable, with the send b
       { occurredAt: new Date().toISOString(), data: { messageId: 'g-4', sender: 'arye6700@gmail.com',
         subject: 'bike toe lace', bodyText: "I'd like to order bike toe lace 2 pieces", attachments: [] } });
     const { order } = await orderFromEmail.draft(env.db, env.ctx, captured.actionRecordId, {
-      provider: { complete: async () => ({ data: { isAnOrder: true, contactName: 'Moshe Ekstein', phone: '',
+      provider: { complete: async () => ({ data: { isAnOrder: true, contactName: 'Moshe Ekstein', phone: '', deliveryMethod: 'PICKUP',
         lines: [{ itemText: 'bike toe lace', variantText: '', quantity: 2 }] } }) },
     });
 

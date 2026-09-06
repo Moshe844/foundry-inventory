@@ -57,7 +57,7 @@ function setup(options = {}) {
 
 const withCarrier = (carrier) => {
   const undo = shipping.provider.register('easypost', carrier);
-  process.env.EASYPOST_API_KEY = 'test-key-not-a-real-one';
+  process.env.EASYPOST_API_KEY = 'EZTK_test-key-not-a-real-one';
   return () => { undo(); delete process.env.EASYPOST_API_KEY; };
 };
 
@@ -156,7 +156,7 @@ test('a rate with no delivery date never counts as arriving on time', () => {
 
 /* ------------------------------------------------------------- the label */
 
-test('buying the label ships the order, tells the customer, and puts the cost in the books', async () => {
+test('buying the label records postage but only physical handoff ships the order', async () => {
   const env = setup();
   const carrier = fakeCarrier();
   const undo = withCarrier(carrier);
@@ -170,18 +170,18 @@ test('buying the label ships the order, tells the customer, and puts the cost in
     assert.deepEqual(carrier.state.bought, ['rate_ups'], 'the rate that was chosen is the rate that was bought');
 
     const row = env.db.prepare('SELECT * FROM sales_shipments WHERE id = ?').get(env.box.id);
-    assert.equal(row.status, 'SHIPPED', 'the ordinary ship path ran');
-    assert.equal(row.handover, 'CARRIER', 'buying a label is not an inference about how it left');
+    assert.equal(row.status, 'PACKED', 'a purchased label does not claim the parcel physically left');
+    assert.equal(row.handover, null);
     assert.equal(row.tracking_number, TRACKING);
     assert.equal(row.tracking_url, 'https://carrier.test/track/1Z999AA10123456784',
       'the carrier\'s own link, not one Foundry assembled');
     assert.equal(Number(row.shipping_cost_minor), 1842);
     assert.equal(row.expected_delivery_date, '2026-09-14');
 
-    // The stock actually moved, because ship() is what does that.
+    // The stock stays put while the labelled parcel is still in the building.
     const left = env.db.prepare(`SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances
       WHERE workspace_id = ? AND sku_id = ?`).get(env.workspace.workspaceId, env.item.skuId).n;
-    assert.equal(Number(left), 38);
+    assert.equal(Number(left), 40);
 
     // And the postage is an expense, not part of what the stock cost.
     if (ledger.settings(env.db, env.workspace.workspaceId).enabled) {
@@ -196,6 +196,14 @@ test('buying the label ships the order, tells the customer, and puts the cost in
     const again = await shipping.service.buyLabel(env.db, env.ctx, env.box.id, ups.id);
     assert.equal(again.replayed, true);
     assert.equal(carrier.state.bought.length, 1);
+
+    const handedOver = shipments.ship(env.db, env.ctx, env.box.id, { handover: 'CARRIER' });
+    assert.equal(handedOver.status, 'SHIPPED');
+    assert.equal(handedOver.handover, 'CARRIER');
+    assert.equal(handedOver.tracking_number, TRACKING, 'the bought label details survive handoff');
+    const afterHandoff = env.db.prepare(`SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances
+      WHERE workspace_id = ? AND sku_id = ?`).get(env.workspace.workspaceId, env.item.skuId).n;
+    assert.equal(Number(afterHandoff), 38, 'stock moves exactly when the parcel leaves');
   } finally { undo(); env.db.close(); }
 });
 
@@ -371,7 +379,7 @@ test('within authority Foundry buys the label itself, and outside it does nothin
     assert.equal(done.carrier, 'ups');
     assert.match(done.because, /\$18\.42/);
     assert.equal(env.db.prepare('SELECT status FROM sales_shipments WHERE id = ?')
-      .get(env.box.id).status, 'SHIPPED');
+      .get(env.box.id).status, 'PACKED', 'automation may buy postage, but cannot invent a physical handoff');
     assert.equal(env.db.prepare('SELECT bought_by_rule_id FROM sales_shipments WHERE id = ?')
       .get(env.box.id).bought_by_rule_id, done.rule.id, 'the rule that spent the money is named');
   } finally { undo(); env.db.close(); }

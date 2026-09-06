@@ -130,6 +130,32 @@ test('with no webhook at all, a payment that succeeded is recorded once', async 
   } finally { undo(); env.db.close(); }
 });
 
+test('the waiting order learns payment immediately and returns receipt and invoice actions', async () => {
+  const env = setup();
+  let invoice = UNPAID;
+  const undo = registry.register('fake', askable(() => invoice));
+  try {
+    const askedFor = await asked(env);
+    invoice = PAID;
+    const app = createApp({ db: env.db, env: 'test', sessionSecret: 'payment-window', aiProvider: fakeProvider({}) });
+    const agent = request.agent(app);
+    await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+    const state = await agent.get(`/sales/orders/${env.order.id}/payment-state`)
+      .set('Accept', 'application/json');
+    assert.equal(state.status, 200);
+    assert.equal(state.body.paid, true);
+    assert.match(state.body.receipt.href, /\/receipt\//);
+    assert.equal(state.body.invoice.href, askedFor.hostedUrl);
+
+    const page = await agent.get(`/orders/${env.order.id}?payment=paid`);
+    assert.equal(page.status, 200);
+    assert.match(page.text, /Payment completed and recorded/);
+    assert.match(page.text, /Print receipt/);
+    assert.match(page.text, /View or print Stripe invoice/);
+  } finally { undo(); env.db.close(); }
+});
+
 test('an unreachable provider is not news about the customer', async () => {
   const env = setup();
   const undo = registry.register('fake', {

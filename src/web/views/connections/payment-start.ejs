@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Opening Stripe · Foundry</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/foundry.css">
+  <style>
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: var(--surface-subtle, #f7f8fa); }
+    .stripe-start { width: min(420px, calc(100vw - 32px)); text-align: center; }
+    .stripe-start .panel { padding: 28px; }
+    .stripe-start h1 { margin: 0 0 10px; font-size: 22px; }
+    .stripe-start p { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
+    .stripe-start__pulse { width: 34px; height: 34px; margin: 0 auto 18px; border: 3px solid #d7dee8;
+      border-top-color: #635bff; border-radius: 50%; animation: stripe-turn .8s linear infinite; }
+    @keyframes stripe-turn { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <main class="stripe-start">
+    <div class="panel">
+      <div class="stripe-start__pulse" aria-hidden="true"></div>
+      <h1>Opening Stripe securely</h1>
+      <p>Stripe may take a moment to check the account. Keep this tab open.</p>
+      <form id="stripe-start-form" method="post" action="<%= postPath %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <noscript><button class="btn btn--primary" type="submit">Continue to Stripe</button></noscript>
+      </form>
+    </div>
+  </main>
+  <script>
+    /* Let the loading card paint before the POST begins. Without these two
+       frames the browser can remain white for the entire Stripe API wait. */
+    window.requestAnimationFrame(function () {
+      window.requestAnimationFrame(function () {
+        document.getElementById('stripe-start-form').submit();
+      });
+    });
+  </script>
+</body>
+</html>

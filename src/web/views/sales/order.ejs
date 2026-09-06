@@ -5,6 +5,7 @@
       : locals.goneWord === 'collected' ? 'Collected'
       : locals.goneWord === 'delivered' ? 'Delivered' : 'Gone'),
     CANCELLED: 'Cancelled' };
+  var setupRequired = Boolean(order.customer_decision_required || order.delivery_decision_required);
   var currentStep = order.status === 'DRAFT' ? 1
     : ['CONFIRMED','BACKORDERED'].includes(order.status) ? 2
       : order.status === 'PARTIALLY_FULFILLED' ? 3 : 4;
@@ -24,7 +25,7 @@
   var shipped = order.totals.fulfilled || 0;
 %>
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= order.order_number %></span></div>
-<div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= order.order_date %><%= order.needed_by ? ' · customer needs it by ' + order.needed_by : '' %></p></div><span class="badge <%= order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= statusLabels[order.status] || order.status %></span></div>
+<div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1><%= order.order_number %> · <%= order.customer.name %></h1><p>Created <%= order.order_date %><%= order.needed_by ? ' · customer needs it by ' + order.needed_by : '' %></p></div><span class="badge <%= setupRequired || order.status === 'BACKORDERED' ? 'badge--warn' : order.status === 'FULFILLED' ? 'badge--success' : 'badge--muted' %>"><%= setupRequired ? 'Waiting for customer details' : (statusLabels[order.status] || order.status) %></span></div>
 
 <% if (money.invoiced && (money.heldReason.pick || money.heldReason.ship)) { %>
   <div class="notice notice--<%= money.override ? 'info' : 'warn' %>" id="payment-hold">
@@ -72,7 +73,7 @@
   was missing. Same order the payment hold uses: state the situation, then
   offer the thing to do about it.
 %>
-<% if (order.status !== 'DRAFT' && order.totals.backordered) { %><div class="notice notice--warn sales-outcome">
+<% if (order.status !== 'DRAFT' && order.totals.backordered) { %><div class="notice notice--warn sales-outcome" id="stock-shortage">
   <strong><%= order.totals.backordered %> unit<%= order.totals.backordered === 1 ? '' : 's' %> still short.</strong>
   <%
     // Stock is allocated when an order is confirmed and not again, so a
@@ -93,7 +94,7 @@
   <% } else { %>
     <p>The customer order is confirmed, but Foundry found only <%= order.totals.allocated %> unit<%= order.totals.allocated === 1 ? '' : 's' %> available to hold. <strong>No on-hand stock changed and nothing was shipped.</strong></p>
   <% } %>
-  <p>Foundry automatically checked stock at other locations, incoming supplier orders and replenishment. If a decision or missing setup is required, it is in <a href="/needs-you">Needs you</a>.</p>
+  <p>Foundry checked stock at every location. Use the exact action below to cover what is missing.</p>
 </div><% } %>
 
 <%#
@@ -102,7 +103,7 @@
   customer correctly, and that decision cannot be made against a form — it is
   made against what the customer actually wrote, which is therefore here.
 %>
-<% if (locals.cameFromEmail && order.status === 'DRAFT') { %>
+<% if (locals.cameFromEmail && (order.status === 'DRAFT' || setupRequired)) { %>
   <div class="card sales-action-card">
     <p class="eyebrow">Foundry prepared this</p>
     <h2>Read from an email from <%= cameFromEmail.sender %></h2>
@@ -110,7 +111,7 @@
     <% if (cameFromEmail.body_text) { %>
       <blockquote class="quoted-source"><%= cameFromEmail.body_text %></blockquote>
     <% } %>
-    <p>Nothing has been committed. Check the products and quantities below against what they wrote, then confirm the order or change it first.</p>
+    <p><%= order.status === 'DRAFT' ? 'Nothing has been committed.' : 'Stock may already be held, but nothing can leave until the customer and delivery details below are resolved.' %> Check the products and quantities against what they wrote.</p>
     <a class="btn btn--sm" href="/mail/<%= cameFromEmail.id %>">Open the original message</a>
   </div>
 <% } else if (locals.cameFromEmail) { %>
@@ -127,8 +128,62 @@
   </details>
 <% } %>
 
+<% if (order.customer_decision_required) { %>
+  <div class="card sales-action-card sales-primary-action" id="customer-decision">
+    <p class="eyebrow">Do this next — 1 of <%= order.delivery_decision_required ? '2' : '1' %></p>
+    <h2>Is this a new customer?</h2>
+    <p><strong><%= cameFromEmail.sender %></strong> does not match any confirmed customer in Foundry. Foundry kept the order, but did not silently trust or merge the sender.</p>
+    <div class="form-actions">
+      <form method="post" action="/sales/orders/<%= order.id %>/resolve-customer">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="action" value="create">
+        <button class="btn btn--primary" type="submit">Create <%= order.customer.name %> as a customer</button>
+      </form>
+    </div>
+    <% if ((locals.customers || []).length) { %>
+      <details class="disclosure" style="margin-top:12px">
+        <summary>This sender is an existing customer</summary>
+        <form method="post" action="/sales/orders/<%= order.id %>/resolve-customer" class="form-actions" style="margin-top:12px">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="action" value="match">
+          <label class="field"><span>Match this order to</span><select name="customerId" required><option value="">Choose the existing customer</option><% customers.forEach(function (customer) { %><option value="<%= customer.id %>"><%= customer.name %><%= customer.email ? ' · ' + customer.email : '' %></option><% }) %></select></label>
+          <button class="btn" type="submit">Match customer and continue</button>
+        </form>
+      </details>
+    <% } %>
+  </div>
+<% } else if (order.delivery_decision_required) { %>
+  <form class="card sales-action-card sales-primary-action" id="delivery-decision" method="post" action="/sales/orders/<%= order.id %>/resolve-delivery">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <p class="eyebrow">Do this next</p>
+    <h2>Where should this order go?</h2>
+    <% if (cameFromEmail && cameFromEmail.reply_sent_at) { %>
+      <p><strong>Foundry already emailed <%= cameFromEmail.sender %></strong> asking for a full shipping address or pickup. The order is waiting for their answer; you can also enter it here if they tell you another way.</p>
+    <% } else if (cameFromEmail && cameFromEmail.draft_at) { %>
+      <p>Foundry wrote the exact question to ask, but the mailbox could not send it automatically. <a href="/mail/<%= cameFromEmail.id %>">Open the email and send it</a>, or enter the answer here.</p>
+    <% } else { %>
+      <p><%= cameFromEmail ? 'The email did not provide a usable destination.' : 'Choose how the customer will receive this order.' %> Nothing can ship until this is answered.</p>
+    <% } %>
+    <fieldset class="ship-method">
+      <legend>How will the customer receive it?</legend>
+      <label class="choice"><input type="radio" name="deliveryMethod" value="SHIP" required checked><span>Ship to this address</span></label>
+      <label class="choice"><input type="radio" name="deliveryMethod" value="PICKUP" required><span>Customer pickup</span></label>
+    </fieldset>
+    <label class="field"><span>Full delivery address</span><textarea name="shippingAddress" rows="3" placeholder="Street, town, state, postcode"><%= order.ship_to_address || '' %></textarea><small>Not needed for pickup.</small></label>
+    <label class="choice"><input type="checkbox" name="saveCustomerAddress" value="1"><span>Use this as the customer's default next time</span></label>
+    <button class="btn btn--primary" type="submit">Save delivery choice and continue</button>
+  </form>
+<% } %>
+
+<% if (setupRequired) { %>
+  <details class="panel section fold">
+    <summary class="panel-head"><div><h2>What they ordered</h2><span class="t-xs t-muted"><%= order.lines.length %> product<%= order.lines.length === 1 ? '' : 's' %> · nothing can leave yet</span></div></summary>
+    <div class="card-body"><% order.lines.forEach(function (line) { %><p><strong><%= line.quantity_ordered %> × <%= line.displayName %></strong><% if (line.unit_price_minor !== null) { %> · <%= helpers.money(line.lineTotalMinor, order.currency) %><% } %></p><% }) %></div>
+  </details>
+<% } else { %>
+
 <% if (order.status === 'DRAFT' && !order.pricing.missingPriceLines) { %>
-  <form class="card sales-action-card sales-primary-action" method="post" action="/sales/orders/<%= order.id %>/confirm">
+  <form class="card sales-action-card sales-primary-action" id="approve-order" method="post" action="/sales/orders/<%= order.id %>/confirm">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <p class="eyebrow">Do this next</p><h2>Confirm this order and reserve stock</h2>
     <p>This is the only action needed now. Foundry will hold available stock for <%= order.customer.name %>; physical on-hand and Accounting remain unchanged until shipment.</p>
@@ -144,7 +199,7 @@
     invent a price; it asks for it here, where the decision is being made, and
     confirms in the same step.
   %>
-  <form class="card sales-action-card sales-primary-action" method="post" action="/sales/orders/<%= order.id %>/confirm">
+  <form class="card sales-action-card sales-primary-action" id="approve-order" method="post" action="/sales/orders/<%= order.id %>/confirm">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <p class="eyebrow">Do this next</p><h2>Give the selling price, then confirm this order</h2>
     <p>Foundry has no selling price on file for <%= order.pricing.missingPriceLines === 1 ? 'this product' : 'these products' %>, and it will not treat a blank as zero. Enter what you charge and the order is confirmed in the same step — the price is kept for next time.</p>
@@ -164,6 +219,18 @@
     <p><%= locals.shortButAvailable %> unit<%= locals.shortButAvailable === 1 ? ' is' : 's are' %> free now. Reserving keeps it for <%= order.customer.name %>; nothing ships yet.</p>
     <button class="btn btn--primary" type="submit">Reserve <%= locals.shortButAvailable %> for <%= order.customer.name %></button>
   </form>
+<% } else if (!['FULFILLED','CANCELLED'].includes(order.status) && order.totals.backordered) { %>
+  <div class="card sales-action-card sales-primary-action">
+    <p class="eyebrow">Do this next</p>
+    <h2>Cover the <%= order.totals.backordered %> missing unit<%= order.totals.backordered === 1 ? '' : 's' %></h2>
+    <p>The order is saved.<% if (shipped) { %> The <%= shipped %> already <%= locals.goneWord || 'gone' %> will not be changed.<% } else { %> The available stock is held and nothing was shipped.<% } %> Choose the exact missing product below to arrange replenishment.</p>
+    <% (locals.shortageDetails || []).forEach(function (line) { %>
+      <div class="list-row">
+        <div><strong><%= line.displayName %></strong><br><span class="hint"><%= line.missing %> still needed</span></div>
+        <a class="btn btn--primary btn--sm" href="<%= line.actionHref %>"><%= line.actionLabel %></a>
+      </div>
+    <% }) %>
+  </div>
 <% } else if (locals.money && (money.blocksPicking || money.blocksShipping)) { %>
   <%#
     Offering "record the items as shipped" on an order the engine will refuse
@@ -255,11 +322,10 @@
         <small>Becomes a link the customer can follow.</small>
       </label>
     </div>
-    <% if (order.customer && !order.customer.shipping_address) { %>
+    <% if (order.delivery_method !== 'PICKUP' && !order.ship_to_address) { %>
       <p class="hint">
-        Foundry has no address for <%= order.customer.name %>, so this parcel will not carry one.
-        <a href="/sales/customers/<%= order.customer.id %>">Add it</a> and every parcel after this
-        one will.
+        This Sales Order has no delivery address, so Foundry cannot prepare a carrier label.
+        The customer's profile is only a default; the order needs its own confirmed destination.
       </p>
     <% } %>
     <button class="btn btn--primary" type="submit">Record these goods as gone</button>
@@ -389,7 +455,7 @@
                 <% if (box.handover !== 'COLLECTED' && box.ship_to_address) { %>
                   <span class="cell-sub"><%= String(box.ship_to_address).split('\n')[0] %></span>
                 <% } else if (box.handover !== 'COLLECTED' && !box.wentBy) { %>
-                  <a class="t-warn" href="/sales/customers/<%= order.customer.id %>">No address on file</a>
+                  <span class="t-warn">No delivery address on this order</span>
                 <% } %>
               </td>
               <td>
@@ -465,7 +531,29 @@
   var money = locals.money || { invoiced: false };
 %>
 <% if (money.invoiced) { %>
-  <details class="panel section fold" id="money">
+  <%
+    var completedReceipt = (locals.customerReceipts || []).slice(-1)[0];
+    var completedRequest = (locals.paymentRequests || []).filter(function (rq) {
+      return rq.status === 'PAID' && rq.hostedUrl;
+    })[0];
+  %>
+  <% if (locals.paymentCompleted) { %>
+    <div class="notice notice--ok section" role="status">
+      <div>
+        <strong>Payment completed and recorded on <%= order.order_number %>.</strong>
+        <span>Foundry updated what the customer owes. You can print either document now.</span>
+      </div>
+      <div class="actions">
+        <% if (completedReceipt) { %>
+          <a class="btn btn--primary" href="/orders/<%= order.id %>/receipt/<%= completedReceipt.id %>">Print receipt</a>
+        <% } %>
+        <% if (completedRequest) { %>
+          <a class="btn" href="<%= completedRequest.hostedUrl %>" target="_blank" rel="noopener noreferrer">View or print Stripe invoice</a>
+        <% } %>
+      </div>
+    </div>
+  <% } %>
+  <details class="panel section fold" id="money"<% if (locals.paymentCompleted) { %> open<% } %>>
     <summary class="panel-head">
       <div>
         <h2>Money<%= money.outstandingMinor
@@ -529,6 +617,11 @@
               <a href="/orders/<%= order.id %>/receipt/<%= receipt.id %>">Print receipt <%= receipt.payment_number %></a>
             </p>
           <% }) %>
+          <% if (completedRequest) { %>
+            <p class="hint">
+              <a href="<%= completedRequest.hostedUrl %>" target="_blank" rel="noopener noreferrer">View or print the Stripe invoice</a>
+            </p>
+          <% } %>
         </div>
       <% } %>
       <p class="hint">
@@ -823,6 +916,7 @@
           </p>
           <div class="pay-modal__buttons">
             <a class="btn btn--primary" id="pay-window-receipt" href="#" hidden>Print the receipt</a>
+            <a class="btn" id="pay-window-invoice" href="#" target="_blank" rel="noopener noreferrer" hidden>View or print Stripe invoice</a>
             <a class="btn btn--primary" id="pay-window-tab" href="#" target="_blank" rel="noopener noreferrer">
               Open the payment page
             </a>
@@ -837,4 +931,6 @@
       </div>
     </div>
   <% } %>
+<% } %>
+
 <% } %>

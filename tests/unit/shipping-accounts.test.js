@@ -32,11 +32,15 @@ test.after(cleanupAll);
  */
 function withoutServerKey(run) {
   const held = { ...process.env };
-  for (const name of ['EASYPOST_API_KEY', 'EASYPOST_WEBHOOK_SECRET',
-    'SHIPPO_API_KEY', 'SHIPPO_WEBHOOK_SECRET', 'SHIPPING_PROVIDER']) delete process.env[name];
+  for (const name of ['SHIPENGINE_API_KEY', 'SHIPENGINE_WEBHOOK_SECRET',
+    'EASYPOST_API_KEY', 'EASYPOST_WEBHOOK_SECRET',
+    'SHIPPO_API_KEY', 'SHIPPO_WEBHOOK_SECRET', 'SHIPPING_PROVIDER',
+    'SHIPPING_SINGLE_TENANT']) delete process.env[name];
   try { return run(); } finally {
-    for (const name of ['EASYPOST_API_KEY', 'EASYPOST_WEBHOOK_SECRET',
-      'SHIPPO_API_KEY', 'SHIPPO_WEBHOOK_SECRET', 'SHIPPING_PROVIDER']) {
+    for (const name of ['SHIPENGINE_API_KEY', 'SHIPENGINE_WEBHOOK_SECRET',
+      'EASYPOST_API_KEY', 'EASYPOST_WEBHOOK_SECRET',
+      'SHIPPO_API_KEY', 'SHIPPO_WEBHOOK_SECRET', 'SHIPPING_PROVIDER',
+      'SHIPPING_SINGLE_TENANT']) {
       if (held[name] !== undefined) process.env[name] = held[name];
     }
   }
@@ -133,6 +137,19 @@ test('the server key is a fallback that says it is one', () => {
     env.db.close();
   }
 });
+
+test('a server live key cannot make the developer pay for tenant labels', () => withoutServerKey(() => {
+  const env = setup();
+  process.env.EASYPOST_API_KEY = 'EZAK_live_platform_key';
+  assert.equal(accounts.forWorkspace(env.db, env.workspace.workspaceId), null,
+    'a shared live key is ignored unless this installation explicitly declares itself single-tenant');
+
+  process.env.SHIPPING_SINGLE_TENANT = 'true';
+  const single = accounts.forWorkspace(env.db, env.workspace.workspaceId);
+  assert.equal(single.source, 'server');
+  assert.equal(single.apiKey, 'EZAK_live_platform_key');
+  env.db.close();
+}));
 
 test('disconnecting takes the key with it', () => withoutServerKey(() => {
   const env = setup();

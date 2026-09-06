@@ -45,7 +45,7 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   assert.match(styles.text, /\.sales-action-card\s*\{[^}]*padding:/s);
   assert.match(styles.text, /\.list-row\s*\{[^}]*padding:/s);
   const created = await agent.post('/sales/orders').type('form').send({
-    _csrf: csrfFrom(form.text), customerName: 'ABC School', skuId: env.item.skuId, quantity: 30,
+    _csrf: csrfFrom(form.text), customerName: 'ABC School', deliveryMethod: 'PICKUP', skuId: env.item.skuId, quantity: 30,
     orderDate: '2026-08-26', neededBy: '2026-09-01', fulfillmentLocationId: env.workspace.main.id,
   });
   assert.equal(created.status, 303);
@@ -136,7 +136,7 @@ test('the short manual flow can reserve an order or complete an in-stock sale in
 
   let form = await agent.get('/sales/new').expect(200);
   const reserved = await agent.post('/sales/orders').type('form').send({
-    _csrf: csrfFrom(form.text), customerName: 'Reserved Customer', skuId: env.item.skuId,
+    _csrf: csrfFrom(form.text), customerName: 'Reserved Customer', deliveryMethod: 'PICKUP', skuId: env.item.skuId,
     quantity: 5, nextStep: 'confirm',
   }).expect(303);
   let order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
@@ -148,7 +148,7 @@ test('the short manual flow can reserve an order or complete an in-stock sale in
 
   form = await agent.get('/sales/new').expect(200);
   const completed = await agent.post('/sales/orders').type('form').send({
-    _csrf: csrfFrom(form.text), customerName: 'Counter Sale Customer', skuId: env.item.skuId,
+    _csrf: csrfFrom(form.text), customerName: 'Counter Sale Customer', deliveryMethod: 'PICKUP', skuId: env.item.skuId,
     quantity: 3, nextStep: 'fulfill',
   }).expect(303);
   order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
@@ -375,7 +375,7 @@ test('the manual Sales Order form refuses a blank price and explains the correct
   assert.match(plain(form.text), /Do now:.*Set the selling price for Unpriced Scarf/i);
   assert.match(plain(form.text), /Unpriced Scarf.*Price not set/i);
   const rejected = await agent.post('/sales/orders').type('form').send({
-    _csrf: csrfFrom(form.text), customerName: 'Test Customer', skuId: unpriced.skuId, quantity: 1,
+    _csrf: csrfFrom(form.text), customerName: 'Test Customer', deliveryMethod: 'PICKUP', skuId: unpriced.skuId, quantity: 1,
     orderDate: '2026-08-30', currency: 'USD',
   });
   assert.equal(rejected.status, 400);
@@ -406,6 +406,46 @@ test('the global Needs you badge includes every customer order waiting for stock
   env.db.close();
 });
 
+test('manual orders reveal available stock before submission and shortage decisions open a real resolution', async () => {
+  const env = setup();
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 3,
+  });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const form = await agent.get('/orders/new').expect(200);
+  assert.match(plain(form.text), /Black Small Shirt.*3 available now/i,
+    'the product choice says how many units are actually free');
+  assert.match(form.text, /id="order-stock-check"[^>]*aria-live="polite"/);
+  assert.match(form.text, /This order is.*over the available stock/,
+    'the browser has an explicit live warning for an excessive quantity');
+  assert.match(form.text, /Create order —.*will wait for stock/,
+    'the primary action itself changes before an owner accepts a backorder');
+
+  const created = await agent.post('/sales/orders').type('form').send({
+    _csrf: csrfFrom(form.text), customerName: 'Too Many Co', deliveryMethod: 'PICKUP',
+    skuId: env.item.skuId, quantity: 8, nextStep: 'confirm',
+  }).expect(303);
+  const order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
+  assert.deepEqual(order.totals, { ordered: 8, fulfilled: 0, allocated: 3, backordered: 5 });
+
+  const decision = needsYouInbox.inbox(env.db, env.workspace.workspaceId)
+    .find((entry) => entry.id.startsWith(`sales-order:${order.id}:`));
+  assert.ok(decision);
+  assert.equal(decision.href, `/purchasing/supplier-for/${env.item.skuId}`);
+
+  const target = await agent.get(decision.href).expect(200);
+  assert.match(plain(target.text), /Who do you buy Black Small Shirt from/i,
+    'the Needs You action lands on the exact information that can unblock replenishment');
+
+  const orderPage = await agent.get(created.headers.location).expect(200);
+  assert.match(orderPage.text, /id="stock-shortage"/);
+  assert.match(plain(orderPage.text), /Cover the 5 missing units.*Add a supplier for this product/i,
+    'the order page also provides a direct way out instead of linking back to Needs You');
+  env.db.close();
+});
+
 
 /**
  * A page must not reassure somebody that nothing moved while recording that
@@ -428,7 +468,7 @@ test('a partly shipped order does not claim nothing was shipped', async () => {
 
   const form = await agent.get('/sales/new');
   const created = await agent.post('/sales/orders').type('form').send({
-    _csrf: csrfFrom(form.text), customerName: 'Riverside Builders', skuId: env.item.skuId,
+    _csrf: csrfFrom(form.text), customerName: 'Riverside Builders', deliveryMethod: 'PICKUP', skuId: env.item.skuId,
     quantity: 50, orderDate: '2026-08-31', fulfillmentLocationId: env.workspace.main.id,
   });
   let page = await agent.get(created.headers.location);
@@ -475,7 +515,7 @@ test('stock arriving after confirmation can be committed, without moving any of 
 
   const form = await agent.get('/sales/new');
   const created = await agent.post('/sales/orders').type('form').send({
-    _csrf: csrfFrom(form.text), customerName: 'Riverside Builders', skuId: env.item.skuId,
+    _csrf: csrfFrom(form.text), customerName: 'Riverside Builders', deliveryMethod: 'PICKUP', skuId: env.item.skuId,
     quantity: 30, orderDate: '2026-08-31', fulfillmentLocationId: env.workspace.main.id,
   });
   let page = await agent.get(created.headers.location);
@@ -529,7 +569,7 @@ test('a draft order is told to be confirmed rather than silently holding stock',
 
   const form = await agent.get('/sales/new');
   const created = await agent.post('/sales/orders').type('form').send({
-    _csrf: csrfFrom(form.text), customerName: 'Draft Co', skuId: env.item.skuId,
+    _csrf: csrfFrom(form.text), customerName: 'Draft Co', deliveryMethod: 'PICKUP', skuId: env.item.skuId,
     quantity: 5, orderDate: '2026-08-31', fulfillmentLocationId: env.workspace.main.id,
   });
   const page = await agent.get(created.headers.location);
@@ -568,7 +608,7 @@ test('an order with an invoice shows what was invoiced, paid and still owed', as
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const form = await agent.get('/sales/new');
   const created = await agent.post('/sales/orders').type('form').send({
-    _csrf: csrfFrom(form.text), customerName: 'ABC School', skuId: env.item.skuId,
+    _csrf: csrfFrom(form.text), customerName: 'ABC School', deliveryMethod: 'PICKUP', skuId: env.item.skuId,
     quantity: 40, orderDate: '2026-09-01', fulfillmentLocationId: env.workspace.main.id,
   });
 

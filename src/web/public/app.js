@@ -774,6 +774,7 @@
     var done = document.getElementById('pay-window-done');
     var doneAmount = document.getElementById('pay-window-done-amount');
     var receipt = document.getElementById('pay-window-receipt');
+    var invoice = document.getElementById('pay-window-invoice');
     var sheet = modal.querySelector('[data-order]');
     var orderId = sheet && sheet.getAttribute('data-order');
     var paying = null;
@@ -812,6 +813,10 @@
     function open(candidate) {
       var url = payable(candidate);
       if (!url) return;
+      clearInterval(asking);
+      clearInterval(watch);
+      asking = null;
+      watch = null;
       tab.href = url;
       modal.hidden = false;
       document.body.classList.add('is-paying');
@@ -822,6 +827,7 @@
       paying = popup(url) || window.open(url, '_blank');
       blocked.hidden = Boolean(paying);
       watching.hidden = !paying;
+      tab.hidden = Boolean(paying);
       // Nothing to bring forward when nothing opened.
       front.hidden = !paying;
 
@@ -870,13 +876,19 @@
         receipt.href = state.receipt.href;
         receipt.hidden = false;
       }
-      // The order underneath is now out of date, so it is re-read quietly
-      // behind the panel rather than on the way out of it.
+      if (invoice && state.invoice) {
+        invoice.href = state.invoice.href;
+        invoice.hidden = false;
+      }
+      // The Stripe window closes immediately. Re-read the order promptly and
+      // leave the receipt and invoice actions on the fresh, visibly-paid page.
       window.setTimeout(function () {
         var here = new URL(window.location.href);
         here.searchParams.delete('pay');
+        here.searchParams.set('payment', 'paid');
+        here.hash = 'money';
         window.location.replace(here.toString());
-      }, 15000);
+      }, 900);
     }
 
     function ask() {
@@ -901,20 +913,27 @@
       watch = null;
       if (paying && !paying.closed) paying.close();
       paying = null;
-      modal.hidden = true;
-      document.body.classList.remove('is-paying');
-      /*
-       * Whether they actually paid is Stripe's to tell Foundry, over the
-       * webhook. Reading the order again shows whatever arrived while the
-       * window was open, rather than leaving a paid order saying it is owed.
-       */
-      var here = new URL(window.location.href);
-      if (here.searchParams.has('pay')) {
+      watching.hidden = false;
+      watching.textContent = 'Confirming the final payment status with Stripe…';
+      blocked.hidden = true;
+      front.hidden = true;
+      // One final uncached check covers the normal case where Stripe closes
+      // just after the last three-second poll. Only then reload an unpaid
+      // order; a paid answer takes the finish path above.
+      window.fetch('/sales/orders/' + orderId + '/payment-state', {
+        headers: { Accept: 'application/json' }, credentials: 'same-origin',
+      }).then(function (response) {
+        return response.ok ? response.json() : null;
+      }).then(function (state) {
+        if (state && state.paid) return finish(state);
+        modal.hidden = true;
+        document.body.classList.remove('is-paying');
+        var here = new URL(window.location.href);
         here.searchParams.delete('pay');
         window.location.replace(here.toString());
-      } else {
+      }).catch(function () {
         window.location.reload();
-      }
+      });
     }
 
     document.addEventListener('click', function (event) {
@@ -929,8 +948,13 @@
         if (paying && !paying.closed) paying.focus();
         return;
       }
-      // Opening it from here is the same job; the panel stays up, waiting.
-      if (event.target.closest('#pay-window-tab')) return;
+      // A user click gives the browser a fresh chance to allow a closable
+      // popup. A noopener tab cannot be watched or closed automatically.
+      if (event.target.closest('#pay-window-tab')) {
+        event.preventDefault();
+        open(tab.href);
+        return;
+      }
       if (event.target.closest('[data-pay-close]') || event.target === modal) close();
     });
     document.addEventListener('keydown', function (event) {

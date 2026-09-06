@@ -8,8 +8,9 @@
  * for the money, find the button, press it, find the link, and send it.
  *
  * What is under test is not that Foundry does it, but that what it does
- * follows the authority it was actually given. Three separate permissions have
- * to agree, and when any one of them does not, Foundry still gets everything
+ * follows the authority it was actually given. Customer terms, the workspace
+ * mode, authority for this exact job, and a sending mailbox all have to agree.
+ * When any one of them does not, Foundry still gets everything
  * ready and says which one stopped it — because a prepared link with no
  * explanation looks like something the owner forgot to do.
  */
@@ -18,10 +19,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const automation = require('../../src/sales/payment-automation');
 const collection = require('../../src/payments/collection');
+const paymentAccounts = require('../../src/payments/accounts');
 const providers = require('../../src/payments/provider');
 const comms = require('../../src/sales/customer-communications');
 const terms = require('../../src/sales/payment-terms');
 const modes = require('../../src/autopilot/modes');
+const capabilities = require('../../src/autopilot/capabilities');
 const sales = require('../../src/sales/sales-order-service');
 const prices = require('../../src/pricing/price-service');
 const inventory = require('../../src/domain/inventory-engine');
@@ -52,6 +55,10 @@ function setup() {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Riverside Supply' });
   const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  // The platform key is Foundry's identity, never this test business's till.
+  // Give this business its own test account so the tests isolate automation
+  // authority instead of relying on the unsafe platform fallback.
+  paymentAccounts.connect(db, workspace.ctx, membership, { secretKey: 'sk_test_riverside_0000' });
   const item = makeQuantityItem(db, workspace.ctx, { name: 'Black Small Shirt', baseCode: 'BLACK-S' });
   prices.setPrice(db, workspace.ctx, { skuId: item.skuId, amount: '10.00', currency: 'USD' });
   inventory.receive(db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 100 });
@@ -144,10 +151,11 @@ test('watching only means nothing is prepared at all', async () => {
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM payment_requests').get().n, 0);
 });
 
-test('when all three agree, Foundry asks and sends and says so', async () => {
+test('when the customer terms, workspace mode, job authority, and mailbox agree, Foundry asks and sends', async () => {
   const env = setup();
   allowed(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
+  capabilities.set(env.db, env.ctx, env.membership, 'payment_requests', true);
 
   const done = await automation.onMoneyDue(env.db, env.ctx, order(env).id);
   assert.equal(done.asked, true);

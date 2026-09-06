@@ -126,8 +126,11 @@ test('Mission 10 requested-date shortfalls become one clear Needs You decision',
   const env = setup();
   const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const order = sales.confirm(env.db, env.ctx, draft(env, 12, { neededBy: tomorrow }).id);
-  const item = needsYou.inbox(env.db, env.workspace.workspaceId).find((entry) => entry.href === `/sales/orders/${order.id}`);
+  const item = needsYou.inbox(env.db, env.workspace.workspaceId)
+    .find((entry) => entry.id.startsWith(`sales-order:${order.id}:`));
   assert.ok(item);
+  assert.equal(item.href, `/purchasing/supplier-for/${env.item.skuId}`,
+    'the decision opens the exact missing supplier setup, not the same order page again');
   assert.equal(item.importance, 'Urgent');
   assert.match(item.title, /ABC School needs 12.*normal supply is too late/i);
   assert.match(item.why, /cannot promise the requested date/i);

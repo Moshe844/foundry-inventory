@@ -26,9 +26,19 @@ const { newId, nowIso, requireText, trimOrNull } = require('../lib/util');
 const credentials = require('../connections/credentials');
 const permissions = require('../actions/permissions');
 
-const PROVIDERS = ['easypost', 'shippo'];
+const PROVIDERS = ['shipengine', 'easypost', 'shippo'];
 
-const KEY_FIELD = { easypost: 'easypostApiKey', shippo: 'shippoApiKey' };
+const KEY_FIELD = {
+  shipengine: 'shipengineApiKey',
+  easypost: 'easypostApiKey',
+  shippo: 'shippoApiKey',
+};
+
+function isTestKey(provider, key) {
+  if (provider === 'easypost') return /^EZTK/i.test(String(key || ''));
+  if (provider === 'shipengine') return /^TEST_/i.test(String(key || ''));
+  return /^shippo_test_/i.test(String(key || ''));
+}
 
 function requireProvider(name) {
   const key = String(name || '').toLowerCase();
@@ -41,7 +51,7 @@ function requireProvider(name) {
 /** The connector row for this workspace's shipping account, if it has one. */
 function connectorFor(db, workspaceId) {
   return db.prepare(`SELECT * FROM workspace_connectors
-    WHERE workspace_id = ? AND provider_type IN ('easypost', 'shippo')
+    WHERE workspace_id = ? AND provider_type IN ('shipengine', 'easypost', 'shippo')
       AND status = 'connected' AND paused_at IS NULL
     ORDER BY updated_at DESC LIMIT 1`).get(workspaceId) || null;
 }
@@ -69,12 +79,12 @@ function forWorkspace(db, workspaceId) {
        * still need to add. So `source` says, and the referral record is what
        * it is read from.
        */
-      const opened = db.prepare(`SELECT referral_customer_id, billing_ready
+      const opened = db.prepare(`SELECT partner, referral_customer_id, billing_ready
         FROM shipping_referral_accounts WHERE workspace_id = ? AND connector_id = ?`)
         .get(workspaceId, connector.id);
       return {
         provider: connector.provider_type,
-        source: opened ? 'referral' : 'workspace',
+        source: opened ? (opened.partner === 'shipengine' ? 'platform' : 'referral') : 'workspace',
         connectorId: connector.id,
         apiKey: held.apiKey,
         webhookSecret: held.webhookSecret || null,
@@ -94,6 +104,13 @@ function forWorkspace(db, workspaceId) {
   for (const name of preferred && PROVIDERS.includes(preferred) ? [preferred] : PROVIDERS) {
     const fromEnv = process.env[`${name.toUpperCase()}_API_KEY`];
     if (fromEnv) {
+      /*
+       * A shared live key makes the server owner pay every tenant's postage.
+       * It is therefore valid only when this installation has explicitly been
+       * declared single-tenant. Test keys remain useful for local development
+       * because they cannot buy real postage.
+       */
+      if (!isTestKey(name, fromEnv) && process.env.SHIPPING_SINGLE_TENANT !== 'true') continue;
       return {
         provider: name,
         source: 'server',
@@ -163,7 +180,8 @@ function connect(db, ctx, membership, input = {}) {
       VALUES (?, ?, ?, ?, ?, '["shipping"]', '{}', 'connected', '["rates","labels","tracking"]',
         ?, 'CONNECTED', ?, ?, ?)`)
       .run(id, ctx.workspaceId, `shipping-${provider}`,
-        provider === 'easypost' ? 'EasyPost' : 'Shippo', provider,
+        provider === 'shipengine' ? 'ShipEngine'
+          : provider === 'easypost' ? 'EasyPost' : 'Shippo', provider,
         `credentials:${id}:provider`, ctx.actorId || null, now, now);
     connector = db.prepare('SELECT * FROM workspace_connectors WHERE id = ?').get(id);
   } else {
@@ -185,6 +203,11 @@ function disconnect(db, ctx, membership) {
    * the module that knows the difference: it forgets the keys and leaves the
    * merchant's EasyPost account, and everything shipped on it, standing.
    */
+  const platform = require('./shipengine-platform');
+  if (platform.rowFor(db, ctx.workspaceId)) {
+    platform.release(db, ctx, membership);
+    return describe(db, ctx.workspaceId);
+  }
   const referral = require('./referral');
   if (referral.rowFor(db, ctx.workspaceId)) {
     referral.release(db, ctx, membership);
@@ -221,18 +244,18 @@ function describe(db, workspaceId) {
     connectorId: account.connectorId,
     displayName: account.displayName,
     keyEndsWith: key.length > 4 ? key.slice(-4) : null,
-    testMode: /^(EZTK|shippo_test)/i.test(key),
+    testMode: isTestKey(account.provider, key),
     hasWebhookSecret: Boolean(account.webhookSecret),
     referralCustomerId: account.referralCustomerId || null,
     billingReady: account.billingReady,
     because: account.source === 'server'
       ? 'This inventory is using the key set on the server, which every inventory on it shares. '
         + 'Connect this inventory\'s own account and its parcels will be billed to it instead.'
-      : account.source === 'referral' && account.billingReady === false
+      : ['referral', 'platform'].includes(account.source) && account.billingReady === false
         ? 'Foundry opened this account, but no payment method has been added to it yet — so it '
           + 'cannot buy a label, and the rates it returns are test rates rather than a carrier\'s.'
         : null,
   };
 }
 
-module.exports = { PROVIDERS, forWorkspace, contextFor, connect, disconnect, describe, connectorFor };
+module.exports = { PROVIDERS, forWorkspace, contextFor, connect, disconnect, describe, connectorFor, isTestKey };

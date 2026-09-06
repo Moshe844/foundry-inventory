@@ -15,6 +15,8 @@ const ingestion = require('../../src/connections/email-ingestion');
 const orderFromEmail = require('../../src/sales/order-from-email');
 const connections = require('../../src/connections/service');
 const sales = require('../../src/sales/sales-order-service');
+const shipments = require('../../src/sales/shipment-service');
+const inventory = require('../../src/domain/inventory-engine');
 const prices = require('../../src/pricing/price-service');
 const authService = require('../../src/domain/auth-service');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('../helpers');
@@ -85,6 +87,8 @@ test('the email becomes a draft order, priced from the catalogue and not from th
 
   assert.ok(order, 'the email produced an order');
   assert.equal(order.status, 'DRAFT', 'nothing is committed until the owner says so');
+  assert.equal(order.customer_decision_required, 1, 'a stranger is not silently made a trusted customer');
+  assert.equal(order.delivery_decision_required, 1, 'an order with no destination cannot proceed');
 
   const lines = env.db.prepare(`SELECT quantity_ordered, unit_price_minor FROM sales_order_lines
     WHERE sales_order_id = ?`).all(order.id);
@@ -174,6 +178,33 @@ test('a customer who already exists is not duplicated', async () => {
   assert.equal(env.db.prepare('SELECT COUNT(*) n FROM customers').get().n, 1);
 });
 
+test('an emailed delivery address belongs to that order and never gets replaced by an old default', async () => {
+  const env = setup();
+  const existing = sales.createCustomer(env.db, env.ctx, {
+    name: 'Chavy', email: 'hendel@example.test',
+    shippingAddress: '14 Old Lane, Riverside, OR 97001',
+  });
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20,
+  });
+  const written = '25 Event Road, Portland, OR 97201';
+  const message = arrive(env, { sender: 'hendel@example.test', subject: 'Order supplies',
+    body: `I would like to order 10 pieces of the COTTON-TEE-B-SMALL. Ship to ${written}` });
+  const { order } = await orderFromEmail.draft(env.db, env.ctx, message.id, {
+    provider: reader({ isAnOrder: true, contactName: 'Chavy', phone: '', shippingAddress: written,
+      lines: [{ itemText: 'COTTON-TEE-B-SMALL', variantText: '', quantity: 10 }] }),
+  });
+
+  assert.match(order.ship_to_address, /25 Event Road/);
+  assert.equal(order.ship_to_source, 'EMAIL');
+  assert.match(sales.getCustomer(env.db, env.workspace.workspaceId, existing.id).shipping_address,
+    /14 Old Lane/, 'the email does not rewrite the permanent customer default');
+
+  const confirmed = sales.confirm(env.db, env.ctx, order.id);
+  const box = shipments.startPicking(env.db, env.ctx, confirmed.id);
+  assert.match(box.ship_to_address, /25 Event Road/, 'the parcel goes where this email order said');
+});
+
 /*
  * What happened after the draft.
  *
@@ -193,11 +224,58 @@ test('a drafted order is a decision in Needs you, not a secret', async () => {
   const { order } = await orderFromEmail.draft(env.db, env.ctx, message.id, { provider: ORDER_TWO() });
 
   const entry = needsYou().inbox(env.db, env.workspace.workspaceId).find((e) => e.id === `email-order:${order.id}`);
-  assert.ok(entry, 'the approval is asked for');
-  assert.match(entry.title, /^Approve SO-\d+ for Moshe Ekstein: 2 × Classic Cotton T-Shirt/);
-  assert.equal(entry.href, `/orders/${order.id}`);
-  assert.match(entry.happened, /arye@example\.test wrote "bike toe lace"/);
-  assert.match(entry.happened, /Nothing is committed/);
+  assert.ok(entry, 'the customer decision is asked for');
+  assert.equal(entry.title, 'Is arye@example.test a new customer?');
+  assert.equal(entry.href, `/orders/${order.id}#customer-decision`);
+  assert.match(entry.happened, /did not silently create or merge a customer record/);
+});
+
+test('the customer decision leads to delivery, and neither can be skipped', async () => {
+  const env = setup();
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10,
+  });
+  const message = arrive(env, { sender: 'newbuyer@example.test', subject: 'Order supplies',
+    body: 'I would like to order 2 pieces of the COTTON-TEE-B-SMALL' });
+  const { order } = await orderFromEmail.draft(env.db, env.ctx, message.id, { provider: ORDER_TWO() });
+
+  assert.throws(() => sales.confirm(env.db, env.ctx, order.id), /whether this new email sender/i);
+  let resolved = sales.resolveEmailCustomer(env.db, env.ctx, order.id, { action: 'create' });
+  assert.equal(resolved.customer_decision_required, 0);
+  assert.equal(resolved.delivery_decision_required, 1);
+  assert.throws(() => sales.confirm(env.db, env.ctx, order.id), /shipped or collected/i);
+
+  resolved = sales.resolveDelivery(env.db, env.ctx, order.id, { deliveryMethod: 'PICKUP' });
+  assert.equal(resolved.delivery_method, 'PICKUP');
+  assert.equal(resolved.delivery_decision_required, 0);
+  assert.equal(sales.confirm(env.db, env.ctx, order.id).status, 'CONFIRMED');
+});
+
+test('a reply on the same thread supplies the shipping answer automatically', async () => {
+  const env = setup();
+  const first = ingestion.capture(env.db,
+    { workspaceId: env.workspace.workspaceId, connectorId: env.connectorId },
+    { occurredAt: '2026-09-06T12:00:00.000Z', data: { messageId: 'delivery-first',
+      threadId: 'customer-thread-1', sender: 'newbuyer@example.test', subject: 'Order supplies',
+      bodyText: 'I would like to order 2 pieces of the COTTON-TEE-B-SMALL', attachments: [] } });
+  const drafted = await orderFromEmail.draft(env.db, env.ctx, first.actionRecordId, { provider: ORDER_TWO() });
+  const second = ingestion.capture(env.db,
+    { workspaceId: env.workspace.workspaceId, connectorId: env.connectorId },
+    { occurredAt: '2026-09-06T12:05:00.000Z', data: { messageId: 'delivery-answer',
+      threadId: 'customer-thread-1', sender: 'newbuyer@example.test', subject: 'Re: Order supplies',
+      bodyText: 'Please ship it to 25 Event Road, Portland, OR 97201', attachments: [] } });
+  const answer = await orderFromEmail.applyPendingDeliveryReply(env.db, env.ctx, second.actionRecordId, {
+    provider: reader({ isAnOrder: false, contactName: '', phone: '',
+      shippingAddress: '25 Event Road, Portland, OR 97201', deliveryMethod: 'SHIP', lines: [] }),
+  });
+
+  assert.equal(answer.handled, true);
+  const order = sales.getOrder(env.db, env.workspace.workspaceId, drafted.order.id);
+  assert.equal(order.delivery_decision_required, 0);
+  assert.match(order.ship_to_address, /25 Event Road/);
+  const reply = env.db.prepare('SELECT order_draft_reason FROM connection_email_messages WHERE id = ?')
+    .get(second.actionRecordId);
+  assert.match(reply.order_draft_reason, /Used this answer to set SO-/);
 });
 
 test('the same request sent twice is one draft order, and the second email says so', async () => {

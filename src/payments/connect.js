@@ -98,17 +98,17 @@ function platform() {
 }
 
 /*
- * Two ways to send a business to Stripe, and only one of them is available on
- * any given dashboard.
+ * Two Stripe capabilities live in this module, but only OAuth is the owner-facing
+ * "connect my existing Stripe account" experience.
  *
  * OAuth needs a client id, which Stripe no longer issues to every new
  * platform — a sandbox created today often has none, and hunting for a setting
  * that does not exist is worse than not offering the path.
  *
- * Hosted onboarding needs nothing but the platform key that must already be
- * set: Foundry creates the account through the API and sends the merchant to
- * Stripe's own onboarding page. No client id, no redirect to register at
- * Stripe, nothing to go and find.
+ * Hosted onboarding creates or completes a platform-controlled connected
+ * account. It is deliberately not a fallback for the Connect Stripe button:
+ * substituting it sends an existing Stripe customer into a long business-
+ * verification form and changes the meaning of the action.
  *
  * Everything after the merchant comes back is identical either way, which is
  * why this is one module and not two.
@@ -137,18 +137,34 @@ function usesEmbedded() {
   return Boolean(usesHostedOnboarding() && platform().publishableKey);
 }
 
+/** Whether the server key belongs to a Connect platform rather than one shop. */
+function platformModeEnabled() {
+  return usesOauth() || usesHostedOnboarding();
+}
+
+/**
+ * The server chooses the road; an owner never has to understand the choice.
+ *
+ * The button promises existing-account sign-in, so it either uses OAuth or is
+ * unavailable. Never silently replace that promise with account onboarding.
+ */
+function preferredFlow() {
+  if (usesOauth()) return 'oauth';
+  return null;
+}
+
 /** Whether a business can connect its own account here at all. */
-function available() { return usesHostedOnboarding() || usesOauth(); }
+function available() { return Boolean(preferredFlow()); }
 
 function requirePlatform(options = {}) {
   const held = platform();
   if (options.oauth !== false && !held.clientId) {
-    throw new ValidationError('Foundry has no Stripe Connect client id, so a business cannot '
-      + 'connect its account this way. Paste a secret key instead.');
+    throw new ValidationError('Stripe existing-account sign-in is not configured. Add this '
+      + "Foundry installation's Stripe Connect OAuth client ID, then try again.");
   }
   if (!held.secretKey) {
-    throw new ValidationError('Foundry has no Stripe platform key, so it cannot complete a '
-      + 'connection. Paste a secret key instead.');
+    throw new ValidationError('Stripe existing-account sign-in is not configured on this '
+      + 'Foundry installation.');
   }
   return held;
 }
@@ -156,6 +172,14 @@ function requirePlatform(options = {}) {
 function rowFor(db, workspaceId) {
   return db.prepare(`SELECT * FROM payment_connect_accounts
     WHERE workspace_id = ? AND provider = ?`).get(workspaceId, PROVIDER) || null;
+}
+
+function isUnfinished(db, row) {
+  if (!row || row.charges_enabled === 1) return false;
+  if (!row.connector_id) return true;
+  const connector = db.prepare(`SELECT setup_status FROM workspace_connectors
+    WHERE id = ? AND workspace_id = ?`).get(row.connector_id, row.workspace_id);
+  return !connector || connector.setup_status !== 'CONNECTED';
 }
 
 /* ---------------------------------------------------------------- talking */
@@ -210,7 +234,7 @@ function authorizeUrl(db, ctx, membership, options = {}) {
   const held = requirePlatform();
 
   const existing = rowFor(db, ctx.workspaceId);
-  if (existing) {
+  if (existing && !isUnfinished(db, existing)) {
     throw new ValidationError('This inventory already has a Stripe account connected. '
       + 'Disconnect it first if you mean to connect a different one.');
   }
@@ -426,6 +450,11 @@ async function embeddedSession(db, ctx, options = {}) {
 async function complete(db, query = {}, options = {}) {
   const providerService = require('../connections/provider-service');
   const state = providerService.readState(db, query.state, 'stripe_connect', true);
+  const actor = db.prepare(`SELECT role FROM users WHERE id = ? AND workspace_id = ?`)
+    .get(state.actor_id, state.workspace_id);
+  if (!actor || actor.role !== 'owner') {
+    throw new AuthenticationError('The owner who started this Stripe connection no longer has permission.');
+  }
   const ctx = { workspaceId: state.workspace_id, actorId: state.actor_id };
 
   if (query.error) {
@@ -449,7 +478,16 @@ async function complete(db, query = {}, options = {}) {
     ? await options.exchange({ code, clientSecret: held.secretKey })
     : await post(TOKEN, { grant_type: 'authorization_code', code, client_secret: held.secretKey });
 
-  const accountId = granted.stripe_user_id;
+  /*
+   * Stripe's Connect OAuth reference calls this `stripe_user_id`. Some of
+   * Stripe's newer OAuth surfaces return `account_id` instead (and older test
+   * tooling has also used `stripe_account_id`). They all identify the same
+   * connected Stripe account; accepting the documented variants keeps the
+   * return trip from failing after the merchant has already approved it.
+   */
+  const accountId = trimOrNull(granted.stripe_user_id)
+    || trimOrNull(granted.account_id)
+    || trimOrNull(granted.stripe_account_id);
   if (!accountId) throw new ValidationError('Stripe did not say which account was connected.');
 
   /*
@@ -628,16 +666,18 @@ function describe(db, workspaceId) {
       connected: false,
       available: available(),
       embedded: usesEmbedded(),
+      testMode: /^sk_test_/.test(platform().secretKey || ''),
       because: available()
         ? 'This business can connect its own Stripe account without giving Foundry a key.'
-        : 'Connecting a Stripe account this way is not set up on this server, so a secret key '
-          + 'has to be pasted instead.',
+        : 'Stripe existing-account sign-in is not configured on this Foundry installation yet.',
     };
   }
   return {
     connected: true,
-    available: true,
+    available: available(),
+    unfinished: isUnfinished(db, row),
     embedded: usesEmbedded(),
+    testMode: /^sk_test_/.test(platform().secretKey || ''),
     provider: PROVIDER,
     accountId: row.provider_account_id,
     displayName: row.display_name,
@@ -652,7 +692,8 @@ function describe(db, workspaceId) {
 }
 
 module.exports = {
-  PROVIDER, available, usesOauth, usesHostedOnboarding, usesEmbedded, platform,
+  PROVIDER, available, usesOauth, usesHostedOnboarding, usesEmbedded, preferredFlow,
+  platformModeEnabled, platform,
   authorizeUrl, complete, openOnboarding, relink, embeddedSession, refresh, disconnect,
-  describe, rowFor, forget,
+  describe, rowFor, isUnfinished, forget,
 };

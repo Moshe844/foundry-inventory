@@ -290,3 +290,40 @@ test('a box carries the address it was picked for, not the customer of the day',
   assert.match(again.ship_to_address, /14 Mill Lane/,
     'a customer moving must not rewrite where an existing box was addressed');
 });
+
+test('the Sales Order owns its destination instead of following the customer profile', () => {
+  const env = setup();
+  const customer = sales.createCustomer(env.db, env.ctx, {
+    name: 'ABC School', shippingAddress: '14 Mill Lane\nRiverside, OR 97001',
+  });
+  inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10 });
+
+  const created = sales.createOrder(env.db, env.ctx, {
+    customerId: customer.id,
+    customerShippingAddress: '25 Event Road\nPortland, OR 97201',
+    lines: [{ skuId: env.item.skuId, quantity: 3 }],
+  });
+  assert.match(created.ship_to_address, /25 Event Road/);
+  assert.match(sales.getCustomer(env.db, env.workspace.workspaceId, customer.id).shipping_address,
+    /14 Mill Lane/, 'an address for one order does not silently change the customer default');
+
+  sales.updateCustomer(env.db, env.ctx, customer.id, {
+    name: 'ABC School', shippingAddress: '900 New Road\nElsewhere, OR 97002',
+  });
+  const order = sales.confirm(env.db, env.ctx, created.id);
+  assert.match(order.ship_to_address, /25 Event Road/, 'the agreed order address is immutable profile-independent evidence');
+  const box = shipments.startPicking(env.db, env.ctx, order.id);
+  assert.match(box.ship_to_address, /25 Event Road/, 'the parcel inherits the order, not today\'s customer profile');
+});
+
+test('customer pickup has no carrier destination', () => {
+  const env = setup();
+  const order = sales.createOrder(env.db, env.ctx, {
+    customerName: 'Walk-in customer', deliveryMethod: 'PICKUP',
+    customerShippingAddress: 'An address that must not be used',
+    lines: [{ skuId: env.item.skuId, quantity: 1 }],
+  });
+  assert.equal(order.delivery_method, 'PICKUP');
+  assert.equal(order.ship_to_address, null);
+  assert.equal(order.ship_to_source, 'PICKUP');
+});

@@ -5,11 +5,12 @@
 <form class="card form-card" method="post" action="/sales/orders">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <input type="hidden" name="currency" value="USD">
-  <div class="card-head"><div><h2>Order essentials</h2><p class="hint">These are the only details Foundry needs for a normal order.</p></div></div>
+  <div class="card-head"><div><h2>Create the order</h2><p class="hint">Customer → delivery → product. Foundry handles the rest after you save.</p></div></div>
   <div class="card-body">
+    <h3>1. Who ordered?</h3>
     <div class="form-grid">
-      <label class="field"><span>Existing customer</span><select name="customerId"><option value="">This is a new customer</option><% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= form.customerId === c.id ? 'selected' : '' %>><%= c.name %></option><% }) %></select></label>
-      <label class="field"><span>New customer name</span><input name="customerName" value="<%= form.customerName || '' %>" placeholder="Enter only for a new customer"></label>
+      <label class="field field--full"><span>Customer</span><select name="customerId" id="order-customer"><option value="">+ Create a new customer with this order</option><% customers.forEach(function(c){ %><option value="<%= c.id %>" data-email="<%= c.email || '' %>" data-address="<%= c.shipping_address || '' %>" <%= form.customerId === c.id ? 'selected' : '' %>><%= c.name %><%= c.email ? ' · ' + c.email : '' %></option><% }) %></select></label>
+      <div class="field field--full" id="order-new-customer"><label class="field"><span>New customer's name</span><input name="customerName" value="<%= form.customerName || '' %>" placeholder="Person or business name"></label></div>
       <%#
         The two things Foundry cannot work without, asked for once.
 
@@ -19,10 +20,21 @@
         they are asked, which is the difference between "you did not tell me"
         and "I never asked".
       %>
-      <label class="field"><span>Their email</span><input type="email" name="customerEmail" value="<%= form.customerEmail || '' %>" placeholder="Where order and shipping updates go"><small>Foundry cannot tell them anything without this. Filled in for an existing customer who has none.</small></label>
-      <label class="field field--full"><span>Where it ships</span><textarea name="customerShippingAddress" rows="2" placeholder="Street, town, postcode"><%= form.customerShippingAddress || '' %></textarea><small>Copied onto every parcel for them. Leave blank if they collect.</small></label>
-      <label class="field"><span>Product or variant</span><select name="skuId" required><option value="">Choose a product</option><% skus.forEach(function(s){ %><option value="<%= s.id %>" <%= form.skuId === s.id ? 'selected' : '' %>><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %></option><% }) %></select><small>Foundry copies the current selling price onto this order.</small></label>
-      <label class="field"><span>Quantity</span><input type="number" name="quantity" min="1" step="1" value="<%= form.quantity || '' %>" required></label>
+      <label class="field"><span>Their email</span><input id="order-customer-email" type="email" name="customerEmail" value="<%= form.customerEmail || '' %>" placeholder="Where order and shipping updates go"><small>Foundry cannot tell them anything without this. Filled in for an existing customer who has none.</small></label>
+      <div class="field field--full"><h3>2. How will they receive it?</h3></div>
+      <fieldset class="field field--full">
+        <legend>How will they receive it?</legend>
+        <label class="choice"><input type="radio" name="deliveryMethod" value="SHIP" <%= form.deliveryMethod !== 'PICKUP' ? 'checked' : '' %>><span>Ship it</span></label>
+        <label class="choice"><input type="radio" name="deliveryMethod" value="PICKUP" <%= form.deliveryMethod === 'PICKUP' ? 'checked' : '' %>><span>Customer pickup</span></label>
+      </fieldset>
+      <div class="field field--full" id="order-destination">
+        <label class="field"><span>Delivery address for this order</span><textarea id="order-customer-address" name="customerShippingAddress" rows="3" placeholder="Street, town, state, postcode"><%= form.customerShippingAddress || '' %></textarea><small>Saved on this Sales Order. Changing the customer's address later will not change this order.</small></label>
+        <label class="choice" style="margin-top:8px;"><input type="checkbox" name="saveCustomerAddress" value="1" <%= form.saveCustomerAddress === '1' ? 'checked' : '' %>><span>Also make this the customer's default address for future orders</span></label>
+      </div>
+      <div class="field field--full"><h3>3. What did they order?</h3></div>
+      <label class="field"><span>Product or variant</span><select id="order-sku" name="skuId" required><option value="">Choose a product</option><% skus.forEach(function(s){ %><option value="<%= s.id %>" <%= form.skuId === s.id ? 'selected' : '' %>><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %> · <%= s.stock.available %> available now</option><% }) %></select><small>“Available now” excludes stock already reserved for other customers.</small></label>
+      <label class="field"><span>Quantity</span><input id="order-quantity" type="number" name="quantity" min="1" step="1" value="<%= form.quantity || '' %>" required></label>
+      <div id="order-stock-check" class="notice notice--info field--full" aria-live="polite"><div><strong>Choose a product and quantity.</strong><br>Foundry will show what can be reserved before you create the order.</div></div>
       <label class="field"><span>Order price <small>only if the product has no selling price</small></span><input name="unitPrice" inputmode="decimal" value="<%= form.unitPrice || '' %>" placeholder="Leave blank to use the inventory price"><small>Blank never means free. Enter 0 only when intentionally free.</small></label>
     </div>
 
@@ -32,7 +44,7 @@
         <label class="field"><span>Order number <small>optional</small></span><input name="orderNumber" value="<%= form.orderNumber || '' %>" placeholder="Foundry will assign one"></label>
         <label class="field"><span>Order date</span><input type="date" name="orderDate" value="<%= form.orderDate || new Date().toISOString().slice(0,10) %>"></label>
         <label class="field"><span>Needed by <small>optional</small></span><input type="date" name="neededBy" value="<%= form.neededBy || '' %>"></label>
-        <label class="field"><span>Ship from <small>optional</small></span><select name="fulfillmentLocationId"><option value="">Let Foundry use available stock</option><% locations.forEach(function(l){ %><option value="<%= l.id %>" <%= form.fulfillmentLocationId === l.id ? 'selected' : '' %>><%= l.name %></option><% }) %></select></label>
+        <label class="field"><span>Ship from <small>optional</small></span><select id="order-location" name="fulfillmentLocationId"><option value="">Let Foundry use available stock at any location</option><% locations.forEach(function(l){ %><option value="<%= l.id %>" <%= form.fulfillmentLocationId === l.id ? 'selected' : '' %>><%= l.name %></option><% }) %></select></label>
         <label class="field"><span>Discount amount <small>optional</small></span><input name="discount" inputmode="decimal" value="<%= form.discount || '' %>" placeholder="0.00"></label>
         <label class="field"><span>Tax amount <small>optional</small></span><input name="tax" inputmode="decimal" value="<%= form.tax || '' %>" placeholder="0.00"></label>
         <label class="field field--full"><span>Reference <small>optional</small></span><input name="reference" value="<%= form.reference || '' %>"></label>
@@ -42,11 +54,82 @@
 
     <div class="notice <%= locals.unpricedCount ? 'notice--warn' : 'notice--info' %>"><div><strong>Every customer order needs a price. Foundry will never invent one.</strong><br>It uses the product’s selling price or the order price above. Accounting updates only after items physically leave.</div></div>
 
-    <div class="sales-create-choices">
-      <div><p class="eyebrow">Most customer orders</p><button class="btn btn--primary" type="submit" name="nextStep" value="confirm">Create order and reserve stock</button><small>Use when the customer ordered now but receives the items later.</small></div>
-      <div><p class="eyebrow">Customer already has the items</p><button class="btn" type="submit" name="nextStep" value="fulfill">Record completed sale now</button><small>Reduces on-hand and updates Accounting immediately when all stock is available.</small></div>
-      <div><p class="eyebrow">Not ready to commit</p><button class="btn btn--ghost" type="submit" name="nextStep" value="draft">Save as draft only</button><small>Nothing is reserved and Accounting is unchanged.</small></div>
-    </div>
+    <div class="form-actions"><button class="btn btn--primary" id="order-confirm-button" type="submit" name="nextStep" value="confirm">Create order and continue</button><button class="btn btn--ghost" type="submit" name="nextStep" value="draft">Save draft</button></div>
+    <p class="hint">Create order and continue reserves available stock. Nothing leaves inventory until the order page says it was shipped, delivered, or collected.</p>
     <a class="btn btn--ghost" href="/sales">Cancel</a>
   </div>
 </form>
+
+<script>
+(function () {
+  var customer = document.getElementById('order-customer');
+  var email = document.getElementById('order-customer-email');
+  var address = document.getElementById('order-customer-address');
+  var destination = document.getElementById('order-destination');
+  var newCustomer = document.getElementById('order-new-customer');
+  var methods = Array.prototype.slice.call(document.querySelectorAll('input[name="deliveryMethod"]'));
+  var sku = document.getElementById('order-sku');
+  var quantity = document.getElementById('order-quantity');
+  var location = document.getElementById('order-location');
+  var stockCheck = document.getElementById('order-stock-check');
+  var confirmButton = document.getElementById('order-confirm-button');
+  var stock = <%- JSON.stringify(Object.fromEntries(skus.map(function (entry) { return [entry.id, entry.stock]; }))).replace(/</g, '\\u003c') %>;
+
+  function useCustomerDefaults() {
+    var option = customer && customer.options[customer.selectedIndex];
+    if (newCustomer) newCustomer.hidden = Boolean(option && option.value);
+    if (!option || !option.value) return;
+    if (!email.value) email.value = option.getAttribute('data-email') || '';
+    if (!address.value) address.value = option.getAttribute('data-address') || '';
+  }
+
+  function showDestination() {
+    var method = methods.filter(function (entry) { return entry.checked; })[0];
+    var ships = !method || method.value === 'SHIP';
+    destination.hidden = !ships;
+    address.disabled = !ships;
+  }
+
+  function showStockPromise() {
+    if (!stockCheck) return;
+    var selected = sku && sku.value ? stock[sku.value] : null;
+    var requested = quantity ? Number(quantity.value) : 0;
+    if (!selected || !Number.isFinite(requested) || requested < 1) {
+      stockCheck.className = 'notice notice--info field--full';
+      stockCheck.innerHTML = '<div><strong>Choose a product and quantity.</strong><br>Foundry will show what can be reserved before you create the order.</div>';
+      if (confirmButton) confirmButton.textContent = 'Create order and continue';
+      return;
+    }
+    var available = Number(selected.available || 0);
+    var locationName = 'all locations';
+    if (location && location.value) {
+      var position = (selected.positions || []).filter(function (entry) { return entry.location_id === location.value; })[0];
+      available = position ? Number(position.available || 0) : 0;
+      locationName = location.options[location.selectedIndex].text;
+    }
+    var reserved = Math.min(requested, Math.max(0, available));
+    var short = Math.max(0, requested - reserved);
+    if (short) {
+      stockCheck.className = 'notice notice--warn field--full';
+      stockCheck.innerHTML = '<div><strong>This order is ' + short + ' unit' + (short === 1 ? '' : 's') + ' over the available stock.</strong><br>'
+        + requested + ' requested · ' + available + ' available now at ' + locationName + ' · ' + reserved + ' can be reserved · '
+        + short + ' will wait for stock. You may continue, but Foundry cannot promise the full order immediately.</div>';
+      if (confirmButton) confirmButton.textContent = 'Create order — ' + short + ' will wait for stock';
+      return;
+    }
+    stockCheck.className = 'notice notice--success field--full';
+    stockCheck.innerHTML = '<div><strong>All ' + requested + ' can be reserved now.</strong><br>'
+      + available + ' available at ' + locationName + ' before this order.</div>';
+    if (confirmButton) confirmButton.textContent = 'Create order and reserve ' + requested;
+  }
+
+  if (customer) customer.addEventListener('change', useCustomerDefaults);
+  methods.forEach(function (entry) { entry.addEventListener('change', showDestination); });
+  if (sku) sku.addEventListener('change', showStockPromise);
+  if (quantity) quantity.addEventListener('input', showStockPromise);
+  if (location) location.addEventListener('change', showStockPromise);
+  useCustomerDefaults();
+  showDestination();
+  showStockPromise();
+}());
+</script>

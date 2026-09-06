@@ -31,7 +31,7 @@
           </form>
         <% } %>
         <% unmapped.forEach(function(record) { var choices = record.entity_type === 'sku' ? skus : locations; %>
-          <div class="list-row" style="align-items:flex-start">
+          <div class="list-row" id="mapping-<%= record.entity_type %>-<%= record.external_id %>" style="align-items:flex-start; scroll-margin-top:24px">
             <% if (record.entity_type === 'sku' && unmappedProducts.length > 1) { %><input type="checkbox" name="externalIds" value="<%= record.external_id %>" form="bulk-product-import" data-selection-item aria-label="Select <%= record.display_name %>"><% } %>
             <div style="flex:1"><strong><%= record.display_name %></strong><p class="muted"><%= record.entity_type === 'sku' ? 'Square product · ' + (record.code || record.external_id) : 'Square location' %></p>
               <% if (choices.length) { %><form method="post" action="/settings/connections/<%= connection.id %>/map" class="form-actions" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="entityType" value="<%= record.entity_type %>"><input type="hidden" name="externalId" value="<%= record.external_id %>"><select class="select" name="foundryRecordId" required><option value="">Choose its Foundry match</option><% if (record.entity_type === 'sku') { skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %><%= sku.variant_label ? ' / ' + sku.variant_label : '' %> · <%= sku.code %></option><% }) } else { locations.forEach(function(location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) } %></select><button class="btn btn--primary btn--sm" type="submit">Save match</button></form><% } %>

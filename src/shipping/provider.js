@@ -89,7 +89,7 @@ function names() { return [...providers.keys()]; }
  * adds to it.
  */
 function configured() {
-  const preferred = String(process.env.SHIPPING_PROVIDER || 'easypost').toLowerCase();
+  const preferred = String(process.env.SHIPPING_PROVIDER || 'shipengine').toLowerCase();
   if (has(preferred) && get(preferred).isConfigured && get(preferred).isConfigured()) return preferred;
   for (const name of providers.keys()) {
     const provider = providers.get(name);

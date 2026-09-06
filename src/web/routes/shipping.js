@@ -86,10 +86,11 @@ webhooks.post('/webhooks/shipping/:provider/:workspaceId?',
 
     let event;
     try {
-      event = shipping.provider.get(name).verifyEvent(raw, req.headers, { webhookSecret });
+      event = await shipping.provider.get(name).verifyEvent(raw, req.headers, { webhookSecret });
     } catch (error) {
       // Refused, not failed: a retry would be refused identically.
-      return res.status(400).json({ error: error.message });
+      return res.status([400, 401, 404].includes(error.status) ? error.status : 400)
+        .json({ error: error.message });
     }
 
     const workspaceId = inventoryForEvent(req.db, name, event, req.params.workspaceId);
@@ -118,11 +119,27 @@ router.use('/settings/shipping', requireAuth);
 
 router.get('/settings/shipping', requirePermission(permissions.VIEW, 'view shipping rules'),
   asyncRoute(async (req, res) => {
+    const originLocation = req.db.prepare(`SELECT name, address FROM locations
+      WHERE workspace_id = ? AND is_active = 1 ORDER BY created_at LIMIT 1`)
+      .get(req.ctx.workspaceId);
+    const parsedOrigin = shipping.address.parse(originLocation?.address);
     res.page('shipping/rules', {
       title: 'Shipping rules', nav: 'settings',
       rules: shipping.rules.list(req.db, req.ctx.workspaceId, { activeOnly: false }),
       account: shipping.accounts.describe(req.db, req.ctx.workspaceId),
       referral: shipping.referral.describe(req.db, req.ctx.workspaceId),
+      shipengine: shipping.shipenginePlatform.describe(req.db, req.ctx.workspaceId),
+      openShipEngineSetup: req.query.setup === 'shipengine',
+      shipFromAddress: {
+        name: originLocation?.name || req.workspace?.name || '',
+        company_name: req.workspace?.name || '',
+        address_line1: parsedOrigin.line1 || '',
+        address_line2: parsedOrigin.line2 || '',
+        city_locality: parsedOrigin.city || '',
+        state_province: parsedOrigin.state || '',
+        postal_code: parsedOrigin.postalCode || '',
+        country_code: parsedOrigin.country || 'US',
+      },
       workspaceName: req.workspace ? req.workspace.name : '',
       providers: shipping.accounts.PROVIDERS,
       webhookUrl: `${process.env.FOUNDRY_PUBLIC_URL || ''}/webhooks/shipping/`
@@ -200,6 +217,52 @@ router.post('/settings/shipping/account/open', requirePermission(permissions.ADM
   }));
 
 /*
+ * Start a workspace-owned ShipEngine seller. The platform credential creates
+ * the isolated seller; the browser then opens ShipEngine's embedded onboarding
+ * for this seller's carrier, warehouse and payment method.
+ */
+router.post('/settings/shipping/shipengine/start',
+  requirePermission(permissions.ADMIN, 'set up shipping'),
+  asyncRoute(async (req, res) => {
+    try {
+      await shipping.shipenginePlatform.enrol(req.db, req.ctx, req.user, {
+        companyName: req.workspace?.name,
+        ownerName: req.user?.name,
+        email: req.user?.email,
+        countryCode: trimOrNull(req.body.countryCode) || 'US',
+      });
+      return res.redirect(303, '/settings/shipping?setup=shipengine#account');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+      return res.redirect(303, '/settings/shipping#account');
+    }
+  }));
+
+router.get('/settings/shipping/shipengine/token',
+  requirePermission(permissions.ADMIN, 'set up shipping'),
+  asyncRoute(async (req, res) => {
+    try {
+      res.type('text/plain').send(shipping.shipenginePlatform.tokenFor(req.db, req.ctx.workspaceId));
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      res.status(err.status).type('text/plain').send(err.message);
+    }
+  }));
+
+router.post('/settings/shipping/shipengine/complete',
+  requirePermission(permissions.ADMIN, 'finish shipping setup'),
+  asyncRoute(async (req, res) => {
+    try {
+      await shipping.shipenginePlatform.completeOnboarding(req.db, req.ctx, req.user);
+      return res.json({ ok: true, redirect: '/settings/shipping?connected=shipengine#account' });
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      return res.status(err.status).json({ ok: false, error: err.message });
+    }
+  }));
+
+/*
  * Collecting a card, without the card passing through Foundry.
  *
  * This answers with a client secret and nothing else. The number is typed into
@@ -267,10 +330,11 @@ router.post('/settings/shipping/account/remove', requirePermission(permissions.A
     try {
       // Said before the row is gone, because what to say depends on which
       // kind of account it was.
-      const opened = shipping.referral.rowFor(req.db, req.ctx.workspaceId);
+      const opened = shipping.referral.rowFor(req.db, req.ctx.workspaceId)
+        || shipping.shipenginePlatform.rowFor(req.db, req.ctx.workspaceId);
       shipping.accounts.disconnect(req.db, req.ctx, req.user);
       req.flash('success', opened
-        ? 'Disconnected. Foundry has forgotten the keys — the EasyPost account itself, and every '
+        ? 'Disconnected. Foundry has forgotten the keys — the shipping account itself, and every '
           + 'label and tracking record on it, still exists and still belongs to this business.'
         : 'Disconnected. Foundry will not get rates or buy labels for this inventory, '
           + 'and parcels handed over by hand are recorded exactly as they always were.');

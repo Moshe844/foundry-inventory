@@ -70,7 +70,16 @@ test('unknown SKU goes to Needs You, mapping once retries safely and remains dur
   assert.equal(waiting.status, 207);
   assert.equal(waiting.body.needsMapping, 1);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 40);
-  assert.ok(needsYou.inbox(env.db, env.workspace.workspaceId).some((row) => /Unknown sku/i.test(row.title)));
+  const decision = needsYou.inbox(env.db, env.workspace.workspaceId)
+    .find((row) => /Unknown sku/i.test(row.title));
+  assert.ok(decision);
+  assert.match(decision.href, new RegExp(`^/settings/connections/${env.connection.id}#issue-`),
+    'Needs You links to the exact actionable issue, not the top of a generic connection page');
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const target = await agent.get(decision.href.split('#')[0]).expect(200);
+  assert.match(target.text, new RegExp(`id="${decision.href.split('#')[1]}"`),
+    'the destination anchor exists beside the matching form');
 
   connections.mapExternal(env.db, env.workspace.ctx, env.connection.id, {
     entityType: 'sku', externalId: 'vendor-unknown-9', foundryRecordId: env.item.skuId,

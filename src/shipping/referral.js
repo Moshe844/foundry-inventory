@@ -200,7 +200,6 @@ async function recordPaymentMethod(db, ctx, membership, input = {}, options = {}
   if (!key) throw new ValidationError('Foundry has no key for that shipping account any more.');
 
   await partnerApi(options).PAYMENT.attach(key, {
-    stripeCustomerId: trimOrNull(input.stripeCustomerId),
     paymentMethodReference: trimOrNull(input.paymentMethodReference),
     priority: input.priority,
   });

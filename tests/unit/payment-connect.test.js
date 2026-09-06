@@ -116,6 +116,8 @@ test('the key Stripe hands over is thrown away, and an account id is kept', () =
   assert.match(begun.url, /^https:\/\/connect\.stripe\.com\/oauth\/authorize\?/);
   assert.match(begun.url, /client_id=ca_pretend_platform/);
   assert.match(begun.url, /scope=read_write/);
+  assert.ok(!new URL(begun.url).searchParams.has('stripe_user[email]'),
+    'Foundry does not prefill a local/test login address into Stripe');
   assert.equal(done.connected, true);
   assert.equal(done.accountId, 'acct_merchant_1');
 
@@ -324,15 +326,29 @@ test('a merchant who declines is told, not shown the form again', () => asPlatfo
   env.db.close();
 }));
 
-test('without a platform registration, Foundry says to paste a key instead', () => asPlatform(() => {
+test('without an OAuth registration, Foundry reports that account sign-in is not configured', () => asPlatform(() => {
   const env = setup();
   const said = connect.describe(env.db, env.workspace.workspaceId);
   assert.equal(said.available, false);
-  assert.match(said.because, /secret key has to be pasted/);
+  assert.match(said.because, /existing-account sign-in is not configured/);
   assert.throws(() => connect.authorizeUrl(env.db, env.ctx, env.membership, {}),
-    /no Stripe Connect client id/);
+    /existing-account sign-in is not configured/);
   env.db.close();
 }, false));
+
+test('normal Stripe account sign-in wins when OAuth and hosted onboarding are both configured',
+  () => asPlatform(() => {
+    const held = process.env.STRIPE_CONNECT_ENABLED;
+    process.env.STRIPE_CONNECT_ENABLED = 'true';
+    try {
+      assert.equal(connect.usesOauth(), true);
+      assert.equal(connect.usesHostedOnboarding(), true);
+      assert.equal(connect.preferredFlow(), 'oauth');
+    } finally {
+      if (held === undefined) delete process.env.STRIPE_CONNECT_ENABLED;
+      else process.env.STRIPE_CONNECT_ENABLED = held;
+    }
+  }));
 
 /* ------------------------------------------------ the road without a client id */
 
@@ -390,13 +406,15 @@ function hostedStripe(options = {}) {
   };
 }
 
-test('with no client id to find, the business still gets to Stripe', () => asHostedPlatform(async () => {
+test('hosted onboarding remains an internal capability but is not substituted for account sign-in',
+  () => asHostedPlatform(async () => {
   const env = setup();
   const stripe = hostedStripe();
 
   assert.equal(connect.usesOauth(), false, 'there is no client id, which is the situation');
   assert.equal(connect.usesHostedOnboarding(), true);
-  assert.equal(connect.available(), true, 'and the button is still offered');
+  assert.equal(connect.preferredFlow(), null);
+  assert.equal(connect.available(), false, 'the existing-account button is not falsely offered');
 
   const begun = await connect.openOnboarding(env.db, env.ctx, env.membership, {
     businessName: 'HalFi Shoes', email: 'owner@halfi.test',
@@ -422,8 +440,48 @@ test('with no client id to find, the business still gets to Stripe', () => asHos
   // And still no secret of theirs anywhere, which was the point of all of it.
   assert.equal(accounts.contextFor(env.db, env.ctx).stripeAccountId, 'acct_hosted_1');
   assert.equal(accounts.contextFor(env.db, env.ctx).stripeSecretKey, PLATFORM_KEY);
+
+  // Once OAuth is configured, the unfinished onboarding row must not trap the
+  // owner. A successful OAuth return replaces it atomically with the account
+  // they actually chose.
+  process.env.STRIPE_CONNECT_CLIENT_ID = 'ca_pretend_platform';
+  try {
+    const replacement = connect.authorizeUrl(env.db, env.ctx, env.membership,
+      { returnUri: 'https://foundry.test/settings/connections/payments/return' });
+    assert.match(replacement.url, /^https:\/\/connect\.stripe\.com\/oauth\/authorize/);
+  } finally {
+    delete process.env.STRIPE_CONNECT_CLIENT_ID;
+  }
   env.db.close();
 }));
+
+test('a business with no Stripe connection can never fall through to the developer account', () => asPlatform(() => {
+  const env = setup('Not Connected');
+  try {
+    assert.equal(accounts.forWorkspace(env.db, env.workspace.workspaceId), null);
+    assert.throws(() => accounts.contextFor(env.db, env.ctx, 'stripe'),
+      /never put a business's customer payment through the developer account/);
+  } finally { env.db.close(); }
+}));
+
+test('the newer OAuth account_id response completes the same existing-account connection',
+  () => asPlatform(async () => {
+    const env = setup();
+    const begun = connect.authorizeUrl(env.db, env.ctx, env.membership, {});
+    const result = await connect.complete(env.db, { code: 'ac_new_oauth', state: begun.state }, {
+      exchange: async () => ({ account_id: 'acct_new_oauth', livemode: false }),
+      readAccount: async (accountId) => ({
+        id: accountId,
+        business_profile: { name: 'Existing Stripe Business' },
+        charges_enabled: true,
+      }),
+    });
+
+    assert.equal(result.connected, true);
+    assert.equal(result.accountId, 'acct_new_oauth');
+    assert.equal(result.displayName, 'Existing Stripe Business');
+    env.db.close();
+  }));
 
 test('an expired onboarding link is replaced, not reported', () => asHostedPlatform(async () => {
   /*
@@ -470,7 +528,8 @@ test('the platform key is not a till here either', () => asHostedPlatform(() => 
   // use — a platform key is a platform key.
   const env = setup();
   assert.equal(accounts.forWorkspace(env.db, env.workspace.workspaceId), null);
-  assert.match(accounts.describe(env.db, env.workspace.workspaceId).because, /connect its own Stripe/);
+  assert.match(accounts.describe(env.db, env.workspace.workspaceId).because,
+    /No payment account is connected/);
   env.db.close();
 }));
 

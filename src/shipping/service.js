@@ -245,14 +245,12 @@ function ratesFor(db, workspaceId, shipmentId) {
 /* ---------------------------------------------------------------- buying */
 
 /**
- * Buy the label, and let the rest of Foundry find out the ordinary way.
+ * Buy the label without claiming the parcel physically left.
  *
- * The carrier's answers are written onto the shipment first, and then the
- * existing ship path runs. That ordering matters: `ship` is what moves the
- * stock, records the fulfilment and writes the customer their notice, and all
- * of it has worked for a long time. Shipping through a carrier should be the
- * same act with better facts, not a second act that does most of the same
- * things slightly differently.
+ * A label is postage and a tracking number. It is not a carrier handoff. The
+ * box therefore stays PACKED and inventory stays on hand until `ship` records
+ * the real-world handoff. This distinction also keeps a printed-but-unused
+ * label from becoming revenue, COGS, and a false customer shipping notice.
  */
 async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
   const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
@@ -274,24 +272,13 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
   const now = nowIso();
   db.prepare(`UPDATE sales_shipments SET provider_rate_id = ?, provider_shipment_id = ?,
     label_url = ?, label_format = ?, tracking_status = 'PRE_TRANSIT', tracked_at = ?,
-    bought_by_rule_id = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+    bought_by_rule_id = ?, carrier = ?, service = ?, tracking_number = ?,
+    shipping_cost_minor = ?, currency = ?, expected_delivery_date = ?, updated_at = ?
+    WHERE id = ? AND workspace_id = ?`)
     .run(rate.provider_rate_id, bought.providerShipmentId || shipment.provider_shipment_id,
-      bought.labelUrl, bought.labelFormat, now, options.ruleId || null, now,
-      shipmentId, ctx.workspaceId);
-
-  /*
-   * Now the ordinary path. The handover is CARRIER because a label was bought
-   * — that is not an inference, it is what buying a label means.
-   */
-  const shipped = require('../sales/shipment-service').ship(db, ctx, shipmentId, {
-    handover: 'CARRIER',
-    carrier: bought.carrier,
-    service: bought.service,
-    trackingNumber: bought.trackingNumber,
-    shippingCostMinor: bought.amountMinor,
-    currency: bought.currency,
-    expectedDeliveryDate: bought.deliveryDate,
-  });
+      bought.labelUrl, bought.labelFormat, now, options.ruleId || null,
+      bought.carrier, bought.service, bought.trackingNumber, bought.amountMinor,
+      bought.currency, bought.deliveryDate, now, shipmentId, ctx.workspaceId);
 
   // The carrier's own tracking link beats a pattern-built one when there is one.
   if (bought.trackingUrl) {
@@ -308,9 +295,8 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
    * is cash, not a payable.
    *
    * Keyed on the shipment, so a retry that reaches this twice posts once. A
-   * failure here never unships a parcel that has physically gone: the label
-   * exists, the customer has been told, and an unposted expense is a visible
-   * gap rather than a lie.
+   * failure here never changes the physical record: the label exists and the
+   * packed parcel still truthfully says it has not left.
    */
   if (bought.amountMinor > 0) {
     try {
@@ -340,7 +326,6 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
 
   return {
     shipment: requireShipment(db, ctx.workspaceId, shipmentId),
-    shipped,
     label: bought.labelUrl,
     labels: bought.labelUrls || [bought.labelUrl].filter(Boolean),
     trackingNumber: bought.trackingNumber,

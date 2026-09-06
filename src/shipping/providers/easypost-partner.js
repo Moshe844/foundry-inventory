@@ -177,16 +177,13 @@ async function updateReferralCustomer(referralCustomerId, input = {}, options = 
 const PAYMENT = {
   /** A secret for Stripe's own card field, in the merchant's browser. */
   async beginCardSetup(referralKey) {
-    const body = await call(referralKey, '/referral_customers/credit_cards/clientsecret',
+    const body = await call(referralKey, '/setup_intents',
       { method: 'POST', beta: true });
-    const secret = body?.client_secret || body?.public_key || null;
+    const secret = body?.client_secret || null;
     if (!secret) throw new ValidationError('EasyPost did not return a way to collect a card.');
     return {
       clientSecret: secret,
       publishableKey: body?.publishable_key || process.env.EASYPOST_STRIPE_PUBLISHABLE_KEY || null,
-      // Stripe's handle for this merchant, which has to travel back with the
-      // payment method. A cus_ id, never anything to do with a card.
-      stripeCustomerId: body?.stripe_customer_id || body?.customer || null,
     };
   },
 
@@ -202,13 +199,11 @@ const PAYMENT = {
   /*
    * Tell EasyPost about the method Stripe has just stored.
    *
-   * Both references come from Stripe, through the browser, and neither is a
-   * card number — `stripeCustomerId` is a cus_ handle and
-   * `paymentMethodReference` a pm_ or ba_ one. Foundry forwards them and keeps
-   * neither.
+   * The pm_ reference comes from Stripe through the browser. Foundry forwards
+   * it to EasyPost's current credit-card endpoint and keeps no card data.
    */
   async attach(referralKey, input = {}) {
-    if (!input.stripeCustomerId || !input.paymentMethodReference) {
+    if (!input.paymentMethodReference) {
       throw new ValidationError('Stripe did not return a stored payment method to record.');
     }
     if (/^(?:\d[ -]?){12,19}$/.test(String(input.paymentMethodReference))) {
@@ -220,13 +215,13 @@ const PAYMENT = {
       throw new ValidationError('That looks like a card number rather than a Stripe reference. '
         + 'Foundry does not handle card numbers.');
     }
-    const body = await call(referralKey, '/referral_customers/payment_method', {
+    const body = await call(referralKey, '/credit_cards', {
       method: 'POST',
-      beta: true,
       body: {
-        stripe_customer_id: input.stripeCustomerId,
-        payment_method_reference: input.paymentMethodReference,
-        priority: input.priority || 'primary',
+        credit_card: {
+          payment_method_id: input.paymentMethodReference,
+          priority: input.priority || 'primary',
+        },
       },
     });
     return { attached: true, id: body?.id || null };

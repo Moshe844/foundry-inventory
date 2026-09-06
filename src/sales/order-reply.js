@@ -156,4 +156,39 @@ function tellThemAboutStock(db, workspaceId, messageId, message, lines, orderNum
   return put(db, workspaceId, messageId, replyTo(message), body);
 }
 
-module.exports = { askWhichProduct, tellThemAboutStock, stockShortfall, nameOf, series, put };
+/** Ask the one operational question needed before this order can proceed. */
+function askDeliveryDetails(db, workspaceId, messageId, message, orderNumber, lines = []) {
+  const short = stockShortfall(db, workspaceId, lines);
+  const stockNote = short.length ? [
+    '',
+    'I also checked what is ready:',
+    ...short.map((row) => {
+      const ready = row.ready
+        ? `${row.ready} of ${row.wanted} ${row.name} ${row.ready === 1 ? 'is' : 'are'} ready now.`
+        : `We do not have the ${row.name} in stock right now.`;
+      if (row.onOrder && row.expected) return `${ready} ${row.onOrder} more are due ${row.expected}.`;
+      if (row.onOrder) return `${ready} ${row.onOrder} more are on order, but the supplier has not given a date.`;
+      return `${ready} The remaining ${row.wanted - row.ready} ${row.wanted - row.ready === 1 ? 'is' : 'are'} not on order yet.`;
+    }),
+  ] : [];
+  const body = [
+    'Hi,',
+    '',
+    `Thanks for your order${orderNumber ? ` — I have it down as ${orderNumber}` : ''}.`,
+    '',
+    'How would you like to receive it?',
+    '',
+    'Please reply with either:',
+    '- the full address where we should ship it, or',
+    '- pickup, if you will collect it.',
+    ...stockNote,
+    '',
+    'We will continue the order as soon as we hear back.',
+    '',
+    'Thanks,',
+  ].join('\n');
+  const drafted = put(db, workspaceId, messageId, replyTo(message), body);
+  return drafted ? { ...drafted, shortfall: short.length > 0 } : null;
+}
+
+module.exports = { askWhichProduct, askDeliveryDetails, tellThemAboutStock, stockShortfall, nameOf, series, put };

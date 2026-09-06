@@ -10,6 +10,11 @@ CREATE TABLE IF NOT EXISTS customers (
   email               TEXT,
   phone               TEXT,
   shipping_address    TEXT,
+  -- An email sender Foundry has never seen is kept as a provisional identity
+  -- until the owner creates or matches the customer. It is not silently
+  -- presented as a trusted customer record.
+  record_state        TEXT NOT NULL DEFAULT 'ACTIVE'
+                        CHECK (record_state IN ('ACTIVE','PROVISIONAL')),
   notes               TEXT,
   created_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   created_at          TEXT NOT NULL,
@@ -28,10 +33,19 @@ CREATE TABLE IF NOT EXISTS sales_orders (
   order_date               TEXT NOT NULL,
   needed_by                TEXT,
   fulfillment_location_id  TEXT REFERENCES locations(id) ON DELETE RESTRICT,
+  -- The destination agreed for this order. It is a snapshot, not a live read
+  -- through to the customer's profile: changing a customer's default address
+  -- tomorrow must never rewrite where today's order is meant to go.
+  delivery_method          TEXT NOT NULL DEFAULT 'SHIP'
+                             CHECK (delivery_method IN ('SHIP','PICKUP')),
+  ship_to_address          TEXT,
+  ship_to_source           TEXT,
   notes                    TEXT,
   reference                TEXT,
   -- The email this order was read out of, when Foundry drafted it from one.
   source_email_message_id  TEXT REFERENCES connection_email_messages(id) ON DELETE SET NULL,
+  customer_decision_required INTEGER NOT NULL DEFAULT 0,
+  delivery_decision_required INTEGER NOT NULL DEFAULT 0,
   currency                 TEXT NOT NULL DEFAULT 'USD',
   discount_minor           INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
   tax_minor                INTEGER NOT NULL DEFAULT 0 CHECK (tax_minor >= 0),

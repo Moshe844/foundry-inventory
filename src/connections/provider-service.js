@@ -486,8 +486,17 @@ async function syncMailbox(db, workspaceId, connectorId, options = {}) {
      * already shows as needing an answer, so a model that could not read it
      * costs the owner an email to answer, not a lost customer.
      */
-    if (captured?.id && captured.classification === 'customer_order_request') {
-      const orders = require('../sales/order-from-email');
+    const orders = require('../sales/order-from-email');
+    let answeredPendingDelivery = false;
+    if (captured?.id) {
+      try {
+        answeredPendingDelivery = Boolean((await orders.applyPendingDeliveryReply(db, auth, captured.id))?.handled);
+      } catch {
+        // The answer remains captured. A reply that is not safe to apply is
+        // visible work, never a guessed destination.
+      }
+    }
+    if (!answeredPendingDelivery && captured?.id && captured.classification === 'customer_order_request') {
       try { await orders.draft(db, auth, captured.id); }
       catch (error) {
         // The message stands on its own; a draft is an improvement on it, not
@@ -508,7 +517,7 @@ async function syncMailbox(db, workspaceId, connectorId, options = {}) {
      * facts in the reply come from the records before a word is written, so
      * a draft nobody sends has still cost nothing but the writing.
      */
-    if (captured?.id && captured.classification === 'customer_message') {
+    if (!answeredPendingDelivery && captured?.id && captured.classification === 'customer_message') {
       try { await prepareReply(db, auth, captured.id); }
       catch { /* The message is captured and shows as needing an answer; a missing draft is not a lost customer. */ }
     }

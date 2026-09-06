@@ -16,6 +16,7 @@
 
 const provider = require('./provider');
 
+provider.register('shipengine', require('./providers/shipengine'));
 provider.register('easypost', require('./providers/easypost'));
 provider.register('shippo', require('./providers/shippo'));
 
@@ -23,6 +24,7 @@ module.exports = {
   provider,
   accounts: require('./accounts'),
   referral: require('./referral'),
+  shipenginePlatform: require('./shipengine-platform'),
   partner: require('./providers/easypost-partner'),
   address: require('./address'),
   service: require('./service'),

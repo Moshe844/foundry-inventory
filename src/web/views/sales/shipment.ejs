@@ -45,9 +45,8 @@
 <%= s.ship_to_address %></address>
         <% if (isOpen) { %>
           <p class="hint">
-            Copied from <%= s.customer_name %> when this box was started. If they have
-            moved since, change it on the customer before starting the next one — this
-            box keeps the address it was picked for.
+            Copied from <%= s.order_number %> when this box was started. The order and this
+            box keep their agreed destination even if the customer's default changes later.
           </p>
         <% } %>
       </div>
@@ -80,8 +79,8 @@
   <div class="notice notice--warn">
     <div>
       <strong>No address on file for <%= s.customer_name || 'this customer' %>.</strong><br>
-      Foundry has nowhere to say this is going. Add a shipping address to the customer,
-      or write it on the label from whatever you have.
+      Foundry has nowhere to say this is going. Correct the Sales Order destination before
+      buying a label; Foundry will not silently use another address.
     </div>
   </div>
 <% } %>
@@ -319,8 +318,8 @@
               <button class="btn btn--primary" type="submit">Buy label</button>
             </div>
             <p class="t-xs t-muted" style="margin-top:8px;">
-              This spends money with the carrier, moves the stock, and prepares the customer's
-              shipping notice with the tracking number on it.
+              This buys postage only. The parcel remains packed and every unit stays in inventory
+              until you confirm it was physically handed over.
             </p>
           </form>
         </div>
@@ -332,7 +331,7 @@
 <% if (ship && s.tracking_number && s.label_url) { %>
   <section class="section" id="label">
     <div class="panel">
-      <div class="panel-head"><div><h2>Shipment created</h2></div></div>
+      <div class="panel-head"><div><h2><%= s.status === 'PACKED' ? 'Label ready — not handed over yet' : 'Shipment' %></h2></div></div>
       <div class="card-body">
         <div class="accounting-equation">
           <p><span>Carrier</span><strong><%= helpers.carrierName ? helpers.carrierName(s.carrier) : s.carrier %> <%= s.service || '' %></strong></p>
@@ -377,6 +376,19 @@
           <span class="t-xs t-muted">This is the step that moves stock</span>
         </div>
       </div>
+      <% if (s.label_url && s.tracking_number) { %>
+      <form method="post" action="/fulfilment/<%= s.id %>/ship" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="handover" value="CARRIER">
+        <div class="card-body">
+          <p class="lede">The label is ready, but Foundry still counts these goods in inventory.</p>
+          <p class="hint">Confirm only when the parcel is physically with the carrier. That moment moves stock, records the sale, and prepares the customer update.</p>
+        </div>
+        <div class="card-foot">
+          <button class="btn btn--primary" type="submit">Handed to carrier — <%= s.units %> leaves stock</button>
+        </div>
+      </form>
+      <% } else { %>
       <form method="post" action="/fulfilment/<%= s.id %>/ship" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="card-body">
@@ -436,6 +448,7 @@
           </span>
         </div>
       </form>
+      <% } %>
     </div>
   </section>
 <% } %>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stripe connection · Foundry</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/foundry.css">
+  <style>
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: var(--surface-subtle, #f7f8fa); }
+    .stripe-return { width: min(420px, calc(100vw - 32px)); text-align: center; }
+    .stripe-return .panel { padding: 28px; }
+    .stripe-return h1 { margin: 0 0 10px; font-size: 22px; }
+    .stripe-return p { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <main class="stripe-return">
+    <div class="panel">
+      <h1><%= outcome.chargesEnabled ? 'Stripe is connected' : outcome.connected ? 'Stripe needs one more step' : 'Stripe was not connected' %></h1>
+      <p><%= outcome.message %></p>
+      <a class="btn btn--primary" href="/settings/connections#payments">Return to Foundry</a>
+    </div>
+  </main>
+  <script>
+    (function () {
+      var message = {
+        type: 'foundry:stripe-return',
+        connected: <%- JSON.stringify(Boolean(outcome.connected)) %>,
+        chargesEnabled: <%- JSON.stringify(Boolean(outcome.chargesEnabled)) %>
+      };
+      if (!window.opener || window.opener.closed) return;
+      // The owner may have opened Foundry on localhost while Stripe had to
+      // return through the configured public/ngrok address. The opener still
+      // validates this page's origin against those exact Foundry origins.
+      window.opener.postMessage(message, '*');
+      // Let the success/error explanation paint before closing. If the browser
+      // refuses window.close(), the owner still sees a useful page and link.
+      window.setTimeout(function () { window.close(); }, 500);
+    }());
+  </script>
+</body>
+</html>

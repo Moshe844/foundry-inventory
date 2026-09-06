@@ -1,0 +1,19 @@
+<div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span>New customer</span></div>
+<div class="page-head"><div class="titles"><p class="eyebrow">Customer</p><h1>Who is the customer?</h1><p>Name them once. Contact and delivery details can be added now or later.</p></div></div>
+
+<% if (locals.formError) { %><div class="notice notice--warn"><strong>Customer not saved.</strong> <%= locals.formError %></div><% } %>
+
+<form class="card form-card" method="post" action="/sales/customers">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="card-head"><div><h2>Customer details</h2><p class="hint">Only the name is required. Foundry will say what is missing when an order needs delivery or an email.</p></div></div>
+  <div class="card-body">
+    <div class="form-grid">
+      <label class="field field--full"><span>Name</span><input name="name" value="<%= form.name || '' %>" required autofocus placeholder="Person or business name"></label>
+      <label class="field"><span>Email <small>for order and shipping messages</small></span><input type="email" name="email" value="<%= form.email || '' %>"></label>
+      <label class="field"><span>Phone <small>optional</small></span><input name="phone" value="<%= form.phone || '' %>"></label>
+      <label class="field field--full"><span>Default shipping address <small>optional</small></span><textarea name="shippingAddress" rows="3" placeholder="Street, town, state, postcode"><%= form.shippingAddress || '' %></textarea><small>Each Sales Order keeps its own confirmed destination; this is only the starting default.</small></label>
+      <details class="field field--full"><summary>Company and notes</summary><div class="form-grid" style="margin-top:12px"><label class="field"><span>Company</span><input name="company" value="<%= form.company || '' %>"></label><label class="field"><span>Notes</span><textarea name="notes"><%= form.notes || '' %></textarea></label></div></details>
+    </div>
+    <div class="form-actions"><button class="btn btn--primary" type="submit">Create customer</button><a class="btn btn--ghost" href="/orders">Cancel</a></div>
+  </div>
+</form>

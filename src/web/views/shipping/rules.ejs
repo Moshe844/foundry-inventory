@@ -10,6 +10,7 @@
    * can see it understood them.
    */
   const money = function (minor) { return '$' + (Number(minor || 0) / 100).toFixed(2); };
+  const se = typeof shipengine === 'undefined' ? { opened: false, available: false } : shipengine;
 %>
 
 <div class="page-head">
@@ -40,8 +41,45 @@
     <p class="hint">Rates and labels come from this account, and its labels are billed to it.</p>
   </div></div>
 
+  <%# ------------------------------------- a workspace ShipEngine seller %>
+  <% if (account.connected && account.source === 'platform') { %>
+    <div class="card-body stack">
+      <p class="lede">
+        ShipEngine for <%= se.name || workspaceName %>
+        <% if (se.billingReady) { %><span class="badge badge--ok">ready to buy labels</span>
+        <% } else { %><span class="badge badge--warn">setup unfinished</span><% } %>
+      </p>
+      <p class="hint">
+        This is this business's separate shipping account. Its carrier rates, payment method,
+        labels and charges are isolated from every other Foundry workspace. Foundry never charges
+        Keeper's developer account for this business's postage.
+      </p>
+      <% if (!se.billingReady) { %>
+        <div class="notice notice--warn"><div>
+          <strong>Finish the one-time setup before buying a real label.</strong><br>
+          <%= se.because %>
+        </div></div>
+      <% } %>
+      <p class="t-xs t-muted">ShipEngine seller <code><%= se.sellerId %></code></p>
+    </div>
+    <div class="card-foot">
+      <% if (!se.billingReady) { %>
+        <button class="btn btn--primary" type="button" data-modal-open="modal-shipengine">
+          Continue shipping setup
+        </button>
+      <% } else { %>
+        <button class="btn" type="button" data-modal-open="modal-shipengine-settings">
+          Manage carriers and payment
+        </button>
+      <% } %>
+      <form method="post" action="/settings/shipping/account/remove" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--ghost" type="submit">Disconnect</button>
+      </form>
+    </div>
+
   <%# ------------------------------------------- an account Foundry opened %>
-  <% if (account.connected && account.source === 'referral') { %>
+  <% } else if (account.connected && account.source === 'referral') { %>
     <div class="card-body">
       <p class="lede">
         EasyPost account for <%= referral.name %><% if (!referral.billingReady) { %>
@@ -107,7 +145,8 @@
   <% } else if (account.connected && account.source === 'workspace') { %>
     <div class="card-body">
       <p class="lede">
-        Connected to <%= account.provider === 'easypost' ? 'EasyPost' : 'Shippo' %><% if (account.testMode) { %>
+        Connected to <%= account.provider === 'shipengine' ? 'ShipEngine'
+          : account.provider === 'easypost' ? 'EasyPost' : 'Shippo' %><% if (account.testMode) { %>
           <span class="badge badge--warn">test mode</span><% } %>
       </p>
       <p class="hint">
@@ -153,7 +192,38 @@
        * second — and would be worse off on a new account, so it must stay.
        */
     %>
-    <% if (referral.available && !referral.opened) { %>
+    <% if (se.available && !se.opened && !account.connected) { %>
+      <form method="post" action="/settings/shipping/shipengine/start" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="countryCode" value="US">
+        <div class="card-body stack">
+          <h3>Set up shipping</h3>
+          <p class="hint">
+            Foundry will open one secure setup window. Your business address is filled in. You
+            activate a carrier and add the payment method that pays for this business's labels.
+            After that, Foundry can compare rates, buy labels, print them and keep tracking updated.
+          </p>
+          <div class="notice notice--ok"><div>
+            <strong>This business pays its own postage.</strong><br>
+            Foundry never charges Keeper's developer account. The payment method entered during
+            setup belongs only to this workspace's ShipEngine seller.
+          </div></div>
+        </div>
+        <div class="card-foot">
+          <button class="btn btn--primary" type="submit">Set up shipping</button>
+        </div>
+      </form>
+    <% } else if (!se.available && !se.opened && !account.connected) { %>
+      <div class="card-body">
+        <div class="notice notice--warn"><div>
+          <strong>ShipEngine's embedded setup is not connected to this Foundry installation yet.</strong><br>
+          The Foundry administrator must add the platform credentials issued during ShipEngine
+          partner onboarding. A normal sandbox API key alone cannot create isolated customer sellers.
+        </div></div>
+      </div>
+    <% } %>
+
+    <% if (!se.available && referral.available && !referral.opened && !se.opened) { %>
       <form method="post" action="/settings/shipping/account/open" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="card-body stack">
@@ -189,7 +259,7 @@
     <%
       // Folded away only when there is something better to fold it behind.
       // Where Foundry cannot open an account, this is the only way in.
-      var offerOpen = Boolean(referral.available && !referral.opened);
+    var offerOpen = Boolean((se.available || referral.available) && !referral.opened && !se.opened);
     %>
     <% if (offerOpen) { %>
       <details class="disclose">
@@ -206,7 +276,8 @@
           <span class="field-label">Provider</span>
           <select class="select" name="provider">
             <% providers.forEach(function (name) { %>
-              <option value="<%= name %>"><%= name === 'easypost' ? 'EasyPost' : 'Shippo' %></option>
+              <option value="<%= name %>"><%= name === 'shipengine' ? 'ShipEngine'
+                : name === 'easypost' ? 'EasyPost' : 'Shippo' %></option>
             <% }) %>
           </select>
         </label>
@@ -214,8 +285,9 @@
           <span class="field-label">API key</span>
           <input class="input" type="password" name="apiKey" autocomplete="off" required>
           <span class="field-hint">
-            Start with the provider's test key. It returns real rates and issues labels without
-            charging anybody or moving anything. Stored encrypted, and never shown back to you.
+            Start with the provider's test key. It exercises the flow and issues test labels
+            without charging anybody or moving anything; test prices may differ from live rates.
+            Stored encrypted, and never shown back to you.
           </span>
         </label>
         <label class="field">
@@ -238,6 +310,125 @@
     <% } %>
   <% } %>
 </section>
+
+<% if (account.connected && account.source === 'platform') { %>
+  <dialog class="modal" id="modal-shipengine" aria-labelledby="shipengine-setup-title">
+    <div class="modal-head">
+      <div>
+        <h2 id="shipengine-setup-title">Set up shipping once</h2>
+        <p class="hint">Carrier, ship-from address, and this business's payment method.</p>
+      </div>
+      <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="shipengine-onboarding" style="min-height:420px;max-height:70vh;overflow:auto">
+        <p class="hint" id="shipengine-onboarding-status">Loading secure shipping setup…</p>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="modal" id="modal-shipengine-settings" aria-labelledby="shipengine-settings-title">
+    <div class="modal-head">
+      <div>
+        <h2 id="shipengine-settings-title">Shipping account</h2>
+        <p class="hint">Manage this business's carriers, warehouse, and payment method.</p>
+      </div>
+      <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="shipengine-account-settings" style="min-height:420px;max-height:70vh;overflow:auto">
+        <p class="hint" id="shipengine-settings-status">Loading secure account settings…</p>
+      </div>
+    </div>
+  </dialog>
+
+  <script type="module">
+    import { ElementsSDK } from 'https://cdn.shipengine.com/shipengine-elements-sdk.mjs';
+
+    const csrf = <%- JSON.stringify(csrfToken) %>;
+    const defaultShipFromAddress = <%- JSON.stringify(shipFromAddress) %>;
+    let onboardingMounted = false;
+    let settingsMounted = false;
+    let completing = false;
+
+    async function getToken() {
+      const response = await fetch('/settings/shipping/shipengine/token', {
+        headers: { accept: 'text/plain' }, credentials: 'same-origin',
+      });
+      const token = await response.text();
+      if (!response.ok) throw new Error(token || 'Foundry could not open secure shipping setup.');
+      return token;
+    }
+
+    const elements = new ElementsSDK(getToken, {
+      baseURL: 'https://elements.shipengine.com',
+      locale: 'en-US',
+      onError: function (error) {
+        const visible = document.querySelector('dialog[open] [id^="shipengine-"][id$="status"]');
+        if (visible) visible.textContent = error && error.message
+          ? error.message : 'ShipEngine could not load this step. Please try again.';
+      },
+      features: {
+        globalFeatures: {
+          enabledShipEngineCarriers: ['stamps_com', 'dhl_express_worldwide'],
+          enabledExternalCarriers: ['ups', 'fedex', 'stamps_com', 'dhl_express_worldwide'],
+          poweredByShipEngine: true,
+        },
+      },
+    });
+
+    async function finish() {
+      if (completing) return;
+      completing = true;
+      const response = await fetch('/settings/shipping/shipengine/complete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-csrf-token': csrf },
+        credentials: 'same-origin',
+        body: JSON.stringify({ _csrf: csrf }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) {
+        completing = false;
+        throw new Error(result.error || 'Foundry could not verify that shipping setup finished.');
+      }
+      window.location.assign(result.redirect || '/settings/shipping#account');
+    }
+
+    function mountOnboarding() {
+      if (onboardingMounted) return;
+      onboardingMounted = true;
+      document.getElementById('shipengine-onboarding-status')?.remove();
+      const onboarding = elements.create('onboarding');
+      onboarding.mount('shipengine-onboarding', {
+        defaultShipFromAddress: defaultShipFromAddress,
+        skipWelcomePage: true,
+        onComplete: finish,
+        onSellerOnboarded: finish,
+      });
+    }
+
+    function mountSettings() {
+      if (settingsMounted) return;
+      settingsMounted = true;
+      document.getElementById('shipengine-settings-status')?.remove();
+      const accountSettings = elements.create('accountSettings');
+      accountSettings.mount('shipengine-account-settings');
+    }
+
+    document.querySelectorAll('[data-modal-open="modal-shipengine"]').forEach(function (button) {
+      button.addEventListener('click', mountOnboarding);
+    });
+    document.querySelectorAll('[data-modal-open="modal-shipengine-settings"]').forEach(function (button) {
+      button.addEventListener('click', mountSettings);
+    });
+
+    <% if (openShipEngineSetup && !se.billingReady) { %>
+      const dialog = document.getElementById('modal-shipengine');
+      mountOnboarding();
+      if (dialog && !dialog.open) dialog.showModal();
+    <% } %>
+  </script>
+<% } %>
 
 <section class="card section">
   <div class="card-head"><div>
@@ -391,8 +582,6 @@
               if (result.error) throw new Error(result.error.message);
               var intent = result.setupIntent || {};
               document.getElementById('billing-method').value = intent.payment_method || '';
-              document.getElementById('billing-customer').value =
-                setup.stripeCustomerId || intent.customer || '';
               form.submit();
             })
             .catch(function (error) { submit.disabled = false; say(error.message); });
