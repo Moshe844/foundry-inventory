@@ -775,7 +775,28 @@
 <% if (locals.paymentRequests) { %>
   <% var payable = paymentRequests.filter(function (rq) { return rq.status === 'OPEN' && rq.hostedUrl; })[0]; %>
   <% if (payable) { %>
-    <div class="pay-modal" id="pay-window" hidden<%= locals.openPaymentUrl ? ' data-open-now=' + JSON.stringify(openPaymentUrl) : '' %>>
+    <%
+      /*
+       * The address of the payment page, as an attribute and nothing else.
+       *
+       * This was written with JSON.stringify to supply the quotes, and the
+       * escaping output tag then turned those quotes into entities — so the
+       * attribute arrived unquoted with literal quote characters inside its
+       * value. The browser read the value as a string beginning with a quote
+       * mark, which is not an absolute URL, so it resolved it as a path
+       * relative to Foundry and opened /orders/%22https://... — a Foundry
+       * page that does not exist.
+       *
+       * A merchant standing at the counter with a customer got a window
+       * saying "We could not find that", and nothing anywhere said the link
+       * was fine and only the markup was wrong.
+       *
+       * The quotes belong in the template, where the escaping cannot reach
+       * them. Nothing in this comment may contain an EJS tag, for the same
+       * reason: the parser reads comments too.
+       */
+    %>
+    <div class="pay-modal" id="pay-window" hidden<% if (locals.openPaymentUrl) { %> data-open-now="<%= openPaymentUrl %>"<% } %>>
       <div class="pay-modal__sheet" role="dialog" aria-modal="true" aria-label="Taking a payment"
         data-order="<%= order.id %>">
         <div class="pay-modal__head">

@@ -790,7 +790,27 @@
         'popup=yes,width=' + width + ',height=' + height + ',left=' + Math.round(left) + ',top=' + Math.round(top));
     }
 
-    function open(url) {
+    /*
+     * Only ever somewhere a payment can actually be taken.
+     *
+     * A relative value here would be opened against Foundry's own origin, and
+     * a merchant standing at the counter would get a Foundry page saying "We
+     * could not find that" instead of a card form. That is exactly what a
+     * broken attribute did once, so the check is here as well as in the
+     * template: a wrong address should look wrong, not be visited.
+     */
+    function payable(url) {
+      if (!url) return null;
+      try {
+        var parsed = new URL(String(url), window.location.href);
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+        if (parsed.origin === window.location.origin) return null;
+        return parsed.href;
+      } catch (error) { return null; }
+    }
+
+    function open(candidate) {
+      var url = payable(candidate);
       if (!url) return;
       tab.href = url;
       modal.hidden = false;
