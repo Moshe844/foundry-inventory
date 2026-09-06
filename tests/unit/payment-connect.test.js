@@ -333,3 +333,143 @@ test('without a platform registration, Foundry says to paste a key instead', () 
     /no Stripe Connect client id/);
   env.db.close();
 }, false));
+
+/* ------------------------------------------------ the road without a client id */
+
+/*
+ * The second way to Stripe, and the one that actually works on a dashboard
+ * made today.
+ *
+ * OAuth needs a client id, and Stripe no longer issues one to every new
+ * platform — a sandbox created this morning has none, and the setting a
+ * developer is told to go and find simply is not there. Hosted onboarding
+ * needs nothing but the platform key that has to be set anyway: Foundry makes
+ * the account and Stripe shows the merchant its own form.
+ *
+ * What matters is that everything after the merchant comes back is the same.
+ * The account id, the no-key rule, charges_enabled honesty, disconnect — all
+ * of it is shared, which is why this lives in one module rather than two.
+ */
+function asHostedPlatform(run) {
+  const held = { id: process.env.STRIPE_CONNECT_CLIENT_ID, key: process.env.STRIPE_SECRET_KEY,
+    on: process.env.STRIPE_CONNECT_ENABLED };
+  delete process.env.STRIPE_CONNECT_CLIENT_ID;      // the whole point: there is none
+  process.env.STRIPE_SECRET_KEY = PLATFORM_KEY;
+  process.env.STRIPE_CONNECT_ENABLED = 'true';
+  const restore = () => {
+    for (const [name, value] of [['STRIPE_CONNECT_CLIENT_ID', held.id],
+      ['STRIPE_SECRET_KEY', held.key], ['STRIPE_CONNECT_ENABLED', held.on]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+  try {
+    const out = run();
+    return out && typeof out.then === 'function' ? out.finally(restore) : (restore(), out);
+  } catch (error) { restore(); throw error; }
+}
+
+function hostedStripe(options = {}) {
+  const state = { created: [], links: [], read: [] };
+  return {
+    state,
+    async createAccount(input) {
+      state.created.push(input);
+      return { id: options.accountId || 'acct_hosted_1', charges_enabled: false, livemode: false,
+        business_profile: { name: input.name } };
+    },
+    async createLink(input) {
+      state.links.push(input);
+      return { url: 'https://connect.stripe.com/setup/s/pretend', expires_at: 1799999999 };
+    },
+    async readAccount(id) {
+      state.read.push(id);
+      return { id, charges_enabled: options.chargesEnabled === true, livemode: false,
+        business_profile: { name: 'HalFi Shoes' } };
+    },
+  };
+}
+
+test('with no client id to find, the business still gets to Stripe', () => asHostedPlatform(async () => {
+  const env = setup();
+  const stripe = hostedStripe();
+
+  assert.equal(connect.usesOauth(), false, 'there is no client id, which is the situation');
+  assert.equal(connect.usesHostedOnboarding(), true);
+  assert.equal(connect.available(), true, 'and the button is still offered');
+
+  const begun = await connect.openOnboarding(env.db, env.ctx, env.membership, {
+    businessName: 'HalFi Shoes', email: 'owner@halfi.test',
+    returnUrl: 'https://foundry.test/settings/connections/payments/return',
+    refreshUrl: 'https://foundry.test/settings/connections/payments/refresh',
+    createAccount: stripe.createAccount, createLink: stripe.createLink,
+  });
+
+  assert.match(begun.url, /^https:\/\/connect\.stripe\.com\/setup\//);
+  assert.equal(begun.accountId, 'acct_hosted_1');
+  assert.deepEqual(stripe.state.created, [{ name: 'HalFi Shoes', email: 'owner@halfi.test' }]);
+
+  /*
+   * The account exists and cannot take a payment, and Foundry says exactly
+   * that. Half a signup is the ordinary result of closing the tab, and a green
+   * tick over it is how a merchant finds out from a customer.
+   */
+  const said = accounts.describe(env.db, env.workspace.workspaceId);
+  assert.equal(said.source, 'connect');
+  assert.equal(said.chargesEnabled, false);
+  assert.match(said.because, /not accepting charges/i);
+
+  // And still no secret of theirs anywhere, which was the point of all of it.
+  assert.equal(accounts.contextFor(env.db, env.ctx).stripeAccountId, 'acct_hosted_1');
+  assert.equal(accounts.contextFor(env.db, env.ctx).stripeSecretKey, PLATFORM_KEY);
+  env.db.close();
+}));
+
+test('an expired onboarding link is replaced, not reported', () => asHostedPlatform(async () => {
+  /*
+   * Stripe calls the refresh address when somebody opens a link that has
+   * lapsed. They did nothing wrong except take longer than the link lasted, so
+   * the answer is another link rather than an error.
+   */
+  const env = setup();
+  const stripe = hostedStripe();
+  await connect.openOnboarding(env.db, env.ctx, env.membership,
+    { businessName: 'HalFi Shoes', createAccount: stripe.createAccount, createLink: stripe.createLink });
+
+  const again = await connect.relink(env.db, env.ctx, { createLink: stripe.createLink });
+  assert.match(again.url, /^https:\/\/connect\.stripe\.com\/setup\//);
+  assert.equal(stripe.state.created.length, 1, 'and no second account was made to do it');
+  assert.equal(stripe.state.links.length, 2);
+  env.db.close();
+}));
+
+test('coming back is settled by asking Stripe, not by the redirect', () => asHostedPlatform(async () => {
+  /*
+   * Hosted onboarding returns the browser and says nothing about whether the
+   * merchant finished. Believing the redirect would mean claiming an account
+   * can take money because somebody navigated back to a page.
+   */
+  const env = setup();
+  const started = hostedStripe();
+  await connect.openOnboarding(env.db, env.ctx, env.membership,
+    { businessName: 'HalFi Shoes', createAccount: started.createAccount, createLink: started.createLink });
+
+  const stillUnfinished = await connect.refresh(env.db, env.workspace.workspaceId,
+    { readAccount: hostedStripe({ chargesEnabled: false }).readAccount });
+  assert.equal(stillUnfinished.chargesEnabled, false);
+
+  const finished = await connect.refresh(env.db, env.workspace.workspaceId,
+    { readAccount: hostedStripe({ chargesEnabled: true }).readAccount });
+  assert.equal(finished.chargesEnabled, true);
+  assert.equal(finished.because, null);
+  env.db.close();
+}));
+
+test('the platform key is not a till here either', () => asHostedPlatform(() => {
+  // The same hazard as with OAuth, and it must not depend on which road is in
+  // use — a platform key is a platform key.
+  const env = setup();
+  assert.equal(accounts.forWorkspace(env.db, env.workspace.workspaceId), null);
+  assert.match(accounts.describe(env.db, env.workspace.workspaceId).because, /connect its own Stripe/);
+  env.db.close();
+}));

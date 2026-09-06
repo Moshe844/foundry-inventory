@@ -93,11 +93,14 @@ function forWorkspace(db, workspaceId) {
    * at all — and at that moment the fallback quietly becomes "every inventory
    * that has not connected yet takes its customers' money into Keeper's bank".
    *
+   * So the question asked here is whether Connect is switched on, not which
+   * of the two ways in it uses. Where it is off, nothing about this changed.
+   *
    * Nobody would ever have chosen that. It would simply have followed from two
    * reasonable things being true at once, and the first anybody would know is
    * a shop's takings arriving somewhere else.
    */
-  if (process.env.STRIPE_CONNECT_CLIENT_ID) return null;
+  if (require('./connect').available()) return null;
 
   return {
     provider: 'stripe',

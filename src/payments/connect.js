@@ -40,6 +40,7 @@ const AUTHORIZE = 'https://connect.stripe.com/oauth/authorize';
 const TOKEN = 'https://connect.stripe.com/oauth/token';
 const DEAUTHORIZE = 'https://connect.stripe.com/oauth/deauthorize';
 const ACCOUNTS = 'https://api.stripe.com/v1/accounts';
+const ACCOUNT_LINKS = 'https://api.stripe.com/v1/account_links';
 
 /*
  * The platform's own identity: one registration for the whole application,
@@ -53,15 +54,38 @@ function platform() {
   };
 }
 
-/** Whether connecting this way is available at all. */
-function available() {
+/*
+ * Two ways to send a business to Stripe, and only one of them is available on
+ * any given dashboard.
+ *
+ * OAuth needs a client id, which Stripe no longer issues to every new
+ * platform — a sandbox created today often has none, and hunting for a setting
+ * that does not exist is worse than not offering the path.
+ *
+ * Hosted onboarding needs nothing but the platform key that must already be
+ * set: Foundry creates the account through the API and sends the merchant to
+ * Stripe's own onboarding page. No client id, no redirect to register at
+ * Stripe, nothing to go and find.
+ *
+ * Everything after the merchant comes back is identical either way, which is
+ * why this is one module and not two.
+ */
+function usesOauth() {
   const held = platform();
   return Boolean(held.clientId && held.secretKey);
 }
 
-function requirePlatform() {
+function usesHostedOnboarding() {
   const held = platform();
-  if (!held.clientId) {
+  return Boolean(held.secretKey && /^(1|true|yes|on)$/i.test(String(process.env.STRIPE_CONNECT_ENABLED || '')));
+}
+
+/** Whether a business can connect its own account here at all. */
+function available() { return usesHostedOnboarding() || usesOauth(); }
+
+function requirePlatform(options = {}) {
+  const held = platform();
+  if (options.oauth !== false && !held.clientId) {
     throw new ValidationError('Foundry has no Stripe Connect client id, so a business cannot '
       + 'connect its account this way. Paste a secret key instead.');
   }
@@ -169,6 +193,97 @@ function authorizeUrl(db, ctx, membership, options = {}) {
   if (options.email) query.set('stripe_user[email]', options.email);
 
   return { url: `${AUTHORIZE}?${query.toString()}`, connectorId: connector.id, state };
+}
+
+/* --------------------------------------------------- hosted onboarding */
+
+/**
+ * Create the business's own Stripe account, and a page for them to finish it.
+ *
+ * A Standard account, deliberately. The business gets a full Stripe dashboard,
+ * its own relationship with Stripe, its own fees and its own payouts — Foundry
+ * is how the account was made and is not who it belongs to, and they keep it
+ * whether or not they keep Foundry.
+ *
+ * The account is created before it is complete, which is normal here: Stripe
+ * expects a platform to make the account and then hand the person a link to
+ * fill in the rest. So the row exists from this moment with charges_enabled
+ * false, and nothing pretends it can take money yet.
+ */
+async function openOnboarding(db, ctx, membership, options = {}) {
+  permissions.assertCan(membership, permissions.ADMIN, 'connect a payment account');
+  const held = requirePlatform({ oauth: false });
+
+  const now = nowIso();
+  let row = rowFor(db, ctx.workspaceId);
+  let connectorId = row ? row.connector_id : null;
+
+  if (!row) {
+    const created = options.createAccount
+      ? await options.createAccount({ email: options.email, name: options.businessName })
+      : await post(`${ACCOUNTS}`, {
+        type: 'standard',
+        email: options.email || undefined,
+        'business_profile[name]': options.businessName || undefined,
+      }, held.secretKey);
+    if (!created || !created.id) {
+      throw new ValidationError('Stripe did not return an account to send this business to.');
+    }
+
+    let connector = db.prepare(`SELECT * FROM workspace_connectors
+      WHERE workspace_id = ? AND provider_type = ?`).get(ctx.workspaceId, PROVIDER);
+    if (!connector) {
+      const id = newId('conn');
+      db.prepare(`INSERT INTO workspace_connectors
+        (id, workspace_id, connector_key, display_name, provider_type, provides, config,
+         status, capabilities, credential_ref, setup_status, authorized_by_user_id, created_at, updated_at)
+        VALUES (?, ?, 'payments-stripe-connect', 'Stripe', ?, '["payments"]', '{"connect":true}',
+          'disconnected', '["invoices","refunds"]', NULL, 'AUTHORIZING', ?, ?, ?)`)
+        .run(id, ctx.workspaceId, PROVIDER, ctx.actorId || null, now, now);
+      connector = db.prepare('SELECT * FROM workspace_connectors WHERE id = ?').get(id);
+    }
+    connectorId = connector.id;
+
+    db.prepare(`INSERT INTO payment_connect_accounts
+      (id, workspace_id, connector_id, provider, provider_account_id, display_name,
+       charges_enabled, livemode, checked_at, connected_by_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(newId('paycon'), ctx.workspaceId, connectorId, PROVIDER, created.id,
+        nameOf(created) || options.businessName || null,
+        created.charges_enabled ? 1 : 0, created.livemode ? 1 : 0, now,
+        ctx.actorId || null, now, now);
+    row = rowFor(db, ctx.workspaceId);
+  }
+
+  return { ...(await onboardingLink(db, row, options)), accountId: row.provider_account_id, connectorId };
+}
+
+/**
+ * A fresh link to Stripe's onboarding, for an account that has one already.
+ *
+ * Account links expire, and Stripe calls the refresh address when a merchant
+ * opens a stale one. Making a new link rather than showing an error is the
+ * whole reason that address exists.
+ */
+async function onboardingLink(db, row, options = {}) {
+  const held = requirePlatform({ oauth: false });
+  const link = options.createLink
+    ? await options.createLink({ account: row.provider_account_id })
+    : await post(`${ACCOUNT_LINKS}`, {
+      account: row.provider_account_id,
+      refresh_url: options.refreshUrl,
+      return_url: options.returnUrl,
+      type: 'account_onboarding',
+    }, held.secretKey);
+  if (!link || !link.url) throw new ValidationError('Stripe did not return an onboarding page.');
+  return { url: link.url, expiresAt: link.expires_at || null };
+}
+
+/** Send them back to Stripe with a link that has not expired. */
+async function relink(db, ctx, options = {}) {
+  const row = rowFor(db, ctx.workspaceId);
+  if (!row) throw new NotFoundError('There is no Stripe account to finish setting up.');
+  return onboardingLink(db, row, options);
 }
 
 /* -------------------------------------------------------------- coming back */
@@ -372,6 +487,7 @@ function describe(db, workspaceId) {
 }
 
 module.exports = {
-  PROVIDER, available, platform, authorizeUrl, complete, refresh, disconnect,
+  PROVIDER, available, usesOauth, usesHostedOnboarding, platform,
+  authorizeUrl, complete, openOnboarding, relink, refresh, disconnect,
   describe, rowFor, forget,
 };

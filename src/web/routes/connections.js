@@ -99,11 +99,22 @@ router.post('/settings/connections/payments/connect', requireOwner, asyncRoute(a
   try {
     const origin = process.env.FOUNDRY_PUBLIC_URL
       || `${req.protocol}://${req.get('host')}`;
-    const begun = require('../../payments/connect').authorizeUrl(req.db, req.ctx, membership, {
-      returnUri: `${origin}/settings/connections/payments/return`,
+    const grant = require('../../payments/connect');
+    const where = {
+      returnUrl: `${origin}/settings/connections/payments/return`,
+      refreshUrl: `${origin}/settings/connections/payments/refresh`,
       businessName: req.workspace ? req.workspace.name : undefined,
       email: req.user ? req.user.email : undefined,
-    });
+    };
+    /*
+     * Hosted onboarding where the dashboard offers it, OAuth where it does
+     * not. The merchant sees one button either way; which road it takes is a
+     * fact about the platform's Stripe account, not a choice for a shop owner.
+     */
+    const begun = grant.usesHostedOnboarding()
+      ? await grant.openOnboarding(req.db, req.ctx, membership, where)
+      : grant.authorizeUrl(req.db, req.ctx, membership,
+        { ...where, returnUri: where.returnUrl });
     return res.redirect(303, begun.url);
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
@@ -122,7 +133,19 @@ router.post('/settings/connections/payments/connect', requireOwner, asyncRoute(a
  */
 router.get('/settings/connections/payments/return', requireOwner, asyncRoute(async (req, res) => {
   try {
-    const done = await require('../../payments/connect').complete(req.db, req.query);
+    const grant = require('../../payments/connect');
+    /*
+     * Two roads, one doormat.
+     *
+     * OAuth comes back carrying a state and a code. Hosted onboarding comes
+     * back carrying nothing at all — Stripe simply returns the browser — and
+     * says nothing about whether the merchant finished. So that case is
+     * settled by asking Stripe about the account rather than by believing the
+     * redirect, which is the same rule as everywhere else here.
+     */
+    const done = req.query && (req.query.state || req.query.code)
+      ? await grant.complete(req.db, req.query)
+      : { ...await grant.refresh(req.db, req.ctx.workspaceId) };
     if (!done.connected) req.flash('warn', done.because);
     else if (!done.chargesEnabled) {
       req.flash('warn', `Connected to ${done.displayName || 'Stripe'}, but Stripe is not accepting `
@@ -138,6 +161,28 @@ router.get('/settings/connections/payments/return', requireOwner, asyncRoute(asy
     req.flash('warn', err.message);
   }
   res.redirect(303, '/settings/connections');
+}));
+
+/*
+ * Stripe sends the merchant here when an onboarding link has expired.
+ *
+ * Making them a fresh one and sending them straight back is the entire reason
+ * Stripe asks for this address. Showing an error instead would strand somebody
+ * who did nothing wrong except take longer than the link lasted.
+ */
+router.get('/settings/connections/payments/refresh', requireOwner, asyncRoute(async (req, res) => {
+  try {
+    const origin = process.env.FOUNDRY_PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+    const again = await require('../../payments/connect').relink(req.db, req.ctx, {
+      returnUrl: `${origin}/settings/connections/payments/return`,
+      refreshUrl: `${origin}/settings/connections/payments/refresh`,
+    });
+    return res.redirect(303, again.url);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+    return res.redirect(303, '/settings/connections');
+  }
 }));
 
 router.post('/settings/connections/payments/remove', requireOwner, asyncRoute(async (req, res) => {

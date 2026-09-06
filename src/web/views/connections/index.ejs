@@ -81,6 +81,21 @@
         <% } %>
       </div>
       <div class="card-foot">
+        <%
+          /*
+           * Somewhere to go back to.
+           *
+           * An account created and not finished is the ordinary outcome of
+           * closing the tab halfway through Stripe's form. Without this the
+           * screen would state the problem and offer nothing but Disconnect,
+           * which throws away the account rather than completing it.
+           */
+        %>
+        <% if (!pay.chargesEnabled) { %>
+          <a class="btn btn--primary" href="/settings/connections/payments/refresh">
+            Finish setting up on Stripe
+          </a>
+        <% } %>
         <form method="post" action="/settings/connections/payments/remove" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <button class="btn btn--ghost" type="submit">Disconnect</button>
