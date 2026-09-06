@@ -683,5 +683,5 @@ async function createSandboxCheckout(db, workspaceId, connectorId, input, option
 module.exports = { beginAuthorization, completeOAuth, completeWooCallback, sync, syncMailbox,
   bringInSetAside, prepareReply, maintainMailboxWatch, sendMailboxMessage,
   reviewHistory, setSelectedLocations,
-  createSandboxCheckout, ignoreExternal, webhookContext, readState, stateConnection, providerOrigin,
+  createSandboxCheckout, ignoreExternal, webhookContext, createState, readState, stateConnection, providerOrigin,
   deactivateDuplicateProviderAccounts };

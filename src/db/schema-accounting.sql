@@ -668,3 +668,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_document_charges
   ON document_charges(workspace_id, source_kind, source_id, label, amount_minor);
 CREATE INDEX IF NOT EXISTS idx_document_charges_status
   ON document_charges(workspace_id, status);
+
+-- A Stripe account a business connected, rather than a key it pasted.
+--
+-- The difference is the whole point. A secret key is total access to somebody
+-- else's Stripe — refunds, payouts, every customer record — and asking a
+-- merchant to paste one into another company's software is asking them to
+-- trust it with more than the job needs. Connect grants access instead: the
+-- business signs in on Stripe's own page, and what Foundry keeps is an account
+-- id, which is not a secret and cannot be used by anyone who is not the
+-- platform it was granted to.
+--
+-- So there is no credential row beside this one. The OAuth exchange returns an
+-- access token as well; Foundry deliberately does not keep it, because acting
+-- through the platform key with this id does the same work and leaves nothing
+-- worth stealing. Revoking is one click on the merchant's side, which is a
+-- thing a pasted key never allowed.
+CREATE TABLE IF NOT EXISTS payment_connect_accounts (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  connector_id          TEXT REFERENCES workspace_connectors(id) ON DELETE SET NULL,
+  provider              TEXT NOT NULL DEFAULT 'stripe',
+  -- Stripe's own id for the merchant's account: acct_…
+  provider_account_id   TEXT NOT NULL,
+  display_name          TEXT,
+  -- Whether Stripe will actually accept a payment on this account yet. An
+  -- account that is connected but cannot take charges looks finished and is
+  -- not, and a payment link made against it fails in front of a customer.
+  charges_enabled       INTEGER NOT NULL DEFAULT 0 CHECK (charges_enabled IN (0,1)),
+  livemode              INTEGER NOT NULL DEFAULT 0 CHECK (livemode IN (0,1)),
+  checked_at            TEXT,
+  connected_by_user_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at            TEXT NOT NULL,
+  updated_at            TEXT NOT NULL,
+  UNIQUE (workspace_id, provider)
+);
+CREATE INDEX IF NOT EXISTS idx_payment_connect_account
+  ON payment_connect_accounts(provider_account_id);

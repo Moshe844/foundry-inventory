@@ -58,7 +58,36 @@
     <p class="section-sub">Payment links are made on this account, and the money arrives in its bank.</p>
   </div>
   <div class="panel">
-    <% if (pay.connected && pay.source === 'workspace') { %>
+    <%# ----------------------------------- an account granted, not a key given %>
+    <% if (pay.connected && pay.source === 'connect') { %>
+      <div class="card-body">
+        <p class="lede">
+          Connected to <%= pay.displayName || 'Stripe' %><% if (!pay.liveMode) { %>
+            <span class="badge badge--warn">test mode</span><% } %><% if (!pay.chargesEnabled) { %>
+            <span class="badge badge--warn">not taking charges</span>
+          <% } else { %> <span class="badge badge--ok">live</span><% } %>
+        </p>
+        <p class="hint">
+          This business granted Foundry permission on Stripe's own page. Foundry holds no key for
+          this account and cannot be made to reveal one, and the business can withdraw the
+          permission from its own Stripe dashboard at any time.
+        </p>
+        <p class="t-xs t-muted">Stripe account <code><%= pay.accountId %></code></p>
+        <% if (!pay.chargesEnabled) { %>
+          <div class="notice notice--warn"><div>
+            <strong>Stripe is not accepting charges on this account yet.</strong><br>
+            <%= pay.because %>
+          </div></div>
+        <% } %>
+      </div>
+      <div class="card-foot">
+        <form method="post" action="/settings/connections/payments/remove" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--ghost" type="submit">Disconnect</button>
+        </form>
+      </div>
+
+    <% } else if (pay.connected && pay.source === 'workspace') { %>
       <div class="card-body">
         <p class="lede">
           Connected to Stripe<% if (!pay.liveMode) { %> <span class="badge badge--warn">test mode</span><% } %>
@@ -91,9 +120,52 @@
           <p class="hint"><%= pay.because %></p>
         </div>
       <% } %>
+      <%
+        /*
+         * Two ways to the same account, in the order that serves people.
+         *
+         * Granting is first and is the plain button, because a secret key is
+         * total access to somebody's Stripe — refunds, payouts, every customer
+         * — and a business should not have to hand that over to be invoiced
+         * for. Pasting a key stays for a merchant whose setup needs it, and is
+         * behind a disclosure rather than gone.
+         */
+        var grant = typeof paymentConnect === 'undefined' ? null : paymentConnect;
+      %>
+      <% if (grant && grant.available && !grant.connected) { %>
+        <form method="post" action="/settings/connections/payments/connect" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="card-body stack">
+            <h3>Connect this business's Stripe</h3>
+            <p class="hint">
+              Stripe opens, this business signs in or creates an account, and approves. Nothing is
+              typed into Foundry — no key to copy, none stored here, and the business can withdraw
+              the permission from Stripe at any time.
+            </p>
+          </div>
+          <div class="card-foot">
+            <button class="btn btn--primary" type="submit">Connect with Stripe</button>
+          </div>
+        </form>
+      <% } %>
+
+      <details class="disclose">
+        <summary>
+          <span><%= grant && grant.available && !grant.connected
+            ? 'Paste a secret key instead' : 'Connect with a Stripe secret key' %></span>
+          <span class="disclose__cue">Show</span>
+        </summary>
+        <div class="disclose__body">
       <form method="post" action="/settings/connections/payments" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="card-body stack">
+          <% if (grant && grant.available) { %>
+            <p class="hint">
+              A secret key gives Foundry full access to the Stripe account, including refunds and
+              payouts. Connecting above grants only what taking a payment needs. Use this where a
+              setup calls for it.
+            </p>
+          <% } %>
           <label class="field">
             <span class="field-label">Stripe secret key</span>
             <input class="input" type="password" name="secretKey" autocomplete="off"
@@ -114,9 +186,12 @@
           </label>
         </div>
         <div class="card-foot">
-          <button class="btn btn--primary" type="submit">Connect this inventory's Stripe</button>
+          <button class="btn <%= grant && grant.available && !grant.connected ? '' : 'btn--primary' %>"
+            type="submit">Connect this inventory's Stripe</button>
         </div>
       </form>
+        </div>
+      </details>
     <% } %>
   </div>
 </section>

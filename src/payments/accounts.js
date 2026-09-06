@@ -44,6 +44,29 @@ function connectorFor(db, workspaceId) {
  * works without one.
  */
 function forWorkspace(db, workspaceId) {
+  /*
+   * An account granted, before a key pasted.
+   *
+   * Both are this workspace's own account and either is correct, but they are
+   * reached differently: a granted account is acted on through the platform's
+   * key with the merchant's account id attached, and Foundry holds no secret
+   * of theirs at all. That is the better arrangement, so it is the one checked
+   * first.
+   */
+  const granted = db.prepare(`SELECT * FROM payment_connect_accounts
+    WHERE workspace_id = ? AND provider = 'stripe'`).get(workspaceId);
+  if (granted && process.env.STRIPE_SECRET_KEY) {
+    return {
+      provider: 'stripe',
+      source: 'connect',
+      connectorId: granted.connector_id,
+      secretKey: process.env.STRIPE_SECRET_KEY,
+      accountId: granted.provider_account_id,
+      chargesEnabled: granted.charges_enabled === 1,
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || null,
+    };
+  }
+
   const connector = connectorFor(db, workspaceId);
   if (connector) {
     const held = credentials.get(db, workspaceId, connector.id, 'provider') || {};
@@ -59,6 +82,23 @@ function forWorkspace(db, workspaceId) {
   }
   const fromEnv = process.env.STRIPE_SECRET_KEY;
   if (!fromEnv) return null;
+
+  /*
+   * The server key is a till for one shop, or it is the platform's identity.
+   * It cannot be both.
+   *
+   * The fallback below was written for a single-tenant install: one key, one
+   * shop, no connection screen to click through. Stripe Connect makes that
+   * same key the platform's own — it has to be set for any business to connect
+   * at all — and at that moment the fallback quietly becomes "every inventory
+   * that has not connected yet takes its customers' money into Keeper's bank".
+   *
+   * Nobody would ever have chosen that. It would simply have followed from two
+   * reasonable things being true at once, and the first anybody would know is
+   * a shop's takings arriving somewhere else.
+   */
+  if (process.env.STRIPE_CONNECT_CLIENT_ID) return null;
+
   return {
     provider: 'stripe',
     source: 'server',
@@ -78,11 +118,31 @@ function forWorkspace(db, workspaceId) {
 function contextFor(db, ctx) {
   const account = forWorkspace(db, ctx.workspaceId);
   if (!account) return ctx;
-  return { ...ctx, stripeSecretKey: account.secretKey };
+  /*
+   * A granted account travels as an id beside the platform's key. The adapter
+   * turns that into Stripe's own "act on behalf of" header, which is how the
+   * invoice ends up on the merchant's account and the money in their bank
+   * without Foundry ever holding a credential of theirs.
+   */
+  return account.accountId
+    ? { ...ctx, stripeSecretKey: account.secretKey, stripeAccountId: account.accountId }
+    : { ...ctx, stripeSecretKey: account.secretKey };
 }
 
 function connect(db, ctx, membership, input = {}) {
   permissions.assertCan(membership, permissions.ADMIN, 'connect a payment account');
+
+  /*
+   * A granted account is not quietly written over by a pasted key. Doing so
+   * would leave Foundry holding a secret for an account it also still had a
+   * live grant on, and the merchant with no way to tell which was in use.
+   */
+  const granted = require('./connect').rowFor(db, ctx.workspaceId);
+  if (granted) {
+    throw new ValidationError('This inventory has a Stripe account connected already, and pasting '
+      + 'a key over it would hide that connection rather than replace it. Disconnect it first.');
+  }
+
   const secretKey = requireText(input.secretKey, 'Secret key', { max: 400 });
   if (!/^sk_(test|live)_/.test(secretKey) && !/^rk_(test|live)_/.test(secretKey)) {
     /*
@@ -122,8 +182,16 @@ function connect(db, ctx, membership, input = {}) {
   return describe(db, ctx.workspaceId);
 }
 
-function disconnect(db, ctx, membership) {
+async function disconnect(db, ctx, membership, options = {}) {
   permissions.assertCan(membership, permissions.ADMIN, 'disconnect a payment account');
+
+  // A granted account is handed back to Stripe as well as forgotten here.
+  const connectAccounts = require('./connect');
+  if (connectAccounts.rowFor(db, ctx.workspaceId)) {
+    await connectAccounts.disconnect(db, ctx, membership, options);
+    return describe(db, ctx.workspaceId);
+  }
+
   const connector = connectorFor(db, ctx.workspaceId);
   if (!connector) throw new NotFoundError('No payment account is connected to this inventory.');
   credentials.remove(db, ctx.workspaceId, connector.id);
@@ -136,9 +204,19 @@ function disconnect(db, ctx, membership) {
 function describe(db, workspaceId) {
   const account = forWorkspace(db, workspaceId);
   if (!account) {
+    const grant = require('./connect');
     return { connected: false, provider: null, source: null,
-      because: 'No payment account is connected, so Foundry cannot make a payment link. Payments '
-        + 'reported by hand — cash, cheque, a card machine — are recorded exactly as they always were.' };
+      available: grant.available(),
+      because: grant.available()
+        ? 'No payment account is connected. This business can connect its own Stripe without '
+          + 'giving Foundry a key, and the money its customers pay then arrives in its own bank.'
+        : 'No payment account is connected, so Foundry cannot make a payment link. Payments '
+          + 'reported by hand — cash, cheque, a card machine — are recorded exactly as they always were.' };
+  }
+  if (account.source === 'connect') {
+    // Nothing to withhold: there is no secret of theirs to describe around.
+    return { ...require('./connect').describe(db, workspaceId),
+      source: 'connect', connectorId: account.connectorId, hasWebhookSecret: Boolean(account.webhookSecret) };
   }
   const key = String(account.secretKey);
   return {

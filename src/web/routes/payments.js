@@ -62,6 +62,20 @@ function requirePermission(permission, what) {
  * the address is only a fallback for events that name no invoice.
  */
 function inventoryForEvent(db, providerName, event, hintedWorkspaceId) {
+  /*
+   * An event about a connected account says whose it is.
+   *
+   * Stripe delivers events for every business that granted access to one
+   * endpoint — the platform's — and names the account on the event itself.
+   * That is a stronger answer than the invoice lookup below and a far stronger
+   * one than the id in the address, so it is asked first.
+   */
+  if (event && event.account) {
+    const owned = db.prepare(`SELECT workspace_id FROM payment_connect_accounts
+      WHERE provider = ? AND provider_account_id = ?`).get(providerName, event.account);
+    if (owned) return owned.workspace_id;
+  }
+
   let read = null;
   try { read = providers.normalise(providers.get(providerName).readEvent(event)); } catch { /* unreadable */ }
   if (read?.externalInvoiceId) {
@@ -204,4 +218,4 @@ async function emailTheLink(req, requestId) {
   return draft;
 }
 
-module.exports = { webhooks, actions: router };
+module.exports = { webhooks, actions: router, inventoryForEvent };

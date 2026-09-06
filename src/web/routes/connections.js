@@ -60,6 +60,8 @@ router.get('/settings/connections', (req, res, next) => {
     // Whose Stripe account this inventory takes money into. Shown here rather
     // than on Money, because it is a connection and not an accounting figure.
     paymentAccount: require('../../payments/accounts').describe(req.db, req.ctx.workspaceId),
+    paymentConnect: require('../../payments/connect').describe(req.db, req.ctx.workspaceId),
+    workspaceName: req.workspace ? req.workspace.name : '',
     paymentWebhookUrl: `${process.env.FOUNDRY_PUBLIC_URL || ''}/webhooks/payments/stripe/${req.ctx.workspaceId}`,
     providerCatalog: providers.catalog(), newConnectionToken: token });
 }));
@@ -85,12 +87,70 @@ router.post('/settings/connections/payments', requireOwner, asyncRoute(async (re
   res.redirect(303, '/settings/connections');
 }));
 
+/*
+ * Connecting without handing over a key.
+ *
+ * Sends the merchant to Stripe's own page, where they sign in or sign up and
+ * approve. Nothing of theirs is typed into Foundry, and what comes back is an
+ * account id rather than a credential.
+ */
+router.post('/settings/connections/payments/connect', requireOwner, asyncRoute(async (req, res) => {
+  const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
+  try {
+    const origin = process.env.FOUNDRY_PUBLIC_URL
+      || `${req.protocol}://${req.get('host')}`;
+    const begun = require('../../payments/connect').authorizeUrl(req.db, req.ctx, membership, {
+      returnUri: `${origin}/settings/connections/payments/return`,
+      businessName: req.workspace ? req.workspace.name : undefined,
+      email: req.user ? req.user.email : undefined,
+    });
+    return res.redirect(303, begun.url);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+    return res.redirect(303, '/settings/connections');
+  }
+}));
+
+/*
+ * Back from Stripe.
+ *
+ * A GET because Stripe redirects the browser here, so there is no form and no
+ * CSRF token to carry. The state does that job instead: single-use, expiring,
+ * and stored hashed — it is what says which inventory this belongs to, and a
+ * code arriving without a valid one is not acted on at all.
+ */
+router.get('/settings/connections/payments/return', requireOwner, asyncRoute(async (req, res) => {
+  try {
+    const done = await require('../../payments/connect').complete(req.db, req.query);
+    if (!done.connected) req.flash('warn', done.because);
+    else if (!done.chargesEnabled) {
+      req.flash('warn', `Connected to ${done.displayName || 'Stripe'}, but Stripe is not accepting `
+        + 'charges on that account yet — it usually wants more details from the business. '
+        + 'Payment links will fail until it is satisfied.');
+    } else {
+      req.flash('success', `Connected. Money from this inventory arrives in `
+        + `${done.displayName || 'this business'}'s own Stripe account`
+        + `${done.liveMode ? '' : ', in test mode'}. Foundry holds no key for it.`);
+    }
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, '/settings/connections');
+}));
+
 router.post('/settings/connections/payments/remove', requireOwner, asyncRoute(async (req, res) => {
   const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
   try {
-    require('../../payments/accounts').disconnect(req.db, req.ctx, membership);
-    req.flash('success', 'Disconnected. Foundry will not make payment links for this inventory; '
-      + 'payments reported by hand are recorded exactly as they always were.');
+    // Said before the row is gone, because what to say depends on which it was.
+    const granted = require('../../payments/connect').rowFor(req.db, req.ctx.workspaceId);
+    await require('../../payments/accounts').disconnect(req.db, req.ctx, membership);
+    req.flash('success', granted
+      ? 'Disconnected, and the grant handed back to Stripe — the account itself, and every payment '
+        + 'taken on it, still belongs to this business.'
+      : 'Disconnected. Foundry will not make payment links for this inventory; '
+        + 'payments reported by hand are recorded exactly as they always were.');
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
     req.flash('warn', err.message);

@@ -57,6 +57,17 @@ async function call(ctx, path, { method = 'POST', values = null, idempotencyKey 
   // second invoice for the same request.
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
 
+  /*
+   * Acting on a merchant's behalf rather than as them.
+   *
+   * A business that connected its account through Stripe Connect never gave
+   * Foundry a key. What it gave was permission, and this header is how that
+   * permission is exercised: the platform's own key with the merchant's
+   * account id attached, so the customer, the invoice and the money all belong
+   * to them and nothing of theirs is stored here.
+   */
+  if (ctx.stripeAccountId) headers['Stripe-Account'] = String(ctx.stripeAccountId);
+
   const response = await fetch(`${API}${path}`, {
     method,
     headers,

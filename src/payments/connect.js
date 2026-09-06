@@ -1,0 +1,377 @@
+'use strict';
+
+/*
+ * A business connects its Stripe account without handing over a key.
+ *
+ * The form beside this one asks a merchant to paste a secret key. It works,
+ * and for a shop with an unusual setup it is the right answer — but a Stripe
+ * secret key is *total* access to their account: refunds, payouts, every
+ * customer record, indefinitely, with no way for them to see what used it or
+ * to take it back short of rolling the key. Asking for that in order to make
+ * an invoice is asking for far more than the job needs, and the merchants who
+ * understand what they are being asked will refuse.
+ *
+ * Connect asks for the job instead. The business signs in on Stripe's own
+ * page, approves, and comes back. What Foundry keeps is an account id — acct_…
+ * — which is not a secret, is useless to anybody who is not the platform it
+ * was granted to, and which they can revoke from their own dashboard in one
+ * click.
+ *
+ *
+ * The token that is deliberately thrown away.
+ *
+ * Stripe's OAuth exchange returns an access token alongside the account id,
+ * and for a Standard account that token is a working key. Foundry does not
+ * keep it. Acting through the platform key with the Stripe-Account header does
+ * exactly the same work, and leaves nothing in the database worth stealing.
+ * Keeping it "just in case" would give back the whole problem this exists to
+ * solve.
+ *
+ * So there is no credential row for a connected account. That is not an
+ * oversight to be tidied up later; it is the feature.
+ */
+
+const { ValidationError, NotFoundError, AuthenticationError } = require('../domain/errors');
+const { newId, nowIso, trimOrNull } = require('../lib/util');
+const permissions = require('../actions/permissions');
+
+const PROVIDER = 'stripe';
+const AUTHORIZE = 'https://connect.stripe.com/oauth/authorize';
+const TOKEN = 'https://connect.stripe.com/oauth/token';
+const DEAUTHORIZE = 'https://connect.stripe.com/oauth/deauthorize';
+const ACCOUNTS = 'https://api.stripe.com/v1/accounts';
+
+/*
+ * The platform's own identity: one registration for the whole application,
+ * exactly like a Gmail or Shopify client id, and correctly global. It is not a
+ * merchant credential and never belongs to a workspace.
+ */
+function platform() {
+  return {
+    clientId: process.env.STRIPE_CONNECT_CLIENT_ID || null,
+    secretKey: process.env.STRIPE_SECRET_KEY || null,
+  };
+}
+
+/** Whether connecting this way is available at all. */
+function available() {
+  const held = platform();
+  return Boolean(held.clientId && held.secretKey);
+}
+
+function requirePlatform() {
+  const held = platform();
+  if (!held.clientId) {
+    throw new ValidationError('Foundry has no Stripe Connect client id, so a business cannot '
+      + 'connect its account this way. Paste a secret key instead.');
+  }
+  if (!held.secretKey) {
+    throw new ValidationError('Foundry has no Stripe platform key, so it cannot complete a '
+      + 'connection. Paste a secret key instead.');
+  }
+  return held;
+}
+
+function rowFor(db, workspaceId) {
+  return db.prepare(`SELECT * FROM payment_connect_accounts
+    WHERE workspace_id = ? AND provider = ?`).get(workspaceId, PROVIDER) || null;
+}
+
+/* ---------------------------------------------------------------- talking */
+
+async function post(url, values, key = null) {
+  const body = new URLSearchParams();
+  for (const [name, value] of Object.entries(values)) {
+    if (value === undefined || value === null || value === '') continue;
+    body.append(name, String(value));
+  }
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      ...(key ? { authorization: `Bearer ${key}` } : {}),
+    },
+    body,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const said = payload?.error_description || payload?.error?.message || payload?.error;
+    throw new ValidationError(typeof said === 'string' ? said
+      : `Stripe refused the request (${response.status}).`);
+  }
+  return payload;
+}
+
+async function get(url, key) {
+  const response = await fetch(url, { headers: { authorization: `Bearer ${key}` } });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const said = payload?.error?.message;
+    const error = new ValidationError(said || `Stripe refused the request (${response.status}).`);
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+/* ------------------------------------------------------------ going there */
+
+/**
+ * Where to send the merchant, and the connector row waiting for them.
+ *
+ * The state is the existing authorization-state machinery, unchanged — it is
+ * single-use, expires in fifteen minutes, and is stored hashed. Reimplementing
+ * that for one more provider would be inventing a second place to get CSRF
+ * wrong.
+ */
+function authorizeUrl(db, ctx, membership, options = {}) {
+  permissions.assertCan(membership, permissions.ADMIN, 'connect a payment account');
+  const held = requirePlatform();
+
+  const existing = rowFor(db, ctx.workspaceId);
+  if (existing) {
+    throw new ValidationError('This inventory already has a Stripe account connected. '
+      + 'Disconnect it first if you mean to connect a different one.');
+  }
+
+  const now = nowIso();
+  let connector = db.prepare(`SELECT * FROM workspace_connectors
+    WHERE workspace_id = ? AND provider_type = ?`).get(ctx.workspaceId, PROVIDER);
+  if (!connector) {
+    const id = newId('conn');
+    db.prepare(`INSERT INTO workspace_connectors
+      (id, workspace_id, connector_key, display_name, provider_type, provides, config,
+       status, capabilities, credential_ref, setup_status, authorized_by_user_id, created_at, updated_at)
+      VALUES (?, ?, 'payments-stripe-connect', 'Stripe', ?, '["payments"]', '{"connect":true}',
+        'disconnected', '["invoices","refunds"]', NULL, 'AUTHORIZING', ?, ?, ?)`)
+      .run(id, ctx.workspaceId, PROVIDER, ctx.actorId || null, now, now);
+    connector = db.prepare('SELECT * FROM workspace_connectors WHERE id = ?').get(id);
+  } else {
+    db.prepare(`UPDATE workspace_connectors SET setup_status = 'AUTHORIZING', last_error = NULL,
+      config = '{"connect":true}', updated_at = ? WHERE id = ?`).run(now, connector.id);
+  }
+
+  const state = require('../connections/provider-service')
+    .createState(db, ctx, connector.id, 'stripe_connect', {});
+
+  const query = new URLSearchParams({
+    response_type: 'code',
+    client_id: held.clientId,
+    scope: 'read_write',
+    state,
+  });
+  if (options.returnUri) query.set('redirect_uri', options.returnUri);
+  /*
+   * What Stripe shows on its own page. Nothing here is trusted afterwards —
+   * the merchant may change any of it — it only saves them retyping.
+   */
+  if (options.businessName) query.set('stripe_user[business_name]', options.businessName);
+  if (options.email) query.set('stripe_user[email]', options.email);
+
+  return { url: `${AUTHORIZE}?${query.toString()}`, connectorId: connector.id, state };
+}
+
+/* -------------------------------------------------------------- coming back */
+
+/**
+ * The merchant is back from Stripe.
+ *
+ * Reads the state before anything else, because the state is what says which
+ * inventory this is about — a code arriving without one is somebody else's
+ * request or a forgery, and either way there is nothing to do with it.
+ */
+async function complete(db, query = {}, options = {}) {
+  const providerService = require('../connections/provider-service');
+  const state = providerService.readState(db, query.state, 'stripe_connect', true);
+  const ctx = { workspaceId: state.workspace_id, actorId: state.actor_id };
+
+  if (query.error) {
+    /*
+     * The merchant said no, or Stripe refused. Recorded on the connector so
+     * the screen can say what happened rather than silently showing the form
+     * again as though nothing was ever attempted.
+     */
+    const because = trimOrNull(query.error_description) || 'The connection was not approved.';
+    db.prepare(`UPDATE workspace_connectors SET status = 'disconnected',
+      setup_status = 'AUTHORIZATION_FAILED', last_error = ?, updated_at = ? WHERE id = ?`)
+      .run(because, nowIso(), state.connector_id);
+    return { connected: false, workspaceId: ctx.workspaceId, because };
+  }
+
+  const code = trimOrNull(query.code);
+  if (!code) throw new AuthenticationError('Stripe sent nothing to complete the connection with.');
+
+  const held = requirePlatform();
+  const granted = options.exchange
+    ? await options.exchange({ code, clientSecret: held.secretKey })
+    : await post(TOKEN, { grant_type: 'authorization_code', code, client_secret: held.secretKey });
+
+  const accountId = granted.stripe_user_id;
+  if (!accountId) throw new ValidationError('Stripe did not say which account was connected.');
+
+  /*
+   * granted.access_token and granted.refresh_token are on this object and are
+   * not written anywhere. See the note at the top of this file: keeping them
+   * would hand back the exact problem Connect exists to remove.
+   */
+
+  const account = options.readAccount
+    ? await options.readAccount(accountId)
+    : await get(`${ACCOUNTS}/${encodeURIComponent(accountId)}`, held.secretKey).catch(() => null);
+
+  const now = nowIso();
+  db.prepare(`UPDATE workspace_connectors SET status = 'connected', paused_at = NULL,
+    setup_status = 'CONNECTED', last_error = NULL, provider_account_id = ?,
+    provider_account_name = ?, updated_at = ? WHERE id = ?`)
+    .run(accountId, nameOf(account), now, state.connector_id);
+
+  db.prepare(`INSERT INTO payment_connect_accounts
+    (id, workspace_id, connector_id, provider, provider_account_id, display_name,
+     charges_enabled, livemode, checked_at, connected_by_user_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(workspace_id, provider) DO UPDATE SET
+      connector_id = excluded.connector_id,
+      provider_account_id = excluded.provider_account_id,
+      display_name = excluded.display_name,
+      charges_enabled = excluded.charges_enabled,
+      livemode = excluded.livemode,
+      checked_at = excluded.checked_at,
+      updated_at = excluded.updated_at`)
+    .run(newId('paycon'), ctx.workspaceId, state.connector_id, PROVIDER, accountId,
+      nameOf(account), account && account.charges_enabled ? 1 : 0,
+      granted.livemode || (account && account.livemode) ? 1 : 0, now,
+      state.actor_id || null, now, now);
+
+  return { connected: true, workspaceId: ctx.workspaceId, ...describe(db, ctx.workspaceId) };
+}
+
+const nameOf = (account) => (account && (account.business_profile?.name
+  || account.settings?.dashboard?.display_name || account.email)) || null;
+
+/**
+ * Ask Stripe whether this account can take a payment yet.
+ *
+ * A connected account that cannot accept charges — details still outstanding,
+ * a verification pending — looks finished on this screen and is not. A payment
+ * link made against it fails in front of a customer, which is the worst place
+ * to find out.
+ */
+async function refresh(db, workspaceId, options = {}) {
+  const row = rowFor(db, workspaceId);
+  if (!row) return describe(db, workspaceId);
+  const held = platform();
+  if (!held.secretKey) return describe(db, workspaceId);
+
+  let account = null;
+  try {
+    account = options.readAccount
+      ? await options.readAccount(row.provider_account_id)
+      : await get(`${ACCOUNTS}/${encodeURIComponent(row.provider_account_id)}`, held.secretKey);
+  } catch (error) {
+    /*
+     * A merchant who revoked access from their own dashboard is not an error.
+     * It is an answer, and the honest thing is to stop claiming the account is
+     * connected rather than to keep the row and fail later.
+     */
+    if (error.status === 401 || error.status === 403 || error.status === 404) {
+      forget(db, workspaceId);
+      return describe(db, workspaceId);
+    }
+    return describe(db, workspaceId);
+  }
+
+  db.prepare(`UPDATE payment_connect_accounts SET charges_enabled = ?, livemode = ?,
+    display_name = ?, checked_at = ?, updated_at = ? WHERE id = ?`)
+    .run(account.charges_enabled ? 1 : 0, account.livemode ? 1 : 0,
+      nameOf(account), nowIso(), nowIso(), row.id);
+  return describe(db, workspaceId);
+}
+
+/* ------------------------------------------------------------ giving it back */
+
+/**
+ * Hand the access back to Stripe and forget the account.
+ *
+ * Deauthorized at Stripe as well as forgotten here, so the merchant's own
+ * dashboard stops listing Foundry. Forgetting locally while Stripe still shows
+ * a live connection would leave them with a grant they cannot see the purpose
+ * of and no obvious way to be rid of.
+ */
+async function disconnect(db, ctx, membership, options = {}) {
+  permissions.assertCan(membership, permissions.ADMIN, 'disconnect a payment account');
+  const row = rowFor(db, ctx.workspaceId);
+  if (!row) throw new NotFoundError('No Stripe account is connected to this inventory.');
+
+  const held = platform();
+  let releasedAtStripe = false;
+  if (held.clientId && held.secretKey) {
+    try {
+      if (options.deauthorize) await options.deauthorize(row.provider_account_id);
+      else {
+        await post(DEAUTHORIZE,
+          { client_id: held.clientId, stripe_user_id: row.provider_account_id }, held.secretKey);
+      }
+      releasedAtStripe = true;
+    } catch {
+      /*
+       * Stripe refusing — most often because the merchant already revoked it
+       * there — must not stop Foundry letting go of it here. The alternative
+       * is a row nobody can remove.
+       */
+    }
+  }
+  forget(db, ctx.workspaceId);
+  return { disconnected: true, releasedAtStripe, ...describe(db, ctx.workspaceId) };
+}
+
+function forget(db, workspaceId) {
+  const row = rowFor(db, workspaceId);
+  if (!row) return;
+  if (row.connector_id) {
+    db.prepare(`UPDATE workspace_connectors SET status = 'disconnected', updated_at = ?
+      WHERE id = ?`).run(nowIso(), row.connector_id);
+  }
+  db.prepare('DELETE FROM payment_connect_accounts WHERE id = ?').run(row.id);
+}
+
+/* -------------------------------------------------------------- describing */
+
+/**
+ * What to say about it, which is everything — there is no secret to withhold.
+ *
+ * `chargesEnabled` is the field a screen must not soften. Connected and unable
+ * to take money is a real state, and a green tick over it is how a merchant
+ * finds out from a customer.
+ */
+function describe(db, workspaceId) {
+  const row = rowFor(db, workspaceId);
+  if (!row) {
+    return {
+      connected: false,
+      available: available(),
+      because: available()
+        ? 'This business can connect its own Stripe account without giving Foundry a key.'
+        : 'Connecting a Stripe account this way is not set up on this server, so a secret key '
+          + 'has to be pasted instead.',
+    };
+  }
+  return {
+    connected: true,
+    available: true,
+    provider: PROVIDER,
+    accountId: row.provider_account_id,
+    displayName: row.display_name,
+    chargesEnabled: row.charges_enabled === 1,
+    liveMode: row.livemode === 1,
+    checkedAt: row.checked_at,
+    because: row.charges_enabled === 1 ? null
+      : 'Stripe has this account connected but is not accepting charges on it yet — usually '
+        + 'because it still wants details from the business. A payment link would fail until '
+        + 'Stripe is satisfied.',
+  };
+}
+
+module.exports = {
+  PROVIDER, available, platform, authorizeUrl, complete, refresh, disconnect,
+  describe, rowFor, forget,
+};
