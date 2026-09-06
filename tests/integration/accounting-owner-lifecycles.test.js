@@ -88,7 +88,7 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   });
   await t.test('07 supplier invoice fully paid', () => {
     payments.record(db, workspace.ctx, membership, { direction: 'SUPPLIER_PAYMENT',
-      supplierId: supplier.id, paymentDate: '2026-09-04', amountMinor: 60_000,
+      supplierId: supplier.id, paymentDate: TODAY, amountMinor: 60_000,
       sourceKey: 'life-supplier-pay-2', allocations: [{ billId: bill.id, amountMinor: 60_000 }] });
     bill = payables.requireBill(db, workspace.workspaceId, bill.id);
     assert.equal(bill.status, 'PAID'); assert.equal(bill.balance_minor, 0);
@@ -105,14 +105,14 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
   });
   await t.test('09 customer partially pays', () => {
     payments.record(db, workspace.ctx, membership, { direction: 'CUSTOMER_RECEIPT',
-      customerId: invoice.customer_id, paymentDate: '2026-09-05', amountMinor: 5_000,
+      customerId: invoice.customer_id, paymentDate: TODAY, amountMinor: 5_000,
       sourceKey: 'life-customer-pay-1', allocations: [{ invoiceId: invoice.id, amountMinor: 5_000 }] });
     invoice = db.prepare('SELECT * FROM accounting_customer_invoices WHERE id = ?').get(invoice.id);
     assert.equal(invoice.status, 'PARTIALLY_PAID'); assert.equal(invoice.balance_minor, 15_000);
   });
   await t.test('10 customer fully pays', () => {
     payments.record(db, workspace.ctx, membership, { direction: 'CUSTOMER_RECEIPT',
-      customerId: invoice.customer_id, paymentDate: '2026-09-06', amountMinor: 15_000,
+      customerId: invoice.customer_id, paymentDate: TODAY, amountMinor: 15_000,
       sourceKey: 'life-customer-pay-2', allocations: [{ invoiceId: invoice.id, amountMinor: 15_000 }] });
     invoice = db.prepare('SELECT * FROM accounting_customer_invoices WHERE id = ?').get(invoice.id);
     assert.equal(invoice.status, 'PAID'); assert.equal(invoice.balance_minor, 0);
@@ -170,6 +170,8 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
     assert.equal(pnl.netIncomeMinor, 200);
   });
   await t.test('18 cash movement calculated independently from profit', () => {
+    // From today, deliberately: the opening balances this workspace was set up
+    // with are not cash movement, and starting earlier would count them.
     const cash = reports.cashFlow(db, workspace.workspaceId, { from: TODAY, to: '2026-09-30' });
     assert.equal(cash.netCashChangeMinor, -82_000);
     assert.notEqual(cash.netCashChangeMinor, reports.profitAndLoss(db, workspace.workspaceId,

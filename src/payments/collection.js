@@ -132,6 +132,15 @@ async function request(db, ctx, orderId, input = {}) {
   const invoice = position.invoices[0];
   const providerName = String(input.provider || 'stripe').toLowerCase();
   const provider = providerRegistry.get(providerName);
+  /*
+   * This workspace's own account, not the server's.
+   *
+   * A single key for every inventory would mean every merchant's customers
+   * paying into one Stripe account — not a billing detail but the money
+   * arriving in the wrong bank. The adapter reads its key off ctx before
+   * falling back to the environment, so this is the whole of the change here.
+   */
+  const withKey = require('./accounts').contextFor(db, ctx);
 
   const customer = db.prepare('SELECT * FROM customers WHERE id = ? AND workspace_id = ?')
     .get(order.customer_id, ctx.workspaceId);
@@ -158,9 +167,9 @@ async function request(db, ctx, orderId, input = {}) {
 
   try {
     const externalCustomerId = previous ? previous.external_customer_id
-      : (await provider.createCustomer(ctx, { name: customer.name, email: customer.email })).externalCustomerId;
+      : (await provider.createCustomer(withKey, { name: customer.name, email: customer.email })).externalCustomerId;
 
-    const created = await provider.createInvoice(ctx, {
+    const created = await provider.createInvoice(withKey, {
       externalCustomerId,
       /*
        * This row is one attempt to collect, and the provider should treat it
@@ -403,7 +412,8 @@ async function refresh(db, ctx, requestId, options = {}) {
   let invoice;
   try {
     // The same context every other provider call is given.
-    invoice = await provider.readInvoice({ ...ctx, ...(options.providerContext || {}) },
+    invoice = await provider.readInvoice(
+      { ...require('./accounts').contextFor(db, ctx), ...(options.providerContext || {}) },
       { externalInvoiceId: request.externalInvoiceId });
   } catch (error) {
     /*

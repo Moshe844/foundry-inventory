@@ -40,6 +40,88 @@
   </div>
 </header>
 
+<%# --------------------------------------------------------- Taking payment %>
+<%
+  /*
+   * Whose Stripe account this inventory takes money into.
+   *
+   * First, and stated plainly, because it is the one connection where getting
+   * it wrong does not mean a missing figure — it means the money arriving in
+   * somebody else's bank.
+   */
+  var pay = typeof paymentAccount === 'undefined' ? null : paymentAccount;
+%>
+<% if (pay) { %>
+<section class="section" aria-labelledby="payments-heading">
+  <div class="section-head">
+    <h2 id="payments-heading">Taking payment</h2>
+    <p class="section-sub">Payment links are made on this account, and the money arrives in its bank.</p>
+  </div>
+  <div class="panel">
+    <% if (pay.connected && pay.source === 'workspace') { %>
+      <div class="card-body">
+        <p class="lede">
+          Connected to Stripe<% if (!pay.liveMode) { %> <span class="badge badge--warn">test mode</span><% } %>
+        </p>
+        <p class="hint">
+          Key ending <%= pay.keyEndsWith %>.
+          <%= pay.hasWebhookSecret
+            ? 'Payments are heard about the moment they happen.'
+            : 'No signing secret is set, so Foundry only learns about a payment when it asks.' %>
+        </p>
+        <p class="t-xs t-muted">Webhook address for this inventory: <code><%= paymentWebhookUrl %></code></p>
+      </div>
+      <div class="card-foot">
+        <form method="post" action="/settings/connections/payments/remove" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--ghost" type="submit">Disconnect</button>
+        </form>
+      </div>
+    <% } else { %>
+      <% if (pay.connected && pay.source === 'server') { %>
+        <div class="card-body">
+          <div class="notice notice--warn"><div>
+            <strong>This inventory is using the Stripe key set on the server.</strong><br>
+            <%= pay.because %>
+          </div></div>
+        </div>
+      <% } else { %>
+        <div class="card-body">
+          <p class="lede">No payment account is connected.</p>
+          <p class="hint"><%= pay.because %></p>
+        </div>
+      <% } %>
+      <form method="post" action="/settings/connections/payments" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="card-body stack">
+          <label class="field">
+            <span class="field-label">Stripe secret key</span>
+            <input class="input" type="password" name="secretKey" autocomplete="off"
+              placeholder="sk_test_…" required>
+            <span class="field-hint">
+              The one Stripe keeps hidden until you reveal it, not the publishable key beginning pk_.
+              Start with a test key. Stored encrypted, and never shown back to you.
+            </span>
+          </label>
+          <label class="field">
+            <span class="field-label">Webhook signing secret <span class="t-muted">(optional)</span></span>
+            <input class="input" type="password" name="webhookSecret" autocomplete="off"
+              placeholder="whsec_…">
+            <span class="field-hint">
+              From the webhook you add in Stripe, pointing at the address shown once this is connected.
+              Without it Foundry finds out about a payment by asking rather than by being told.
+            </span>
+          </label>
+        </div>
+        <div class="card-foot">
+          <button class="btn btn--primary" type="submit">Connect this inventory's Stripe</button>
+        </div>
+      </form>
+    <% } %>
+  </div>
+</section>
+<% } %>
+
 <%# ------------------------------------------------------ What is connected %>
 <section class="section">
   <div class="section-head">

@@ -57,7 +57,45 @@ router.get('/settings/connections', (req, res, next) => {
   delete req.session.newConnectionToken;
   res.page('connections/index', { title: 'Connections', nav: 'connections', connections: rows,
     backTo: { href: '/settings', label: 'Settings' },
+    // Whose Stripe account this inventory takes money into. Shown here rather
+    // than on Money, because it is a connection and not an accounting figure.
+    paymentAccount: require('../../payments/accounts').describe(req.db, req.ctx.workspaceId),
+    paymentWebhookUrl: `${process.env.FOUNDRY_PUBLIC_URL || ''}/webhooks/payments/stripe/${req.ctx.workspaceId}`,
     providerCatalog: providers.catalog(), newConnectionToken: token });
+}));
+
+/*
+ * Connecting this inventory's own Stripe account.
+ *
+ * Owner only, because it decides whose bank the money arrives in. The key goes
+ * straight to the encrypted credential store and is never echoed back.
+ */
+router.post('/settings/connections/payments', requireOwner, asyncRoute(async (req, res) => {
+  const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
+  try {
+    const account = require('../../payments/accounts').connect(req.db, req.ctx, membership, {
+      secretKey: req.body.secretKey, webhookSecret: req.body.webhookSecret,
+    });
+    req.flash('success', `Connected. This inventory takes money into its own Stripe account`
+      + `${account.liveMode ? '' : ', in test mode'}.`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, '/settings/connections');
+}));
+
+router.post('/settings/connections/payments/remove', requireOwner, asyncRoute(async (req, res) => {
+  const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
+  try {
+    require('../../payments/accounts').disconnect(req.db, req.ctx, membership);
+    req.flash('success', 'Disconnected. Foundry will not make payment links for this inventory; '
+      + 'payments reported by hand are recorded exactly as they always were.');
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, '/settings/connections');
 }));
 
 router.post('/settings/connections', requireOwner, asyncRoute(async (req, res) => {

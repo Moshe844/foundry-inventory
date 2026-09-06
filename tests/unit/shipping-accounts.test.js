@@ -22,6 +22,26 @@ const { makeDatabase, cleanupAll, seedWorkspace } = require('../helpers');
 
 test.after(cleanupAll);
 
+/*
+ * A developer's own .env is not part of the test.
+ *
+ * config.js loads .env at require time, so a machine that happens to hold a
+ * real EASYPOST_API_KEY would fail every "nothing connected" assertion here —
+ * and pass on a machine that did not, which is the kind of test that only ever
+ * breaks for somebody else.
+ */
+function withoutServerKey(run) {
+  const held = { ...process.env };
+  for (const name of ['EASYPOST_API_KEY', 'EASYPOST_WEBHOOK_SECRET',
+    'SHIPPO_API_KEY', 'SHIPPO_WEBHOOK_SECRET', 'SHIPPING_PROVIDER']) delete process.env[name];
+  try { return run(); } finally {
+    for (const name of ['EASYPOST_API_KEY', 'EASYPOST_WEBHOOK_SECRET',
+      'SHIPPO_API_KEY', 'SHIPPO_WEBHOOK_SECRET', 'SHIPPING_PROVIDER']) {
+      if (held[name] !== undefined) process.env[name] = held[name];
+    }
+  }
+}
+
 function setup(name) {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: name || 'Shop' });
@@ -29,7 +49,7 @@ function setup(name) {
   return { db, workspace, ctx: workspace.ctx, membership };
 }
 
-test('a workspace ships on its own account, and the key is not on the record', () => {
+test('a workspace ships on its own account, and the key is not on the record', () => withoutServerKey(() => {
   const env = setup();
   assert.equal(accounts.describe(env.db, env.workspace.workspaceId).connected, false,
     'no account is a normal state, not a broken one');
@@ -61,9 +81,9 @@ test('a workspace ships on its own account, and the key is not on the record', (
   assert.equal(held.ctx.easypostApiKey, 'EZTK_pretend_key_9999');
   assert.equal(held.account.webhookSecret, 'a-long-random-string');
   env.db.close();
-});
+}));
 
-test('one inventory never ships on another inventory account', () => {
+test('one inventory never ships on another inventory account', () => withoutServerKey(() => {
   /*
    * The failure this whole change exists to prevent: two merchants on one
    * server, and a parcel billed to the wrong one.
@@ -80,7 +100,7 @@ test('one inventory never ships on another inventory account', () => {
     'the other inventory has no account, and does not inherit one');
   assert.equal(accounts.contextFor(db, two.ctx), null);
   db.close();
-});
+}));
 
 test('the server key is a fallback that says it is one', () => {
   /*
@@ -90,6 +110,9 @@ test('the server key is a fallback that says it is one', () => {
    * "who is paying for this label" should not be a question anybody guesses at.
    */
   const env = setup();
+  // Saved, not just deleted afterwards: unsetting a real key would break every
+  // test that runs after this one.
+  const held = process.env.EASYPOST_API_KEY;
   process.env.EASYPOST_API_KEY = 'EZTK_server_2222';
   try {
     const shared = accounts.describe(env.db, env.workspace.workspaceId);
@@ -105,12 +128,13 @@ test('the server key is a fallback that says it is one', () => {
     assert.equal(own.source, 'workspace');
     assert.equal(own.apiKey, 'EZTK_theirs_3333');
   } finally {
-    delete process.env.EASYPOST_API_KEY;
+    if (held === undefined) delete process.env.EASYPOST_API_KEY;
+    else process.env.EASYPOST_API_KEY = held;
     env.db.close();
   }
 });
 
-test('disconnecting takes the key with it', () => {
+test('disconnecting takes the key with it', () => withoutServerKey(() => {
   const env = setup();
   accounts.connect(env.db, env.ctx, env.membership, { provider: 'shippo', apiKey: 'shippo_test_4444' });
   assert.equal(accounts.forWorkspace(env.db, env.workspace.workspaceId).provider, 'shippo');
@@ -119,13 +143,13 @@ test('disconnecting takes the key with it', () => {
   assert.equal(accounts.forWorkspace(env.db, env.workspace.workspaceId), null,
     'no key, and no connector claiming to be connected');
   env.db.close();
-});
+}));
 
-test('only a provider Foundry actually has an adapter for can be connected', () => {
+test('only a provider Foundry actually has an adapter for can be connected', () => withoutServerKey(() => {
   const env = setup();
   assert.throws(() => accounts.connect(env.db, env.ctx, env.membership,
     { provider: 'someone-else', apiKey: 'x' }), /easypost or shippo/);
   assert.throws(() => accounts.connect(env.db, env.ctx, env.membership,
     { provider: 'easypost', apiKey: '' }), /API key/);
   env.db.close();
-});
+}));

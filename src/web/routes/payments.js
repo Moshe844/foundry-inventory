@@ -83,11 +83,24 @@ webhooks.post('/webhooks/payments/:provider/:workspaceId?',
     if (!providers.has(name)) return res.status(404).json({ error: 'No such payment provider.' });
 
     const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || '');
+
+    /*
+     * Whose secret verifies this.
+     *
+     * Each inventory connects its own Stripe account and sets its own signing
+     * secret, so there is no one secret that verifies every message. The
+     * address carries the inventory id — which is why it is registered per
+     * merchant — and that names the secret to check against. The server's own
+     * answers only for a single-tenant install with no id in the path.
+     */
+    const named = req.params.workspaceId
+      ? require('../../payments/accounts').forWorkspace(req.db, req.params.workspaceId) : null;
+    const webhookSecret = (named && named.webhookSecret)
+      || process.env[`${name.toUpperCase()}_WEBHOOK_SECRET`];
+
     let event;
     try {
-      event = providers.get(name).verifyEvent(raw, req.headers, {
-        webhookSecret: process.env[`${name.toUpperCase()}_WEBHOOK_SECRET`],
-      });
+      event = providers.get(name).verifyEvent(raw, req.headers, { webhookSecret });
     } catch (error) {
       // 400, not 500: the message was refused, and a provider should not retry
       // something Foundry will refuse identically next time.

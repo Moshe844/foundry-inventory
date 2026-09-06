@@ -151,7 +151,10 @@ test('paying before the goods come does not deliver them', () => {
   const { billId } = orderedAndInvoiced(env);
 
   payments.record(env.db, env.ctx, env.membership, {
-    direction: 'SUPPLIER_PAYMENT', supplierId: env.supplier.id, paymentDate: '2026-09-05',
+    // TODAY, for the same reason as the bill below: a fixed date passes until
+    // the clock reaches it and then fails for a reason that has nothing to do
+    // with what is being tested.
+    direction: 'SUPPLIER_PAYMENT', supplierId: env.supplier.id, paymentDate: TODAY,
     amountMinor: 24000, method: 'bank_transfer', sourceKey: 'paid-up-front',
     allocations: [{ billId, amountMinor: 24000 }],
   });
