@@ -12,6 +12,15 @@ function createLocation(db, ctx, input) {
   const name = requireText(input.name, 'Location name', { max: 120 });
   const kind = requireOneOf(input.kind, LOCATION_KIND_IDS, 'Location type');
   const note = trimOrNull(input.note);
+  /*
+   * Where parcels leave from.
+   *
+   * Optional, because most locations never post anything and a stockroom does
+   * not need a postal address to hold stock. It matters at exactly one moment:
+   * a carrier will not quote a rate without an origin, and Foundry will not
+   * invent one.
+   */
+  const address = trimOrNull(input.address);
   const clash = db
     .prepare('SELECT 1 FROM locations WHERE workspace_id = ? AND name = ? COLLATE NOCASE')
     .get(ctx.workspaceId, name);
@@ -19,9 +28,9 @@ function createLocation(db, ctx, input) {
 
   const id = newId('loc');
   db.prepare(
-    `INSERT INTO locations (id, workspace_id, name, kind, note, is_active, created_at)
-     VALUES (?, ?, ?, ?, ?, 1, ?)`
-  ).run(id, ctx.workspaceId, name, kind, note, nowIso());
+    `INSERT INTO locations (id, workspace_id, name, kind, note, address, is_active, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?)`
+  ).run(id, ctx.workspaceId, name, kind, note, address, nowIso());
   return repo.requireLocation(db, ctx.workspaceId, id);
 }
 
@@ -30,19 +39,29 @@ function updateLocation(db, ctx, locationId, input) {
   const name = requireText(input.name, 'Location name', { max: 120 });
   const kind = requireOneOf(input.kind, LOCATION_KIND_IDS, 'Location type');
   const note = trimOrNull(input.note);
+  /*
+   * An address left out of the form does not erase one already held.
+   *
+   * The edit form is also used to rename a location, and a rename that
+   * silently cleared the address would stop every parcel shipping from it
+   * without saying anything.
+   */
+  const address = input.address === undefined ? location.address : trimOrNull(input.address);
   const clash = db
     .prepare('SELECT 1 FROM locations WHERE workspace_id = ? AND name = ? COLLATE NOCASE AND id <> ?')
     .get(ctx.workspaceId, name, locationId);
   if (clash) throw new ValidationError(`A location called "${name}" already exists.`, { field: 'name' });
 
-  db.prepare('UPDATE locations SET name = ?, kind = ?, note = ? WHERE id = ? AND workspace_id = ?').run(
+  db.prepare(`UPDATE locations SET name = ?, kind = ?, note = ?, address = ?
+    WHERE id = ? AND workspace_id = ?`).run(
     name,
     kind,
     note,
+    address,
     locationId,
     ctx.workspaceId
   );
-  return { ...location, name, kind, note };
+  return { ...location, name, kind, note, address };
 }
 
 function setLocationActive(db, ctx, locationId, isActive) {

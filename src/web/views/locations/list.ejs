@@ -93,8 +93,23 @@
           </select>
         </div>
         <div class="field">
+          <%#
+            Its own field rather than a line in the note, because a carrier
+            needs it as an address and will not quote a rate without one.
+            Optional: most locations never post anything, and a stockroom does
+            not need a postal address to hold stock.
+          %>
+          <label class="label" for="location-address">Postal address <span class="optional">optional</span></label>
+          <textarea class="input textarea" id="location-address" name="address" rows="3"
+            placeholder="12 Depot Road&#10;Monroe, NY 10950"></textarea>
+          <p class="field-hint">
+            Where parcels leave from. Needed only to buy a shipping label, and Foundry asks for it
+            once rather than filling it in on your behalf.
+          </p>
+        </div>
+        <div class="field">
           <label class="label" for="location-note">Note <span class="optional">optional</span></label>
-          <input class="input" id="location-note" name="note" placeholder="Address, floor, or who runs it">
+          <input class="input" id="location-note" name="note" placeholder="Floor, aisle, or who runs it">
         </div>
       </div>
       <div class="modal-foot">
@@ -124,6 +139,12 @@
                 <option value="<%= kind.id %>" <%= location.kind === kind.id ? 'selected' : '' %>><%= kind.label %></option>
               <% }) %>
             </select>
+          </div>
+          <div class="field">
+            <label class="label" for="edit-address-<%= location.id %>">Postal address</label>
+            <textarea class="input textarea" id="edit-address-<%= location.id %>" name="address" rows="3"
+              placeholder="12 Depot Road&#10;Monroe, NY 10950"><%= location.address || '' %></textarea>
+            <p class="field-hint">Where parcels leave from, for buying a shipping label.</p>
           </div>
           <div class="field">
             <label class="label" for="edit-note-<%= location.id %>">Note</label>

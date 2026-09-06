@@ -28,6 +28,7 @@ router.post(
       name: req.body.name,
       kind: req.body.kind,
       note: req.body.note,
+      address: req.body.address,
     });
     req.flash('success', `${location.name} is ready to hold stock.`);
     res.redirect(303, '/locations');
@@ -42,6 +43,7 @@ router.post(
       name: req.body.name,
       kind: req.body.kind,
       note: req.body.note,
+      address: req.body.address,
     });
     req.flash('success', 'Location updated.');
     res.redirect(303, '/locations');
