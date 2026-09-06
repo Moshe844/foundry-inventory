@@ -149,13 +149,23 @@
         </form>
       <% } %>
 
-      <details class="disclose">
-        <summary>
-          <span><%= grant && grant.available && !grant.connected
-            ? 'Paste a secret key instead' : 'Connect with a Stripe secret key' %></span>
-          <span class="disclose__cue">Show</span>
-        </summary>
-        <div class="disclose__body">
+      <%
+        /*
+         * The key form is folded away only when there is something better to
+         * fold it behind. Where Connect is not set up on this server it is the
+         * only way in, and burying the only way in behind a Show link is worse
+         * than the screen that existed before this feature.
+         */
+        var offerGrant = Boolean(grant && grant.available && !grant.connected);
+      %>
+      <% if (offerGrant) { %>
+        <details class="disclose">
+          <summary>
+            <span>Paste a secret key instead</span>
+            <span class="disclose__cue">Show</span>
+          </summary>
+          <div class="disclose__body">
+      <% } %>
       <form method="post" action="/settings/connections/payments" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="card-body stack">
@@ -186,12 +196,14 @@
           </label>
         </div>
         <div class="card-foot">
-          <button class="btn <%= grant && grant.available && !grant.connected ? '' : 'btn--primary' %>"
+          <button class="btn <%= offerGrant ? '' : 'btn--primary' %>"
             type="submit">Connect this inventory's Stripe</button>
         </div>
       </form>
-        </div>
-      </details>
+      <% if (offerGrant) { %>
+          </div>
+        </details>
+      <% } %>
     <% } %>
   </div>
 </section>

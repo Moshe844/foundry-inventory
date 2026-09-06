@@ -1836,3 +1836,19 @@ a.list-row.panel { display: flex; margin-bottom: var(--space-4); }
   font-size: var(--text-sm);
   color: var(--muted);
 }
+
+/*
+ * Long, unbroken strings that are not words.
+ *
+ * A webhook address, an account id, an API endpoint. None of them contain a
+ * space, so nothing in normal text wrapping will ever break one, and a
+ * viewport narrower than the string is a line running out through the side of
+ * the panel it belongs to. Foundry shows several of these on the connection
+ * screens, which is exactly where somebody is reading carefully.
+ */
+code,
+.t-code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-size: 0.92em;
+}

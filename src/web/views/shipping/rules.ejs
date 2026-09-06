@@ -186,13 +186,19 @@
       </form>
     <% } %>
 
-    <details class="disclose">
-      <summary>
-        <span><%= referral.available && !referral.opened
-          ? 'I already have a carrier account' : 'Connect a carrier account' %></span>
-        <span class="disclose__cue">Show</span>
-      </summary>
-      <div class="disclose__body">
+    <%
+      // Folded away only when there is something better to fold it behind.
+      // Where Foundry cannot open an account, this is the only way in.
+      var offerOpen = Boolean(referral.available && !referral.opened);
+    %>
+    <% if (offerOpen) { %>
+      <details class="disclose">
+        <summary>
+          <span>I already have a carrier account</span>
+          <span class="disclose__cue">Show</span>
+        </summary>
+        <div class="disclose__body">
+    <% } %>
     <form method="post" action="/settings/shipping/account" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="card-body stack">
@@ -222,12 +228,14 @@
         </label>
       </div>
       <div class="card-foot">
-        <button class="btn <%= referral.available && !referral.opened ? '' : 'btn--primary' %>"
+        <button class="btn <%= offerOpen ? '' : 'btn--primary' %>"
           type="submit">Connect this inventory's account</button>
       </div>
     </form>
-      </div>
-    </details>
+    <% if (offerOpen) { %>
+        </div>
+      </details>
+    <% } %>
   <% } %>
 </section>
 
