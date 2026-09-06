@@ -473,3 +473,37 @@ test('the platform key is not a till here either', () => asHostedPlatform(() => 
   assert.match(accounts.describe(env.db, env.workspace.workspaceId).because, /connect its own Stripe/);
   env.db.close();
 }));
+
+test('a restricted account is not a ready one, in either Stripe vocabulary', () => asHostedPlatform(async () => {
+  /*
+   * v1 said charges_enabled. v2 says the merchant configuration's card_payments
+   * capability is "active", and says "restricted" while it still wants the
+   * business to finish its form — which is the state every account is in for
+   * the first few minutes of its life.
+   *
+   * Reading only the v1 word against a v2 account would mean every newly
+   * created account reporting false for ever, and reading the presence of the
+   * capability rather than its status would mean reporting true immediately.
+   * Both are wrong in the same place: in front of a customer.
+   */
+  const env = setup();
+  const v2 = (status) => async () => ({
+    id: 'acct_hosted_1', livemode: false, display_name: 'HalFi Shoes',
+    configuration: { merchant: { capabilities: { card_payments: { requested: true, status } } } },
+  });
+
+  await connect.openOnboarding(env.db, env.ctx, env.membership, {
+    businessName: 'HalFi Shoes',
+    createAccount: v2('restricted'),
+    createLink: async () => ({ url: 'https://connect.stripe.com/setup/s/x' }),
+  });
+  assert.equal(connect.describe(env.db, env.workspace.workspaceId).chargesEnabled, false,
+    'requested but restricted is not ready');
+
+  assert.equal((await connect.refresh(env.db, env.workspace.workspaceId,
+    { readAccount: v2('active') })).chargesEnabled, true);
+  assert.equal((await connect.refresh(env.db, env.workspace.workspaceId,
+    { readAccount: v2('restricted') })).chargesEnabled, false,
+    'and an account that loses the capability again stops claiming it');
+  env.db.close();
+}));

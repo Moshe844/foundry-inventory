@@ -43,6 +43,43 @@ const ACCOUNTS = 'https://api.stripe.com/v1/accounts';
 const ACCOUNT_LINKS = 'https://api.stripe.com/v1/account_links';
 
 /*
+ * Accounts v2, because Stripe refuses v1 for a new integration.
+ *
+ * The first version of this created accounts with POST /v1/accounts, which is
+ * what every example still shows, and Stripe answered: "no longer recommends
+ * Accounts v1 for new Connect integrations". So the account is made on v2.
+ *
+ * Everything downstream is untouched, and that was checked rather than
+ * assumed: a v2 account is reachable from the ordinary v1 API through the
+ * Stripe-Account header, so the invoicing adapter did not change by a
+ * character. The version below is the preview header v2 currently requires.
+ */
+const V2_ACCOUNTS = 'https://api.stripe.com/v2/core/accounts';
+const V2_ACCOUNT_LINKS = 'https://api.stripe.com/v2/core/account_links';
+const V2_VERSION = '2025-08-27.preview';
+
+/** v2 speaks JSON, where v1 takes form encoding. */
+async function callV2(url, key, { method = 'POST', body = null } = {}) {
+  const response = await fetch(url, {
+    method,
+    headers: {
+      authorization: `Bearer ${key}`,
+      'content-type': 'application/json',
+      'Stripe-Version': V2_VERSION,
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const said = payload?.error?.message;
+    const error = new ValidationError(said || `Stripe refused the request (${response.status}).`);
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+/*
  * The platform's own identity: one registration for the whole application,
  * exactly like a Gmail or Shopify client id, and correctly global. It is not a
  * merchant credential and never belongs to a workspace.
@@ -221,11 +258,28 @@ async function openOnboarding(db, ctx, membership, options = {}) {
   if (!row) {
     const created = options.createAccount
       ? await options.createAccount({ email: options.email, name: options.businessName })
-      : await post(`${ACCOUNTS}`, {
-        type: 'standard',
-        email: options.email || undefined,
-        'business_profile[name]': options.businessName || undefined,
-      }, held.secretKey);
+      : await callV2(V2_ACCOUNTS, held.secretKey, { body: {
+        contact_email: options.email || undefined,
+        display_name: options.businessName || undefined,
+        /*
+         * A full dashboard, and the business carrying its own fees and losses.
+         *
+         * This is the arrangement that makes the account genuinely theirs:
+         * they get Stripe's own dashboard, they pay Stripe directly, and they
+         * — not Keeper — answer for a chargeback. A platform that collected
+         * fees or absorbed losses would be a different business, and it is not
+         * the one Foundry is in.
+         */
+        dashboard: 'full',
+        identity: { country: 'us', entity_type: 'individual' },
+        defaults: {
+          currency: 'usd',
+          locales: ['en-US'],
+          responsibilities: { losses_collector: 'stripe', fees_collector: 'stripe' },
+        },
+        configuration: { merchant: { capabilities: { card_payments: { requested: true } } } },
+        include: ['configuration.merchant', 'identity', 'requirements'],
+      } });
     if (!created || !created.id) {
       throw new ValidationError('Stripe did not return an account to send this business to.');
     }
@@ -250,7 +304,7 @@ async function openOnboarding(db, ctx, membership, options = {}) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(newId('paycon'), ctx.workspaceId, connectorId, PROVIDER, created.id,
         nameOf(created) || options.businessName || null,
-        created.charges_enabled ? 1 : 0, created.livemode ? 1 : 0, now,
+        canTakeCharges(created) ? 1 : 0, created.livemode ? 1 : 0, now,
         ctx.actorId || null, now, now);
     row = rowFor(db, ctx.workspaceId);
   }
@@ -269,12 +323,17 @@ async function onboardingLink(db, row, options = {}) {
   const held = requirePlatform({ oauth: false });
   const link = options.createLink
     ? await options.createLink({ account: row.provider_account_id })
-    : await post(`${ACCOUNT_LINKS}`, {
+    : await callV2(V2_ACCOUNT_LINKS, held.secretKey, { body: {
       account: row.provider_account_id,
-      refresh_url: options.refreshUrl,
-      return_url: options.returnUrl,
-      type: 'account_onboarding',
-    }, held.secretKey);
+      use_case: {
+        type: 'account_onboarding',
+        account_onboarding: {
+          configurations: ['merchant'],
+          return_url: options.returnUrl,
+          refresh_url: options.refreshUrl,
+        },
+      },
+    } });
   if (!link || !link.url) throw new ValidationError('Stripe did not return an onboarding page.');
   return { url: link.url, expiresAt: link.expires_at || null };
 }
@@ -332,7 +391,7 @@ async function complete(db, query = {}, options = {}) {
 
   const account = options.readAccount
     ? await options.readAccount(accountId)
-    : await get(`${ACCOUNTS}/${encodeURIComponent(accountId)}`, held.secretKey).catch(() => null);
+    : await readAccount(accountId, held.secretKey).catch(() => null);
 
   const now = nowIso();
   db.prepare(`UPDATE workspace_connectors SET status = 'connected', paused_at = NULL,
@@ -353,15 +412,50 @@ async function complete(db, query = {}, options = {}) {
       checked_at = excluded.checked_at,
       updated_at = excluded.updated_at`)
     .run(newId('paycon'), ctx.workspaceId, state.connector_id, PROVIDER, accountId,
-      nameOf(account), account && account.charges_enabled ? 1 : 0,
+      nameOf(account), canTakeCharges(account) ? 1 : 0,
       granted.livemode || (account && account.livemode) ? 1 : 0, now,
       state.actor_id || null, now, now);
 
   return { connected: true, workspaceId: ctx.workspaceId, ...describe(db, ctx.workspaceId) };
 }
 
-const nameOf = (account) => (account && (account.business_profile?.name
-  || account.settings?.dashboard?.display_name || account.email)) || null;
+const nameOf = (account) => (account && (account.display_name || account.business_profile?.name
+  || account.settings?.dashboard?.display_name || account.contact_email || account.email)) || null;
+
+/*
+ * Whether Stripe will take a card on this account, in either API's words.
+ *
+ * v1 says charges_enabled. v2 says the merchant configuration's card_payments
+ * capability is active, and says "restricted" while it is still waiting for
+ * the business to finish its form. They mean the same thing and the rest of
+ * Foundry should not have to know which one answered.
+ */
+function canTakeCharges(account) {
+  if (!account) return false;
+  const capability = account.configuration?.merchant?.capabilities?.card_payments;
+  if (capability) return capability.status === 'active';
+  return Boolean(account.charges_enabled);
+}
+
+/**
+ * Read an account, whichever way it was made.
+ *
+ * Hosted onboarding creates it on v2; an OAuth grant is to an account that
+ * exists on v1. Rather than record which, this asks v2 and falls back — an id
+ * that v2 does not recognise is not an error worth surfacing, it is a fact
+ * about where to look next.
+ */
+async function readAccount(accountId, key) {
+  try {
+    return await callV2(`${V2_ACCOUNTS}/${encodeURIComponent(accountId)}`
+      + '?include=configuration.merchant&include=requirements', key, { method: 'GET' });
+  } catch (error) {
+    if (error.status === 404 || error.status === 400) {
+      return get(`${ACCOUNTS}/${encodeURIComponent(accountId)}`, key);
+    }
+    throw error;
+  }
+}
 
 /**
  * Ask Stripe whether this account can take a payment yet.
@@ -381,7 +475,7 @@ async function refresh(db, workspaceId, options = {}) {
   try {
     account = options.readAccount
       ? await options.readAccount(row.provider_account_id)
-      : await get(`${ACCOUNTS}/${encodeURIComponent(row.provider_account_id)}`, held.secretKey);
+      : await readAccount(row.provider_account_id, held.secretKey);
   } catch (error) {
     /*
      * A merchant who revoked access from their own dashboard is not an error.
@@ -397,7 +491,7 @@ async function refresh(db, workspaceId, options = {}) {
 
   db.prepare(`UPDATE payment_connect_accounts SET charges_enabled = ?, livemode = ?,
     display_name = ?, checked_at = ?, updated_at = ? WHERE id = ?`)
-    .run(account.charges_enabled ? 1 : 0, account.livemode ? 1 : 0,
+    .run(canTakeCharges(account) ? 1 : 0, account.livemode ? 1 : 0,
       nameOf(account), nowIso(), nowIso(), row.id);
   return describe(db, workspaceId);
 }

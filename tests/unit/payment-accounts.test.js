@@ -25,14 +25,16 @@ test.after(cleanupAll);
  * fail — and worse, would pass on a machine that did not, which is the kind of
  * test that only breaks for somebody else.
  */
+const SERVER_SETTINGS = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET',
+  'STRIPE_CONNECT_ENABLED', 'STRIPE_CONNECT_CLIENT_ID'];
+
 function withoutServerKey(run) {
-  const held = process.env.STRIPE_SECRET_KEY;
-  const heldSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  delete process.env.STRIPE_SECRET_KEY;
-  delete process.env.STRIPE_WEBHOOK_SECRET;
+  const held = {};
+  for (const name of SERVER_SETTINGS) { held[name] = process.env[name]; delete process.env[name]; }
   try { return run(); } finally {
-    if (held !== undefined) process.env.STRIPE_SECRET_KEY = held;
-    if (heldSecret !== undefined) process.env.STRIPE_WEBHOOK_SECRET = heldSecret;
+    for (const name of SERVER_SETTINGS) {
+      if (held[name] !== undefined) process.env[name] = held[name];
+    }
   }
 }
 
@@ -106,6 +108,19 @@ test('the server key is a fallback that says whose money it is', () => {
   // Saved, not just deleted afterwards: this process may hold a real key, and
   // a test that quietly unsets it breaks every test that runs after it.
   const held = process.env.STRIPE_SECRET_KEY;
+  /*
+   * And Connect is explicitly off, because that is the condition being tested.
+   *
+   * The server key stands in for a shop's till only on a single-tenant
+   * install. Where Connect is switched on, the same key is the platform's own
+   * identity and deliberately stops being anybody's till — so a machine whose
+   * .env has Connect enabled would fail this, and one without it would pass:
+   * the kind of test that only ever breaks for somebody else.
+   */
+  const heldConnect = process.env.STRIPE_CONNECT_ENABLED;
+  const heldClient = process.env.STRIPE_CONNECT_CLIENT_ID;
+  delete process.env.STRIPE_CONNECT_ENABLED;
+  delete process.env.STRIPE_CONNECT_CLIENT_ID;
   process.env.STRIPE_SECRET_KEY = 'sk_test_server_2222';
   try {
     const shared = accounts.describe(env.db, env.workspace.workspaceId);
@@ -119,6 +134,8 @@ test('the server key is a fallback that says whose money it is', () => {
   } finally {
     if (held === undefined) delete process.env.STRIPE_SECRET_KEY;
     else process.env.STRIPE_SECRET_KEY = held;
+    if (heldConnect !== undefined) process.env.STRIPE_CONNECT_ENABLED = heldConnect;
+    if (heldClient !== undefined) process.env.STRIPE_CONNECT_CLIENT_ID = heldClient;
     env.db.close();
   }
 });
