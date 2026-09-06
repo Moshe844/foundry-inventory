@@ -271,7 +271,20 @@ async function openOnboarding(db, ctx, membership, options = {}) {
          * the one Foundry is in.
          */
         dashboard: 'full',
-        identity: { country: 'us', entity_type: 'individual' },
+        /*
+         * Country, and nothing else about who they are.
+         *
+         * Stripe will not set a default currency without a country, so that
+         * one has to be stated. entity_type — individual or company — is a
+         * fact about the business that Foundry does not know, and the first
+         * version asserted "individual" simply because it made the API stop
+         * complaining. A sole trader would not notice; every company would
+         * arrive at Stripe's form with the wrong answer already filled in and
+         * have to undo it, which is a step Foundry added by guessing.
+         *
+         * Left out, Stripe asks them. That is the right party to ask.
+         */
+        identity: { country: 'us' },
         defaults: {
           currency: 'usd',
           locales: ['en-US'],
