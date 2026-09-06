@@ -507,3 +507,88 @@ test('a restricted account is not a ready one, in either Stripe vocabulary', () 
     'and an account that loses the capability again stops claiming it');
   env.db.close();
 }));
+
+/* ------------------------------------------- the form, without the handoff */
+
+function asEmbeddedPlatform(run) {
+  const held = { key: process.env.STRIPE_SECRET_KEY, on: process.env.STRIPE_CONNECT_ENABLED,
+    pub: process.env.STRIPE_PUBLISHABLE_KEY, id: process.env.STRIPE_CONNECT_CLIENT_ID };
+  delete process.env.STRIPE_CONNECT_CLIENT_ID;
+  process.env.STRIPE_SECRET_KEY = PLATFORM_KEY;
+  process.env.STRIPE_CONNECT_ENABLED = 'true';
+  process.env.STRIPE_PUBLISHABLE_KEY = 'pk_test_platform_public';
+  const restore = () => {
+    for (const [name, value] of [['STRIPE_SECRET_KEY', held.key],
+      ['STRIPE_CONNECT_ENABLED', held.on], ['STRIPE_PUBLISHABLE_KEY', held.pub],
+      ['STRIPE_CONNECT_CLIENT_ID', held.id]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+  try {
+    const out = run();
+    return out && typeof out.then === 'function' ? out.finally(restore) : (restore(), out);
+  } catch (error) { restore(); throw error; }
+}
+
+test('the form runs here, and no page is asked for that nobody will open', () => asEmbeddedPlatform(async () => {
+  /*
+   * The questions are Stripe's and cannot be shortened by anybody — they are
+   * what has to be answered before money may be moved into a bank. What the
+   * embedded form removes is the handoff, which is most of what makes the
+   * process feel long.
+   */
+  const env = setup();
+  const stripe = hostedStripe();
+  let linksAsked = 0;
+
+  assert.equal(connect.usesEmbedded(), true);
+
+  await connect.openOnboarding(env.db, env.ctx, env.membership, {
+    businessName: 'HalFi Shoes', link: false,
+    createAccount: stripe.createAccount,
+    createLink: async () => { linksAsked += 1; return { url: 'x' }; },
+  });
+  assert.equal(linksAsked, 0, 'no hosted page was requested for a form shown here');
+
+  const session = await connect.embeddedSession(env.db, env.ctx, {
+    createSession: async (input) => {
+      assert.equal(input.account, 'acct_hosted_1');
+      return { client_secret: 'accs_secret_pretend' };
+    },
+  });
+  assert.equal(session.clientSecret, 'accs_secret_pretend');
+  assert.equal(session.publishableKey, 'pk_test_platform_public',
+    'the browser gets the public key, which is what it is for');
+  assert.ok(!JSON.stringify(session).includes(PLATFORM_KEY),
+    'and never the secret one');
+  env.db.close();
+}));
+
+test('without a publishable key the form still opens, on Stripe', () => asHostedPlatform(async () => {
+  /*
+   * The embedded form needs a public key in the browser. Where there is none,
+   * the answer is the hosted page — never a merchant stranded in front of a
+   * panel that cannot render.
+   */
+  const env = setup();
+  const held = process.env.STRIPE_PUBLISHABLE_KEY;
+  delete process.env.STRIPE_PUBLISHABLE_KEY;
+  try {
+    assert.equal(connect.usesEmbedded(), false);
+    assert.equal(connect.usesHostedOnboarding(), true, 'so the hosted road is still open');
+
+    const stripe = hostedStripe();
+    const begun = await connect.openOnboarding(env.db, env.ctx, env.membership, {
+      businessName: 'HalFi Shoes',
+      createAccount: stripe.createAccount, createLink: stripe.createLink,
+    });
+    assert.match(begun.url, /^https:\/\/connect\.stripe\.com\/setup\//);
+
+    await assert.rejects(() => connect.embeddedSession(env.db, env.ctx),
+      /no Stripe publishable key/);
+  } finally {
+    if (held !== undefined) process.env.STRIPE_PUBLISHABLE_KEY = held;
+    env.db.close();
+  }
+}));

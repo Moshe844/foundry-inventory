@@ -88,6 +88,12 @@ function platform() {
   return {
     clientId: process.env.STRIPE_CONNECT_CLIENT_ID || null,
     secretKey: process.env.STRIPE_SECRET_KEY || null,
+    /*
+     * The publishable key is not a secret — it is designed to be read by every
+     * browser that loads the page — and it is what Stripe's embedded onboarding
+     * needs in order to run inside Foundry rather than on a page of its own.
+     */
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || null,
   };
 }
 
@@ -115,6 +121,20 @@ function usesOauth() {
 function usesHostedOnboarding() {
   const held = platform();
   return Boolean(held.secretKey && /^(1|true|yes|on)$/i.test(String(process.env.STRIPE_CONNECT_ENABLED || '')));
+}
+
+/**
+ * Whether the form can be shown inside Foundry rather than on Stripe's page.
+ *
+ * The questions are the same either way — they are Stripe's identity checks,
+ * required before money may be moved into anybody's bank, and no integration
+ * can shorten them. What this removes is the handoff: no leaving the app, no
+ * "Return to Keeper Inventory" link, no separate page that looks like somebody
+ * else's software. Most of what makes the process feel long is that, not the
+ * questions.
+ */
+function usesEmbedded() {
+  return Boolean(usesHostedOnboarding() && platform().publishableKey);
 }
 
 /** Whether a business can connect its own account here at all. */
@@ -322,6 +342,11 @@ async function openOnboarding(db, ctx, membership, options = {}) {
     row = rowFor(db, ctx.workspaceId);
   }
 
+  /*
+   * No link when the form is being shown here. Creating one anyway would be
+   * asking Stripe for a page nobody is going to open.
+   */
+  if (options.link === false) return { accountId: row.provider_account_id, connectorId, url: null };
   return { ...(await onboardingLink(db, row, options)), accountId: row.provider_account_id, connectorId };
 }
 
@@ -356,6 +381,37 @@ async function relink(db, ctx, options = {}) {
   const row = rowFor(db, ctx.workspaceId);
   if (!row) throw new NotFoundError('There is no Stripe account to finish setting up.');
   return onboardingLink(db, row, options);
+}
+
+/**
+ * A session for Stripe's own form, running inside this page.
+ *
+ * The client secret is short-lived and scoped to one account and one
+ * component. It is not a credential for the merchant's account and cannot be
+ * used to act on it — which is why it is safe to hand to a browser, and why
+ * this route needs no new secret anywhere.
+ */
+async function embeddedSession(db, ctx, options = {}) {
+  const held = requirePlatform({ oauth: false });
+  if (!held.publishableKey) {
+    throw new ValidationError('Foundry has no Stripe publishable key, so the setup form cannot be '
+      + 'shown here. It will open on Stripe instead.');
+  }
+  const row = rowFor(db, ctx.workspaceId);
+  if (!row) throw new NotFoundError('There is no Stripe account to set up.');
+
+  const made = options.createSession
+    ? await options.createSession({ account: row.provider_account_id })
+    : await post('https://api.stripe.com/v1/account_sessions', {
+      account: row.provider_account_id,
+      'components[account_onboarding][enabled]': 'true',
+      'components[account_onboarding][features][external_account_collection]': 'true',
+    }, held.secretKey);
+  if (!made || !made.client_secret) {
+    throw new ValidationError('Stripe did not return a way to show the setup form.');
+  }
+  return { clientSecret: made.client_secret, publishableKey: held.publishableKey,
+    accountId: row.provider_account_id };
 }
 
 /* -------------------------------------------------------------- coming back */
@@ -571,6 +627,7 @@ function describe(db, workspaceId) {
     return {
       connected: false,
       available: available(),
+      embedded: usesEmbedded(),
       because: available()
         ? 'This business can connect its own Stripe account without giving Foundry a key.'
         : 'Connecting a Stripe account this way is not set up on this server, so a secret key '
@@ -580,6 +637,7 @@ function describe(db, workspaceId) {
   return {
     connected: true,
     available: true,
+    embedded: usesEmbedded(),
     provider: PROVIDER,
     accountId: row.provider_account_id,
     displayName: row.display_name,
@@ -594,7 +652,7 @@ function describe(db, workspaceId) {
 }
 
 module.exports = {
-  PROVIDER, available, usesOauth, usesHostedOnboarding, platform,
-  authorizeUrl, complete, openOnboarding, relink, refresh, disconnect,
+  PROVIDER, available, usesOauth, usesHostedOnboarding, usesEmbedded, platform,
+  authorizeUrl, complete, openOnboarding, relink, embeddedSession, refresh, disconnect,
   describe, rowFor, forget,
 };

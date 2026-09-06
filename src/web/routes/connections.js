@@ -111,6 +111,20 @@ router.post('/settings/connections/payments/connect', requireOwner, asyncRoute(a
      * not. The merchant sees one button either way; which road it takes is a
      * fact about the platform's Stripe account, not a choice for a shop owner.
      */
+    /*
+     * Three roads, one button.
+     *
+     * Where Stripe's form can run inside Foundry, the account is created and
+     * the merchant stays exactly where they are — the form appears under the
+     * button they just pressed. Otherwise they go to Stripe's own page, by
+     * hosted onboarding or by OAuth depending on the dashboard. Which road is
+     * taken is a fact about the platform's Stripe account and never a question
+     * put to a shop owner.
+     */
+    if (grant.usesEmbedded()) {
+      await grant.openOnboarding(req.db, req.ctx, membership, { ...where, link: false });
+      return res.redirect(303, '/settings/connections#payments');
+    }
     const begun = grant.usesHostedOnboarding()
       ? await grant.openOnboarding(req.db, req.ctx, membership, where)
       : grant.authorizeUrl(req.db, req.ctx, membership,
@@ -161,6 +175,40 @@ router.get('/settings/connections/payments/return', requireOwner, asyncRoute(asy
     req.flash('warn', err.message);
   }
   res.redirect(303, '/settings/connections');
+}));
+
+/*
+ * A session for Stripe's form, running inside this page.
+ *
+ * Answers a short-lived client secret and the publishable key, and nothing
+ * else. Neither can act on the merchant's account; they only let Stripe's own
+ * component render here instead of on a page of its own.
+ */
+router.post('/settings/connections/payments/session', requireOwner, asyncRoute(async (req, res) => {
+  try {
+    const made = await require('../../payments/connect').embeddedSession(req.db, req.ctx);
+    return res.json({ ok: true, clientSecret: made.clientSecret, publishableKey: made.publishableKey });
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    return res.status(err.status).json({ ok: false, error: err.message });
+  }
+}));
+
+/*
+ * The merchant finished, or closed the form.
+ *
+ * Stripe's component says only that it is done, never whether the account can
+ * take money — so this asks Stripe rather than believing the browser, which is
+ * the same rule as every other way back in this file.
+ */
+router.post('/settings/connections/payments/settled', requireOwner, asyncRoute(async (req, res) => {
+  try {
+    const state = await require('../../payments/connect').refresh(req.db, req.ctx.workspaceId);
+    return res.json({ ok: true, chargesEnabled: Boolean(state.chargesEnabled) });
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    return res.status(err.status).json({ ok: false, error: err.message });
+  }
 }));
 
 /*

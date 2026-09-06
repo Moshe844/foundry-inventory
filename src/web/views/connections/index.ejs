@@ -50,6 +50,7 @@
    * somebody else's bank.
    */
   var pay = typeof paymentAccount === 'undefined' ? null : paymentAccount;
+  var grant0 = typeof paymentConnect === 'undefined' ? null : paymentConnect;
 %>
 <% if (pay) { %>
 <section class="section" aria-labelledby="payments-heading">
@@ -91,7 +92,7 @@
            * which throws away the account rather than completing it.
            */
         %>
-        <% if (!pay.chargesEnabled) { %>
+        <% if (!pay.chargesEnabled && !(grant0 && grant0.embedded)) { %>
           <a class="btn btn--primary" href="/settings/connections/payments/refresh">
             Finish setting up on Stripe
           </a>
@@ -101,6 +102,33 @@
           <button class="btn btn--ghost" type="submit">Disconnect</button>
         </form>
       </div>
+
+    <%
+      /*
+       * Stripe's own form, inside this page.
+       *
+       * The questions are Stripe's identity checks and no integration can
+       * shorten them — they are what has to be answered before money may be
+       * moved into anybody's bank. What this removes is the handoff: no
+       * leaving Foundry, no page that looks like somebody else's software, no
+       * link back. Most of what makes the process feel long is that.
+       *
+       * If the script will not load, or no publishable key is set, the button
+       * above still opens the same form on Stripe. Nobody is ever stuck behind
+       * our JavaScript.
+       */
+    %>
+    <% if (!pay.chargesEnabled && grant0 && grant0.embedded) { %>
+      <div class="card-body">
+        <div id="stripe-onboarding" data-account="<%= pay.accountId %>"></div>
+        <p class="t-xs t-muted" id="stripe-onboarding-said">Loading the setup form…</p>
+        <noscript>
+          <a class="btn btn--primary" href="/settings/connections/payments/refresh">
+            Finish setting up on Stripe
+          </a>
+        </noscript>
+      </div>
+    <% } %>
 
     <% } else if (pay.connected && pay.source === 'workspace') { %>
       <div class="card-body">
@@ -375,3 +403,80 @@
     </div>
   </section>
 <% }) %>
+
+<% if (typeof paymentAccount !== 'undefined' && paymentAccount && paymentAccount.connected
+     && paymentAccount.source === 'connect' && !paymentAccount.chargesEnabled
+     && typeof paymentConnect !== 'undefined' && paymentConnect && paymentConnect.embedded) { %>
+<script>
+/*
+ * Stripe's setup form, running here.
+ *
+ * Loaded only when there is an account waiting to be finished, so the page
+ * does not pull a third-party script it has no use for. The client secret is
+ * fetched from Foundry, short-lived, and scoped to one account and one
+ * component — it cannot act on the merchant's account, which is why it is safe
+ * to hand to a browser.
+ *
+ * Every failure path ends at the same place: the same form, on Stripe's own
+ * page, through the address below. A merchant must never be stuck because our
+ * JavaScript did not load.
+ */
+(function () {
+  var mount = document.getElementById('stripe-onboarding');
+  var said = document.getElementById('stripe-onboarding-said');
+  if (!mount) return;
+
+  function fallBack(why) {
+    said.innerHTML = '';
+    said.appendChild(document.createTextNode(why + ' '));
+    var link = document.createElement('a');
+    link.href = '/settings/connections/payments/refresh';
+    link.className = 'btn btn--primary';
+    link.textContent = 'Finish setting up on Stripe';
+    said.appendChild(link);
+  }
+
+  function script() {
+    if (window.StripeConnect && window.StripeConnect.init) return Promise.resolve();
+    return new Promise(function (resolve, reject) {
+      var tag = document.createElement('script');
+      tag.src = 'https://connect-js.stripe.com/v1.0/connect.js';
+      tag.onload = resolve;
+      tag.onerror = function () { reject(new Error('The setup form could not be loaded.')); };
+      document.head.appendChild(tag);
+    });
+  }
+
+  fetch('/settings/connections/payments/session', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-csrf-token': '<%= csrfToken %>' },
+    body: JSON.stringify({ _csrf: '<%= csrfToken %>' }),
+  }).then(function (response) { return response.json(); }).then(function (session) {
+    if (!session.ok) throw new Error(session.error || 'Stripe would not open the setup form.');
+    return script().then(function () {
+      var connect = window.StripeConnect.init({
+        publishableKey: session.publishableKey,
+        fetchClientSecret: function () { return Promise.resolve(session.clientSecret); },
+      });
+      var form = connect.create('account-onboarding');
+      /*
+       * "Done" from the component means the merchant closed it, not that
+       * Stripe will take a card. So Foundry asks Stripe and reloads on the
+       * answer — the same rule as every other way back from this.
+       */
+      form.setOnExit(function () {
+        said.textContent = 'Checking with Stripe…';
+        fetch('/settings/connections/payments/settled', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-csrf-token': '<%= csrfToken %>' },
+          body: JSON.stringify({ _csrf: '<%= csrfToken %>' }),
+        }).then(function () { window.location.reload(); })
+          .catch(function () { window.location.reload(); });
+      });
+      mount.appendChild(form);
+      said.textContent = '';
+    });
+  }).catch(function (error) { fallBack(error.message); });
+}());
+</script>
+<% } %>
