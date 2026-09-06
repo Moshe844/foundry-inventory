@@ -125,3 +125,37 @@ CREATE TABLE IF NOT EXISTS shipping_rules (
 );
 CREATE INDEX IF NOT EXISTS idx_shipping_rules_workspace
   ON shipping_rules(workspace_id, is_active);
+
+-- A shipping account Foundry opened on a merchant's behalf.
+--
+-- The alternative to asking every shop owner to leave, create an EasyPost
+-- account, fund a wallet and copy a key back. Foundry creates the account
+-- through the partner API and the merchant never sees EasyPost — but the
+-- account is theirs, not Keeper's: their rates, their labels, their bill.
+--
+-- No key is stored here. The keys live in the encrypted credential store like
+-- every other provider credential, referenced by the connector row; this table
+-- holds only the facts a person might need to see on a screen, and the one
+-- fact that decides whether a live label may be bought.
+CREATE TABLE IF NOT EXISTS shipping_referral_accounts (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  connector_id          TEXT REFERENCES workspace_connectors(id) ON DELETE SET NULL,
+  partner               TEXT NOT NULL DEFAULT 'easypost',
+  -- The carrier's own id for this merchant. The account survives Foundry
+  -- disconnecting from it, which is why the id is worth keeping.
+  referral_customer_id  TEXT NOT NULL,
+  name                  TEXT,
+  email                 TEXT,
+  -- Whether the merchant has a way to be billed yet. Until they do, the
+  -- account exists but can buy nothing, and rates quoted against it are test
+  -- rates rather than what a carrier would really charge.
+  billing_ready         INTEGER NOT NULL DEFAULT 0 CHECK (billing_ready IN (0,1)),
+  billing_checked_at    TEXT,
+  opened_by_user_id     TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at            TEXT NOT NULL,
+  updated_at            TEXT NOT NULL,
+  UNIQUE (workspace_id, partner)
+);
+CREATE INDEX IF NOT EXISTS idx_shipping_referral_customer
+  ON shipping_referral_accounts(referral_customer_id);

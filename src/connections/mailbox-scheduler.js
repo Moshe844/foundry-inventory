@@ -96,7 +96,23 @@ async function runDue(db, options = {}) {
    * typed in by hand that no webhook was ever registered for.
    */
   const shipping = require('../shipping');
-  if (shipping.provider.configured()) {
+  /*
+   * Whether anybody here can reach a carrier at all.
+   *
+   * `provider.configured()` reads the environment, which was the whole story
+   * when there was one key for the server. It stopped being the whole story
+   * the moment an account could belong to a workspace: an install where every
+   * merchant connected their own account has no key in the environment, so
+   * this gate closed and nothing below it ever ran — no tracking sweep, no
+   * delay notices, no rule ever buying a label. Each sweep resolves its own
+   * workspace's account, so the only question here is whether there is any
+   * account anywhere.
+   */
+  const anyoneCanShip = Boolean(shipping.provider.configured()) || Boolean(
+    db.prepare(`SELECT 1 FROM workspace_connectors
+      WHERE provider_type IN ('easypost', 'shippo') AND status = 'connected'
+        AND paused_at IS NULL LIMIT 1`).get());
+  if (anyoneCanShip) {
     const shipped = db.prepare(`SELECT DISTINCT workspace_id FROM sales_shipments
       WHERE status = 'SHIPPED' AND tracking_number IS NOT NULL
         AND (tracking_status IS NULL OR tracking_status NOT IN ('DELIVERED','RETURNED','CANCELLED'))`)
@@ -129,6 +145,17 @@ async function runDue(db, options = {}) {
       try { await shipping.service.sweep(db, { workspaceId, actorId: null }, {}); }
       catch (error) { console.error('[shipping] label sweep failed', error.message); }
     }
+
+    /*
+     * And accounts Foundry opened that still cannot be billed.
+     *
+     * A merchant may add their card on the carrier's own page, on a phone, or
+     * by finishing the form tomorrow — none of which comes back through
+     * Foundry. Without this the account sits in test mode for ever with
+     * nothing saying why. Only unfinished ones are asked about.
+     */
+    try { await shipping.referral.sweep(db); }
+    catch (error) { console.error('[shipping] billing recheck failed', error.message); }
   }
 
   const workspaceIds = db.prepare(`SELECT DISTINCT workspace_id FROM purchase_orders

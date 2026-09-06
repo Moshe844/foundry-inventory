@@ -122,6 +122,8 @@ router.get('/settings/shipping', requirePermission(permissions.VIEW, 'view shipp
       title: 'Shipping rules', nav: 'settings',
       rules: shipping.rules.list(req.db, req.ctx.workspaceId, { activeOnly: false }),
       account: shipping.accounts.describe(req.db, req.ctx.workspaceId),
+      referral: shipping.referral.describe(req.db, req.ctx.workspaceId),
+      workspaceName: req.workspace ? req.workspace.name : '',
       providers: shipping.accounts.PROVIDERS,
       webhookUrl: `${process.env.FOUNDRY_PUBLIC_URL || ''}/webhooks/shipping/`
         + `<provider>/${req.ctx.workspaceId}`,
@@ -173,12 +175,105 @@ router.post('/settings/shipping/account', requirePermission(permissions.ADMIN, '
     res.redirect(303, '/settings/shipping');
   }));
 
+/*
+ * Opening an account from inside Foundry, rather than sending them away.
+ *
+ * The same destination as the form above — a key this inventory ships on — and
+ * the merchant never leaves. Admin only, for the same reason: it decides who
+ * gets the bill.
+ */
+router.post('/settings/shipping/account/open', requirePermission(permissions.ADMIN, 'open a shipping account'),
+  asyncRoute(async (req, res) => {
+    try {
+      const opened = await shipping.referral.enrol(req.db, req.ctx, req.user, {
+        name: req.body.name,
+        email: req.body.email,
+        phone: req.body.phone,
+      });
+      req.flash('success', `Opened. ${opened.name} now has its own carrier account and its labels are `
+        + 'billed to it. Add a payment method and it can buy real ones.');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, '/settings/shipping#account');
+  }));
+
+/*
+ * Collecting a card, without the card passing through Foundry.
+ *
+ * This answers with a client secret and nothing else. The number is typed into
+ * Stripe's own field in the merchant's browser and goes straight to Stripe;
+ * what comes back here is a reference that is worthless to anybody who
+ * intercepts it. JSON rather than a redirect because the field it feeds is on
+ * the page already.
+ */
+router.post('/settings/shipping/account/billing/start',
+  requirePermission(permissions.ADMIN, 'set up shipping billing'),
+  asyncRoute(async (req, res) => {
+    try {
+      const setup = await shipping.referral.beginPaymentSetup(req.db, req.ctx, req.user,
+        { kind: trimOrNull(req.body.kind) });
+      return res.json({ ok: true, ...setup });
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      return res.status(err.status).json({ ok: false, error: err.message });
+    }
+  }));
+
+router.post('/settings/shipping/account/billing/confirm',
+  requirePermission(permissions.ADMIN, 'set up shipping billing'),
+  asyncRoute(async (req, res) => {
+    try {
+      const state = await shipping.referral.recordPaymentMethod(req.db, req.ctx, req.user, {
+        stripeCustomerId: req.body.stripeCustomerId,
+        paymentMethodReference: req.body.paymentMethodReference,
+      });
+      req.flash(state.billingReady ? 'success' : 'warn', state.billingReady
+        ? 'Payment method added. This account can buy real labels now, and rates are live rates.'
+        : 'Stripe stored the payment method, but EasyPost is not reporting one yet. '
+          + 'Foundry will keep checking rather than buy a label it cannot pay for.');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, '/settings/shipping#account');
+  }));
+
+/*
+ * "I added it somewhere else."
+ *
+ * A merchant may add a card on EasyPost's own page, or on a phone, or finish
+ * the form tomorrow. Foundry asks the carrier rather than assuming, because a
+ * payment method it was told about is not the same as one that will be billed.
+ */
+router.post('/settings/shipping/account/billing/recheck',
+  requirePermission(permissions.ADMIN, 'set up shipping billing'),
+  asyncRoute(async (req, res) => {
+    try {
+      const state = await shipping.referral.refreshBilling(req.db, req.ctx);
+      req.flash(state.billingReady ? 'success' : 'warn', state.billingReady
+        ? 'EasyPost has a payment method for this account. It can buy real labels now.'
+        : 'EasyPost still has no payment method on this account, so it cannot buy a label yet.');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, '/settings/shipping#account');
+  }));
+
 router.post('/settings/shipping/account/remove', requirePermission(permissions.ADMIN, 'disconnect a shipping account'),
   asyncRoute(async (req, res) => {
     try {
+      // Said before the row is gone, because what to say depends on which
+      // kind of account it was.
+      const opened = shipping.referral.rowFor(req.db, req.ctx.workspaceId);
       shipping.accounts.disconnect(req.db, req.ctx, req.user);
-      req.flash('success', 'Disconnected. Foundry will not get rates or buy labels for this inventory, '
-        + 'and parcels handed over by hand are recorded exactly as they always were.');
+      req.flash('success', opened
+        ? 'Disconnected. Foundry has forgotten the keys — the EasyPost account itself, and every '
+          + 'label and tracking record on it, still exists and still belongs to this business.'
+        : 'Disconnected. Foundry will not get rates or buy labels for this inventory, '
+          + 'and parcels handed over by hand are recorded exactly as they always were.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);

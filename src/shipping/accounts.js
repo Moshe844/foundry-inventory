@@ -59,13 +59,28 @@ function forWorkspace(db, workspaceId) {
   if (connector) {
     const held = credentials.get(db, workspaceId, connector.id, 'provider') || {};
     if (held.apiKey) {
+      /*
+       * The same key, reached two ways.
+       *
+       * A merchant either pasted one they already had, or Foundry opened the
+       * account for them through the partner API. Nothing below this line
+       * cares which — a key is a key — but the person looking at the settings
+       * screen does, because only one of the two has a payment method they may
+       * still need to add. So `source` says, and the referral record is what
+       * it is read from.
+       */
+      const opened = db.prepare(`SELECT referral_customer_id, billing_ready
+        FROM shipping_referral_accounts WHERE workspace_id = ? AND connector_id = ?`)
+        .get(workspaceId, connector.id);
       return {
         provider: connector.provider_type,
-        source: 'workspace',
+        source: opened ? 'referral' : 'workspace',
         connectorId: connector.id,
         apiKey: held.apiKey,
         webhookSecret: held.webhookSecret || null,
         displayName: connector.display_name,
+        referralCustomerId: opened ? opened.referral_customer_id : null,
+        billingReady: opened ? opened.billing_ready === 1 : null,
       };
     }
   }
@@ -120,6 +135,23 @@ function connect(db, ctx, membership, input = {}) {
   const webhookSecret = trimOrNull(input.webhookSecret);
   const now = nowIso();
 
+  /*
+   * An account Foundry opened is not quietly written over.
+   *
+   * A merchant who later negotiates their own carrier contract should be able
+   * to switch to it — but pasting a key over a referral account would leave
+   * that account's keys gone from Foundry with nothing said, and the merchant
+   * still being billed by EasyPost for an account they can no longer see. So
+   * it is refused, once, with the reason.
+   */
+  const opened = db.prepare(`SELECT id FROM shipping_referral_accounts
+    WHERE workspace_id = ? AND partner = ?`).get(ctx.workspaceId, provider);
+  if (opened) {
+    throw new ValidationError('Foundry opened a shipping account for this inventory, and pasting a '
+      + 'key over it would hide that account rather than replace it. Disconnect it first, then '
+      + 'connect the account you want to ship on.');
+  }
+
   let connector = db.prepare(`SELECT * FROM workspace_connectors
     WHERE workspace_id = ? AND provider_type = ?`).get(ctx.workspaceId, provider);
 
@@ -147,6 +179,18 @@ function connect(db, ctx, membership, input = {}) {
 function disconnect(db, ctx, membership) {
   permissions.assertCan(membership, permissions.ADMIN,
     'disconnect a shipping account');
+
+  /*
+   * Disconnecting an account Foundry opened is a different act, and is done by
+   * the module that knows the difference: it forgets the keys and leaves the
+   * merchant's EasyPost account, and everything shipped on it, standing.
+   */
+  const referral = require('./referral');
+  if (referral.rowFor(db, ctx.workspaceId)) {
+    referral.release(db, ctx, membership);
+    return describe(db, ctx.workspaceId);
+  }
+
   const connector = connectorFor(db, ctx.workspaceId);
   if (!connector) throw new NotFoundError('No shipping account is connected to this inventory.');
   credentials.remove(db, ctx.workspaceId, connector.id);
@@ -179,10 +223,15 @@ function describe(db, workspaceId) {
     keyEndsWith: key.length > 4 ? key.slice(-4) : null,
     testMode: /^(EZTK|shippo_test)/i.test(key),
     hasWebhookSecret: Boolean(account.webhookSecret),
+    referralCustomerId: account.referralCustomerId || null,
+    billingReady: account.billingReady,
     because: account.source === 'server'
       ? 'This inventory is using the key set on the server, which every inventory on it shares. '
         + 'Connect this inventory\'s own account and its parcels will be billed to it instead.'
-      : null,
+      : account.source === 'referral' && account.billingReady === false
+        ? 'Foundry opened this account, but no payment method has been added to it yet — so it '
+          + 'cannot buy a label, and the rates it returns are test rates rather than a carrier\'s.'
+        : null,
   };
 }
 

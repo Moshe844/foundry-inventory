@@ -22,6 +22,8 @@ provider.register('shippo', require('./providers/shippo'));
 module.exports = {
   provider,
   accounts: require('./accounts'),
+  referral: require('./referral'),
+  partner: require('./providers/easypost-partner'),
   address: require('./address'),
   service: require('./service'),
   rules: require('./rules'),

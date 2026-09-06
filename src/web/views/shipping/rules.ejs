@@ -40,7 +40,71 @@
     <p class="hint">Rates and labels come from this account, and its labels are billed to it.</p>
   </div></div>
 
-  <% if (account.connected && account.source === 'workspace') { %>
+  <%# ------------------------------------------- an account Foundry opened %>
+  <% if (account.connected && account.source === 'referral') { %>
+    <div class="card-body">
+      <p class="lede">
+        EasyPost account for <%= referral.name %><% if (!referral.billingReady) { %>
+          <span class="badge badge--warn">no payment method</span>
+        <% } else { %> <span class="badge badge--ok">live</span><% } %>
+      </p>
+      <p class="hint">
+        Foundry opened this account and it belongs to this business — its rates, its labels, its
+        bill. Nobody at Keeper is charged for anything shipped on it.
+      </p>
+      <p class="t-xs t-muted">
+        EasyPost reference <code><%= referral.referralCustomerId %></code> ·
+        billing notices go to <%= referral.email %>
+      </p>
+      <% if (!referral.billingReady) { %>
+        <div class="notice notice--warn"><div>
+          <strong>This account cannot buy a label yet.</strong><br>
+          <%= referral.because %>
+        </div></div>
+      <% } %>
+      <p class="t-xs t-muted">Webhook address for this inventory: <code><%= webhookUrl %></code></p>
+    </div>
+
+    <% if (!referral.billingReady) { %>
+      <%
+        /*
+         * Collecting the card, without the card coming here.
+         *
+         * The field below is Stripe's own, mounted into this page. The number
+         * is typed into Stripe's iframe and goes straight to Stripe; what
+         * reaches Foundry is a pm_ reference, which is worth nothing to
+         * anybody who steals it. Foundry then asks EasyPost whether it can
+         * really bill this merchant, rather than believing the browser.
+         */
+      %>
+      <div class="card-body stack" id="billing-setup">
+        <button class="btn btn--primary" type="button" id="billing-start">Add a payment method</button>
+        <div id="billing-field" hidden></div>
+        <p class="t-xs t-muted" id="billing-said"></p>
+        <form method="post" action="/settings/shipping/account/billing/confirm" id="billing-confirm" hidden>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="stripeCustomerId" id="billing-customer">
+          <input type="hidden" name="paymentMethodReference" id="billing-method">
+        </form>
+        <form method="post" action="/settings/shipping/account/billing/recheck" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--ghost" type="submit">I added one elsewhere — check again</button>
+        </form>
+      </div>
+    <% } %>
+
+    <div class="card-foot">
+      <form method="post" action="/settings/shipping/account/remove" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--ghost" type="submit">Disconnect</button>
+      </form>
+      <p class="t-xs t-muted">
+        Disconnecting makes Foundry forget the keys. The EasyPost account, and everything shipped
+        on it, stays.
+      </p>
+    </div>
+
+  <% } else if (account.connected && account.source === 'workspace') { %>
     <div class="card-body">
       <p class="lede">
         Connected to <%= account.provider === 'easypost' ? 'EasyPost' : 'Shippo' %><% if (account.testMode) { %>
@@ -78,6 +142,57 @@
         </p>
       </div>
     <% } %>
+
+    <%
+      /*
+       * Two ways to the same place, and the order matters.
+       *
+       * Almost every shop has no carrier account and does not want to go and
+       * make one, so that path is first and is the plain button. A shop that
+       * already ships on negotiated rates wants its own key and will find the
+       * second — and would be worse off on a new account, so it must stay.
+       */
+    %>
+    <% if (referral.available && !referral.opened) { %>
+      <form method="post" action="/settings/shipping/account/open" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="card-body stack">
+          <h3>Let Foundry open one</h3>
+          <p class="hint">
+            Foundry creates a carrier account in this business's name. The account is yours — your
+            rates, your labels, your bill — and you never leave this page to make it.
+          </p>
+          <label class="field">
+            <span class="field-label">Business name</span>
+            <input class="input" name="name" value="<%= workspaceName %>" required>
+            <span class="field-hint">The name the carrier bills and the name on the account.</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Email for billing notices</span>
+            <input class="input" type="email" name="email" required>
+            <span class="field-hint">
+              The carrier sends receipts and account notices here. It is not used by Foundry for
+              anything else.
+            </span>
+          </label>
+          <label class="field">
+            <span class="field-label">Phone <span class="t-muted">(optional)</span></span>
+            <input class="input" name="phone">
+          </label>
+        </div>
+        <div class="card-foot">
+          <button class="btn btn--primary" type="submit">Open a shipping account</button>
+        </div>
+      </form>
+    <% } %>
+
+    <details class="disclose">
+      <summary>
+        <span><%= referral.available && !referral.opened
+          ? 'I already have a carrier account' : 'Connect a carrier account' %></span>
+        <span class="disclose__cue">Show</span>
+      </summary>
+      <div class="disclose__body">
     <form method="post" action="/settings/shipping/account" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="card-body stack">
@@ -107,9 +222,12 @@
         </label>
       </div>
       <div class="card-foot">
-        <button class="btn btn--primary" type="submit">Connect this inventory's account</button>
+        <button class="btn <%= referral.available && !referral.opened ? '' : 'btn--primary' %>"
+          type="submit">Connect this inventory's account</button>
       </div>
     </form>
+      </div>
+    </details>
   <% } %>
 </section>
 
@@ -195,3 +313,89 @@
   it. A rule cannot make it buy something nobody offered, and a rate with no delivery date never
   counts as arriving on time — a carrier that declines to say is not a carrier promising.
 </p>
+
+<% if (account.connected && account.source === 'referral' && !referral.billingReady) { %>
+<script>
+/*
+ * The card field, which is Stripe's and not Foundry's.
+ *
+ * Loaded only when there is a payment method to add, so the page does not pull
+ * a third-party script it has no use for. The sequence: ask Foundry for a
+ * client secret, mount Stripe's own field with it, and post back the reference
+ * Stripe returns. At no point does a card number exist in this page's own
+ * variables, this request, or this server.
+ *
+ * If any of it fails — script blocked, network down, an EasyPost shape that
+ * has moved — the "I added one elsewhere" button below is still there and
+ * still works, because a merchant should never be stuck behind our JavaScript.
+ */
+(function () {
+  var start = document.getElementById('billing-start');
+  var field = document.getElementById('billing-field');
+  var said = document.getElementById('billing-said');
+  var form = document.getElementById('billing-confirm');
+  if (!start) return;
+
+  function say(text) { said.textContent = text; }
+
+  function load() {
+    if (window.Stripe) return Promise.resolve();
+    return new Promise(function (resolve, reject) {
+      var tag = document.createElement('script');
+      tag.src = 'https://js.stripe.com/v3/';
+      tag.onload = resolve;
+      tag.onerror = function () { reject(new Error('Stripe could not be loaded.')); };
+      document.head.appendChild(tag);
+    });
+  }
+
+  start.addEventListener('click', function () {
+    start.disabled = true;
+    say('Asking the carrier for a secure card field…');
+
+    fetch('/settings/shipping/account/billing/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-csrf-token': '<%= csrfToken %>' },
+      body: JSON.stringify({ _csrf: '<%= csrfToken %>', kind: 'card' }),
+    }).then(function (response) { return response.json(); }).then(function (setup) {
+      if (!setup.ok) throw new Error(setup.error || 'The carrier would not open a card field.');
+      if (!setup.publishableKey) {
+        throw new Error('The carrier did not say which Stripe account to collect the card into.');
+      }
+      return load().then(function () {
+        var stripe = window.Stripe(setup.publishableKey);
+        var elements = stripe.elements({ clientSecret: setup.clientSecret });
+        elements.create('payment').mount(field);
+        field.hidden = false;
+        say('');
+
+        var submit = document.createElement('button');
+        submit.className = 'btn btn--primary';
+        submit.type = 'button';
+        submit.textContent = 'Save this payment method';
+        field.after(submit);
+
+        submit.addEventListener('click', function () {
+          submit.disabled = true;
+          say('Saving with Stripe…');
+          stripe.confirmSetup({ elements: elements, redirect: 'if_required' })
+            .then(function (result) {
+              if (result.error) throw new Error(result.error.message);
+              var intent = result.setupIntent || {};
+              document.getElementById('billing-method').value = intent.payment_method || '';
+              document.getElementById('billing-customer').value =
+                setup.stripeCustomerId || intent.customer || '';
+              form.submit();
+            })
+            .catch(function (error) { submit.disabled = false; say(error.message); });
+        });
+      });
+    }).catch(function (error) {
+      start.disabled = false;
+      say(error.message + ' You can add a payment method on the carrier\u2019s own site instead, '
+        + 'then use the button below.');
+    });
+  });
+}());
+</script>
+<% } %>
