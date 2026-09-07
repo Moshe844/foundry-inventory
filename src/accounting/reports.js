@@ -381,20 +381,41 @@ function profitability(db, workspaceId, input = {}) {
   return { ...dates, dimension, rows };
 }
 
+/*
+ * When each position last went out, worked out once instead of three times a row.
+ *
+ * This query asked the same question — "when did this SKU last leave this
+ * location" — three separate times for every row it considered: once to select
+ * it, twice more to filter on it. Each of those is a correlated MAX() over the
+ * movement ledger with no index that fits the predicate, so it degenerates into
+ * a scan; six hundred cost balances over two thousand movements became close to
+ * four million row visits and 210ms.
+ *
+ * That number matters more than it looks. slowInventoryValue is read by the
+ * owner dashboard, which is read by the business brain, which is read by the
+ * decision inbox — and the inbox is computed on every page load in the product.
+ * One badly-shaped query was three quarters of the cost of every screen.
+ *
+ * The shape below asks it once: a single grouped pass over the outbound
+ * movements, joined on. Same rows, same order, same totals.
+ */
 function slowInventoryValue(db, workspaceId, input = {}) {
   const before = dateOnly(input.before || new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10), 'Slow-stock cutoff');
-  const rows = db.prepare(`SELECT b.*, i.name || CASE WHEN s.variant_label IS NULL OR s.variant_label = '' THEN '' ELSE ' / ' || s.variant_label END AS label,
+  const rows = db.prepare(`WITH last_outbound AS (
+      SELECT sku_id, location_id, MAX(occurred_at) AS at
+        FROM movements
+       WHERE workspace_id = ? AND quantity_delta < 0
+       GROUP BY sku_id, location_id
+    )
+    SELECT b.*, i.name || CASE WHEN s.variant_label IS NULL OR s.variant_label = '' THEN '' ELSE ' / ' || s.variant_label END AS label,
       l.name AS location_name,
-      (SELECT MAX(m.occurred_at) FROM movements m WHERE m.workspace_id = b.workspace_id
-        AND m.sku_id = b.sku_id AND m.location_id = b.location_id AND m.quantity_delta < 0) AS last_outbound
+      o.at AS last_outbound
     FROM accounting_inventory_cost_balances b JOIN skus s ON s.id = b.sku_id
     JOIN items i ON i.id = s.item_id JOIN locations l ON l.id = b.location_id
+    LEFT JOIN last_outbound o ON o.sku_id = b.sku_id AND o.location_id = b.location_id
     WHERE b.workspace_id = ? AND b.quantity_units > 0
-      AND ((SELECT MAX(m.occurred_at) FROM movements m WHERE m.workspace_id = b.workspace_id
-        AND m.sku_id = b.sku_id AND m.location_id = b.location_id AND m.quantity_delta < 0) IS NULL
-        OR date((SELECT MAX(m.occurred_at) FROM movements m WHERE m.workspace_id = b.workspace_id
-          AND m.sku_id = b.sku_id AND m.location_id = b.location_id AND m.quantity_delta < 0)) < ?)
-    ORDER BY b.total_cost_minor DESC`).all(workspaceId, before);
+      AND (o.at IS NULL OR date(o.at) < ?)
+    ORDER BY b.total_cost_minor DESC`).all(workspaceId, workspaceId, before);
   return { before, rows, totalCostMinor: rows.reduce((sum, row) => sum + Number(row.total_cost_minor), 0) };
 }
 
