@@ -53,6 +53,9 @@ STOP is only for a message whose whole point is that Foundry should stop, pause 
 on its own: "stop", "stop doing that", "pause", "hold off", "don't do anything for now". A message
 that asks for work to be done — ordering, moving, counting, receiving — is never STOP, however
 urgent it sounds.
+SALES_ORDER also covers a request to create, place, start or raise a customer order, even when it is
+phrased as a question — "Can you create a customer order for Marlow?" is SALES_ORDER, not QUESTION,
+because the person wants an order to exist, not an explanation.
 UNKNOWN only when none fits.
 
 Use the supplied durable context to understand short follow-ups such as "approve it" or "what about that one".
@@ -149,6 +152,14 @@ function fallbackClassify(message) {
   if (/(?:change|map|rename|replace)\s+(?:the\s+)?(?:vendor|supplier)(?:'s)?\s+(?:code|sku)\b/i.test(clean) ||
       /(?:vendor|supplier)\s+(?:code|sku)\s+[A-Za-z0-9][A-Za-z0-9._/-]*\s*,?\s*(?:use|make it|call it)\b/i.test(clean)) {
     return result('CONFIGURATION_CHANGE', 'This maps a vendor product identifier to the customer\'s own internal code.');
+  }
+  // Asking for an order to exist — "can you create a customer order for
+  // Marlow?" — is work, not a question, however it is punctuated. It has to be
+  // decided here, before the question rule reads the question mark and sends
+  // somebody who wanted an order to a page that only explains things.
+  if (/\b(?:create|place|make|start|open|raise|set up|new)\b[^.?!]*\b(?:customer|sales)\s+order\b/i.test(clean)
+      || /\b(?:customer|sales)\s+order\b[^.?!]*\bfor\b/i.test(clean)) {
+    return result('SALES_ORDER', 'This asks for a customer order to be created.');
   }
   if (/\b(add|create|rename|archive|remove|delete)\b.*\b(product|item|sku|variant|location|warehouse|inventory)\b/i.test(clean)) {
     return result('CATALOG_CHANGE', 'This explicitly changes the inventory catalogue.');

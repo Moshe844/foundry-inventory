@@ -489,6 +489,10 @@ function migrateCustomerArchiving(db) {
   if (!ddl || /ARCHIVED/.test(ddl.sql)) return;
 
   db.pragma('foreign_keys = OFF');
+  // Without this, renaming `customers` rewrites every other table's foreign
+  // key to say `customers_old` — and after the old table is dropped, six
+  // tables point at nothing and no customer order can ever be inserted again.
+  db.pragma('legacy_alter_table = ON');
   try {
     db.exec('BEGIN IMMEDIATE');
     db.exec('ALTER TABLE customers RENAME TO customers_old');
@@ -523,8 +527,56 @@ function migrateCustomerArchiving(db) {
     try { db.exec('ROLLBACK'); } catch { /* the transaction is already gone */ }
     throw err;
   } finally {
+    db.pragma('legacy_alter_table = OFF');
     db.pragma('foreign_keys = ON');
   }
+}
+
+/*
+ * Healing the databases the rename already went through.
+ *
+ * Before the pragma above, every database that ran the customer rebuild came
+ * out with sales_orders, invoices, payments, communications, payment terms and
+ * payment requests all declaring `REFERENCES "customers_old"(id)`. The rows are
+ * fine; only the declarations are wrong, and SQLite has no ALTER for a foreign
+ * key. The supported repair is the one its own documentation gives for exactly
+ * this situation: edit the declaration text in sqlite_master, then verify the
+ * schema and the references. It touches no data, and it does nothing at all on
+ * a database that does not carry the mistake.
+ */
+function repairRenamedCustomerReferences(db) {
+  const damaged = db.prepare(`SELECT name FROM sqlite_master
+    WHERE type = 'table' AND sql LIKE '%REFERENCES "customers_old"(%'`).all();
+  if (!damaged.length) return;
+  // The driver builds SQLite in defensive mode, which refuses to let the
+  // schema table be written; this is the one deliberate exception.
+  db.unsafeMode(true);
+  db.pragma('foreign_keys = OFF');
+  db.pragma('writable_schema = ON');
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    db.prepare(`UPDATE sqlite_master
+      SET sql = replace(sql, 'REFERENCES "customers_old"(', 'REFERENCES customers(')
+      WHERE type = 'table' AND sql LIKE '%REFERENCES "customers_old"(%'`).run();
+    // Editing sqlite_master directly leaves this connection's parsed schema
+    // stale; bumping the version is how SQLite is told to read it again.
+    const version = db.pragma('schema_version', { simple: true });
+    db.pragma(`schema_version = ${Number(version) + 1}`);
+    db.exec('COMMIT');
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch { /* the transaction is already gone */ }
+    throw err;
+  } finally {
+    db.pragma('writable_schema = OFF');
+    db.pragma('foreign_keys = ON');
+    db.unsafeMode(false);
+  }
+  // The edited declarations are only read on the next open, so prove them now.
+  const integrity = db.pragma('integrity_check', { simple: true });
+  if (integrity !== 'ok') throw new Error(`Repairing customer references left the schema unsound: ${integrity}`);
+  const still = db.prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE sql LIKE '%customers_old%'`).get().n;
+  if (still) throw new Error('Repairing customer references did not clear every stale declaration.');
+  console.log(`[foundry] repaired ${damaged.length} foreign keys that pointed at the renamed customers table`);
 }
 
 function migrateDocumentCharges(db) {
@@ -786,6 +838,7 @@ function migrate(db) {
   // into it, or the repair writes into a table that no longer matches and the
   // failure is swallowed as "this file had no charges".
   migrateCustomerArchiving(db);
+  repairRenamedCustomerReferences(db);
   migrateDocumentCharges(db);
 
   require('./backfill-shipments').backfillShipments(db);

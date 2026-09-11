@@ -691,3 +691,72 @@ test('an order with an invoice shows what was invoiced, paid and still owed', as
   assert.match(text, /\$500\.00 paid/, 'and both halves are shown');
   env.db.close();
 });
+
+/*
+ * Asking for an order is a conversation, not a form.
+ *
+ * "Can you create a customer order for Marlow?" names a customer and nothing
+ * else. Foundry answers from its own records: it notices the customer is not
+ * on file and offers to create them, then offers what is actually available to
+ * place, then asks how many — and only then creates and confirms the order.
+ * The provider here throws, so every step is the deterministic path; the model
+ * can only make it smoother, never a requirement.
+ */
+test('asking for a customer order walks through customer, product and quantity from real records', async () => {
+  const env = setup({ complete: async () => { throw new Error('offline'); } });
+  inventory.receive(env.db, env.workspace.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 12 });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const original = 'Can you create a customer order for Marlow?';
+
+  const home = await agent.get('/');
+  let response = await agent.post('/foundry/tell').type('form')
+    .send({ _csrf: csrfFrom(home.text), message: original });
+  assert.equal(response.headers.location, '/actions', 'a request for an order is a conversation, not a question page');
+
+  let page = await agent.get('/actions');
+  assert.match(plain(page.text), /“Marlow” is not a customer on file yet\. Create them and carry on/);
+  assert.match(page.text, /name="answer" value="create"/);
+  assert.match(page.text, /name="answer" value="choose"/);
+
+  response = await agent.post('/sales/clarify').type('form')
+    .send({ _csrf: csrfFrom(page.text), original, answer: 'create' });
+  page = await agent.get('/actions');
+  assert.match(plain(page.text), /what would you like to place for Marlow\?/);
+  assert.match(plain(page.text), /Black Small Shirt — 12 units available/, 'the choices say what is actually available');
+
+  response = await agent.post('/sales/clarify').type('form')
+    .send({ _csrf: csrfFrom(page.text), original, answer: env.item.skuId });
+  page = await agent.get('/actions');
+  assert.match(plain(page.text), /How many Black Small Shirt for Marlow\? 12 available right now\./);
+
+  response = await agent.post('/sales/clarify').type('form')
+    .send({ _csrf: csrfFrom(page.text), original, answer: '4' });
+  assert.match(response.headers.location, /^\/sales\/orders\/so_/);
+  const [order] = sales.listOrders(env.db, env.workspace.workspaceId);
+  assert.equal(order.customer.name, 'Marlow');
+  assert.equal(order.status, 'CONFIRMED');
+  assert.deepEqual(order.totals, { ordered: 4, fulfilled: 0, allocated: 4, backordered: 0 });
+  assert.equal(sales.listCustomers(env.db, env.workspace.workspaceId).length, 1, 'the customer was created once');
+  env.db.close();
+});
+
+test('a near miss on the customer name is offered back rather than duplicated', async () => {
+  const env = setup({ complete: async () => { throw new Error('offline'); } });
+  sales.createCustomer(env.db, env.workspace.ctx, { name: 'Marlow & Co.' });
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const original = 'Please create a customer order for Marlow';
+  const home = await agent.get('/');
+  await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: original });
+  let page = await agent.get('/actions');
+  assert.match(plain(page.text), /no customer called “Marlow” on file\. Did you mean/);
+  assert.match(page.text, /name="answer" value="Marlow &amp; Co\."/);
+  assert.match(page.text, /value="__create__:Marlow"/);
+  await agent.post('/sales/clarify').type('form')
+    .send({ _csrf: csrfFrom(page.text), original, answer: 'Marlow & Co.' });
+  page = await agent.get('/actions');
+  assert.match(plain(page.text), /what would you like to place for Marlow & Co\.\?/);
+  assert.equal(sales.listCustomers(env.db, env.workspace.workspaceId).length, 1, 'no second Marlow was created');
+  env.db.close();
+});
