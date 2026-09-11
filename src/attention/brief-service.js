@@ -89,6 +89,29 @@ function deterministicBrief(items, context = {}) {
   return parts.join(' ');
 }
 
+/**
+ * Home has one authoritative answer to "does a person need to decide
+ * something?": the Needs You inbox. Inventory findings are a watchlist, not a
+ * second owner queue. Give those findings wording that cannot contradict a
+ * zero Needs You count while preserving the exact measured lead finding.
+ */
+function deterministicObservationBrief(items, context = {}) {
+  const noun = context.stockNoun || 'stock';
+  if (!items.length) {
+    return `Foundry is monitoring your ${noun}. Nothing unusual is developing right now.`;
+  }
+  const counts = attention.summarise(items);
+  const watched = [
+    counts.critical ? `${counts.critical} urgent` : null,
+    counts.important ? `${counts.important} worth watching closely` : null,
+    counts.watch ? `${counts.watch} early signal${counts.watch === 1 ? '' : 's'}` : null,
+  ].filter(Boolean).join(', ');
+  const lead = items[0];
+  return `Foundry is watching ${items.length === 1 ? '1 inventory condition' : `${items.length} inventory conditions`}: ${watched}. `
+    + `Most important: ${lead.title} — ${lead.conciseSummary}. `
+    + 'This is being monitored; it is not waiting for your decision.';
+}
+
 /** Verifies a model-written opening against every finding it is describing. */
 function openingIsGrounded(text, items) {
   const permitted = new Set();
@@ -187,6 +210,7 @@ module.exports = {
   buildBrief,
   currentBrief,
   deterministicBrief,
+  deterministicObservationBrief,
   openingIsGrounded,
   signatureOf,
   purchasingSignature,

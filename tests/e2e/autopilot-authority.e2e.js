@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { chromium } = require('playwright');
+const { completeTransfer } = require('./transfer-helper');
 
 const { openDatabase } = require('../../src/db');
 const modes = require('../../src/autopilot/modes');
@@ -183,15 +184,20 @@ test('authority browser E2E: real policy boundaries, audit wording, Pause and Re
       await runSchedulerTurn(page);
       assert.equal(inspect(databasePath, (db) =>
         db.prepare('SELECT on_hand FROM balances WHERE workspace_id = ? AND sku_id = ? AND location_id = ?')
-          .get(state.workspaceId, state.skuId, state.destinationId).on_hand), 9);
+          .get(state.workspaceId, state.skuId, state.destinationId).on_hand), 4);
       const completed = inspect(databasePath, (db) =>
         workItems.list(db, state.workspaceId, { category: 'balance_transfer' })
           .find((item) => item.executionStatus === 'COMPLETED'));
-      assert.ok(completed, 'the resumed authority completed the waiting transfer');
+      assert.ok(completed, 'the resumed authority prepared the waiting transfer');
       await page.goto(`${BASE}/autopilot/work/${completed.id}`);
       const detail = await page.locator('body').innerText();
       assert.match(detail, /Dated Demand Fixture — move stock between locations/);
-      assert.match(detail, /I transferred 5\./);
+      assert.match(detail, /I prepared TR-\d+ for 5/);
+      await page.getByRole('link', { name: 'Open the prepared transfer' }).click();
+      await completeTransfer(page);
+      assert.equal(inspect(databasePath, (db) =>
+        db.prepare('SELECT on_hand FROM balances WHERE workspace_id = ? AND sku_id = ? AND location_id = ?')
+          .get(state.workspaceId, state.skuId, state.destinationId).on_hand), 9);
     });
   });
 });

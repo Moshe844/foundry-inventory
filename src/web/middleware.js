@@ -163,7 +163,9 @@ function foundryContext(db) {
     try {
       res.locals.attentionCount = require('../attention/needs-you-count').countNeedsYou(
         db,
-        req.ctx.workspaceId
+        req.ctx.workspaceId,
+        req.user,
+        { productBrain: req.app.locals.productBrain }
       );
     } catch {
       res.locals.attentionCount = 0;
@@ -232,6 +234,26 @@ function requireOwner(req, res, next) {
   return next();
 }
 
+/**
+ * A permission guard that also declares its contract to the product brain.
+ * Express still enforces access at runtime; the metadata lets route validation,
+ * navigation and help use the exact same requirement.
+ */
+function requirePermission(permission, what) {
+  const guard = (req, res, next) => {
+    try {
+      require('../actions/permissions').assertCan(req.user, permission, what);
+      return next();
+    } catch (error) { return next(error); }
+  };
+  guard.productMetadata = { permission, what };
+  return guard;
+}
+
+requireAuth.productMetadata = { authenticated: true };
+requireAccount.productMetadata = { account: true };
+requireOwner.productMetadata = { permission: 'ADMIN', role: 'owner' };
+
 /*
  * The way back to the page you came from.
  *
@@ -247,13 +269,58 @@ function requireOwner(req, res, next) {
  * reload, or a redirect after saving, must not offer to take you back to
  * where you already are. A page that sets its own `backTo` keeps it.
  */
+const productDestinations = require('../product-brain/registry').canonical;
 const HUBS = [
-  { path: '/settings', label: 'Settings' },
-  { path: '/planning', label: 'What happens next' },
+  // The Brief presents the owner's current decisions as direct links. A
+  // decision opened there belongs to that journey just as much as one opened
+  // from the full Needs You queue.
+  { path: productDestinations.destination('home').href, label: 'Brief' },
+  { path: productDestinations.destination('settings').href, label: 'Settings' },
+  { path: productDestinations.destination('planning').href, label: 'What happens next' },
+  { path: productDestinations.destination('purchasing').href, label: 'Purchasing' },
+  // Needs You is a task inbox. When it opens the exact decision screen, the
+  // owner must be able to return to the queue they were working through.
+  { path: productDestinations.destination('needs-you').href, label: 'Needs you' },
+  { path: '/everything', label: 'Everything else' },
 ];
+
+/*
+ * The three surfaces in the chrome are never "inside" anything.
+ *
+ * Clicking Brief from Settings put "Back to Settings" on the home page, which
+ * reads as though home were a page you had opened out of Settings — the one
+ * screen where nothing can be behind you. A tab that is always one click away
+ * is a destination, not a step, so these never take a back link no matter what
+ * the referer says.
+ */
+const SURFACES = [
+  productDestinations.destination('home').href,
+  productDestinations.destination('needs-you').href,
+  productDestinations.destination('ask').href,
+  productDestinations.destination('workspaces').href,
+  '/inventories/new',
+];
+
+function entityOrigin(req, from) {
+  const brain = req.app && req.app.locals && req.app.locals.productBrain;
+  if (!brain || !req.user) return null;
+  for (const entity of brain.listEntities()) {
+    if (!entity.route || !entity.route.includes(':')) continue;
+    const pattern = new RegExp(`^${entity.route.split('#')[0]
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/:[A-Za-z0-9_]+/g, '[^/]+')}$`);
+    if (!pattern.test(from.pathname)) continue;
+    const href = `${from.pathname}${from.search || ''}${from.hash || ''}`;
+    const access = brain.accessForHref(href, req.user);
+    if (!access || !access.allowed) return null;
+    return { href, label: entity.label };
+  }
+  return null;
+}
 
 function cameFrom(req) {
   const here = String(req.path || '');
+  if (SURFACES.includes(here)) return null;
   const session = req.session;
   const remembered = session && session.backTo && session.backTo.path === here
     ? { href: session.backTo.href, label: session.backTo.label } : null;
@@ -276,6 +343,16 @@ function cameFrom(req) {
   // The same page again: a redirect after saving. The trail still holds.
   if (from.pathname === here) return remembered;
 
+  // A record is also a real place in a journey. When an owner opens the exact
+  // decision behind PO-1002, returning to that exact PO is more useful than a
+  // generic Automatic work fallback. Entity routes come from the canonical
+  // product brain, so this does not become another independent route list.
+  const record = entityOrigin(req, from);
+  if (record) {
+    if (session) session.backTo = { path: here, href: record.href, label: record.label };
+    return record;
+  }
+
   /*
    * Arrived from somewhere else entirely, so this is a different journey.
    *
@@ -291,6 +368,8 @@ function cameFrom(req) {
 /** Renders a view inside the application shell. */
 function pageRenderer(req, res, next) {
   res.page = (view, data = {}) => {
+    let navigationArrival = null;
+    try { navigationArrival = require('../product-brain/navigation').verifyArrival(req); } catch { navigationArrival = null; }
     let workspaceGuidance = null;
     let screenGuide = Object.prototype.hasOwnProperty.call(data, 'screenGuide')
       ? data.screenGuide
@@ -298,7 +377,9 @@ function pageRenderer(req, res, next) {
     if (req.ctx && data.nav && data.nav !== 'home' && data.nav !== 'overview') {
       try {
         const guidance = require('../manager/guidance');
-        workspaceGuidance = guidance.build(req.db, req.ctx.workspaceId);
+        workspaceGuidance = guidance.build(req.db, req.ctx.workspaceId, req.user, {
+          productBrain: req.app.locals.productBrain,
+        });
         if (!Object.prototype.hasOwnProperty.call(data, 'screenGuide')) {
           // A page under a shared sidebar section can say what it actually is,
           // rather than inheriting the section's description.
@@ -319,7 +400,18 @@ function pageRenderer(req, res, next) {
         body: html,
         title: data.title || 'Foundry',
         nav: data.nav || null,
-        backTo: data.backTo || cameFrom(req),
+        /*
+         * A page nobody can leave.
+         *
+         * The trail is read from where somebody came from, which is right when
+         * there is one and leaves nothing at all when there is not — Activity,
+         * opened from a bookmark or a full-history link, offered no way out but
+         * the browser's own back button. A page that is always reached from
+         * somewhere may name that somewhere as its fallback.
+         */
+        backTo: (navigationArrival && navigationArrival.backTo) || data.backTo
+          || cameFrom(req) || data.backToFallback || null,
+        navigationArrival,
         workspaceGuidance,
         screenGuide,
         // Absolute base for anything that cannot be a relative path — social
@@ -348,6 +440,19 @@ function errorHandler(isProduction) {
     const expected = err instanceof DomainError;
     if (!expected) {
       console.error('[foundry] unexpected error', err);
+      // Record and enqueue external delivery without including request bodies,
+      // cookies, tokens or stack traces in the alert payload.
+      try {
+        require('../operations/monitoring').raise(req.db, {
+          severity: 'ERROR',
+          kind: 'http.unexpected_error',
+          title: 'Foundry returned an unexpected server error',
+          detail: `${req.method} ${req.path} · ${err && err.code ? err.code : err && err.name ? err.name : 'Error'}`,
+          fingerprint: `http.unexpected_error:${req.method}:${req.route && req.route.path || req.path}:${err && err.code || err && err.name || 'Error'}`,
+        });
+      } catch (monitoringError) {
+        console.error('[foundry] could not record operational alert', monitoringError);
+      }
     }
     const message = expected ? err.message : 'Something went wrong on our side. Please try again.';
 
@@ -383,6 +488,7 @@ module.exports = {
   requireAuth,
   requireAccount,
   requireOwner,
+  requirePermission,
   pageRenderer,
   asyncRoute,
   errorHandler,

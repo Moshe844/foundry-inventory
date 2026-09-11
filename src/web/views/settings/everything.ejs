@@ -1,0 +1,44 @@
+<%
+  /*
+   * Everything else.
+   *
+   * The redesign took eight departments off the main path. Nothing was
+   * deleted — every screen kept its address — and this page is the promise
+   * that made the consolidation honest, because a navigation that hides things
+   * is worse than the sidebar it replaced.
+   *
+   * Grouped by the question each screen answers, not by the module it lives
+   * in, and each group says plainly why it is not on the main path. If
+   * somebody has to come here during ordinary work, that is a bug in the
+   * screen they came from.
+   */
+%>
+
+<p class="rm-stamp">Everything else</p>
+<h1 class="rm-figure">Nothing was taken away. It was moved behind the work.</h1>
+<p class="rm-sub">
+  Foundry's day is the brief, the desk and the line. These are the screens underneath them —
+  every one still at its own address, grouped by the question it answers. If you find yourself
+  here during ordinary work, tell me, because that means a screen sent you looking.
+</p>
+
+<div class="rm-vault">
+  <% sections.forEach(function (section) { %>
+    <div class="rm-vault__grp">
+      <p class="rm-vault__h"><%= section.title %></p>
+      <p class="rm-vault__why"><%= section.why %></p>
+      <div class="rm-vault__links">
+        <% section.links.forEach(function (link) { %>
+          <a href="<%= link.href %>"><%= link.label %></a>
+        <% }) %>
+      </div>
+    </div>
+  <% }) %>
+</div>
+
+<p class="rm-disclose">
+  <a href="/">Back to the brief</a>
+  <a href="/what-you-told-me">What you've told me</a>
+  <a href="/guide">How to use Foundry</a>
+  <a href="/support">Support</a>
+</p>

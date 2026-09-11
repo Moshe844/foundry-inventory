@@ -28,6 +28,9 @@ const runner = require('../../src/autopilot/runner');
 const workItems = require('../../src/autopilot/work-items');
 const repo = require('../../src/domain/repository');
 const autopilotPresenter = require('../../src/autopilot/presenter');
+const sales = require('../../src/sales/sales-order-service');
+const queryService = require('../../src/attention/query-service');
+const queryPlanner = require('../../src/attention/query-planner');
 
 test.after(cleanupAll);
 
@@ -102,8 +105,8 @@ test('the plan shown for approval carries the reason, the working and the after-
   assert.match(text, /at or below the reorder point of 60/i);
   // The exact movements and the exact order.
   assert.match(text, /from Main Warehouse to Downtown Store/i);
-  assert.match(text, /3 case\(s\)/);
-  assert.match(text, /36 unit\(s\) from ABC Supply/);
+  assert.match(text, /3 cases/);
+  assert.match(text, /36 units from ABC Supply/);
   // The working.
   assert.match(text, /How Foundry worked this out/i);
   assert.match(text, /Position across every location is 48 on hand \+ 0 on order = 48/);
@@ -193,6 +196,28 @@ test('a location-minimum transfer leads with the location shortage, not an unrel
   assert.match(needsYou, /Downtown Store has 4 and needs 20/);
   assert.match(needsYou, /90 total across all locations/);
   assert.doesNotMatch(needsYou, /90 on hand · reorder at 60/);
+  runner.planWork(env.db, env.workspace.ctx, env.membership, { trigger: 'location-minimum-copy' });
+  const transferPlan = workItems.list(env.db, env.workspace.workspaceId, {
+    category: 'replenishment_plan', status: workItems.STATUS.WAITING_FOR_APPROVAL,
+  })[0];
+  assert.ok(transferPlan);
+  const transferPage = plain((await env.agent.get(`/autopilot/work/${transferPlan.id}`)).text).replace(/\s+/g, ' ');
+  assert.match(transferPage, /Downtown Store has 4 on hand, leaving 4 available\. Its available-stock target is 20, so it needs 16 units/i,
+    'the primary transfer decision explains the exact quantity instead of making the owner infer it');
+
+  runner.approveWorkItem(env.db, env.workspace.ctx, env.membership, transferPlan.id);
+  runner.executeWorkItem(env.db, env.workspace.ctx, env.membership, transferPlan.id);
+  const why = queryService.execute(env.db, env.workspace.workspaceId, {
+    intent: 'foundry_why', entityQuery: 'Trail Ration Packs', locationQuery: '', windowDays: 30, limit: 10,
+  }, { question: 'Why did you move 16 Trail Ration Packs?', membership: env.membership });
+  assert.match(why.answer, /prepared TR-\d+ for 16 Trail Ration Pack.*Main Warehouse to Downtown Store/i);
+  assert.match(why.answer, /No stock moved when it was approved/i);
+  assert.match(why.answer, /Downtown Store had 4 physically on hand.*target was 20.*transfer is intended to restore/i);
+  assert.match(why.answer, /Total unchanged/i);
+  assert.doesNotMatch(why.answer, /purchase order|ordered? 16|supplier/i,
+    'a transfer question is not answered with a purchase merely because both concern the same product');
+  assert.equal(why.handoff.href, `/autopilot/work/${transferPlan.id}`);
+  assert.equal(why.progressiveDisclosure, true);
   env.db.close();
 });
 
@@ -361,7 +386,7 @@ test('a card never argues with the plan printed inside it', async () => {
   // Nothing anywhere on the page may still be offering that order.
   assert.doesNotMatch(text, /and order 36/i, 'the heading must not outlive the decision');
   assert.doesNotMatch(text, /order 3 case\(s\) from ABC Supply/i, 'nor the recommendation');
-  assert.match(text, /Move 7 unit\(s\) between locations/);
+  assert.match(text, /Move 7 units between locations/);
   env.db.close();
 });
 
@@ -486,7 +511,7 @@ test('one need produces one decision, not a transfer approval and a PO approval'
   env.db.close();
 });
 
-test('approving the one plan carries out both halves and verifies each', async () => {
+test('approving the one plan prepares both halves and verifies each', async () => {
   const poService = require('../../src/purchasing/po-service');
   const engine = require('../../src/domain/inventory-engine');
 
@@ -504,14 +529,13 @@ test('approving the one plan carries out both halves and verifies each', async (
   assert.equal(result.executed, true);
   assert.equal(result.verified, true, JSON.stringify(result.checks));
 
-  // The move happened through the ledger, and each leg was checked on its own.
+  // The transfer is prepared, but approval is not a warehouse movement.
   const after = { warehouse: balance(env.workspace.main.id), shop: balance(env.workspace.store.id) };
-  const moved = before.warehouse - after.warehouse;
-  assert.ok(moved > 0, 'the move ran');
-  assert.equal(after.shop, before.shop + moved, 'what left one place arrived at the other');
-  assert.equal(after.warehouse + after.shop, before.warehouse + before.shop, 'a move creates nothing');
-  assert.ok(after.warehouse > 0, 'and it does not empty the warehouse');
-  assert.ok(result.checks.some((check) => check.kind === 'transfer' && check.ok));
+  assert.deepEqual(after, before, 'stock remains at the source until dispatch');
+  const transferCheck = result.checks.find((check) => check.kind === 'transfer');
+  assert.ok(transferCheck && transferCheck.ok);
+  assert.ok(transferCheck.transferId);
+  assert.equal(transferCheck.status, 'APPROVED');
 
   // The order was prepared, not placed.
   assert.ok(result.purchaseOrderId, 'the order half ran too');
@@ -847,6 +871,7 @@ test('a fresh workspace reaches exactly one replenishment decision, and it expla
   const runner = require('../../src/autopilot/runner');
   const workItems = require('../../src/autopilot/work-items');
   const poService = require('../../src/purchasing/po-service');
+  const provenancePresenter = require('../../src/provenance/presenter');
 
   const DAY = 24 * 60 * 60 * 1000;
   const daysAgo = (n) => new Date(Date.now() - n * DAY).toISOString();
@@ -911,31 +936,155 @@ test('a fresh workspace reaches exactly one replenishment decision, and it expla
     'no standalone "approve this order" decision for a plan-owned order'
   );
 
+  // A customer now asks for more than the ten left. This is the same stock
+  // need, not a second decision. Needs You must add the consequence to the
+  // prepared plan and the order must point to that exact actionable plan.
+  const customer = sales.createCustomer(store.db, workspace.ctx, { name: 'Human Walkthrough Customer' });
+  const customerOrder = sales.confirm(store.db, workspace.ctx, sales.createOrder(store.db, workspace.ctx, {
+    customerId: customer.id, deliveryMethod: 'PICKUP',
+    lines: [{ skuId: small.id, quantity: 15, unitPriceMinor: 2000 }],
+  }).id);
+  const activePlan = workItems.awaitingReplenishmentForSku(store.db, workspace.workspaceId, small.id);
+  assert.ok(activePlan);
+
   // Needs you offers that one thing, by name.
   const inbox = plain((await agent.get('/needs-you')).text).replace(/\s+/g, ' ');
-  assert.match(inbox, /Black T-shirt \/ Black \/ Small needs a decision/);
+  assert.match(inbox, /Create a draft order for 8 cases \(96 units\) of Black T-shirt \/ Black \/ Small\?/,
+    'the one plan is resized to include the newly committed customer demand');
+  assert.match(inbox, /SO-1001 is waiting for 5 Black T-shirt \/ Black \/ Small/i,
+    'the customer consequence is part of the prepared replenishment decision');
+  assert.doesNotMatch(inbox, /Decision 2 of|Cover SO-1001/i,
+    'one stock problem is not presented as two Needs You decisions');
+  assert.doesNotMatch(inbox, /needs a decision/, 'name the decision instead of describing its category');
   assert.doesNotMatch(inbox, /ready to send/, 'the consequence must not be the decision');
 
+  const orderStory = await agent.get(`/sales/orders/${customerOrder.id}`).expect(200);
+  assert.match(orderStory.text, new RegExp(`/autopilot/work/${activePlan.id}`),
+    'the shortage action opens the prepared plan that can actually resolve it');
+
   // Opening it shows the whole calculation, not just the consequence.
-  const page = plain((await agent.get(`/autopilot/work/${live[0].id}`)).text).replace(/\s+/g, ' ');
+  const decisionPage = await agent.get(`/autopilot/work/${activePlan.id}`).expect(200);
+  const page = plain(decisionPage.text).replace(/\s+/g, ' ');
   assert.match(page, /Your reorder point is 60/, 'what triggered it');
   assert.match(page, /your target is 80/i);
-  assert.match(page, /You have 10 on hand and 0 already on order/, 'the position');
+  assert.match(page, /You have 10 on hand; 10 are reserved for customers and 5 more are waiting for stock/, 'the position and customer demand');
   assert.match(page, /Downtown Store: 10 on hand/, 'the location balances');
-  assert.match(page, /6 cases/, 'the purchase-unit arithmetic: 80 - 10 = 70, rounded up to whole cases of 12');
-  assert.match(page, /72 units/);
+  assert.match(page, /8 cases/, 'the purchase quantity covers backorders and restores available stock');
+  assert.match(page, /96 units/);
+  assert.match(page, /5 more are waiting for stock/i);
+  assert.match(page, /Available after customer orders/i);
+  assert.match(page, /Short 5/i);
+  assert.match(page, /After delivery is received/i);
   assert.match(page, /ABC Apparel/);
   assert.match(page, /What approval does/, 'and exactly what the button does');
   assert.match(page, /create a draft purchase order/i);
   assert.match(page, /Amount needed to reach target/, 'the shortfall is in the calculations');
+  assert.match(decisionPage.text, new RegExp(`/orders/${customerOrder.id}`),
+    'the decision links to the exact customer order that proves the waiting demand');
+  assert.match(page, /SO-1001 · Human Walkthrough Customer.*5 Black T-shirt \/ Black \/ Small waiting for stock/i,
+    'the proof link says whose order, which product and how many units are waiting');
+
+  // Purchasing is another view of this same recommendation, not a second way
+  // to create it outside the governed decision.
+  const purchasing = await agent.get('/purchasing').expect(200);
+  const purchasingWords = plain(purchasing.text).replace(/\s+/g, ' ');
+  assert.match(purchasing.text, new RegExp(`/autopilot/work/${activePlan.id}`));
+  assert.match(purchasingWords, /Review Foundry's decision/);
+  assert.doesNotMatch(purchasingWords, /Do now:.*Add who supplies/i,
+    'the Needs You count is not paired with an unrelated setup instruction');
+  assert.doesNotMatch(purchasing.text, new RegExp(`/purchasing/prepare/${supplier.id}`),
+    'there is no competing prepare-order form while this decision is waiting');
+  const duplicateAttempt = await agent.post(`/purchasing/prepare/${supplier.id}`).type('form').send({
+    _csrf: csrfFrom(purchasing.text),
+  });
+  assert.equal(duplicateAttempt.headers.location, `/autopilot/work/${activePlan.id}`,
+    'even a stale direct submit returns to the one owned decision');
+  assert.equal(store.db.prepare('SELECT COUNT(*) c FROM purchase_orders').get().c, 0,
+    'the stale submit cannot create a duplicate draft');
+
+  // A human does not ask with an intent name or a record id. Continuous
+  // language and two competing quantities must resolve to the live decision,
+  // not an older PO that happens to contain one of those numbers.
+  const humanQuestion =
+    'Why on earth are we buying 84 shirts when this customer is only waiting on 5?';
+  const plannedQuestion = await queryPlanner.plan(humanQuestion);
+  assert.equal(plannedQuestion.intent, 'foundry_why');
+  const why = queryService.execute(store.db, workspace.workspaceId, plannedQuestion, {
+    question: humanQuestion,
+    membership,
+  });
+  assert.equal(why.handoff.href, `/autopilot/work/${activePlan.id}`);
+  assert.match(why.answer, /SO-1001.*waiting for 5 Black T-shirt/i);
+  assert.match(why.answer, /target (?:of )?80/i);
+  assert.match(why.answer, /current plan is for 96 units, not 84/i);
+  assert.match(why.answer, /Covering those and leaving your target of 80 available requires 85 units/i);
+  assert.match(why.answer, /rounds up to 8 cases \(96 units\)/i);
+  assert.match(why.answer, /91 units will be available/i);
+  assert.match(why.answer, /create a draft purchase order/i);
+  assert.doesNotMatch(why.answer, /no linked cause or decision evidence/i);
 
   // Approving the plan is what produces the order.
-  runner.approveWorkItem(store.db, workspace.ctx, membership, live[0].id);
-  const carried = runner.executeWorkItem(store.db, workspace.ctx, membership, live[0].id);
+  runner.approveWorkItem(store.db, workspace.ctx, membership, activePlan.id);
+  const carried = runner.executeWorkItem(store.db, workspace.ctx, membership, activePlan.id);
   assert.equal(carried.executed, true);
   const order = poService.get(store.db, workspace.workspaceId, carried.purchaseOrderId);
   assert.equal(order.status, 'DRAFT', 'prepared, never sent');
-  assert.equal(order.lines[0].quantity_units || order.lines[0].quantityUnits, 72);
+  assert.equal(order.lines[0].quantity_units || order.lines[0].quantityUnits, 96);
+  assert.equal(order.sourceDetail.customerDemand[0].orderId, customerOrder.id,
+    'the immutable purchase source records the exact customer demand it covered');
+  const purchaseStory = provenancePresenter.purchaseOrderStory(
+    store.db, workspace.workspaceId, order, {}, { membership }
+  );
+  assert.match(purchaseStory.ownerSteps[0].text,
+    /SO-1001 is waiting for 5 units of Black T-shirt \/ Black \/ Small/i);
+  assert.equal(purchaseStory.ownerSteps[0].href, `/autopilot/work/${activePlan.id}`,
+    'show the purchase decision opens the recorded decision, not the PO itself');
+  assert.ok(purchaseStory.details.some((entry) => entry.relation === 'RESPONDS_TO'
+    && entry.from.type === 'purchase_order' && entry.from.id === order.id
+    && entry.to.type === 'sales_order' && entry.to.id === customerOrder.id),
+  'the typed evidence graph connects the supply action to the exact customer order');
+  const completedWords = plain((await agent.get(`/autopilot/work/${activePlan.id}`)).text).replace(/\s+/g, ' ');
+  assert.match(completedWords, /10 units physically on hand; 10 units reserved, leaving 0 units available/i);
+  assert.match(completedWords, /5 customer units are waiting for stock/i);
+  assert.match(completedWords, new RegExp(`${order.poNumber} is a draft for 96 units; it is not on order yet`, 'i'));
+  assert.match(completedWords, /Current stock and placed orders are still 5 units short of customer demand/i);
+  assert.match(completedWords, /Available after all customer orders at plan creation/i);
+  assert.match(completedWords, /on hand − reserved \+ on order − waiting demand/i);
+  // The next ordinary manager pass turns the prepared PO into the one decision
+  // to place it, just as the live scheduler does.
+  runner.run(store.db, workspace.ctx, membership, { trigger: 'manual' });
+  const oneNextDecision = plain((await agent.get('/needs-you')).text).replace(/\s+/g, ' ');
+  assert.match(oneNextDecision, /Decision 1 of 1/i,
+    'the low-stock finding, customer shortage and prepared PO become one next decision');
+  assert.match(oneNextDecision, new RegExp(`Place ${order.poNumber} with ABC Apparel for 8 cases \\(96 units\\)`, 'i'));
+  assert.match(oneNextDecision, /SO-1001 is waiting for 5 Black T-shirt \/ Black \/ Small/i,
+    'the one supplier-order decision carries the exact customer consequence');
+  assert.doesNotMatch(oneNextDecision, /other things waiting/i);
+  const placementPlan = workItems.awaitingReplenishmentForSku(store.db, workspace.workspaceId, small.id);
+  assert.ok(placementPlan && placementPlan.id !== activePlan.id);
+  const placementWords = plain((await agent.get(`/autopilot/work/${placementPlan.id}`)).text).replace(/\s+/g, ' ');
+  assert.match(placementWords, new RegExp(`Place ${order.poNumber} with ABC Apparel for 8 cases \\(96 units\\)`, 'i'));
+  assert.match(placementWords, new RegExp(`record ${order.poNumber} for 8 cases \\(96 units\\) with ABC Apparel as placed`, 'i'));
+  assert.match(placementWords, /After current customer orders are covered, 91 units will be available/i);
+  runner.approveWorkItem(store.db, workspace.ctx, membership, placementPlan.id);
+  const placed = runner.executeWorkItem(store.db, workspace.ctx, membership, placementPlan.id);
+  assert.equal(placed.executed, true);
+  const afterPlacement = plain((await agent.get('/needs-you')).text).replace(/\s+/g, ' ');
+  assert.match(afterPlacement, new RegExp(`${order.poNumber} needs ABC Apparel's email before it can be sent`, 'i'),
+    'after placement, the only remaining decision is the missing real delivery address for the supplier');
+  assert.doesNotMatch(afterPlacement, /decide whether the customer date needs to change/i);
+
+  const coveredPurchasing = await agent.get('/purchasing').expect(200);
+  const coveredPurchasingWords = plain(coveredPurchasing.text).replace(/\s+/g, ' ');
+  assert.doesNotMatch(coveredPurchasingWords, /Coming up short/i,
+    'a fully covered undated customer wait is not presented as an unresolved shortage');
+  assert.match(coveredPurchasingWords, /Customers waiting for stock already ordered/i);
+  assert.match(coveredPurchasingWords,
+    new RegExp(`SO-1001 is waiting for 5 units of Black T-shirt \/ Black \/ Small`, 'i'));
+  assert.match(coveredPurchasingWords,
+    new RegExp(`${order.poNumber} brings 96 units on .*which covers this order\. Nothing more needs to be ordered`, 'i'));
+  assert.match(coveredPurchasing.text, new RegExp(`/purchasing/orders/${order.id}`),
+    'the covered status links to the exact incoming PO');
   store.db.close();
 });
 

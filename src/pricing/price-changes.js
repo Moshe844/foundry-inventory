@@ -52,24 +52,58 @@ inventory unit. Do not invent a price or apply one line's amount to another
 line. Return the structured list only.`;
 
 function matchesInstruction(message) {
-  const text = String(message || '');
-  const changesValue = /\b(?:add|set|change|make|update|remove|clear|is|to)\b/i.test(text);
+  const text = String(message || '').trim();
+  const explicitChange = /\b(?:add|set|change|make|update|remove|clear)\b/i.test(text);
+  const unambiguousChange = /\b(?:add|set|change|update|remove|clear)\b/i.test(text);
+  const statesValue = /\b(?:price|priced|selling price|retail price|sale price|msrp)\b[\s\S]{0,80}\b(?:is|to)\b/i.test(text);
   const namesSellingPrice = /\b(?:price|priced|selling price|retail price|sale price|msrp)\b/i.test(text);
   const assignsMoney = /\b(?:add|set|change|make|update)\b[\s\S]{0,240}(?:[$£€¥]\s*[\d,]+(?:\.\d{1,2})?|\b(?:USD|EUR|GBP|CAD|AUD|JPY)\s*[\d,]+(?:\.\d{1,2})?)/i.test(text);
   const namesPurchaseCost = /\b(?:supplier|purchase|wholesale|landed)\s+(?:price|cost)\b|\b(?:unit\s+)?cost\b/i.test(text);
+  const asksForInformation = /^(?:why|how|what|where|when|who|do|does|did|am|is|are|was|were|have|has|had)\b/i.test(text)
+    || /\?\s*$/.test(text);
 
   // Ordinary instructions often assign a customer price without saying the
   // word "price" — for example, "set JEANS-BLACK-S to $12 each". A change
   // verb plus an explicit currency amount is sufficiently specific to enter
   // the selling-price preview. Supplier costs remain a separate concept and
   // must never be silently turned into customer pricing.
-  return !namesPurchaseCost && changesValue && (namesSellingPrice || assignsMoney);
+  // A dollar amount is not an instruction by itself. “Why did I make $1,560?”
+  // and “What is this item's $20 price?” are questions about business facts,
+  // not requests to rewrite the catalogue. Information questions may enter
+  // this path only when they also contain an unambiguous edit verb, such as
+  // “Can you set …?”. “Make” stays available for imperative product changes,
+  // but is deliberately too ambiguous to override a question boundary.
+  if (asksForInformation && !unambiguousChange) return false;
+  return !namesPurchaseCost
+    && ((explicitChange && (namesSellingPrice || assignsMoney))
+      || (statesValue && /[$£€¥]|\b(?:USD|EUR|GBP|CAD|AUD|JPY)\b/i.test(text)));
 }
 
 function matchesBulkInstruction(message) {
   if (!matchesInstruction(message)) return false;
   const amounts = String(message || '').match(/(?:[$£€¥]\s*[\d,]+(?:\.\d{1,2})?|\b(?:USD|EUR|GBP|CAD|AUD|JPY)\s*[\d,]+(?:\.\d{1,2})?)/gi) || [];
   return amounts.length > 1;
+}
+
+/*
+ * "Put a price on every product."
+ *
+ * One amount and no named product used to fall through to the single-change
+ * path, where the resolver picked one product out of the catalogue and prepared
+ * a price for that one. The owner said "each item" and Foundry quietly chose
+ * one of them — the worst possible reading, because it looks like it worked.
+ *
+ * A whole-catalogue instruction is its own kind: one proposal per product, all
+ * previewed together, nothing written until they are approved.
+ */
+const EVERY_PRODUCT = new RegExp(
+  '\\b(?:each|every|all)\\s+(?:of\\s+)?'
+  + '(?:the|my|our)?\\s*(?:item|items|product|products|sku|skus|variant|variants)\\b', 'i');
+
+function matchesEveryProductInstruction(message) {
+  return matchesInstruction(message)
+    && !matchesBulkInstruction(message)
+    && EVERY_PRODUCT.test(String(message || ''));
 }
 
 function catalogue(db, workspaceId) {
@@ -250,6 +284,37 @@ function continueInterpret(db, ctx, continuation, answer) {
   return proposalFromInterpreted(db, ctx, data, statedAs);
 }
 
+function interpretEvery(db, ctx, message) {
+  const statedAs = requireText(message, 'Price instruction', { max: 1200 });
+  // Read locally rather than by model: the only facts needed are the amount and
+  // whether it is a removal, and both are already parsed here.
+  const parsed = fallback(statedAs, catalogue(db, ctx.workspaceId));
+  if (parsed.operation !== 'remove' && !(Number(parsed.amount) > 0)) {
+    throw new ValidationError('What selling price should Foundry use for every product?');
+  }
+  const amountMinor = parsed.operation === 'remove' ? null : prices.toMinor(String(parsed.amount));
+  const currency = prices.normaliseCurrency(parsed.currency || 'USD');
+
+  const rows = db.prepare(`SELECT s.id FROM skus s JOIN items i ON i.id = s.item_id
+    WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
+    ORDER BY i.name, s.position LIMIT 300`).all(ctx.workspaceId);
+  if (!rows.length) throw new ValidationError('There are no products to price yet.');
+
+  // A product that already has this price is not a change, and a proposal that
+  // changes nothing is noise in a list somebody has to read line by line.
+  const prepared = rows.filter((row) => {
+    const current = prices.currentForSku(db, ctx.workspaceId, row.id);
+    return parsed.operation === 'remove'
+      ? current.isSet
+      : current.amount_minor !== amountMinor || current.currency !== currency;
+  });
+  if (!prepared.length) throw new ValidationError('Every product already has that selling price.');
+
+  return db.transaction(() => prepared.map((row) => createProposal(db, ctx, {
+    skuId: row.id, amountMinor, currency, sourceText: `${statedAs} — every product`,
+  })))();
+}
+
 async function interpretMany(db, ctx, message, options = {}) {
   const statedAs = requireText(message, 'Price instruction', { max: 12000 });
   let changes;
@@ -371,5 +436,6 @@ function cancelBatch(db, workspaceId, ids) {
 module.exports = {
   SCHEMA, SYSTEM, BULK_SCHEMA, BULK_SYSTEM,
   matchesInstruction, matchesBulkInstruction, fallback, fallbackMany,
+  matchesEveryProductInstruction, interpretEvery,
   interpret, continueInterpret, interpretMany, createProposal, get, approve, approveBatch, cancel, cancelBatch,
 };

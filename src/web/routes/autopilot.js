@@ -158,7 +158,9 @@ router.get(
       return res.redirect(303, `/purchasing/supplier-for/${explanation.item.recommendedAction.skuId}`);
     }
     res.page('autopilot/work', {
-      backTo: { href: '/autopilot', label: 'Automatic work' },
+      // Use the actual referring hub when there is one (especially Needs You),
+      // while keeping Automatic work as the safe direct-link fallback.
+      backToFallback: { href: '/autopilot', label: 'Automatic work' },
 
       // Named, so the browser tab and the heading say which product is being
       // decided rather than only what kind of decision it is.
@@ -214,7 +216,9 @@ router.post(
     permissions.assertCan(req.user, permissions.OPERATE, 'run Foundry');
     const result = runner.run(req.db, req.ctx, req.user, { trigger: 'manual' });
     reactions.drainWorkspace(req.db, req.ctx.workspaceId);
-    const currentNeeds = require('../../manager/needs-you-inbox').inbox(req.db, req.ctx.workspaceId).length;
+    const currentNeeds = require('../../manager/needs-you-inbox').inbox(req.db, req.ctx.workspaceId, req.user, {
+      productBrain: req.app.locals.productBrain,
+    }).length;
     const noNewWork = result.planned === 0 && result.executed === 0 && result.recovered === 0;
     req.flash(
       'success',

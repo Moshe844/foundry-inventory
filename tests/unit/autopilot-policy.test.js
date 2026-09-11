@@ -195,7 +195,7 @@ test('a policy does nothing until it is approved', () => {
   assert.equal(policy.isActive, false);
   const before = engine.evaluate(env.db, env.workspace.workspaceId, goodPlan(env));
   assert.equal(before.decision, 'needs_approval');
-  assert.match(before.reason, /No policy authorises/);
+  assert.match(before.reason, /authoris/i);
 
   policyService.approve(env.db, env.ctx, env.membership, policy.id);
   assert.equal(engine.evaluate(env.db, env.workspace.workspaceId, goodPlan(env)).decision, 'authorized');

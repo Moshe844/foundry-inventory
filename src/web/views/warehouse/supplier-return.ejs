@@ -1,0 +1,10 @@
+<div class="rm-operation-page">
+<p class="rm-stamp"><a href="/warehouse/operations#supplier-returns">Supplier returns</a> · <%= record.return_number %></p>
+<h1 class="rm-figure">Return to <%= record.supplier_name %>.</h1>
+<p class="rm-sub"><%= record.status.replace('_',' ') %><% if(record.expected_credit_minor!==null){ %> · expected credit <%= helpers.money(record.expected_credit_minor,'USD') %><% } %></p>
+<section class="rm-panel"><div class="rm-list"><% record.lines.forEach(function(line){ %><div class="rm-row"><span><strong><%= line.item_name %></strong><small><%= line.sku_code %> · <%= line.location_name %></small></span><span><%= line.quantity %> units</span></div><% }) %></div>
+  <% if(record.status==='REQUESTED'){ %><form method="post" action="/warehouse/returns/supplier/<%= record.id %>/authorize"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button rm-button--primary">Authorize supplier return</button></form><% } %>
+  <% if(record.status==='AUTHORIZED'){ %><p class="rm-note">Ship only when the goods physically leave. This posts one issue movement per line.</p><form method="post" action="/warehouse/returns/supplier/<%= record.id %>/ship"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button rm-button--primary">Record goods shipped back</button></form><% } %>
+  <% if(record.status==='AWAITING_CREDIT'||record.status==='CREDIT_MISMATCH'){ %><% if(record.status==='CREDIT_MISMATCH'){ %><p class="rm-alert">The supplier credit does not match what was expected. Foundry has kept the difference explicit.</p><% } %><form method="post" action="/warehouse/returns/supplier/<%= record.id %>/credit" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Credit amount<input name="amount" inputmode="decimal" required></label><label>Credit note number<input name="creditNumber" required></label><label>Credit date<input name="creditDate" type="date" required></label><div class="rm-span-2"><button class="rm-button rm-button--primary">Record and reconcile credit</button></div></form><% } %>
+</section>
+</div>

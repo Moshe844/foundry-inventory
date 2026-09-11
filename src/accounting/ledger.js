@@ -211,12 +211,20 @@ function post(db, ctx, input) {
   const description = requireText(input.description, 'Journal description', { max: 500 });
   const existing = db.prepare(`SELECT id FROM accounting_journal_entries
     WHERE workspace_id = ? AND source_key = ?`).get(ctx.workspaceId, sourceKey);
-  if (existing) return { entry: getEntry(db, ctx.workspaceId, existing.id), replayed: true };
+  if (existing) {
+    const result = { entry: getEntry(db, ctx.workspaceId, existing.id), replayed: true };
+    attachProvenance(db, ctx.workspaceId, result.entry, input);
+    return result;
+  }
 
   return inTransaction(db, () => {
     const replay = db.prepare(`SELECT id FROM accounting_journal_entries
       WHERE workspace_id = ? AND source_key = ?`).get(ctx.workspaceId, sourceKey);
-    if (replay) return { entry: getEntry(db, ctx.workspaceId, replay.id), replayed: true };
+    if (replay) {
+      const result = { entry: getEntry(db, ctx.workspaceId, replay.id), replayed: true };
+      attachProvenance(db, ctx.workspaceId, result.entry, input);
+      return result;
+    }
     const period = ensurePeriod(db, ctx.workspaceId, postingDate);
     if (period.status !== 'OPEN') throw new ValidationError(`The accounting period ending ${period.ends_on} is closed.`);
     const normalized = normalizeLines(db, ctx.workspaceId, input.lines, configured.currency);
@@ -252,8 +260,37 @@ function post(db, ctx, input) {
     }
     db.prepare(`UPDATE accounting_journal_entries SET status = 'POSTED', posted_at = ?
       WHERE id = ? AND status = 'DRAFT'`).run(now, id);
-    return { entry: getEntry(db, ctx.workspaceId, id), replayed: false };
+    const result = { entry: getEntry(db, ctx.workspaceId, id), replayed: false };
+    attachProvenance(db, ctx.workspaceId, result.entry, input);
+    return result;
   });
+}
+
+function attachProvenance(db, workspaceId, entry, input) {
+  // Payment records are inserted immediately after their journal and are
+  // linked by payments.record(). Every other operational source already
+  // exists when it is posted and can be linked atomically here.
+  const sourceType = ({
+    purchase_order_receipt: 'purchase_receipt', sales_order_event: 'sales_order_event',
+    supplier_bill: 'supplier_bill', customer_invoice: 'customer_invoice',
+    inventory_movement: 'inventory_movement', domain_event: 'domain_event',
+    inventory_transfer: 'inventory_transfer', inventory_transfer_event: 'inventory_transfer_event',
+  })[input.sourceRecordType];
+  const graph = require('../provenance/service');
+  if (sourceType && input.sourceRecordId
+      && graph.exists(db, workspaceId, { type: sourceType, id: input.sourceRecordId })) {
+    graph.record(db, workspaceId, { type: 'POSTED_AS',
+      from: { type: sourceType, id: input.sourceRecordId },
+      to: { type: 'journal_entry', id: entry.id },
+      domainEventId: input.sourceEventId || null, basis: 'EVENT' });
+  }
+  if (input.sourceEventId
+      && graph.exists(db, workspaceId, { type: 'domain_event', id: input.sourceEventId })) {
+    graph.record(db, workspaceId, { type: 'POSTED_AS',
+      from: { type: 'domain_event', id: input.sourceEventId },
+      to: { type: 'journal_entry', id: entry.id },
+      domainEventId: input.sourceEventId, basis: 'EVENT' });
+  }
 }
 
 function reverse(db, ctx, membership, entryId, input = {}) {

@@ -22,6 +22,7 @@ const replenishment = require('../../src/purchasing/replenishment');
 const policyService = require('../../src/purchasing/policy-service');
 const position = require('../../src/purchasing/position');
 const repo = require('../../src/domain/repository');
+const sales = require('../../src/sales/sales-order-service');
 const { localDateKey, addLocalDays } = require('../../src/lib/calendar');
 const { createApp } = require('../../src/app');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, makeVariantItem, csrfFrom, plain, signIn } = require('../helpers');
@@ -246,6 +247,15 @@ test('an existing unpriced draft has one repair action and cannot be approved or
     lines: [{ skuId: env.item.skuId, quantityPurchaseUnits: 1 }],
   });
   let page = await agent.get(`/purchasing/orders/${order.id}`);
+  assert.match(page.text, new RegExp(`href="/purchasing/orders/${order.id}/detail"`),
+    'Open the working detail goes to the dedicated operational page');
+  assert.doesNotMatch(page.text, /Guidance for this screen/,
+    'an exact purchase does not display an unrelated workspace-wide task as its next step');
+  const workingDetail = await agent.get(`/purchasing/orders/${order.id}/detail`);
+  assert.equal(workingDetail.status, 200);
+  assert.doesNotMatch(workingDetail.text, /Guidance for this screen/,
+    'the working detail remains focused on this purchase');
+  assert.match(plain(workingDetail.text), /Purchase order.*Draft Repair Supplier/i);
   let text = plain(page.text);
   assert.match(text, /Finish pricing this order/);
   assert.match(text, /Save prices and continue/);
@@ -323,6 +333,9 @@ test('preparing, approving and receiving an order, end to end', async () => {
   // Receive part of it.
   const receivePage = await agent.get(`${orderPath}/receive`);
   assert.equal(receivePage.status, 200);
+  assert.match(plain(receivePage.text), /Record only what physically arrived/);
+  assert.doesNotMatch(plain(receivePage.text), /Do now:.*Add who supplies/i,
+    'a focused receiving task does not interrupt with an unrelated workspace setup suggestion');
   const lineId = afterApproval.lines[0].id;
   const partial = await agent
     .post(`${orderPath}/receive`)
@@ -381,6 +394,40 @@ test('a resubmitted receiving form does not receive the delivery twice', async (
     1
   );
   assert.match(plain((await agent.get(`/purchasing/orders/${order.id}`)).text), /already booked in|48 unit/);
+});
+
+test('receiving a purchase immediately allocates waiting customer demand before Foundry replans', async () => {
+  const env = setup();
+  const { agent } = await owner(env);
+  const customer = sales.createCustomer(env.db, env.workspace.ctx, { name: 'Waiting Customer' });
+  const customerOrder = sales.confirm(env.db, env.workspace.ctx, sales.createOrder(env.db, env.workspace.ctx, {
+    customerId: customer.id,
+    fulfillmentLocationId: env.workspace.main.id,
+    deliveryMethod: 'PICKUP',
+    lines: [{ skuId: env.item.skuId, quantity: 15, unitPriceMinor: 2000 }],
+  }).id);
+  assert.equal(customerOrder.totals.backordered, 5);
+
+  let order = poService.createOrder(env.db, env.workspace.ctx, env.membership, {
+    supplierId: env.supplier.id,
+    destinationLocationId: env.workspace.main.id,
+    lines: [{ skuId: env.item.skuId, quantityPurchaseUnits: 2 }],
+  });
+  order = poService.approve(env.db, env.workspace.ctx, env.membership, order.id, {
+    expectedHash: order.integrityHash, markOrdered: true,
+  });
+  const receivePage = await agent.get(`/purchasing/orders/${order.id}/receive`).expect(200);
+  await agent.post(`/purchasing/orders/${order.id}/receive`).type('form').send({
+    _csrf: csrfFrom(receivePage.text),
+    [`qty_${order.lines[0].id}`]: 24,
+  }).expect(302);
+
+  const updated = sales.getOrder(env.db, env.workspace.workspaceId, customerOrder.id);
+  assert.equal(updated.totals.backordered, 0,
+    'the customer is no longer shown waiting after the physical receipt exists');
+  assert.equal(updated.totals.allocated, 15,
+    'the newly received stock is allocated in the same visible receiving flow');
+  env.db.close();
 });
 
 test('an over-receipt comes back as a question, not a silent acceptance', async () => {
@@ -506,12 +553,12 @@ test('a purchase order from one inventory is invisible from another', async () =
   assert.match(plain((await outsider.get('/suppliers')).text), /No suppliers yet|0 suppliers/);
 });
 
-test('the overview brief mentions purchasing when there is purchasing to mention', async () => {
+test('the overview brief gives the correct purchasing next step and mentions an overdue order', async () => {
   const env = setup();
   const { agent } = await owner(env);
 
   const overview = plain((await agent.get('/')).text);
-  assert.match(overview, /needs? replenishment/);
+  assert.match(overview, /Decide when to reorder Navy Oxford/);
 
   // An overdue order is mentioned too.
   const order = poService.createOrder(env.db, env.workspace.ctx, env.membership, {
@@ -522,7 +569,7 @@ test('the overview brief mentions purchasing when there is purchasing to mention
   poService.approve(env.db, env.workspace.ctx, env.membership, order.id);
 
   const after = plain((await agent.get('/')).text);
-  assert.match(after, new RegExp(`${order.poNumber} is 3 days past its expected arrival`));
+  assert.match(after, new RegExp(`ABC Footwear's delivery on ${order.poNumber} was expected .* and has not arrived`));
 });
 
 test('a delivery that matches the order is booked in with one click', async () => {

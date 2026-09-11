@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light">
   <title><%= title %> · Foundry</title>
-  <meta name="description" content="Foundry, a Keeper product, manages your inventory operation and brings you the exceptions that need your judgement.">
-  <meta property="og:title" content="Foundry — A Keeper product">
+  <meta name="description" content="Foundry manages your inventory operation and brings you the exceptions that need your judgement.">
+  <meta property="og:title" content="Foundry">
   <meta property="og:description" content="Foundry handles routine inventory work and brings you the exceptions that need your judgement.">
   <meta property="og:type" content="website">
   <meta property="og:image" content="<%= origin %>/og.png">
@@ -14,204 +14,135 @@
   <meta name="twitter:title" content="Foundry — Your inventory operation, managed.">
   <meta name="twitter:description" content="Foundry handles routine inventory work and brings you the exceptions that need your judgement.">
   <meta name="twitter:image" content="<%= origin %>/og.png">
-  <%# app.css and product-clarity.css are the layers this redesign is replacing.
-      They stay until the screens that still depend on them are migrated; the
-      design system loads last so it wins wherever the two disagree. %>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <%# The first four sheets carry what is specific to a single screen. The
+      design system loads last and owns everything shared — the tokens they all
+      read, and the components every screen is assembled out of — so both
+      vocabularies in the views produce one product rather than two. %>
   <link rel="stylesheet" href="/app.css">
   <link rel="stylesheet" href="/product-clarity.css">
   <link rel="stylesheet" href="/foundry.css">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230f766e'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/room.css">
+  <link rel="stylesheet" href="/design.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%235B4BE8'/%3E%3Cpath d='M6 8.5 12 5.8l6 2.7v6L12 17.2 6 14.5z' fill='none' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
 <body class="page-<%= nav || 'plain' %>">
 <%
-  // A configured inventory has the universal Tell Foundry command on its
-  // Foundry home. A manually-created inventory still uses the action command
-  // page; sending it to a home-page fragment that does not exist is a dead
-  // link disguised as navigation.
-  var tellFoundryHref = foundry && foundry.configured
-    ? '/#tell-foundry'
-    : '/actions#action-instruction';
+  /*
+   * Three states, not eight destinations.
+   *
+   * The rail carries what a person actually does in a day: read what Foundry
+   * left them, settle what it could not, say something to it. Inventory,
+   * Orders, Money and Activity are no longer places — they are lenses, and
+   * they are reached from the brief, from a story, or by asking. Everything
+   * that used to be a sidebar entry still has its address and is listed, in
+   * full, at /everything.
+   */
+  var isRoom = !!locals.room;
+  var railTab = nav === 'home' || nav === 'overview' || nav === 'brief'
+    ? 'brief'
+    : nav === 'attention' ? 'needs' : nav === 'ask' ? 'ask' : null;
+  var allWorkspaces = typeof workspaces !== 'undefined' && workspaces ? workspaces : [];
+  var others = allWorkspaces.filter(function (w) { return !workspace || w.workspaceId !== workspace.id; });
 %>
 <a class="skip-link" href="#main">Skip to content</a>
 <div class="app">
-  <aside class="sidebar">
-    <a class="brand" href="/">
-      <span class="brand-mark" aria-hidden="true">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6l-8-3.8z"/><path d="m4 8.2 8 3.8 8-3.8M12 12v7.6"/></svg>
+
+  <header class="rm-rail">
+    <a class="rm-rail__brand" href="/" aria-label="Foundry">
+      <span class="rm-rail__mark" aria-hidden="true">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6l-8-3.8z"/><path d="m4 8.2 8 3.8 8-3.8M12 12v7.6"/></svg>
       </span>
-      <span class="brand-text"><strong>Foundry</strong><small>A Keeper product</small></span>
+      <span class="rm-rail__name">Foundry</span>
     </a>
 
-    <%
-      var allWorkspaces = typeof workspaces !== 'undefined' && workspaces ? workspaces : [];
-      var others = allWorkspaces.filter(function (w) { return !workspace || w.workspaceId !== workspace.id; });
-    %>
+    <nav class="rm-rail__nav" aria-label="Primary navigation">
+      <% if (workspace) { %>
+        <a class="rm-tab <%= railTab === 'brief' ? 'is-on' : '' %>" href="/"<%- railTab === 'brief' ? ' aria-current="page"' : '' %>><span class="rm-tab__icon"><%- helpers.icon('overview', { size: 18 }) %></span><span>Brief</span></a>
+        <a class="rm-tab <%= railTab === 'needs' ? 'is-on' : '' %>" href="/needs-you"<%- railTab === 'needs' ? ' aria-current="page"' : '' %>><span class="rm-tab__icon"><%- helpers.icon('attention', { size: 18 }) %></span><span>Needs you</span><% if (attentionCount > 0) { %><span aria-label="<%= attentionCount %> waiting" class="rm-tab__count nav-count"><%= attentionCount %></span><% } %></a>
+        <a class="rm-tab <%= railTab === 'ask' ? 'is-on' : '' %>" href="/ask"<%- railTab === 'ask' ? ' aria-current="page"' : '' %>><span class="rm-tab__icon"><%- helpers.icon('foundry', { size: 18 }) %></span><span>Ask Foundry</span></a>
+      <% } else { %>
+        <a class="rm-tab <%= nav === 'inventories' ? 'is-on' : '' %>" href="/inventories"><span class="rm-tab__icon"><%- helpers.icon('layers', { size: 18 }) %></span><span>Your inventories</span></a>
+        <a class="rm-tab" href="/inventories/new"><span class="rm-tab__icon"><%- helpers.icon('plus', { size: 18 }) %></span><span>New inventory</span></a>
+      <% } %>
+    </nav>
+
+    <span class="rm-rail__spacer"></span>
+
+    <%# Every record in the inventory, from anywhere in it. The type-ahead and
+        the endpoint behind it already existed; what was missing was the field
+        to type into, so the fastest route to a product or an order was not
+        reachable from any screen. Press / to jump into it. %>
     <% if (workspace) { %>
-      <div class="wsp-switch" data-switcher>
-        <button class="wsp-switch-current" type="button" data-switcher-toggle aria-expanded="false" aria-haspopup="true">
-          <span class="wsp-switch-text"><small>Inventory</small><strong><%= workspace.name %></strong></span>
-          <%- helpers.icon('chevron', { size: 14, className: 'wsp-switch-caret' }) %>
+      <div class="rail-search" role="search">
+        <span class="search-icon" aria-hidden="true"><%- helpers.icon('search', { size: 14 }) %></span>
+        <input class="search-input" type="search" data-search autocomplete="off"
+               placeholder="Search products, orders, suppliers…" aria-label="Search this inventory">
+        <div class="search-results" data-search-results hidden role="listbox" aria-label="Search results"></div>
+      </div>
+    <% } %>
+
+    <% if (workspace) { %>
+      <div class="rm-switch" data-switcher>
+        <button class="rm-switch__btn" type="button" data-switcher-toggle aria-expanded="false" aria-haspopup="true">
+          <%= workspace.name %><%- helpers.icon('chevron', { size: 12 }) %>
         </button>
-        <div class="wsp-switch-menu" data-switcher-menu hidden>
+        <div class="rm-switch__menu" data-switcher-menu hidden>
           <% if (others.length) { %>
-            <div class="wsp-switch-label">Switch to</div>
+            <div class="rm-switch__label">Switch to</div>
             <% others.forEach(function (other) { %>
               <form method="post" action="/inventories/switch">
                 <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                 <input type="hidden" name="workspaceId" value="<%= other.workspaceId %>">
                 <input type="hidden" name="next" value="/">
-                <button class="wsp-switch-item" type="submit"><span><%= other.name %></span><% if (other.attentionCount > 0) { %><span class="nav-count"><%= other.attentionCount %></span><% } %></button>
+                <button class="rm-switch__item" type="submit"><span><%= other.name %></span><% if (other.attentionCount > 0) { %><span class="rm-tab__count"><%= other.attentionCount %></span><% } %></button>
               </form>
             <% }) %>
           <% } %>
-          <a class="wsp-switch-item wsp-switch-item--quiet" href="/inventories">All inventories</a>
-          <a class="wsp-switch-item wsp-switch-item--quiet" href="/inventories/new"><%- helpers.icon('plus', { size: 13 }) %> New inventory</a>
+          <div class="rm-switch__label">Elsewhere</div>
+          <a class="rm-switch__item" href="/inventories">All inventories</a>
+          <a class="rm-switch__item" href="/inventories/new">New inventory</a>
+          <a class="rm-switch__item" href="/what-you-told-me">What you've told me</a>
+          <a class="rm-switch__item" href="/everything">Everything else</a>
         </div>
       </div>
     <% } %>
 
-    <nav class="nav" aria-label="Main">
-      <% if (!workspace) { %>
-        <a class="nav-item nav-item--primary <%= nav === 'inventories' ? 'is-active' : '' %>" href="/inventories"><%- helpers.icon('inventory') %><span>Your inventories</span></a>
-        <a class="nav-item nav-item--primary" href="/inventories/new"><%- helpers.icon('plus') %><span>New Inventory</span></a>
-      <% } else { %>
-        <%
-          // Six destinations, no group headings, no subtitles. The subtitles
-          // were explaining the navigation to someone who had not used the
-          // product yet, which is a job for the screen they land on, not for a
-          // label they will read a thousand times. Needs you sits directly
-          // under Home because those two are the whole daily loop.
-          var navItems = [
-            // "/" renders one of two views depending on whether Foundry has been
-            // configured, and the plainer one calls itself 'overview'. That key
-            // belongs to Home, which is the page it is: attaching it to
-            // Inventory lit the wrong entry for every unconfigured workspace.
-            /*
-             * What the owner does, not what the software contains.
-             *
-             * This list read Inventory, Sales, Fulfilment, Mail, Purchasing,
-             * Accounting, Activity — a department per module, which is the
-             * shape of an ERP and the opposite of the point. Somebody who
-             * hired Keeper to run these things should not have to operate
-             * seven of them.
-             *
-             * So the departments fold into the thing they are part of.
-             * Fulfilment is what happens to an order, so it lives under
-             * Orders. Purchasing is how stock arrives, so it lives under
-             * Inventory. Mail is not a place anybody goes to work — what
-             * needs the owner reaches Needs You, and the rest sits on the
-             * order or the supplier it belongs to. Nothing was removed; each
-             * still has its own address, and the section it now lives in
-             * links to it plainly.
-             */
-            { key: 'home', href: '/', icon: 'foundry', label: 'Home', also: ['overview'] },
-            { key: 'attention', href: '/needs-you', icon: 'attention', label: 'Needs you', count: attentionCount },
-            // Inventory covers what you have and how more of it arrives.
-            { key: 'inventory', href: '/inventory', icon: 'inventory', label: 'Inventory', also: ['purchasing'] },
-            // Orders covers a customer order end to end: promised, picked,
-            // shipped, paid, and what the customer was told about it.
-            { key: 'sales', href: '/orders', icon: 'sales', label: 'Orders', also: ['fulfilment', 'mail'] },
-            // "Money" rather than "Accounting", because the owner wants to
-            // know how the business is doing; the books are underneath.
-            { key: 'accounting', href: '/money', icon: 'accounting', label: 'Money' },
-            { key: 'activity', href: '/activity', icon: 'activity', label: 'Activity' },
-          ];
-          var navSecondary = [
-            { key: 'connections', href: '/settings/connections', icon: 'link', label: 'Connections' },
-            { key: 'settings', href: '/settings', icon: 'settings', label: 'Settings', also: ['autopilot', 'history'] },
-          ];
-          function navActive(entry) {
-            if (nav === entry.key) return true;
-            return (entry.also || []).indexOf(nav) !== -1;
-          }
-        %>
-        <% navItems.concat(navSecondary).forEach(function (entry, index) { %>
-          <% if (index === navItems.length) { %><div class="nav-divider" role="presentation"></div><% } %>
-          <a class="nav-item <%= navActive(entry) ? 'is-active' : '' %>" href="<%= entry.href %>"<%- navActive(entry) ? ' aria-current="page"' : '' %>>
-            <%- helpers.icon(entry.icon) %><span><%= entry.label %></span>
-            <% if (entry.count > 0) { %><span class="nav-count" aria-label="<%= entry.count %> waiting"><%= entry.count %></span><% } %>
-          </a>
-        <% }) %>
-      <% } %>
-    </nav>
-
-    <div class="sidebar-foot">
-      <% if (currentUser || account) { %>
-        <% var signedInPerson = currentUser || account; %>
-        <div class="who"><span class="avatar"><%= helpers.initials(signedInPerson.name) %></span><span class="who-text"><strong><%= signedInPerson.name %></strong><small><%= currentUser ? helpers.roleLabel(currentUser.role) : 'Account' %></small></span></div>
-        <form method="post" action="/logout"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--ghost btn--sm btn--block" type="submit"><%- helpers.icon('logout', { size: 16 }) %> Sign out</button></form>
-      <% } else { %>
-        <a class="btn btn--ghost btn--sm btn--block" href="/login">Sign in</a>
-      <% } %>
-    </div>
-  </aside>
-
-  <div class="main">
-    <header class="topbar">
-      <a class="topbar-brand" href="/" aria-label="Foundry, a Keeper product"><span class="brand-mark" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6l-8-3.8z"/></svg></span></a>
-      <% if (workspace) { %>
-        <form class="topbar-search" role="search" action="/search" method="get" autocomplete="off">
-          <label class="visually-hidden" for="global-search">Search inventory</label>
-          <%- helpers.icon('search', { size: 18, className: 'search-icon' }) %>
-          <input id="global-search" class="search-input" type="search" name="q" value="<%= typeof searchTerm !== 'undefined' ? searchTerm : '' %>" placeholder="Search inventory records" data-search>
-          <div class="search-results" data-search-results hidden></div>
-        </form>
-        <div class="topbar-actions">
-          <% if (typeof screenGuide !== 'undefined' && screenGuide) { %>
-            <a class="topbar-help" href="#context-help"><%- helpers.icon('question', { size: 15 }) %> What can I do here?</a>
-          <% } else { %>
-            <a class="topbar-help" href="/guide"><%- helpers.icon('question', { size: 15 }) %> How do I use Foundry?</a>
-            <a class="topbar-help" href="/support">Support</a>
-          <% } %>
-          <a class="btn btn--primary btn--sm" href="<%= tellFoundryHref %>"><%- helpers.icon('foundry', { size: 16 }) %><span class="btn-label">Tell Foundry</span></a>
-        </div>
-      <% } else { %>
-        <div class="topbar-actions"><a class="btn btn--primary btn--sm" href="/inventories/new"><%- helpers.icon('plus', { size: 16 }) %><span class="btn-label">New Inventory</span></a></div>
-      <% } %>
-    </header>
-
-    <main class="content" id="main">
-      <% if (flash && flash.length) { %>
-        <%# The icon has to agree with the message. A question mark rendered as a
-            green tick tells someone their request succeeded at the exact moment
-            Foundry is telling them it needs more from them. %>
-        <div class="flash-stack" data-flash-stack><% flash.forEach(function (message) {
-          var icons = { error: 'alert', warn: 'alert', info: 'question', success: 'check' };
-          var glyph = icons[message.type] || 'check';
-          var live = message.type === 'error' || message.type === 'warn' ? 'alert' : 'status';
-        %><div class="flash flash--<%= message.type %>" role="<%= live %>"><%- helpers.icon(glyph, { size: 18 }) %><span><%= message.message %></span></div><% }) %></div>
-      <% } %>
-      <% if (typeof screenGuide !== 'undefined' && screenGuide) { %>
-        <%- include('partials/screen-guide', { screenGuide: screenGuide }) %>
-      <% } %>
-      <% if (typeof backTo !== 'undefined' && backTo && backTo.href) { %>
-        <a class="page-back" href="<%= backTo.href %>">
-          <span class="page-back-arrow" aria-hidden="true">&#8592;</span><span>Back to <%= backTo.label %></span>
-        </a>
-      <% } %>
-      <%- body %>
-    </main>
-  </div>
-
-  <nav class="mobilenav" aria-label="Main">
-    <% if (!workspace) { %>
-      <a class="<%= nav === 'inventories' ? 'is-active' : '' %>" href="/inventories"><%- helpers.icon('inventory', { size: 22 }) %><span>Inventories</span></a>
-      <a href="/inventories/new"><%- helpers.icon('plus', { size: 22 }) %><span>New</span></a>
+    <% if (currentUser || account) { %>
+      <% var signedInPerson = currentUser || account; %>
+      <span class="rm-rail__who">
+        <span><%= signedInPerson.name %></span>
+        <form method="post" action="/logout" style="margin:0"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-tab" type="submit">Sign out</button></form>
+      </span>
     <% } else { %>
-      <%
-        // The phone bar used to offer a different six than the sidebar, so the
-        // product had two answers to "where do I go". It now carries the four
-        // destinations of the daily loop, with Tell Foundry in the middle as
-        // the thing you reach for rather than a place you visit. Everything
-        // else is reachable from those four.
-      %>
-      <a class="<%= nav === 'home' ? 'is-active' : '' %>" href="/"><%- helpers.icon('foundry', { size: 22 }) %><span>Home</span></a>
-      <a class="<%= nav === 'attention' ? 'is-active' : '' %>" href="/needs-you"><%- helpers.icon('attention', { size: 22 }) %><span>Needs you</span><% if (attentionCount > 0) { %><span class="nav-count"><%= attentionCount %></span><% } %></a>
-      <a class="mobilenav-tell" href="<%= tellFoundryHref %>"><%- helpers.icon('send', { size: 22 }) %><span>Tell Foundry</span></a>
-      <a class="<%= nav === 'inventory' || nav === 'overview' ? 'is-active' : '' %>" href="/inventory"><%- helpers.icon('inventory', { size: 22 }) %><span>Inventory</span></a>
-      <a class="<%= nav === 'activity' ? 'is-active' : '' %>" href="/activity"><%- helpers.icon('activity', { size: 22 }) %><span>Activity</span></a>
+      <a class="rm-tab" href="/login">Sign in</a>
     <% } %>
-  </nav>
+  </header>
+
+  <main class="rm-canvas <%= isRoom ? 'rm' : 'rm rm-legacy' %>" id="main">
+    <% if (workspace && workspace.data_mode === 'synthetic') { %>
+      <p class="rm-stamp" role="status" style="color:var(--copper)">Test environment · generated records, kept separate from your real inventories</p>
+    <% } %>
+    <% if (flash && flash.length) { %>
+      <div class="flash-stack" data-flash-stack><% flash.forEach(function (message) {
+        var live = message.type === 'error' || message.type === 'warn' ? 'alert' : 'status';
+      %><div class="flash flash--<%= message.type %>" role="<%= live %>"><span><%= message.message %></span></div><% }) %></div>
+    <% } %>
+    <% if (typeof navigationArrival !== 'undefined' && navigationArrival) { %>
+      <div class="flash flash--success" role="status" data-navigation-arrival>
+        <span><%= navigationArrival.message %></span>
+      </div>
+    <% } %>
+    <% if (!isRoom && typeof screenGuide !== 'undefined' && screenGuide) { %>
+      <%- include('partials/screen-guide', { screenGuide: screenGuide }) %>
+    <% } %>
+    <% if (typeof backTo !== 'undefined' && backTo && backTo.href) { %>
+      <a class="page-back" href="<%= backTo.href %>"><span aria-hidden="true">←</span> Back to <%= backTo.label %></a>
+    <% } %>
+    <%- body %>
+  </main>
 </div>
 <script src="/app.js" defer></script>
 </body>

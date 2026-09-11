@@ -51,7 +51,7 @@ async function post(agent, path, body, from = '/autopilot') {
   return agent.post(path).type('form').send({ _csrf: csrfFrom(page.text), ...body });
 }
 
-test('Home leads an unfinished business with one real setup action, not a dashboard', async () => {
+test('Home treats recorded opening stock as operational while leading with the next useful setup action', async () => {
   const env = setup();
   env.db.prepare(
     `INSERT INTO workspace_configuration
@@ -65,14 +65,15 @@ test('Home leads an unfinished business with one real setup action, not a dashbo
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
 
-  // Supplier and replenishment setup are still genuinely unfinished. Home
-  // leads with that real state instead of pretending the business is ready or
-  // asking the person to infer a workflow from stock counters.
+  // The inventory is operational once real products, locations and opening
+  // stock exist. Supplier and replenishment setup remain useful, but optional;
+  // they must not make the owner think Foundry is still unusable.
   assert.match(page, /Good (morning|afternoon|evening), /, 'a briefing, addressed to somebody');
-  assert.match(page, /Getting Foundry ready/);
+  assert.match(page, /Everything is under control/);
   assert.match(page, /Do this next/);
   assert.match(page, /Add who supplies/);
-  assert.match(page, /Setup progress · 2 of 5 complete/);
+  assert.match(page, /Optional setup · 2 of 5 complete/);
+  assert.doesNotMatch(page, /Getting Foundry ready/);
   assert.doesNotMatch(page, /Inventory pulse/, 'setup guidance replaces the ordinary dashboard until setup is complete');
   assert.doesNotMatch(page, /Tell Foundry when you sell something/, 'missing history is taught in context, not made into work');
 });
@@ -112,7 +113,7 @@ test('completed manager checks appear in durable history even when no action was
   assert.doesNotMatch(page, /Foundry has not had anything to do yet/);
 });
 
-test('an active product reaching zero appears automatically in Foundry needs you', async () => {
+test('an active product reaching zero is watched without inventing a Needs You decision', async () => {
   const env = setup();
   env.db.prepare(
     `INSERT INTO workspace_configuration
@@ -129,10 +130,10 @@ test('an active product reaching zero appears automatically in Foundry needs you
   assert.match(page, /Essential Filter is out of stock/i);
   assert.match(page, /0 on hand/i);
 
-  // The stockout is the only thing waiting. This inventory has a real sale
-  // behind it — that is how the filter reached zero — so Foundry has already
-  // been told what it sells and must not still be asking.
-  assert.match(page, /1 thing needs you/i);
+  // A stockout is serious, but with no supplier or owner choice attached it is
+  // a measured condition, not a decision disguised as work for the owner.
+  assert.match(page, /Needs you 0 nothing is waiting/i);
+  assert.match(page, /being monitored; it is not waiting for your decision/i);
   assert.doesNotMatch(page, /Tell Foundry when you sell something/i);
   assert.doesNotMatch(page, /tracked variant/i, 'not in Foundry\'s own vocabulary');
 });

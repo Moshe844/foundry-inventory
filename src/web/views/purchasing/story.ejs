@@ -1,0 +1,181 @@
+<%
+  /*
+   * A purchase, end to end, told by the same component that tells an order.
+   *
+   * Need, supplier choice, the purchase order, the email that carried it, the
+   * acknowledgement, the delivery, the invoice and the payment are one story.
+   * That they are five services and four tables underneath is not something
+   * the owner should have to know, and it was the whole reason purchasing felt
+   * like a department to operate rather than something Foundry runs.
+   *
+   * One component, two subjects, is also the practical answer to a hundred and
+   * eleven templates: build the spine once and every business event has a page.
+   */
+  var bills = locals.supplierBills || [];
+  var summary = locals.billSummary || {};
+
+  /*
+   * The two balances, side by side.
+   *
+   * Goods and money on a purchase move independently and Foundry never lets
+   * one imply the other: a partial delivery changes what is still expected, a
+   * partial payment changes what is still owed, and neither ever touches the
+   * other. That rule is enforced in the engine, and this is where the owner
+   * can see it holding — which is why it stayed on the story rather than
+   * going behind the detail link with the line costs.
+   */
+  var moneyStatus = !bills.length ? 'Waiting for supplier invoice'
+    : summary.needsReview ? 'Invoice needs review'
+    : summary.owedMinor === 0 ? 'Paid'
+    : summary.paidMinor > 0 ? 'Partially paid' : 'Unpaid';
+  var supplierMessage = (locals.communications || [])[0] || null;
+  var sentToSupplier = (locals.communications || []).some(function (message) { return message.status === 'SENT'; });
+%>
+
+<%- include('../partials/spine', { story: story }) %>
+
+<% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status) && order.hasCosts && permissions.approve) { %>
+  <div class="rm-decision" style="margin-top:20px">
+    <span class="rm-decision__arrow" aria-hidden="true">→</span>
+    <span class="rm-decision__txt">
+      Ready for your approval.
+      <small><%= order.orderedUnits %> units from <%= order.supplierName %> for <%= helpers.money(Math.round(order.subtotal * 100), order.currency) %>. Nothing has been sent yet.</small>
+    </span>
+    <span class="rm-decision__go">
+      <form method="post" action="/purchasing/orders/<%= order.id %>/approve" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="integrityHash" value="<%= order.integrityHash %>">
+        <button class="rm-btn" type="submit">Approve order</button>
+      </form>
+    </span>
+  </div>
+<% } %>
+
+<% if (order.status === 'ORDERED' && !sentToSupplier && supplierMessage) { %>
+  <div class="rm-decision" style="margin-top:20px">
+    <span class="rm-decision__arrow" aria-hidden="true">→</span>
+    <span class="rm-decision__txt">
+      This order has not reached <%= order.supplierName %>.
+      <small><% if (!supplierMessage.recipient) { %>Foundry needs the supplier's email address; it will not pretend an internal approval was a sent order.<% } else if (!supplierMessage.connectorId) { %>Foundry needs the mailbox it should send from.<% } else { %>The message is prepared and needs permission to send.<% } %></small>
+    </span>
+    <span class="rm-decision__go">
+      <% if (!supplierMessage.recipient || !supplierMessage.connectorId) { %>
+        <a class="rm-btn" href="/suppliers/<%= order.supplierId %>"><%= !supplierMessage.recipient ? 'Add supplier email' : 'Choose sending mailbox' %></a>
+      <% } else if (permissions.approve) { %>
+        <form method="post" action="/purchasing/orders/<%= order.id %>/send" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="rm-btn" type="submit">Send order</button>
+        </form>
+      <% } %>
+    </span>
+  </div>
+<% } %>
+
+<% if (locals.evidenceTrace) { %>
+  <details class="rm-work" style="margin-top:24px">
+    <summary>See how this purchase is connected</summary>
+    <div class="rm-work__body">
+      <p style="margin-top:0"><%= evidenceTrace.ownerSummary %></p>
+      <div class="accounting-next-list">
+        <% evidenceTrace.ownerSteps.forEach(function (step, index) { %>
+          <p>
+            <strong><%= index + 1 %>. <%= step.label %></strong><br>
+            <span><%= step.text %></span>
+            <% if (step.href) { %> <a href="<%= step.href %>"><%= step.linkText %></a>.<% } %>
+          </p>
+        <% }) %>
+      </div>
+      <% evidenceTrace.unknown.forEach(function (gap) { %><p class="rm-sub"><%= gap %></p><% }) %>
+      <details class="disclose" style="margin-top:16px">
+        <summary>Advanced evidence records</summary>
+        <div class="disclose__body">
+          <p class="rm-sub">These are the immutable record links Foundry used. They are for audit and troubleshooting, not for reading the purchase day to day.</p>
+          <% evidenceTrace.details.forEach(function (link) { %>
+            <p class="rm-sub">
+              <% if (link.from.href) { %><a href="<%= link.from.href %>"><%= link.from.title %></a><% } else { %><%= link.from.title %><% } %>
+              <%= link.phrase %>
+              <% if (link.to.href) { %><a href="<%= link.to.href %>"><%= link.to.title %></a><% } else { %><%= link.to.title %><% } %>.
+            </p>
+          <% }) %>
+        </div>
+      </details>
+    </div>
+  </details>
+<% } %>
+
+<p class="rm-stamp" style="margin-top:34px">Delivery and payment are tracked separately</p>
+<div class="rm-ledger" style="margin-bottom:24px">
+  <div class="rm-ledger__row">
+    <span class="rm-ledger__k">Goods</span>
+    <span class="rm-ledger__v">Ordered <%= order.orderedUnits %> units</span>
+    <span class="rm-ledger__n">
+      Received <%= order.receivedUnits %> units ·
+      Still expected <%= order.outstandingUnits %> units
+    </span>
+  </div>
+  <div class="rm-ledger__row">
+    <span class="rm-ledger__k">Money</span>
+    <span class="rm-ledger__v">Supplier invoices received <%= helpers.money(summary.invoiceTotalMinor || 0, order.currency) %></span>
+    <span class="rm-ledger__n<%= summary.needsReview ? ' is-warn' : '' %>">
+      Paid <%= helpers.money(summary.paidMinor || 0, order.currency) %> ·
+      Still owed <%= helpers.money(summary.owedMinor || 0, order.currency) %> ·
+      <%= moneyStatus %>
+    </span>
+  </div>
+</div>
+<p class="rm-sub" style="font-size:16px">
+  Receiving products changes inventory. A supplier invoice creates the bill. A payment reduces only
+  the bill. I wait for evidence of each and never treat an invoice as a delivery, or a delivery as
+  a payment.
+</p>
+
+<% var awaitingLandedCostApproval = (landedCostDocuments || []).find(function (document) {
+  return document.status === 'DRAFT' || document.status === 'APPROVED';
+}); %>
+<% if (awaitingLandedCostApproval) { %>
+  <div class="rm-decision" style="margin-top:20px">
+    <span class="rm-decision__arrow" aria-hidden="true">→</span>
+    <span class="rm-decision__txt">
+      Foundry prepared the documented landed-cost split.
+      <small>It is based on the supplier bill and goods actually received. Review it before it changes inventory value.</small>
+    </span>
+    <span class="rm-decision__go"><a class="rm-btn" href="/purchasing/orders/<%= order.id %>/landed-costs/<%= awaitingLandedCostApproval.id %>">Review split</a></span>
+  </div>
+<% } %>
+
+<% if (summary.needsReview) { %>
+  <div class="rm-decision" style="margin-top:30px">
+    <span class="rm-decision__arrow" aria-hidden="true">→</span>
+    <span class="rm-decision__txt">
+      An invoice on this order needs looking at.
+      <small>It does not agree with what was ordered or what arrived, so I have not posted it as final.</small>
+    </span>
+    <span class="rm-decision__go"><a class="rm-btn" href="/purchasing/orders/<%= order.id %>/detail#bills">Look at it</a></span>
+  </div>
+<% } %>
+
+<div class="rm-spine-foot">
+  <a class="rm-btn rm-btn--ghost" href="/ask?about=<%= encodeURIComponent(order.poNumber + ' from ' + order.supplierName) %>">Ask about this purchase</a>
+  <% if ((order.status === 'ORDERED' && sentToSupplier) || order.status === 'PARTIALLY_RECEIVED') { %>
+    <a class="rm-btn" href="/purchasing/orders/<%= order.id %>/receive">Book in what arrived</a>
+  <% } %>
+  <% if ((locals.receipts || []).length && permissions.landedCosts) { %>
+    <a class="rm-btn rm-btn--wash" href="/purchasing/orders/<%= order.id %>/landed-costs"><%= awaitingLandedCostApproval ? 'Review landed-cost draft' : 'Add freight, duty or handling' %></a>
+  <% } %>
+  <a class="rm-btn rm-btn--wash" href="/purchasing/orders/<%= order.id %>/detail">See or edit details</a>
+</div>
+
+<%# The working page, on the same page, one disclosure down. Same reasoning as
+    a customer order: understanding it and acting on it must not be two
+    addresses. /purchasing/orders/:id/detail renders it on its own. %>
+<details class="rm-work" id="working">
+  <summary>The lines, costs, receipts and documents</summary>
+  <div class="rm-work__body"><%- include('order') %></div>
+</details>
+
+<p class="rm-disclose">
+  <a href="/suppliers/<%= order.supplierId %>">Everything from <%= order.supplierName %></a>
+  <a href="/purchasing/orders/<%= order.id %>/document">The purchase order as the supplier sees it</a>
+  <% if (bills.length) { %><a href="/money">What you owe</a><% } %>
+  <a href="/purchasing/orders">Other purchases</a>
+</p>

@@ -14,6 +14,7 @@
 
 const engine = require('../domain/inventory-engine');
 const resolver = require('./resolver');
+const removals = require('./removals');
 
 const check = (label, expected, observed) => ({
   label,
@@ -45,12 +46,25 @@ function verify(db, workspaceId, proposal, { before, after, result }) {
   }
 
   if (proposal.actionType === 'transfer') {
-    checks.push(
-      check('Stock at source', (before.sourceOnHand ?? 0) - proposal.quantity, after.sourceOnHand ?? 0),
-      check('Stock at destination', (before.destinationOnHand ?? 0) + proposal.quantity, after.destinationOnHand ?? 0),
-      // The one that matters most: a transfer moves stock, it never makes any.
-      check('Total unchanged', before.total ?? 0, after.total ?? 0)
-    );
+    if (result?.transferId) {
+      const transfer = db.prepare(`SELECT * FROM inventory_transfers WHERE id = ? AND workspace_id = ?`)
+        .get(result.transferId, workspaceId);
+      const requested = transfer ? db.prepare(`SELECT COALESCE(SUM(requested_quantity),0) AS n
+        FROM inventory_transfer_lines WHERE transfer_id = ?`).get(transfer.id).n : 0;
+      checks.push(
+        check('Transfer document created', true, Boolean(transfer)),
+        check('Transfer quantity requested', proposal.quantity, Number(requested)),
+        check('Stock remains at source before dispatch', before.sourceOnHand ?? 0, after.sourceOnHand ?? 0),
+        check('Destination is not credited before receipt', before.destinationOnHand ?? 0, after.destinationOnHand ?? 0),
+        check('Total unchanged', before.total ?? 0, after.total ?? 0)
+      );
+    } else {
+      checks.push(
+        check('Stock at source', (before.sourceOnHand ?? 0) - proposal.quantity, after.sourceOnHand ?? 0),
+        check('Stock at destination', (before.destinationOnHand ?? 0) + proposal.quantity, after.destinationOnHand ?? 0),
+        check('Total unchanged', before.total ?? 0, after.total ?? 0)
+      );
+    }
   }
 
   if (proposal.actionType === 'adjust') {
@@ -75,7 +89,7 @@ function verify(db, workspaceId, proposal, { before, after, result }) {
         continue;
       }
       if (proposal.actionType === 'transfer') {
-        checks.push(check(`${unit.serial} location`, proposal.destinationLocationId, unit.location_id));
+        checks.push(check(`${unit.serial} location`, result?.transferId ? proposal.sourceLocationId : proposal.destinationLocationId, unit.location_id));
       }
       if (proposal.actionType === 'issue') {
         checks.push(check(`${unit.serial} status`, 'issued', unit.status));
@@ -97,7 +111,7 @@ function verify(db, workspaceId, proposal, { before, after, result }) {
       check(
         'Lot balance at destination',
         proposal.actionType === 'transfer'
-          ? (before.destinationOnHand ?? 0) + proposal.quantity
+          ? (result?.transferId ? (before.destinationOnHand ?? 0) : (before.destinationOnHand ?? 0) + proposal.quantity)
           : after.destinationOnHand ?? 0,
         proposal.destinationLocationId
           ? resolver.lotBalanceAt(db, workspaceId, proposal.lotId, proposal.destinationLocationId)
@@ -124,6 +138,15 @@ function verify(db, workspaceId, proposal, { before, after, result }) {
         );
       }
     }
+  }
+
+  if (proposal.actionType === removals.ACTION_TYPE) {
+    const kind = removals.kindOf(proposal);
+    // Asked of the record itself, not of what the executor reported doing to
+    // it: deleted and archived are different rows in different states, and both
+    // are only correct if the thing has actually stopped being offered.
+    checks.push(check('Record removed', true,
+      Boolean(kind && kind.isGone(db, workspaceId, proposal.settings.recordId))));
   }
 
   if (proposal.actionType === 'archive_item') {

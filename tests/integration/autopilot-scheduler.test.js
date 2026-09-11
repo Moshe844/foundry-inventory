@@ -16,6 +16,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const os = require('os');
 
 const scheduler = require('../../src/autopilot/scheduler');
 const modes = require('../../src/autopilot/modes');
@@ -82,7 +83,7 @@ const balanceOf = (env, locationId) => repo.getBalance(env.db, env.workspace.wor
 
 // --- the point of it ---------------------------------------------------------
 
-test('nobody presses anything and the work still happens', () => {
+test('nobody presses anything and the governed transfer is still prepared', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
@@ -91,23 +92,27 @@ test('nobody presses anything and the work still happens', () => {
   const result = scheduler.tick(env.db, { trigger: 'scheduled' });
 
   assert.equal(result.executed, 1);
-  assert.equal(balanceOf(env, env.workspace.main.id), before + 12);
+  assert.equal(balanceOf(env, env.workspace.main.id), before);
+  const transfer = env.db.prepare(
+    'SELECT status FROM inventory_transfers WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1'
+  ).get(env.workspace.workspaceId);
+  assert.equal(transfer.status, 'APPROVED');
 });
 
-test('a scheduled action is carried out under the authority of whoever approved the policy', () => {
+test('a scheduled transfer records the authority of whoever approved the policy', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
   scheduler.tick(env.db, { trigger: 'scheduled' });
 
-  const movement = env.db
-    .prepare('SELECT actor_user_id FROM movements WHERE sku_id = ? ORDER BY seq DESC LIMIT 1')
-    .get(env.black5.id);
+  const transfer = env.db
+    .prepare('SELECT approved_by_user_id FROM inventory_transfers WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1')
+    .get(env.workspace.workspaceId);
 
   assert.equal(
-    movement.actor_user_id,
+    transfer.approved_by_user_id,
     env.membership.id,
-    'the movement belongs to the person who granted the permission, not to nobody'
+    'the approval belongs to the person who granted the permission, not to nobody'
   );
 });
 
@@ -269,6 +274,28 @@ test('only one process runs the loop at a time', () => {
   const second = scheduler.tick(env.db, { trigger: 'scheduled' });
   assert.equal(second.skipped, true);
   assert.match(second.because, /another process/);
+});
+
+test('a replacement process immediately recovers a lease left by a dead local process', () => {
+  const env = tights();
+  env.db.prepare(`INSERT INTO autopilot_lease (id, holder, expires_at, acquired_at)
+      VALUES (?, ?, ?, ?)`)
+    .run('autopilot', `999999999@${os.hostname()}`, Date.now() + 15 * 60 * 1000,
+      new Date().toISOString());
+
+  const result = scheduler.tick(env.db, { trigger: 'startup' });
+  assert.ok(!result.skipped, 'restart catches up now instead of leaving the UI stale for 15 minutes');
+});
+
+test('startup re-reads business state even inside an already-processed time bucket', () => {
+  const env = tights();
+  const now = Date.now();
+  scheduler.runWorkspace(env.db, env.workspace.workspaceId, { trigger: 'startup', now });
+  scheduler.runWorkspace(env.db, env.workspace.workspaceId, { trigger: 'startup', now: now + 1 });
+
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM work_plans WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 2,
+  'a replacement process recalculates while work-item keys still prevent duplicate actions');
 });
 
 test('workspaces with nothing in them are not swept at all', () => {

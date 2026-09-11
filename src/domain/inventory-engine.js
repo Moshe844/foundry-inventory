@@ -11,8 +11,9 @@
  *      go negative unless the item explicitly allows it.
  *   2. Every balance change writes an immutable movement row carrying actor,
  *      timestamp, operation, reason and the resulting balance.
- *   3. Whole operations run in a single IMMEDIATE transaction, so a transfer
- *      can never create or destroy stock, even if it fails half way.
+ *   3. Each physical movement leg runs in one IMMEDIATE transaction. Durable
+ *      transfers deliberately separate dispatch from receipt; their custody
+ *      record proves the units between those two legs.
  *   4. A serial unit has one nullable location column, so it cannot be in two
  *      places; a partial unique index stops an active serial being received
  *      twice.
@@ -274,6 +275,21 @@ function receive(db, ctx, input) {
     };
 
     if (sku.tracking_mode === 'serial') {
+      const returnedIds=Array.isArray(input.returnSerialUnitIds)?[...new Set(input.returnSerialUnitIds.filter(Boolean))]:[];
+      if(returnedIds.length){
+        const movements=[];
+        for(const returnedId of returnedIds){
+          const unit=repo.requireSerialUnit(db,ctx.workspaceId,returnedId);
+          if(unit.sku_id!==sku.id||unit.status!=='issued'||unit.location_id!==null){
+            throw new ValidationError(`Serial number ${unit.serial} is not an issued unit that can be returned.`);
+          }
+          db.prepare("UPDATE serial_units SET status='in_stock',location_id=?,condition=?,updated_at=? WHERE id=? AND workspace_id=?")
+            .run(location.id,input.returnCondition||unit.condition||'unknown',now,unit.id,ctx.workspaceId);
+          const balanceAfter=applyBalanceDelta(db,{workspaceId:ctx.workspaceId,skuId:sku.id,locationId:location.id,delta:1,allowNegative:false,now,label:location.name});
+          movements.push(recordMovement(db,{...base,serialUnitId:unit.id,quantityDelta:1,balanceAfter}));
+        }
+        return {groupId,quantity:returnedIds.length,movementIds:movements,serialUnitIds:returnedIds};
+      }
       const serials = parseSerialInput(input.serials);
       const movements = [];
       for (const entry of serials) {
@@ -497,6 +513,115 @@ function issue(db, ctx, input) {
     });
     const movementId = recordMovement(db, { ...base, quantityDelta: -quantity, balanceAfter });
     return { groupId, quantity, movementIds: [movementId] };
+  });
+}
+
+/**
+ * Physical dispatch leg for a durable transfer.
+ *
+ * This is intentionally lower-level than `transfer`: the transfer domain owns
+ * the document/state machine and supplies its stable group id. Inventory still
+ * owns every balance, lot and serial mutation and the immutable movement.
+ */
+function dispatchTransfer(db, ctx, input) {
+  requireContext(ctx);
+  return inTransaction(db, () => {
+    const now = nowIso();
+    const occurredAt = operationOccurredAt(input, now);
+    const groupId = requireText(input.groupId, 'Transfer movement group', { max: 160 });
+    const sku = repo.requireSku(db, ctx.workspaceId, input.skuId);
+    const from = repo.requireLocation(db, ctx.workspaceId, input.fromLocationId, 'source location');
+    const to = repo.requireLocation(db, ctx.workspaceId, input.toLocationId, 'destination location');
+    if (from.id === to.id) throw new ValidationError('Choose two different locations.');
+    const base = { workspaceId: ctx.workspaceId, groupId, operation: 'transfer', leg: 'out',
+      itemId: sku.item_id, skuId: sku.id, locationId: from.id,
+      counterpartyLocationId: to.id, actorUserId: ctx.actorId, occurredAt,
+      reasonCode: 'internal_transfer_dispatch', notes: trimOrNull(input.notes),
+      reference: trimOrNull(input.reference) };
+
+    if (sku.tracking_mode === 'serial') {
+      const units = resolveSerialUnits(db, ctx, sku, from, input.serialUnitIds);
+      const movementIds = [];
+      for (const unit of units) {
+        db.prepare(`UPDATE serial_units SET status = 'issued', location_id = NULL, updated_at = ?
+          WHERE id = ? AND workspace_id = ? AND status = 'in_stock' AND location_id = ?`)
+          .run(now, unit.id, ctx.workspaceId, from.id);
+        const balanceAfter = applyBalanceDelta(db, { workspaceId: ctx.workspaceId,
+          skuId: sku.id, locationId: from.id, delta: -1, allowNegative: false,
+          now, label: from.name });
+        movementIds.push(recordMovement(db, { ...base, serialUnitId: unit.id,
+          quantityDelta: -1, balanceAfter }));
+      }
+      return { groupId, quantity: units.length, movementIds, serialUnitIds: units.map((row) => row.id) };
+    }
+
+    const quantity = requirePositiveInt(input.quantity, 'Quantity');
+    let lot = null;
+    if (sku.tracking_mode === 'lot') {
+      lot = resolveLotForMove(db, ctx, sku, input);
+      applyLotDelta(db, { workspaceId: ctx.workspaceId, lotId: lot.id,
+        locationId: from.id, delta: -quantity, now, lotCode: lot.code,
+        locationName: from.name });
+    }
+    const balanceAfter = applyBalanceDelta(db, { workspaceId: ctx.workspaceId,
+      skuId: sku.id, locationId: from.id, delta: -quantity,
+      allowNegative: false, now, label: from.name });
+    const movementId = recordMovement(db, { ...base, lotId: lot?.id || null,
+      quantityDelta: -quantity, balanceAfter });
+    return { groupId, quantity, movementIds: [movementId], serialUnitIds: [] };
+  });
+}
+
+/** Physical receipt leg for stock already held in durable transfer custody. */
+function receiveTransfer(db, ctx, input) {
+  requireContext(ctx);
+  return inTransaction(db, () => {
+    const now = nowIso();
+    const occurredAt = operationOccurredAt(input, now);
+    const groupId = requireText(input.groupId, 'Transfer movement group', { max: 160 });
+    const sku = repo.requireSku(db, ctx.workspaceId, input.skuId);
+    const from = repo.requireLocation(db, ctx.workspaceId, input.fromLocationId, 'source location');
+    const to = repo.requireLocation(db, ctx.workspaceId, input.toLocationId, 'destination location');
+    const base = { workspaceId: ctx.workspaceId, groupId, operation: 'transfer', leg: 'in',
+      itemId: sku.item_id, skuId: sku.id, locationId: to.id,
+      counterpartyLocationId: from.id, actorUserId: ctx.actorId, occurredAt,
+      reasonCode: 'internal_transfer_receipt', notes: trimOrNull(input.notes),
+      reference: trimOrNull(input.reference) };
+
+    if (sku.tracking_mode === 'serial') {
+      const ids = [...new Set(input.serialUnitIds || [])];
+      if (!ids.length) throw new ValidationError('Choose the serial units that arrived.');
+      const movementIds = [];
+      for (const id of ids) {
+        const unit = db.prepare(`SELECT * FROM serial_units
+          WHERE id = ? AND workspace_id = ? AND sku_id = ? AND status = 'issued' AND location_id IS NULL`)
+          .get(id, ctx.workspaceId, sku.id);
+        if (!unit) throw new ValidationError('One selected serial unit is not in transfer custody.');
+        db.prepare(`UPDATE serial_units SET status = 'in_stock', location_id = ?, updated_at = ?
+          WHERE id = ? AND workspace_id = ?`).run(to.id, now, id, ctx.workspaceId);
+        const balanceAfter = applyBalanceDelta(db, { workspaceId: ctx.workspaceId,
+          skuId: sku.id, locationId: to.id, delta: 1, allowNegative: false,
+          now, label: to.name });
+        movementIds.push(recordMovement(db, { ...base, serialUnitId: id,
+          quantityDelta: 1, balanceAfter }));
+      }
+      return { groupId, quantity: ids.length, movementIds, serialUnitIds: ids };
+    }
+
+    const quantity = requirePositiveInt(input.quantity, 'Quantity');
+    let lot = null;
+    if (sku.tracking_mode === 'lot') {
+      lot = resolveLotForMove(db, ctx, sku, input);
+      applyLotDelta(db, { workspaceId: ctx.workspaceId, lotId: lot.id,
+        locationId: to.id, delta: quantity, now, lotCode: lot.code,
+        locationName: to.name });
+    }
+    const balanceAfter = applyBalanceDelta(db, { workspaceId: ctx.workspaceId,
+      skuId: sku.id, locationId: to.id, delta: quantity, allowNegative: false,
+      now, label: to.name });
+    const movementId = recordMovement(db, { ...base, lotId: lot?.id || null,
+      quantityDelta: quantity, balanceAfter });
+    return { groupId, quantity, movementIds: [movementId], serialUnitIds: [] };
   });
 }
 
@@ -902,6 +1027,8 @@ module.exports = {
   receive,
   issue,
   transfer,
+  dispatchTransfer,
+  receiveTransfer,
   adjust,
   verifyIntegrity,
 };

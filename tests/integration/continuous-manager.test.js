@@ -89,7 +89,7 @@ test('Mission 9.1 sale below reorder point creates replenishment without Check n
     event.type === events.TYPES.INVENTORY_ISSUED && event.status === events.STATUS.PROCESSED));
 });
 
-test('Mission 9.2 qualifying transfer inside authority executes automatically', () => {
+test('Mission 9.2 qualifying transfer inside authority prepares an approved lifecycle automatically', () => {
   const db = database();
   const env = seedAuthorityWorkspace(db, { requiredQuantity: 5, workspaceName: 'M9 Auto Transfer' });
   const policy = approveTransferPolicy(env, { maximumQuantity: 5 });
@@ -97,9 +97,11 @@ test('Mission 9.2 qualifying transfer inside authority executes automatically', 
   const before = balanceAt(env, env.destination.id);
   const published = react(env, events.TYPES.INVENTORY_ISSUED, { skuId: env.sku.id });
 
-  assert.equal(balanceAt(env, env.destination.id), before + 5);
+  assert.equal(balanceAt(env, env.destination.id), before, 'no physical arrival is invented');
+  const transfer = db.prepare('SELECT * FROM inventory_transfers WHERE workspace_id = ?').get(env.workspace.workspaceId);
+  assert.equal(transfer.status, 'APPROVED');
   const [done] = workItems.list(db, env.workspace.workspaceId, { category: 'balance_transfer' });
-  assert.equal(done.executionStatus, workItems.STATUS.COMPLETED);
+  assert.equal(done.executionStatus, workItems.STATUS.COMPLETED, JSON.stringify(done.outcome));
   assert.equal(done.triggerEventId, published.event.id);
   assert.equal(done.outcome.triggerEventId, published.event.id);
   assert.equal(done.outcome.policyId, policy.id);
@@ -225,7 +227,9 @@ test('Mission 9.10 authority change safely reconsiders eligible pending work', (
 
   approveTransferPolicy(env, { maximumQuantity: 5 });
   react(env, events.TYPES.AUTHORITY_UPDATED, { change: 'policy_approved' });
-  assert.equal(balanceAt(env, env.destination.id), 9);
+  assert.equal(balanceAt(env, env.destination.id), 4, 'approval must not impersonate dispatch and receipt');
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM inventory_transfers
+    WHERE workspace_id = ? AND status = 'APPROVED'`).get(env.workspace.workspaceId).n, 1);
   assert.equal(workItems.awaitingApproval(db, env.workspace.workspaceId).length, 0);
 });
 
@@ -249,7 +253,9 @@ test('Mission 9.12 Resume immediately resumes eligible management', () => {
   react(env, events.TYPES.INVENTORY_ISSUED, { skuId: env.sku.id });
   modes.resume(db, env.ctx, env.membership);
   react(env, events.TYPES.FOUNDRY_RESUMED, { resumed: true });
-  assert.equal(balanceAt(env, env.destination.id), 9);
+  assert.equal(balanceAt(env, env.destination.id), 4, 'resuming may prepare, but cannot invent physical movement');
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM inventory_transfers
+    WHERE workspace_id = ? AND status = 'APPROVED'`).get(env.workspace.workspaceId).n, 1);
 });
 
 test('Mission 9.13 a PO becomes due/late from a scheduled time turn alone', () => {
@@ -298,8 +304,12 @@ test('Mission 9.15 events and reactions remain isolated between workspaces', () 
 
   react(a, events.TYPES.INVENTORY_ISSUED, { skuId: a.sku.id });
 
-  assert.equal(balanceAt(a, a.destination.id), 9);
+  assert.equal(balanceAt(a, a.destination.id), 4);
   assert.equal(balanceAt(b, b.destination.id), beforeB);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM inventory_transfers WHERE workspace_id = ?')
+    .get(a.workspace.workspaceId).n, 1);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM inventory_transfers WHERE workspace_id = ?')
+    .get(b.workspace.workspaceId).n, 0);
   assert.equal(events.list(db, b.workspace.workspaceId).length, 0);
   assert.equal(workItems.list(db, b.workspace.workspaceId, { category: 'balance_transfer' }).length, 0);
 });

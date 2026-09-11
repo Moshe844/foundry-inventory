@@ -18,12 +18,14 @@
  */
 
 const modes = require('./modes');
-const { pluralUnit } = require('../lib/util');
+const { pluralUnit, humanizeUnitMarkers } = require('../lib/util');
 const workItems = require('./work-items');
 const policyService = require('./policy-service');
 const position = require('../purchasing/position');
 const poService = require('../purchasing/po-service');
+const replenishment = require('../purchasing/replenishment');
 const replenishmentPlan = require('../purchasing/replenishment-plan');
+const salesOrders = require('../sales/sales-order-service');
 const attention = require('../attention/attention-engine');
 const managerReadiness = require('../manager/readiness');
 const { localDateKey } = require('../lib/calendar');
@@ -141,14 +143,17 @@ function describeCompleted(item, ownedByPlan = new Set(), currentOrder = null) {
   const done = item.executionStatus === workItems.STATUS.COMPLETED;
 
   if (item.category === 'balance_transfer') {
+    const transferNumber = outcome.transferNumber || 'a transfer';
     return {
       headline:
-        `${done ? 'Moved' : 'Wants to move'} ${action.quantity} ${action.displayName} ` +
+        `${done ? 'Prepared transfer for' : 'Wants to move'} ${action.quantity} ${action.displayName} ` +
         `from ${action.fromLocationName} to ${action.toLocationName}`,
       detail:
         outcome.before && outcome.after
-          ? `${action.fromLocationName} ${outcome.before.source} → ${outcome.after.source}, ` +
-            `${action.toLocationName} ${outcome.before.destination} → ${outcome.after.destination}.`
+          ? `${done ? `${transferNumber} is ready for warehouse execution. ` : ''}` +
+            `${action.fromLocationName} ${outcome.before.source} → ${outcome.after.source}, ` +
+            `${action.toLocationName} ${outcome.before.destination} → ${outcome.after.destination}; ` +
+            `${done ? 'stock stays at the source until dispatch.' : 'nothing has moved.'}`
           : null,
       verified: item.verificationStatus === 'VERIFIED',
       link: `/autopilot/work/${item.id}`,
@@ -239,6 +244,7 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
     FROM sales_order_events soe JOIN sales_orders so ON so.id = soe.sales_order_id
     JOIN customers c ON c.id = so.customer_id
     WHERE soe.workspace_id = ? AND soe.event_type = 'CONFIRMED' AND soe.created_at >= ?
+      AND soe.idempotency_key LIKE 'external:%'
     ORDER BY soe.created_at DESC LIMIT 8`).all(workspaceId, from).map((row) => {
       const detail = json(row.detail, {});
       const quantity = (detail.allocations || []).reduce((sum, line) => sum + Number(line.allocated || 0), 0);
@@ -264,7 +270,37 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
       link: row.purchase_order_id ? `/purchasing/orders/${row.purchase_order_id}` : '/activity?stream=purchasing',
       verified: true,
     }));
-  actions.push(...salesActions, ...supplierActions);
+  /*
+   * A provider-confirmed customer payment is routine work Foundry genuinely
+   * completed without the owner. It used to appear only in Accounting while
+   * Home said "Handled 0", even though Foundry had verified Stripe, posted the
+   * receipt, and cleared the order balance. Count the evidence-backed receipt,
+   * not the provider callback itself, so retries can never inflate this number.
+   */
+  const paymentActions = db.prepare(`SELECT p.id, p.amount_minor, p.currency, p.sales_order_id,
+      p.created_at, r.provider, so.order_number, c.name AS customer_name
+    FROM accounting_payments p
+    JOIN payment_requests r ON r.workspace_id = p.workspace_id
+      AND r.sales_order_id = p.sales_order_id
+      AND p.source_key LIKE (r.provider || ':' || r.id || ':paid:%')
+    JOIN sales_orders so ON so.id = p.sales_order_id
+    JOIN customers c ON c.id = p.customer_id
+    WHERE p.workspace_id = ? AND p.direction = 'CUSTOMER_RECEIPT'
+      AND p.status = 'POSTED' AND p.created_at >= ?
+    ORDER BY p.created_at DESC LIMIT 8`).all(workspaceId, from).map((row) => {
+      const amount = new Intl.NumberFormat('en-US', {
+        style: 'currency', currency: row.currency || 'USD',
+      }).format(Number(row.amount_minor || 0) / 100);
+      return {
+        id: row.id,
+        headline: `Recorded ${amount} from ${row.customer_name}`,
+        detail: `${row.provider === 'stripe' ? 'Stripe' : row.provider} confirmed the payment and Foundry posted it to ${row.order_number} without you.`,
+        link: `/orders/${row.sales_order_id}`,
+        verified: true,
+      };
+    });
+  actions.push(...paymentActions, ...salesActions, ...supplierActions);
+  const handledCount = completed.length + paymentActions.length + salesActions.length + supplierActions.length;
   const transfers = completed.filter((item) => item.category === 'balance_transfer');
   const purchases = completed.filter((item) => item.category === 'purchase_preparation');
 
@@ -278,9 +314,19 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
     since: from,
     actions,
     counts: {
-      handled: completed.length + salesActions.length + supplierActions.length,
+      handled: handledCount,
       transfers: transfers.length,
-      unitsMoved: transfers.reduce((sum, item) => sum + ((item.recommendedAction || {}).quantity || 0), 0),
+      transfersPrepared: transfers.length,
+      unitsPreparedForTransfer: transfers.reduce(
+        (sum, item) => sum + ((item.recommendedAction || {}).quantity || 0), 0
+      ),
+      // Retained for older consumers, but only counts work proven physically
+      // received. Preparing or approving a transfer is not a stock movement.
+      unitsMoved: transfers.reduce((sum, item) => {
+        const outcome = item.outcome || {};
+        return sum + (outcome.transferStatus === 'RECEIVED'
+          ? ((item.recommendedAction || {}).quantity || 0) : 0);
+      }, 0),
       purchasesPrepared: purchases.length,
       purchaseValue: purchases.reduce((sum, item) => sum + ((item.outcome || {}).subtotal || 0), 0),
       evaluations: evaluations.length,
@@ -291,14 +337,14 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
     lastEvaluation: [sweeps.last, evaluations[0] && evaluations[0].finishedAt].filter(Boolean).sort().pop() || null,
     // The honest headline. Zero is a perfectly good number.
     headline:
-      completed.length + salesActions.length + supplierActions.length === 0
+      handledCount === 0
         ? prepared > 0
-          ? `Checked ${plural(positionsWatched, 'stock position')} and prepared ` +
-            `${plural(prepared, 'thing')} for you. Carried nothing out on its own.`
+          ? `Checked ${plural(positionsWatched, 'stock position')}. ` +
+            'Prepared suggestions are available, but Foundry completed no automatic action.'
           : evaluations.length > 0 || sweeps.n > 0
             ? `Checked ${plural(positionsWatched, 'stock position')}. Nothing needed doing.`
             : 'Nothing yet today.'
-        : `Handled ${plural(completed.length + salesActions.length + supplierActions.length, 'task')}.`,
+        : `Handled ${plural(handledCount, 'task')}.`,
   };
 }
 
@@ -325,6 +371,8 @@ function planShape(action) {
     purchase: action.purchase || null,
     prepared: action.prepared || null,
     onHandTotal: action.onHandTotal,
+    committed: action.committed,
+    backordered: action.backordered,
     onOrder: action.onOrder,
     networkPosition: action.networkPosition,
     reorderPoint: action.reorderPoint,
@@ -352,7 +400,7 @@ const counted = (quantity, label = 'unit') => {
  * This copy answers one question first: what will approval do, and why is that
  * exact quantity being proposed?
  */
-function pendingReplenishmentCopy(item, action, actions, breakdown) {
+function pendingReplenishmentCopy(item, action, actions, breakdown, preparedOrders = [], customerDemand = []) {
   if (item.category !== 'replenishment_plan' || item.isTerminal || !breakdown) return null;
 
   const now = actions.filter((entry) => entry.when === 'now');
@@ -364,14 +412,25 @@ function pendingReplenishmentCopy(item, action, actions, breakdown) {
   const movedUnits = transferring.reduce((total, entry) => total + (entry.quantity || 0), 0);
   const orderedUnits = draftUnits || placedUnits || 0;
   const purchase = action.purchase || null;
+  const preparedOrder = preparedOrders[0] || null;
+  const preparedLine = preparedOrder
+    ? preparedOrder.lines.find((line) => line.skuId === ((item.affectedEntities || {}).skuId || action.skuId))
+      || preparedOrder.lines[0]
+    : null;
   const purchaseQuantity = purchase && purchase.quantityPurchaseUnits !== purchase.quantityUnits
     ? `${counted(purchase.quantityPurchaseUnits, purchase.purchaseUnit)} (${counted(purchase.quantityUnits, action.unitLabel)})`
     : counted(orderedUnits, action.unitLabel);
   const displayName = (item.affectedEntities || {}).displayName || action.displayName || 'this item';
   const shortfall = Math.max(0, Number(action.target || 0) - Number(action.networkPosition || 0));
   const supplierName = (action.purchase || {}).supplierName
+    || (preparedOrder && preparedOrder.supplierName)
     || ((action.prepared || {}).orders || [])[0]?.supplierName
     || null;
+  const preparedQuantity = preparedLine
+    ? (preparedLine.quantityPurchaseUnits !== preparedLine.quantityUnits
+      ? `${counted(preparedLine.quantityPurchaseUnits, preparedLine.purchaseUnit)} (${counted(preparedLine.quantityUnits, preparedLine.unitLabel || action.unitLabel)})`
+      : counted(preparedLine.quantityUnits, preparedLine.unitLabel || action.unitLabel))
+    : counted(placedUnits, action.unitLabel);
   const source = item.sourceEvidence || [];
   const issued = source.find((fact) => /^Issued in last /i.test(fact.label || ''));
   const leadTime = source.find((fact) => fact.label === 'Lead time');
@@ -380,21 +439,29 @@ function pendingReplenishmentCopy(item, action, actions, breakdown) {
   const onlyPlacement = placing.length === 1 && now.length === 1;
   const onlyTransfer = transferring.length === 1 && now.length === 1;
   const kind = onlyDraft ? 'draft' : onlyPlacement ? 'placement' : onlyTransfer ? 'transfer' : 'combined';
+  const transfer = onlyTransfer ? (action.transfers || [])[0] || {} : {};
+  const destination = onlyTransfer
+    ? (action.byLocation || []).find((location) => location.locationId === transfer.toLocationId) || {}
+    : {};
+  const destinationTarget = Number(destination.need || 0);
+  const destinationAvailable = Number.isFinite(Number(destination.available))
+    ? Number(destination.available) : Number(destination.onHand || 0);
+  const destinationCommitted = Number(destination.committed || 0);
+  const waiting = customerDemand.reduce((total, demand) => total + Number(demand.quantity || 0), 0);
+  const waitingOrders = customerDemand.map((demand) => demand.orderNumber).filter(Boolean).join(', ');
 
   const heading = onlyDraft
-    ? `Create a draft order for ${purchaseQuantity}?`
+    ? `Create a draft order for ${purchaseQuantity} of ${displayName}?`
     : onlyPlacement
-      ? `Place the prepared order for ${counted(placedUnits, action.unitLabel)}?`
+      ? `Place ${preparedOrder ? preparedOrder.poNumber : 'the prepared order'}${supplierName ? ` with ${supplierName}` : ''} for ${preparedQuantity}?`
       : onlyTransfer
         ? `Move ${counted(movedUnits, action.unitLabel)} between locations?`
         : `Approve replenishment for ${displayName}?`;
 
   const primaryLabel = onlyDraft
-    ? `Create draft order for ${purchase && purchase.quantityPurchaseUnits !== purchase.quantityUnits
-      ? counted(purchase.quantityPurchaseUnits, purchase.purchaseUnit)
-      : draftUnits}`
+    ? `Create draft order for ${displayName}`
     : onlyPlacement
-      ? `Place order for ${placedUnits}`
+      ? `Place ${preparedOrder ? preparedOrder.poNumber : `order for ${placedUnits}`}`
       : onlyTransfer
         ? `Approve transfer of ${movedUnits}`
         : 'Approve replenishment plan';
@@ -406,10 +473,10 @@ function pendingReplenishmentCopy(item, action, actions, breakdown) {
       `${supplierName ? ` from ${supplierName}` : ''}.`;
     approvalLimit = 'It will not place the order, contact the supplier, or change on-hand stock.';
   } else if (onlyPlacement) {
-    approvalEffect = `Foundry will record the prepared order for ${counted(placedUnits, action.unitLabel)} as placed.`;
+    approvalEffect = `Foundry will record ${preparedOrder ? preparedOrder.poNumber : 'the prepared order'} for ${preparedQuantity}` +
+      `${supplierName ? ` with ${supplierName}` : ''} as placed.`;
     approvalLimit = 'On-hand stock will not change until the delivery is received.';
   } else if (onlyTransfer) {
-    const transfer = (action.transfers || [])[0] || {};
     approvalEffect = `Move ${counted(movedUnits, action.unitLabel)} from ` +
       `${transfer.fromLocationName || 'the source location'} to ${transfer.toLocationName || 'the destination location'}.`;
     approvalLimit = 'The total quantity will not change; stock will only move between locations.';
@@ -421,7 +488,20 @@ function pendingReplenishmentCopy(item, action, actions, breakdown) {
   }
 
   const orderRule = orderedUnits
-    ? orderedUnits === shortfall
+    ? breakdown.backordered > 0 && purchase
+      ? `${counted(breakdown.backordered, action.unitLabel)} are already promised to customers but waiting for stock. ` +
+        `Covering those and leaving your target of ${action.target} available requires ${counted(shortfall, action.unitLabel)}. ` +
+        `${supplierName || 'The supplier'} sells ${pluralUnit(purchase.purchaseUnit)} of ${purchase.unitsPerPurchaseUnit}, ` +
+        `so Foundry rounds up to ${counted(purchase.quantityPurchaseUnits, purchase.purchaseUnit)} ` +
+        `(${counted(purchase.quantityUnits, action.unitLabel)}). ` +
+        `After current customer orders are covered, ${counted(breakdown.afterEveryOrderArrives, action.unitLabel)} will be available.`
+      : onlyPlacement && preparedLine
+        ? `Your target is ${action.target}, and current customer demand leaves the stock position at ${action.networkPosition}, ` +
+          `so ${counted(shortfall, action.unitLabel)} ${Number(shortfall) === 1 ? 'is' : 'are'} needed. ${supplierName || 'The supplier'} sells ` +
+          `${pluralUnit(preparedLine.purchaseUnit)} of ${preparedLine.unitsPerPurchaseUnit}, so ` +
+          `${preparedOrder ? preparedOrder.poNumber : 'the draft'} contains ${preparedQuantity}. ` +
+          `After current customer orders are covered, ${counted(breakdown.afterEveryOrderArrives, action.unitLabel)} will be available.`
+      : orderedUnits === shortfall
       ? `Target ${action.target} − current position ${action.networkPosition} = ${shortfall} to add.`
       : purchase && purchase.unitsPerPurchaseUnit > 1
         ? `Target ${action.target} − current position ${action.networkPosition} = ${shortfall} needed. ` +
@@ -431,6 +511,15 @@ function pendingReplenishmentCopy(item, action, actions, breakdown) {
         : `Target ${action.target} − current position ${action.networkPosition} = ${shortfall} needed. ` +
           `Supplier minimum or ordering-multiple rules increase the purchasable quantity to ${orderedUnits}.`
     : null;
+  const transferRule = onlyTransfer
+    ? `${transfer.toLocationName || 'The destination'} has ${Number(destination.onHand || 0)} on hand` +
+      `${destinationCommitted ? `, with ${destinationCommitted} reserved for customers` : ''}, leaving ${destinationAvailable} available. ` +
+      `Its available-stock target is ${destinationTarget}, so it needs ${counted(movedUnits, action.unitLabel)}. ` +
+      (waiting
+        ? `${waitingOrders || 'A customer order'} is waiting for ${counted(waiting, action.unitLabel)}; ` +
+          `the move covers that demand and leaves ${Math.max(0, destinationTarget - waiting)} at the location as its operating buffer.`
+        : 'This restores the location target without buying more stock.')
+    : null;
 
   const stages = [
     {
@@ -439,6 +528,7 @@ function pendingReplenishmentCopy(item, action, actions, breakdown) {
       drafted: breakdown.drafted,
       onOrder: breakdown.onOrder,
       covered: breakdown.onHand + breakdown.onOrder + breakdown.drafted,
+      availableAfterDemand: breakdown.onHand + breakdown.onOrder + breakdown.drafted - breakdown.customerDemand,
     },
     {
       label: 'After approval',
@@ -446,6 +536,7 @@ function pendingReplenishmentCopy(item, action, actions, breakdown) {
       drafted: breakdown.after.drafted,
       onOrder: breakdown.after.onOrder,
       covered: breakdown.after.onHand + breakdown.after.onOrder + breakdown.after.drafted,
+      availableAfterDemand: breakdown.after.onHand + breakdown.after.onOrder + breakdown.after.drafted - breakdown.customerDemand,
     },
   ];
   if (breakdown.after.drafted > 0) {
@@ -455,15 +546,17 @@ function pendingReplenishmentCopy(item, action, actions, breakdown) {
       drafted: 0,
       onOrder: breakdown.after.onOrder + breakdown.after.drafted,
       covered: breakdown.after.onHand + breakdown.after.onOrder + breakdown.after.drafted,
+      availableAfterDemand: breakdown.after.onHand + breakdown.after.onOrder + breakdown.after.drafted - breakdown.customerDemand,
     });
   }
-  if (breakdown.afterEveryOrderArrives > breakdown.after.onHand) {
+  if (breakdown.physicalAfterEveryOrderArrives > breakdown.after.onHand) {
     stages.push({
       label: 'After delivery is received',
-      onHand: breakdown.afterEveryOrderArrives,
+      onHand: breakdown.physicalAfterEveryOrderArrives,
       drafted: 0,
       onOrder: 0,
-      covered: breakdown.afterEveryOrderArrives,
+      covered: breakdown.physicalAfterEveryOrderArrives,
+      availableAfterDemand: breakdown.afterEveryOrderArrives,
     });
   }
 
@@ -474,11 +567,18 @@ function pendingReplenishmentCopy(item, action, actions, breakdown) {
     primaryLabel,
     secondaryLabel: 'Not now',
     summary: onlyTransfer
-      ? `${(action.byLocation || []).map((location) => `${location.locationName} has ${location.onHand}`).join('; ')}. ` +
-        `Moving ${movedUnits} puts the stock where it is needed without changing the ${breakdown.onHand} total.`
-      : `You have ${breakdown.onHand} on hand and ${breakdown.onOrder} already on order. ` +
+      ? waiting
+        ? `${waitingOrders || 'A customer order'} is waiting for ${counted(waiting, action.unitLabel)}. ` +
+          `${transfer.toLocationName || 'The destination'} has ${destinationAvailable} available after reservations and its target is ${destinationTarget}, ` +
+          `so moving ${counted(movedUnits, action.unitLabel)} from ${transfer.fromLocationName || 'the source location'} ` +
+          `covers the customer and restores the location buffer without changing the ${breakdown.onHand} total.`
+        : `${(action.byLocation || []).map((location) => `${location.locationName} has ${location.onHand}`).join('; ')}. ` +
+          `Moving ${movedUnits} puts the stock where it is needed without changing the ${breakdown.onHand} total.`
+      : `You have ${breakdown.onHand} on hand; ${breakdown.committed} are reserved for customers` +
+        `${breakdown.backordered ? ` and ${breakdown.backordered} more are waiting for stock` : ''}. ` +
+        `${breakdown.onOrder} are already on order. ` +
         `Your reorder point is ${action.reorderPoint}, and your target is ${action.target}.`,
-    orderRule,
+    orderRule: transferRule || orderRule,
     approvalEffect,
     approvalLimit,
     supplierName,
@@ -486,7 +586,10 @@ function pendingReplenishmentCopy(item, action, actions, breakdown) {
     leadTime,
     unitCost,
     locationDetail: (action.byLocation || [])
-      .map((location) => `${location.locationName}: ${location.onHand} on hand${location.need ? `, ${location.need} needed for its location target` : ''}`),
+      .map((location) => `${location.locationName}: ${location.onHand} on hand` +
+        `${Number(location.committed || 0) ? `, ${location.committed} reserved` : ''}, ` +
+        `${Number.isFinite(Number(location.available)) ? location.available : location.onHand} available` +
+        `${location.need ? `, available-stock target ${location.need}` : ''}`),
     movementRows: ((action.after || {}).byLocation || []).map((location) => ({
       locationName: location.locationName,
       before: location.before,
@@ -673,6 +776,16 @@ function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
     item.affectedEntities && item.affectedEntities.skuId,
     ...((item.recommendedAction && item.recommendedAction.lines) || []).map((line) => line.skuId),
   ]).filter(Boolean));
+  // Once a plan has become a Foundry-prepared draft, the remaining human job
+  // is to review/place that PO. The older low-stock finding is evidence for
+  // that decision, not another decision in the queue.
+  for (const row of db.prepare(`SELECT DISTINCT pol.sku_id
+    FROM purchase_order_lines pol
+    JOIN purchase_orders po ON po.id = pol.purchase_order_id
+    WHERE pol.workspace_id = ? AND po.status IN ('DRAFT','AWAITING_APPROVAL')
+      AND po.source = 'foundry_recommendation'`).all(workspaceId)) {
+    workCoveredSkus.add(row.sku_id);
+  }
   return attention
     .listAttention(db, workspaceId)
     .filter((item) => ['critical', 'important'].includes(item.severity))
@@ -683,7 +796,21 @@ function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
       'replenishment_needed', 'stock_protection_boundary', 'low_stock', 'stockout_risk', 'unusual_adjustment',
       'data_integrity', 'supplier_price_change',
     ].includes(item.category))
-    .filter((item) => !['low_stock', 'stockout_risk', 'replenishment_needed'].includes(item.category) || !workCoveredSkus.has(item.skuId))
+    .filter((item) => {
+      if (!['low_stock', 'stockout_risk', 'replenishment_needed'].includes(item.category)) return true;
+      if (workCoveredSkus.has(item.skuId)) return false;
+      // A location-balancing decision can remain even when the network has
+      // enough overall. The single-SKU purchasing calculation cannot see that
+      // distribution need, so do not use it to dismiss a real transfer.
+      if (item.category === 'replenishment_needed'
+          && ['transfer', 'transfer_and_purchase'].includes((item.metrics || {}).decision)
+          && Number((item.metrics || {}).transferUnits || 0) > 0) return true;
+      // Attention rows are historical detections. Re-read the live purchasing
+      // position before showing one: a placed order may now cover the exact
+      // shortage even if the old finding has not yet been closed by a sweep.
+      const current = replenishment.evaluateOne(db, workspaceId, item.skuId);
+      return !current || current.recommend || current.reason === 'no_supplier';
+    })
     .map((item) => {
       const needsSupplier = item.category === 'replenishment_needed'
         && (item.metrics || {}).blocked === 'no_supplier';
@@ -929,12 +1056,25 @@ function replenishmentCurrentState(db, workspaceId, item) {
   if (!skuId) return null;
   const current = position.positionForSku(db, workspaceId, skuId);
   const order = currentOrderForWork(db, workspaceId, item);
+  const waiting = salesOrders.backorderedBySku(db, workspaceId, { skuIds: [skuId] })[0];
+  const backordered = Number(waiting ? waiting.backordered : 0);
+  const afterCustomerDemand = current.available + current.onOrder - backordered;
+  const orderSentence = order && ['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)
+    ? `${order.poNumber} is a draft for ${plural(order.outstandingUnits, 'unit')}; it is not on order yet.`
+    : `${plural(current.onOrder, 'unit')} are on order.`;
   return {
     ...current,
+    backordered,
+    afterCustomerDemand,
     order,
     summary:
-      `${current.onHand} on hand + ${current.onOrder} on order = ` +
-      `inventory position ${current.position}.`,
+      `${plural(current.onHand, 'unit')} physically on hand; ` +
+      `${plural(current.committed, 'unit')} reserved, leaving ${plural(current.available, 'unit')} available. ` +
+      (backordered ? `${plural(backordered, 'customer unit')} are waiting for stock. ` : '') +
+      `${orderSentence} ` +
+      (afterCustomerDemand < 0
+        ? `Current stock and placed orders are still ${plural(Math.abs(afterCustomerDemand), 'unit')} short of customer demand.`
+        : `After current customer orders are covered, ${plural(afterCustomerDemand, 'unit')} remain available.`),
   };
 }
 
@@ -944,12 +1084,16 @@ function verificationFor(item, currentResult) {
   return raw.map((check) => {
     if (check.name) return { ok: check.ok !== false, text: check.name };
     if (check.kind === 'transfer') {
+      const prepared = check.transferId && ['REQUESTED', 'APPROVED', 'PICKED'].includes(check.status);
       return {
         ok: check.ok !== false,
-        text:
-          `Verified transfer: ${check.quantity} units moved from ${check.from} to ${check.to}; ` +
-          `source ${check.sourceBefore} → ${check.sourceAfter}, destination ` +
-          `${check.destinationBefore} → ${check.destinationAfter}.`,
+        text: prepared
+          ? `Verified transfer prepared: ${check.transferNumber || check.transferId} for ${check.quantity} units ` +
+            `from ${check.from} to ${check.to}; no stock moved early (source ${check.sourceBefore}, ` +
+            `destination ${check.destinationBefore}).`
+          : `Verified transfer state: ${check.quantity} units from ${check.from} to ${check.to}; ` +
+            `source ${check.sourceBefore} → ${check.sourceAfter}, destination ` +
+            `${check.destinationBefore} → ${check.destinationAfter}.`,
       };
     }
     if (check.kind === 'purchase' && currentResult && currentResult.order) {
@@ -1026,9 +1170,36 @@ function explain(db, workspaceId, workItemId) {
   const policy = item.policyId ? policyService.get(db, workspaceId, item.policyId) : null;
   const currentOrder = currentOrderForWork(db, workspaceId, item);
   const currentResult = replenishmentCurrentState(db, workspaceId, item);
+  const preparedOrders = item.category === 'replenishment_plan'
+    ? ((action.prepared || {}).orders || []).flatMap((record) => {
+        try { return [poService.get(db, workspaceId, record.poId)]; } catch { return []; }
+      })
+    : [];
+
+  // A replenishment number is only trustworthy when the owner can open the
+  // customer demand behind it.  Keep this derived from the live order service
+  // rather than copying order ids into the plan: an order can be fulfilled,
+  // cancelled or reallocated after the plan was first prepared.
+  const planSkuId = item.category === 'replenishment_plan'
+    ? (item.affectedEntities || {}).skuId || action.skuId || null
+    : null;
+  const customerDemand = planSkuId
+    ? salesOrders.waitingForStock(db, workspaceId).flatMap((order) =>
+        order.lines
+          .filter((line) => line.sku_id === planSkuId && Number(line.backordered) > 0)
+          .map((line) => ({
+            orderId: order.id,
+            orderNumber: order.order_number,
+            customerName: order.customer.name,
+            displayName: line.displayName,
+            quantity: Number(line.backordered),
+            href: `/orders/${order.id}`,
+          })))
+    : [];
 
   const paragraphs = [];
   let orderLink = null;
+  let transferLink = null;
 
   // Said before anything else, and in the past tense. Work a plan has taken
   // over still described as "I want to move 45. Nothing has moved yet." reads
@@ -1045,6 +1216,8 @@ function explain(db, workspaceId, workItemId) {
     const evidence = Object.fromEntries((item.sourceEvidence || []).map((entry) => [entry.label, entry.value]));
     const toName = action.toLocationName;
     const fromName = action.fromLocationName;
+    const transferId = outcome.transferId || null;
+    if (transferId) transferLink = `/transfers/${transferId}`;
 
     paragraphs.push(
       `${toName} had ${evidence[`${toName} on hand`]} left and had issued ` +
@@ -1070,7 +1243,8 @@ function explain(db, workspaceId, workItemId) {
 
     paragraphs.push(
       done
-        ? `I transferred ${action.quantity}.`
+        ? `I prepared ${outcome.transferNumber || 'a transfer'} for ${action.quantity}. ` +
+          'Approval did not move stock; the warehouse must pick, dispatch and receive it.'
         : item.executionStatus === workItems.STATUS.SUPERSEDED
           ? `It would have moved ${action.quantity}. Nothing moved.`
           : `I want to move ${action.quantity}. Nothing has moved yet.`
@@ -1078,8 +1252,8 @@ function explain(db, workspaceId, workItemId) {
 
     if (outcome.after) {
       paragraphs.push(
-        `Verified result: ${toName} ${outcome.after.destination}, ${fromName} ${outcome.after.source}. ` +
-          `Total unchanged at ${outcome.after.total}.`
+        `Verified preparation: ${toName} stayed at ${outcome.after.destination}, ` +
+          `${fromName} stayed at ${outcome.after.source}. Total unchanged at ${outcome.after.total}.`
       );
     }
   } else if (item.category === 'replenishment_plan') {
@@ -1091,10 +1265,10 @@ function explain(db, workspaceId, workItemId) {
 
     paragraphs.push(
       item.executionStatus === workItems.STATUS.SUPERSEDED
-        ? `Historical plan: ${action.explanation}`
+        ? `Historical plan: ${humanizeUnitMarkers(action.explanation)}`
         : done
-          ? `When this plan was created: ${action.explanation}`
-          : action.explanation
+          ? `When this plan was created: ${humanizeUnitMarkers(action.explanation)}`
+          : humanizeUnitMarkers(action.explanation)
     );
     paragraphs.push(
       `${done || item.executionStatus === workItems.STATUS.SUPERSEDED ? 'At that time, ' : ''}` +
@@ -1108,7 +1282,7 @@ function explain(db, workspaceId, workItemId) {
     if (action.prepared) {
       paragraphs.push(
         (done || item.executionStatus === workItems.STATUS.SUPERSEDED ? 'At that time, ' : '') +
-          `${action.prepared.units} ${plan_unit(action)}(s) ` +
+          `${plural(action.prepared.units, plan_unit(action))} ` +
           `${done || item.executionStatus === workItems.STATUS.SUPERSEDED ? 'were' : 'are'} drafted on ` +
           `${action.prepared.orders.map((order) => order.poNumber).join(', ')}, which is why the plan ` +
           `${done || item.executionStatus === workItems.STATUS.SUPERSEDED ? 'proposed' : 'proposes'} no further order.` +
@@ -1121,18 +1295,18 @@ function explain(db, workspaceId, workItemId) {
     if (moved && action.purchase) {
       paragraphs.push(
         (done
-          ? `I moved ${moved} and prepared an order for `
+          ? `I prepared a transfer for ${moved} and prepared an order for `
           : item.executionStatus === workItems.STATUS.SUPERSEDED
             ? `The replaced plan would have moved ${moved} and ordered `
             : `I want to move ${moved} and order `) +
-          `${action.purchase.quantityPurchaseUnits} ${action.purchase.purchaseUnit}(s) — ` +
-          `${action.purchase.quantityUnits} units — from ${action.purchase.supplierName}. ` +
+          `${plural(action.purchase.quantityPurchaseUnits, action.purchase.purchaseUnit)} — ` +
+          `${plural(action.purchase.quantityUnits, action.unitLabel || 'unit')} — from ${action.purchase.supplierName}. ` +
           'Moving stock does not change how much of it exists, so the order is the same size either way.'
       );
     } else if (moved) {
       paragraphs.push(
         done
-          ? `I moved ${moved}.`
+          ? `I prepared a transfer for ${moved}. No stock moves until warehouse dispatch.`
           : item.executionStatus === workItems.STATUS.SUPERSEDED
             ? `The replaced plan would have moved ${moved}. Nothing moved.`
             : `I want to move ${moved}. Nothing has moved yet.`
@@ -1144,7 +1318,7 @@ function explain(db, workspaceId, workItemId) {
           : item.executionStatus === workItems.STATUS.SUPERSEDED
             ? 'The replaced plan would have ordered '
             : 'I want to order ') +
-          `${action.purchase.quantityPurchaseUnits} ${action.purchase.purchaseUnit}(s) from ${action.purchase.supplierName}.`
+          `${plural(action.purchase.quantityPurchaseUnits, action.purchase.purchaseUnit)} from ${action.purchase.supplierName}.`
       );
     }
 
@@ -1160,7 +1334,8 @@ function explain(db, workspaceId, workItemId) {
           // projection stored when the plan was made — otherwise the sentence
           // and the table can disagree about the same product.
           (action.purchase || action.prepared
-            ? `, rising to ${replenishmentPlan.positionBreakdown(planShape(action)).afterEveryOrderArrives} once the order arrives.`
+            ? `; once every customer order is covered and the supplier order arrives, ` +
+              `${replenishmentPlan.positionBreakdown(planShape(action)).afterEveryOrderArrives} remain available.`
             : '.')
       );
     }
@@ -1236,12 +1411,14 @@ function explain(db, workspaceId, workItemId) {
     policy,
     supersededBy,
     orderLink,
+    transferLink,
+    customerDemand,
     currentResult: item.executionStatus === workItems.STATUS.COMPLETED ? currentResult : null,
     // Only before it runs: afterwards the record of what happened is the truth,
     // and a list of intentions beside it would read as things still to come.
     actions: planned,
     position: positionBreakdown,
-    approvalCopy: pendingReplenishmentCopy(item, action, planned, positionBreakdown),
+    approvalCopy: pendingReplenishmentCopy(item, action, planned, positionBreakdown, preparedOrders, customerDemand),
     paragraphs,
     checks: (item.policyEvaluation || {}).checks || [],
     evidence: evidenceForDisplay(item),

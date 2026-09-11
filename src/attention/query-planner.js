@@ -21,6 +21,9 @@ const queryService = require('./query-service');
 const phrasing = require('./answer-phrasing');
 const { requireText } = require('../lib/util');
 const { ValidationError } = require('../domain/errors');
+const productNavigation = require('../product-brain/navigation');
+const { canonical: productBrain } = require('../product-brain/registry');
+const destinationContracts = require('../product-brain/destinations');
 
 const MAX_QUESTION = 400;
 
@@ -56,8 +59,13 @@ Intents:
 - expiring_soon: lots approaching their expiry date.
 - idle_stock: things on hand that have not been issued for a while.
 - top_moving: what is selling or being used most.
+- top_customers: which customers ordered the most, ranked from recorded sales
+  orders. Put a named customer in entityQuery only when one was supplied.
 - attention_summary: what needs attention right now.
 - replenishment: what they should buy or reorder, and how much.
+- demand_forecast: expected demand over a future period, calculated from
+  recorded demand history. This is an estimate with evidence and confidence,
+  not a promise. Use 90 days for a quarter and 365 for a year.
 - why_low: why a named product is low, short, running out or below its level —
   "why is this low", "why are we short of navy oxfords", "how did we get so low
   on rope", "should I be worried about yoghurt". They are asking for the
@@ -103,6 +111,12 @@ Intents:
 - sales_tax_summary: sales tax collected, recoverable, payable or liability.
 - bills_due: supplier bills due soon or in a named period.
 - customer_payments: how much a named customer paid. Put the customer in entityQuery.
+- period_profit_and_customer_cash: reconcile profit for a period with total
+  customer cash received for that period. Use this when no particular sale,
+  order, customer, or product is named.
+- sale_profit_and_payment: explain a particular sale's price, exact product
+  cost and gross profit together with whether the customer paid and what they
+  still owe. Put any order, customer or product words in entityQuery.
 - supplier_spend: purchase volume and payments for a named supplier. Put the supplier in entityQuery.
 - product_profitability: which product has the most gross profit.
 - location_profitability: which location has the most gross profit.
@@ -153,12 +167,15 @@ Rules:
   cannot send emails", "Foundry cannot delete an inventory", "Foundry does not
   handle payments". All three were false and all three were read by the owner
   as fact. If nothing here matches, say only that, and say it in one line.
-- Choose 'unsupported' only for things Foundry genuinely cannot do at all:
-  tax filing, payroll, automatic bill payment without authority, or forecasting beyond available evidence. Foundry can answer
+- Choose 'unsupported' only after the deterministic product contract below says
+  the capability is unavailable. Foundry can answer
   financial questions from its posted ledger and can prepare, send and
   follow up supplier messages according to its recorded authority. Put one plain sentence in
   unsupportedReason saying what it cannot do.
-- unsupportedReason must be '' for every other intent.`;
+- unsupportedReason must be '' for every other intent.
+
+Authoritative product contract (the model may interpret it but may not override it):
+${productBrain.capabilityPrompt()}`;
 
 function planPrompt(question, context) {
   const vocabulary = context.stockNoun ? `They call their stock "${context.stockNoun}".` : '';
@@ -171,6 +188,32 @@ Question: ${question}`;
 /** Turns a question into a validated plan. Never returns unbounded free text. */
 async function plan(question, options = {}) {
   const clean = requireText(question, 'Question', { max: MAX_QUESTION });
+  /* A natural owner question can span two accounting columns. Preserve the
+     whole request for the deterministic joined read model instead of letting
+     a single-intent classifier answer only the profit or only the payment. */
+  const asksSaleEconomics = /\b(?:profit|margin|cost|made|make|earn(?:ed|ing)?)\b/i.test(clean);
+  const asksCustomerPayment = /\b(?:paid|payment|pay|owe|owing|received)\b/i.test(clean);
+  const namesOneSale = /\bSO[-\s]?\d+\b/i.test(clean)
+    || /\b(?:this|that|last|latest|specific)\s+(?:sale|order)\b/i.test(clean)
+    || /\b(?:on|from|for)\s+(?:the\s+)?[^?.]{1,60}\s+(?:sale|order)\b/i.test(clean);
+  if (asksSaleEconomics && asksCustomerPayment
+      && /\b(?:sale|order|customers?|sold|product|item)\b/i.test(clean)) {
+    return queryService.normalisePlan({
+      intent: namesOneSale ? 'sale_profit_and_payment' : 'period_profit_and_customer_cash',
+      entityQuery: namesOneSale ? clean : '',
+      windowDays: /this\s+week/i.test(clean) ? 7 : /this\s+year/i.test(clean) ? 365 : 30,
+    });
+  }
+  /*
+   * Balance questions outrank purchase-volume questions.  An owner can ask for
+   * both the remaining supplier balance and the payments behind it in one
+   * sentence; sending that to supplier_spend loses the payable proof and its
+   * exact destination.  Match the financial relationship, not one sample
+   * wording or supplier name.
+   */
+  if (/\b(?:what|how much)\b.*\b(?:we|i)\b.*\b(?:still\s+)?owe\b|\b(?:remaining|open|outstanding)\b.*\b(?:supplier|bill|balance)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'payables_aging', entityQuery: clean });
+  }
   if (/\b(?:how are we doing|how is (?:my|our|the) business|business briefing|business right now|overall business)\b/i.test(clean)
       && !/\bfinancial(?:ly)?\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'business_health', windowDays: 30 });
@@ -190,6 +233,11 @@ async function plan(question, options = {}) {
   }
   if (/\b(run(ning)?\s+out|stock\s*out|about\s+to\s+run|likely\s+to\s+run)\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'likely_stockouts' });
+  }
+  if (/\b(?:what|how much)\b.*\bdemand\b.*\b(?:next|future|forecast|quarter|year|month)\b|\bforecast\b.*\bdemand\b/i.test(clean)) {
+    const windowDays = /\b(?:quarter|3\s*months?)\b/i.test(clean) ? 90
+      : /\byear\b/i.test(clean) ? 365 : 30;
+    return queryService.normalisePlan({ intent: 'demand_forecast', windowDays });
   }
   if (/\bwhat\s+(should|do)\s+i\s+(order|buy|purchase)\b|\border\s+this\s+(week|month)\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'what_to_order' });
@@ -212,7 +260,7 @@ async function plan(question, options = {}) {
       .replace(/[?.!]+$/g, '').replace(/\s+/g, ' ').trim();
     return queryService.normalisePlan({ intent: 'demand_explanation', entityQuery });
   }
-  if (/\bhow\s+much\s+stock\s+should\b|\b(rebalance|move\s+stock|transfer)\b/i.test(clean)) {
+  if (/\bhow\s+much\s+stock\s+should\b|\b(?:should|could|can)\s+(?:we|i)\s+(?:rebalance|move|transfer)\b|\b(?:what|how)\b.*\b(?:rebalance|move|transfer)\b/i.test(clean)) {
     const entityQuery = clean
       .replace(/\b(?:how|much|stock|inventory|should|shall|does|do|need|needs|to|keep|hold|carry|at|in|the|a|we|i|move|transfer|rebalance|between|from)\b/gi, ' ')
       .replace(/[?.!]+$/g, '').replace(/\s+/g, ' ').trim();
@@ -224,13 +272,27 @@ async function plan(question, options = {}) {
   if (/\bwhat\b.*\b(?:attention next|need attention next)|\banything\b.*\b(?:worry|concern)|\bwhat should i worry about\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'next_attention' });
   }
-  if (/\bwhy\s+did\s+(?:keeper|foundry|you|we)\s+(?:order|buy|reorder)\b/i.test(clean)) {
-    const entityQuery = clean.replace(/^.*?\b(?:order|buy|reorder)\b/i, '')
+  if (/\bwhy\b.*\b(?:buy(?:ing)?|order(?:ing)?|reorder(?:ing)?|purchas(?:e|ing)|replenish(?:ing|ment)?)\b/i.test(clean)) {
+    const entityQuery = clean.replace(
+      /^.*?\b(?:buy(?:ing)?|order(?:ing)?|reorder(?:ing)?|purchas(?:e|ing)|replenish(?:ing|ment)?)\b/i, ''
+    )
       .replace(/[?.!]+$/g, '').trim();
     return queryService.normalisePlan({ intent: 'foundry_why', entityQuery });
   }
   if (/\b(?:which|what)\s+product\b.*\b(?:profit|money|margin)|\bmost\s+profitable\s+product/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'product_profitability', windowDays: /year/i.test(clean) ? 365 : 30 });
+  }
+  if (/\b(?:which|what)\s+customers?\b.*\b(?:order|buy|spend).*(?:most|largest|highest)|\btop\s+customers?\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'top_customers', windowDays: /year/i.test(clean) ? 365 : 30 });
+  }
+  if (/\b(?:what|how much)\b.*\b(?:do|did|are)\s+(?:we|i)\s+charg(?:e|ed|ing)\b|\b(?:current|selling|retail|sale)\s+price\b/i.test(clean)) {
+    const entityQuery = clean.replace(/\b(?:what|how|much|do|did|are|we|i|charge|charged|charging|current|selling|retail|sale|price|for|these|this)\b/gi, ' ')
+      .replace(/[?.!]+$/g, '').replace(/\s+/g, ' ').trim();
+    return queryService.normalisePlan({ intent: 'selling_price', entityQuery });
+  }
+  if (/\b(?:should|do you recommend)\b.*\b(?:raise|lower|change|set)\b.*\b(?:price|prices|pricing)\b|\bwhat\b.*\b(?:price|prices|pricing)\b.*\b(?:should|recommend)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'unsupported',
+      unsupportedReason: 'Foundry can show and set recorded selling prices, but it does not yet calculate a recommended selling price.' });
   }
   if (/\b(?:which|what)\s+location\b.*\b(?:profit|money|margin)|\bmost\s+profitable\s+location/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'location_profitability', windowDays: /year/i.test(clean) ? 365 : 30 });
@@ -325,8 +387,36 @@ async function plan(question, options = {}) {
 
 /** The whole path: question → plan → deterministic lookup → grounded answer. */
 async function ask(db, workspaceId, question, options = {}) {
+  const navigation = await productNavigation.resolveNatural(
+    db, workspaceId, options.membership || null, question,
+    { brain: options.productBrain, provider: options.provider,
+      actorId: options.actorId, currentHref: options.currentHref }
+  );
+  if (navigation) return productNavigation.asQueryResult(question, navigation);
+
   const queryPlan = await plan(question, options);
-  const result = queryService.execute(db, workspaceId, queryPlan, { question: String(question).trim() });
+  const rawResult = queryService.execute(db, workspaceId, queryPlan, {
+    question: String(question).trim(), membership: options.membership || null,
+  });
+  const brain = options.productBrain || productBrain;
+  const result = { ...rawResult };
+  if (result.handoff && options.membership) {
+    const access = destinationContracts.contract(result.handoff.href, options.membership, { brain });
+    if (!access.allowed) result.handoff = null;
+    else result.handoff = { ...result.handoff,
+      href: productNavigation.handoffHref(result.handoff.href, result.handoff.label,
+        `/ask?q=${encodeURIComponent(String(question).trim())}`) };
+  }
+  if (Array.isArray(result.rows) && options.membership) {
+    result.rows = result.rows.map((row) => {
+      if (!row || !row.href) return row;
+      const access = destinationContracts.contract(row.href, options.membership, { brain });
+      if (access.allowed) return row;
+      const safe = { ...row };
+      delete safe.href;
+      return safe;
+    });
+  }
 
   /*
    * The wording, once the figures are settled.
@@ -338,10 +428,12 @@ async function ask(db, workspaceId, question, options = {}) {
    * same place: the answer Foundry computed.
    */
   let spoken = null;
-  try {
-    spoken = await phrasing.phrase(String(question).trim(), result, options);
-  } catch {
-    spoken = null;
+  if (result.answerMode !== 'verified') {
+    try {
+      spoken = await phrasing.phrase(String(question).trim(), result, options);
+    } catch {
+      spoken = null;
+    }
   }
 
   return { question: String(question).trim(), ...result, spoken };

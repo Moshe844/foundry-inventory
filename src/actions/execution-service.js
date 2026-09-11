@@ -18,12 +18,14 @@
 
 const { inTransaction } = require('../db');
 const engine = require('../domain/inventory-engine');
+const transferService = require('../transfers/transfer-service');
 const locationService = require('../domain/location-service');
 const itemService = require('../domain/item-service');
 const catalog = require('../imports/catalog-service');
 const repo = require('../domain/repository');
 const proposals = require('./proposal-service');
 const permissions = require('./permissions');
+const removals = require('./removals');
 const policy = require('./policy');
 const verification = require('./verification');
 const reevaluate = require('../attention/reevaluate');
@@ -48,7 +50,7 @@ class StaleProposalError extends DomainError {
 function approve(db, ctx, membership, proposalId) {
   const proposal = proposals.get(db, ctx.workspaceId, proposalId);
   if (!proposal) throw new NotFoundError('That action could not be found.');
-  permissions.assertCanPerform(membership, proposal.actionType);
+  permissions.assertCanPerform(membership, proposal.actionType, proposal);
 
   if (proposal.status === 'APPROVED') return proposal;
   if (proposal.status !== 'AWAITING_APPROVAL') {
@@ -97,14 +99,14 @@ function execute(db, ctx, membership, proposalId, options = {}) {
 
   const proposal = proposals.get(db, ctx.workspaceId, proposalId);
   if (!proposal) throw new NotFoundError('That action could not be found.');
-  permissions.assertCanPerform(membership, proposal.actionType);
+  permissions.assertCanPerform(membership, proposal.actionType, proposal);
   if (proposal.status !== 'APPROVED') {
     throw new ValidationError('That action has not been approved.');
   }
 
   let claimed;
   try {
-    claimed = runOnce(db, ctx, proposal, idempotencyKey);
+    claimed = runOnce(db, ctx, membership, proposal, idempotencyKey);
   } catch (error) {
     if (isDuplicateKey(error)) {
       // Another request beat this one to it by microseconds.
@@ -117,7 +119,7 @@ function execute(db, ctx, membership, proposalId, options = {}) {
   // Attention re-evaluation happens after the movement has committed, never
   // inside it: interpretation must not be able to roll back inventory work.
   const affectedSkuIds = proposal.skuId ? [proposal.skuId] : (claimed.affectedSkuIds || []);
-  if (claimed.status === 'SUCCEEDED' && affectedSkuIds.length) {
+  if (claimed.status === 'SUCCEEDED' && affectedSkuIds.length && claimed.movementIds.length) {
     reevaluate.afterMovement(db, ctx.workspaceId, affectedSkuIds, `action:${proposal.actionType}`);
   }
   return claimed;
@@ -127,7 +129,7 @@ function isDuplicateKey(error) {
   return Boolean(error && typeof error.code === 'string' && error.code.startsWith('SQLITE_CONSTRAINT'));
 }
 
-function runOnce(db, ctx, proposal, idempotencyKey) {
+function runOnce(db, ctx, membership, proposal, idempotencyKey) {
   return inTransaction(db, () => {
     const executionId = newId('axe');
     // Claimed first: if anything below fails, the row is rolled back with it,
@@ -150,7 +152,7 @@ function runOnce(db, ctx, proposal, idempotencyKey) {
     }
 
     const before = proposals.currentState(db, ctx.workspaceId, proposal);
-    const result = perform(db, ctx, proposal);
+    const result = perform(db, ctx, membership, proposal);
     const after = proposals.currentState(db, ctx.workspaceId, proposal);
 
     const verdict = verification.verify(db, ctx.workspaceId, proposal, { before, after, result });
@@ -178,7 +180,9 @@ function runOnce(db, ctx, proposal, idempotencyKey) {
     ).run(
       JSON.stringify(result.groupIds || []),
       JSON.stringify(result.movementIds || []),
-      JSON.stringify({ before, after, verified: verdict.verified }),
+      JSON.stringify({ before, after, verified: verdict.verified,
+        transferId: result.transferId || null, transferNumber: result.transferNumber || null,
+        transferStatus: result.transferStatus || null }),
       nowIso(),
       executionId
     );
@@ -200,6 +204,9 @@ function runOnce(db, ctx, proposal, idempotencyKey) {
       verified: verdict.verified,
       verification: verdict,
       movementIds: result.movementIds || [],
+      transferId: result.transferId || null,
+      transferNumber: result.transferNumber || null,
+      transferStatus: result.transferStatus || null,
       affectedSkuIds: result.skuIds || [],
       proposal: proposals.get(db, ctx.workspaceId, proposal.proposalId),
     };
@@ -210,7 +217,7 @@ function runOnce(db, ctx, proposal, idempotencyKey) {
  * The only place an action reaches inventory, and it does so exclusively
  * through Mission 1's public operations.
  */
-function perform(db, ctx, proposal) {
+function perform(db, ctx, membership, proposal) {
   const engineCtx = { workspaceId: ctx.workspaceId, actorId: ctx.actorId };
   const reference = `Foundry ${proposal.proposalId}`;
 
@@ -243,16 +250,20 @@ function perform(db, ctx, proposal) {
   }
 
   if (proposal.actionType === 'transfer') {
-    return engine.transfer(db, engineCtx, {
-      skuId: proposal.skuId,
-      fromLocationId: proposal.sourceLocationId,
-      toLocationId: proposal.destinationLocationId,
-      quantity: proposal.serialUnitIds.length ? undefined : proposal.quantity,
-      serialUnitIds: proposal.serialUnitIds.length ? proposal.serialUnitIds : undefined,
-      lotId: proposal.lotId || undefined,
-      reference,
-      notes: proposal.notes || undefined,
+    let transfer = transferService.request(db, engineCtx, membership, {
+      fromLocationId: proposal.sourceLocationId, toLocationId: proposal.destinationLocationId,
+      reference, notes: proposal.notes || undefined,
+      idempotencyKey: `action-transfer-request:${proposal.proposalId}`,
+      lines: [{ skuId: proposal.skuId, quantity: proposal.quantity,
+        serialUnitIds: proposal.serialUnitIds.length ? proposal.serialUnitIds : undefined,
+        lotId: proposal.lotId || undefined }],
     });
+    if (permissions.can(membership, permissions.APPROVE_TRANSFER)) {
+      transfer = transferService.approve(db, engineCtx, membership, transfer.id,
+        { idempotencyKey: `action-transfer-approve:${proposal.proposalId}` });
+    }
+    return { movementIds: [], groupIds: [], skuIds: [], transferId: transfer.id,
+      transferNumber: transfer.transfer_number, transferStatus: transfer.status };
   }
 
   if (proposal.actionType === 'adjust') {
@@ -290,6 +301,22 @@ function perform(db, ctx, proposal) {
       groupIds: received.groupId ? [received.groupId] : [],
       itemId: created.itemId,
       skuIds: created.skuIds,
+    };
+  }
+
+  if (proposal.actionType === removals.ACTION_TYPE) {
+    const kind = removals.kindOf(proposal);
+    if (!kind) throw new ValidationError('Foundry cannot remove that sort of record.');
+    // The registry decides deletion versus archiving from what currently refers
+    // to the record — the same call the preview and the re-check made. Nothing
+    // here overrides it, so an approved preview and the outcome cannot diverge.
+    const outcome = kind.remove(db, engineCtx, proposal.settings.recordId);
+    return {
+      movementIds: [],
+      groupIds: [],
+      recordKind: kind.kind,
+      recordId: proposal.settings.recordId,
+      recordDeleted: Boolean(outcome && outcome.deleted),
     };
   }
 
@@ -364,6 +391,9 @@ function replay(db, workspaceId, row) {
         }
       : null,
     movementIds: JSON.parse(row.movement_ids || '[]'),
+    transferId: stored.transferId || null,
+    transferNumber: stored.transferNumber || null,
+    transferStatus: stored.transferStatus || null,
     proposal: row.proposal_id ? proposals.get(db, workspaceId, row.proposal_id) : null,
   };
 }
@@ -393,7 +423,7 @@ function approvePlan(db, ctx, membership, planId) {
   return inTransaction(db, () => {
     const plan = actionService.getPlan(db, ctx.workspaceId, planId);
     if (!plan) throw new NotFoundError('That plan could not be found.');
-    for (const line of plan.lines) permissions.assertCanPerform(membership, line.actionType);
+    for (const line of plan.lines) permissions.assertCanPerform(membership, line.actionType, line);
     if (plan.status === 'APPROVED') return actionService.getPlan(db, ctx.workspaceId, planId);
     if (plan.status !== 'AWAITING_APPROVAL') throw new ValidationError('That plan is no longer waiting for approval.');
 
@@ -430,7 +460,7 @@ function executePlan(db, ctx, membership, planId, options = {}) {
   const plan = actionService.getPlan(db, ctx.workspaceId, planId);
   if (!plan) throw new NotFoundError('That plan could not be found.');
   if (plan.status !== 'APPROVED') throw new ValidationError('That plan has not been approved.');
-  for (const line of plan.lines) permissions.assertCanPerform(membership, line.actionType);
+  for (const line of plan.lines) permissions.assertCanPerform(membership, line.actionType, line);
 
   let outcome;
   try {
@@ -465,7 +495,7 @@ function executePlan(db, ctx, membership, planId, options = {}) {
           );
         }
         const before = proposals.currentState(db, ctx.workspaceId, line);
-        const result = perform(db, ctx, line);
+        const result = perform(db, ctx, membership, line);
         const after = proposals.currentState(db, ctx.workspaceId, line);
         const verdict = verification.verify(db, ctx.workspaceId, line, { before, after, result });
         if (!verdict.verified) allVerified = false;
@@ -492,7 +522,10 @@ function executePlan(db, ctx, membership, planId, options = {}) {
 
         proposals.setStatus(db, ctx, line.proposalId, 'SUCCEEDED', { completed: true });
         proposals.record(db, ctx, line.proposalId, 'SUCCEEDED', { executionId, before, after }, planId);
-        results.push({ proposalId: line.proposalId, before, after, verified: verdict.verified, verification: verdict });
+        results.push({ proposalId: line.proposalId, before, after,
+          transferId: result.transferId || null, transferNumber: result.transferNumber || null,
+          transferStatus: result.transferStatus || null,
+          verified: verdict.verified, verification: verdict });
       }
 
       db.prepare(

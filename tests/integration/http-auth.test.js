@@ -50,7 +50,8 @@ test('sign in fails for a wrong password and succeeds for the right one', async 
 
   const home = await agent.get('/');
   assert.equal(home.status, 200);
-  assert.match(home.text, /Overview/);
+  // Signing in lands on the brief, which is what "/" is now.
+  assert.match(home.text, /class="rm-tab is-on" href="\/"/);
 });
 
 test('registration creates an account, then the customer creates an inventory', async () => {

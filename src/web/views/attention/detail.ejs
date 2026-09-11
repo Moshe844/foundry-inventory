@@ -119,7 +119,7 @@
               <ul class="plain-list">
                 <% plan.transfers.forEach(function (move) { %>
                   <li>
-                    <strong><%= move.quantity %> <%= plan.unitLabel %>(s)</strong>
+                    <strong><%= move.quantity %> <%= helpers.plural(move.quantity, plan.unitLabel) %></strong>
                     from <%= move.fromLocationName %> to <%= move.toLocationName %>.
                     <span class="muted"><%= move.why %></span>
                   </li>
@@ -131,8 +131,8 @@
               <h3 class="rep-plan-sub">Order</h3>
               <ul class="plain-list">
                 <li>
-                  <strong><%= plan.purchase.quantityPurchaseUnits %> <%= plan.purchase.purchaseUnit %>(s)</strong>
-                  — <%= plan.purchase.quantityUnits %> <%= plan.unitLabel %>(s) from <%= plan.purchase.supplierName %>,
+                  <strong><%= plan.purchase.quantityPurchaseUnits %> <%= helpers.plural(plan.purchase.quantityPurchaseUnits, plan.purchase.purchaseUnit) %></strong>
+                  — <%= plan.purchase.quantityUnits %> <%= helpers.plural(plan.purchase.quantityUnits, plan.unitLabel) %> from <%= plan.purchase.supplierName %>,
                   arriving in about <%= plan.purchase.leadTimeDays %> days<%= plan.purchase.leadTimeAssumed ? ' (assumed)' : '' %>.
                   <% if (plan.purchase.estimatedCost !== null) { %>
                     <span class="muted">About <%= plan.purchase.estimatedCost %> in total.</span>
@@ -145,7 +145,7 @@
               <h3 class="rep-plan-sub">Already prepared</h3>
               <ul class="plain-list">
                 <li>
-                  <%= plan.prepared.units %> <%= plan.unitLabel %>(s) are on
+                  <%= plan.prepared.units %> <%= helpers.plural(plan.prepared.units, plan.unitLabel) %> are on
                   <% plan.prepared.orders.forEach(function (order, i) { %><%= i ? ', ' : '' %><a href="/purchasing/orders/<%= order.poId %>"><%= order.poNumber %></a><% }); %>,
                   waiting for approval. Foundry is not proposing another order for the same stock.
                 </li>

@@ -1,0 +1,66 @@
+<div class="rm-operation-page">
+<p class="rm-stamp">Warehouse operations</p>
+<h1 class="rm-figure">Count it, return it, or fulfill it.</h1>
+<p class="rm-sub">Physical changes use the inventory ledger. Refunds and supplier credits use accounting. Foundry does not infer a count or condition.</p>
+
+<section class="rm-panel" id="counts">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Physical inventory</p><h2>Blind counts and approvals</h2></div></div>
+  <% if (countPlans.length) { %><div class="rm-list"><% countPlans.forEach(function(p){ %><div class="rm-row"><span><strong><%= p.name %></strong><small><%= p.location_name %> · every <%= p.frequency_days %> days · next <%= p.next_due_date %></small></span><form method="post" action="/warehouse/count-plans/<%= p.id %>/start"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button rm-button--quiet">Start now</button></form></div><% }) %></div><% } %>
+  <% if (campaigns.length) { %><div class="rm-list"><% campaigns.forEach(function(c){ %><a class="rm-row" href="/warehouse/counts/<%= c.current_session_id %>"><span><strong><%= c.name %></strong><small><%= c.location_name %> · <%= c.count_kind %></small></span><span class="rm-chip"><%= c.status.replace('_',' ') %></span></a><% }) %></div><% } %>
+  <form method="post" action="/warehouse/counts" class="rm-form-grid">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Count type<select name="countKind"><option value="CYCLE">Cycle count</option><option value="FULL">Full physical inventory</option></select></label>
+    <label>Location<select name="locationId" required><% locations.forEach(function(l){ %><option value="<%= l.id %>"><%= '› '.repeat(l.depth) %><%= l.name %></option><% }) %></select></label>
+    <label>Product <span class="optional">ignored for full count</span><select name="skuId"><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %></option><% }) %></select></label>
+    <label>Counter sees system quantity?<select name="blindCount"><option value="1">No — blind count</option><option value="0">Yes</option></select></label>
+    <label class="rm-span-2">Name <span class="optional">optional</span><input name="name" placeholder="Friday footwear count"></label>
+    <div class="rm-span-2"><button class="rm-button rm-button--primary">Start count</button></div>
+  </form>
+  <details class="rm-disclosure"><summary>Schedule a recurring count</summary><form method="post" action="/warehouse/count-plans" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Name<input name="name" required placeholder="Weekly high-value count"></label><label>Frequency (days)<input type="number" name="frequencyDays" min="1" value="7" required></label>
+    <label>Count type<select name="countKind"><option value="CYCLE">Cycle count</option><option value="FULL">Full physical inventory</option></select></label><label>First due<input type="date" name="nextDueDate"></label>
+    <label>Location<select name="locationId" required><% locations.forEach(function(l){ %><option value="<%= l.id %>"><%= l.name %></option><% }) %></select></label><label>Product<select name="skuId"><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %></option><% }) %></select></label>
+    <input type="hidden" name="blindCount" value="1"><div class="rm-span-2"><button class="rm-button rm-button--primary">Save count plan</button></div></form></details>
+  <% if (analytics.length) { %><details class="rm-disclosure"><summary>Variance history</summary><div class="rm-list"><% analytics.forEach(function(a){ %><div class="rm-row"><span><strong><%= a.item_name %></strong><small><%= a.sku_code %></small></span><span><%= a.expected_quantity %> → <%= a.counted_quantity %> (<%= a.variance > 0 ? '+' : '' %><%= a.variance %>)</span></div><% }) %></div></details><% } %>
+</section>
+
+<section class="rm-panel" id="customer-returns">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Customer returns</p><h2>Authorize → quarantine → inspect → refund or exchange</h2></div></div>
+  <% if (customerReturns.length) { %><div class="rm-list"><% customerReturns.forEach(function(r){ %><a class="rm-row" href="/warehouse/returns/customer/<%= r.id %>"><span><strong><%= r.return_number %> · <%= r.customer_name %></strong><small><%= r.order_number %> · <%= r.resolution %></small></span><span class="rm-chip"><%= r.status.replace('_',' ') %></span></a><% }) %></div><% } %>
+  <% if (orders.length) { %><form method="post" action="/warehouse/returns/customer" class="rm-form-grid">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Fulfilled order<select name="salesOrderId" required><% orders.forEach(function(o){ %><option value="<%= o.id %>"><%= o.order_number %> · <%= o.customer.name %></option><% }) %></select></label>
+    <label>Returned product<select name="salesOrderLineId"><% orders.forEach(function(o){ o.lines.filter(function(l){return l.quantity_fulfilled>0}).forEach(function(l){ %><option value="<%= l.id %>"><%= o.order_number %> · <%= l.displayName %> · <%= l.quantity_fulfilled %> shipped</option><% }) }) %></select></label>
+    <label>Quantity<input type="number" name="quantity" min="1" value="1" required></label>
+    <label>Quarantine location<select name="quarantineLocationId" required><% locations.forEach(function(l){ %><option value="<%= l.id %>"><%= l.name %></option><% }) %></select></label>
+    <label>Resolution<select name="resolution"><option value="REFUND">Refund</option><option value="EXCHANGE">Exchange</option><option value="NO_REFUND">No refund</option></select></label>
+    <label>Reason<input name="reason" required placeholder="Wrong size"></label>
+    <div class="rm-span-2"><button class="rm-button rm-button--primary">Request return</button></div>
+  </form><% } else { %><p class="rm-muted">No fulfilled customer-order units are available to return.</p><% } %>
+</section>
+
+<section class="rm-panel" id="supplier-returns">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Supplier returns</p><h2>Return to vendor and reconcile the credit</h2></div></div>
+  <% if (supplierReturns.length) { %><div class="rm-list"><% supplierReturns.forEach(function(r){ %><a class="rm-row" href="/warehouse/returns/supplier/<%= r.id %>"><span><strong><%= r.return_number %> · <%= r.supplier_name %></strong><small><%= r.reason || 'No reason recorded' %></small></span><span class="rm-chip"><%= r.status.replace('_',' ') %></span></a><% }) %></div><% } %>
+  <% if (suppliers.length && skus.length) { %><form method="post" action="/warehouse/returns/supplier" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Supplier<select name="supplierId"><% suppliers.forEach(function(s){ %><option value="<%= s.id %>"><%= s.name %></option><% }) %></select></label>
+    <label>Product<select name="skuId"><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %></option><% }) %></select></label>
+    <label>From location<select name="locationId"><% locations.forEach(function(l){ %><option value="<%= l.id %>"><%= l.name %></option><% }) %></select></label>
+    <label>Quantity<input type="number" name="quantity" min="1" value="1"></label>
+    <label>Supplier bill <span class="optional">optional evidence</span><select name="supplierBillId"><option value="">No bill linked</option><% supplierBills.forEach(function(b){ %><option value="<%= b.id %>"><%= b.supplier_name %> · <%= b.supplier_invoice_number || b.bill_number %></option><% }) %></select></label>
+    <label>Expected credit <span class="optional">optional</span><input name="expectedCredit" inputmode="decimal" placeholder="50.00"></label>
+    <label>Reason<input name="reason" required placeholder="Damaged delivery"></label>
+    <label>Exact lot <span class="optional">required for lot stock</span><select name="lotId"><option value="">Not lot tracked</option><% lots.forEach(function(l){ %><option value="<%= l.id %>"><%= l.item_name %> · <%= l.code %> · <%= l.location_name %> (<%= l.quantity %>)</option><% }) %></select></label>
+    <label>Exact serials <span class="optional">required for serialized stock</span><select name="serialUnitIds" multiple size="4"><% serialUnits.forEach(function(s){ %><option value="<%= s.id %>"><%= s.item_name %> · <%= s.serial %> · <%= s.location_name %></option><% }) %></select></label>
+    <div class="rm-span-2"><button class="rm-button rm-button--primary">Request supplier return</button></div>
+  </form><% } %>
+</section>
+
+<section class="rm-panel" id="waves">
+  <div class="rm-panel__head"><div><p class="rm-kicker">High-volume fulfillment</p><h2>Pick several orders as one wave</h2></div></div>
+  <% if (waves.length) { %><div class="rm-list"><% waves.forEach(function(w){ %><a class="rm-row" href="/warehouse/waves/<%= w.id %>"><span><strong>Wave #<%= w.wave_number %> · <%= w.title %></strong><small><%= w.shipment_count %> shipments · <%= w.units %> units</small></span><span class="rm-chip"><%= w.status %></span></a><% }) %></div><% } %>
+  <% if (readyOrders.length) { %><form method="post" action="/warehouse/waves" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Strategy<select name="strategy"><option>WAVE</option><option>BATCH</option><option>CLUSTER</option></select></label><label>Name<input name="title" placeholder="Morning carrier pickup"></label><fieldset class="rm-span-2"><legend>Ready orders</legend><% readyOrders.forEach(function(o){ %><label><input type="checkbox" name="orderIds" value="<%= o.id %>"> <%= o.order_number %> · <%= o.customer_name %> · <%= o.units %> units</label><% }) %></fieldset><div class="rm-span-2"><button class="rm-button rm-button--primary">Release wave</button></div></form><% } else { %><p class="rm-muted">No allocated customer orders are ready to pick.</p><% } %>
+</section>
+
+<p class="rm-disclose"><a href="/warehouse">Back to warehouse</a><a href="/fulfilment">Single-order fulfillment</a></p>
+</div>

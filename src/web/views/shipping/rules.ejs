@@ -15,7 +15,7 @@
 
 <div class="page-head">
   <div>
-    <p class="eyebrow">Foundry · A Keeper product</p>
+    <p class="eyebrow">Foundry</p>
     <h1>Shipping rules</h1>
     <p class="lede">
       When a parcel is ready, Foundry gets live rates from the carriers. A rule here says which of
@@ -52,7 +52,7 @@
       <p class="hint">
         This is this business's separate shipping account. Its carrier rates, payment method,
         labels and charges are isolated from every other Foundry workspace. Foundry never charges
-        Keeper's developer account for this business's postage.
+        Foundry's platform account for this business's postage.
       </p>
       <% if (!se.billingReady) { %>
         <div class="notice notice--warn"><div>
@@ -88,7 +88,7 @@
       </p>
       <p class="hint">
         Foundry opened this account and it belongs to this business — its rates, its labels, its
-        bill. Nobody at Keeper is charged for anything shipped on it.
+        bill. Foundry is not charged for anything shipped on it.
       </p>
       <p class="t-xs t-muted">
         EasyPost reference <code><%= referral.referralCustomerId %></code> ·
@@ -205,7 +205,7 @@
           </p>
           <div class="notice notice--ok"><div>
             <strong>This business pays its own postage.</strong><br>
-            Foundry never charges Keeper's developer account. The payment method entered during
+            Foundry never charges its platform account. The payment method entered during
             setup belongs only to this workspace's ShipEngine seller.
           </div></div>
         </div>
@@ -215,11 +215,19 @@
       </form>
     <% } else if (!se.available && !se.opened && !account.connected) { %>
       <div class="card-body">
-        <div class="notice notice--warn"><div>
-          <strong>ShipEngine's embedded setup is not connected to this Foundry installation yet.</strong><br>
-          The Foundry administrator must add the platform credentials issued during ShipEngine
-          partner onboarding. A normal sandbox API key alone cannot create isolated customer sellers.
+        <div class="notice"><div>
+          <strong>Use a free account owned by this business.</strong><br>
+          Create an account with <a href="https://www.easypost.com/signup" target="_blank" rel="noopener">EasyPost</a>,
+          <a href="https://www.shipengine.com/signup/" target="_blank" rel="noopener">ShipEngine</a>, or
+          <a href="https://apps.goshippo.com/join" target="_blank" rel="noopener">Shippo</a>.
+          Add the business's payment method there, then paste its API key below. Foundry verifies the
+          key before saving it; postage is charged to that business's provider account, not Foundry.
         </div></div>
+        <details class="disclose"><summary><span>Enterprise embedded setup</span><span class="disclose__cue">Show</span></summary>
+          <div class="disclose__body hint">A fully embedded seller-account flow requires partner credentials
+          issued by the shipping provider. It is optional; the customer-owned free-account path below supports
+          rates, labels and tracking without an Enterprise Foundry platform account.</div>
+        </details>
       </div>
     <% } %>
 
@@ -272,6 +280,7 @@
     <form method="post" action="/settings/shipping/account" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="card-body stack">
+        <% if (!offerOpen) { %><h3>Connect this business's shipping account</h3><% } %>
         <label class="field">
           <span class="field-label">Provider</span>
           <select class="select" name="provider">

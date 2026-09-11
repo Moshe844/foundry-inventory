@@ -166,13 +166,20 @@ test('every event says who did it, when, and where to read more', async () => {
 });
 
 /** The sidebar entry is what actually sent people to the wrong page. */
-test('the sidebar sends Activity to the business history', async () => {
+test('the brief sends Activity to the business history', async () => {
   const env = await traded({ quietChecks: 1 });
-  const raw = (await env.agent.get('/activity')).text;
-  const anchors = raw.match(/<a[^>]*class="nav-item[^"]*"[^>]*>[\s\S]*?<\/a>/g) || [];
-  const activityLink = anchors.find((a) => /<span>Activity<\/span>/.test(a));
-  assert.ok(activityLink, 'the sidebar has an Activity entry');
-  assert.match(activityLink, /href="\/activity"/, 'pointing at the ledger, not the autopilot log');
+  /*
+   * There is no sidebar any more: the chrome carries the three things somebody
+   * does in a day, and everything else is reached from the brief or by asking.
+   * What still has to be true is what this test was always about — the way in
+   * to Activity goes to the business history and not to the autopilot log.
+   */
+  const brief = (await env.agent.get('/')).text;
+  assert.match(brief, /href="\/activity"[^>]*>Everything that happened</,
+    'the brief offers the business history by name');
+  const vault = (await env.agent.get('/everything')).text;
+  assert.match(vault, /href="\/activity"/, 'and it is listed with everything else');
+  assert.equal((await env.agent.get('/activity')).status, 200);
   env.db.close();
 });
 

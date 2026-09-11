@@ -22,6 +22,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { chromium } = require('playwright');
+const { completeTransfer } = require('./transfer-helper');
 
 const { openDatabase } = require('../../src/db');
 const engine = require('../../src/domain/inventory-engine');
@@ -225,9 +226,9 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
   await t.test('0. the home page is what Foundry is doing, not a table of counts', async () => {
     await signIn(page);
     const text = await page.locator('body').innerText();
-    assert.match(text, /Getting Foundry ready/i);
+    assert.match(text, /Foundry is working/i);
     assert.match(text, /Do this next/i);
-    assert.match(text, /Your business right now/i);
+    assert.match(text, /The business/i);
     await shot(page, 'operator-home');
   });
 
@@ -285,7 +286,7 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     await shot(page, 'why-this-transfer');
   });
 
-  await t.test('5. handing over authority immediately reconsiders and carries out eligible work', async () => {
+  await t.test('5. handing over authority prepares eligible work and the warehouse completes it', async () => {
     const before = { brooklyn: balance(databasePath, state, state.brooklyn), jersey: balance(databasePath, state, state.jersey) };
 
     await page.goto(`${BASE}/autopilot`);
@@ -293,8 +294,8 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     await page.waitForURL(/\/autopilot/);
     await shot(page, 'mode-run-it');
 
-    assert.equal(balance(databasePath, state, state.brooklyn), before.brooklyn + 12, 'twelve arrived in Brooklyn');
-    assert.equal(balance(databasePath, state, state.jersey), before.jersey - 12, 'twelve left New Jersey');
+    assert.equal(balance(databasePath, state, state.brooklyn), before.brooklyn, 'approval does not receive stock');
+    assert.equal(balance(databasePath, state, state.jersey), before.jersey, 'approval does not dispatch stock');
     assert.equal(
       balance(databasePath, state, state.brooklyn) + balance(databasePath, state, state.jersey),
       before.brooklyn + before.jersey,
@@ -302,9 +303,14 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     );
 
     await page.goto(`${BASE}${workPath}`);
-    const text = await page.locator('body').innerText();
-    assert.match(text, /I transferred 12\./);
+    let text = await page.locator('body').innerText();
+    assert.match(text, /I prepared TR-\d+ for 12/);
+    assert.match(text, /Approval did not move stock/);
     assert.doesNotMatch(text, /not verified/);
+    await page.getByRole('link', { name: 'Open the prepared transfer' }).click();
+    await completeTransfer(page);
+    assert.equal(balance(databasePath, state, state.brooklyn), before.brooklyn + 12, 'receipt puts twelve in Brooklyn');
+    assert.equal(balance(databasePath, state, state.jersey), before.jersey - 12, 'dispatch removes twelve from New Jersey');
     await shot(page, 'it-did-it');
   });
 
@@ -328,7 +334,11 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     await page.goto(`${BASE}/autopilot/history`);
     const text = await page.locator('body').innerText();
     assert.match(text, /Completed automatically/);
-    assert.match(text, /Moved 12 Kids Tights/);
+    assert.match(text, /Prepared transfer for 12 Kids Tights/);
+    assert.match(text, /TR-\d+ is ready for warehouse execution/);
+    assert.match(text, /stock stays at the source until dispatch/i);
+    assert.doesNotMatch(text, /Moved 12 Kids Tights/,
+      'Foundry must not claim it physically moved goods when it prepared the transfer');
     await shot(page, 'history');
   });
 
@@ -342,7 +352,7 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     });
     await page.goto(`${BASE}/`);
     const home = await page.locator('body').innerText();
-    assert.match(home, /things? need you/i);
+    assert.match(home, /(?:thing needs|things need) you/i);
     assert.match(home, /Kids Tights \/ Black \/ 5 does not match the records/i);
     assert.equal(inspect(databasePath, (db) => db.prepare('SELECT COUNT(*) n FROM adjustments WHERE workspace_id = ?').get(state.workspaceId).n), 0,
       'investigation never silently changes the ledger');
@@ -357,9 +367,11 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
 
   await t.test('10. the kill switch stops everything, immediately', async () => {
     await page.goto(`${BASE}/`);
-    page.once('dialog', (dialog) => dialog.accept());
     await page.click('form[action="/autopilot/pause"] button[type=submit]');
-    await page.waitForURL(`${BASE}/`);
+    await Promise.all([
+      page.waitForURL(`${BASE}/`),
+      page.click('[data-ask-yes]'),
+    ]);
 
     const text = await page.locator('body').innerText();
     assert.match(text, /Foundry is paused/);
@@ -373,7 +385,9 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
 
   await t.test('11. what it already did survives the pause', async () => {
     await page.goto(`${BASE}/autopilot/history`);
-    assert.match(await page.locator('body').innerText(), /Moved 12 Kids Tights/);
+    const text = await page.locator('body').innerText();
+    assert.match(text, /Prepared transfer for 12 Kids Tights/);
+    assert.match(text, /TR-\d+ is ready for warehouse execution/);
     assert.deepEqual(pageErrors, [], 'no client-side errors anywhere in the run');
   });
 });

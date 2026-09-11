@@ -388,6 +388,16 @@ function recordSalesOrderReceivable(db, event, order, fulfilledLines, journalEnt
       Number(entry.line.unit_price_minor), lineGross, revenueAccount.id,
       entry.line.item_id, entry.line.sku_id, entry.line.id, now);
   }
+  const graph = require('../provenance/service');
+  graph.recordMany(db, event.workspaceId, [
+    { type: 'BILLED_BY', from: { type: 'sales_order', id: order.id },
+      to: { type: 'customer_invoice', id: invoiceId } },
+    { type: 'POSTED_AS', from: { type: 'customer_invoice', id: invoiceId },
+      to: { type: 'journal_entry', id: journalEntryId } },
+    ...db.prepare('SELECT id FROM accounting_customer_invoice_lines WHERE invoice_id = ?').all(invoiceId)
+      .map((line) => ({ type: 'HAS_PART', from: { type: 'customer_invoice', id: invoiceId },
+        to: { type: 'customer_invoice_line', id: line.id } })),
+  ], { basis: 'EVENT', domainEventId: event.id });
 }
 
 function postTransfer(db, event) {

@@ -1,0 +1,7 @@
+<p class="rm-stamp no-print">Warehouse label</p>
+<div class="rm-label-sheet">
+  <h1><%= label.title %></h1><p><%= label.subtitle %></p>
+  <div class="rm-label-barcode"><%- barcodeSvg %></div><code><%= label.barcode %></code>
+  <p class="rm-label-check"><%= verified ? 'Encoding verified for scan round-trip' : 'Encoding could not be verified' %></p>
+</div>
+<div class="rm-actions no-print"><button class="rm-button rm-button--primary" type="button" onclick="window.print()">Print label</button><a class="rm-button" href="/warehouse">Back to warehouse</a></div>

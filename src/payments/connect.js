@@ -662,11 +662,19 @@ function forget(db, workspaceId) {
 function describe(db, workspaceId) {
   const row = rowFor(db, workspaceId);
   if (!row) {
+    const attempt = db.prepare(`SELECT setup_status, last_error, updated_at
+      FROM workspace_connectors
+      WHERE workspace_id = ? AND provider_type = ?
+      ORDER BY updated_at DESC LIMIT 1`).get(workspaceId, PROVIDER) || null;
     return {
       connected: false,
       available: available(),
       embedded: usesEmbedded(),
       testMode: /^sk_test_/.test(platform().secretKey || ''),
+      lastAttemptStatus: attempt ? attempt.setup_status : null,
+      lastAttemptError: attempt && attempt.setup_status === 'AUTHORIZATION_FAILED'
+        ? attempt.last_error : null,
+      lastAttemptAt: attempt ? attempt.updated_at : null,
       because: available()
         ? 'This business can connect its own Stripe account without giving Foundry a key.'
         : 'Stripe existing-account sign-in is not configured on this Foundry installation yet.',

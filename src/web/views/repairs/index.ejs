@@ -1,0 +1,22 @@
+<section class="page-head">
+  <div><p class="eyebrow">Diagnose · Simulate · Repair · Verify</p><h1>Repair cases</h1>
+    <p>Cross-domain problems Foundry has reconstructed without forcing any number to agree.</p></div>
+  <a class="btn btn--primary" href="/repairs/report">Report something wrong</a>
+</section>
+
+<section class="section">
+  <% if (!repairCases.length) { %>
+    <div class="empty"><h2>No repair cases</h2><p>Foundry has not found a cross-domain inconsistency that needs a governed repair.</p></div>
+  <% } else { %>
+    <div class="list-stack">
+      <% repairCases.forEach(function (entry) { %>
+        <a class="card card--link" href="/repairs/<%= entry.id %>">
+          <span class="badge"><%= entry.status.replaceAll('_', ' ') %></span>
+          <h2><%= entry.symptom %></h2>
+          <p><%= entry.failedInvariant %></p>
+          <small><%= entry.materiality %> materiality · <%= entry.confidence %> confidence · <%= entry.attempts %> execution attempt<%= entry.attempts === 1 ? '' : 's' %></small>
+        </a>
+      <% }) %>
+    </div>
+  <% } %>
+</section>

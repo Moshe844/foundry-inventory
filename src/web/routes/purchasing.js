@@ -34,11 +34,13 @@ const reactions = require('../../manager/reactions');
 const autopilotPresenter = require('../../autopilot/presenter');
 const connectionService = require('../../connections/service');
 const payables = require('../../accounting/payables');
+const landedCosts = require('../../accounting/landed-costs');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { unitCount } = require('../../lib/units');
 const { localDateKey } = require('../../lib/calendar');
 const { trimOrNull } = require('../../lib/util');
 const { ValidationError } = require('../../domain/errors');
+const workItems = require('../../autopilot/work-items');
 
 const router = express.Router();
 router.use('/purchasing', requireAuth);
@@ -53,6 +55,20 @@ function locations(db, workspaceId) {
   return repo.listLocations(db, workspaceId).filter((l) => l.is_active);
 }
 
+/**
+ * A current replenishment decision owns its recommendation until the owner
+ * accepts or leaves it. Purchasing must not offer a second button that creates
+ * the same PO outside that decision and its authority/audit trail.
+ */
+function activePlansForGroup(db, workspaceId, group) {
+  const unique = new Map();
+  for (const line of group.lines || []) {
+    const item = workItems.awaitingReplenishmentForSku(db, workspaceId, line.skuId);
+    if (item) unique.set(item.id, item);
+  }
+  return [...unique.values()];
+}
+
 const can = (req) => ({
   view: permissions.can(req.user, permissions.VIEW_PURCHASING),
   create: permissions.can(req.user, permissions.CREATE_PO),
@@ -61,6 +77,8 @@ const can = (req) => ({
   suppliers: permissions.can(req.user, permissions.MANAGE_SUPPLIERS),
   replenishment: permissions.can(req.user, permissions.MANAGE_REPLENISHMENT),
   payments: permissions.can(req.user, permissions.RECORD_PAYMENTS),
+  landedCosts: permissions.can(req.user, permissions.ALLOCATE_LANDED_COST)
+    && permissions.can(req.user, permissions.MANAGE_ACCOUNTING),
 });
 
 function react(req, type, payload, options = {}) {
@@ -71,11 +89,93 @@ function react(req, type, payload, options = {}) {
 // What should I order?
 // ---------------------------------------------------------------------------
 
+// Landed cost is kept beside the purchase it belongs to. The owner selects
+// receipt evidence and an already-posted supplier-bill expense; Foundry then
+// shows the exact split before an accounting authority applies it.
+router.get(
+  '/purchasing/orders/:id/landed-costs',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.VIEW_PURCHASING, 'see purchasing');
+    const order = poService.get(req.db, req.ctx.workspaceId, req.params.id);
+    const receipts = receiving.receiptsFor(req.db, req.ctx.workspaceId, order.id);
+    const sourceLines = req.db.prepare(`SELECT bl.id, bl.description, bl.line_total_minor, b.bill_number,
+        b.supplier_invoice_number, a.name AS account_name FROM accounting_supplier_bill_lines bl
+      JOIN accounting_supplier_bills b ON b.id = bl.bill_id JOIN accounting_accounts a ON a.id = bl.debit_account_id
+      WHERE b.workspace_id = ? AND b.status IN ('OPEN','PARTIALLY_PAID','PAID')
+        AND a.system_key <> 'INVENTORY_ASSET' ORDER BY b.issue_date DESC, b.rowid, bl.line_number`)
+      .all(req.ctx.workspaceId);
+    res.page('purchasing/landed-costs', { title: `Landed cost · ${order.poNumber}`, nav: 'purchasing', room: true,
+      order, receipts, sourceLines, documents: landedCosts.listForPurchaseOrder(req.db, req.ctx.workspaceId, order.id),
+      permissions: can(req) });
+  })
+);
+
+router.post(
+  '/purchasing/orders/:id/landed-costs',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.ALLOCATE_LANDED_COST, 'prepare landed-cost allocations');
+    guard(req, permissions.MANAGE_ACCOUNTING, 'prepare landed-cost allocations');
+    const order = poService.get(req.db, req.ctx.workspaceId, req.params.id);
+    const receiptIds = Array.isArray(req.body.receiptIds) ? req.body.receiptIds : [req.body.receiptIds].filter(Boolean);
+    const amountMinor = Math.round(Number(req.body.amount) * 100);
+    const created = landedCosts.createDraft(req.db, req.ctx, req.user, {
+      purchaseOrderId: order.id, receiptIds, allocationMethod: req.body.allocationMethod,
+      note: trimOrNull(req.body.note), charges: [{ category: req.body.category, description: req.body.description,
+        amountMinor, sourceBillLineId: req.body.sourceBillLineId, sourceEvidence: 'owner-selected supplier bill line' }],
+    });
+    req.flash('success', 'Foundry prepared the landed-cost allocation. Review the exact split before approving it.');
+    return res.redirect(303, `/purchasing/orders/${order.id}/landed-costs/${created.document.id}`);
+  })
+);
+
+router.get(
+  '/purchasing/orders/:id/landed-costs/:documentId',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.VIEW_PURCHASING, 'see purchasing');
+    const order = poService.get(req.db, req.ctx.workspaceId, req.params.id);
+    const document = landedCosts.document(req.db, req.ctx.workspaceId, req.params.documentId);
+    if (document.purchase_order_id !== order.id) throw new ValidationError('That landed-cost document belongs to a different purchase order.');
+    const preview = ['DRAFT', 'APPROVED'].includes(document.status)
+      ? landedCosts.preview(req.db, req.ctx.workspaceId, document.id) : null;
+    res.page('purchasing/landed-cost-detail', { title: `${document.document_number} · landed cost`, nav: 'purchasing', room: true,
+      order, document, preview, permissions: can(req) });
+  })
+);
+
+router.post(
+  '/purchasing/orders/:id/landed-costs/:documentId/approve',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.ALLOCATE_LANDED_COST, 'approve landed-cost allocations');
+    const document = landedCosts.document(req.db, req.ctx.workspaceId, req.params.documentId);
+    landedCosts.approve(req.db, req.ctx, req.user, document.id);
+    req.flash('success', 'Allocation approved. Apply it when you are ready to capitalise the evidenced cost.');
+    return res.redirect(303, `/purchasing/orders/${req.params.id}/landed-costs/${document.id}`);
+  })
+);
+
+router.post(
+  '/purchasing/orders/:id/landed-costs/:documentId/apply',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.ALLOCATE_LANDED_COST, 'apply landed-cost allocations');
+    const document = landedCosts.document(req.db, req.ctx.workspaceId, req.params.documentId);
+    landedCosts.apply(req.db, req.ctx, req.user, document.id);
+    req.flash('success', 'Foundry capitalised the evidenced landed cost and updated future product cost.');
+    return res.redirect(303, `/purchasing/orders/${req.params.id}/landed-costs/${document.id}`);
+  })
+);
+
 router.get(
   '/purchasing',
   asyncRoute(async (req, res) => {
     guard(req, permissions.VIEW_PURCHASING, 'see purchasing');
-    const plan = replenishment.evaluateWorkspace(req.db, req.ctx.workspaceId);
+    const evaluated = replenishment.evaluateWorkspace(req.db, req.ctx.workspaceId);
+    const plan = {
+      ...evaluated,
+      bySupplier: evaluated.bySupplier.map((group) => ({
+        ...group,
+        activePlans: activePlansForGroup(req.db, req.ctx.workspaceId, group),
+      })),
+    };
 
     let ahead = { shortages: [], purchases: [] };
     try {
@@ -88,6 +188,14 @@ router.get(
     res.page('purchasing/plan', {
       title: 'Purchasing',
       nav: 'purchasing',
+      // This page already renders the one actionable recommendation in its
+      // own context. A workspace-wide setup suggestion in the shell can name
+      // a different product while the badge counts the replenishment decision,
+      // making one banner appear to describe two unrelated "needs you" items.
+      screenGuide: {
+        description: 'See what stock needs replenishing, why, and the one decision that moves it forward.',
+        next: null,
+      },
       plan,
       ahead,
       open: position.openOrders(req.db, req.ctx.workspaceId),
@@ -254,6 +362,19 @@ router.post(
       return res.redirect('/purchasing');
     }
 
+    const activePlans = activePlansForGroup(req.db, req.ctx.workspaceId, group);
+    if (activePlans.length) {
+      req.flash(
+        'info',
+        activePlans.length === 1
+          ? 'Foundry already prepared this as one decision. Review that decision so the same supplier order is not created twice.'
+          : 'Foundry already prepared these recommendations as decisions. Review them in Needs You so no supplier order is created twice.'
+      );
+      return res.redirect(activePlans.length === 1
+        ? `/autopilot/work/${activePlans[0].id}`
+        : '/needs-you');
+    }
+
     const order = poService.createOrder(req.db, req.ctx, req.user, {
       supplierId: group.supplierId,
       source: 'foundry_recommendation',
@@ -355,8 +476,9 @@ router.get(
     guard(req, permissions.VIEW_PURCHASING, 'see purchasing');
     const status = req.query.status && poService.STATUS[req.query.status] ? req.query.status : null;
     res.page('purchasing/orders', {
-      title: 'Purchase orders',
+      title: 'Purchases',
       nav: 'purchasing',
+      room: true,
       orders: poService.list(req.db, req.ctx.workspaceId, { status }),
       status,
       statuses: Object.keys(poService.STATUS),
@@ -442,9 +564,15 @@ router.post(
 );
 
 router.get(
-  '/purchasing/orders/:id',
+  ['/purchasing/orders/:id', '/purchasing/orders/:id/detail'],
   asyncRoute(async (req, res) => {
     guard(req, permissions.VIEW_PURCHASING, 'see purchasing');
+    /*
+     * The story is the page; the working detail keeps its address with
+     * /detail on the end. Same arrangement as a customer order, because they
+     * are the same kind of thing.
+     */
+    const wantsDetail = req.path.endsWith('/detail');
     const order = poService.get(req.db, req.ctx.workspaceId, req.params.id);
     const communications = supplierCommunications.forOrder(req.db, req.ctx.workspaceId, order.id)
       .map((communication) => {
@@ -474,9 +602,35 @@ router.get(
       owedMinor: approvedBills.reduce((sum, bill) => sum + Number(bill.balance_minor), 0),
       needsReview: supplierBills.some((bill) => ['DRAFT', 'DISPUTED'].includes(bill.status)),
     };
-    res.page('purchasing/order', {
-      title: `${order.poNumber} · ${order.supplierName}`,
+    const poEvents = poService.eventsFor(req.db, req.ctx.workspaceId, order.id);
+    const poReceipts = receiving.receiptsFor(req.db, req.ctx.workspaceId, order.id);
+    const landedCostDocuments = landedCosts.listForPurchaseOrder(req.db, req.ctx.workspaceId, order.id);
+    res.page(wantsDetail ? 'purchasing/order' : 'purchasing/story', {
+      title: wantsDetail
+        ? `${order.poNumber} · ${order.supplierName}`
+        : `${order.supplierName} · ${order.poNumber}`,
       nav: 'purchasing',
+      room: !wantsDetail,
+      // This record already derives its next step from its own delivery,
+      // invoice, and payment state. A workspace-wide setup suggestion here
+      // competes with the purchase and falsely reads as an instruction about
+      // this PO (for example, adding a supplier for an unrelated product).
+      screenGuide: null,
+      /*
+       * Need, supplier choice, the email that carried the order, the
+       * acknowledgement, the delivery, the invoice and the payment, as one
+       * story — built from what this page already read.
+       */
+      story: wantsDetail ? null : require('../story').purchaseOrder(req.db, req.ctx.workspaceId, order, {
+        events: poEvents,
+        receipts: poReceipts,
+        communications,
+        supplierBills,
+      }),
+      evidenceTrace: wantsDetail ? null : require('../../provenance/presenter').purchaseOrderStory(
+        req.db, req.ctx.workspaceId, order, {
+          receipts: poReceipts, supplierBills, billSummary,
+        }, { membership: req.user }),
       order,
       /*
        * Freight, duty and the rest, as the supplier stated them. Read here
@@ -492,8 +646,8 @@ router.get(
           .get(req.ctx.workspaceId, order.id);
         try { return doc ? JSON.parse(doc.result).documentTotalMinor ?? null : null; } catch { return null; }
       })(),
-      events: poService.eventsFor(req.db, req.ctx.workspaceId, order.id),
-      receipts: receiving.receiptsFor(req.db, req.ctx.workspaceId, order.id),
+      events: poEvents,
+      receipts: poReceipts,
       locations: locations(req.db, req.ctx.workspaceId),
       permissions: can(req),
       expectedInFuture: Boolean(order.expectedDate && order.expectedDate > localDateKey()),
@@ -501,6 +655,7 @@ router.get(
       supplierDocuments: require('../../purchasing/supplier-evidence').forOrder(req.db, req.ctx.workspaceId, order.id),
       supplierBills,
       billSummary,
+      landedCostDocuments,
     });
   })
 );
@@ -606,6 +761,10 @@ router.get(
     res.page('purchasing/receive-pick', {
       title: 'Book in a delivery',
       nav: 'purchasing',
+      screenGuide: {
+        description: 'Choose the purchase order for the goods that physically arrived. Foundry will use its outstanding lines and destinations.',
+        next: null,
+      },
       orders: matched.length ? matched : all,
       supplierName,
       noMatch: Boolean(supplierName) && matched.length === 0,
@@ -701,6 +860,10 @@ router.get(
     return res.page('purchasing/receive', {
       title: `Receive ${order.poNumber}`,
       nav: 'purchasing',
+      screenGuide: {
+        description: `Record only what physically arrived for ${order.poNumber}. This updates stock; it does not create or pay a supplier bill.`,
+        next: null,
+      },
       order,
       lines,
       locations: locations(req.db, req.ctx.workspaceId),
@@ -780,6 +943,10 @@ router.post(
       return res.page('purchasing/receive', {
         title: `Receive ${order.poNumber}`,
         nav: 'purchasing',
+        screenGuide: {
+          description: `Record only what physically arrived for ${order.poNumber}. This updates stock; it does not create or pay a supplier bill.`,
+          next: null,
+        },
         order,
         lines: outstanding,
         locations: locations(req.db, req.ctx.workspaceId),
@@ -836,6 +1003,8 @@ router.get(
       // The list page says what it is; so should the supplier's own page.
       screenDescription: 'Set up one supplier: what they sell you, where orders go, and what Foundry may send them.',
       supplier,
+      // So the page can promise the right thing before anybody presses it.
+      usage: supplierService.supplierUsage(req.db, req.ctx.workspaceId, supplier.id),
       items: supplierService.itemsForSupplier(req.db, req.ctx.workspaceId, supplier.id, { includeInactive: true }),
       orders: poService.list(req.db, req.ctx.workspaceId, { supplierId: supplier.id, limit: 10 }),
       mailboxConnections: req.db.prepare(`SELECT id, display_name, provider_type, status, last_synced_at
@@ -878,6 +1047,40 @@ router.post(
     react(req, managerEvents.TYPES.SUPPLIER_UPDATED, { supplierId: req.params.id, change: 'terms_updated' });
     req.flash('success', 'Saved.');
     return res.redirect(`/suppliers/${req.params.id}`);
+  })
+);
+
+/*
+ * Retiring a supplier, and bringing one back.
+ *
+ * Archive rather than delete: purchase orders, bills and price history point at
+ * this record. The service refuses while a purchase order is still open.
+ */
+router.post(
+  '/suppliers/:id/archive',
+  asyncRoute(async (req, res) => {
+    guard(req, permissions.MANAGE_SUPPLIERS, 'manage suppliers');
+    const restore = req.body.restore === '1';
+    try {
+      if (restore) {
+        const supplier = supplierService.setSupplierActive(req.db, req.ctx, req.params.id, true);
+        req.flash('success', `${supplier.name} is active again.`);
+        return res.redirect(303, `/suppliers/${req.params.id}`);
+      }
+      const result = supplierService.removeSupplier(req.db, req.ctx, req.params.id);
+      if (result.deleted) {
+        req.flash('success', `${result.supplier.name} was deleted. Nothing referred to them.`);
+        return res.redirect(303, '/suppliers');
+      }
+      const kept = result.usage.used.map((u) => `${u.count} ${u.label}`).join(', ');
+      req.flash('success',
+        `${result.supplier.name} was archived rather than deleted, because ${kept} still refer to them. `
+        + 'They will not appear when you buy something.');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    return res.redirect(303, `/suppliers/${req.params.id}`);
   })
 );
 

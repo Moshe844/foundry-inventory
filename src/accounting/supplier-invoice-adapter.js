@@ -9,6 +9,7 @@
 const ledger = require('./ledger');
 const payables = require('./payables');
 const authService = require('../domain/auth-service');
+const landedCostProposal = require('../foundry/landed-cost-proposal');
 
 function captureMatchedInvoice(db, message, document, matched) {
   const configured = ledger.settings(db, message.workspace_id);
@@ -43,14 +44,30 @@ function captureMatchedInvoice(db, message, document, matched) {
     evidenceMessageId: message.id, evidenceDocumentId: document.id,
     sourceKey: `supplier-document:${document.id}`,
     notes: 'Created from trusted supplier email evidence. No physical stock was received by this invoice.',
-    lines: matched.map(({ proposed, line, quantity, unitPrice }) => ({
+    lines: [
+      ...matched.map(({ proposed, line, quantity, unitPrice }) => ({
       description: proposed.description || line.description || line.sku_code,
       quantity, unitCostMinor: Math.round(Number(unitPrice) * 100),
       itemId: line.item_id, skuId: line.sku_id, purchaseOrderLineId: line.id,
-    })),
+      })),
+      // A separately stated delivery charge is a real payable line, not a
+      // pretend PO product. It is eligible for landed cost only after the
+      // evidence service below proves the bill line and a physical receipt.
+      ...(facts.charges || []).map((charge) => ({
+        description: charge.label, quantity: 1, unitCostMinor: Math.round(Number(charge.amount) * 100),
+      })),
+    ],
   });
   const bill = payables.open(db, ctx, membership, draft.bill.id);
-  return { status: bill.status, billId: bill.id, matchStatus: bill.match_status, replayed: draft.replayed };
+  const charges = (facts.charges || []).map((charge) => ({
+    kind: charge.kind, label: charge.label, amountMinor: Math.round(Number(charge.amount) * 100),
+  }));
+  const proposal = charges.length ? landedCostProposal.propose(db, ctx, membership, {
+    interpretation: { documentNumber: document.document_reference || facts.invoiceNumber, charges },
+    bill, purchaseOrder: { id: document.purchase_order_id }, sourceDocumentId: document.id,
+  }) : null;
+  return { status: bill.status, billId: bill.id, matchStatus: bill.match_status, replayed: draft.replayed,
+    landedCostProposal: proposal };
 }
 
 module.exports = { captureMatchedInvoice };

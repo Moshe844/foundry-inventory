@@ -19,6 +19,7 @@ const authService = require('../../src/domain/auth-service');
 const attention = require('../../src/attention/attention-engine');
 const proposals = require('../../src/actions/proposal-service');
 const execution = require('../../src/actions/execution-service');
+const transferService = require('../../src/transfers/transfer-service');
 const actionService = require('../../src/actions/action-service');
 const intentService = require('../../src/actions/intent-service');
 const managerIntentRouter = require('../../src/manager/intent-router');
@@ -101,8 +102,57 @@ test('explicit receive and physical-count instructions do not wait on an AI prov
     env.db, env.ctx, env.membership,
     'Order 500 more Navy Oxford Navy 4 from our supplier'
   );
-  assert.equal(unsupportedPurchase.kind, 'unsupported');
-  assert.match(unsupportedPurchase.message, /supplier/i);
+  assert.equal(unsupportedPurchase.kind, 'question');
+  assert.match(unsupportedPurchase.question, /supplier/i);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM suppliers').get().n, 0);
+});
+
+test('a named missing supplier can be added once and the same purchase request continues to a draft PO', async () => {
+  const env = setup();
+  const item = makeQuantityItem(env.db, env.ctx, { name: 'Sol shoes', baseCode: 'SOL' });
+  const parsedIntent = {
+    lines: [intentService.normaliseLine(intent({
+      actionType: 'purchase', item: 'Sol shoes', variant: '', quantity: 2,
+      sourceLocation: '', destinationLocation: '', supplier: 'ABC Footwear', purchaseUnit: '',
+    }))],
+    clarifyingQuestion: '',
+    unsupportedReason: '',
+  };
+
+  const confirmation = await actionService.interpret(
+    env.db, env.ctx, env.membership,
+    'Create a PO from ABC Footwear for 2 sol shoes at $10 each',
+    { parsedIntent }
+  );
+  assert.equal(confirmation.kind, 'question', JSON.stringify(confirmation));
+  assert.match(confirmation.question, /ABC Footwear is not in your suppliers yet/i);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM suppliers').get().n, 0,
+    'the supplier must not be silently created');
+
+  const drafted = await actionService.continueInterpretation(
+    env.db, env.ctx, env.membership, confirmation.continuation, '__create_purchase_supplier__'
+  );
+  assert.equal(drafted.kind, 'purchase_order', JSON.stringify(drafted));
+  assert.equal(drafted.approvedByConfirmation, true,
+    'the supplier confirmation is also the one-off approval for this exact order');
+  assert.equal(drafted.order.status, 'DRAFT');
+  assert.equal(drafted.order.supplierName, 'ABC Footwear');
+  assert.equal(drafted.order.lines[0].skuId, item.skuId);
+  assert.equal(drafted.order.lines[0].quantityUnits, 2);
+  assert.equal(drafted.order.lines[0].unitCost, 10,
+    'Foundry must preserve the supplier price the owner stated');
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM suppliers').get().n, 1);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM purchase_orders').get().n, 1);
+
+  const relationship = env.db.prepare(
+    `SELECT supplier_sku, purchase_unit, units_per_purchase_unit, last_unit_cost
+       FROM supplier_items WHERE workspace_id = ? AND sku_id = ?`
+  ).get(env.workspace.workspaceId, item.skuId);
+  assert.equal(relationship.supplier_sku, null);
+  assert.equal(relationship.purchase_unit, 'unit');
+  assert.equal(relationship.units_per_purchase_unit, 1);
+  assert.equal(relationship.last_unit_cost, 10,
+    'the explicitly stated price becomes the new supplier relationship cost');
 });
 
 test('an explicit coded catalogue list is complete without depending on provider formatting', async () => {
@@ -239,6 +289,25 @@ function run(env, proposal) {
   return execution.execute(env.db, env.ctx, env.membership, proposal.proposalId);
 }
 
+function completePreparedTransfer(env, result) {
+  let transfer = transferService.get(env.db, env.workspace.workspaceId, result.transferId);
+  if (transfer.status === 'REQUESTED') transfer = transferService.approve(env.db, env.ctx, env.membership, transfer.id);
+  transfer = transferService.pick(env.db, env.ctx, env.membership, transfer.id);
+  transfer = transferService.dispatch(env.db, env.ctx, env.membership, transfer.id,
+    { idempotencyKey: `test-dispatch:${transfer.id}` });
+  return transferService.receive(env.db, env.ctx, env.membership, transfer.id, {
+    idempotencyKey: `test-receipt:${transfer.id}`,
+    lines: transfer.lines.map((line) => ({
+      lineId: line.id,
+      received: line.in_transit_quantity,
+      lost: 0,
+      damaged: 0,
+      receivedSerialUnitIds: line.serials.filter((serial) => serial.state === 'IN_TRANSIT')
+        .map((serial) => serial.serial_unit_id),
+    })),
+  });
+}
+
 // --- the preview -------------------------------------------------------------
 
 test('a transfer proposal shows real before and after figures', () => {
@@ -249,7 +318,7 @@ test('a transfer proposal shows real before and after figures', () => {
   assert.equal(view.subjectName, "Children's Sweater / Navy / 4");
   assert.deepEqual(
     view.rows.map((r) => [r.label, r.before, r.after]),
-    [['Main Warehouse', 48, 33], ['Downtown Store', 4, 19]]
+    [['Main Warehouse', 48, 48], ['Downtown Store', 4, 4]]
   );
   assert.deepEqual(view.total, { before: 52, after: 52 });
   assert.equal(view.totalChanges, false, 'a transfer never changes how much you have');
@@ -331,31 +400,32 @@ test('an exact imported item code misread as a lot resolves its only variant', (
 
 // --- execution and verification ----------------------------------------------
 
-test('an approved transfer runs through the engine and is verified', () => {
+test('an approved action prepares a verified transfer without inventing physical movement', () => {
   const env = clothing();
   const proposal = propose(env);
   const result = run(env, proposal);
 
   assert.equal(result.status, 'SUCCEEDED');
   assert.equal(result.verified, true, JSON.stringify(result.verification.problems));
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 33);
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 19);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 48);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 4);
   assert.equal(repo.getSkuTotal(env.db, env.workspace.workspaceId, env.navy4.id), 52, 'total unchanged');
   assert.equal(engine.verifyIntegrity(env.db, env.workspace.workspaceId).ok, true);
 
-  // The movement ledger has it, attributed to a real person.
+  // Approval creates a custody document, not fictional warehouse movements.
   const movements = env.db
     .prepare("SELECT * FROM movements WHERE workspace_id = ? AND operation = 'transfer'")
     .all(env.workspace.workspaceId);
-  assert.equal(movements.length, 2, 'both legs');
-  assert.equal(movements[0].group_id, movements[1].group_id);
-  for (const movement of movements) assert.equal(movement.actor_user_id, env.workspace.ownerId);
+  assert.equal(movements.length, 0);
+  const transfer = transferService.get(env.db, env.workspace.workspaceId, result.transferId);
+  assert.equal(transfer.status, 'APPROVED');
+  assert.equal(transfer.totals.requested, 15);
 
   const verification = env.db
     .prepare('SELECT * FROM action_verifications WHERE execution_id = ?')
     .get(result.executionId);
   assert.equal(verification.verified, 1);
-  assert.ok(JSON.parse(verification.checks).some((c) => c.label === 'Total unchanged' && c.passed));
+  assert.ok(JSON.parse(verification.checks).some((c) => c.label === 'Transfer document created' && c.passed));
 });
 
 test('a receive is verified against the new balance', () => {
@@ -440,6 +510,7 @@ test('a serialized unit moves as itself and ends up in exactly one place', () =>
 
   const result = run(env, proposal);
   assert.equal(result.verified, true, JSON.stringify(result.verification.problems));
+  completePreparedTransfer(env, result);
 
   const units = unitsFor(env.db, env.workspace.workspaceId, item.skuId);
   const moved = units.find((u) => u.serial === 'DL-829193');
@@ -510,6 +581,7 @@ test('a named lot moves as that lot, not as generic stock', () => {
 
   const result = run(env, proposal);
   assert.equal(result.verified, true, JSON.stringify(result.verification.problems));
+  completePreparedTransfer(env, result);
 
   const lotAt = (lotId, locationId) =>
     env.db.prepare('SELECT quantity FROM lot_balances WHERE lot_id = ? AND location_id = ?').get(lotId, locationId);
@@ -538,14 +610,16 @@ test('executing the same approved action twice moves stock once', () => {
   assert.equal(second.executionId, first.executionId);
   assert.deepEqual(second.after, first.after);
 
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 33);
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 19);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 48);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 4);
   assert.equal(
     env.db.prepare("SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ? AND operation = 'transfer'")
       .get(env.workspace.workspaceId).n,
-    2,
-    'one transfer, two legs — not four'
+    0,
+    'preparing a transfer does not record either physical leg'
   );
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM inventory_transfers WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 1, 'the action is idempotent at the transfer-document boundary');
   assert.equal(
     env.db.prepare('SELECT COUNT(*) AS n FROM action_executions WHERE workspace_id = ?')
       .get(env.workspace.workspaceId).n,
@@ -644,8 +718,9 @@ test('changing the quantity supersedes rather than edits, and needs approving ag
 
   const result = run(env, revised);
   assert.equal(result.verified, true);
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 16);
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 36);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 4);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 48);
+  assert.equal(transferService.get(env.db, env.workspace.workspaceId, result.transferId).totals.requested, 12);
 });
 
 // --- warnings ----------------------------------------------------------------
@@ -692,7 +767,9 @@ test('permissions are per membership and enforced on the server', () => {
   assert.deepEqual(permissions.permissionsFor(env.membership), permissions.ALL);
   // Staff handle stock, and from Mission 6 can see purchasing and book in what
   // arrives — but cannot commit the business to an order.
-  assert.deepEqual(permissions.permissionsFor(staff), ['VIEW', 'OPERATE', 'VIEW_PURCHASING', 'RECEIVE_PO']);
+  assert.deepEqual(permissions.permissionsFor(staff), ['VIEW', 'OPERATE', 'VIEW_PURCHASING', 'RECEIVE_PO',
+    'VIEW_TRANSFERS', 'REQUEST_TRANSFER', 'PICK_TRANSFER', 'DISPATCH_TRANSFER', 'RECEIVE_TRANSFER',
+    'COUNT_STOCK', 'INSPECT_CUSTOMER_RETURN', 'SHIP_SUPPLIER_RETURN', 'MANAGE_FULFILLMENT_WAVES']);
   for (const withheld of ['ADJUST', 'ADMIN', 'CREATE_PO', 'APPROVE_PO', 'MANAGE_SUPPLIERS', 'MANAGE_REPLENISHMENT']) {
     assert.equal(permissions.can(staff, withheld), false, `staff should not hold ${withheld}`);
   }
@@ -745,8 +822,10 @@ test('several lines run together, and all of them land', () => {
   const result = execution.executePlan(env.db, env.ctx, env.membership, plan.planId);
 
   assert.equal(result.verified, true);
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 14);
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy5.id, env.workspace.store.id), 8);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 4);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy5.id, env.workspace.store.id), 0);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM inventory_transfers WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 2);
 });
 
 test('a plan is all or nothing: one bad line leaves the inventory untouched', () => {
@@ -784,7 +863,9 @@ test('a plan executes once, however many times it is asked', () => {
   const second = execution.executePlan(env.db, env.ctx, env.membership, plan.planId);
   assert.equal(first.replayed, false);
   assert.equal(second.replayed, true);
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 9);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 4);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM inventory_transfers WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 2);
 });
 
 // --- from a finding ----------------------------------------------------------
@@ -840,6 +921,8 @@ test('carrying out the transfer resolves the finding it came from', () => {
   const result = execution.execute(db, workspace.ctx, membership, proposal.proposalId);
   assert.equal(result.verified, true);
 
+  completePreparedTransfer({ db, workspace, membership, ctx: workspace.ctx }, result);
+
   const after = attention.getAttention(db, workspace.workspaceId, finding.attentionId);
   assert.equal(after.status, 'RESOLVED', 'the condition no longer holds');
   assert.ok(after.resolutionReason);
@@ -876,27 +959,19 @@ test('“do it” with nothing pending says so rather than guessing', async () =
 
 // --- undo --------------------------------------------------------------------
 
-test('undo is a new movement the other way, never a deletion', () => {
+test('a prepared transfer is cancelled rather than reversed as fictional movement', () => {
   const env = clothing();
   const proposal = propose(env);
   run(env, proposal);
 
-  const before = env.db.prepare('SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ?')
-    .get(env.workspace.workspaceId).n;
-
   const reversal = actionService.proposeCompensation(env.db, env.ctx, env.membership, proposal.proposalId);
-  assert.equal(reversal.kind, 'proposal');
-  assert.equal(reversal.proposal.sourceType, 'COMPENSATION');
-  assert.equal(reversal.proposal.sourceLocationId, env.workspace.store.id);
-  assert.equal(reversal.proposal.destinationLocationId, env.workspace.main.id);
-
-  run(env, reversal.proposal);
+  assert.equal(reversal.kind, 'question');
+  assert.match(reversal.question, /only 4 at Downtown Store/i);
+  const transfer = transferService.list(env.db, env.workspace.workspaceId)[0];
+  transferService.cancel(env.db, env.ctx, env.membership, transfer.id, { reason: 'No longer required' });
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 48);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 4);
-
-  const after = env.db.prepare('SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ?')
-    .get(env.workspace.workspaceId).n;
-  assert.equal(after, before + 2, 'the original movements are still there');
+  assert.equal(transferService.get(env.db, env.workspace.workspaceId, transfer.id).status, 'CANCELLED');
 });
 
 test('a correction cannot be silently undone', () => {
@@ -1025,13 +1100,12 @@ test('the whole story of an action is answerable afterwards', () => {
   assert.deepEqual(final.expectedBeforeState.sourceOnHand, 48);
 
   const stored = events.find((e) => e.event === 'SUCCEEDED');
-  assert.equal(stored.detail.after.sourceOnHand, 33);
+  assert.equal(stored.detail.after.sourceOnHand, 48);
 
   // And the ledger says Foundry was involved.
-  const movement = env.db
-    .prepare("SELECT * FROM movements WHERE workspace_id = ? AND operation = 'transfer' LIMIT 1")
-    .get(env.workspace.workspaceId);
-  assert.match(movement.reference, new RegExp(proposal.proposalId));
+  const transfer = transferService.get(env.db, env.workspace.workspaceId, result.transferId);
+  assert.equal(transfer.status, 'APPROVED');
+  assert.equal(transfer.totals.requested, 15);
 });
 
 // --- other business shapes ---------------------------------------------------
@@ -1055,6 +1129,7 @@ test('a food distributor moves quantity from a named lot only', () => {
   assert.ok(built.ok, built.question);
   const result = run(env, proposals.persist(env.db, env.ctx, built.proposal, {}));
   assert.equal(result.verified, true, JSON.stringify(result.verification.problems));
+  completePreparedTransfer(env, result);
 
   const at = (lotId, locationId) =>
     (env.db.prepare('SELECT quantity FROM lot_balances WHERE lot_id = ? AND location_id = ?')
@@ -1080,6 +1155,7 @@ test('a school moves one named laptop, and only that one', () => {
   }));
   const result = run(env, proposals.persist(env.db, env.ctx, built.proposal, {}));
   assert.equal(result.verified, true);
+  completePreparedTransfer(env, result);
 
   const units = unitsFor(env.db, env.workspace.workspaceId, item.skuId);
   assert.equal(units.find((u) => u.serial === 'NG-0002').location_id, env.workspace.store.id);
@@ -1193,7 +1269,7 @@ test('stock that exists nowhere is a statement, not a question', () => {
   assert.match(built.unsupported, /Receive some before moving any/);
 });
 
-test('stock in two places asks which, and says what is in each', () => {
+test('a named transfer destination is never offered as its own source', () => {
   const env = setup();
   const item = makeQuantityItem(env.db, env.ctx, { name: 'Cherry', baseCode: 'CHE-1' });
   engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 3 });
@@ -1203,15 +1279,44 @@ test('stock in two places asks which, and says what is in each', () => {
     item: 'Cherry', variant: '', quantity: null,
     sourceLocation: '', destinationLocation: 'Downtown Store',
   }));
+  assert.ok(built.ok, built.question || built.unsupported);
+  assert.equal(built.proposal.sourceLocationId, env.workspace.main.id);
+  assert.equal(built.proposal.destinationLocationId, env.workspace.store.id);
+  assert.match(built.proposal.assumptions.join(' '), /Main Warehouse/);
+});
+
+test('a transfer only at its named destination explains the real issue', () => {
+  const env = setup();
+  const item = makeQuantityItem(env.db, env.ctx, { name: 'Cherry', baseCode: 'CHE-1' });
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.store.id, quantity: 9 });
+
+  const built = proposals.build(env.db, env.ctx, intent({
+    item: 'Cherry', variant: '', quantity: 2,
+    sourceLocation: '', destinationLocation: 'Downtown Store',
+  }));
+  assert.equal(built.ok, false);
+  assert.match(built.unsupported, /already the destination/);
+  assert.equal(built.question, null);
+});
+
+test('stock in two eligible source locations asks which, excluding the destination', () => {
+  const env = setup();
+  const locationService = require('../../src/domain/location-service');
+  const overflow = locationService.createLocation(env.db, env.ctx, { name: 'Overflow', kind: 'warehouse' });
+  const item = makeQuantityItem(env.db, env.ctx, { name: 'Cherry', baseCode: 'CHE-1' });
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 3 });
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: overflow.id, quantity: 9 });
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.store.id, quantity: 4 });
+
+  const built = proposals.build(env.db, env.ctx, intent({
+    item: 'Cherry', variant: '', quantity: 2,
+    sourceLocation: '', destinationLocation: 'Downtown Store',
+  }));
   assert.equal(built.ok, false);
   assert.match(built.question, /Main Warehouse \(3\)/);
-  assert.match(built.question, /Downtown Store \(9\)/);
-  assert.match(built.question, /Which should it come out of/);
-  assert.equal(built.clarification.dimension, 'source_location');
-  assert.deepEqual(
-    built.choices.map((choice) => choice.value),
-    ['Downtown Store', 'Main Warehouse']
-  );
+  assert.match(built.question, /Overflow \(9\)/);
+  assert.doesNotMatch(built.question, /Downtown Store/);
+  assert.deepEqual(built.choices.map((choice) => choice.value), ['Overflow', 'Main Warehouse']);
 });
 
 test('a correction can start from nothing, because finding stock is real', () => {
@@ -1389,6 +1494,7 @@ test('a corrected spelling still executes against the right records', () => {
   const result = run(env, proposals.persist(env.db, env.ctx, built.proposal, {}));
 
   assert.equal(result.verified, true, JSON.stringify(result.verification.problems));
+  completePreparedTransfer(env, result);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, item.skuId, monroe.id), 4);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, item.skuId, env.workspace.main.id), 6);
 });
@@ -1516,7 +1622,7 @@ test('when every batch has expired, the question says so rather than suggesting 
   assert.doesNotMatch(built.question, /the earliest to expire of the ones still good/);
 });
 
-test('a lot-tracked transfer Foundry proposed actually executes', () => {
+test('a lot-tracked transfer Foundry proposed preserves the exact lot in a real transfer document', () => {
   const { db } = makeDatabase();
   const w = seedWorkspace(db);
   const membership = authService.getMembership(db, w.workspaceId, w.accountId);
@@ -1535,8 +1641,13 @@ test('a lot-tracked transfer Foundry proposed actually executes', () => {
   const done = execution.execute(db, w.ctx, membership, saved.proposalId);
 
   assert.equal(done.status, 'SUCCEEDED', done.errorMessage || '');
-  assert.equal(repo.getBalance(db, w.workspaceId, lot.skuId, w.store.id), 10);
-  assert.equal(repo.getBalance(db, w.workspaceId, lot.skuId, w.main.id), 30);
+  assert.equal(repo.getBalance(db, w.workspaceId, lot.skuId, w.store.id), 0);
+  assert.equal(repo.getBalance(db, w.workspaceId, lot.skuId, w.main.id), 40);
+  const line = db.prepare(`SELECT tl.*, t.status FROM inventory_transfer_lines tl
+    JOIN inventory_transfers t ON t.id = tl.transfer_id WHERE tl.workspace_id = ?`).get(w.workspaceId);
+  assert.equal(line.requested_quantity, 10);
+  assert.equal(line.lot_id, built.proposal.lotId);
+  assert.equal(line.status, 'APPROVED');
 });
 
 // --- questions with no answer (reported from the console) --------------------

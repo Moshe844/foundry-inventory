@@ -369,3 +369,20 @@ CREATE TABLE IF NOT EXISTS catalog_code_change_proposals (
 );
 CREATE INDEX IF NOT EXISTS idx_catalog_code_changes_workspace
   ON catalog_code_change_proposals(workspace_id, created_at DESC);
+
+-- A person can decide that a valid operational prompt is not something they
+-- want Foundry to keep pursuing.  This is intentionally separate from the
+-- underlying record: dismissing a missing-email prompt, for example, must not
+-- delete the supplier or cancel its order.  The inbox reads this durable,
+-- workspace-scoped decision everywhere it is presented (home, Brief and
+-- Needs You), so a refresh or restart cannot make a dismissed card return.
+CREATE TABLE IF NOT EXISTS needs_you_dismissals (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  entry_id              TEXT NOT NULL,
+  dismissed_by_user_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  dismissed_at          TEXT NOT NULL,
+  UNIQUE(workspace_id, entry_id)
+);
+CREATE INDEX IF NOT EXISTS idx_needs_you_dismissals_workspace
+  ON needs_you_dismissals(workspace_id, entry_id);

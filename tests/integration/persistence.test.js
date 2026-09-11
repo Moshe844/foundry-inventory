@@ -162,8 +162,13 @@ test('a restarted application serves the same numbers to the browser', async () 
   assert.match(item, /Main Warehouse/);
   assert.match(item, /Adjusted Copper Elbow at Main Warehouse from 75 to 72\./);
 
-  const overview = plain((await agent.get('/')).text);
-  assert.match(overview, /Units on hand/);
+  /*
+   * The brief is a briefing, not a counter, so the stock figure it used to
+   * print lives one click away on what you hold — which is where the same
+   * number has to survive a restart.
+   */
+  const held = plain((await agent.get('/inventory')).text);
+  assert.match(held, /units on hand/i);
 
   const activity = plain((await agent.get('/activity')).text);
   assert.match(activity, /Transferred 25 × Copper Elbow from Main Warehouse to Downtown Store\./);

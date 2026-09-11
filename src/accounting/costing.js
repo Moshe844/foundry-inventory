@@ -204,11 +204,33 @@ function transfer(db, ctx, input) {
 
 function valuation(db, workspaceId) {
   const rows = allStates(db, workspaceId);
-  const totalCostMinor = rows.reduce((sum, row) => sum + Number(row.total_cost_minor), 0);
-  const totalUnits = rows.reduce((sum, row) => sum + Number(row.quantity_units), 0);
-  return { rows: rows.map((row) => ({ ...row,
+  let transitRows = []; let inTransitCostMinor = 0; let inTransitUnits = 0;
+  try {
+    transitRows = db.prepare(`SELECT tl.sku_id, NULL AS location_id,
+        (tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity) AS quantity_units,
+        CASE WHEN tl.shipped_quantity > 0 THEN ROUND(tl.dispatched_cost_minor *
+          (tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity)
+          / tl.shipped_quantity) ELSE 0 END AS total_cost_minor,
+        s.code, s.variant_label, i.name AS item_name,
+        ('In transit: ' || src.name || ' → ' || dst.name) AS location_name,
+        1 AS in_transit
+      FROM inventory_transfer_lines tl
+      JOIN inventory_transfers t ON t.id = tl.transfer_id
+      JOIN skus s ON s.id = tl.sku_id JOIN items i ON i.id = s.item_id
+      JOIN locations src ON src.id = t.source_location_id JOIN locations dst ON dst.id = t.destination_location_id
+      WHERE tl.workspace_id = ? AND t.status IN ('SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')
+        AND (tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity) > 0
+      ORDER BY i.name, s.code, t.created_at`).all(workspaceId);
+    inTransitCostMinor = transitRows.reduce((sum, row) => sum + Number(row.total_cost_minor), 0);
+    inTransitUnits = transitRows.reduce((sum, row) => sum + Number(row.quantity_units), 0);
+  } catch (error) {
+    if (!String(error.message || '').includes('no such table')) throw error;
+  }
+  const totalCostMinor = rows.reduce((sum, row) => sum + Number(row.total_cost_minor), 0) + inTransitCostMinor;
+  const totalUnits = rows.reduce((sum, row) => sum + Number(row.quantity_units), 0) + inTransitUnits;
+  return { rows: [...rows, ...transitRows].map((row) => ({ ...row,
     averageUnitCostMinor: row.quantity_units ? Number(row.total_cost_minor) / Number(row.quantity_units) : 0 })),
-  totalUnits, totalCostMinor };
+  totalUnits, totalCostMinor, inTransitUnits, inTransitCostMinor };
 }
 
 /** Changes evidenced inventory value without claiming that quantity moved. */

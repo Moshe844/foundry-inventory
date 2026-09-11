@@ -1,24 +1,4 @@
-/* Mission 8.5 — product clarity and first-run guidance */
 
-.nav-group-label {
-  margin: 15px 10px 5px;
-  color: var(--muted-soft);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: .09em;
-  text-transform: uppercase;
-}
-.nav-group-label:first-child { margin-top: 5px; }
-.nav-item__copy { display: flex; flex-direction: column; min-width: 0; line-height: 1.18; }
-.nav-item__copy small { margin-top: 2px; color: var(--muted); font-size: 10.5px; font-weight: 450; }
-.nav-item.is-active .nav-item__copy small { color: var(--accent-dark); opacity: .8; }
-
-.topbar-help {
-  display: inline-flex; align-items: center; gap: 6px;
-  color: var(--ink-soft); font-size: 12.5px; font-weight: 600;
-  padding: 7px 9px; border-radius: var(--radius-sm);
-}
-.topbar-help:hover { background: var(--surface); text-decoration: none; }
 
 .product-intro {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center;
@@ -400,14 +380,8 @@ body.is-paying { overflow: hidden; }
    and finding your place again. One link, top left, above whatever the page
    is — placed in the layout so a page opts in rather than growing its own.
    --------------------------------------------------------------------------- */
-.page-back {
-  display: inline-flex; align-items: center; gap: 6px;
-  margin: 0 0 14px; padding: 5px 10px 5px 8px;
-  border: 1px solid var(--line, #d5d8de); border-radius: 999px;
-  background: var(--surface, #fff); color: var(--ink-soft, #5b6472);
-  font-size: 12.5px; font-weight: 500; text-decoration: none;
-}
-.page-back:hover { color: var(--ink, #1d2430); border-color: var(--accent-line, #9db8f0); }
+/* The link itself is drawn in design.css, so every page leaves the same way.
+   A pill here made a way back look like an action to take. */
 .page-back-arrow { font-size: 14px; line-height: 1; }
 
 /* ---------------------------------------------------------------------------

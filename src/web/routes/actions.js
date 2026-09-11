@@ -24,6 +24,8 @@ const importPlans = require('../../imports/plan-service');
 const { requireAuth, asyncRoute } = require('../middleware');
 const actionHandoff = require('../action-handoff');
 const repo = require('../../domain/repository');
+const poService = require('../../purchasing/po-service');
+const supplierCommunications = require('../../purchasing/supplier-communications');
 const { trimOrNull } = require('../../lib/util');
 
 const router = express.Router();
@@ -219,6 +221,26 @@ router.post(
         line: result.line,
       };
       return res.redirect(303, '/actions/location-required');
+    }
+    if (result.kind === 'purchase_order' && result.order) {
+      settleEvent();
+      if (result.approvedByConfirmation) {
+        const order = poService.approve(req.db, req.ctx, membershipOf(req), result.order.id, {
+          expectedHash: result.order.integrityHash,
+        });
+        await supplierCommunications.dispatchAutomaticForOrder(req.db, req.ctx.workspaceId, order.id);
+        const messages = supplierCommunications.forOrder(req.db, req.ctx.workspaceId, order.id);
+        const sent = messages.some((message) => message.status === 'SENT');
+        const missingRecipient = messages.some((message) => !message.recipient);
+        req.flash('success', sent
+          ? `${order.poNumber} was approved and sent to ${order.supplierName}.`
+          : missingRecipient
+            ? `${order.poNumber} was approved. ${order.supplierName} has no email on file, so nothing was sent.`
+            : `${order.poNumber} was approved. Its supplier message is prepared but has not been sent.`);
+        return res.redirect(303, `/purchasing/orders/${order.id}`);
+      }
+      req.flash('success', `Foundry drafted ${result.order.poNumber}. Nothing is ordered and nobody is contacted until you approve it.`);
+      return res.redirect(303, `/purchasing/orders/${result.order.id}`);
     }
     const handedOn = actionHandoff.handOff(req, result);
     if (handedOn) {

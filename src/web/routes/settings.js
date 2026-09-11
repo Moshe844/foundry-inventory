@@ -18,6 +18,174 @@ router.get('/support', requireAuth, asyncRoute(async (req, res) => res.page('sup
   title: 'Help and support', nav: null, supportEmail: config.supportEmail,
 })));
 
+/*
+ * Settings is a transcript.
+ *
+ * Foundry is taught by talking to it, so what an owner needs is a readable
+ * record of what they already said, with the ability to change, pause or
+ * revoke any line of it — not a tree of forms. The forms still exist, at
+ * /settings and behind it; this is the page somebody actually arrives at
+ * asking "what have I told it, and has it used any of that?".
+ */
+router.get('/what-you-told-me', requireAuth, asyncRoute(async (req, res) => {
+  const safely = (fn, fallback) => { try { return fn(); } catch { return fallback; } };
+
+  const rules = safely(() => operatingInstructions.list(req.db, req.ctx.workspaceId), []);
+  const policies = safely(
+    () => require('../../autopilot/policy-service').list(req.db, req.ctx.workspaceId), []
+  );
+
+  const connections = safely(() => require('../../connections/service')
+    .list(req.db, req.ctx.workspaceId), [])
+    .map((row) => ({
+      id: row.id,
+      name: row.display_name || row.provider_type,
+      // What it is doing for the business, not what it is configured as.
+      doing: row.provides && row.provides.length
+        ? row.provides.join(', ').replaceAll('_', ' ')
+        : 'connected, and not carrying anything yet',
+      state: row.publicStatus === 'Connected' ? 'healthy'
+        : row.publicStatus === 'Needs attention' ? 'needs you' : 'disconnected',
+      healthy: row.publicStatus === 'Connected',
+    }));
+
+  /*
+   * Preferences that are held as settings rather than as sentences, said back
+   * as sentences anyway. Where somebody set it in a form, this is still the
+   * page that has to be able to tell them what it means.
+   */
+  const preferences = [];
+  const notices = safely(
+    () => require('../../sales/customer-communications').policy(req.db, req.ctx.workspaceId), null
+  );
+  if (notices) {
+    preferences.push({
+      text: notices.shippingNotice === 'send'
+        ? 'Tell customers their order shipped without checking with me first.'
+        : notices.shippingNotice === 'off'
+          ? 'Do not write to customers when their order ships.'
+          : 'Write to customers when their order ships, but let me read it before it goes.',
+      href: '/fulfilment',
+    });
+  }
+
+  return res.page('settings/told', {
+    title: "What you've told me",
+    nav: 'settings',
+    room: true,
+    rules,
+    policies,
+    connections,
+    preferences,
+  });
+}));
+
+/*
+ * The promise that makes the consolidation honest.
+ *
+ * Every screen this redesign took off the main path still has its address, and
+ * they are all listed here, grouped by the question they answer. A navigation
+ * that hides things is worse than the sidebar it replaced.
+ */
+router.get('/everything', requireAuth, asyncRoute(async (req, res) => res.page('settings/everything', {
+  title: 'Everything else',
+  nav: 'settings',
+  room: true,
+  sections: [
+    {
+      title: 'Customer orders',
+      why: 'An order is one story, and it is the page. These are the working surfaces underneath it.',
+      links: [
+        { href: '/orders', label: 'All customer orders' },
+        { href: '/orders/new', label: 'Write an order' },
+        { href: '/fulfilment', label: 'Picking and packing queue' },
+        { href: '/sales/customers/new', label: 'Add a customer' },
+      ],
+    },
+    {
+      title: 'Buying and suppliers',
+      why: 'A purchase is one story too. Foundry prepares these; the queue is here for when you want to work through them yourself.',
+      links: [
+        { href: '/purchasing', label: 'What needs buying' },
+        { href: '/purchasing/orders', label: 'All purchase orders' },
+        { href: '/purchasing/orders/new', label: 'Write a purchase order' },
+        { href: '/purchasing/receive', label: 'Book in a delivery' },
+        { href: '/suppliers', label: 'Suppliers and their terms' },
+        { href: '/purchasing/setup', label: 'Reorder points and targets' },
+      ],
+    },
+    {
+      title: 'Stock, in detail',
+      why: 'What you hold answers the question in six lines. This is the database underneath it, for when six lines is not enough.',
+      links: [
+        { href: '/inventory/table', label: 'Full stock table' },
+        { href: '/inventory/new', label: 'Add a product' },
+        { href: '/locations', label: 'Locations' },
+        { href: '/warehouse', label: 'Warehouse tasks and scanning' },
+        { href: '/transfers', label: 'Transfers and in-transit stock' },
+        { href: '/planning', label: 'What Foundry expects to go wrong' },
+        { href: '/pricing/new', label: 'Change selling prices' },
+        { href: '/imports/start', label: 'Bring data in from a file' },
+      ],
+    },
+    {
+      title: 'Books and accounting',
+      why: 'Money says how the business is doing. This is the ledger, for your accountant — you should not be operating it during ordinary work.',
+      links: [
+        { href: '/accounting/books', label: 'Books dashboard' },
+        { href: '/accounting/transactions', label: 'Every transaction' },
+        { href: '/accounting/chart', label: 'Chart of accounts' },
+        { href: '/accounting/receivables', label: 'What customers owe' },
+        { href: '/accounting/payables', label: 'What you owe' },
+        { href: '/accounting/banking', label: 'Banking and reconciliation' },
+        { href: '/accounting/periods', label: 'Closing a period' },
+        { href: '/accounting/tax', label: 'Tax rates' },
+        { href: '/accounting/reports/profit-and-loss', label: 'Profit and loss' },
+        { href: '/accounting/reports/balance-sheet', label: 'Balance sheet' },
+      ],
+    },
+    {
+      title: 'Messages',
+      why: 'Foundry is not an email client. Supplier mail lives on the purchase, customer mail on the order, and anything waiting on a reply is on the desk. This is the whole mailbox, for when you want to look through it.',
+      links: [
+        { href: '/mail', label: 'All conversations' },
+        { href: '/activity', label: 'Everything that happened, in order' },
+      ],
+    },
+    {
+      title: 'What Foundry may do on its own',
+      why: 'Authority is two choices: ask me first, or handle routine work inside limits you approve. The exact limits are here.',
+      links: [
+        { href: '/autopilot', label: 'Standing authority' },
+        { href: '/autopilot/settings', label: 'Limits and preferences' },
+        { href: '/autopilot/history', label: 'Everything it did on its own' },
+        { href: '/actions', label: 'Changes prepared for approval' },
+      ],
+    },
+    {
+      title: 'Connections',
+      why: 'Mailbox, shop, payments and carrier. Mapping and credentials are technical, so they sit inside each connection rather than on the main path.',
+      links: [
+        { href: '/settings/connections', label: 'All connections' },
+        { href: '/settings/shipping', label: 'Shipping and carriers' },
+      ],
+    },
+    {
+      title: 'This inventory',
+      why: 'Set once, changed rarely.',
+      links: [
+        { href: '/search', label: 'Search every record' },
+        { href: '/settings', label: 'Settings, people and plan' },
+        { href: '/foundry', label: 'How this inventory is configured' },
+        { href: '/inventories', label: 'Your other inventories' },
+        { href: '/settings/export', label: 'Export everything' },
+        { href: '/guide', label: 'How to use Foundry' },
+        { href: '/support', label: 'Support' },
+      ],
+    },
+  ],
+})));
+
 router.get(
   '/settings',
   asyncRoute(async (req, res) => {
@@ -37,6 +205,7 @@ router.get(
     res.page('settings', {
       title: 'Settings',
       nav: 'settings',
+      room: true,
       users,
       integrity,
       eventFeed: eventFeed.state(req.db, req.ctx.workspaceId),

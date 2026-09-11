@@ -1,0 +1,809 @@
+
+@keyframes rm-ping {
+  0%   { transform: scale(.6); opacity: .9; }
+  70%  { transform: scale(1.5); opacity: 0; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+@keyframes rm-sweep { to { transform: translateX(100%); } }
+
+.rm-spine-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 12px; }
+.rm-spine-head__t { font-size: clamp(22px, 2.6vw, 28px); font-weight: 700; letter-spacing: -0.034em; line-height: 1.15; width: 100%; }
+.rm-spine-head__m {
+  font-size: 12.5px; font-weight: 550; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--pill); padding: 4px 10px;
+  font-variant-numeric: tabular-nums;
+}
+.rm-spine-head__m.right { margin-left: auto; font-weight: 650; color: var(--ink-2); }
+.rm-spine-head__m .hot { color: var(--flag-2); font-weight: 700; }
+@keyframes rm-beat {
+  0%, 100% { box-shadow: 0 0 0 4px var(--flag-wash); }
+  50%      { box-shadow: 0 0 0 7px rgba(245,158,11,.14); }
+}
+
+/* ------------------------------------------------------------ command line */
+
+.rm-line { max-width: 880px; }
+.rm-turn { margin-bottom: 16px; }
+.rm-turn__who { font-size: 11.5px; font-weight: 700; color: var(--ghost); margin-bottom: 5px; display: flex; align-items: center; gap: 6px; }
+.rm-turn__said { font-size: 15.5px; line-height: 1.6; margin: 0; color: var(--ink); }
+.rm-turn__said + .rm-turn__said { margin-top: 8px; }
+
+.rm-rule {
+  border: 1px solid var(--brand-line);
+  background: linear-gradient(180deg, var(--brand-wash) 0%, #fff 120%);
+  padding: 15px 16px; margin: 12px 0; border-radius: var(--r); box-shadow: var(--sh-2);
+}
+.rm-rule__k { font-size: 11.5px; font-weight: 700; color: var(--brand-2); margin: 0 0 6px; }
+.rm-rule__t { font-size: 15px; font-weight: 650; line-height: 1.45; color: var(--ink); margin: 0; letter-spacing: -0.018em; }
+.rm-rule__m { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--brand-line); display: flex; flex-wrap: wrap; gap: 5px 14px; }
+.rm-rule__m a, .rm-rule__m button { color: var(--brand-2); font-weight: 650; background: none; border: 0; font: inherit; padding: 0; cursor: pointer; }
+.rm-rule__m form { display: inline; margin: 0; }
+.rm-composer__pending { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; }
+@keyframes rm-in { from { opacity: .45; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+/* ------------------------------------------------------------ folding ----
+ * How the shared frame folds is design.css's business now; what is left here
+ * is only what these screens do differently at a small size.
+ */
+
+@media (max-width: 720px) {
+  .rm-group { grid-template-columns: 30px minmax(0, 1fr); }
+  .rm-group .rm-meter { display: none; }
+  .rm-stages { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 8px; }
+}
+
+/* ============================================================== first run */
+
+/* An empty inventory is not a briefing with nothing in it. It is its own
+   screen, and the only thing on it is the one decision that starts everything:
+   where the inventory comes from. No setup checklist, no command box, no
+   "what Foundry handled" — none of those mean anything yet, and offering them
+   is how a first morning turns into four competing instructions. */
+
+.rm-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-xl);
+  padding: 34px 34px 32px;
+  margin-bottom: 22px;
+  color: #fff;
+  background:
+    radial-gradient(760px 300px at 86% -26%, rgba(124, 107, 255, .5), transparent 62%),
+    radial-gradient(620px 280px at 6% 118%, rgba(219, 109, 10, .22), transparent 64%),
+    linear-gradient(140deg, #221D4B 0%, #15122F 52%, #0A0817 100%);
+  box-shadow: 0 1px 2px rgba(20,18,31,.24), 0 26px 52px -28px rgba(58, 44, 163, .78);
+}
+/* A faint grid, so the surface reads as a system rather than a poster. */
+.rm-hero::before {
+  content: "";
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(720px 300px at 30% 0%, #000, transparent 75%);
+  pointer-events: none;
+}
+.rm-hero > * { position: relative; }
+.rm-hero__badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12.5px; font-weight: 600; letter-spacing: -0.01em;
+  color: #DBD5FF;
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.16);
+  padding: 5px 12px 5px 9px; border-radius: var(--pill);
+  margin-bottom: 16px;
+}
+.rm-hero__badge .rm-dot { background: #A99BFF; }
+.rm-hero__badge .rm-dot::after { border-color: #A99BFF; }
+.rm-hero h1 {
+  font-size: clamp(28px, 3.8vw, 42px);
+  font-weight: 700; letter-spacing: -0.038em; line-height: 1.08;
+  margin: 0 0 12px; color: #fff; max-width: 18ch;
+}
+.rm-hero p {
+  font-size: 16px; line-height: 1.6; margin: 0;
+  color: rgba(226, 223, 255, .78); max-width: 62ch;
+}
+.rm-hero__foot {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  margin-top: 20px; font-size: 13px; color: rgba(214, 208, 255, .66);
+}
+.rm-hero__foot .icon { opacity: .8; }
+
+@media (max-width: 720px) {
+  .rm-hero { padding: 24px 20px; border-radius: var(--r-lg); }
+  .rm-choices-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* A place to put a file. */
+.rm-drop {
+  display: flex; align-items: center; gap: 14px;
+  padding: 18px;
+  border: 1.5px dashed var(--line-3);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  transition: border-color .16s var(--ease), background .16s var(--ease);
+}
+.rm-drop:hover, .rm-drop:focus-within { border-color: var(--brand-line); background: var(--brand-wash); }
+.rm-drop__ic {
+  width: 42px; height: 42px; border-radius: 12px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--brand-grad); color: #fff;
+  box-shadow: 0 4px 12px -4px rgba(91,75,232,.5);
+}
+.rm-drop__b { flex: 1 1 auto; min-width: 0; }
+.rm-drop__t { font-size: 14.5px; font-weight: 650; letter-spacing: -0.02em; display: block; }
+.rm-drop__d { font-size: 12.5px; color: var(--muted); display: block; margin-top: 3px; }
+
+/* A system Foundry can connect to. */
+.rm-provider {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 18px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: var(--sh-1);
+  transition: border-color .16s var(--ease), box-shadow .16s var(--ease), transform .16s var(--ease);
+}
+.rm-provider:hover { border-color: var(--brand-line); box-shadow: var(--sh-3); transform: translateY(-2px); }
+.rm-provider__top { display: flex; align-items: center; gap: 11px; }
+.rm-provider__mark {
+  width: 38px; height: 38px; border-radius: 11px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; letter-spacing: -0.02em;
+  background: var(--surface-3); color: var(--brand-2);
+}
+.rm-provider__n { font-size: 15.5px; font-weight: 700; letter-spacing: -0.024em; }
+.rm-provider__s { margin-left: auto; }
+.rm-provider p { font-size: 13.5px; line-height: 1.55; color: var(--ink-2); margin: 0; }
+.rm-provider p.quiet { color: var(--muted); font-size: 12.5px; }
+.rm-provider form { display: grid; gap: 10px; margin: 0; }
+/* A button is the size of its words. Stretched across the card it read as a
+   banner, and four of them in a row read as four banners. */
+.rm-provider form > button { justify-self: start; }
+
+/* ========================================================= reading, review */
+
+/* Foundry taking a minute to read something is the one place in the product
+   where waiting is the whole screen, so it has to look like work happening and
+   not like a page that failed to load. */
+.rm-thinking { max-width: 620px; margin: 40px auto 0; text-align: center; }
+.rm-thinking__mark {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 60px; height: 60px; border-radius: 18px;
+  background: var(--brand-grad); color: #fff; margin-bottom: 22px;
+  box-shadow: 0 8px 24px -8px rgba(91,75,232,.6), inset 0 1px 0 rgba(255,255,255,.25);
+}
+.rm-thinking__mark::after {
+  content: ""; position: absolute; inset: -6px;
+  border-radius: 24px; border: 1.5px solid var(--brand-lift);
+  animation: rm-ping 2.4s var(--ease) infinite;
+}
+.rm-thinking h1 { font-size: clamp(24px, 3vw, 30px); font-weight: 700; letter-spacing: -0.034em; margin: 0 0 10px; }
+.rm-thinking > p { font-size: 15px; line-height: 1.6; color: var(--muted); margin: 0 auto 26px; max-width: 52ch; }
+
+.rm-track { display: grid; gap: 8px; text-align: left; margin: 0 0 22px; padding: 0; list-style: none; }
+.rm-track li {
+  display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; align-items: start;
+  padding: 13px 15px; position: relative; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--sh-1);
+}
+.rm-track__dot {
+  width: 26px; height: 26px; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--ghost);
+}
+.rm-track li.is-done .rm-track__dot { background: var(--good-wash); color: var(--good); }
+.rm-track li.is-current { border-color: var(--brand-line); box-shadow: var(--sh-2); }
+.rm-track li.is-current .rm-track__dot { background: var(--brand-grad); color: #fff; }
+/* The line being worked on carries the sweep, so the wait is visibly active. */
+.rm-track li.is-current::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(124,107,255,.10), transparent);
+  transform: translateX(-100%); animation: rm-sweep 2.4s var(--ease) infinite;
+}
+.rm-track strong { display: block; font-size: 14px; font-weight: 650; letter-spacing: -0.018em; }
+.rm-track span.d { display: block; font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.rm-thinking__foot { display: flex; align-items: center; justify-content: center; gap: 14px; font-size: 12.5px; color: var(--muted); }
+
+/* What Foundry found, before anything is created. Figures, not a paragraph. */
+.rm-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.rm-fact {
+  padding: 15px 16px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--sh-1);
+}
+.rm-fact__k { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 650; color: var(--muted); }
+.rm-fact__k .icon { width: 14px; height: 14px; }
+.rm-fact__v { font-size: 27px; font-weight: 700; letter-spacing: -0.04em; line-height: 1.2; font-variant-numeric: tabular-nums; margin-top: 3px; }
+.rm-fact__d { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+
+/* A list of things that are now true. */
+.rm-checks { display: grid; margin: 0; padding: 0; list-style: none; }
+.rm-checks li {
+  display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 11px; align-items: start;
+  padding: 12px 16px; border-top: 1px solid var(--line-2);
+  font-size: 13.5px; line-height: 1.55; color: var(--ink-2);
+}
+.rm-checks li:first-child { border-top: 0; }
+.rm-checks li strong { color: var(--ink); font-weight: 650; }
+.rm-checks__ic {
+  width: 24px; height: 24px; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--good-wash); color: var(--good);
+}
+.rm-checks__ic .icon { width: 13px; height: 13px; }
+.rm-checks li.is-flag .rm-checks__ic { background: var(--flag-wash); color: var(--flag-2); }
+
+/* Something two sources disagree about. */
+.rm-conflict {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--sh-1); margin-bottom: 12px; overflow: hidden;
+}
+.rm-conflict.is-blocking { border-color: var(--flag-line); }
+.rm-conflict__head { display: flex; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--line-2); }
+.rm-conflict__head h3 { font-size: 13.5px; font-weight: 650; letter-spacing: -0.018em; margin: 0; }
+.rm-conflict__head .right { margin-left: auto; }
+.rm-conflict__body { padding: 14px 16px; }
+.rm-conflict__subject { font-size: 15px; font-weight: 600; letter-spacing: -0.018em; margin: 0 0 12px; }
+.rm-evidence { display: grid; gap: 1px; background: var(--line-2); border-radius: var(--r-sm); overflow: hidden; margin-bottom: 12px; }
+.rm-evidence > div {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 14px;
+  padding: 9px 12px; background: var(--surface-2); font-size: 13px;
+}
+.rm-evidence .src { font-weight: 600; color: var(--ink-2); }
+.rm-evidence .says { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; }
+.rm-evidence .when { color: var(--muted); font-size: 12.5px; }
+.rm-conflict__rec { font-size: 13px; color: var(--brand-3); background: var(--brand-wash); border-radius: var(--r-sm); padding: 9px 12px; margin: 0 0 12px; }
+.rm-conflict__rec.is-yours { color: var(--flag-2); background: var(--flag-wash); }
+
+/* Ways of getting opening quantities in. */
+.rm-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 16px; }
+
+/* A quantity grid is one of the few genuine tables in the product. */
+.rm-qty { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.rm-qty th {
+  text-align: left; font-size: 12px; font-weight: 650; color: var(--muted);
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.rm-qty th:not(:first-child), .rm-qty td:not(:first-child) { text-align: center; }
+.rm-qty td { padding: 8px 10px; border-bottom: 1px solid var(--line-2); }
+.rm-qty tr:last-child td { border-bottom: 0; }
+.rm-qty td:first-child strong { display: block; font-weight: 600; color: var(--ink); }
+.rm-qty td:first-child small { font-family: var(--f-num); font-size: 11px; color: var(--muted); }
+.rm-qty input {
+  width: 74px; text-align: center;
+  font-family: var(--f-num); font-size: 13.5px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line-3);
+  border-radius: var(--r-xs); padding: 7px 6px;
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+.rm-qty input:focus { outline: none; border-color: var(--brand); box-shadow: var(--ring); }
+
+/* Screens still on the older markup keep their structure but follow the
+   system surfaces, so a step in this flow never looks like another product. */
+.rm .foundry-hero {
+  background: none; border: 0; padding: 0; margin: 0 0 18px; text-align: left; box-shadow: none;
+}
+.rm .foundry-hero h1 { font-size: clamp(24px, 3vw, 32px); font-weight: 700; letter-spacing: -0.034em; margin: 0 0 8px; }
+.rm .foundry-hero p { font-size: 15px; line-height: 1.6; color: var(--muted); margin: 0; max-width: 72ch; }
+.rm .foundry-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 42px; height: 42px; border-radius: 13px; margin-bottom: 14px;
+  background: var(--brand-grad); color: #fff; box-shadow: 0 4px 14px -5px rgba(91,75,232,.55);
+}
+.rm .foundry-mark--done { background: linear-gradient(135deg, #3DD68C, var(--good)); }
+.rm .proposal-block {
+  display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 16px;
+  padding: 16px; margin-bottom: 12px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--sh-1);
+}
+.rm .proposal-label { font-size: 12px; font-weight: 650; color: var(--muted); }
+.rm .proposal-body h2 { font-size: 16px; font-weight: 700; letter-spacing: -0.024em; margin: 0 0 6px; }
+.rm .proposal-list { margin: 8px 0 0; padding-left: 18px; font-size: 13.5px; line-height: 1.65; color: var(--ink-2); }
+.rm .sub-head { font-size: 13px; font-weight: 650; color: var(--muted); margin: 16px 0 6px; }
+.rm .plain-list { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.7; color: var(--ink-2); }
+
+@media (max-width: 720px) {
+  .rm .proposal-block { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .rm-evidence > div { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+}
+
+/* ====================================================== choosing an answer */
+
+/* A decision with real consequences gets a card per answer, and the
+   consequence is written on the card. Three bare radio buttons in a row asked
+   somebody to guess the difference between answers that do very different
+   things to their stock. */
+.rm-picks { display: grid; gap: 9px; margin: 0 0 4px; }
+.rm-pick {
+  position: relative;
+  display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 12px; align-items: start;
+  padding: 14px 16px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--sh-1);
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease);
+}
+.rm-pick:hover { border-color: var(--brand-line); box-shadow: var(--sh-2); }
+.rm-pick input { position: absolute; opacity: 0; pointer-events: none; }
+.rm-pick__box {
+  width: 18px; height: 18px; margin-top: 1px; border-radius: 50%;
+  border: 1.5px solid var(--line-3); background: var(--surface);
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color .15s var(--ease), background .15s var(--ease);
+}
+.rm-pick__box::after {
+  content: ""; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--brand); transform: scale(0); transition: transform .15s var(--ease);
+}
+.rm-pick input:checked ~ .rm-pick__box { border-color: var(--brand); }
+.rm-pick input:checked ~ .rm-pick__box::after { transform: scale(1); }
+.rm-pick:has(input:checked) { border-color: var(--brand); background: var(--brand-wash); box-shadow: var(--sh-2); }
+.rm-pick input:focus-visible ~ .rm-pick__box { outline: 2px solid var(--brand); outline-offset: 2px; }
+.rm-pick__t { font-size: 14.5px; font-weight: 650; letter-spacing: -0.02em; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rm-pick__d { font-size: 13px; color: var(--muted); line-height: 1.55; margin-top: 3px; display: block; }
+.rm-pick--quiet { background: var(--surface-2); }
+
+/* Same shape, square, for the things you can agree to rather than choose
+   between. */
+.rm-pick--check .rm-pick__box { border-radius: var(--r-xs); }
+.rm-pick--check .rm-pick__box::after {
+  width: 10px; height: 10px; border-radius: 2px; background: var(--brand);
+}
+
+/* The decision the whole page builds to. */
+.rm-confirm {
+  display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+  padding: 16px 18px; margin: 18px 0 0;
+  background: var(--surface); border: 1px solid var(--line-3);
+  border-radius: var(--r-lg); box-shadow: var(--sh-2);
+}
+.rm-confirm__t { flex: 1 1 340px; min-width: 0; }
+.rm-confirm__t strong { display: block; font-size: 15px; font-weight: 700; letter-spacing: -0.022em; }
+.rm-confirm__t span { display: block; font-size: 13px; color: var(--muted); margin-top: 4px; line-height: 1.55; }
+
+/* Answers that do different things, each carrying what it does. */
+.rm-answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 12px; }
+.rm-answer {
+  display: grid; gap: 5px; text-align: left; cursor: pointer;
+  padding: 15px 16px; font-family: var(--f);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--sh-1); color: var(--ink);
+  transition: transform .15s var(--ease), box-shadow .15s var(--ease), border-color .15s var(--ease);
+}
+.rm-answer:hover { transform: translateY(-2px); box-shadow: var(--sh-3); border-color: var(--brand-line); }
+.rm-answer strong { font-size: 14.5px; font-weight: 700; letter-spacing: -0.022em; }
+.rm-answer span { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.rm-answer.is-primary { border-color: var(--brand); background: linear-gradient(180deg, var(--brand-wash), #fff 70%); }
+.rm-answer.is-primary strong { color: var(--brand-3); }
+
+/* Three-up explanation grid, for the panels that lay out what Foundry found,
+   what it will do, and what it deliberately will not. */
+.rm-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.rm-col {
+  padding: 16px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--sh-1);
+}
+.rm-col h3 {
+  font-size: 12.5px; font-weight: 700; margin: 0 0 10px;
+  display: flex; align-items: center; gap: 7px; color: var(--muted);
+}
+.rm-col ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.rm-col li { font-size: 13.5px; line-height: 1.5; color: var(--ink-2); padding-left: 16px; position: relative; }
+.rm-col li::before {
+  content: ""; position: absolute; left: 0; top: .55em;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--faint);
+}
+.rm-col li strong { display: block; color: var(--ink); font-weight: 650; }
+.rm-col li span { display: block; font-size: 12.5px; color: var(--muted); margin-top: 1px; }
+.rm-col--will { border-color: var(--brand-line); }
+.rm-col--will h3 { color: var(--brand-2); }
+.rm-col--will li::before { background: var(--brand); }
+.rm-col--wont { border-color: var(--flag-line); }
+.rm-col--wont h3 { color: var(--flag-2); }
+.rm-col--wont li::before { background: var(--flag); }
+
+/* Badge groups used through the proposal. */
+.rm-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+
+/* ===================================================== sections within a page
+
+   A page that is genuinely a list of several things needs a heading between
+   them. Not a card, not a rule across the screen: a name, an aside on the same
+   line, and a count on the right where a count exists. */
+.rm-sect { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin: 28px 0 12px; }
+.rm-sect:first-of-type { margin-top: 22px; }
+.rm-sect h2 { font-size: 16.5px; font-weight: 700; letter-spacing: -0.026em; margin: 0; }
+.rm-sect p { font-size: 13px; line-height: 1.5; color: var(--muted); margin: 0; flex: 1 1 240px; }
+.rm-sect__c {
+  margin-left: auto; font-size: 12px; font-weight: 650; color: var(--muted);
+  background: var(--surface-3); border-radius: var(--pill); padding: 3px 10px;
+}
+
+/* Two badges can be true at once — connected, and in test mode. */
+.rm-provider__s { display: flex; gap: 5px; align-items: center; }
+.rm-provider code { font-family: var(--f-num); font-size: 11.5px; background: var(--surface-3); padding: 1px 5px; border-radius: 5px; word-break: break-all; }
+.rm-provider .input {
+  width: 100%; font-family: var(--f); font-size: 14px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line-3);
+  border-radius: var(--r-sm); padding: 9px 11px;
+  transition: border-color .15s var(--ease), box-shadow .15s var(--ease);
+}
+.rm-provider .input:focus { outline: none; border-color: var(--brand); box-shadow: var(--ring); }
+.rm-provider .rm-choices { padding-top: 2px; }
+.rm-provider .rm-choices form { display: inline-flex; }
+.rm-provider__mark.is-word { font-size: 10.5px; font-weight: 700; letter-spacing: 0; }
+
+/* ============================================================ the wait itself
+
+   The subject of the work, named. A filename or the opening of their own
+   sentence, so the screen proves the right thing arrived rather than asking
+   for a minute of trust. */
+/* Wide enough that the four steps sit on one line rather than scrolling
+   sideways above a narrow column. */
+.rm-thinking-steps { max-width: 820px; margin: 0 auto; }
+.rm-subject {
+  display: flex; align-items: center; gap: 11px; text-align: left;
+  padding: 12px 15px; margin: 0 0 20px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--sh-1);
+}
+.rm-subject__ic {
+  width: 32px; height: 32px; border-radius: 10px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--brand-wash); color: var(--brand-2);
+}
+.rm-subject__b { min-width: 0; }
+.rm-subject__b strong {
+  display: block; font-size: 13.5px; font-weight: 650; letter-spacing: -0.016em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rm-subject__b span { display: block; font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+/* A finished step keeps the time it took. The total alone told somebody how
+   long they had waited but never which part was slow. */
+.rm-track li { grid-template-columns: 26px minmax(0, 1fr) auto; }
+.rm-track__t {
+  font-family: var(--f-num); font-size: 11.5px; font-weight: 600;
+  color: var(--ghost); align-self: center; font-variant-numeric: tabular-nums;
+}
+.rm-track li.is-done .rm-track__t { color: var(--good); }
+
+.rm-thinking__vow {
+  display: inline-flex; align-items: flex-start; gap: 8px; text-align: left;
+  font-size: 12.5px; line-height: 1.55; color: var(--muted);
+  margin: 0 auto 20px; max-width: 56ch;
+}
+.rm-thinking__vow .icon { color: var(--good); flex: none; margin-top: 2px; }
+
+/* What the option boxes will become, shown while they are being typed. */
+.variant-preview {
+  margin: 0 0 12px; padding: 9px 12px;
+  font-size: 12.5px; line-height: 1.5; color: var(--brand-3);
+  background: var(--brand-wash); border: 1px solid var(--brand-line);
+  border-radius: var(--r-sm);
+}
+/* A wide table scrolls inside its own panel. The page never scrolls sideways. */
+.rm-scroll { overflow-x: auto; }
+
+/*
+ * One row per variant.
+ *
+ * Stock, price and buying rule were three separate full-width tables keyed on
+ * the same list of variants, so answering "what is happening with size 38"
+ * meant reading that list three times. It is a matrix — a value per variant per
+ * measure — so it stays a table, but one.
+ */
+.rm-vtable { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.rm-vtable th {
+  text-align: left; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ghost);
+  padding: 10px 12px; border-bottom: 1px solid var(--line-2); white-space: nowrap;
+}
+.rm-vtable th.num, .rm-vtable td.num { text-align: right; }
+.rm-vtable td {
+  padding: 12px; border-bottom: 1px solid var(--line-2); vertical-align: top; color: var(--ink-2);
+}
+.rm-vtable tbody tr:last-child td { border-bottom: 0; }
+.rm-vtable tbody tr:hover { background: var(--surface-2); }
+.rm-vtable td.num { font-family: var(--f-num); font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
+.rm-vtable td.num strong { font-weight: 700; }
+.rm-vtable .vt-nil { color: var(--faint); }
+.rm-vtable td.vt-nil { color: var(--faint); }
+.rm-vtable .vt-id strong { display: block; font-size: 14px; font-weight: 650; letter-spacing: -0.018em; color: var(--ink); }
+.rm-vtable .vt-id small { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.rm-vtable .vt-id small.mono, .rm-vtable .mono { font-family: var(--f-num); }
+.rm-vtable .vt-where { color: var(--ghost); }
+.rm-vtable .vt-price strong { font-weight: 650; color: var(--ink); }
+.rm-vtable .vt-price a, .rm-vtable .vt-do { display: inline-block; font-size: 12px; font-weight: 600; color: var(--brand-2); margin-left: 6px; }
+.rm-vtable .vt-do { margin-left: 0; }
+.rm-vtable .vt-price small, .rm-vtable .vt-rule small { display: block; font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+.rm-vtable .vt-rule strong { font-weight: 650; color: var(--ink); white-space: nowrap; }
+.rm-vtable .vt-do-cell { white-space: nowrap; text-align: right; }
+.rm-vtable .vt-do-cell .rm-btn { margin-left: 6px; }
+.rm-vtable .vt-where-cell { font-size: 12.5px; color: var(--muted); }
+
+/* Stock per location: the place, the figure, and the share of the total. */
+.rm-where { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; margin-bottom: 12px; }
+.rm-where:last-child { margin-bottom: 0; }
+.rm-where__k { font-size: 13px; font-weight: 600; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rm-where__v { font-family: var(--f-num); font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.rm-where .rm-meter { grid-column: 1 / -1; margin-top: 3px; }
+
+/* Foundry's read on one variant: prose, because a forecast is an argument. */
+.rm-outlook { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line-2); }
+.rm-outlook:last-child { padding-bottom: 0; margin-bottom: 0; border-bottom: 0; }
+.rm-outlook__k { display: block; font-size: 13.5px; font-weight: 700; letter-spacing: -0.018em; margin-bottom: 6px; }
+.rm-outlook p { font-size: 13.5px; line-height: 1.6; color: var(--ink-2); margin: 0 0 8px; }
+.rm-outlook p:last-of-type { margin-bottom: 0; }
+.rm-scroll { max-width: 100%; }
+
+/* ======================================================== a box you can tick
+
+   foundry.css sizes every input inside a .field to full width and 38px tall,
+   and makes every label in one a block. A checkbox is neither: it became a wide
+   grey rectangle sitting above its own words — in the new-item form, the edit
+   modal, the reorder settings, and everywhere else the pattern is used. Stated
+   once here, after every other sheet, so it is fixed everywhere at once. */
+label.checkbox, label.choice { display: flex; }
+input[type="checkbox"], input[type="radio"] {
+  width: 16px; height: 16px; min-height: 0;
+  padding: 0; margin-top: 1px; flex: none;
+  accent-color: var(--brand);
+}
+.rm-composer__pending { display: flex; align-items: center; gap: 9px; }
+.rm-composer__pending::before {
+  content: ""; width: 13px; height: 13px; flex: none; border-radius: 50%;
+  border: 2px solid var(--brand-line); border-top-color: var(--brand);
+  animation: spin .7s linear infinite;
+}
+.rm-composer__pending[data-operator-attachment-status]::before { display: none; }
+/* A wait somebody can walk away from. */
+.rm-composer__pending a { color: var(--brand-2); font-weight: 600; margin-left: 4px; }
+
+/* ===================================================== a form with real steps
+
+   Three numbered headings dropped inside a field grid is not a sequence, it is
+   three headings. A step is a panel with its number on it. */
+/* A form built as steps rather than as one long grid of fields. */
+[data-step-form].card { padding: 0; overflow: hidden; display: grid; gap: 0; }
+[data-step-form] > .rm-work, [data-step-form] > .rm-note, [data-step-form] > .rm-confirm { margin: 14px 18px; }
+.rm-form { display: grid; gap: 14px; }
+.rm-step-panel { padding: 18px; border-top: 1px solid var(--line-2); }
+.rm-step-panel:first-of-type { border-top: 0; }
+.rm-step-panel__h { display: flex; align-items: center; gap: 11px; margin-bottom: 14px; }
+.rm-step-panel__h h2 { font-size: 14.5px; font-weight: 650; letter-spacing: -0.02em; margin: 0; }
+.rm-step-panel__n {
+  width: 22px; height: 22px; border-radius: 50%; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11.5px; font-weight: 700; font-family: var(--f-num);
+  background: var(--brand-wash); color: var(--brand-3); border: 1px solid var(--brand-line);
+}
+.rm-step-panel__b .form-grid { margin-bottom: 14px; }
+.rm-form .checkbox, [data-step-form] .checkbox { margin-top: 10px; }
+
+/* The question. Cancel holds the focus and Escape refuses, because the cheap
+   accident to make on a destructive question is agreeing to it. */
+dialog.rm-ask {
+  width: min(440px, calc(100vw - 32px));
+  padding: 0; border: 1px solid var(--line-3);
+  border-radius: var(--r-lg); background: var(--surface); color: var(--ink);
+  box-shadow: 0 24px 64px -20px rgba(11, 18, 32, .5);
+}
+dialog.rm-ask::backdrop { background: rgba(20, 18, 31, .38); backdrop-filter: blur(2px); }
+.rm-ask__b { display: flex; gap: 13px; align-items: flex-start; padding: 20px 20px 16px; }
+.rm-ask__ic {
+  width: 30px; height: 30px; border-radius: 9px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700;
+  background: var(--flag-wash); color: var(--flag-2);
+}
+.rm-ask__t { font-size: 15px; font-weight: 600; line-height: 1.5; margin: 0; letter-spacing: -0.014em; }
+.rm-ask__d { font-size: 12.5px; color: var(--muted); margin: 6px 0 0; }
+.rm-ask__f {
+  display: flex; justify-content: flex-end; gap: 9px;
+  padding: 14px 20px; border-top: 1px solid var(--line-2); background: var(--surface-2);
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+}
+
+/* A transfer is a custody story, not two misleading before/after balances.
+   Until physical dispatch and receipt happen, the destination really is still
+   at zero; say what will happen next instead of rendering 0 → 0. */
+.act-transfer-preview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr);
+  gap: 10px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+.act-transfer-preview__place { display: grid; gap: 3px; min-width: 0; }
+.act-transfer-preview__label { font-size: 12px; color: var(--muted); }
+.act-transfer-preview__label strong { color: var(--ink); font-weight: 650; }
+.act-transfer-preview__number { font-family: var(--f-num); font-size: 28px; line-height: 1; color: var(--ink); }
+.act-transfer-preview__place small { font-size: 12px; line-height: 1.45; color: var(--muted); }
+.act-transfer-preview__place small strong { color: var(--brand-2); }
+.act-transfer-preview__arrow { align-self: center; justify-self: center; color: var(--brand-2); font-size: 22px; font-weight: 650; }
+.act-transfer-preview__total {
+  grid-column: 1 / -1;
+  display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding-top: 11px; border-top: 1px solid var(--line);
+  font-size: 12.5px; color: var(--muted);
+}
+.act-transfer-preview__total strong { color: var(--ink); font-weight: 650; }
+.act-transfer-prepared {
+  display: grid; gap: 6px; padding: 14px 15px;
+  border: 1px solid var(--brand-line); border-radius: var(--r);
+  background: var(--brand-wash); color: var(--ink-2); font-size: 13px;
+}
+.act-transfer-prepared > strong { color: var(--brand-3); font-size: 14px; }
+.act-transfer-prepared small { color: var(--muted); line-height: 1.5; }
+.rm-transfer-next .rm-panel__body { display: grid; gap: 14px; }
+.rm-transfer-next .rm-panel__head { padding: 18px 20px 16px; align-items: flex-start; }
+.rm-transfer-next .rm-panel__head h2 { font-size: 17px; line-height: 1.35; }
+.rm-transfer-next .rm-panel__body { padding: 18px 20px 20px; }
+.rm-transfer-next__summary { margin: 0; max-width: 72ch; color: var(--ink-2); font-size: 14px; line-height: 1.62; }
+.rm-transfer-status {
+  display: inline-flex; align-items: center; flex: none; margin-left: auto;
+  padding: 5px 9px; border: 1px solid var(--brand-line); border-radius: var(--pill);
+  background: var(--brand-wash); color: var(--brand-3); font-size: 11.5px; font-weight: 700;
+}
+.rm-transfer-next .rm-btn { min-height: 44px; padding-inline: 17px; }
+.rm-transfer-next .rm-more { margin: 0; }
+.rm-transfer-receipt {
+  display: grid; gap: 7px; padding: 14px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2);
+}
+.rm-transfer-receipt > strong { font-size: 14px; color: var(--ink); }
+.rm-transfer-receipt > span { font-size: 12.5px; color: var(--muted); }
+.rm-transfer-lines { display: grid; gap: 1px; padding: 0; background: var(--line-2); }
+.rm-transfer-line {
+  display: flex; justify-content: space-between; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 13px 16px; background: var(--surface);
+}
+.rm-transfer-line > div { display: grid; gap: 2px; }
+.rm-transfer-line strong { color: var(--ink); font-size: 13.5px; }
+.rm-transfer-line small, .rm-transfer-line span { font-size: 12px; color: var(--muted); }
+.rm-transfer-line > div:last-child { text-align: right; }
+.rm-transfer-events { display: grid; gap: 1px; background: var(--line-2); }
+.rm-transfer-events > div { display: grid; gap: 2px; padding: 11px 14px; background: var(--surface); }
+.rm-transfer-events strong { font-size: 12.5px; color: var(--ink-2); }
+.rm-transfer-events span { font-size: 12px; color: var(--muted); }
+.rm-transfer-disclosure { margin-top: 12px; overflow: hidden; }
+.rm-transfer-disclosure > summary {
+  list-style: none; cursor: pointer; padding: 14px 16px;
+  color: var(--ink-2); font-size: 13px; font-weight: 650;
+}
+.rm-transfer-disclosure > summary::-webkit-details-marker { display: none; }
+.rm-transfer-disclosure > summary::before { content: '›'; display: inline-block; margin-right: 8px; color: var(--brand-2); font-size: 16px; transition: transform .15s var(--ease); }
+.rm-transfer-disclosure[open] > summary { border-bottom: 1px solid var(--line-2); background: var(--surface-2); }
+.rm-transfer-disclosure[open] > summary::before { transform: rotate(90deg); }
+.rm-transfer-disclosure .rm-panel__body { padding: 16px; }
+.rm-transfer-board { overflow: hidden; margin-top: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--sh-1); }
+.rm-transfer-board--completed { margin-top: 16px; }
+.rm-transfer-board__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 20px 16px; border-bottom: 1px solid var(--line-2); }
+.rm-transfer-board__head h2 { margin: 2px 0 0; font-size: 16px; letter-spacing: -0.02em; }
+.rm-transfer-board__count { display: grid; place-items: center; min-width: 28px; height: 28px; padding-inline: 7px; border-radius: var(--pill); background: var(--brand-wash); color: var(--brand-3); font-family: var(--f-num); font-size: 13px; font-weight: 700; }
+.rm-transfer-board__rows { display: grid; }
+.rm-transfer-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(230px, .9fr) 22px; gap: 18px; align-items: center; padding: 17px 20px; color: var(--ink); text-decoration: none; border-top: 1px solid var(--line-2); transition: background .15s var(--ease), box-shadow .15s var(--ease); }
+.rm-transfer-board__rows .rm-transfer-row:first-child { border-top: 0; }
+.rm-transfer-row:hover { color: var(--ink); background: var(--surface-2); }
+.rm-transfer-row:focus-visible { outline: 2px solid var(--brand-lift); outline-offset: -2px; }
+.rm-transfer-row__route { display: grid; grid-template-columns: max-content 18px minmax(0, 1fr); gap: 6px; align-items: center; min-width: 0; }
+.rm-transfer-row__route strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 650; }
+.rm-transfer-row__route i { color: var(--brand-2); font-size: 17px; font-style: normal; text-align: center; }
+.rm-transfer-row__route small { grid-column: 1 / -1; margin-top: 2px; color: var(--muted); font-size: 12px; }
+.rm-transfer-row__state { display: grid; justify-items: start; gap: 5px; min-width: 0; }
+.rm-transfer-row__state small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.rm-transfer-row__badge { display: inline-flex; align-items: center; min-height: 22px; padding: 3px 8px; border-radius: var(--pill); font-size: 11.5px; font-weight: 700; }
+.rm-transfer-row__badge.is-open, .rm-transfer-row__badge.is-attention { color: var(--flag-2); background: var(--flag-wash); border: 1px solid var(--flag-line); }
+.rm-transfer-row__badge.is-ready { color: var(--brand-3); background: var(--brand-wash); border: 1px solid var(--brand-line); }
+.rm-transfer-row__badge.is-transit { color: #14698c; background: #eaf8ff; border: 1px solid #b8e4f7; }
+.rm-transfer-row__badge.is-done { color: var(--good); background: var(--good-wash); border: 1px solid var(--good-line); }
+.rm-transfer-row__badge.is-muted { color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); }
+.rm-transfer-row__go { color: var(--ghost); font-size: 24px; line-height: 1; transition: color .15s var(--ease), transform .15s var(--ease); }
+.rm-transfer-row:hover .rm-transfer-row__go { color: var(--brand-2); transform: translateX(2px); }
+@media (max-width: 680px) { .rm-transfer-row { grid-template-columns: minmax(0, 1fr) 20px; gap: 12px; } .rm-transfer-row__state { grid-column: 1; } .rm-transfer-row__go { grid-column: 2; grid-row: 1 / span 2; } }
+@media (max-width: 560px) { .rm-transfer-line > div:last-child { text-align: left; } }
+@media (max-width: 560px) {
+  .act-transfer-preview { grid-template-columns: 1fr; }
+  .act-transfer-preview__arrow { transform: rotate(90deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rm-toast { transition: none; }
+}
+@media (max-width: 560px) {
+  .rm-toasts { right: 12px; left: 12px; bottom: 12px; justify-items: stretch; max-width: none; }
+}
+
+/* Mission 5 — a warehouse task must be usable one-handed on a phone. */
+.rm-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; padding:18px; }
+.rm-form-grid label,.rm-scan__form>label { display:grid; gap:6px; color:var(--muted); font-size:13px; }
+.rm-form-grid input,.rm-form-grid select,.rm-inline-form input,.rm-inline-form select,
+.rm-scan__form input { width:100%; min-height:44px; border:1px solid var(--line-3); border-radius:10px; background:#fff; color:var(--ink); padding:9px 11px; font:inherit; }
+.rm-span-2 { grid-column:1/-1; }
+.rm-inline-form { display:grid; grid-template-columns:1fr 1fr 150px auto; gap:10px; padding:16px; align-items:end; }
+.rm-scan { border:2px solid var(--brand-lift); }
+.rm-scan__form { display:grid; gap:14px; padding:18px; }
+.rm-scan__form>label input { min-height:58px; font-size:18px; font-family:var(--f-num); }
+.rm-scan__submit { min-height:56px; font-size:17px; }
+.rm-check { display:flex; align-items:flex-start; gap:9px; margin:10px 0; color:var(--ink); font-size:14px; }
+.rm-check input { width:18px; height:18px; margin-top:1px; flex:0 0 auto; }
+.rm-label-sheet { width:92mm; min-height:48mm; margin:32px auto; padding:8mm; text-align:center; border:1px solid var(--line-3); background:#fff; color:#000; }
+.rm-label-sheet h1 { margin:0 0 4px; font-size:20px; }
+.rm-label-sheet p { margin:3px 0; }
+.rm-label-barcode { display:flex; justify-content:center; overflow:hidden; margin:12px 0 6px; }
+.rm-label-barcode svg { max-width:100%; height:64px; }
+.rm-label-check { font-size:10px; color:#555; }
+@media (max-width:700px) {
+  .rm-form-grid,.rm-inline-form { grid-template-columns:1fr; }
+  .rm-span-2 { grid-column:auto; }
+  .rm-scan__form { padding:12px; }
+  .rm-scan__form>label input { min-height:64px; }
+}
+@media print {
+  .no-print,.rm-rail { display:none!important; }
+  .rm-canvas { padding:0!important; }
+  .rm-label-sheet { border:0; margin:0; }
+}
+
+/* Mission 8 — evidence-heavy operations still read as an ordinary owner workflow. */
+.rm-operation-page { max-width: 1120px; }
+.rm-operation-page > .rm-panel { overflow: hidden; }
+.rm-operation-page .rm-list { margin: 0; padding: 0; display: grid; gap: 0; }
+.rm-operation-page .rm-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-width: 0;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--line-2);
+  color: var(--ink);
+  text-decoration: none;
+}
+.rm-operation-page .rm-row:last-child { border-bottom: 0; }
+.rm-operation-page a.rm-row:hover { background: var(--brand-wash); }
+.rm-operation-page .rm-row > span { min-width: 0; }
+.rm-operation-page .rm-row strong,
+.rm-operation-page .rm-row small { display: block; }
+.rm-operation-page .rm-row strong { line-height: 1.35; }
+.rm-operation-page .rm-row small { margin-top: 4px; color: var(--muted); line-height: 1.4; }
+.rm-operation-page .rm-row > span:last-child { flex: 0 1 auto; text-align: right; }
+.rm-operation-page .rm-panel > form:not(.rm-form-grid),
+.rm-operation-page .rm-panel > .rm-note + form:not(.rm-form-grid) { margin: 16px 18px 18px; }
+.rm-operation-page .rm-panel > .rm-note,
+.rm-operation-page .rm-panel > .rm-alert { margin: 16px 18px; }
+.rm-operation-page textarea { min-height: 92px; resize: vertical; }
+@media (max-width: 700px) {
+  .rm-operation-page .rm-row { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .rm-operation-page .rm-row > span:last-child { width: 100%; text-align: left; }
+  .rm-operation-page .rm-row .rm-inline-form { padding: 0; }
+}
+
+/* Mission 7: an evidence review rather than a spreadsheet-shaped form. */
+.rm-landed-cost { max-width: 1040px; }
+.rm-landed-cost__form, .rm-landed-cost__history { margin-top: 26px; }
+.rm-landed-cost__form .rm-form { padding: 18px; }
+.rm-choice-set { border: 0; padding: 0; margin: 0; }
+.rm-choice-set legend { font-size: 13px; font-weight: 700; color: var(--ink); margin-bottom: 9px; }
+.rm-landed-cost__receipts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+/* The receipt picker is a row of tickboxes, not the destination cards that
+   share this name on the setup screens. Scoped to its own container so the two
+   stopped overwriting each other. */
+.rm-landed-cost__receipts .rm-choice { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; padding: 12px 13px; }
+.rm-landed-cost__receipts .rm-choice input { margin-top: 3px; accent-color: var(--brand); }
+.rm-landed-cost__receipts .rm-choice span { display: grid; gap: 2px; }
+.rm-landed-cost__receipts .rm-choice strong { font-size: var(--t-md); line-height: 1.35; }
+.rm-landed-cost__receipts .rm-choice small, .rm-landed-cost__allocations small { font-size: var(--t-sm); color: var(--muted); line-height: 1.4; }
+.rm-landed-cost__totals { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.rm-landed-cost__totals span { display: flex; gap: 8px; align-items: center; padding: 9px 11px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-2); font-size: 13px; }
+.rm-landed-cost__allocations { display: grid; border-top: 1px solid var(--line); }
+.rm-landed-cost__allocations > div { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.rm-landed-cost__allocations > div:last-child { border-bottom: 0; }
+.rm-landed-cost__allocations span { display: grid; gap: 2px; min-width: 0; }
+.rm-landed-cost__allocations strong { font-size: 13.5px; }
+@media (max-width: 620px) { .rm-landed-cost__allocations > div { align-items: flex-start; } }

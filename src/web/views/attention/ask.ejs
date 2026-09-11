@@ -1,221 +1,219 @@
-<div class="page-head">
-  <div class="titles">
-    <h1>Ask Foundry</h1>
-    <div class="page-sub">Ask about the operation or tell Foundry what needs doing. Changes are always previewed first.</div>
-  </div>
-  <div class="page-actions">
-    <a class="btn" href="/">Back to Foundry</a>
-  </div>
-</div>
+<%
+  /*
+   * The Line — the running conversation with Foundry.
+   *
+   * There used to be two boxes for one thing. "Ask Foundry" answered questions
+   * on this page; "Tell Foundry" carried instructions from somewhere else. But
+   * Foundry has one understanding of what somebody said, and which box they
+   * typed it in should never decide whether it understands them. So there is
+   * one composer, it posts to the router that already classifies fifteen kinds
+   * of sentence, and where the sentence goes is Foundry's problem rather than
+   * the owner's.
+   *
+   * This is also where Foundry is taught. A rule typed here comes back as a
+   * card that can be read, changed, paused and revoked — and that card is the
+   * settings record. There is no form: the sentence is the form.
+   */
+  var recent = locals.recentRules || [];
+  var pending = locals.pendingRules || [];
+  var about = locals.about || '';
+  var askReturnHref = question ? '/ask?q=' + encodeURIComponent(question) : '/ask';
+  function evidenceHref(href, label) {
+    if (!href) return null;
+    if (!String(href).startsWith('/') || String(href).startsWith('/foundry/navigate?')) return href;
+    return '/foundry/navigate?to=' + encodeURIComponent(href)
+      + '&label=' + encodeURIComponent('Open ' + label)
+      + '&return=' + encodeURIComponent(askReturnHref);
+  }
+%>
 
-<div class="card section">
-  <div class="card-body">
-    <form method="get" action="/ask" class="ask-form" data-ask-form>
-      <input
-        class="input ask-input"
-        id="ask-question"
-        type="text"
-        name="q"
-        <%# The question just asked is the heading of the answer directly below,
-            so repeating it in the box only leaves the reader to clear it before
-            asking the next thing. It is still in the address bar to edit and
-            re-run if that is what they want. %>
-        value=""
-        placeholder="<%= examples.length ? examples[0] : 'Ask about your stock' %>"
-        maxlength="400"
-        autocomplete="off"
-        autofocus
-      >
-      <button class="btn btn--primary" type="submit" data-ask-submit>
-        <%- helpers.icon('send', { size: 15 }) %> Ask
-      </button>
-    </form>
-    <div class="ask-pending" data-ask-pending hidden>Foundry is looking through your records…</div>
+<div class="rm-line">
 
-    <% if (!aiConfigured) { %>
-      <p class="muted" style="font-size:13px; margin-top:10px;">
-        Ask Foundry needs an AI provider configured. Everything on the
-        <a href="/attention">Needs attention</a> page works without one.
-      </p>
-    <% } else if (!question) { %>
-      <div class="ask-examples">
-        <% examples.forEach(function (example) { %>
-          <a class="chip" href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
-        <% }) %>
-      </div>
-    <% } %>
-  </div>
-</div>
+  <% if (!question && !result && !error) { %>
+    <p class="rm-stamp">The line</p>
+    <h1 class="rm-verdict">Tell me anything.</h1>
+    <p class="rm-prose">
+      What happened, what you want, how you want this run. I work out which it is.
+      Nothing I understand as a change is carried out until you have seen exactly what it does.
+    </p>
+  <% } %>
 
-<% if (error) { %>
-  <div class="card section"><div class="card-body"><p class="is-warn"><%= error %></p></div></div>
-<% } %>
+  <% if (about) { %>
+    <p class="rm-stamp">About: <%= about %></p>
+  <% } %>
 
-<% if (result) { %>
-  <div class="card section">
-    <div class="card-head">
-      <h2><%= result.question %></h2>
-      <span class="spacer"></span>
-      <% if (result.isAction) { %>
-        <span class="badge badge--muted">This is a change, not a question</span>
-      <% } else if (!result.supported) { %>
-        <span class="badge badge--muted">Not something Foundry can answer</span>
-      <% } %>
+  <% if (error) { %>
+    <div class="rm-turn">
+      <p class="rm-turn__who">Foundry</p>
+      <p class="rm-turn__said"><%= error %></p>
     </div>
-    <div class="card-body">
+  <% } %>
+
+  <% if (result) { %>
+    <div class="rm-turn">
+      <p class="rm-turn__who">You asked</p>
+      <p class="rm-turn__said"><%= result.question %></p>
+    </div>
+
+    <div class="rm-turn">
+      <p class="rm-turn__who">Foundry</p>
       <%
         /*
-         * The sentence first, the record underneath.
-         *
-         * `spoken` is a phrasing of the same figures — every number in it was
-         * checked against the computed answer before it got here, and dropped
-         * if it did not match. The computed answer is still shown, because it
-         * is the statement of record and the thing that is true whether or not
-         * a model was available to read it aloud.
+         * The sentence first, the record underneath. `spoken` is a phrasing of
+         * the same figures — every number in it was checked against the
+         * computed answer before it got here, and dropped if it did not match.
+         * The computed answer is still shown, because it is the statement of
+         * record and is true whether or not a model was there to read it out.
          */
       %>
-      <% if (result.spoken) { %>
-        <p class="lede"><%= result.spoken %></p>
-        <p class="answer-record" style="white-space:pre-line"><%= result.answer %></p>
+      <% if (result.spoken && !result.progressiveDisclosure) { %>
+        <p class="rm-turn__said"><%= result.spoken %></p>
+        <p class="rm-turn__said rm-quiet" style="font-size:17px;white-space:pre-line"><%= result.answer %></p>
       <% } else { %>
-        <p class="lede" style="white-space:pre-line"><%= result.answer %></p>
+        <p class="rm-turn__said" style="white-space:pre-line"><%= result.answer %></p>
       <% } %>
 
-      <%
-        /*
-         * A question Foundry will not answer must still leave somebody with
-         * somewhere to go.
-         *
-         * "What can you do?" is the most reasonable thing a new customer can
-         * type, and it came back as "Outside what Foundry does" over a sentence
-         * explaining that Foundry answers questions about records rather than
-         * describing its own capabilities — which is a refusal to answer the
-         * one question whose answer the product already has, written down, on
-         * the guide page. The reader was left on a dead end with no examples,
-         * because the example chips only show before a question is asked.
-         *
-         * So an unsupported answer now carries the way forward with it.
-         */
-      %>
-      <% if (!result.supported && !result.isAction) { %>
-        <div class="dead-end">
-          <p class="dead-end__title">Here is what you can ask</p>
-          <div class="dead-end__examples">
-            <% examples.slice(0, 4).forEach(function (example) { %>
-              <a class="chip" href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
+      <% if (result.rows && result.rows.length && result.progressiveDisclosure) { %>
+        <details class="rm-disclose" style="margin-top:18px">
+          <summary>See how I worked this out</summary>
+          <div class="rm-told" style="margin-top:12px">
+            <% result.rows.slice(0, 12).forEach(function (row) { %>
+              <%
+                var first = result.columns[0];
+                var label = row[first] === null || row[first] === undefined ? '—' : row[first];
+                var rest = result.columns.slice(1).map(function (column) {
+                  var value = row[column];
+                  if (value === null || value === undefined) return null;
+                  return helpers.columnLabel(column) + ' ' + value;
+                }).filter(Boolean).join(' · ');
+                var linkHref = evidenceHref(row.href, label);
+              %>
+              <div class="rm-told__row">
+                <span class="rm-told__t"><% if (linkHref) { %><a class="rm-u" href="<%= linkHref %>"><%= label %></a><% } else { %><%= label %><% } %></span>
+                <span class="rm-told__m"><%= rest %></span>
+              </div>
             <% }) %>
           </div>
-          <p class="dead-end__more">
-            Or read <a href="/guide">what Foundry can do today</a> — inventory, purchasing, sales,
-            files and exceptions, with the shortest path for each.
-          </p>
+        </details>
+      <% } else if (result.rows && result.rows.length) { %>
+        <div class="rm-told" style="margin-top:18px">
+          <% result.rows.slice(0, 12).forEach(function (row) { %>
+            <%
+              var first = result.columns[0];
+              var label = row[first] === null || row[first] === undefined ? '—' : row[first];
+              var rest = result.columns.slice(1).map(function (column) {
+                var value = row[column];
+                if (column === 'occurredAt') value = helpers.dateTime(value);
+                if (column === 'operation') value = helpers.operationLabel(value);
+                if (column === 'expiresAt') value = helpers.shortDate(value);
+                if (value === null || value === undefined) return null;
+                return helpers.columnLabel(column) + ' ' + value;
+              }).filter(Boolean).join(' · ');
+              var linkHref = evidenceHref(row.href, label);
+            %>
+            <div class="rm-told__row">
+              <span class="rm-told__t"><% if (linkHref) { %><a class="rm-u" href="<%= linkHref %>"><%= label %></a><% } else { %><%= label %><% } %></span>
+              <span class="rm-told__m"><%= rest %></span>
+            </div>
+          <% }) %>
         </div>
+        <% if (result.rows.length > 12) { %>
+          <p class="rm-stamp" style="margin-top:10px"><%= result.rows.length - 12 %> more not shown</p>
+        <% } %>
       <% } %>
 
       <% if (result.handoff) { %>
-        <p style="margin-top:12px;">
-          <a class="btn btn--primary" href="<%= result.handoff.href %>"><%= result.handoff.label %></a>
-        </p>
+        <p class="rm-choices" style="margin-top:18px"><a class="rm-btn" href="<%= result.handoff.href %>"><%= result.handoff.label %></a></p>
       <% } %>
+
       <% if (result.isAction) { %>
-        <%# Saying "Foundry cannot move stock" would be false — it can, from the
-            actions page. So it hands the request straight over. %>
-        <form method="post" action="/actions/ask" style="margin-top:12px;" data-busy>
+        <%# Saying "Foundry cannot move stock" would be false — it can. So the
+            request is handed straight over rather than explained away. %>
+        <form method="post" action="/actions/ask" style="margin-top:18px" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="instruction" value="<%= result.question %>">
-          <button class="btn btn--primary" type="submit">
-            <%- helpers.icon('adjust', { size: 15 }) %> Work out this change
-          </button>
+          <button class="rm-btn" type="submit">Work out what that would change</button>
         </form>
-        <p class="muted" style="font-size:12px; margin-top:8px;">
-          Foundry will show you exactly what it would do, and wait for you to approve it.
+        <p class="rm-stamp" style="margin-top:10px">Nothing has changed. You will see the exact change before it happens.</p>
+      <% } %>
+
+      <% if (!result.supported && !result.isAction) { %>
+        <p class="rm-stamp" style="margin-top:18px">Things I can answer</p>
+        <div class="rm-suggest">
+          <% examples.slice(0, 4).forEach(function (example) { %>
+            <a href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
+          <% }) %>
+        </div>
+      <% } %>
+
+      <% if (result.supported || result.isAction) { %>
+        <p class="rm-disclose">
+          <a href="#" onclick="var d=document.getElementById('read-as');d.hidden=!d.hidden;return false;">How I read that</a>
+        </p>
+        <p class="rm-stamp" id="read-as" hidden>
+          Read as “<%= result.plan.intent.replace(/_/g, ' ') %>”<%
+          %><% if (result.plan.entityQuery) { %> for “<%= result.plan.entityQuery %>”<% } %><%
+          %><% if (result.plan.locationQuery) { %> at “<%= result.plan.locationQuery %>”<% } %>
+          · <%= result.rowCount %> <%= helpers.plural(result.rowCount, 'row') %> from your records
+          · nothing changed — asking is not doing, and changes are approved on the actions page
         </p>
       <% } %>
     </div>
+  <% } %>
 
-    <% if (result.rows.length) { %>
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <% result.columns.forEach(function (column) { %>
-                <th class="<%= ['onHand','delta','quantity','issued','movements','expected','counted'].indexOf(column) >= 0 ? 'right' : '' %>">
-                  <%= helpers.columnLabel(column) %>
-                </th>
-              <% }) %>
-            </tr>
-          </thead>
-          <tbody>
-            <% result.rows.forEach(function (row) { %>
-              <tr>
-                <% result.columns.forEach(function (column) { %>
-                  <%
-                    var value = row[column];
-                    var numeric = ['onHand','delta','quantity','issued','movements','expected','counted'].indexOf(column) >= 0;
-                    if (column === 'occurredAt') value = helpers.dateTime(value);
-                    if (column === 'operation') value = helpers.operationLabel(value);
-                    if (column === 'expiresAt') value = helpers.shortDate(value);
-                    if (numeric && column === 'delta' && Number(value) > 0) value = '+' + value;
-                  %>
-                  <%
-                    /*
-                     * A row that names a record links to it.
-                     *
-                     * Answers were a table of dead text: told "PO-1001 is late"
-                     * and given no way to open PO-1001. Any executor can attach
-                     * an href to a row, and the first column becomes the way in
-                     * — so drilling from a number to the thing that caused it
-                     * works the same everywhere rather than per intent.
-                     */
-                    var isFirst = result.columns.indexOf(column) === 0;
-                    var shown = value === null || value === undefined ? '—' : value;
-                  %>
-                  <td class="<%= numeric ? 'right num' : '' %>"><% if (isFirst && row.href) { %><a href="<%= row.href %>"><%= shown %></a><% } else { %><%= shown %><% } %></td>
-                <% }) %>
-              </tr>
-            <% }) %>
-          </tbody>
-        </table>
+  <%
+    /*
+     * A rule Foundry has understood but not yet been given. This is the card
+     * the concept is built on: the settings record, rendered the moment it is
+     * created, in the owner's own words, with its controls attached.
+     */
+  %>
+  <% pending.forEach(function (rule) { %>
+    <div class="rm-turn">
+      <p class="rm-turn__who">Foundry</p>
+      <p class="rm-turn__said">I read that as a standing rule. Is this right?</p>
+      <div class="rm-rule">
+        <p class="rm-rule__k">Waiting for you · not in force yet</p>
+        <p class="rm-rule__t"><%= rule.summary || rule.statedAs %></p>
+        <p class="rm-rule__m">
+          <a href="/operating-instructions/<%= rule.id %>">Check it and turn it on</a>
+          <% if (rule.questions && rule.questions.length) { %>
+            <span class="rm-quiet">— <%= rule.questions[0] %></span>
+          <% } %>
+        </p>
       </div>
-    <% } %>
+    </div>
+  <% }) %>
 
-    <%
-      /*
-       * How Foundry read the question is worth being able to check — it is how
-       * somebody catches an answer that is confidently about the wrong thing.
-       * It is also Foundry's own vocabulary, so it belongs one click down
-       * rather than as the last thing on the page.
-       *
-       * And when Foundry did not run a query at all, "Foundry read this as
-       * 'unsupported'. 0 rows from your records." is three facts about nothing.
-       */
-    %>
-    <% if (result.supported || result.isAction) { %>
-    <details class="disclose card-foot">
-      <summary>
-        <span>How Foundry read this</span>
-        <span class="disclose__cue">Show</span>
-      </summary>
-      <div class="disclose__body">
-      Foundry read this as “<%= result.plan.intent.replace(/_/g, ' ') %>”<%
-        %><% if (result.plan.entityQuery) { %> for “<%= result.plan.entityQuery %>”<% } %><%
-        %><% if (result.plan.locationQuery) { %> at “<%= result.plan.locationQuery %>”<% } %><%
-        %><% if (['movement_history','recent_adjustments','expiring_soon','idle_stock','top_moving'].indexOf(result.plan.intent) >= 0) { %>
-          over <%= result.plan.windowDays %> days<% } %>.
-      <% if (result.isAction) { %>
-        Nothing has changed. This page only reads; the change is prepared on the actions page,
-        where you approve it first.
-      <% } else if (result.handoff) { %>
-        <%# This page only reads. Where the change is made depends on what was
-            asked, so it says nothing about the actions page here. %>
-        <%= result.rowCount %> <%= helpers.plural(result.rowCount, 'row') %> from your records.
-        Nothing has changed — asking is not doing.
-      <% } else { %>
-        <%= result.rowCount %> <%= helpers.plural(result.rowCount, 'row') %> from your records.
-        Foundry looks things up; changes are approved on the actions page.
-      <% } %>
-      </div>
-    </details>
-    <% } %>
-  </div>
-<% } %>
+  <%# ------------------------------------------------------------- composer %>
+  <%- include('../partials/composer', {
+    composerPrefill: about ? 'About ' + about + ': ' : '',
+  }) %>
+
+  <% if (!aiConfigured) { %>
+    <p class="rm-stamp" style="margin-top:14px;color:var(--copper)">
+      Foundry needs its model connection before it can read a sentence. Everything on the desk works without one.
+    </p>
+  <% } else if (!result) { %>
+    <div class="rm-suggest">
+      <% examples.forEach(function (example) { %>
+        <a href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
+      <% }) %>
+    </div>
+  <% } %>
+
+  <%# ------------------------------------------------- what has already been said %>
+  <% if (recent.length) { %>
+    <p class="rm-stamp" style="margin-top:48px">Lately you told me</p>
+    <div class="rm-told">
+      <% recent.slice(0, 4).forEach(function (rule) { %>
+        <div class="rm-told__row">
+          <span class="rm-told__t"><%= rule.summary || rule.statedAs %></span>
+          <span class="rm-told__m is-ok"><%= helpers.shortDate(rule.approvedAt || rule.createdAt) %></span>
+        </div>
+      <% }) %>
+    </div>
+    <p class="rm-disclose"><a href="/what-you-told-me">Everything you've told me</a></p>
+  <% } %>
+
+</div>

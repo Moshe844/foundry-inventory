@@ -139,9 +139,9 @@ test('completed replenishment leads with live position and readable live verific
 
   const response = await env.agent.get(`/autopilot/work/${completed.id}`);
   const page = plain(response.text).replace(/\s+/g, ' ');
-  assert.match(page, /Current result: 56 on hand \+ 24 on order = inventory position 80\./);
+  assert.match(page, /Current result: 56 units physically on hand; 0 units reserved, leaving 56 units available\. 24 units are on order\. After current customer orders are covered, 80 units remain available\./);
   assert.match(page, /Position when this plan was made/);
-  assert.match(page, /Inventory position at plan creation/);
+  assert.match(page, /Available after all customer orders at plan creation/);
   assert.doesNotMatch(page, /Position now/);
   assert.match(page, /Lead time used when plan was created 13 days/);
   assert.doesNotMatch(page, /After approving this/);

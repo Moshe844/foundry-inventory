@@ -1,0 +1,50 @@
+<%
+  /*
+   * The spine. One component, two subjects.
+   *
+   * Past marks are solid, the current moment is warm, and what Foundry intends
+   * to do is hollow and dashed. The future half is the whole difference between
+   * a record and a colleague: a ledger tells you where you have been.
+   */
+%>
+<%
+  /*
+   * The stages, as a rail. Where a story has got to, before a single line of
+   * its timeline is read: solid where it is done, sweeping where it is
+   * happening now, grey where it has not started.
+   */
+  var stageList = story.stages || [];
+%>
+<div class="rm-spine-head">
+  <span class="rm-spine-head__t"><%= story.head.title %></span>
+  <% story.head.meta.forEach(function (line) { %><span class="rm-spine-head__m"><%= line %></span><% }) %>
+  <span class="rm-spine-head__m right"><% if (story.head.hot) { %><span class="hot"><%= story.head.state %></span><% } else { %><%= story.head.state %><% } %></span>
+</div>
+
+<% if (stageList.length) { %>
+  <div class="rm-stages">
+    <% stageList.forEach(function (stage) { %>
+      <div class="rm-stage <%= stage.state === 'done' ? 'is-done' : stage.state === 'now' ? 'is-now' : '' %>">
+        <span class="rm-stage__bar"></span>
+        <span class="rm-stage__t"><%= stage.label %></span>
+      </div>
+    <% }) %>
+  </div>
+<% } %>
+
+<% if (locals.collapseHistory) { %><details class="rm-work" style="margin-top:20px"><summary>Show order history</summary><div class="rm-work__body"><% } %>
+<ul class="rm-spine">
+  <% story.marks.forEach(function (entry) { %>
+    <li class="<%= entry.state === 'future' ? 'is-future' : entry.state === 'now' ? 'is-now' : entry.state === 'blocked' ? 'is-future is-blocked' : '' %>">
+      <span class="rm-spine__d"><%= entry.when || (entry.state === 'now' ? 'Now' : 'No date') %></span>
+      <span class="rm-spine__g" aria-hidden="true"></span>
+      <span class="rm-spine__x">
+        <%= entry.text %>
+        <% entry.sub.forEach(function (note) { %>
+          <span class="sub"><% if (note.href) { %><a href="<%= note.href %>"><%= note.text %></a><% } else { %><%= note.text %><% } %></span>
+        <% }) %>
+      </span>
+    </li>
+  <% }) %>
+</ul>
+<% if (locals.collapseHistory) { %></div></details><% } %>

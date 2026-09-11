@@ -8,6 +8,7 @@ const connections = require('../../connections/service');
 const catalogImport = require('../../connections/catalog-import');
 const ingestion = require('../../connections/event-ingestion');
 const providerService = require('../../connections/provider-service');
+const accountingSync = require('../../accounting/integration-sync');
 const mailboxInventory = require('../../connections/mailbox-inventory');
 const documentRestorations = require('../../manager/document-restorations');
 const shopifyBootstrap = require('../../connections/shopify-bootstrap');
@@ -16,6 +17,8 @@ const supplierService = require('../../purchasing/supplier-service');
 const repo = require('../../domain/repository');
 const { ValidationError } = require('../../domain/errors');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
+const publicApi = require('../../connections/public-api');
+const outboundWebhooks = require('../../connections/outbound-webhooks');
 
 const router = express.Router();
 
@@ -98,8 +101,12 @@ router.get('/settings/connections', (req, res, next) => {
   const rows = connections.refreshHealth(req.db, req.ctx.workspaceId);
   const token = req.session.newConnectionToken || null;
   delete req.session.newConnectionToken;
+  const apiToken = req.session.newPublicApiToken || null;
+  const webhookSecret = req.session.newWebhookSecret || null;
+  delete req.session.newPublicApiToken;
+  delete req.session.newWebhookSecret;
   res.page('connections/index', { title: 'Connections', nav: 'connections', connections: rows,
-    backTo: { href: '/settings', label: 'Settings' },
+    room: true, backTo: { href: '/settings', label: 'Settings' },
     // Whose Stripe account this inventory takes money into. Shown here rather
     // than on Money, because it is a connection and not an accounting figure.
     paymentAccount: require('../../payments/accounts').describe(req.db, req.ctx.workspaceId),
@@ -107,9 +114,38 @@ router.get('/settings/connections', (req, res, next) => {
     shippingAccount: require('../../shipping/accounts').describe(req.db, req.ctx.workspaceId),
     shippingPlatform: require('../../shipping/shipengine-platform').describe(req.db, req.ctx.workspaceId),
     paymentReturnOrigin: stripeConnectOrigin(req),
+    currentWorkspaceId: req.ctx.workspaceId,
     workspaceName: req.workspace ? req.workspace.name : '',
     paymentWebhookUrl: `${process.env.FOUNDRY_PUBLIC_URL || ''}/webhooks/payments/stripe/${req.ctx.workspaceId}`,
-    providerCatalog: providers.catalog(), newConnectionToken: token });
+    providerCatalog: providers.catalog(), newConnectionToken: token, apiToken, webhookSecret,
+    apiClients: publicApi.list(req.db, req.ctx.workspaceId),
+    outboundWebhooks: outboundWebhooks.list(req.db, req.ctx.workspaceId) });
+}));
+
+router.post('/settings/connections/api-clients', requireOwner, asyncRoute(async (req, res) => {
+  const created = publicApi.create(req.db, req.ctx, { name: req.body.name, scopes: req.body.scopes });
+  req.session.newPublicApiToken = created;
+  req.flash('success', 'API client created. Copy its token now; Foundry will not show it again.');
+  res.redirect(303, '/settings/connections#developer-api');
+}));
+
+router.post('/settings/connections/api-clients/:id/revoke', requireOwner, asyncRoute(async (req, res) => {
+  publicApi.revoke(req.db, req.ctx.workspaceId, req.params.id);
+  req.flash('success', 'API client revoked immediately. Its token no longer works.');
+  res.redirect(303, '/settings/connections#developer-api');
+}));
+
+router.post('/settings/connections/outbound-webhooks', requireOwner, asyncRoute(async (req, res) => {
+  const created = outboundWebhooks.create(req.db, req.ctx, req.body);
+  req.session.newWebhookSecret = created;
+  req.flash('success', 'Signed webhook created. Copy its signing secret now; Foundry will not show it again.');
+  res.redirect(303, '/settings/connections#developer-api');
+}));
+
+router.post('/settings/connections/outbound-webhooks/:id/revoke', requireOwner, asyncRoute(async (req, res) => {
+  outboundWebhooks.revoke(req.db, req.ctx.workspaceId, req.params.id);
+  req.flash('success', 'Outbound webhook revoked. No new events will be queued for it.');
+  res.redirect(303, '/settings/connections#developer-api');
 }));
 
 /*
@@ -215,21 +251,34 @@ router.get('/settings/connections/payments/return', (req, res, next) => (
     const done = req.query && (req.query.state || req.query.code)
       ? await grant.complete(req.db, req.query)
       : { ...await grant.refresh(req.db, req.ctx.workspaceId) };
+    const connectedWorkspace = done.workspaceId
+      ? req.db.prepare('SELECT id, name FROM workspaces WHERE id = ?').get(done.workspaceId)
+      : null;
     if (!done.connected) {
-      outcome = { connected: false, chargesEnabled: false, message: done.because };
+      outcome = { connected: false, chargesEnabled: false, workspaceId: done.workspaceId || null,
+        inventoryName: connectedWorkspace ? connectedWorkspace.name : null, message: done.because };
       req.flash('warn', done.because);
     } else if (!done.chargesEnabled) {
-      outcome = { connected: true, chargesEnabled: false,
+      outcome = { connected: true, chargesEnabled: false, workspaceId: done.workspaceId || null,
+        inventoryName: connectedWorkspace ? connectedWorkspace.name : null,
         message: `Stripe still needs information before ${done.displayName || 'this account'} can take payments.` };
       req.flash('warn', `Connected to ${done.displayName || 'Stripe'}, but Stripe is not accepting `
         + 'charges on that account yet — it usually wants more details from the business. '
         + 'Payment links will fail until it is satisfied.');
     } else {
-      outcome = { connected: true, chargesEnabled: true,
+      outcome = { connected: true, chargesEnabled: true, workspaceId: done.workspaceId || null,
+        inventoryName: connectedWorkspace ? connectedWorkspace.name : null,
         message: `${done.displayName || 'Stripe'} is connected and ready to take payments.` };
       req.flash('success', `Connected. Money from this inventory arrives in `
         + `${done.displayName || 'this business'}'s own Stripe account`
         + `${done.liveMode ? '' : ', in test mode'}. Foundry holds no key for it.`);
+      if (req.account) {
+        require('../../operations/checkpoints').record(req.db, 'integration.oauth_popup', 'PASS', {
+          popupReturned: true, sessionPreserved: true, provider: 'stripe',
+          liveMode: Boolean(done.liveMode), workspaceId: done.workspaceId || req.ctx?.workspaceId || null,
+          releaseRef: require('../../config').operations.releaseRef,
+        });
+      }
     }
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
@@ -352,13 +401,15 @@ router.post('/settings/connections/connect', requireOwner, asyncRoute(async (req
 }));
 
 router.get('/settings/connections/:provider/callback', requireOwner, asyncRoute(async (req, res) => {
-  if (!['shopify', 'square', 'clover', 'gmail', 'microsoft365'].includes(req.params.provider)) return res.status(404).page('error', {
+  if (!['shopify', 'square', 'clover', 'gmail', 'microsoft365', 'quickbooks', 'xero'].includes(req.params.provider)) return res.status(404).page('error', {
     title: 'Not found', status: 404, message: 'Provider not found.' });
   const connection = await providerService.completeOAuth(req.db, req.params.provider, req.query,
     `${req.protocol}://${req.get('host')}`);
   req.session.workspaceId = connection.workspace_id;
   req.flash('success', ['gmail', 'microsoft365'].includes(req.params.provider)
     ? `${connection.display_name} is connected. Choose the supplier senders Foundry should watch.`
+    : ['quickbooks', 'xero'].includes(req.params.provider)
+      ? `${connection.display_name} is connected read-only. Foundry verified the company; choose what authority it may have.`
     : `${connection.display_name} is connected. Foundry discovered its products and locations.`);
   res.redirect(303, `/settings/connections/${connection.id}`);
 }));
@@ -459,17 +510,65 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
   const canBootstrapShopify = connection.provider_type === 'shopify' && !connection.config.catalogBootstrap
     && !bootstrapCounts.items && !bootstrapCounts.locations && !bootstrapCounts.movements;
   const provider = providers.get(connection.provider_type)?.metadata() || providers.generic;
+  const accounting = provider.integrationClass === 'accounting'
+    ? accountingSync.state(req.db, req.ctx.workspaceId, connection.id) : null;
   const view = isMailbox ? 'connections/detail-mailbox'
     : connection.provider_type === 'square' && provider.sandboxMode
       ? 'connections/detail-square-sandbox' : 'connections/detail';
   res.page(view, { title: connection.display_name, nav: 'connections', connection, token,
     backTo: { href: '/settings/connections', label: 'Connections' },
     issues, events, mappings, reconciliations, messages, messageAttachments, emailRules, externalRecords, syncRuns, canBootstrapShopify,
-    provider, mailboxSignature: isMailbox
+    provider, accounting, mailboxSignature: isMailbox
       ? mailboxStateSignature(req.db, req.ctx.workspaceId, connection.id) : null,
     skus: dbSkus(req.db, req.ctx.workspaceId), locations: repo.listLocations(req.db, req.ctx.workspaceId),
     customers: req.db.prepare('SELECT id, name FROM customers WHERE workspace_id = ? ORDER BY name COLLATE NOCASE').all(req.ctx.workspaceId),
-    suppliers: req.db.prepare('SELECT id, name FROM suppliers WHERE workspace_id = ? ORDER BY name COLLATE NOCASE').all(req.ctx.workspaceId) });
+    suppliers: req.db.prepare('SELECT id, name FROM suppliers WHERE workspace_id = ? ORDER BY name COLLATE NOCASE').all(req.ctx.workspaceId),
+    accountingAccounts: accounting ? req.db.prepare(`SELECT id, code, name FROM accounting_accounts
+      WHERE workspace_id = ? AND active = 1 ORDER BY code`).all(req.ctx.workspaceId) : [] });
+}));
+
+router.post('/settings/connections/:id/accounting-authority', requireOwner, asyncRoute(async (req, res) => {
+  accountingSync.chooseAuthority(req.db, req.ctx, req.params.id, req.body);
+  req.flash('success', req.body.authority === 'OBSERVE'
+    ? 'Read-only authority saved. Foundry cannot post or change the external books.'
+    : 'Authority saved. Run the shadow comparison before any posting can be enabled.');
+  res.redirect(303, `/settings/connections/${req.params.id}`);
+}));
+
+router.post('/settings/connections/:id/accounting-shadow', requireOwner, asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  const adapter = providers.get(connection.provider_type);
+  if (adapter?.integrationClass !== 'accounting') throw new ValidationError('This is not an accounting connection.');
+  const credentials = await providerService.loadProviderCredentials(req.db, connection, adapter);
+  const result = await accountingSync.shadow(req.db, req.ctx, connection.id, adapter, credentials, { asOf: req.body.asOf });
+  req.flash(result.status === 'MATCHED' ? 'success' : 'warn', result.status === 'MATCHED'
+    ? 'Shadow comparison matched exactly. No external record was changed.'
+    : `Foundry found ${result.differences.length} difference${result.differences.length === 1 ? '' : 's'} and stopped. Nothing was posted.`);
+  res.redirect(303, `/settings/connections/${connection.id}`);
+}));
+
+router.post('/settings/connections/:id/accounting-map', requireOwner, asyncRoute(async (req, res) => {
+  accountingSync.mapAccount(req.db, req.ctx, req.params.id, req.body);
+  req.flash('success', 'Exact account mapping saved. Run the shadow comparison again; nothing has been posted.');
+  res.redirect(303, `/settings/connections/${req.params.id}`);
+}));
+
+router.post('/settings/connections/:id/accounting-enable', requireOwner, asyncRoute(async (req, res) => {
+  accountingSync.enableWrites(req.db, req.ctx, req.params.id);
+  req.flash('success', 'Posting authority is enabled. Foundry remains the source of truth and every external post is idempotent and auditable.');
+  res.redirect(303, `/settings/connections/${req.params.id}`);
+}));
+
+router.post('/settings/connections/:id/accounting-post', requireOwner, asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  const adapter = providers.get(connection.provider_type);
+  if (adapter?.integrationClass !== 'accounting') throw new ValidationError('This is not an accounting connection.');
+  const credentials = await providerService.loadProviderCredentials(req.db, connection, adapter);
+  const result = await accountingSync.syncPending(req.db, req.ctx, connection.id, adapter, credentials);
+  req.flash(result.remaining ? 'warn' : 'success', result.remaining
+    ? `${result.posted} verified entr${result.posted === 1 ? 'y was' : 'ies were'} posted; ${result.remaining} stopped before an uncertain mapping.`
+    : `${result.posted} verified accounting entr${result.posted === 1 ? 'y was' : 'ies were'} posted. Provider identities were recorded.`);
+  res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 
 router.get('/settings/connections/:id/state', asyncRoute(async (req, res) => {

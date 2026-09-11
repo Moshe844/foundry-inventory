@@ -3,14 +3,56 @@
 const express = require('express');
 const changes = require('../../pricing/price-changes');
 const prices = require('../../pricing/price-service');
+const purchaseCosts = require('../../accounting/inventory-cost-instructions');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 
 const router = express.Router();
 router.use('/pricing', requireAuth);
 
+function pendingPurchaseCostBatch(req) {
+  const ids = Array.isArray(req.session.pendingPurchaseCostBatch) ? req.session.pendingPurchaseCostBatch : [];
+  return ids.map((id) => purchaseCosts.get(req.db, req.ctx.workspaceId, id))
+    .filter((proposal) => proposal.status === 'PENDING');
+}
+
+router.get('/pricing/purchase-costs/batch', asyncRoute(async (req, res) => {
+  const proposals = pendingPurchaseCostBatch(req);
+  if (!proposals.length) {
+    delete req.session.pendingPurchaseCostBatch;
+    req.flash('info', 'There is no purchase-cost change waiting for review.');
+    return res.redirect(303, '/inventory');
+  }
+  return res.page('pricing/purchase-cost-batch', { title: 'Review purchase costs', nav: 'inventory', proposals,
+    // This is already the owner's active decision. A separate workspace-wide
+    // setup suggestion above it creates two competing "next" actions.
+    screenGuide: null });
+}));
+
+router.post('/pricing/purchase-costs/batch/approve', requireOwner, asyncRoute(async (req, res) => {
+  const proposals = pendingPurchaseCostBatch(req);
+  const approvals = req.body.approval || {};
+  const completed = purchaseCosts.approveBatch(req.db, req.ctx, req.user, proposals.map((proposal) => ({
+    id: proposal.id, integrityHash: approvals[proposal.id],
+  })));
+  delete req.session.pendingPurchaseCostBatch;
+  const below = completed.filter((proposal) => proposal.belowCost);
+  req.flash(below.length ? 'warn' : 'success', below.length
+    ? `${completed.length} purchase cost${completed.length === 1 ? '' : 's'} updated. ${below.length} product${below.length === 1 ? ' now sells' : 's now sell'} below purchase cost — review the warning in Inventory.`
+    : `${completed.length} purchase cost${completed.length === 1 ? '' : 's'} updated and now visible in Inventory.`);
+  return res.redirect(303, completed.length === 1 ? `/inventory/${completed[0].item_id}#pricing` : '/inventory');
+}));
+
+router.post('/pricing/purchase-costs/batch/cancel', requireOwner, asyncRoute(async (req, res) => {
+  const proposals = pendingPurchaseCostBatch(req);
+  purchaseCosts.cancelBatch(req.db, req.ctx.workspaceId, proposals.map((proposal) => proposal.id));
+  delete req.session.pendingPurchaseCostBatch;
+  req.flash('success', 'The purchase costs were not changed.');
+  return res.redirect(303, '/inventory');
+}));
+
 router.get('/pricing/new', asyncRoute(async (req, res) => {
   const sku = prices.requireSku(req.db, req.ctx.workspaceId, req.query.skuId);
-  res.page('pricing/new', { title: 'Set selling price', nav: 'inventory', sku,
+  res.page('pricing/new', { title: 'Set selling price', nav: 'inventory', sku, screenGuide: null,
     current: prices.currentForSku(req.db, req.ctx.workspaceId, sku.id),
     purchaseCost: prices.purchaseCostForSku(req.db, req.ctx.workspaceId, sku.id) });
 }));
@@ -65,7 +107,7 @@ router.get('/pricing/proposals/batch', asyncRoute(async (req, res) => {
     req.flash('info', 'There is no price list waiting for review.');
     return res.redirect(303, '/inventory');
   }
-  return res.page('pricing/batch', { title: 'Review selling prices', nav: 'inventory', proposals });
+  return res.page('pricing/batch', { title: 'Review selling prices', nav: 'inventory', proposals, screenGuide: null });
 }));
 
 router.post('/pricing/proposals/batch/approve', requireOwner, asyncRoute(async (req, res) => {
@@ -89,7 +131,7 @@ router.post('/pricing/proposals/batch/cancel', requireOwner, asyncRoute(async (r
 }));
 
 router.get('/pricing/proposals/:id', asyncRoute(async (req, res) => {
-  res.page('pricing/proposal', { title: 'Review selling price', nav: 'inventory',
+  res.page('pricing/proposal', { title: 'Review selling price', nav: 'inventory', screenGuide: null,
     proposal: changes.get(req.db, req.ctx.workspaceId, req.params.id) });
 }));
 

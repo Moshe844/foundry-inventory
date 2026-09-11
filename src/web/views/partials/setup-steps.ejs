@@ -1,0 +1,20 @@
+<%
+  /*
+   * Where you are in getting set up.
+   *
+   * Every screen behind a first-run choice belongs to one flow, and before this
+   * each of them arrived with no sense of that — you chose a source and landed
+   * somewhere that looked like a different product with no idea how much was
+   * left. Four states, and never a claim that a later one has been reached.
+   */
+  var steps = ['Choose a source', 'Give Foundry the detail', 'Review what it found', 'Start operating'];
+  var at = Number(locals.step || 0);
+%>
+<div class="rm-steps">
+  <% steps.forEach(function (label, i) { %>
+    <div class="rm-step <%= i < at ? 'is-done' : i === at ? 'is-now' : '' %>">
+      <span class="rm-step__n"><%= i < at ? '✓' : i + 1 %></span>
+      <span class="rm-step__t"><%= label %></span>
+    </div>
+  <% }) %>
+</div>

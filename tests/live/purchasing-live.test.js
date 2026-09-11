@@ -82,16 +82,16 @@ async function ask(env, question) {
 test('“what should I order today?” is answered from the engine', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const env = wholesaler();
   const { plan, result } = await ask(env, 'What should I order today?');
+  const engineAnswer = replenishment.evaluateOne(env.db, env.workspace.workspaceId, env.item.skuId);
 
-  assert.equal(plan.intent, 'replenishment', JSON.stringify(plan));
-  assert.equal(result.rows.length, 1);
-  assert.equal(result.rows[0].label, 'Navy Oxford');
+  assert.equal(plan.intent, 'what_to_order', JSON.stringify(plan));
+  assert.equal(result.rows.length, 1, JSON.stringify({ result, engineAnswer }));
+  assert.equal(result.rows[0].product, 'Navy Oxford');
   assert.equal(result.rows[0].supplier, 'ABC Footwear');
 
   // The figure came from the deterministic engine, not from the model.
-  const engineAnswer = replenishment.evaluateOne(env.db, env.workspace.workspaceId, env.item.skuId);
-  assert.equal(result.rows[0].recommended, engineAnswer.quantityUnits);
-  assert.equal(result.rows[0].recommended % 12, 0, 'whole cases only');
+  assert.equal(result.rows[0].quantity, engineAnswer.quantityUnits);
+  assert.equal(result.rows[0].quantity % 12, 0, 'whole cases only');
 });
 
 test('“what is already on order?” answers from real orders', { skip: !LIVE, timeout: TIMEOUT }, async () => {

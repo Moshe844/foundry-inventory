@@ -323,6 +323,14 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
       console.error('[shipping] postage was not posted to the books', error.message);
     }
   }
+  if (held && held.account.source !== 'server'
+      && !require('./accounts').isTestKey(held.account.provider, held.account.apiKey)) {
+    require('../operations/checkpoints').record(db, 'integration.shipping_onboarding', 'PASS', {
+      connected: true, customerFunded: true, platformCharged: false,
+      provider: held.account.provider, shipmentId, amountMinor: bought.amountMinor, liveMode: true,
+      releaseRef: require('../config').operations.releaseRef,
+    });
+  }
 
   return {
     shipment: requireShipment(db, ctx.workspaceId, shipmentId),

@@ -119,11 +119,11 @@ test('a written instruction becomes a preview, not a movement', async () => {
   assert.match(res.headers.location, /^\/actions\/act_/);
 
   const preview = plain((await agent.get(res.headers.location)).text);
-  assert.match(preview, /Foundry is ready to transfer/);
+  assert.match(preview, /Foundry is ready to prepare a real transfer/);
   assert.match(preview, /Children's Sweater \/ Navy \/ 4/);
-  assert.match(preview, /Main Warehouse\s+stock leaves here\s+48\s+33/);
-  assert.match(preview, /Downtown Store\s+stock arrives here\s+4\s+19/);
-  assert.match(preview, /unchanged — stock only moves/);
+  assert.match(preview, /From Main Warehouse\s+48 on hand now · 15 will be reserved after approval/);
+  assert.match(preview, /To Downtown Store\s+4 on hand now · \+15 only after receipt/);
+  assert.match(preview, /total on hand unchanged while the stock moves/);
   assert.match(preview, /Approve transfer/);
 
   // Nothing has moved yet.
@@ -170,10 +170,10 @@ test('an unknown transfer destination offers to create it, then previews and ver
 
   const transferPage = await agent.get(continued.headers.location);
   const transferText = plain(transferPage.text);
-  assert.match(transferText, /Foundry is ready to transfer/);
-  assert.match(transferText, /Main Warehouse\s+stock leaves here\s+48\s+46/);
-  assert.match(transferText, /Overflow Warehouse\s+stock arrives here\s+0\s+2/);
-  assert.match(transferText, /Total on hand\s+unchanged.+stock only moves\s+52\s+52/);
+  assert.match(transferText, /Foundry is ready to prepare a real transfer/);
+  assert.match(transferText, /From Main Warehouse\s+48 on hand now · 2 will be reserved after approval/);
+  assert.match(transferText, /To Overflow Warehouse\s+0 on hand now · \+2 only after receipt/);
+  assert.match(transferText, /52 total on hand unchanged while the stock moves/);
   assert.match(transferText, /no stock has moved yet/i);
 
   const approved = await agent.post(continued.headers.location + '/approve').type('form').send({
@@ -184,11 +184,11 @@ test('an unknown transfer destination offers to create it, then previews and ver
 
   const result = plain((await agent.get(continued.headers.location)).text);
   assert.match(result, /Verified against your records/);
-  assert.match(result, /Main Warehouse\s+48\s+46/);
-  assert.match(result, /Overflow Warehouse\s+0\s+2/);
-  assert.match(result, /Total on hand\s+52\s+52/);
-  assert.equal(balance(env, env.workspace.main.id), 46);
-  assert.equal(balance(env, overflow.id), 2);
+  assert.match(result, /Main Warehouse still holds 48 on hand/);
+  assert.match(result, /Overflow Warehouse remains at 0 until the receipt is recorded/);
+  assert.equal(balance(env, env.workspace.main.id), 48);
+  assert.equal(balance(env, overflow.id), 0);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM inventory_transfers').get().n, 1);
 });
 
 test('an instruction Foundry cannot carry out is refused honestly', async () => {
@@ -226,7 +226,7 @@ test('an ambiguous instruction asks rather than guesses', async () => {
 
 // --- approval and execution --------------------------------------------------
 
-test('approving carries the action out and reports exactly what changed', async () => {
+test('approving a transfer prepares its real lifecycle without claiming physical movement', async () => {
   const env = setup();
   const proposal = makeProposal(env);
   const agent = request.agent(env.app);
@@ -237,17 +237,19 @@ test('approving carries the action out and reports exactly what changed', async 
   await agent.get(approved.headers.location);
 
   const page = plain((await agent.get(`/actions/${proposal.proposalId}`)).text);
-  assert.match(page, /Done/);
+  assert.match(page, /Transfer prepared/);
   assert.match(page, /Verified against your records/);
-  assert.match(page, /Main Warehouse\s+48\s+33/);
-  assert.match(page, /Downtown Store\s+4\s+19/);
+  assert.match(page, /Main Warehouse still holds 48 on hand/);
+  assert.match(page, /Downtown Store remains at 4 until the receipt is recorded/);
+  assert.match(page, /Nothing physically moved/);
 
-  assert.equal(balance(env, env.workspace.main.id), 33);
-  assert.equal(balance(env, env.workspace.store.id), 19);
+  assert.equal(balance(env, env.workspace.main.id), 48);
+  assert.equal(balance(env, env.workspace.store.id), 4);
+  assert.equal(env.db.prepare("SELECT COUNT(*) AS n FROM inventory_transfers WHERE status = 'APPROVED'").get().n, 1);
   assert.equal(engine.verifyIntegrity(env.db, env.workspace.workspaceId).ok, true);
 });
 
-test('a double-clicked approval moves stock once', async () => {
+test('a double-clicked approval prepares one transfer and moves no physical stock', async () => {
   const env = setup();
   const proposal = makeProposal(env);
   const agent = request.agent(env.app);
@@ -266,13 +268,14 @@ test('a double-clicked approval moves stock once', async () => {
 
   assert.ok([303, 302].includes(first.status));
   assert.ok([303, 302].includes(second.status));
-  assert.equal(balance(env, env.workspace.main.id), 33, 'moved once');
-  assert.equal(balance(env, env.workspace.store.id), 19);
+  assert.equal(balance(env, env.workspace.main.id), 48, 'dispatch has not happened');
+  assert.equal(balance(env, env.workspace.store.id), 4);
   assert.equal(
     env.db.prepare("SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ? AND operation = 'transfer'")
       .get(env.workspace.workspaceId).n,
-    2
+    0
   );
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM inventory_transfers').get().n, 1);
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM action_executions').get().n, 1);
 });
 
@@ -285,8 +288,9 @@ test('refreshing the result page does not run it again', async () => {
   await post(agent, `/actions/${proposal.proposalId}/approve`, {}, `/actions/${proposal.proposalId}`);
   for (let i = 0; i < 4; i += 1) await agent.get(`/actions/${proposal.proposalId}/run`);
 
-  assert.equal(balance(env, env.workspace.main.id), 33);
+  assert.equal(balance(env, env.workspace.main.id), 48);
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM action_executions').get().n, 1);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM inventory_transfers').get().n, 1);
 });
 
 test('a replayed approve POST after execution changes nothing', async () => {
@@ -304,8 +308,9 @@ test('a replayed approve POST after execution changes nothing', async () => {
   await agent.post(`/actions/${proposal.proposalId}/approve`).type('form').send({ _csrf: token });
   await agent.get(`/actions/${proposal.proposalId}/run`);
 
-  assert.equal(balance(env, env.workspace.main.id), 33);
-  assert.equal(balance(env, env.workspace.store.id), 19);
+  assert.equal(balance(env, env.workspace.main.id), 48);
+  assert.equal(balance(env, env.workspace.store.id), 4);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM inventory_transfers').get().n, 1);
 });
 
 // --- staleness ---------------------------------------------------------------
@@ -322,7 +327,7 @@ test('a proposal whose stock has moved is shown as recalculated, not executed', 
 
   const preview = plain((await agent.get(`/actions/${proposal.proposalId}`)).text);
   assert.match(preview, /The stock changed since Foundry worked this out/);
-  assert.match(preview, /Main Warehouse\s+stock leaves here\s+31/, 'the current figure is shown');
+  assert.match(preview, /From Main Warehouse\s+31 on hand now/, 'the current figure is shown');
 
   const res = await post(agent, `/actions/${proposal.proposalId}/approve`, {}, `/actions/${proposal.proposalId}`);
   assert.equal(res.status, 303);
@@ -345,14 +350,15 @@ test('the quantity can be changed, and the new one needs approving', async () =>
   assert.notEqual(revisedId, proposal.proposalId);
 
   const page = plain((await agent.get(res.headers.location)).text);
-  assert.match(page, /Main Warehouse\s+stock leaves here\s+48\s+36/);
+  assert.match(page, /From Main Warehouse\s+48 on hand now · 12 will be reserved after approval/);
   assert.match(page, /Approve transfer/);
   assert.equal(balance(env, env.workspace.main.id), 48, 'still nothing has moved');
 
   await post(agent, `/actions/${revisedId}/approve`, {}, `/actions/${revisedId}`);
   await agent.get(`/actions/${revisedId}/run`);
-  assert.equal(balance(env, env.workspace.main.id), 36);
-  assert.equal(balance(env, env.workspace.store.id), 16);
+  assert.equal(balance(env, env.workspace.main.id), 48);
+  assert.equal(balance(env, env.workspace.store.id), 4);
+  assert.equal(env.db.prepare('SELECT SUM(requested_quantity) AS n FROM inventory_transfer_lines').get().n, 12);
 });
 
 // --- permissions -------------------------------------------------------------
@@ -391,7 +397,7 @@ test('permission is enforced on the server, not by hiding a button', async () =>
   );
 });
 
-test('an operator can transfer but not correct', async () => {
+test('an operator can request a transfer but cannot approve it or correct stock', async () => {
   const env = setup();
   const staff = authService.getMembership(
     env.db,
@@ -407,13 +413,11 @@ test('an operator can transfer but not correct', async () => {
 
   await post(agent, `/actions/${proposal.proposalId}/approve`, {}, `/actions/${proposal.proposalId}`);
   await agent.get(`/actions/${proposal.proposalId}/run`);
-  assert.equal(balance(env, env.workspace.main.id), 33);
+  assert.equal(balance(env, env.workspace.main.id), 48);
 
-  // And the ledger names the person who actually approved it.
-  const movement = env.db
-    .prepare("SELECT * FROM movements WHERE workspace_id = ? AND operation = 'transfer' LIMIT 1")
-    .get(env.workspace.workspaceId);
-  assert.equal(movement.actor_user_id, env.workspace.staffId);
+  const transfer = env.db.prepare('SELECT * FROM inventory_transfers WHERE workspace_id = ?').get(env.workspace.workspaceId);
+  assert.equal(transfer.requested_by_user_id, env.workspace.staffId);
+  assert.equal(transfer.status, 'REQUESTED');
 });
 
 // --- warnings ----------------------------------------------------------------
@@ -469,7 +473,7 @@ test('a finding offers a review, never a "do it now"', async () => {
   assert.match(res.headers.location, /^\/actions\/act_/);
 
   const preview = plain((await agent.get(res.headers.location)).text);
-  assert.match(preview, /Foundry is ready to transfer/);
+  assert.match(preview, /Foundry is ready to prepare a real transfer/);
   assert.match(preview, /A Foundry finding/);
 });
 

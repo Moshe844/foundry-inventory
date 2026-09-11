@@ -28,6 +28,7 @@ const mailboxScheduler = require('../../src/connections/mailbox-scheduler');
 const queryService = require('../../src/attention/query-service');
 const ledger = require('../../src/accounting/ledger');
 const reports = require('../../src/accounting/reports');
+const landedCosts = require('../../src/accounting/landed-costs');
 const reactions = require('../../src/manager/reactions');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, signIn, csrfFrom, plain } = require('../helpers');
 
@@ -124,6 +125,35 @@ test('a trusted matched supplier invoice becomes AP without receiving or double-
     .reduce((sum, line) => sum + line.credit_minor - line.debit_minor, 0);
   assert.equal(receiptAp, 0, 'receiving stock alone must not say the supplier was invoiced');
   assert.equal(reports.controlReconciliation(env.db, env.workspace.workspaceId, { asOf: '2026-12-31' }).ap.reconciled, true);
+  env.db.close();
+});
+
+test('a trusted supplier invoice email prepares, but does not apply, its documented freight allocation', () => {
+  const env = setup();
+  ledger.configure(env.db, env.workspace.ctx, env.membership, {
+    startDate: '2026-01-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+  });
+  const approved = poService.approve(env.db, env.workspace.ctx, env.membership, env.order.id);
+  receiving.receive(env.db, env.workspace.ctx, env.membership, approved.id, {
+    idempotencyKey: 'supplier-email-landed-cost-receipt',
+    lines: [{ lineId: approved.lines[0].id, quantityUnits: 24 }],
+  });
+
+  message(env, 'accounting-invoice-landed-1', `Invoice ACC-LC-1 for ${approved.poNumber}`, {
+    documentType: 'invoice', poNumber: approved.poNumber, invoiceNumber: 'ACC-LC-1',
+    lines: [{ supplierSku: 'ABC-BLK-S', quantity: 24, unitPrice: 6.5 }],
+    charges: [{ kind: 'freight', label: 'Inbound freight', amount: 25 }],
+  });
+
+  const bill = env.db.prepare(`SELECT * FROM accounting_supplier_bills
+    WHERE workspace_id = ? AND supplier_invoice_number = 'ACC-LC-1'`).get(env.workspace.workspaceId);
+  assert.equal(bill.status, 'OPEN');
+  assert.equal(bill.balance_minor, 18_100, 'the payable includes the documented freight exactly once');
+  const draft = landedCosts.listForPurchaseOrder(env.db, env.workspace.workspaceId, approved.id)[0];
+  assert.ok(draft, 'the connected supplier email created a reviewable landed-cost draft');
+  assert.equal(draft.status, 'DRAFT');
+  assert.equal(draft.charges[0].amount_minor, 2_500);
+  assert.equal(draft.allocations.length, 0, 'the email did not change inventory value without approval');
   env.db.close();
 });
 

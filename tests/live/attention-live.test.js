@@ -175,24 +175,25 @@ test(
 );
 
 test(
-  'questions outside inventory are refused rather than guessed at',
+  'business questions use supported deterministic domains and unsupported advice stays honest',
   { skip: !LIVE, timeout: TIMEOUT },
   async () => {
     const { db, workspace } = busyWorkspace();
-    // Purchasing questions became answerable in Mission 6; these are the ones
-    // that are still outside the product entirely.
-    const outside = [
-      'Should I raise my prices?',
-      'What will demand look like next year?',
-      'Which customers order the most?',
-    ];
+    const demand = await queryPlanner.ask(db, workspace.workspaceId,
+      'What will demand look like next year?', {});
+    assert.equal(demand.plan.intent, 'demand_forecast');
+    assert.ok(Array.isArray(demand.rows));
 
-    for (const question of outside) {
-      const result = await queryPlanner.ask(db, workspace.workspaceId, question, {});
-      assert.equal(result.plan.intent, 'unsupported', `"${question}" was answered as ${result.plan.intent}`);
-      assert.ok(result.answer.length > 10, 'and it says why');
-      assert.equal(result.rows.length, 0);
-    }
+    const customers = await queryPlanner.ask(db, workspace.workspaceId,
+      'Which customers order the most?', {});
+    assert.equal(customers.plan.intent, 'top_customers');
+    assert.ok(Array.isArray(customers.rows));
+
+    const outside = await queryPlanner.ask(db, workspace.workspaceId,
+      'Should I raise my prices?', {});
+    assert.equal(outside.plan.intent, 'unsupported', `price strategy was answered as ${outside.plan.intent}`);
+    assert.ok(outside.answer.length > 10, 'and it says why');
+    assert.equal(outside.rows.length, 0);
     const margin = await queryPlanner.ask(db, workspace.workspaceId,
       'What was our gross margin last quarter?', {});
     assert.equal(margin.plan.intent, 'profit_and_loss');

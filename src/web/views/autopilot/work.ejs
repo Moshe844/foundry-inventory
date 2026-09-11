@@ -14,6 +14,10 @@
   </div>
 </div>
 
+<% if (locals.transferLink) { %>
+  <div class="section"><a class="btn btn--primary" href="<%= locals.transferLink %>">Open the prepared transfer</a></div>
+<% } %>
+
 <% if (locals.currentResult) { %>
   <div class="notice notice--ok section current-result" role="status">
     <strong>Current result:</strong>
@@ -36,6 +40,19 @@
         <div class="notice section" role="note">
           <strong>Why this quantity?</strong>
           <div><%= locals.approvalCopy.orderRule %></div>
+          <% if ((locals.customerDemand || []).length) { %>
+            <div class="section t-sm">
+              <strong>Customer orders this must cover:</strong>
+              <ul class="plain-list">
+                <% locals.customerDemand.forEach(function (demand) { %>
+                  <li>
+                    <a href="<%= demand.href %>"><%= demand.orderNumber %> · <%= demand.customerName %></a>
+                    — <%= demand.quantity %> <%= demand.displayName %> waiting for stock
+                  </li>
+                <% }) %>
+              </ul>
+            </div>
+          <% } %>
         </div>
       <% } %>
 
@@ -58,7 +75,7 @@
         <h3 class="rep-plan-sub">What changes at each stage</h3>
         <table class="rep-plan-table">
           <thead>
-            <tr><th>Stage</th><th class="num">On hand</th><th class="num">Draft</th><th class="num">Placed order</th><th class="num">Planned total</th></tr>
+            <tr><th>Stage</th><th class="num">On hand</th><th class="num">Draft</th><th class="num">Placed order</th><th class="num">Stock + purchase plan</th><th class="num">Available after customer orders</th></tr>
           </thead>
           <tbody>
             <% locals.approvalCopy.stages.forEach(function (stage) { %>
@@ -68,6 +85,9 @@
                 <td class="num"><%= stage.drafted %></td>
                 <td class="num"><%= stage.onOrder %></td>
                 <td class="num"><strong><%= stage.covered %></strong></td>
+                <td class="num"><strong><%= stage.availableAfterDemand < 0
+                  ? `Short ${Math.abs(stage.availableAfterDemand)}`
+                  : stage.availableAfterDemand %></strong></td>
               </tr>
             <% }) %>
           </tbody>
@@ -119,15 +139,18 @@
       <table class="rep-plan-table">
         <tbody>
           <tr><td>On hand</td><td class="num"><%= locals.position.onHand %></td></tr>
+          <tr><td>Reserved for customer orders</td><td class="num"><%= locals.position.committed %></td></tr>
+          <tr><td>Customer demand waiting for stock</td><td class="num"><%= locals.position.backordered %></td></tr>
+          <tr><td>Available before waiting demand</td><td class="num"><%= locals.position.onHand - locals.position.committed %></td></tr>
           <tr><td>On order <span class="muted">— placed with a supplier</span></td><td class="num"><%= locals.position.onOrder %></td></tr>
           <tr><td>Drafted <span class="muted">— decided, not yet placed</span></td><td class="num"><%= locals.position.drafted %></td></tr>
           <tr><td><strong><%=
             item.executionStatus === 'COMPLETED'
-              ? 'Inventory position at plan creation'
+              ? 'Available after all customer orders at plan creation'
               : item.executionStatus === 'SUPERSEDED'
-                ? 'Inventory position in the replaced plan'
-                : 'Inventory position now'
-          %></strong> <span class="muted">— on hand + on order</span></td><td class="num"><strong><%= locals.position.position %></strong></td></tr>
+                ? 'Available after all customer orders in the replaced plan'
+                : 'Available after all customer orders now'
+          %></strong> <span class="muted">— on hand − reserved + on order − waiting demand</span></td><td class="num"><strong><%= locals.position.position %></strong></td></tr>
           <tr><td>Reorder point</td><td class="num"><%= locals.position.reorderPoint %></td></tr>
           <tr><td>Order up to</td><td class="num"><%= locals.position.target %></td></tr>
         </tbody>

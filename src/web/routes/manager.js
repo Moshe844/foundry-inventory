@@ -27,13 +27,29 @@ const reactions = require('../../manager/reactions');
 const salesIntent = require('../../sales/sales-intent');
 const permissions = require('../../actions/permissions');
 const priceChanges = require('../../pricing/price-changes');
+const inventoryCostInstructions = require('../../accounting/inventory-cost-instructions');
 const connectionTell = require('../../connections/tell');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 const actionHandoff = require('../action-handoff');
 const { trimOrNull } = require('../../lib/util');
+const productNavigation = require('../../product-brain/navigation');
 
 const router = express.Router();
-router.use(['/foundry/tell', '/needs-you', '/investigations', '/document-removals', '/import-removals', '/catalog-code-changes'], requireAuth);
+router.use(['/foundry/tell', '/foundry/navigate', '/needs-you', '/investigations', '/document-removals', '/import-removals', '/catalog-code-changes'], requireAuth);
+
+/** One validated gateway for every destination Foundry offers in conversation. */
+router.get('/foundry/navigate', (req, res) => {
+  const href = String(req.query.to || '');
+  const access = req.app.locals.productBrain.accessForHref(href, req.user);
+  if (!access.exists || !access.available || !access.allowed) {
+    req.flash('warn', access.reason || 'That destination is not available to you.');
+    return res.redirect(303, '/ask');
+  }
+  const label = String(req.query.label || 'requested page').slice(0, 100);
+  const returnTo = String(req.query.return || '/ask');
+  productNavigation.remember(req, { href, label }, returnTo);
+  return res.redirect(303, href);
+});
 
 function actionRedirect(result) {
   if (result.kind === 'proposal' || result.kind === 'existing') return `/actions/${result.proposal.proposalId}`;
@@ -252,8 +268,36 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     return res.redirect(303, '/needs-you');
   }
 
+  // Purchase cost is the current price paid per inventory unit, not the
+  // historical value of whatever happens to be on hand today. Preview the
+  // exact products and their customer-price consequence before changing it.
+  if (inventoryCostInstructions.matchesInstruction(message)) {
+    try {
+      const prepared = inventoryCostInstructions.prepare(req.db, req.ctx, message);
+      req.session.pendingPurchaseCostBatch = prepared.proposals.map((proposal) => proposal.id);
+      req.flash('success', `Foundry understood ${prepared.currency} ${(prepared.unitCostMinor / 100).toFixed(2)} as the current purchase cost for ${prepared.productCount} product${prepared.productCount === 1 ? '' : 's'}. Review what changes${prepared.belowCostCount ? ` — ${prepared.belowCostCount} would sell below cost` : ''}.`);
+      return res.redirect(303, '/pricing/purchase-costs/batch');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+      return res.redirect(303, '/#tell-foundry');
+    }
+  }
+
   if (priceChanges.matchesInstruction(message)) {
     try {
+      /*
+       * "Add a price for each item" names no product and gives one amount, so
+       * it used to reach the single-change path — where the resolver picked one
+       * product out of the catalogue and prepared a price for that. The owner
+       * asked for every item and got one, which looks like it worked.
+       */
+      if (priceChanges.matchesEveryProductInstruction(message)) {
+        const batch = priceChanges.interpretEvery(req.db, req.ctx, message);
+        req.session.pendingPriceBatch = batch.map((proposal) => proposal.id);
+        req.flash('success', `Foundry understood one selling price for every product — ${batch.length} in all. Review the complete list before anything changes.`);
+        return res.redirect(303, '/pricing/proposals/batch');
+      }
       if (priceChanges.matchesBulkInstruction(message)) {
         const batch = await priceChanges.interpretMany(req.db, req.ctx, message, {
           provider: req.app.locals.aiProvider || undefined,
@@ -298,6 +342,20 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       req.flash('warning', err.message);
       return res.redirect(303, '/#tell-foundry');
     }
+  }
+
+  const navigation = await productNavigation.resolveNatural(req.db, req.ctx.workspaceId, req.user, message, {
+    brain: req.app.locals.productBrain,
+    provider: req.app.locals.aiProvider || undefined,
+    actorId: req.ctx.actorId,
+    currentHref: req.get('referer') || '',
+  });
+  if (navigation) {
+    if (navigation.canNavigate && navigation.navigateNow) {
+      productNavigation.remember(req, navigation, `/ask?q=${encodeURIComponent(message)}`);
+      return res.redirect(303, navigation.href);
+    }
+    return res.redirect(303, `/ask?q=${encodeURIComponent(message)}`);
   }
 
   const intent = await intentRouter.classify(req.db, req.ctx, message, {
@@ -515,23 +573,30 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     // and the real answer, that nobody is on file to buy it from, was never
     // given. The specific path already exists and answers or asks properly; it
     // just had no caller.
-    const specific = namesAProduct
-      ? await actionService.interpret(req.db, req.ctx, req.user, message, {
-          provider: req.app.locals.aiProvider || undefined,
-        })
-      : { kind: 'none' };
+    const specific = await actionService.interpret(req.db, req.ctx, req.user, message, {
+      provider: req.app.locals.aiProvider || undefined,
+    });
     if (specific.kind === 'purchase_order' && specific.order) {
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'purchase_order', specific.order.id);
       managerContext.remember(req.db, req.ctx, { purchaseOrderId: specific.order.id });
       req.flash('success', `Foundry drafted ${specific.order.poNumber}. Nothing is ordered until you approve it.`);
       return res.redirect(303, `/purchasing/orders/${specific.order.id}`);
     }
-    if (specific.kind === 'question' && specific.question) {
-      req.session.pendingActionQuestion = { question: specific.question, instruction: message, choices: null };
+    if (specific.kind === 'question' && specific.question && (specific.purchaseSpecific || namesAProduct)) {
+      let continuationId = null;
+      if (specific.continuation) continuationId = crypto.randomUUID();
+      req.session.pendingActionQuestion = {
+        question: specific.question,
+        instruction: message,
+        choices: specific.choices || null,
+        continuation: specific.continuation || null,
+        continuationId,
+        answerAction: '/actions/ask',
+      };
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
       return res.redirect(303, '/actions');
     }
-    if (specific.kind === 'unsupported' && specific.message) {
+    if (specific.kind === 'unsupported' && specific.message && (specific.purchaseSpecific || namesAProduct)) {
       req.session.pendingActionQuestion = { unsupported: specific.message, instruction: message };
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
       return res.redirect(303, '/actions');
@@ -545,6 +610,20 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     return res.redirect(303, '/');
   }
   if (intent.handler === 'supplier_code_mapping' || intent.intentClass === 'CONFIGURATION_CHANGE') {
+    if (intent.handler === 'inventory_cost_update') {
+      try {
+        const prepared = inventoryCostInstructions.prepare(req.db, req.ctx, message);
+        req.session.pendingPurchaseCostBatch = prepared.proposals.map((proposal) => proposal.id);
+        intentRouter.markRouted(req.db, req.ctx, intent.id, 'inventory_cost_update');
+        req.flash('success', `Foundry understood ${prepared.currency} ${(prepared.unitCostMinor / 100).toFixed(2)} as the current purchase cost for ${prepared.productCount} product${prepared.productCount === 1 ? '' : 's'}. Review what changes${prepared.belowCostCount ? ` — ${prepared.belowCostCount} would sell below cost` : ''}.`);
+        return res.redirect(303, '/pricing/purchase-costs/batch');
+      } catch (err) {
+        if (!err.status || err.status >= 500) throw err;
+        intentRouter.markRouted(req.db, req.ctx, intent.id, 'inventory_cost_update', null, 'NEEDS_CLARIFICATION');
+        req.flash('warn', err.message);
+        return res.redirect(303, '/#tell-foundry');
+      }
+    }
     const mappingInstruction = supplierCodeMappings.parseInstruction(message);
     if (mappingInstruction.matched) {
       try {
@@ -849,6 +928,7 @@ function mentionsKnownProduct(db, workspaceId, message) {
 
 const autopilotPresenter = require('../../autopilot/presenter');
 const needsYouInbox = require('../../manager/needs-you-inbox');
+const needsYouDismissals = require('../../manager/needs-you-dismissals');
 const autopilotModes = require('../../autopilot/modes');
 
 router.get('/operating-instructions/:id', asyncRoute(async (req, res) => {
@@ -1074,7 +1154,24 @@ router.get(
   })
 );
 
-router.get('/needs-you', asyncRoute(async (req, res) => {
+// This is a durable owner decision, not the old "skip for now" cursor.  The
+// central inbox applies it to every surface that reports Needs You, while the
+// source record remains intact and auditable in its normal domain screen.
+router.post('/needs-you/dismiss', asyncRoute(async (req, res) => {
+  const entryId = trimOrNull(req.body.entryId);
+  const visible = needsYouInbox.inbox(req.db, req.ctx.workspaceId, req.user, {
+    productBrain: req.app.locals.productBrain,
+  });
+  if (!entryId || !visible.some((entry) => entry.id === entryId)) {
+    req.flash('warn', 'That item is no longer waiting for you.');
+    return res.redirect(303, '/needs-you');
+  }
+  needsYouDismissals.dismiss(req.db, req.ctx, entryId);
+  req.flash('success', 'Dismissed completely. Foundry will not surface it again; the underlying record was not changed.');
+  return res.redirect(303, '/needs-you');
+}));
+
+router.get(['/needs-you', '/needs-you/all'], asyncRoute(async (req, res) => {
   // An opening-balance investigation is answered by recording the stock, and
   // the person who just recorded it should not be asked for it again.
   investigations.settleOpeningBalances(req.db, req.ctx.workspaceId);
@@ -1095,12 +1192,18 @@ router.get('/needs-you', asyncRoute(async (req, res) => {
     try { reason = JSON.parse(row.details || '{}').interpretationReason || null; } catch { reason = null; }
     return { ...row, reason };
   });
-  res.page('manager/needs-you', {
-    title: 'Needs you', nav: 'attention', operating,
+  res.page(req.path === '/needs-you/all' ? 'manager/needs-you-all' : 'manager/needs-you', {
+    title: 'Needs you', nav: 'attention', room: true, operating,
+    // Which decision in the stack is on screen. A position rather than a
+    // filter: the desk is cleared in order, and skipping moves the position
+    // rather than hiding the entry.
+    at: Number(req.query.at || 0) || 0,
     // One list, built by one contract. The per-mechanism collections below are
     // still passed for anything else reading this page, but the page itself
     // renders the inbox.
-    inbox: needsYouInbox.inbox(req.db, req.ctx.workspaceId),
+    inbox: needsYouInbox.inbox(req.db, req.ctx.workspaceId, req.user, {
+      productBrain: req.app.locals.productBrain,
+    }),
     // Which slice of the inbox is on screen. Filtering happens in the view over
     // the list it already has, so the filter is a link rather than something
     // that only works once JavaScript has loaded.

@@ -116,5 +116,5 @@ test('costing is idempotent and refuses to guess a missing opening cost', () => 
   });
   assert.throws(() => costing.issue(db, workspace.ctx, {
     movementIds: issue.movementIds, sourceType: 'sale', sourceRecordId: 'sale-uncosted',
-  }), /before its opening or receipt cost was established/i);
+  }), /no recorded cost.*no cost on file.*No amount was guessed/i);
 });

@@ -38,6 +38,8 @@ const signalEngine = require('../signals/signal-engine');
 const replenishmentPlan = require('../purchasing/replenishment-plan');
 const workItems = require('./work-items');
 const managerGuards = require('../manager/guards');
+const salesOrders = require('../sales/sales-order-service');
+const transferService = require('../transfers/transfer-service');
 
 const policySnapshot = (verdict) => ({
   decision: verdict.decision,
@@ -144,6 +146,8 @@ function planWork(db, ctx, membership, options = {}) {
         reorderPoint: plan.reorderPoint,
         target: plan.target,
         onHandTotal: plan.onHandTotal,
+        committed: plan.committed,
+        backordered: plan.backordered,
         onOrder: plan.onOrder,
         networkPosition: plan.networkPosition,
         byLocation: plan.byLocation,
@@ -711,20 +715,32 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
       });
       for (const id of done.movementIds || []) movementIds.push(id);
 
-      // Each move is checked on its own, against the two balances it claimed to
-      // change. A plan that reports success while one leg silently did nothing
-      // is worse than a plan that fails.
+      // Approval prepares a custody-aware transfer; it must not impersonate
+      // picking, dispatch, or receipt. Verify the document and the deliberate
+      // absence of a physical movement here. The warehouse steps verify their
+      // own legs when they actually happen.
       const sourceAfter = repo.getBalance(db, workspaceId, skuId, move.fromLocationId);
       const destinationAfter = repo.getBalance(db, workspaceId, skuId, move.toLocationId);
+      const preparedTransfer = done.transferId
+        ? transferService.get(db, workspaceId, done.transferId)
+        : null;
       checks.push({
         kind: 'transfer',
         from: named.fromLocationName,
         to: named.toLocationName,
         quantity: move.quantity,
-        ok: sourceAfter === sourceBefore - move.quantity && destinationAfter === destinationBefore + move.quantity,
+        transferId: preparedTransfer ? preparedTransfer.id : null,
+        transferNumber: preparedTransfer ? preparedTransfer.transfer_number : null,
+        status: preparedTransfer ? preparedTransfer.status : null,
+        ok: Boolean(preparedTransfer)
+          && Number(preparedTransfer.totals.requested) === Number(move.quantity)
+          && sourceAfter === sourceBefore && destinationAfter === destinationBefore,
         sourceBefore, sourceAfter, destinationBefore, destinationAfter,
       });
-      moved.push({ ...named, proposalId: stored.proposalId });
+      moved.push({ ...named, proposalId: stored.proposalId,
+        transferId: preparedTransfer ? preparedTransfer.id : null,
+        transferNumber: preparedTransfer ? preparedTransfer.transfer_number : null,
+        status: preparedTransfer ? preparedTransfer.status : null });
     }
   } catch (error) {
     workItems.transition(db, workspaceId, item.id, workItems.STATUS.FAILED, {
@@ -744,6 +760,18 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
   let purchaseOrderId = null;
   if (toCarryOut.some((entry) => entry.kind === 'prepare_order') && plan.purchase) {
     try {
+      const customerDemand = salesOrders.waitingForStock(db, workspaceId).flatMap((order) =>
+        order.lines
+          .filter((line) => line.sku_id === skuId && Number(line.backordered) > 0)
+          .map((line) => ({
+            orderId: order.id,
+            orderNumber: order.order_number,
+            customerName: order.customer.name,
+            skuId,
+            displayName: line.displayName,
+            waitingQuantity: Number(line.backordered),
+          }))
+      );
       const order = poService.createOrder(db, ctx, membership, {
         supplierId: plan.purchase.supplierId,
         source: 'foundry_recommendation',
@@ -753,6 +781,8 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
           reorderPoint: plan.reorderPoint,
           target: plan.target,
           position: plan.networkPosition,
+          displayName: plan.displayName,
+          customerDemand,
         },
         lines: [{
           skuId,
@@ -829,6 +859,7 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
         actions,
         transfers: moved.map((move) => ({
           from: move.fromLocationName, to: move.toLocationName, quantity: move.quantity,
+          transferId: move.transferId, transferNumber: move.transferNumber, status: move.status,
         })),
         purchaseOrderId,
         before,
@@ -1007,9 +1038,15 @@ function executeWorkItemInternal(db, ctx, membership, workItemId, options = {}) 
   };
   after.total = after.source + after.destination;
 
+  const transfer = done.transferId
+    ? transferService.get(db, workspaceId, done.transferId)
+    : null;
+  const transferQuantity = transfer ? Number(transfer.totals.requested || 0) : 0;
   const checks = [
-    { name: 'Source went down by the amount moved', ok: after.source === before.source - action.quantity },
-    { name: 'Destination went up by the amount moved', ok: after.destination === before.destination + action.quantity },
+    { name: 'A real transfer was prepared', ok: Boolean(transfer) },
+    { name: 'The transfer has the approved quantity', ok: transferQuantity === action.quantity },
+    { name: 'The source still owns the stock until dispatch', ok: after.source === before.source },
+    { name: 'The destination has not received stock early', ok: after.destination === before.destination },
     { name: 'Total across both locations is unchanged', ok: after.total === before.total },
   ];
   const verified = checks.every((entry) => entry.ok);
@@ -1018,7 +1055,7 @@ function executeWorkItemInternal(db, ctx, membership, workItemId, options = {}) 
     workItems.transition(db, workspaceId, item.id, workItems.STATUS.FAILED, {
       verificationStatus: 'FAILED',
       outcome: { before, after, checks },
-      errorMessage: 'The result of this transfer could not be verified.',
+      errorMessage: 'The prepared transfer could not be independently verified.',
     });
     // Stop, rather than try again. Something is wrong that another attempt
     // would only repeat.
@@ -1033,6 +1070,9 @@ function executeWorkItemInternal(db, ctx, membership, workItemId, options = {}) 
     verificationStatus: 'VERIFIED',
       outcome: {
         before, after, checks, quantity: action.quantity,
+        transferId: transfer ? transfer.id : null,
+        transferNumber: transfer ? transfer.transfer_number : null,
+        transferStatus: transfer ? transfer.status : null,
         triggerEventId: options.triggerEventId || item.triggerEventId || null,
         policyId: verdict.policy ? verdict.policy.id : null,
         policyVersion: verdict.policy ? verdict.policy.version : null,
@@ -1042,8 +1082,8 @@ function executeWorkItemInternal(db, ctx, membership, workItemId, options = {}) 
   notify(db, workspaceId, {
     kind: 'action_completed',
     severity: 'info',
-    title: `Moved ${action.quantity} ${action.displayName} to ${action.toLocationName}`,
-    body: `${action.fromLocationName} ${before.source} → ${after.source}, ${action.toLocationName} ${before.destination} → ${after.destination}.`,
+    title: `Prepared transfer of ${action.quantity} ${action.displayName} to ${action.toLocationName}`,
+    body: `${transfer ? transfer.transferNumber : 'The transfer'} is ${transfer ? transfer.status.toLowerCase() : 'ready'}; stock remains at ${action.fromLocationName} until dispatch is recorded.`,
     workItemId: item.id,
     link: `/autopilot/work/${item.id}`,
   });
@@ -1054,7 +1094,7 @@ function executeWorkItemInternal(db, ctx, membership, workItemId, options = {}) 
     /* a failed sweep must not undo work that succeeded */
   }
 
-  return { executed: true, verified: true, item: completed, before, after, checks };
+  return { executed: true, verified: true, item: completed, before, after, checks, transfer };
 }
 
 function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
@@ -1275,7 +1315,7 @@ function run(db, ctx, membership, options = {}) {
   const alreadyManaging = managerGuards.activeWorkspaces.has(workspaceId);
   if (!alreadyManaging) managerGuards.activeWorkspaces.add(workspaceId);
   try {
-    const recovered = recover(db, ctx, membership);
+    const recovered = options.skipRecovery ? [] : recover(db, ctx, membership);
     const planned = planWork(db, ctx, membership, options);
 
     const executed = [];

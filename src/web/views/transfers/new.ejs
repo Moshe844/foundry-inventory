@@ -1,0 +1,53 @@
+<p class="rm-stamp">New inventory transfer</p>
+<div class="rm-titleline"><div><h1 class="rm-figure">Request stock to move.</h1>
+  <p class="rm-sub">This prepares and reserves work. Nothing leaves inventory until dispatch is recorded.</p></div></div>
+<% if (locations.length < 2) { %>
+<section class="rm-panel">
+  <h2>A transfer needs two locations.</h2>
+  <p class="rm-sub">This inventory currently has only <strong><%= locations[0] ? locations[0].name : 'no active location' %></strong>. Add the real destination or source before requesting stock to move.</p>
+  <p><a class="rm-button rm-button--primary" href="/locations?returnTo=%2Ftransfers%2Fnew">Add another location</a> <a class="rm-button" href="/transfers">Back to transfers</a></p>
+</section>
+<% } else if (!skus.some(s => s.tracking_mode === 'quantity')) { %>
+<section class="rm-panel">
+  <h2>Choose exact stock from its product.</h2>
+  <p class="rm-sub">This inventory has no quantity-tracked product available here. Open a lot- or serial-tracked product so Foundry can preserve the exact identity being moved.</p>
+  <p><a class="rm-button rm-button--primary" href="/inventory">Open products</a> <a class="rm-button" href="/transfers">Back to transfers</a></p>
+</section>
+<% } else { %>
+<form method="post" action="/transfers" class="card form-card" data-step-form>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+
+  <section class="rm-step-panel">
+    <div class="rm-step-panel__h"><span class="rm-step-panel__n">1</span><h2>Where is it moving?</h2></div>
+    <div class="rm-step-panel__b form-grid">
+      <label class="rm-field"><span>Move from</span><select name="fromLocationId" required><% locations.forEach(function(l) { %><option value="<%= l.id %>"><%= l.name %></option><% }) %></select><small>Stock remains here until somebody confirms it physically left.</small></label>
+      <label class="rm-field"><span>Move to</span><select name="toLocationId" required><% locations.forEach(function(l) { %><option value="<%= l.id %>"><%= l.name %></option><% }) %></select><small>Stock is added here only when its arrival is recorded.</small></label>
+    </div>
+  </section>
+
+  <section class="rm-step-panel">
+    <div class="rm-step-panel__h"><span class="rm-step-panel__n">2</span><h2>What is moving?</h2></div>
+    <div class="rm-step-panel__b form-grid">
+      <label class="rm-field"><span>Product or variant</span><select name="skuId" required><% skus.filter(s => s.tracking_mode === 'quantity').forEach(function(s) { %><option value="<%= s.id %>"><%= s.item_name %><%= s.variant_label ? ' / ' + s.variant_label : '' %> · <%= s.code %></option><% }) %></select></label>
+      <label class="rm-field"><span>How many units?</span><input type="number" min="1" step="1" name="quantity" value="1" required><small>Foundry checks availability and customer commitments before it reserves anything.</small></label>
+    </div>
+  </section>
+
+  <details class="rm-work">
+    <summary>Optional details — arrival date, customer reference, and reason</summary>
+    <div class="rm-work__body">
+      <div class="form-grid">
+        <label class="rm-field"><span>Expected arrival <small>optional</small></span><input type="date" name="expectedArrivalDate"></label>
+        <label class="rm-field"><span>Reference <small>customer order, replenishment plan, or internal reference</small></span><input name="reference" placeholder="Optional"></label>
+      </div>
+      <label class="rm-field"><span>Why is it moving? <small>optional</small></span><input name="reason" placeholder="Rebalance stock, cover customer demand…"></label>
+    </div>
+  </details>
+
+  <div class="rm-panel__foot">
+    <strong>This creates a transfer request only.</strong> Foundry will reserve it after approval; the warehouse then records the real-world pick, dispatch, and receipt.
+    <div class="rm-title__do" style="margin-top:12px"><button class="rm-button rm-button--primary" type="submit">Create transfer request</button><a class="rm-button" href="/transfers">Cancel</a></div>
+  </div>
+</form>
+<p class="rm-note">The fastest path is usually to <a href="/actions">tell Foundry what needs moving</a>. Lot- and serial-tracked stock starts from the product page so Foundry can preserve the exact identity.</p>
+<% } %>

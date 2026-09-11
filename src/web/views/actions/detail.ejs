@@ -10,7 +10,7 @@
   <%# ---------------------------------------------------- already executed %>
   <div class="card section <%= outcome.verified ? '' : 'card--warn' %>">
     <div class="card-head">
-      <h2><%= outcome.verified ? 'Done' : 'Ran, but not verified' %></h2>
+      <h2><%= outcome.verified ? (outcome.transferId ? 'Transfer prepared' : 'Done') : 'Ran, but not verified' %></h2>
       <span class="spacer"></span>
       <span class="badge badge--<%= outcome.verified ? 'ok' : 'danger' %>">
         <%= outcome.verified ? 'Verified against your records' : 'Needs checking' %>
@@ -26,32 +26,44 @@
           <% outcome.problems.forEach(function (problem) { %><li class="is-warn"><%= problem %></li><% }) %>
         </ul>
       <% } else { %>
-        <p class="lede">Foundry <%= action.pastVerb %> <strong><%= outcome.name %></strong> and checked the result.</p>
+        <% if (outcome.transferId) { %><p class="lede">Foundry created <strong><%= outcome.transferNumber %></strong><%= outcome.transferStatus === 'APPROVED' ? ' and reserved the available stock' : '' %>. Nothing physically moved: picking, dispatch and receipt remain separate verified steps.</p>
+        <% } else { %><p class="lede">Foundry <%= action.pastVerb %> <strong><%= outcome.name %></strong> and checked the result.</p><% } %>
       <% } %>
 
-      <div class="act-ledger">
-        <% outcome.lines.forEach(function (line) { %>
-          <div class="act-row">
-            <span class="act-place"><%= line.label %></span>
-            <span class="act-move"><span class="num"><%= line.from %></span> <%- helpers.icon('chevron', { size: 13 }) %> <span class="num act-after"><%= line.to %></span></span>
-          </div>
-        <% }) %>
-        <div class="act-row act-row--total">
-          <span class="act-place"><%= outcome.lotScoped && outcome.lotName ? outcome.lotName + ' in total' : 'Total on hand' %></span>
-          <span class="act-move"><span class="num"><%= outcome.total.from %></span> <%- helpers.icon('chevron', { size: 13 }) %> <span class="num act-after"><%= outcome.total.to %></span></span>
+      <% if (outcome.transferId) { %>
+        <% var preparedSource = outcome.lines[0]; var preparedDestination = outcome.lines[1]; %>
+        <div class="act-transfer-prepared">
+          <strong><%= outcome.transferNumber %> is ready for the warehouse.</strong>
+          <span><%= preparedSource ? preparedSource.label : 'The source' %> still holds <strong><%= preparedSource ? preparedSource.from : 0 %></strong> on hand.</span>
+          <span><%= preparedDestination ? preparedDestination.label : 'The destination' %> remains at <strong><%= preparedDestination ? preparedDestination.from : 0 %></strong> until the receipt is recorded.</span>
+          <small>The next screen asks for the one real-world fact that happens next—picked, left the source, or arrived.</small>
         </div>
-        <% if (outcome.productTotal) { %>
+      <% } else { %>
+        <div class="act-ledger">
+          <% outcome.lines.forEach(function (line) { %>
+            <div class="act-row">
+              <span class="act-place"><%= line.label %></span>
+              <span class="act-move"><span class="num"><%= line.from %></span> <%- helpers.icon('chevron', { size: 13 }) %> <span class="num act-after"><%= line.to %></span></span>
+            </div>
+          <% }) %>
           <div class="act-row act-row--total">
-            <span class="act-place">All of <%= outcome.productTotal.label %> · every batch, every location</span>
-            <span class="act-move"><span class="num"><%= outcome.productTotal.from %></span> <%- helpers.icon('chevron', { size: 13 }) %> <span class="num act-after"><%= outcome.productTotal.to %></span></span>
+            <span class="act-place"><%= outcome.statusRow ? outcome.statusRow.label : outcome.lotScoped && outcome.lotName ? outcome.lotName + ' in total' : 'Total on hand' %></span>
+            <span class="act-move"><span class="<%= outcome.statusRow ? '' : 'num' %>"><%= outcome.statusRow ? outcome.statusRow.from : outcome.total.from %></span> <%- helpers.icon('chevron', { size: 13 }) %> <span class="<%= outcome.statusRow ? '' : 'num' %> act-after"><%= outcome.statusRow ? outcome.statusRow.to : outcome.total.to %></span></span>
           </div>
-        <% } %>
-      </div>
+          <% if (outcome.productTotal) { %>
+            <div class="act-row act-row--total">
+              <span class="act-place">All of <%= outcome.productTotal.label %> · every batch, every location</span>
+              <span class="act-move"><span class="num"><%= outcome.productTotal.from %></span> <%- helpers.icon('chevron', { size: 13 }) %> <span class="num act-after"><%= outcome.productTotal.to %></span></span>
+            </div>
+          <% } %>
+        </div>
+      <% } %>
     </div>
     <div class="card-foot">
       <div class="btn-row">
-        <a class="btn btn--sm" href="/activity">See it in the activity ledger</a>
-        <% if (action.actionType === 'transfer') { %>
+        <% if (outcome.transferId) { %><a class="btn btn--primary" href="/transfers/<%= outcome.transferId %>">Continue <%= outcome.transferNumber %></a>
+        <% } else { %><a class="btn btn--sm" href="/activity">See it in the activity ledger</a><% } %>
+        <% if (action.actionType === 'transfer' && !outcome.transferId) { %>
           <form method="post" action="/actions/<%= action.proposalId %>/reverse">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <button class="btn btn--sm btn--ghost" type="submit">Move it back</button>
@@ -85,7 +97,7 @@
                 side they contradict each other — 3, above 12 becoming 5 — so on
                 a stale action the figure that no longer follows is left out
                 rather than presented as though it still holds. %>
-            <% if (!stale) { %>
+            <% if (!stale && action.quantity) { %>
               <span class="act-quantity"><%= helpers.qty(action.quantity) %></span>
             <% } %>
             <span class="act-subject-text">
@@ -94,45 +106,74 @@
             </span>
           </div>
 
-          <div class="act-ledger">
-            <% action.rows.forEach(function (row) { %>
-              <div class="act-row">
-                <span class="act-place">
-                  <%= row.label %>
-                  <small><%= row.direction === 'out' ? 'stock leaves here' : 'stock arrives here' %></small>
-                </span>
-                <span class="act-move">
-                  <span class="num"><%= row.before %></span>
-                  <%- helpers.icon('chevron', { size: 13 }) %>
-                  <span class="num act-after"><%= row.after %></span>
-                </span>
+          <% if (action.actionType === 'transfer') { %>
+            <% var transferSource = action.rows.find(function(row) { return row.direction === 'out'; }); %>
+            <% var transferDestination = action.rows.find(function(row) { return row.direction === 'in'; }); %>
+            <div class="act-transfer-preview">
+              <div class="act-transfer-preview__place">
+                <span class="act-transfer-preview__label">From <strong><%= transferSource ? transferSource.label : 'the source' %></strong></span>
+                <strong class="act-transfer-preview__number"><%= transferSource ? transferSource.before : 0 %></strong>
+                <small>on hand now · <%= helpers.qty(action.quantity) %> will be reserved after approval</small>
               </div>
-            <% }) %>
-            <div class="act-row act-row--total">
-              <span class="act-place">
-                <%= action.actionType === 'archive_item' ? 'Catalogue status' : action.lotScoped && action.lotName ? action.lotName + ' in total' : 'Total on hand' %>
-                <small><%= action.actionType === 'archive_item' ? 'stock remains unchanged' : action.totalChanges ? 'this changes how much you have' : 'unchanged — stock only moves' %></small>
-              </span>
-              <span class="act-move">
-                <span class="<%= action.actionType === 'archive_item' ? '' : 'num' %>"><%= action.actionType === 'archive_item' ? 'Active' : action.total.before %></span>
-                <%- helpers.icon('chevron', { size: 13 }) %>
-                <span class="<%= action.actionType === 'archive_item' ? '' : 'num' %> act-after"><%= action.actionType === 'archive_item' ? 'Archived' : action.total.after %></span>
-              </span>
+              <div class="act-transfer-preview__arrow" aria-hidden="true">→</div>
+              <div class="act-transfer-preview__place">
+                <span class="act-transfer-preview__label">To <strong><%= transferDestination ? transferDestination.label : 'the destination' %></strong></span>
+                <strong class="act-transfer-preview__number"><%= transferDestination ? transferDestination.before : 0 %></strong>
+                <small>on hand now · <strong>+<%= helpers.qty(action.quantity) %></strong> only after receipt</small>
+              </div>
+              <div class="act-transfer-preview__total">
+                <strong><%= action.total.before %> total on hand</strong>
+                <span>unchanged while the stock moves between your locations</span>
+              </div>
             </div>
-            <% if (action.productTotal) { %>
+          <% } else { %>
+            <div class="act-ledger">
+              <% action.rows.forEach(function (row) { %>
+                <div class="act-row">
+                  <span class="act-place">
+                    <%= row.label %>
+                    <small><%= row.direction === 'out' ? 'stock leaves here' : 'stock arrives here' %></small>
+                  </span>
+                  <span class="act-move">
+                    <span class="num"><%= row.before %></span>
+                    <%- helpers.icon('chevron', { size: 13 }) %>
+                    <span class="num act-after"><%= row.after %></span>
+                  </span>
+                </div>
+              <% }) %>
               <div class="act-row act-row--total">
                 <span class="act-place">
-                  All of <%= action.productTotal.label %>
-                  <small>every batch, every location</small>
+                  <%= action.statusRow ? action.statusRow.label : action.lotScoped && action.lotName ? action.lotName + ' in total' : 'Total on hand' %>
+                  <small><%= action.statusRow ? action.statusRow.note : action.totalChanges ? 'this changes how much you have' : 'unchanged' %></small>
                 </span>
                 <span class="act-move">
-                  <span class="num"><%= action.productTotal.before %></span>
+                  <span class="<%= action.statusRow ? '' : 'num' %>"><%= action.statusRow ? action.statusRow.before : action.total.before %></span>
                   <%- helpers.icon('chevron', { size: 13 }) %>
-                  <span class="num act-after"><%= action.productTotal.after %></span>
+                  <span class="<%= action.statusRow ? '' : 'num' %> act-after"><%= action.statusRow ? action.statusRow.after : action.total.after %></span>
                 </span>
               </div>
-            <% } %>
-          </div>
+              <% if (action.productTotal) { %>
+                <div class="act-row act-row--total">
+                  <span class="act-place">
+                    All of <%= action.productTotal.label %>
+                    <small>every batch, every location</small>
+                  </span>
+                  <span class="act-move">
+                    <span class="num"><%= action.productTotal.before %></span>
+                    <%- helpers.icon('chevron', { size: 13 }) %>
+                    <span class="num act-after"><%= action.productTotal.after %></span>
+                  </span>
+                </div>
+              <% } %>
+            </div>
+          <% } %>
+
+          <% if (action.subject.note) { %>
+            <div class="act-reason">
+              <span class="muted">What happens to the record</span>
+              <strong><%= action.subject.note %></strong>
+            </div>
+          <% } %>
 
           <% if (action.reasonLabel) { %>
             <div class="act-reason">
@@ -231,9 +272,9 @@
         <div class="table-wrap">
           <table class="table">
             <tbody>
-              <tr><td class="muted">Operation</td><td class="right"><%= helpers.operationLabel(action.actionType) || action.actionType %></td></tr>
+              <tr><td class="muted">Operation</td><td class="right"><%= action.operationName || helpers.operationLabel(action.actionType) || action.actionType %></td></tr>
               <tr><td class="muted">Needs permission</td><td class="right"><%= permissionLabel %></td></tr>
-              <tr><td class="muted">Risk</td><td class="right"><%= action.safetyLevel === 'HIGH' ? 'Higher — read the warning' : 'Changes stock' %></td></tr>
+              <tr><td class="muted">Risk</td><td class="right"><%= action.safetyLevel === 'HIGH' ? 'Higher — read the warning' : action.isMutation ? 'Changes stock' : 'Changes a record, not a count' %></td></tr>
               <tr><td class="muted">Approval</td><td class="right"><%= action.approvalRequirement === 'CONFIRM_WITH_WARNING' ? 'Explicit, with warning' : 'Explicit' %></td></tr>
               <tr><td class="muted">Proposed</td><td class="right"><%= helpers.timeAgo(action.createdAt) %></td></tr>
               <tr><td class="muted">Valid until</td><td class="right"><%= helpers.dateTime(action.expiresAt) %></td></tr>
@@ -242,8 +283,13 @@
           </table>
         </div>
         <div class="card-foot muted" style="font-size:12px;">
-          Foundry carries this out through the same inventory engine your team uses.
-          It cannot change stock any other way.
+          <% if (action.isMutation) { %>
+            Foundry carries this out through the same inventory engine your team uses.
+            It cannot change stock any other way.
+          <% } else { %>
+            Foundry carries this out through the same services your team uses, and it
+            changes no stock count at all.
+          <% } %>
         </div>
       </div>
 

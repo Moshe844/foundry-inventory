@@ -48,7 +48,8 @@ function nextShipmentNumber(db, workspaceId) {
 }
 
 function requireShipment(db, workspaceId, shipmentId) {
-  const row = db.prepare(`SELECT sh.*, so.order_number, so.customer_id, c.name AS customer_name,
+  const row = db.prepare(`SELECT sh.*, so.order_number, so.customer_id, so.delivery_method,
+      c.name AS customer_name,
       l.name AS ship_from_location_name
     FROM sales_shipments sh
     JOIN sales_orders so ON so.id = sh.sales_order_id
@@ -60,7 +61,7 @@ function requireShipment(db, workspaceId, shipmentId) {
 }
 
 function shipmentLines(db, workspaceId, shipmentId) {
-  return db.prepare(`SELECT ssl.*, i.name AS item_name, i.unit_label, s.code AS sku_code,
+  return db.prepare(`SELECT ssl.*, i.name AS item_name, i.unit_label, i.tracking_mode, s.code AS sku_code,
       s.variant_label, l.name AS location_name
     FROM sales_shipment_lines ssl
     JOIN skus s ON s.id = ssl.sku_id
@@ -250,9 +251,13 @@ function startPicking(db, ctx, orderId, input = {}) {
       ? db.prepare('SELECT shipping_address FROM customers WHERE id = ? AND workspace_id = ?')
         .get(order.customer_id, ctx.workspaceId)
       : null;
-    const shipTo = trimOrNull(input.shipToAddress)
-      || trimOrNull(order.ship_to_address)
-      || (customer ? trimOrNull(customer.shipping_address) : null);
+    // Pickup is a confirmed absence of a carrier destination, not a missing
+    // address to be repaired from the customer's profile. Once the order says
+    // pickup, a historical/default shipping address must not leak into its box.
+    const shipTo = order.delivery_method === 'PICKUP' ? null
+      : trimOrNull(input.shipToAddress)
+        || trimOrNull(order.ship_to_address)
+        || (customer ? trimOrNull(customer.shipping_address) : null);
     db.prepare(`INSERT INTO sales_shipments
       (id, workspace_id, sales_order_id, shipment_number, status, ship_from_location_id,
        ship_to_address, notes, created_by_user_id, created_at, updated_at)
@@ -360,7 +365,7 @@ const HANDOVER = {
   DELIVERED_BY_US: { label: 'Delivered by us', past: 'delivered', needsAddress: true },
 };
 
-function requireHandover(input) {
+function requireHandover(input, shipment = null) {
   const given = trimOrNull(input.handover);
   if (given && HANDOVER[given]) return given;
   /*
@@ -370,6 +375,12 @@ function requireHandover(input) {
    * rather than choosing on their behalf.
    */
   if (trimOrNull(input.trackingNumber) || trimOrNull(input.carrier)) return 'CARRIER';
+  /* Carry the delivery choice made on the order into fulfilment. Older orders
+     predate that field, and their explicit "ship" action historically meant
+     carrier, so they remain compatible without asking the owner twice. */
+  if (shipment?.delivery_method === 'PICKUP') return 'COLLECTED';
+  if (shipment?.delivery_method === 'DELIVER') return 'DELIVERED_BY_US';
+  if (shipment?.delivery_method === 'SHIP') return 'CARRIER';
   throw new ValidationError('Say how these goods left: sent by carrier, collected by the customer, or delivered by us. Foundry will not record a shipment it cannot describe.');
 }
 
@@ -398,7 +409,7 @@ function ship(db, ctx, shipmentId, input = {}) {
     throw new ValidationError(`${payment.heldReason.ship} The box stays packed until it is paid, or until you approve this one order to go anyway.`);
   }
 
-  const handover = requireHandover(input);
+  const handover = requireHandover(input, shipment);
   const trackingNumber = trimOrNull(input.trackingNumber) || trimOrNull(shipment.tracking_number);
   const detected = trackingNumber ? carriers.detect(trackingNumber) : null;
   const carrierCode = trimOrNull(input.carrier) || trimOrNull(shipment.carrier)
@@ -406,12 +417,25 @@ function ship(db, ctx, shipmentId, input = {}) {
   const cost = input.shippingCostMinor === undefined || input.shippingCostMinor === null
     || input.shippingCostMinor === '' ? shipment.shipping_cost_minor : Math.round(Number(input.shippingCostMinor));
 
+  const fulfillmentLines=[];
+  for(const line of lines){
+    const base={lineId:line.sales_order_line_id,locationId:line.location_id};
+    if(line.tracking_mode==='quantity'){fulfillmentLines.push({...base,quantity:Number(line.quantity)});continue;}
+    const scans=db.prepare(`SELECT s.quantity,s.lot_id,s.serial_unit_id FROM fulfillment_wave_scans s
+      JOIN fulfillment_wave_lines l ON l.id=s.line_id AND l.workspace_id=s.workspace_id
+      WHERE s.workspace_id=? AND l.shipment_line_id=? AND s.status='ACCEPTED' ORDER BY s.seq`).all(ctx.workspaceId,line.id);
+    if(line.tracking_mode==='serial'){
+      const serialUnitIds=scans.map((scan)=>scan.serial_unit_id).filter(Boolean);
+      if(serialUnitIds.length!==Number(line.quantity))throw new ValidationError('Every serial unit in this shipment must be scan-verified before it can leave.');
+      fulfillmentLines.push({...base,quantity:serialUnitIds.length,serialUnitIds});
+    }else{
+      const byLot=new Map();scans.forEach((scan)=>{if(scan.lot_id)byLot.set(scan.lot_id,(byLot.get(scan.lot_id)||0)+Number(scan.quantity));});
+      if([...byLot.values()].reduce((n,q)=>n+q,0)!==Number(line.quantity))throw new ValidationError('Every lot quantity in this shipment must be scan-verified before it can leave.');
+      for(const [lotId,quantity] of byLot)fulfillmentLines.push({...base,quantity,lotId});
+    }
+  }
   orders.fulfill(db, ctx, shipment.sales_order_id, {
-    lines: lines.map((line) => ({
-      lineId: line.sales_order_line_id,
-      locationId: line.location_id,
-      quantity: Number(line.quantity),
-    })),
+    lines: fulfillmentLines,
   }, { idempotencyKey: `sales-shipment:${shipmentId}` });
 
   const result = inTransaction(db, () => {
@@ -430,6 +454,38 @@ function ship(db, ctx, shipmentId, input = {}) {
         trimOrNull(input.shippedAt) || now, now, trimOrNull(input.notes), now, shipmentId);
     return decorate(db, ctx.workspaceId, requireShipment(db, ctx.workspaceId, shipmentId));
   });
+
+  /*
+   * Record the physical box in the same evidence chain as the order and the
+   * inventory issues it caused. The fulfillment event already owns the exact
+   * movement IDs, so this is a deterministic link rather than a time-based
+   * guess. It also lets the owner-facing story name SHP-1001 instead of the
+   * opaque internal event called "fulfilled".
+   */
+  try {
+    const graph = require('../provenance/service');
+    graph.record(db, ctx.workspaceId, {
+      type: 'FULFILLED_BY',
+      from: { type: 'sales_order', id: shipment.sales_order_id },
+      to: { type: 'shipment', id: shipmentId },
+      basis: 'DIRECT_RECORD',
+    });
+    const event = db.prepare(`SELECT id, detail FROM sales_order_events
+      WHERE workspace_id = ? AND idempotency_key = ?`).get(
+      ctx.workspaceId, `sales-shipment:${shipmentId}`);
+    let detail = {};
+    try { detail = JSON.parse(event?.detail || '{}'); } catch { detail = {}; }
+    for (const line of detail.fulfilled || []) {
+      for (const movementId of line.movementIds || []) {
+        graph.record(db, ctx.workspaceId, {
+          type: 'CAUSED_MOVEMENT',
+          from: { type: 'shipment', id: shipmentId },
+          to: { type: 'inventory_movement', id: movementId },
+          basis: 'DIRECT_RECORD',
+        });
+      }
+    }
+  } catch { /* shipment truth is already committed; graph repair is idempotent */ }
 
   /*
    * Tell the customer, and let nothing about that undo this.

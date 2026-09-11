@@ -12,7 +12,7 @@ const express = require('express');
 const collection = require('../../payments/collection');
 const providers = require('../../payments/provider');
 const permissions = require('../../actions/permissions');
-const { requireAuth, asyncRoute } = require('../middleware');
+const { requireAuth, requirePermission, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 const { ValidationError } = require('../../domain/errors');
 
@@ -26,13 +26,6 @@ const { ValidationError } = require('../../domain/errors');
  */
 const webhooks = express.Router();
 const router = express.Router();
-
-function requirePermission(permission, what) {
-  return (req, res, next) => {
-    try { permissions.assertCan(req.user, permission, what); return next(); }
-    catch (error) { return next(error); }
-  };
-}
 
 /*
  * The webhook.
@@ -135,6 +128,9 @@ webhooks.post('/webhooks/payments/:provider/:workspaceId?',
 
     const ctx = { workspaceId, actorId: null };
     try {
+      const paymentAccount = name === 'stripe'
+        ? require('../../payments/accounts').describe(req.db, workspaceId) : { liveMode: false };
+      collection.recordTransportEvidence(req.db, name, 'webhook', paymentAccount.liveMode === true);
       const result = collection.receiveEvent(req.db, ctx, name, event);
       return res.status(200).json({ ok: true, applied: Boolean(result.applied), outcome: result.outcome });
     } catch (error) {

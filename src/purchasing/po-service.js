@@ -231,10 +231,15 @@ function nextNumber(db, workspaceId) {
 }
 
 function recordEvent(db, workspaceId, poId, event, detail, actorUserId) {
+  const id = newId('poev');
   db.prepare(
     `INSERT INTO purchase_order_events (id, workspace_id, purchase_order_id, event, detail, actor_user_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(newId('poev'), workspaceId, poId, event, JSON.stringify(detail || {}), actorUserId || null, nowIso());
+  ).run(id, workspaceId, poId, event, JSON.stringify(detail || {}), actorUserId || null, nowIso());
+  require('../provenance/service').record(db, workspaceId, { type: 'HAS_EVENT',
+    from: { type: 'purchase_order', id: poId }, to: { type: 'purchase_order_event', id },
+    basis: 'DIRECT_RECORD' });
+  return db.prepare('SELECT * FROM purchase_order_events WHERE id = ?').get(id);
 }
 
 function eventsFor(db, workspaceId, poId) {
@@ -422,6 +427,29 @@ function createOrder(db, ctx, membership, input) {
     }, ctx.actorId);
 
     const prepared = get(db, ctx.workspaceId, id);
+    const graph = require('../provenance/service');
+    graph.recordMany(db, ctx.workspaceId, [
+      ...prepared.lines.map((line) => ({ type: 'HAS_PART',
+        from: { type: 'purchase_order', id }, to: { type: 'purchase_order_line', id: line.id } })),
+      ...((input.sourceDetail || {}).workItemId ? [{ type: 'DECIDED_BY',
+        from: { type: 'purchase_order', id }, to: { type: 'work_item', id: input.sourceDetail.workItemId } }] : []),
+      ...((input.sourceDetail || {}).recommendationId ? [{ type: 'DECIDED_BY',
+        from: { type: 'purchase_order', id }, to: { type: 'planning_recommendation', id: input.sourceDetail.recommendationId } }] : []),
+      ...((input.sourceDetail || {}).triggerEventId ? [{ type: 'RESPONDS_TO',
+        from: { type: 'purchase_order', id }, to: { type: 'domain_event', id: input.sourceDetail.triggerEventId } }] : []),
+      ...(((input.sourceDetail || {}).customerDemand || []).filter((demand) => demand.orderId).map((demand) => ({
+        type: 'RESPONDS_TO',
+        from: { type: 'purchase_order', id },
+        to: { type: 'sales_order', id: demand.orderId },
+        metadata: {
+          skuId: demand.skuId || null,
+          displayName: demand.displayName || null,
+          waitingQuantity: Number(demand.waitingQuantity || 0),
+          orderNumber: demand.orderNumber || null,
+          customerName: demand.customerName || null,
+        },
+      }))),
+    ], { basis: 'DIRECT_RECORD' });
     supplierCommunications.prepareForOrder(db, ctx.workspaceId, prepared);
     return prepared;
   });

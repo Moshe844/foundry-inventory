@@ -26,7 +26,7 @@ async function post(agent, path, body, formPath = '/') {
   return agent.post(path).type('form').send({ _csrf: token, ...body });
 }
 
-test('a quantity item can be created and run through every operation', async () => {
+test('a quantity item creates a transfer request before warehouse execution', async () => {
   const { db, workspace, agent } = await signedInWorkspace();
 
   const created = await post(agent, '/inventory', {
@@ -51,13 +51,16 @@ test('a quantity item can be created and run through every operation', async () 
     toLocationId: workspace.store.id,
     quantity: 25,
   }, itemPage);
-  assert.equal(repo.getBalance(db, workspace.workspaceId, sku.id, workspace.main.id), 75);
-  assert.equal(repo.getBalance(db, workspace.workspaceId, sku.id, workspace.store.id), 25);
+  assert.equal(repo.getBalance(db, workspace.workspaceId, sku.id, workspace.main.id), 100);
+  assert.equal(repo.getBalance(db, workspace.workspaceId, sku.id, workspace.store.id), 0);
   assert.equal(repo.getSkuTotal(db, workspace.workspaceId, sku.id), 100);
+  assert.equal(db.prepare(
+    'SELECT COUNT(*) AS n FROM inventory_transfers WHERE workspace_id = ? AND status = ?'
+  ).get(workspace.workspaceId, 'REQUESTED').n, 1);
 
   await post(agent, `${itemPage}/issue`, {
     skuId: sku.id,
-    locationId: workspace.store.id,
+    locationId: workspace.main.id,
     quantity: 5,
     reasonCode: 'sold',
   }, itemPage);
@@ -71,11 +74,11 @@ test('a quantity item can be created and run through every operation', async () 
     notes: 'Counted on Friday.',
   }, itemPage);
   assert.equal(repo.getBalance(db, workspace.workspaceId, sku.id, workspace.main.id), 72);
-  assert.equal(repo.getSkuTotal(db, workspace.workspaceId, sku.id), 92);
+  assert.equal(repo.getSkuTotal(db, workspace.workspaceId, sku.id), 72);
 
   const page = plain((await agent.get(itemPage)).text);
   assert.match(page, /Copper Elbow/);
-  assert.match(page, /Adjusted Copper Elbow at Main Warehouse from 75 to 72\./);
+  assert.match(page, /Adjusted Copper Elbow at Main Warehouse from 95 to 72\./);
   assert.equal(engine.verifyIntegrity(db, workspace.workspaceId).ok, true);
 });
 
@@ -136,7 +139,7 @@ test('a variant item is created with one SKU per combination and tracked apart',
   assert.match(page.text, /Variants/);
 });
 
-test('a serialized item is received, moved and shown by serial number', async () => {
+test('a serialized item is received and its transfer request preserves exact identity', async () => {
   const { db, workspace, agent } = await signedInWorkspace();
 
   const created = await post(agent, '/inventory', {
@@ -165,8 +168,11 @@ test('a serialized item is received, moved and shown by serial number', async ()
     serialUnitIds: units[0].id,
   }, itemPage);
 
-  assert.equal(repo.getBalance(db, workspace.workspaceId, sku.id, workspace.main.id), 1);
-  assert.equal(repo.getBalance(db, workspace.workspaceId, sku.id, workspace.store.id), 1);
+  assert.equal(repo.getBalance(db, workspace.workspaceId, sku.id, workspace.main.id), 2);
+  assert.equal(repo.getBalance(db, workspace.workspaceId, sku.id, workspace.store.id), 0);
+  assert.equal(db.prepare(
+    'SELECT COUNT(*) AS n FROM inventory_transfer_serials WHERE workspace_id = ? AND serial_unit_id = ? AND state = ?'
+  ).get(workspace.workspaceId, units[0].id, 'REQUESTED').n, 1);
 
   const page = await agent.get(itemPage);
   assert.match(page.text, /DL-829193/);
@@ -184,7 +190,7 @@ test('a serialized item is received, moved and shown by serial number', async ()
   assert.equal(repo.getSkuTotal(db, workspace.workspaceId, sku.id), 2);
 });
 
-test('a lot-tracked item exposes its lots and moves stock lot by lot', async () => {
+test('a lot-tracked item exposes its lots and requests stock lot by lot', async () => {
   const { db, workspace, agent } = await signedInWorkspace();
 
   const created = await post(agent, '/inventory', {
@@ -221,8 +227,11 @@ test('a lot-tracked item exposes its lots and moves stock lot by lot', async () 
     quantity: 24,
   }, itemPage);
 
-  assert.equal(repo.getLotBalance(db, workspace.workspaceId, lots[0].id, workspace.store.id), 24);
+  assert.equal(repo.getLotBalance(db, workspace.workspaceId, lots[0].id, workspace.store.id), 0);
   assert.equal(repo.getLotBalance(db, workspace.workspaceId, lots[1].id, workspace.store.id), 0);
+  assert.equal(db.prepare(
+    'SELECT requested_quantity FROM inventory_transfer_lines WHERE workspace_id = ? AND lot_id = ?'
+  ).get(workspace.workspaceId, lots[0].id).requested_quantity, 24);
 
   const page = await agent.get(itemPage);
   assert.match(page.text, /L240812/);
@@ -233,12 +242,12 @@ test('a lot-tracked item exposes its lots and moves stock lot by lot', async () 
     skuId: sku.id,
     locationId: workspace.main.id,
     lotId: lots[0].id,
-    quantity: 61,
+    quantity: 85,
   }, itemPage);
   assert.equal(tooMuch.status, 303);
-  assert.equal(repo.getLotBalance(db, workspace.workspaceId, lots[0].id, workspace.main.id), 60);
+  assert.equal(repo.getLotBalance(db, workspace.workspaceId, lots[0].id, workspace.main.id), 84);
   const afterPage = await agent.get(itemPage);
-  assert.match(afterPage.text, /only has 60/);
+  assert.match(afterPage.text, /only has 84/);
 });
 
 test('search results lead straight to the right record', async () => {

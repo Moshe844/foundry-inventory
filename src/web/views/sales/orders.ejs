@@ -1,224 +1,156 @@
 <%
   /*
-   * Sales, as customer demand rather than three tables of equal weight.
+   * Customer orders, as a list of stories rather than a table of rows.
    *
-   * Customer orders are what this page is for; completed sales from a connected
-   * till are history, and customers are a supporting record created by the first
-   * order. All three were cards of the same size, so the page had no subject.
+   * What this replaced put three tables of equal weight on one page — open
+   * orders, completed till sales, customers — so the page had no subject, and
+   * the order table called the same number three different names.
    *
-   * The order table also called the same number three different things. Stock
-   * held for a customer is "committed" on the item page and in the inventory
-   * list; here it was "Reserved", beside "Ordered" and "Waiting", none of which
-   * said what they were counting. And the status column printed the stored enum
-   * with its underscores swapped for spaces — "partially fulfilled" — except
-   * for BACKORDERED, which somebody had already special-cased into English.
-   * They all read as English now, from one list.
+   * Now there is one subject: what is each customer waiting for, and is
+   * anything stuck. Every line is one order and its next step, in the order
+   * somebody should deal with them. That ranking is `order-status.js`, not a
+   * sort in this template, so it can be tested.
+   *
+   * Till sales and the customer list have not gone; they are links at the
+   * bottom, because neither answers the question this page exists for.
    */
-  var openOrders = orders.filter(function (o) {
-    return ['CONFIRMED', 'BACKORDERED', 'PARTIALLY_FULFILLED'].includes(o.status);
+  var open = orders.filter(function (o) {
+    return ['CONFIRMED', 'BACKORDERED', 'PARTIALLY_FULFILLED', 'DRAFT'].includes(o.status);
   });
-  var committed = openOrders.reduce(function (n, o) { return n + o.totals.allocated; }, 0);
-  var waiting = openOrders.reduce(function (n, o) { return n + o.totals.backordered; }, 0);
-
-  var STATUS = {
-    DRAFT: { label: 'Being prepared', tone: 'muted' },
-    CONFIRMED: { label: 'Confirmed — stock held', tone: 'info' },
-    BACKORDERED: { label: 'Confirmed — waiting for stock', tone: 'warn' },
-    PARTIALLY_FULFILLED: { label: 'Partly shipped', tone: 'info' },
-    FULFILLED: { label: 'Shipped', tone: 'ok' },
-    CANCELLED: { label: 'Cancelled', tone: 'muted' },
+  /*
+   * Everything that is no longer moving, cancelled included. An order that
+   * vanishes from the list because somebody cancelled it is an order nobody
+   * can answer a question about later, so it stays and says what became of it.
+   */
+  var done = orders.filter(function (o) { return ['FULFILLED', 'CANCELLED'].includes(o.status); });
+  var completed = done.filter(function (o) { return o.status === 'FULFILLED'; });
+  var cancelled = done.filter(function (o) { return o.status === 'CANCELLED'; });
+  var completionCounts = completed.reduce(function (counts, order) {
+    var label = String(order.fulfilmentLabel || 'Gone').toLowerCase();
+    counts[label] = (counts[label] || 0) + 1;
+    return counts;
+  }, {});
+  var summaryBits = [open.length + ' open'];
+  Object.keys(completionCounts).forEach(function (label) {
+    summaryBits.push(completionCounts[label] + ' ' + label);
+  });
+  if (cancelled.length) summaryBits.push(cancelled.length + ' cancelled');
+  var stuck = open.filter(function (o) { return o.next && o.next.rank >= 40; });
+  var money = function (minor, currency) {
+    var amount = Number(minor || 0) / 100;
+    return (currency === 'USD' || !currency ? '$' : currency + ' ')
+      + Math.abs(amount).toLocaleString('en-US', { maximumFractionDigits: 0 });
   };
 %>
 
-<div class="page-head">
-  <div>
-    <h1>Orders</h1>
-    <p class="page-sub">Every customer order from the promise to the parcel: held, picked, shipped, paid.</p>
-  </div>
-  <%#
-    Picking, shipping and customer mail are part of Orders now rather than
-    departments of their own, so this is where somebody finds them — including
-    on the first morning, when there are no orders yet. Hiding them until an
-    order exists would mean consolidating the sidebar had simply lost them.
+<p class="rm-stamp"><%= summaryBits.join(' · ') %></p>
+<h1 class="rm-figure"><%= summary %></h1>
+<p class="rm-sub">
+  <% if (!orders.length) { %>
+    No customer orders yet. When one arrives — typed here, emailed in, or through a connected shop —
+    it becomes a page that tells the whole story of it.
+  <% } else if (stuck.length) { %>
+    The ones that need you are first. Everything below them is moving on its own.
+  <% } else if (open.length) { %>
+    Nothing is stuck. Each of these is on its way and I am getting on with it.
+  <% } else if (completed.length && !cancelled.length) { %>
+    No active order is waiting. The completed orders remain below as history.
+  <% } else { %>
+    No active order is waiting. Completed and cancelled orders remain below as history.
+  <% } %>
+</p>
 
-    "New order" is the exception and stays conditional: with nothing here the
-    empty state below already says it, and one call to action is enough.
-  %>
-  <%#
-    One action, two directions.
-
-    These were three buttons the same size, so the eye had to read all three to
-    find out that two of them leave the page. Making an order is the thing you
-    do here; picking and mail are where you go next, and they are sized like it.
-  %>
-  <div class="page-actions">
-    <a class="btn" href="/sales/customers/new">Add customer</a>
-    <% if (orders.length) { %>
-      <a class="btn btn--primary" href="/orders/new"><%- helpers.icon('plus', { size: 15 }) %> New order</a>
-    <% } %>
+<% if (open.length) { %>
+  <div class="rm-told">
+    <% open.forEach(function (order) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t">
+          <a class="rm-u" href="/orders/<%= order.id %>"><%= order.customer.name %></a>
+          <span class="rm-quiet">· <%= order.order_number %></span>
+          <small>
+            <%= order.next ? order.next.text : '' %><%
+            %><% if (order.next && order.next.detail) { %> — <%= order.next.detail %><% } %>
+          </small>
+        </span>
+        <span class="rm-told__m <%= order.next && order.next.rank >= 50 ? 'is-paused' : '' %>">
+          <%= order.totals.ordered %> units
+          <% if (order.pricing && order.pricing.totalMinor) { %>· <%= money(order.pricing.totalMinor, order.currency) %><% } %>
+          <% if (order.needed_by) { %>· by <%= helpers.shortDate(order.needed_by) %><% } %>
+        </span>
+      </div>
+    <% }) %>
   </div>
-</div>
+<% } %>
+
+<% if (done.length) { %>
+  <p class="rm-stamp">Closed history · <%= done.length %></p>
+  <div class="rm-told">
+    <% done.slice(0, 12).forEach(function (order) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t rm-quiet"><a class="rm-u" href="/orders/<%= order.id %>"><%= order.customer.name %></a> · <%= order.order_number %></span>
+        <span class="rm-told__m <%= order.status === 'CANCELLED' ? 'is-paused' : 'is-ok' %>">
+          <%= order.status === 'CANCELLED'
+            ? 'Cancelled'
+            : order.totals.fulfilled + ' units ' + String(order.fulfilmentLabel || 'gone').toLowerCase() %>
+        </span>
+      </div>
+    <% }) %>
+  </div>
+<% } %>
 
 <%
   /*
-   * One sentence instead of three numbers.
+   * Sales that arrived already finished, from a till or a connected shop.
    *
-   * "2 open customer orders / 120 committed / 0 units waiting for stock" is
-   * three true figures that between them never say whether anything needs
-   * doing. This says that and stops.
+   * A dash on its own is Foundry refusing to state a figure without saying
+   * why, which is half the rule. It values a sale at the price on file when it
+   * happened, so a sale from before a price existed has no value it can
+   * support — and says so.
    */
 %>
-<p class="lede orders-verdict"><%= summary %></p>
+<% if (completedSales && completedSales.length) { %>
+  <p class="rm-stamp">Completed sales · <%= completedSales.length %></p>
+  <div class="rm-told">
+    <% completedSales.slice(0, 12).forEach(function (sale) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t">
+          <%= sale.reference %>
+          <small>
+            <%= sale.itemSummary %> · <%= sale.totalUnits %> unit<%= sale.totalUnits === 1 ? '' : 's' %>
+            · <%= sale.locations.join(', ') %> · <%= sale.providerName %>
+            · <%= helpers.dateTime(sale.occurredAt) %>
+          </small>
+        </span>
+        <span class="rm-told__m">
+          <% if (sale.priceComplete) { %>
+            <%= helpers.money(sale.totalMinor, sale.currency || 'USD') %>
+          <% } else { %>
+            No price on file when this sold
+          <% } %>
+        </span>
+      </div>
+    <% }) %>
+  </div>
+<% } %>
 
-<p class="orders-elsewhere t-muted">
-  <a href="/fulfilment"><%- helpers.icon('box', { size: 14 }) %> Picking and shipping</a>
-  <a href="/mail"><%- helpers.icon('send', { size: 14 }) %> Customer mail</a>
+<% if (customers && customers.length) { %>
+  <p class="rm-stamp">Customers · <%= customers.length %> on file</p>
+  <div class="rm-told">
+    <% customers.slice(0, 10).forEach(function (customer) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t">
+          <a class="rm-u" href="/sales/customers/<%= customer.id %>"><%= customer.name %></a>
+          <small><%= customer.company || customer.email || 'No contact details yet' %></small>
+        </span>
+        <span class="rm-told__m"><%= customer.order_count %> order<%= customer.order_count === 1 ? '' : 's' %></span>
+      </div>
+    <% }) %>
+  </div>
+<% } %>
+
+<p class="rm-disclose">
+  <a href="/orders/new">Write an order</a>
+  <a href="/fulfilment">Picking and packing</a>
+  <a href="/sales/customers/new">Add customer</a>
+  <% if (!sellingConnectionCount) { %><a href="/settings/connections">Connect a shop so orders arrive on their own</a><% } %>
 </p>
-
-<%# ------------------------------------------------------------ Customer orders %>
-<section class="section">
-  <div class="section-head">
-    <h2>Customer orders</h2>
-    <% if (orders.length) { %><span class="section-more"><%= orders.length %> order<%= orders.length === 1 ? '' : 's' %></span><% } %>
-  </div>
-
-  <% if (!orders.length) { %>
-    <div class="empty-state">
-      <span class="empty-state__icon"><%- helpers.icon('sales', { size: 20 }) %></span>
-      <p class="empty-state__title">No customer orders yet</p>
-      <p class="empty-state__body">
-        Create one when a customer commits to buy stock. Foundry holds what is available for them;
-        the stock itself only moves when you fulfill it.
-      </p>
-      <a class="btn btn--primary" href="/sales/new">Create a customer order</a>
-    </div>
-  <% } else { %>
-    <div class="panel">
-      <div class="table-wrap">
-        <table class="table table--stack">
-          <thead>
-            <tr>
-              <th>Order</th>
-              <th>Customer</th>
-              <th>Waiting for</th>
-              <th class="num">Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            <% orders.forEach(function (order) { %>
-              <tr>
-                <td class="cell-main">
-                  <a class="cell-title" href="/orders/<%= order.id %>"><%= order.order_number %></a>
-                  <span class="cell-sub">
-                    <% if (order.needed_by) { %>wanted <%= helpers.shortDate(order.needed_by) %>
-                    <% } else { %><%= helpers.shortDate(order.order_date) %><% } %>
-                  </span>
-                </td>
-                <td data-label="Customer">
-                  <%= order.customer.name %>
-                  <% if (order.customer.company) { %><span class="cell-sub"><%= order.customer.company %></span><% } %>
-                </td>
-                <td data-label="Waiting for">
-                  <span class="badge badge--<%= order.next.tone === 'go' ? 'info'
-                    : order.next.tone === 'danger' ? 'warn' : order.next.tone %>"><%= order.next.text %></span>
-                  <% if (order.next.detail) { %>
-                    <div class="cell-sub"><%= order.next.detail %></div>
-                  <% } %>
-                </td>
-                <td class="num cell-end" data-label="Value">
-                  <%= order.pricing.missingPriceLines ? '—' : helpers.money(order.pricing.totalMinor, order.currency) %>
-                </td>
-              </tr>
-            <% }) %>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <%#
-      The shortfall used to be announced again here, under the table: "160
-      units across 1 order are short." The row it is about now says exactly
-      that, next to the order it belongs to, so repeating it below was the page
-      telling somebody something they had just read — and further from the
-      thing they would click.
-    %>
-
-    
-  <% } %>
-</section>
-
-<%# ----------------------------------------------------------- Completed sales %>
-<% if (completedSales.length) { %>
-<section class="section">
-  <div class="section-head">
-    <h2>Completed sales</h2>
-    <span class="section-more">From the tills and stores you have connected</span>
-  </div>
-  <% if (!completedSales.length) { %>
-    <div class="quiet-note">
-      Nothing yet. <a href="/settings/connections">Connect where checkout happens</a> and completed
-      sales arrive here by themselves, reducing stock through the same records as everything else.
-    </div>
-  <% } else { %>
-    <div class="panel">
-      <div class="table-wrap">
-        <table class="table table--stack">
-          <thead>
-            <tr><th>Sale</th><th>From</th><th>What sold</th><th>Where</th><th>When</th><th class="num">Total</th></tr>
-          </thead>
-          <tbody>
-            <% completedSales.forEach(function (sale) { %>
-              <tr>
-                <td class="cell-main"><span class="cell-title"><%= sale.reference %></span></td>
-                <td data-label="From"><%= sale.providerName %></td>
-                <td data-label="What sold">
-                  <%= sale.itemSummary %>
-                  <span class="cell-sub"><%= sale.totalUnits %> unit<%= sale.totalUnits === 1 ? '' : 's' %></span>
-                </td>
-                <td data-label="Where" class="t-muted"><%= sale.locations.join(', ') %></td>
-                <td data-label="When" class="t-muted"><%= helpers.dateTime(sale.occurredAt) %></td>
-                <td class="num cell-end" data-label="Total">
-                  <%#
-                    A dash on its own is Foundry refusing to state a figure and
-                    not saying why, which is only half of the rule. Foundry
-                    values a sale at the price that was on file when it
-                    happened, so a sale from before a price was recorded has no
-                    value it can support — and says so instead of leaving
-                    somebody wondering whether the total is broken.
-                  %>
-                  <% if (sale.priceComplete) { %>
-                    <%= helpers.money(sale.totalMinor, sale.currency || 'USD') %>
-                  <% } else { %>
-                    <span class="t-muted">No price on file when this sold</span>
-                  <% } %>
-                </td>
-              </tr>
-            <% }) %>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  <% } %>
-</section>
-<% } %>
-
-<%# ---------------------------------------------------------------- Customers %>
-<% if (customers.length) { %>
-  <section class="section">
-    <div class="section-head">
-      <h2>Customers</h2>
-      <span class="section-more"><%= customers.length %> on file</span>
-    </div>
-    <div class="panel">
-      <% customers.forEach(function (customer) { %>
-        <a class="conn" href="/sales/customers/<%= customer.id %>">
-          <span class="conn__body">
-            <span class="conn__name"><%= customer.name %></span>
-            <span class="conn__meta"><%= customer.company || customer.email || 'No contact details yet' %></span>
-          </span>
-          <span class="t-xs t-muted"><%= customer.order_count %> order<%= customer.order_count === 1 ? '' : 's' %></span>
-        </a>
-      <% }) %>
-    </div>
-  </section>
-<% } %>

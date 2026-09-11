@@ -31,6 +31,12 @@ const signalEngine = require('../signals/signal-engine');
 const position = require('./position');
 const supplierService = require('./supplier-service');
 const policyService = require('./policy-service');
+const { pluralUnit } = require('../lib/util');
+
+const counted = (quantity, unit) => {
+  const singular = String(unit || 'unit').replace(/\(s\)$/i, '').trim() || 'unit';
+  return `${quantity} ${Number(quantity) === 1 ? singular : pluralUnit(singular)}`;
+};
 
 /**
  * Constants of the method, in one place so a recommendation can name the rule
@@ -73,12 +79,17 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
 
   const onHand = sku.measured.onHand;
   const committed = Number(sku.measured.committed || 0);
+  const backordered = Number(sku.measured.backordered || 0);
   const available = Number.isFinite(Number(sku.measured.available)) ? Number(sku.measured.available) : onHand;
   const onOrder = incoming.onOrder;
-  const inventoryPosition = available + onOrder;
+  // Allocated orders are already removed from available. Confirmed demand that
+  // could not be allocated must be removed as well; otherwise an order can
+  // cover the backorder and still leave less than the stated stock target.
+  const inventoryPosition = available + onOrder - backordered;
   const availableWords = committed > 0
     ? `${available} available (${onHand} on hand − ${committed} committed)`
     : `${onHand} on hand`;
+  const demandWords = backordered > 0 ? `, with ${backordered} more promised but waiting for stock` : '';
 
   const usage = sku.estimated.hasUsageEvidence ? sku.estimated.averageDailyUsage : null;
   const usageWindow = sku.measured.windowDays;
@@ -107,6 +118,7 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
     unitLabel: sku.unitLabel,
     onHand,
     committed,
+    backordered,
     available,
     onOrder,
     position: inventoryPosition,
@@ -211,8 +223,8 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
     step: 'position',
     detail:
       onOrder > 0
-        ? `Available position is ${availableWords} + ${onOrder} already on order = ${inventoryPosition}.`
-        : `Available position is ${availableWords}, with nothing on order.`,
+        ? `Available position is ${availableWords}${demandWords} + ${onOrder} already on order = ${inventoryPosition}.`
+        : `Available position is ${availableWords}${demandWords}, with nothing on order = ${inventoryPosition}.`,
     value: inventoryPosition,
   });
 
@@ -243,7 +255,7 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
   const shortfall = Math.max(0, target - inventoryPosition);
   steps.push({
     step: 'shortfall',
-    detail: `Order up to ${target} − position ${inventoryPosition} = ${shortfall} ${sku.unitLabel}(s) needed.`,
+    detail: `Order up to ${target} − position ${inventoryPosition} = ${counted(shortfall, sku.unitLabel)} needed.`,
     value: shortfall,
   });
 
@@ -273,7 +285,7 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
     steps.push({
       step: 'already_prepared',
       detail:
-        `${drafted.units} ${sku.unitLabel}(s) are already prepared on ` +
+        `${counted(drafted.units, sku.unitLabel)} are already prepared on ` +
         `${drafted.orders.map((o) => o.poNumber).join(', ')}, which covers the ${shortfall} needed.`,
       value: 0,
     });
@@ -288,8 +300,7 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
       prepared: drafted,
       headline: 'Already prepared',
       explanation:
-        `This line is ${shortfall} short of its target, and ${drafted.units} ` +
-        `${sku.unitLabel}(s) are already drafted on ` +
+        `This line is ${shortfall} short of its target, and ${counted(drafted.units, sku.unitLabel)} are already drafted on ` +
         `${drafted.orders.map((o) => o.poNumber).join(', ')}. Approve that rather than ordering again.`,
       evidence: evidenceFor(base, { reorderPoint, target, safetyStock, usagePerDay, shortfall }),
       calculation: steps,
@@ -356,10 +367,10 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
     estimatedCost,
     headline:
       finalPurchaseUnits === finalUnits
-        ? `Order ${finalUnits} ${sku.unitLabel}(s)`
-        : `Order ${finalUnits} ${sku.unitLabel}(s) — ${finalPurchaseUnits} ${supplierItem.purchaseUnit}(s)`,
+        ? `Order ${counted(finalUnits, sku.unitLabel)}`
+        : `Order ${counted(finalUnits, sku.unitLabel)} — ${counted(finalPurchaseUnits, supplierItem.purchaseUnit)}`,
     explanation:
-      `${availableWords}${onOrder ? ` and ${onOrder} on order` : ''} is at or below the reorder point of ` +
+      `${availableWords}${demandWords}${onOrder ? ` and ${onOrder} on order` : ''} is at or below the reorder point of ` +
       `${reorderPoint}. ` +
       (usagePerDay > 0
         ? `Recent measured usage is ${round(usagePerDay, 2)} a day, so stock lasts about ${daysUntilOut} days. `
@@ -389,9 +400,11 @@ function evidenceFor(base, extra) {
   const rows = [
     fact('On hand', base.onHand),
     fact('Committed to customer orders', base.committed || 0),
+    fact('Customer demand waiting for stock', base.backordered || 0),
     fact('Available', base.available),
     fact('On order', base.onOrder, base.incoming.nextExpectedDate ? `next expected ${base.incoming.nextExpectedDate}` : null),
-    fact('Inventory position', base.position, 'available + on order (on hand − committed + on order)'),
+    fact('Inventory position', base.position,
+      'available + on order − customer demand waiting for stock'),
     fact(
       `Issued in last ${base.usageWindowDays} days`,
       base.issuedInWindow,
@@ -419,10 +432,10 @@ function evidenceFor(base, extra) {
       )
     );
     if (supplierItem.minimumOrderQuantity) {
-      rows.push(fact('Minimum order', `${supplierItem.minimumOrderQuantity} ${supplierItem.purchaseUnit}(s)`));
+      rows.push(fact('Minimum order', counted(supplierItem.minimumOrderQuantity, supplierItem.purchaseUnit)));
     }
     if (supplierItem.orderMultiple && supplierItem.orderMultiple > 1) {
-      rows.push(fact('Order multiple', `${supplierItem.orderMultiple} ${supplierItem.purchaseUnit}(s)`));
+      rows.push(fact('Order multiple', counted(supplierItem.orderMultiple, supplierItem.purchaseUnit)));
     }
     const cost = supplierItem.lastUnitCost ?? supplierItem.unitCost;
     if (cost !== null && cost !== undefined) rows.push(fact('Last unit cost', cost));

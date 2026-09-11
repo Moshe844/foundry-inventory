@@ -315,6 +315,16 @@
         if (target && target.tagName === 'DIALOG') return;
 
         if (target) {
+          // A destination is not reached when it is still hidden inside a
+          // closed disclosure. Open the exact <details> target and every
+          // containing disclosure before scrolling. This is intentionally
+          // generic: every Needs You, Accounting, order, and capability link
+          // that uses a real element id gets the same arrival contract.
+          let disclosure = target.tagName === 'DETAILS' ? target : target.closest('details');
+          while (disclosure) {
+            disclosure.open = true;
+            disclosure = disclosure.parentElement && disclosure.parentElement.closest('details');
+          }
           // The persistent “What can I do here?” link points at a compact
           // disclosure. Landing on a closed disclosure would move the page
           // without answering the question the person just clicked.
@@ -372,14 +382,215 @@
     land();
   }
 
+  /* ------------------------------------------------------- saying something
+
+     Foundry's own voice, in Foundry's own window.
+
+     The browser's alert, confirm and prompt open a grey box headed
+     "localhost:4000 says" — the operating system's typography, the operating
+     system's buttons, and a title naming the port. It is the one place in the
+     product where the thing talking to somebody is visibly not Foundry, and it
+     turns up on exactly the actions that matter most: archiving a product,
+     disconnecting a mailbox, pausing Foundry itself.
+
+     Two shapes replace them, because they are two different acts. A statement
+     is a toast: it appears, it is read, it goes. A question is a dialog: it
+     waits, it can be refused, and until it is answered nothing has happened.
+     Turning the questions into toasts would have removed the gate that is the
+     entire reason they exist. */
+
+  var toastHost = null;
+
+  function toastRoot() {
+    if (toastHost && document.body.contains(toastHost)) return toastHost;
+    toastHost = document.createElement('div');
+    toastHost.className = 'rm-toasts';
+    // Polite: a toast is never the only place a fact appears, so it must not
+    // interrupt somebody mid-sentence in a screen reader.
+    toastHost.setAttribute('role', 'status');
+    toastHost.setAttribute('aria-live', 'polite');
+    document.body.appendChild(toastHost);
+    return toastHost;
+  }
+
+  /**
+   * Says one thing, briefly.
+   *
+   * `tone` is 'info' (default), 'ok' or 'warn'. `copy` puts the value in a
+   * selectable box inside the toast — the honest replacement for the prompt
+   * that used to show a link when the clipboard was unavailable, because the
+   * point of that box was never the message, it was that you could take the
+   * text out of it.
+   */
+  function toast(message, options) {
+    var settings = options || {};
+    var node = document.createElement('div');
+    node.className = 'rm-toast rm-toast--' + (settings.tone || 'info');
+
+    var text = document.createElement('span');
+    text.className = 'rm-toast__t';
+    text.textContent = message;
+    node.appendChild(text);
+
+    if (settings.copy) {
+      var field = document.createElement('input');
+      field.className = 'rm-toast__copy';
+      field.type = 'text';
+      field.readOnly = true;
+      field.value = settings.copy;
+      field.setAttribute('aria-label', message);
+      node.appendChild(field);
+    }
+
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'rm-toast__x';
+    close.setAttribute('aria-label', 'Dismiss');
+    close.textContent = '×';
+    node.appendChild(close);
+
+    var host = toastRoot();
+    host.appendChild(node);
+    // A frame between insertion and the class that animates it, so the browser
+    // has a starting position to move from.
+    window.requestAnimationFrame(function () { node.classList.add('is-in'); });
+
+    var leaving = false;
+    var timer = null;
+    function leave() {
+      if (leaving) return;
+      leaving = true;
+      if (timer) window.clearTimeout(timer);
+      node.classList.remove('is-in');
+      window.setTimeout(function () {
+        if (node.parentNode) node.parentNode.removeChild(node);
+      }, 220);
+    }
+    close.addEventListener('click', leave);
+
+    // A toast holding something to copy waits to be dismissed: taking the text
+    // out of it is the whole job, and four seconds is not long enough to do it.
+    if (!settings.copy) {
+      timer = window.setTimeout(leave, settings.forMs || 4500);
+      node.addEventListener('mouseenter', function () {
+        if (timer) window.clearTimeout(timer);
+      });
+      node.addEventListener('mouseleave', function () {
+        if (!leaving) timer = window.setTimeout(leave, 1800);
+      });
+    }
+
+    if (settings.copy) {
+      var box = node.querySelector('.rm-toast__copy');
+      window.setTimeout(function () { box.focus(); box.select(); }, 40);
+    }
+    return leave;
+  }
+
+  /*
+   * The question, asked in the product's own window.
+   *
+   * One dialog, built once and reused, because there is only ever one question
+   * on screen at a time. The confirming button carries the words off the button
+   * that was pressed — "Archive", "Disconnect", "Pause Foundry" — so the answer
+   * names the act rather than saying "OK" and leaving somebody to remember what
+   * they clicked.
+   */
+  var askDialog = null;
+
+  function askRoot() {
+    if (askDialog && document.body.contains(askDialog)) return askDialog;
+    askDialog = document.createElement('dialog');
+    askDialog.className = 'rm-ask';
+    askDialog.innerHTML = '<div class="rm-ask__b">'
+      + '<span class="rm-ask__ic" aria-hidden="true">!</span>'
+      + '<div><p class="rm-ask__t" data-ask-text></p>'
+      + '<p class="rm-ask__d">Nothing happens until you choose.</p></div></div>'
+      + '<div class="rm-ask__f">'
+      + '<button type="button" class="rm-btn rm-btn--ghost" data-ask-no>Cancel</button>'
+      + '<button type="button" class="rm-btn rm-btn--danger" data-ask-yes></button>'
+      + '</div>';
+    document.body.appendChild(askDialog);
+    return askDialog;
+  }
+
+  /**
+   * Asks, and calls back only on yes.
+   *
+   * Cancel holds the focus, and Escape closes without answering, because the
+   * cheap accident to make on a destructive question is agreeing to it.
+   */
+  function ask(message, label, onYes) {
+    var dialog = askRoot();
+    if (typeof dialog.showModal !== 'function') {
+      // Older browser: the native question is worse-looking than this one but
+      // it is still a question, and losing the gate is not an option.
+      if (window.confirm(message)) onYes();
+      return;
+    }
+    dialog.querySelector('[data-ask-text]').textContent = message;
+    var yes = dialog.querySelector('[data-ask-yes]');
+    var no = dialog.querySelector('[data-ask-no]');
+    yes.textContent = label || 'Yes, do it';
+
+    var answered = false;
+    function close() {
+      yes.removeEventListener('click', agree);
+      no.removeEventListener('click', refuse);
+      dialog.removeEventListener('cancel', refuse);
+      if (dialog.open) dialog.close();
+    }
+    function agree() {
+      if (answered) return;
+      answered = true;
+      close();
+      onYes();
+    }
+    // Escape reaches here as the dialog's own `cancel` event, which closes it
+    // natively; `close` only has the listeners left to take down.
+    function refuse() {
+      answered = true;
+      close();
+    }
+    yes.addEventListener('click', agree);
+    no.addEventListener('click', refuse);
+    dialog.addEventListener('cancel', refuse);
+    dialog.showModal();
+    window.setTimeout(function () { no.focus(); }, 30);
+  }
+
+  /* Inline scripts on a handful of pages want to say something too. */
+  window.Foundry = window.Foundry || {};
+  window.Foundry.toast = toast;
+  window.Foundry.ask = ask;
+
   function initConfirms() {
     document.addEventListener('submit', (event) => {
       const form = event.target;
       const message = form.getAttribute('data-confirm');
-      if (message && !window.confirm(message)) {
+      /*
+       * The question, then the submit — in that order, and not in one turn.
+       *
+       * `window.confirm` blocked the thread and handed back an answer, so the
+       * whole thing fitted in the submit handler. A dialog cannot: it returns
+       * immediately and answers later. So a form carrying a question is
+       * stopped, asked, and — on yes — submitted again with the same button,
+       * which is what carries a two-decision form's name and value.
+       */
+      if (message && !form.hasAttribute('data-confirmed')) {
         event.preventDefault();
+        const presser = event.submitter && event.submitter.matches('button[type=submit], input[type=submit]')
+          ? event.submitter
+          : form.querySelector('button[type="submit"]');
+        const label = presser ? (presser.textContent || '').trim() : '';
+        ask(message, label, () => {
+          form.setAttribute('data-confirmed', '');
+          if (typeof form.requestSubmit === 'function') form.requestSubmit(presser || undefined);
+          else form.submit();
+        });
         return;
       }
+      form.removeAttribute('data-confirmed');
       // Stop double submits on slow connections.
       const submit = form.querySelector('button[type="submit"]:not([data-no-lock])');
       if (submit) {
@@ -431,11 +642,23 @@
     const startedAt = Date.now();
     let stopped = false;
 
-    const paint = (stage) => {
+    /*
+     * A finished step keeps the time it took, taken from the server's own
+     * timeline rather than measured in the browser — the page may have been
+     * opened after the work started, or reloaded halfway through.
+     */
+    const paint = (stage, timeline) => {
       const current = order.indexOf(stage);
       steps.forEach((step, index) => {
         step.classList.toggle('is-done', current > index);
         step.classList.toggle('is-current', current === index);
+
+        if (!timeline || current <= index) return;
+        const began = timeline[order[index]];
+        const ended = index + 1 < order.length ? timeline[order[index + 1]] : timeline.done;
+        if (began === undefined || ended === undefined) return;
+        const stamp = step.querySelector('[data-step-time]');
+        if (stamp) stamp.textContent = `${Math.max(1, Math.round((ended - began) / 1000))}s`;
       });
     };
 
@@ -461,7 +684,7 @@
             window.location.reload();
             return;
           }
-          paint(job.stage);
+          paint(job.stage, job.timeline);
           window.setTimeout(poll, 1500);
         })
         .catch(() => {
@@ -473,6 +696,61 @@
     };
 
     window.setTimeout(poll, 800);
+  }
+
+  /*
+   * What the option boxes will actually become.
+   *
+   * A shop typing its size run as "25 27 29 31 33" used to get one variant
+   * carrying one number for five different shoes, and only found out on the
+   * item page afterwards. The same reading the server does is shown here while
+   * they type, so a size run that has not been understood as five sizes is
+   * visible before anything is created.
+   */
+  function initVariantPreview() {
+    const target = document.querySelector('[data-variant-preview]');
+    if (!target) return;
+
+    const host = target.closest('[data-reveal]') || document;
+    const rows = [...host.querySelectorAll('.option-row')];
+    if (!rows.length) return;
+
+    const ATOMIC = /^(?:\d{1,4}(?:\.\d{1,2})?|[2-6]?X{0,3}[SML]|OS)$/i;
+    const SEPARATORS = new RegExp('[,;/|\r\n]+');
+
+    const split = (raw) => {
+      const text = String(raw || '').trim();
+      if (!text) return [];
+      const parts = SEPARATORS.test(text) ? text.split(SEPARATORS) : null;
+      if (parts) return parts.map((p) => p.trim()).filter(Boolean);
+      const tokens = text.split(/\s+/);
+      if (tokens.length > 1 && tokens.every((t) => ATOMIC.test(t))) return tokens;
+      return [text];
+    };
+
+    const paint = () => {
+      const axes = rows
+        .map((row) => {
+          const inputs = row.querySelectorAll('input');
+          return { name: (inputs[0] || {}).value || '', values: split((inputs[1] || {}).value) };
+        })
+        .filter((axis) => axis.values.length);
+
+      if (!axes.length) {
+        target.hidden = true;
+        return;
+      }
+
+      const total = axes.reduce((n, axis) => n * axis.values.length, 1);
+      const detail = axes
+        .map((axis) => `${axis.name || 'Option'}: ${axis.values.join(' · ')}`)
+        .join('  |  ');
+      target.textContent = `${total} variant${total === 1 ? '' : 's'} will be created — ${detail}`;
+      target.hidden = false;
+    };
+
+    host.addEventListener('input', paint);
+    paint();
   }
 
   /** Short Foundry calls (seconds) just need the button to look busy. */
@@ -501,7 +779,11 @@
     if (picker) picker.addEventListener('click', () => source.click());
     source.addEventListener('change', () => {
       const name = document.querySelector('[data-source-name]');
-      if (name && source.files && source.files[0]) name.textContent = source.files[0].name;
+      const chosen = source.files && source.files[0];
+      if (name && chosen) name.textContent = chosen.name;
+      // The control says what it is holding, so the slot stops looking empty.
+      const slot = source.closest('.rm-composer__attach');
+      if (slot) slot.classList.toggle('has-file', Boolean(chosen));
     });
   }
 
@@ -538,6 +820,26 @@
           button.classList.add('is-busy');
           button.setAttribute('aria-busy', 'true');
         }
+        /*
+         * A wait with no end and no exit.
+         *
+         * A model call is seconds, usually. When it is not, the page says
+         * "Foundry is working out what that means…" and offers nothing — no
+         * way to tell whether to keep waiting or to leave. After ten seconds
+         * it says both: that it is still going, and that leaving costs
+         * nothing, which is true because nothing is written until it is
+         * approved.
+         */
+        if (!pending) return;
+        window.setTimeout(() => {
+          if (pending.hidden || pending.dataset.escaped) return;
+          pending.dataset.escaped = '1';
+          pending.append(' Still going. ');
+          const out = document.createElement('a');
+          out.href = '/';
+          out.textContent = 'Leave it — nothing has changed yet';
+          pending.append(out);
+        }, 10000);
       });
     });
   }
@@ -725,11 +1027,17 @@
         button.textContent = 'Copied';
         setTimeout(function () { button.textContent = said; }, 2000);
       };
+      var offer = function () {
+        // No clipboard permission, so show it rather than silently doing
+        // nothing. The point of the old prompt was never its message — it was
+        // that the text could be selected out of it, so the toast carries a
+        // box that is focused and selected already.
+        toast('Copy this link', { copy: value, tone: 'info' });
+      };
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(value).then(done, function () { window.prompt('Copy this link', value); });
+        navigator.clipboard.writeText(value).then(done, offer);
       } else {
-        // No clipboard permission, so show it rather than silently doing nothing.
-        window.prompt('Copy this link', value);
+        offer();
       }
     });
   }
@@ -964,6 +1272,27 @@
     open(modal.getAttribute('data-open-now'));
   }
 
+  /**
+   * Enter sends; Shift+Enter starts a new line.
+   *
+   * The command box is a textarea because what people type is often more than
+   * one line, but a textarea swallows Enter — so the box that is meant to be
+   * the fastest way to talk to Foundry was the one thing on the page you could
+   * not send from the keyboard.
+   */
+  function initComposerSend() {
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || event.shiftKey) return;
+      const box = event.target.closest('.rm-composer textarea');
+      if (!box) return;
+      const form = box.closest('form');
+      if (!form) return;
+      event.preventDefault();
+      if (typeof form.requestSubmit === 'function') form.requestSubmit();
+      else form.submit();
+    });
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     initNavigationLanding();
     initSearch();
@@ -987,5 +1316,7 @@
     initCopyButtons();
     initPaymentWindow();
     initPrintButtons();
+    initComposerSend();
+    initVariantPreview();
   });
 })();

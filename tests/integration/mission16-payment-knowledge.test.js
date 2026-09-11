@@ -26,7 +26,7 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 const { createApp } = require('../../src/app');
 const { fakeProvider } = require('../helpers/fake-provider');
-const { makeDatabase, cleanupAll, seedWorkspace, signIn, makeQuantityItem } = require('../helpers');
+const { makeDatabase, cleanupAll, seedWorkspace, signIn, makeQuantityItem, plain } = require('../helpers');
 const authService = require('../../src/domain/auth-service');
 const collection = require('../../src/payments/collection');
 const registry = require('../../src/payments/provider');
@@ -150,9 +150,13 @@ test('the waiting order learns payment immediately and returns receipt and invoi
 
     const page = await agent.get(`/orders/${env.order.id}?payment=paid`);
     assert.equal(page.status, 200);
-    assert.match(page.text, /Payment completed and recorded/);
+    assert.match(page.text, /Payment recorded/);
     assert.match(page.text, /Print receipt/);
     assert.match(page.text, /View or print Stripe invoice/);
+
+    const home = plain((await agent.get('/')).text);
+    assert.match(home, /Handled\s*1\s*automatic action completed in the last day/i);
+    assert.match(home, /Recorded \$300\.00 from Moshe Ekstein.*confirmed the payment and Foundry posted it to SO-1001 without you/i);
   } finally { undo(); env.db.close(); }
 });
 

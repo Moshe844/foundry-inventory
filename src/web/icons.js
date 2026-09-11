@@ -46,6 +46,23 @@ const PATHS = {
   send: '<path d="M4.5 12 20 4.5l-3 7.5 3 7.5z"/><path d="M20 12H7"/>',
   question: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.4v.3"/><path d="M12 16.8h.01"/>',
   attention: '<path d="M18 8.5a6 6 0 1 0-12 0c0 5-2 6.5-2 6.5h16s-2-1.5-2-6.5"/><path d="M13.7 19a2 2 0 0 1-3.4 0"/>',
+
+  // Added for the operating surfaces: a live operation needs pictures for the
+  // states it is actually in — working, shipping, arriving, waiting on you.
+  spark: '<path d="M12 3.5 13.6 8.4 18.5 10l-4.9 1.6L12 16.5l-1.6-4.9L5.5 10l4.9-1.6z"/>',
+  ship: '<path d="M3 13.5h11V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1z"/><path d="M14 9h3.4a1 1 0 0 1 .9.55L20 13v.5h-6z"/><circle cx="7" cy="17" r="1.8"/><circle cx="17" cy="17" r="1.8"/><path d="M8.8 17h6.4M3 17h1.2M18.8 17H21v-3.5"/>',
+  arrive: '<path d="M12 3.5v10m0 0 3.5-3.5M12 13.5 8.5 10"/><path d="M4 15.5v3A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-3"/><path d="M4 15.5h4l1 2h6l1-2h4"/>',
+  arrowRight: '<path d="M5 12h13m0 0-5-5m5 5-5 5"/>',
+  bolt: '<path d="M13.5 3 5.5 13.2h5.2L10 21l8.2-10.4h-5.3z"/>',
+  trendUp: '<path d="M3.5 17 9 11l3.5 3.5L20.5 6"/><path d="M15.5 6h5v5"/>',
+  trendDown: '<path d="M3.5 7 9 13l3.5-3.5L20.5 18"/><path d="M15.5 18h5v-5"/>',
+  pause: '<rect x="7" y="5" width="3.5" height="14" rx="1"/><rect x="13.5" y="5" width="3.5" height="14" rx="1"/>',
+  play: '<path d="M7.5 5.2 19 12 7.5 18.8z"/>',
+  wallet: '<path d="M3.5 8.5A2 2 0 0 1 5.5 6.5h13a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="M3.5 10.5h17"/><circle cx="16.5" cy="14" r="1.2"/>',
+  layers: '<path d="m12 3.5 8.5 4.2L12 12 3.5 7.7z"/><path d="m3.5 12 8.5 4.3 8.5-4.3"/><path d="m3.5 16.3 8.5 4.2 8.5-4.2"/>',
+  chat: '<path d="M20.5 12a7.5 7.5 0 0 1-10.9 6.7L4.5 20l1.3-5A7.5 7.5 0 1 1 20.5 12z"/>',
+  eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+  hand: '<path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11m0-.5V4.5a1.5 1.5 0 0 1 3 0V11m0-1.5a1.5 1.5 0 0 1 3 0V15a5.5 5.5 0 0 1-5.5 5.5h-1A5.5 5.5 0 0 1 6 15v-3a1.5 1.5 0 0 1 3 0"/>',
 };
 
 function icon(name, { size = 20, className = '' } = {}) {

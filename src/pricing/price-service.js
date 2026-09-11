@@ -65,12 +65,47 @@ function listForItem(db, workspaceId, itemId) {
     .all(workspaceId, itemId).map((row) => currentForSku(db, workspaceId, row.id));
 }
 
-function purchaseCostForSku(db, workspaceId, skuId) {
-  const row = db.prepare(`SELECT si.last_unit_cost, si.last_cost_at, s.currency, s.name AS supplier_name
+function supplierPurchaseCostForSku(db, workspaceId, skuId) {
+  const row = db.prepare(`SELECT si.id AS supplier_item_id, si.last_unit_cost, si.last_cost_at, s.currency, s.name AS supplier_name
     FROM supplier_items si JOIN suppliers s ON s.id = si.supplier_id
     WHERE si.workspace_id = ? AND si.sku_id = ? AND si.is_active = 1 AND si.last_unit_cost IS NOT NULL
     ORDER BY si.is_preferred DESC, si.last_cost_at DESC, si.updated_at DESC LIMIT 1`).get(workspaceId, skuId);
   return row ? { ...row, amount_minor: fromMajorNumber(row.last_unit_cost), formatted: formatMinor(fromMajorNumber(row.last_unit_cost), row.currency) } : null;
+}
+
+function purchaseCostForSku(db, workspaceId, skuId) {
+  const stated = db.prepare(`SELECT pc.*, sup.name AS supplier_name
+    FROM sku_purchase_costs pc
+    LEFT JOIN supplier_items si ON si.id = pc.supplier_item_id
+    LEFT JOIN suppliers sup ON sup.id = si.supplier_id
+    WHERE pc.workspace_id = ? AND pc.sku_id = ?
+    ORDER BY pc.created_at DESC, pc.rowid DESC LIMIT 1`).get(workspaceId, skuId);
+  if (stated) return { ...stated, isSet: true, formatted: formatMinor(stated.amount_minor, stated.currency),
+    sourceLabel: stated.supplier_name || 'Owner supplied' };
+  const supplier = supplierPurchaseCostForSku(db, workspaceId, skuId);
+  return supplier ? { ...supplier, isSet: true, sourceLabel: supplier.supplier_name } : null;
+}
+
+function setPurchaseCost(db, ctx, input) {
+  const sku = requireSku(db, ctx.workspaceId, input.skuId);
+  const amountMinor = input.amountMinor !== undefined
+    ? Number(input.amountMinor) : toMinor(input.amount, 'Purchase cost');
+  if (!Number.isSafeInteger(amountMinor) || amountMinor < 0) {
+    throw new ValidationError('Purchase cost must be a valid non-negative amount.');
+  }
+  const currency = normaliseCurrency(input.currency);
+  const current = purchaseCostForSku(db, ctx.workspaceId, sku.id);
+  if (current && current.amount_minor === amountMinor && current.currency === currency) {
+    return { ...current, replayed: true };
+  }
+  const id = newId('pcost');
+  db.prepare(`INSERT INTO sku_purchase_costs
+    (id, workspace_id, sku_id, amount_minor, currency, supplier_item_id, source,
+     source_detail, created_by_user_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, ctx.workspaceId, sku.id, amountMinor, currency, input.supplierItemId || null,
+      trimOrNull(input.source) || 'owner', JSON.stringify(input.sourceDetail || {}), ctx.actorId || null, nowIso());
+  return purchaseCostForSku(db, ctx.workspaceId, sku.id);
 }
 
 function setPrice(db, ctx, input) {
@@ -113,5 +148,6 @@ function historyForSku(db, workspaceId, skuId, limit = 50) {
 
 module.exports = {
   normaliseCurrency, toMinor, fromMajorNumber, formatMinor, requireSku,
-  currentForSku, listForItem, purchaseCostForSku, setPrice, historyForSku,
+  currentForSku, listForItem, supplierPurchaseCostForSku, purchaseCostForSku,
+  setPrice, setPurchaseCost, historyForSku,
 };

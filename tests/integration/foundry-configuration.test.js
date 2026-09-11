@@ -34,7 +34,7 @@ const {
 test.after(cleanupAll);
 
 const VARIANT_UNDERSTANDING = buildUnderstanding({
-  businessDescription: "We wholesale children's shoes in styles, colors and sizes across two warehouses.",
+  businessDescription: "We wholesale children's shoes in colors Navy and Cream, sizes 4, 5 and 6, across Brooklyn Warehouse and New Jersey Warehouse.",
   inventoryArchetypes: ['quantity', 'variant'],
   variantDimensions: [
     { name: 'Color', exampleValues: ['Navy', 'Cream'] },

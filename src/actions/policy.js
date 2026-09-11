@@ -37,7 +37,13 @@ const THRESHOLDS = {
 /** How long an unapproved proposal stays good for. */
 const PROPOSAL_TTL_MS = 30 * 60 * 1000;
 
-const CONFIGURATION_ACTIONS = ['add_location', 'rename_terminology', 'create_item', 'archive_item'];
+const removals = require('./removals');
+
+// Retiring a supplier, customer or location changes a record, never a count,
+// so it classifies with the other configuration changes rather than with the
+// stock movements — no quantity thresholds apply to it.
+const CONFIGURATION_ACTIONS = ['add_location', 'rename_terminology', 'create_item', 'archive_item',
+  removals.ACTION_TYPE];
 const MUTATION_ACTIONS = ['receive', 'issue', 'transfer', 'adjust'];
 
 function share(part, whole) {

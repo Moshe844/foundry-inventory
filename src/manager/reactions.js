@@ -67,6 +67,12 @@ function processClaimed(db, event, { now = Date.now() } = {}) {
     events.TYPES.INVENTORY_ISSUED, events.TYPES.INVENTORY_RECEIVED,
     events.TYPES.INVENTORY_TRANSFERRED, events.TYPES.INVENTORY_CORRECTED,
     events.TYPES.COUNT_CONFIRMED,
+    // Purchase receiving writes the same immutable inventory movements, but
+    // its business event is deliberately purchase-shaped so Accounting can
+    // trace the receipt to the PO. It still changes availability and must
+    // reconcile waiting customer orders before planning reads the new state.
+    events.TYPES.PURCHASE_ORDER_PARTIALLY_RECEIVED,
+    events.TYPES.PURCHASE_ORDER_COMPLETED,
   ]);
   if (scope && inventoryChanged.has(event.type)) {
     const owner = ownerFor(db, workspaceId);

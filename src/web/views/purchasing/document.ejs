@@ -5,22 +5,50 @@
 %>
 <meta charset="utf-8">
 <title><%= order.poNumber %> · <%= businessName %></title>
+<%# This page is the document itself — it renders without the application
+    chrome, because a supplier receives a purchase order rather than a screen.
+    It therefore carries its own stylesheet, written from the same type and
+    the same neutral ramp as design.css, so a printed Foundry document and a
+    Foundry screen are recognisably the same product. %>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>
   :root { color-scheme: light; }
-  body { font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #14181f; margin: 0; padding: 32px; background: #fff; }
-  .sheet { max-width: 760px; margin: 0 auto; }
-  h1 { font-size: 22px; margin: 0 0 2px; }
-  .muted { color: #5c6672; }
+  body {
+    font-family: "Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+    font-size: 13.5px; line-height: 1.5; letter-spacing: -0.004em;
+    color: #171C29; margin: 0; padding: 40px 32px; background: #fff;
+    -webkit-font-smoothing: antialiased;
+  }
+  .sheet { max-width: 780px; margin: 0 auto; }
+  h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.026em; margin: 0 0 2px; }
+  h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.018em; margin: 0; }
+  .muted { color: #6D7689; }
   .row { display: flex; gap: 32px; justify-content: space-between; align-items: flex-start; }
-  .block { margin: 22px 0; }
-  .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #5c6672; margin-bottom: 4px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e3e7ec; }
-  th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: #5c6672; }
-  td.num, th.num { text-align: right; }
-  tfoot td { font-weight: 600; border-bottom: none; border-top: 2px solid #14181f; }
-  .note { margin-top: 24px; font-size: 12px; color: #5c6672; }
-  .actions { margin-bottom: 20px; }
+  .block { margin: 24px 0; }
+  .label {
+    font-size: 11.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: #6D7689; margin-bottom: 4px;
+  }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #EAEDF3; }
+  th {
+    font-size: 11.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: #6D7689; border-bottom-color: #E1E5ED;
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tfoot td { font-weight: 600; border-bottom: none; border-top: 1px solid #CBD1DC; }
+  .note { margin-top: 26px; font-size: 12.5px; color: #6D7689; }
+  .actions { margin-bottom: 24px; display: flex; gap: 8px; }
+  .actions a, .actions button {
+    font: inherit; font-size: 13.5px; font-weight: 500;
+    min-height: 32px; padding: 0 12px;
+    border: 1px solid #CBD1DC; border-radius: 6px;
+    background: #fff; color: #171C29; cursor: pointer;
+    display: inline-flex; align-items: center; text-decoration: none;
+  }
+  .actions button { background: #5B4BE8; border-color: #4A3ACB; color: #fff; }
   @media print { .actions { display: none; } body { padding: 0; } }
 </style>
 

@@ -15,6 +15,9 @@ const { validateOrThrow } = require('./validator');
 const { NotFoundError, ValidationError } = require('../domain/errors');
 const { TRACKING_MODE_IDS, LOCATION_KIND_IDS } = require('../domain/constants');
 const { newId, nowIso, trimOrNull } = require('../lib/util');
+const syntheticMode = require('../synthetic/data-mode');
+const syntheticRequest = require('../synthetic/request-spec');
+const realBusinessGrounding = require('./real-business-grounding');
 
 const TERMINOLOGY_KEYS = ['item', 'location', 'serialUnit', 'lot', 'variant'];
 const DEFAULT_TERMS = {
@@ -28,13 +31,19 @@ const DEFAULT_TERMS = {
 /**
  * @param {object} answers  { [questionId]: answerOptionId | '__foundry__' }
  */
-function buildPlan(db, ctx, { understandingId, answers = {}, acceptedRecommendationIds = [] }) {
+function buildPlan(db, ctx, {
+  understandingId, answers = {}, acceptedRecommendationIds = [], ownerInventoryLines = [],
+}) {
   const stored = db
     .prepare('SELECT * FROM foundry_understandings WHERE id = ? AND workspace_id = ?')
     .get(understandingId, ctx.workspaceId);
   if (!stored) throw new NotFoundError('That understanding could not be found.');
 
   const understanding = JSON.parse(stored.payload);
+  const generationContext = syntheticMode.context(db, ctx.workspaceId, stored.source_description);
+  if (generationContext.mode === 'production' && stored.provider !== 'document-evidence') {
+    realBusinessGrounding.ground(understanding, stored.source_description);
+  }
   const decisions = resolveDecisions(understanding, answers);
 
   const recommendations = db
@@ -131,6 +140,17 @@ function buildPlan(db, ctx, { understandingId, answers = {}, acceptedRecommendat
     })),
 
     assumptions: (understanding.assumptions || []).slice(0, 24).map((a) => String(a).slice(0, 300)),
+    ownerProvidedInventory: ownerInventoryLines.length
+      ? { lines: ownerInventoryLines.map((line) => ({
+          productName: String(line.productName).trim().slice(0, 160),
+          variantLabel: String(line.variantLabel || '').trim().slice(0, 160),
+          quantity: Number(line.quantity),
+          locationName: String(line.locationName).trim().slice(0, 120),
+        })) }
+      : null,
+    syntheticGeneration: generationContext.allowed
+      ? { workspaceMode: 'synthetic', ...syntheticRequest.parse(stored.source_description) }
+      : null,
     configurationVersion: version,
     integrityHash: '',
   }, PLAN_SCHEMA));

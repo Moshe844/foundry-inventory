@@ -27,6 +27,13 @@ API key in the production secret manager, never in source control.
 A normal `TEST_...` sandbox API key is useful for testing one account, but it is not a replacement
 for a ShipEngine Partner account. It cannot provide isolated seller onboarding for Foundry customers.
 
+As confirmed by ShipStation API in September 2026, Partner API access and Shipping Elements are
+Enterprise-plan capabilities with custom pricing. Do not treat a self-service Free or Advanced key
+as permission to create seller accounts. Until Foundry has an Enterprise/Partner agreement, each
+business may instead connect its own self-service shipping account and API key; that keeps postage
+and subscription charges with that business but does not provide Foundry's embedded one-click
+seller onboarding.
+
 ## Owner flow
 
 1. The owner selects **Set up shipping** in Foundry.

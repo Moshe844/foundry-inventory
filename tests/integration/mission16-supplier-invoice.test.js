@@ -21,6 +21,8 @@ const intake = require('../../src/foundry/document-intake');
 const invoiceIntake = require('../../src/foundry/supplier-invoice-intake');
 const suppliers = require('../../src/purchasing/supplier-service');
 const poService = require('../../src/purchasing/po-service');
+const receiving = require('../../src/purchasing/receiving-service');
+const landedCosts = require('../../src/accounting/landed-costs');
 const authService = require('../../src/domain/auth-service');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('../helpers');
 
@@ -126,6 +128,26 @@ test('Test B: a supplier billing more than was ordered is reported, not absorbed
   assert.ok(result.billDifferences.some((d) => /ordered 24, billed 30/.test(d)));
   assert.ok(result.billDifferences.some((d) => /ordered at 10\.00, billed at 12\.00/.test(d)));
   assert.equal(onHand(env), 0, 'and still nothing moved');
+});
+
+test('a parsed invoice prepares a landed-cost draft only after it can prove the bill and receipt', () => {
+  const env = setup();
+  const order = orderFor24(env);
+  receiving.receive(env.db, env.ctx, env.membership, order.id, {
+    idempotencyKey: 'supplier-invoice-landed-cost-receipt',
+    lines: [{ lineId: order.lines[0].id, quantityUnits: 24 }],
+  });
+
+  const result = importIt(env, invoice({
+    referencedOrderNumber: order.poNumber,
+    charges: [{ kind: 'freight', label: 'Inbound freight', amount: 25 }],
+    documentTotal: 265,
+  }));
+
+  assert.equal(result.landedCostProposal.proposed, true);
+  const draft = landedCosts.document(env.db, env.workspace.workspaceId, result.landedCostProposal.documentId);
+  assert.equal(draft.status, 'DRAFT', 'parsing an invoice never changes inventory value by itself');
+  assert.equal(draft.charges[0].amount_minor, 2500);
 });
 
 test('Test C: an invoice with no order records the money and asks one question', () => {

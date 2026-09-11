@@ -1,39 +1,86 @@
-<div class="page-head">
-  <div class="titles">
-    <a class="back-link" href="/onboarding"><%- helpers.icon('chevron', { size: 14 }) %> All inventory sources</a>
-    <span class="setup-eyebrow">Inventory source</span>
-    <h1>Use files that arrive by email</h1>
-    <div class="page-sub">Connect the mailbox. Then choose the sender and whether its PDF, Excel, CSV, Word, or text files contain inventory or purchasing information.</div>
-  </div>
+<%
+  /*
+   * Inventory that arrives as an email attachment.
+   *
+   * The thing somebody is actually worried about here is what Foundry will be
+   * allowed to read, so the answer to that is on the screen rather than in a
+   * paragraph at the bottom: it ignores every sender you have not approved.
+   */
+%>
+
+<a class="rm-head__back" href="/onboarding"><%- helpers.icon('chevron', { size: 13 }) %> Start over</a>
+<%- include('../partials/setup-steps', { step: 1 }) %>
+
+<div class="rm-head">
+  <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 14 }) %> Inventory source · email attachments</p>
+  <h1>Use files that arrive by email.</h1>
+  <p>
+    Connect the mailbox, then choose the sender and whether their PDF, Excel, CSV, Word or text files
+    carry inventory or purchasing information. Foundry checks on its own from then on.
+  </p>
 </div>
 
 <% if (connected.length) { %>
-  <section class="section">
-    <div class="section-head"><div><h2>Continue with a connected mailbox</h2><p class="muted">Choose which sender and files Foundry should use.</p></div></div>
-    <div class="grid grid--2">
-      <% connected.forEach(function(connection) { %>
-        <a class="card list-row" href="/settings/connections/<%= connection.id %>">
-          <div><strong><%= connection.display_name %></strong><p><%= connection.provider_account_name || 'Mailbox connected' %></p></div>
-          <span class="btn btn--primary btn--sm">Choose emails and files</span>
+  <section class="rm-panel" style="margin-bottom:16px">
+    <div class="rm-panel__head">
+      <%- helpers.icon('check', { size: 15, className: 'rm-quiet' }) %>
+      <h2>Connected mailboxes</h2>
+      <span class="right">Choose which sender and files to use</span>
+    </div>
+    <div class="rm-feed">
+      <% connected.forEach(function (connection) { %>
+        <a class="rm-feed__row" href="/settings/connections/<%= connection.id %>">
+          <span class="rm-feed__ic is-done"><%- helpers.icon('link', { size: 14 }) %></span>
+          <span class="rm-feed__t">
+            <%= connection.display_name %>
+            <small><%= connection.provider_account_name || 'Mailbox connected' %></small>
+          </span>
+          <span class="rm-feed__m">Choose emails and files →</span>
         </a>
       <% }) %>
     </div>
   </section>
 <% } %>
 
-<section class="section">
-  <div class="section-head"><div><h2><%= connected.length ? 'Connect another mailbox' : 'Choose your mailbox' %></h2><p class="muted">Foundry ignores every sender you do not approve.</p></div></div>
-  <div class="grid grid--2">
-    <% providerCatalog.forEach(function(provider) { %>
-      <article class="card"><div class="card-body grid">
-        <div class="list-row" style="padding:0;border:0"><div><span class="eyebrow"><%= provider.mark %></span><h2><%= provider.name %></h2></div><span class="badge <%= provider.available ? 'badge--ok' : 'badge--muted' %>"><%= provider.available ? 'Ready' : 'Setup required' %></span></div>
-        <p>Sign in normally. Foundry will ask next which sender and attachments to use.</p>
-        <% if (!canManageConnections) { %><p class="hint">Ask an inventory owner to connect this mailbox.</p>
-        <% } else if (!provider.available) { %><p class="hint"><%= provider.unavailableReason %></p>
-        <% } else { %><form method="post" action="/settings/connections/connect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= provider.type %>"><button class="btn btn--primary" type="submit">Connect <%= provider.name %></button></form><% } %>
-      </div></article>
-    <% }) %>
-  </div>
-</section>
+<p class="rm-stamp"><%- helpers.icon('layers', { size: 14 }) %> <%= connected.length ? 'Connect another mailbox' : 'Choose your mailbox' %></p>
+<div class="rm-grid2">
+  <% providerCatalog.forEach(function (provider) { %>
+    <article class="rm-provider">
+      <div class="rm-provider__top">
+        <span class="rm-provider__mark"><%= provider.mark %></span>
+        <span class="rm-provider__n"><%= provider.name %></span>
+        <span class="rm-provider__s">
+          <span class="rm-pillbadge <%= provider.available ? 'is-ok' : '' %>"><%= provider.available ? 'Ready' : 'Setup required' %></span>
+        </span>
+      </div>
+      <p>Sign in as normal. Foundry then asks which sender and which attachments it may use.</p>
+      <% if (!canManageConnections) { %>
+        <p class="quiet">Ask an inventory owner to connect this mailbox.</p>
+      <% } else if (!provider.available) { %>
+        <p class="quiet"><%= provider.unavailableReason %></p>
+      <% } else { %>
+        <form method="post" action="/settings/connections/connect">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="providerType" value="<%= provider.type %>">
+          <button class="rm-btn" type="submit">Connect <%= provider.name %> <%- helpers.icon('arrowRight', { size: 14 }) %></button>
+        </form>
+      <% } %>
+    </article>
+  <% }) %>
+</div>
 
-<div class="notice section"><div><strong>What happens after connection</strong><p>Foundry checks automatically, prepares one safe review when an approved file arrives, and puts that review on Home. Nothing becomes stock until you approve the exact products and quantities.</p></div></div>
+<div class="rm-note">
+  <%- helpers.icon('shield', { size: 16 }) %>
+  <span>
+    <strong>Foundry ignores every sender you do not approve.</strong>
+    After connection it checks automatically, prepares one safe review when an approved file arrives,
+    and puts that review on your brief. Nothing becomes stock until you approve the exact products
+    and quantities.
+  </span>
+</div>
+
+<p class="rm-disclose">
+  <a href="/onboarding">Choose a different source</a>
+  <a href="/onboarding/files">I have the files to hand</a>
+  <a href="/everything">Everything else</a>
+</p>

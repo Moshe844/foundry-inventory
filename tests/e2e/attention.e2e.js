@@ -142,8 +142,11 @@ test(
 
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-    context.setDefaultTimeout(600000);
-    context.setDefaultNavigationTimeout(600000);
+    // Provider-backed understanding has its own explicit long wait below.
+    // Ordinary buttons must fail quickly; otherwise stale copy or a changed
+    // workflow looks like a ten-minute AI stall.
+    context.setDefaultTimeout(15000);
+    context.setDefaultNavigationTimeout(30000);
     const page = await context.newPage();
 
     const consoleErrors = [];
@@ -192,11 +195,48 @@ test(
         page.waitForURL(/\/foundry\/thinking\//, { timeout: 30000 }),
         page.click('button:has-text("Understand my inventory")'),
       ]);
-      await page.waitForURL(/\/foundry\/proposal\//);
+      // A failed background understanding returns to the same /thinking URL
+      // with an actionable alert. Waiting only for the happy-path URL hid that
+      // terminal state for the full ten-minute Playwright timeout.
+      await page.waitForFunction(
+        () => location.pathname.includes('/foundry/proposal/') || Boolean(document.querySelector('[role="alert"]')),
+        null,
+        { timeout: 210000 }
+      );
+      const setupAlert = page.locator('[role="alert"]');
+      if (await setupAlert.count()) {
+        assert.fail(`Foundry onboarding failed: ${await setupAlert.first().innerText()}`);
+      }
+      assert.match(new URL(page.url()).pathname, /\/foundry\/proposal\//);
       await shot(page, 'proposal');
 
-      await page.click('button:has-text("Configure my inventory")');
-      await page.waitForURL(/\/foundry\/ready\//);
+      // A business description proves structure, not actual products or stock.
+      // Current Real Business onboarding therefore asks for the evidence source
+      // instead of offering the old structure-only approval. For this attention
+      // scenario the owner chooses manual entry, then supplies the two real
+      // locations the later trading-history steps use.
+      const proposal = await page.locator('body').innerText();
+      assert.match(proposal, /Where are your real product and stock records today\?/i);
+      assert.doesNotMatch(proposal, /Configure my inventory/i);
+      await page.click('a:has-text("Choose where my records are")');
+      await page.waitForURL(`${BASE}/onboarding`);
+      await Promise.all([
+        page.waitForURL(`${BASE}/foundry/describe`),
+        page.click('button:has-text("Enter it in Foundry")'),
+      ]);
+      await Promise.all([
+        page.waitForURL(`${BASE}/locations`),
+        page.click('button:has-text("Set it up manually instead")'),
+      ]);
+      for (const [name, kind] of [['Central Warehouse', 'warehouse'], ['Trade Counter', 'store']]) {
+        await page.locator('button[data-modal-open="modal-location"]').first().click();
+        await page.fill('#location-name', name);
+        await page.selectOption('#location-kind', kind);
+        await Promise.all([
+          page.waitForURL(`${BASE}/locations`),
+          page.click('#modal-location button[type="submit"]'),
+        ]);
+      }
 
       state.workspaceId = inspect(databasePath, (db) =>
         db.prepare('SELECT workspace_id FROM workspace_configuration LIMIT 1').get().workspace_id
@@ -344,7 +384,7 @@ test(
     await t.test('8. acting on the inventory resolves the finding, with a reason', async () => {
       await page.goto(`${BASE}/inventory/${state.valve.itemId}`);
       // The record itself says what Foundry has noticed about it.
-      await page.locator('.item-attention-row', { hasText: 'may run out' }).first().waitFor();
+      await page.locator('.rm-decision', { hasText: 'may run out' }).first().waitFor();
       await shot(page, 'item-with-finding');
 
       await page.click('button[data-modal-open="modal-receive"]');
@@ -361,7 +401,7 @@ test(
       assert.ok(resolved.resolutionReason);
 
       // …and the banner on the record clears with it.
-      assert.equal(await page.locator('.item-attention-row').count(), 0);
+      assert.equal(await page.locator('.rm-decision', { hasText: 'may run out' }).count(), 0);
 
       await page.goto(`${BASE}/attention`);
       const body = await page.locator('body').innerText();
@@ -391,8 +431,10 @@ test(
     await t.test('10. a real question is answered from the ledger', async () => {
       await page.goto(`${BASE}/ask`);
       await page.fill('#ask-question', 'How many brass gate valves do we have?');
-      await page.locator('[data-ask-form] button[type=submit]').click();
-      await page.waitForURL(/\/ask\?q=/);
+      await Promise.all([
+        page.waitForURL(/\/ask\?q=/, { timeout: 120000 }),
+        page.locator('[data-ask-form] button[type=submit]').click({ timeout: 120000 }),
+      ]);
       await shot(page, 'ask-answer');
 
       const body = await page.locator('body').innerText();
@@ -402,21 +444,23 @@ test(
           .get(state.workspaceId, state.valveSku.id).n
       );
       assert.match(body, new RegExp(String(total)), 'the answer is the engine\'s number');
-      assert.match(body, /How Foundry read this/);
+      assert.match(body, /How I read that/);
       assert.match(body, /on hand/i);
     });
 
     await t.test('11. an accounting question is answered without inventing a margin', async () => {
       await page.goto(`${BASE}/ask`);
       await page.fill('#ask-question', 'What was our gross margin on valves last quarter?');
-      await page.locator('[data-ask-form] button[type=submit]').click();
-      await page.waitForURL(/\/ask\?q=/);
+      await Promise.all([
+        page.waitForURL(/\/ask\?q=/, { timeout: 120000 }),
+        page.locator('[data-ask-form] button[type=submit]').click({ timeout: 120000 }),
+      ]);
       await shot(page, 'ask-unsupported');
 
       const body = await page.locator('body').innerText();
       assert.match(body, /does not have a realized margin to report yet/i);
       assert.match(body, /Open profit and loss/);
-      assert.match(body, /Revenue\s+\$0\.00/);
+      assert.match(body, /Revenue\s+(?:Display\s+)?\$0\.00/);
       assert.ok(!/\bI (?:ordered|switched|moved)\b/i.test(body), 'no invented action');
     });
 

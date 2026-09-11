@@ -1,0 +1,48 @@
+<main class="rm-canvas rm-landed-cost">
+  <p class="rm-stamp"><a href="/purchasing/orders/<%= order.id %>">Purchase order <%= order.poNumber %></a> <span>›</span> Landed cost</p>
+  <h1 class="rm-verdict">Put the cost of getting these goods here into inventory.</h1>
+  <p class="rm-prose">Use this only for an already-recorded supplier-bill expense such as freight, duty, insurance or handling. Foundry will show the exact split and wait for approval. It never creates another payable.</p>
+
+  <% if (!receipts.length) { %>
+    <section class="rm-panel rm-landed-cost__empty">
+      <div class="rm-panel__body"><h2 class="rm-h">Nothing has arrived yet.</h2><p class="rm-sub">Book in a delivery first. Landed cost can only be attached to stock that is actually received.</p></div>
+    </section>
+  <% } else if (!sourceLines.length) { %>
+    <section class="rm-panel rm-landed-cost__empty">
+      <div class="rm-panel__body"><h2 class="rm-h">Foundry needs the source bill first.</h2><p class="rm-sub">Record and open the supplier bill containing the freight, duty, insurance or handling charge. That is the evidence Foundry uses to reclassify the cost without duplicating what you owe.</p></div>
+    </section>
+  <% } else if (permissions.landedCosts) { %>
+    <section class="rm-panel rm-landed-cost__form">
+      <div class="rm-panel__head"><div><p class="rm-kicker">Prepare allocation</p><h2>What cost should join this received stock?</h2></div></div>
+      <form class="rm-form" method="post" action="/purchasing/orders/<%= order.id %>/landed-costs" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="rm-form-grid">
+          <label>Cost category
+            <select name="category" required><option value="freight">Freight</option><option value="duty">Duty</option><option value="insurance">Insurance</option><option value="handling">Handling</option><option value="other">Other</option></select>
+          </label>
+          <label>Amount (before the allocation)
+            <input name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00">
+          </label>
+          <label>How should Foundry split it?
+            <select name="allocationMethod" required><option value="quantity">By received quantity</option><option value="value">By goods value</option><option value="weight">By recorded weight</option></select>
+          </label>
+          <label>Source supplier-bill expense
+            <select name="sourceBillLineId" required>
+              <option value="">Choose the recorded charge</option>
+              <% sourceLines.forEach(function (line) { %><option value="<%= line.id %>"><%= line.supplier_invoice_number || line.bill_number %> · <%= line.description %> · $<%= (line.line_total_minor / 100).toFixed(2) %></option><% }) %>
+            </select>
+          </label>
+        </div>
+        <label class="rm-field"><span>Plain-language note <small>Optional — for example, “ocean freight for August container”.</small></span><input name="description" type="text" maxlength="250" placeholder="Describe this cost"><input name="note" type="text" maxlength="500" placeholder="Optional internal note"></label>
+        <fieldset class="rm-choice-set"><legend>Which delivery did this cover?</legend><div class="rm-landed-cost__receipts"><% receipts.forEach(function (receipt, index) { %><label class="rm-choice"><input type="checkbox" name="receiptIds" value="<%= receipt.id %>" <%= index === 0 ? 'checked' : '' %>><span><strong><%= receipt.reference || 'Received delivery' %></strong><small><%= receipt.totalUnits %> units · <%= String(receipt.receivedAt).slice(0, 10) %></small></span></label><% }) %></div></fieldset>
+        <div class="rm-choices"><button class="rm-btn" type="submit">Show the exact allocation</button><a class="rm-btn rm-btn--ghost" href="/purchasing/orders/<%= order.id %>">Back to purchase</a></div>
+      </form>
+    </section>
+  <% } else { %>
+    <section class="rm-panel"><div class="rm-panel__body"><h2 class="rm-h">An accounting owner needs to approve this.</h2><p class="rm-sub">You can see the receipts and cost evidence, but only someone authorised to change inventory value may prepare the allocation.</p></div></section>
+  <% } %>
+
+  <% if (documents.length) { %>
+    <section class="rm-panel rm-landed-cost__history"><div class="rm-panel__head"><div><p class="rm-kicker">History</p><h2>Cost allocations for this purchase</h2></div></div><div class="rm-transfer-board"><% documents.forEach(function (doc) { var total = doc.charges.reduce(function (sum, charge) { return sum + Number(charge.amount_minor); }, 0); %><a class="rm-transfer-row" href="/purchasing/orders/<%= order.id %>/landed-costs/<%= doc.id %>"><span><strong><%= doc.document_number %></strong><small><%= doc.allocation_method %> split · $<%= (total / 100).toFixed(2) %></small></span><span class="rm-transfer-status rm-transfer-status--<%= String(doc.status).toLowerCase() %>"><%= doc.status.toLowerCase() %></span></a><% }) %></div></section>
+  <% } %>
+</main>

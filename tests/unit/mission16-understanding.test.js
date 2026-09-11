@@ -22,9 +22,19 @@ const assert = require('node:assert/strict');
 const resolver = require('../../src/actions/resolver');
 const actionService = require('../../src/actions/action-service');
 const authService = require('../../src/domain/auth-service');
+const realBusinessGrounding = require('../../src/foundry/real-business-grounding');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('../helpers');
 
 test.after(cleanupAll);
+
+test('generic location language shapes structure but never creates a production location name', () => {
+  assert.equal(realBusinessGrounding.locationIsGrounded(
+    'Every machine has its own current location and condition.', 'Current Location'), false);
+  assert.equal(realBusinessGrounding.locationIsGrounded(
+    'Every device is kept in a storage location.', 'Storage Location'), false);
+  assert.equal(realBusinessGrounding.locationIsGrounded(
+    'We have warehouses in Brooklyn and New Jersey.', 'Brooklyn'), true);
+});
 
 function setup() {
   const { db } = makeDatabase();
@@ -114,7 +124,16 @@ test(`a request Foundry cannot carry out keeps the reader own words`, async () =
     'nuke it',
     'I want to start from scratch',
   ]) {
-    const answer = await actionService.interpret(env.db, env.ctx, env.membership, said);
+    // This test owns the layer after interpretation. Keep the reader result
+    // deterministic so a remote model refusal cannot turn product grounding
+    // CI red or spend a minute retrying an intentionally unsupported phrase.
+    const answer = await actionService.interpret(env.db, env.ctx, env.membership, said, {
+      parsedIntent: {
+        lines: [],
+        clarifyingQuestion: `What outcome do you want from “${said}”?`,
+        unsupportedReason: '',
+      },
+    });
     assert.ok(!answer.notFound,
       `"${said}" must never offer to create a product — it offered "${answer.notFound}"`);
     assert.ok(['question', 'unsupported', 'proposal', 'delete_inventory'].includes(answer.kind),

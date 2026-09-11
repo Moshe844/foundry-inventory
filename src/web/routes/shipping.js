@@ -20,18 +20,11 @@
 const express = require('express');
 const shipping = require('../../shipping');
 const permissions = require('../../actions/permissions');
-const { requireAuth, asyncRoute } = require('../middleware');
+const { requireAuth, requirePermission, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 
 const webhooks = express.Router();
 const router = express.Router();
-
-function requirePermission(permission, what) {
-  return (req, res, next) => {
-    try { permissions.assertCan(req.user, permission, what); return next(); }
-    catch (error) { return next(error); }
-  };
-}
 
 /**
  * Which inventory a carrier's message belongs to.
@@ -119,8 +112,14 @@ router.use('/settings/shipping', requireAuth);
 
 router.get('/settings/shipping', requirePermission(permissions.VIEW, 'view shipping rules'),
   asyncRoute(async (req, res) => {
+    // Prefer the real location whose address can actually be prefilled. Seeded
+    // and migrated locations can share a timestamp, so "first created" alone
+    // was nondeterministic and occasionally selected an unaddressed store over
+    // the configured dispatch location.
     const originLocation = req.db.prepare(`SELECT name, address FROM locations
-      WHERE workspace_id = ? AND is_active = 1 ORDER BY created_at LIMIT 1`)
+      WHERE workspace_id = ? AND is_active = 1
+      ORDER BY CASE WHEN TRIM(COALESCE(address, '')) <> '' THEN 0 ELSE 1 END,
+        created_at, rowid LIMIT 1`)
       .get(req.ctx.workspaceId);
     const parsedOrigin = shipping.address.parse(originLocation?.address);
     res.page('shipping/rules', {
@@ -178,6 +177,9 @@ router.post('/settings/shipping', requirePermission(permissions.OPERATE, 'set sh
 router.post('/settings/shipping/account', requirePermission(permissions.ADMIN, 'connect a shipping account'),
   asyncRoute(async (req, res) => {
     try {
+      await shipping.accounts.verifyInput({
+        provider: trimOrNull(req.body.provider), apiKey: req.body.apiKey,
+      });
       const account = shipping.accounts.connect(req.db, req.ctx, req.user, {
         provider: trimOrNull(req.body.provider),
         apiKey: req.body.apiKey,

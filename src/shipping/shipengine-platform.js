@@ -111,8 +111,9 @@ function splitName(value) {
 
 async function createSeller(input = {}, options = {}) {
   if (!isConfigured() && !options.configuration) {
-    throw new ValidationError('Foundry\'s ShipEngine partner connection is not finished. The '
-      + 'administrator must add the platform credentials supplied by ShipEngine.');
+    throw new ValidationError('Embedded multi-business shipping requires ShipStation API '
+      + 'Enterprise/Partner approval and the platform credentials they issue. Foundry does not '
+      + 'have those credentials yet.');
   }
   const person = splitName(input.ownerName);
   const body = await platformCall('/partners/accounts', {
@@ -222,8 +223,8 @@ function describe(db, workspaceId) {
     missing: missingConfiguration(),
     because: isConfigured()
       ? 'Foundry can open a separate ShipEngine seller for this business.'
-      : 'Foundry still needs its ShipEngine platform credentials before it can open isolated '
-        + 'seller accounts for businesses.',
+      : 'Embedded multi-business onboarding requires ShipStation API Enterprise/Partner approval '
+        + 'and the platform credentials they issue. Foundry does not have those credentials yet.',
   };
   return {
     opened: true,

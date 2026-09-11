@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
 
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
@@ -18,6 +19,21 @@ const CONNECTIONS_SCHEMA_PATH = path.join(__dirname, 'schema-connections.sql');
 const ACCOUNTING_SCHEMA_PATH = path.join(__dirname, 'schema-accounting.sql');
 const FORECASTING_SCHEMA_PATH = path.join(__dirname, 'schema-forecasting.sql');
 const SHIPPING_SCHEMA_PATH = path.join(__dirname, 'schema-shipping.sql');
+const PROVENANCE_SCHEMA_PATH = path.join(__dirname, 'schema-provenance.sql');
+const REPAIRS_SCHEMA_PATH = path.join(__dirname, 'schema-repairs.sql');
+const RUNTIME_SCHEMA_PATH = path.join(__dirname, 'schema-runtime.sql');
+const WAREHOUSE_SCHEMA_PATH = path.join(__dirname, 'schema-warehouse.sql');
+const TRANSFERS_SCHEMA_PATH = path.join(__dirname, 'schema-transfers.sql');
+const UOM_COSTING_SCHEMA_PATH = path.join(__dirname, 'schema-uom-costing.sql');
+const OPERATIONS_SCHEMA_PATH = path.join(__dirname, 'schema-operations.sql');
+const ACCOUNTING_INTEGRATIONS_SCHEMA_PATH = path.join(__dirname, 'schema-accounting-integrations.sql');
+const SCHEMA_PATHS = [SCHEMA_PATH, FOUNDRY_SCHEMA_PATH, ATTENTION_SCHEMA_PATH,
+  ACTIONS_SCHEMA_PATH, IMPORTS_SCHEMA_PATH, PURCHASING_SCHEMA_PATH,
+  ONBOARDING_SCHEMA_PATH, AUTOPILOT_SCHEMA_PATH, MANAGER_SCHEMA_PATH,
+  SALES_SCHEMA_PATH, CONNECTIONS_SCHEMA_PATH, ACCOUNTING_SCHEMA_PATH,
+  FORECASTING_SCHEMA_PATH, SHIPPING_SCHEMA_PATH, PROVENANCE_SCHEMA_PATH,
+  REPAIRS_SCHEMA_PATH, RUNTIME_SCHEMA_PATH, WAREHOUSE_SCHEMA_PATH, TRANSFERS_SCHEMA_PATH,
+  UOM_COSTING_SCHEMA_PATH, OPERATIONS_SCHEMA_PATH, ACCOUNTING_INTEGRATIONS_SCHEMA_PATH];
 
 /**
  * Opens (and initialises) a SQLite database.
@@ -36,6 +52,11 @@ function openDatabase(databasePath, options = {}) {
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 10000');
   migrate(db);
+  // Historical links are added only when an existing foreign key or immutable
+  // event payload proves them. This is idempotent and never manufactures a
+  // relationship merely because timestamps or amounts happen to resemble one
+  // another.
+  require('../provenance/backfill').backfillAll(db);
   return db;
 }
 
@@ -51,6 +72,14 @@ const ADDED_COLUMNS = [
     column: 'source_of_truth_mode',
     definition: "TEXT NOT NULL DEFAULT 'FOUNDRY_NATIVE'",
   },
+  {
+    // This is an operating boundary, not a phrase classifier. A workspace
+    // deliberately created for synthetic data stays synthetic until its owner
+    // explicitly changes it; words such as "realistic" never change the row.
+    table: 'workspaces',
+    column: 'data_mode',
+    definition: "TEXT NOT NULL DEFAULT 'production' CHECK (data_mode IN ('production','synthetic'))",
+  },
   { table: 'attention_items', column: 'item_id', definition: 'TEXT' },
   { table: 'attention_items', column: 'sku_id', definition: 'TEXT' },
   { table: 'accounts', column: 'last_workspace_id', definition: 'TEXT' },
@@ -59,6 +88,9 @@ const ADDED_COLUMNS = [
   // scanner reads off the box, and a file usually carries both in separate
   // columns. Nullable, because most inventories never have one.
   { table: 'skus', column: 'barcode', definition: 'TEXT' },
+  { table: 'locations', column: 'parent_location_id', definition: 'TEXT REFERENCES locations(id) ON DELETE RESTRICT' },
+  { table: 'locations', column: 'barcode', definition: 'TEXT' },
+  { table: 'locations', column: 'pick_sequence', definition: 'INTEGER NOT NULL DEFAULT 0' },
   // Per-workspace action permissions, granted on top of the membership role.
   { table: 'users', column: 'permissions', definition: 'TEXT' },
   { table: 'physical_events', column: 'attachment_mime', definition: 'TEXT' },
@@ -84,6 +116,9 @@ const ADDED_COLUMNS = [
   { table: 'sales_orders', column: 'currency', definition: "TEXT NOT NULL DEFAULT 'USD'" },
   { table: 'sales_orders', column: 'discount_minor', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'sales_orders', column: 'tax_minor', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  // Lower numbers are served first. Existing orders retain ordinary priority;
+  // an owner can elevate a genuine customer commitment without changing dates.
+  { table: 'sales_orders', column: 'allocation_priority', definition: 'INTEGER NOT NULL DEFAULT 100' },
   // A Sales Order owns the address agreed for that order. Customer addresses
   // are defaults only; they are not mutable pointers for parcels already sold.
   { table: 'sales_orders', column: 'delivery_method', definition: "TEXT NOT NULL DEFAULT 'SHIP'" },
@@ -435,6 +470,63 @@ function dropLegacyUserLogin(db) {
  * becomes a kind and an id, and the rows already stored are simply labelled
  * with the kind they always were.
  */
+/*
+ * Letting a customer be retired.
+ *
+ * `record_state` was constrained to ACTIVE or PROVISIONAL, so there was no way
+ * to take a customer out of circulation — archiving was refused by the database
+ * itself. Widening the constraint needs a table rebuild, because SQLite cannot
+ * alter a CHECK in place.
+ *
+ * Nothing else changes: every column, every row and both indexes come across as
+ * they were, and the whole thing is one transaction so a failure leaves the
+ * original table untouched. It is skipped entirely once the constraint already
+ * admits ARCHIVED, so it runs exactly once.
+ */
+function migrateCustomerArchiving(db) {
+  if (!tableExists(db, 'customers')) return;
+  const ddl = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='customers'").get();
+  if (!ddl || /ARCHIVED/.test(ddl.sql)) return;
+
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    db.exec('ALTER TABLE customers RENAME TO customers_old');
+    db.exec(`CREATE TABLE customers (
+      id                  TEXT PRIMARY KEY,
+      workspace_id        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      name                TEXT NOT NULL,
+      company             TEXT,
+      email               TEXT,
+      phone               TEXT,
+      shipping_address    TEXT,
+      record_state        TEXT NOT NULL DEFAULT 'ACTIVE'
+                            CHECK (record_state IN ('ACTIVE','PROVISIONAL','ARCHIVED')),
+      notes               TEXT,
+      created_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      created_at          TEXT NOT NULL,
+      updated_at          TEXT NOT NULL
+    )`);
+    db.exec(`INSERT INTO customers
+      (id, workspace_id, name, company, email, phone, shipping_address, record_state,
+       notes, created_by_user_id, created_at, updated_at)
+      SELECT id, workspace_id, name, company, email, phone, shipping_address, record_state,
+             notes, created_by_user_id, created_at, updated_at
+        FROM customers_old`);
+    db.exec('DROP TABLE customers_old');
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_customers_workspace_name
+      ON customers(workspace_id, name COLLATE NOCASE)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_customers_workspace
+      ON customers(workspace_id, name COLLATE NOCASE)`);
+    db.exec('COMMIT');
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch { /* the transaction is already gone */ }
+    throw err;
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+}
+
 function migrateDocumentCharges(db) {
   if (!tableExists(db, 'document_charges')) return;
   if (!hasColumn(db, 'document_charges', 'setup_document_id')) return;
@@ -503,6 +595,23 @@ function migrateMailboxDocumentPurpose(db) {
   // Old builds surfaced a failed push registration as an urgent owner task.
   db.prepare(`UPDATE connection_issues SET status = 'RESOLVED', resolved_at = ?, updated_at = ?
     WHERE issue_type = 'MAILBOX_WATCH_RENEWAL_FAILED' AND status = 'OPEN'`).run(now, now);
+}
+
+// A role default does not apply when a membership has an explicit grant list.
+// Existing owners/accountants would otherwise miss a new financial authority
+// solely because their list predates Mission 7. Staff never receive it, and
+// an owner can still remove it explicitly afterwards.
+function migrateLandedCostPermission(db) {
+  if (!tableExists(db, 'users') || !hasColumn(db, 'users', 'permissions')) return;
+  for (const row of db.prepare(`SELECT id, permissions FROM users
+    WHERE role IN ('owner','accountant') AND permissions IS NOT NULL`).all()) {
+    try {
+      const values = JSON.parse(row.permissions);
+      if (!Array.isArray(values) || values.includes('ALLOCATE_LANDED_COST')) continue;
+      values.push('ALLOCATE_LANDED_COST');
+      db.prepare('UPDATE users SET permissions = ? WHERE id = ?').run(JSON.stringify(values), row.id);
+    } catch { /* malformed grants already use role defaults */ }
+  }
 }
 
 /**
@@ -596,6 +705,10 @@ function migrate(db) {
   // new columns, and CREATE INDEX on a column an older table does not have yet
   // fails outright. Widen the table first, then let the schema fill in the rest.
   addMissingColumns(db);
+  // Older databases enumerated only building-level location types. Warehouse
+  // structure is still stored in the same canonical location table, so widen
+  // the storage rule before a bin or dock is created.
+  relaxColumnCheck(db, 'locations', 'kind');
   backfillEmailOrderSetup(db);
 
   // Enum CHECKs are relaxed before the schema files that own those tables, so
@@ -610,6 +723,12 @@ function migrate(db) {
   // enumerated list did not have.
   relaxColumnCheck(db, 'work_items', 'execution_status');
   relaxColumnCheck(db, 'connector_feed_events', 'status');
+  // The evidence graph grows by registering new record types and relation
+  // semantics. Existing SQLite CHECK constraints need widening before the
+  // canonical provenance schema can be applied.
+  relaxColumnCheck(db, 'business_relations', 'relation_type');
+  relaxColumnCheck(db, 'business_relations', 'from_type');
+  relaxColumnCheck(db, 'business_relations', 'to_type');
 
   db.exec(fs.readFileSync(ATTENTION_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(ACTIONS_SCHEMA_PATH, 'utf8'));
@@ -622,6 +741,10 @@ function migrate(db) {
   // Accounting consumes durable sales, purchasing, inventory, and manager
   // events. It is additive and never becomes the physical stock authority.
   db.exec(fs.readFileSync(ACCOUNTING_SCHEMA_PATH, 'utf8'));
+  // Recover only explicit owner purchase-cost instructions that the obsolete
+  // UI mistakenly stored as opening valuation. Ordinary valuations are never
+  // promoted to current supplier cost.
+  require('../pricing/backfill-purchase-costs').backfillPurchaseCosts(db);
   // Forecasting reads everything above it and writes to none of it. Last on
   // purpose: its tables reference skus, locations and suppliers, and it must
   // never be something the operational schema depends on.
@@ -629,6 +752,31 @@ function migrate(db) {
   // Shipping hangs off sales_shipments, so it follows sales. It holds what a
   // carrier said — rates, labels, scans — and never what Foundry decided.
   db.exec(fs.readFileSync(SHIPPING_SCHEMA_PATH, 'utf8'));
+  // The graph indexes records owned by every domain above it, so its schema is
+  // intentionally last and no operational table depends on it.
+  db.exec(fs.readFileSync(PROVENANCE_SCHEMA_PATH, 'utf8'));
+  // Repairs refer to records across every operational domain and therefore
+  // sit above them. They never become an alternate source of business truth.
+  db.exec(fs.readFileSync(REPAIRS_SCHEMA_PATH, 'utf8'));
+  // Production runtime state is last: jobs, inbox/outbox and certification
+  // evidence may refer to workspaces, but business truth never depends on
+  // operational bookkeeping.
+  db.exec(fs.readFileSync(RUNTIME_SCHEMA_PATH, 'utf8'));
+  // Warehouse tasks orchestrate calls into the canonical inventory engine;
+  // no operational domain depends on them, so they are safely additive last.
+  db.exec(fs.readFileSync(WAREHOUSE_SCHEMA_PATH, 'utf8'));
+  // Transfer documents depend on sales-order lines for optional demand pegs,
+  // warehouse locations for custody and the canonical movement ledger.
+  db.exec(fs.readFileSync(TRANSFERS_SCHEMA_PATH, 'utf8'));
+  require('../transfers/backfill').backfillLegacyTransfers(db);
+  // Unit conversions and landed costs build on supplier bills, receipts and
+  // the accounting cost balance, so they are intentionally last among the
+  // business schemas.  They never become a second stock ledger.
+  db.exec(fs.readFileSync(UOM_COSTING_SCHEMA_PATH, 'utf8'));
+  // Count campaigns, returns and fulfillment waves coordinate records owned
+  // by inventory, sales, purchasing, accounting and warehouse domains. Their
+  // physical and financial effects still post through those domain engines.
+  db.exec(fs.readFileSync(OPERATIONS_SCHEMA_PATH, 'utf8'));
 
   /*
    * Orders that shipped before shipments existed have no record of where the
@@ -637,6 +785,7 @@ function migrate(db) {
   // The charge table has to be its current shape before anything repairs
   // into it, or the repair writes into a table that no longer matches and the
   // failure is swallowed as "this file had no charges".
+  migrateCustomerArchiving(db);
   migrateDocumentCharges(db);
 
   require('./backfill-shipments').backfillShipments(db);
@@ -662,12 +811,22 @@ function migrate(db) {
   // can be granted. Fresh databases already use the current schema.
   relaxColumnCheck(db, 'users', 'role');
   db.exec(fs.readFileSync(CONNECTIONS_SCHEMA_PATH, 'utf8'));
+  // Accounting providers and public webhooks build on both the canonical
+  // accounting ledger and the shared connection/runtime delivery machinery.
+  db.exec(fs.readFileSync(ACCOUNTING_INTEGRATIONS_SCHEMA_PATH, 'utf8'));
   migrateMailboxDocumentPurpose(db);
+  migrateLandedCostPermission(db);
   dropLegacyUserLogin(db);
   db.prepare(
-    `INSERT INTO schema_meta (key, value) VALUES ('version', '16')
+    `INSERT INTO schema_meta (key, value) VALUES ('version', '20')
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   ).run();
+  const schemaFingerprint = crypto.createHash('sha256');
+  for (const schemaPath of SCHEMA_PATHS) schemaFingerprint.update(fs.readFileSync(schemaPath));
+  db.prepare(`INSERT OR IGNORE INTO database_releases
+    (release_ref, schema_version, schema_fingerprint, applied_at) VALUES (?, 20, ?, ?)`)
+    .run(process.env.FOUNDRY_RELEASE_REF || process.env.GIT_COMMIT || 'development',
+      schemaFingerprint.digest('hex'), new Date().toISOString());
 }
 
 /**

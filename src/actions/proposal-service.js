@@ -19,6 +19,7 @@ const resolver = require('./resolver');
 const catalog = require('../imports/catalog-service');
 const policy = require('./policy');
 const permissions = require('./permissions');
+const removals = require('./removals');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const { newId, nowIso } = require('../lib/util');
 const { ADJUSTMENT_REASON_IDS, ISSUE_REASON_IDS } = require('../domain/constants');
@@ -93,7 +94,7 @@ function build(db, ctx, intent, options = {}) {
   draft.safetyLevel = classification.safetyLevel;
   draft.approvalRequirement = classification.approvalRequirement;
   draft.warnings = classification.warnings;
-  draft.requiredPermission = permissions.permissionForAction(actionType);
+  draft.requiredPermission = permissions.permissionForAction(actionType, draft);
   draft.integrityHash = computeIntegrityHash(draft);
 
   return { ok: true, proposal: draft };
@@ -213,6 +214,60 @@ function buildConfiguration(db, ctx, intent, draft, options = {}) {
       destinationLocationName: location.name,
       destinationOnHand: quantity,
     };
+    return { ok: true };
+  }
+
+  /*
+   * Retiring a supplier, a customer or a location.
+   *
+   * Nothing here knows which of those it is dealing with. The kind comes out of
+   * the registry, and the registry does the finding, the counting and the
+   * removing; this branch only turns "they said a name" into "this exact record,
+   * and here is what will happen to it".
+   */
+  if (draft.actionType === removals.ACTION_TYPE) {
+    const kind = removals.get(intent.recordKind);
+    if (!kind) {
+      return {
+        ok: false,
+        question: `Which sort of record did you mean — ${removals.labelList()}?`,
+      };
+    }
+
+    const named = String(intent.recordName || intent.item || intent.supplier || '').trim();
+    const found = kind.find(db, ctx.workspaceId, named);
+    if (!found.ok) {
+      const names = (found.candidates || []).map((row) => row.name).filter(Boolean).slice(0, 8);
+      return {
+        ok: false,
+        question: names.length ? `${found.message} Foundry has ${names.join(', ')}.` : found.message,
+        choices: names.length ? names : null,
+      };
+    }
+
+    const record = found.value;
+    // Worked out now rather than at execution, so the preview can promise the
+    // right one of the two outcomes instead of hedging between them.
+    const decision = removals.decide(db, ctx.workspaceId, kind, record.id);
+    if (decision.blocked) {
+      return {
+        ok: false,
+        question: null,
+        unsupported: `${record.name} cannot be removed yet — ${decision.blocked}`,
+      };
+    }
+
+    draft.settings = {
+      recordKind: kind.kind,
+      recordId: record.id,
+      recordName: record.name,
+      recordLabel: kind.label,
+      deletable: decision.deletable,
+      heldBy: decision.heldBy,
+      used: decision.used,
+    };
+    draft.expectedBeforeState = { total: 0, active: true };
+    draft.expectedAfterState = { total: 0, active: false };
     return { ok: true };
   }
 
@@ -598,17 +653,23 @@ function resolveSubject(db, workspaceId, intent, draft, options = {}) {
  * is in each), or none at all (say that, rather than asking which of the
  * nowheres it should come from).
  */
-function inferSource(db, workspaceId, draft) {
+function inferSource(db, workspaceId, draft, { excludeLocationIds = [] } = {}) {
+  const excluded = new Set(excludeLocationIds.filter(Boolean));
   if (draft.serialUnitIds.length && draft.subject && draft.subject.units) {
-    const places = [...new Set(draft.subject.units.map((u) => u.location_id).filter(Boolean))];
+    const allPlaces = [...new Set(draft.subject.units.map((u) => u.location_id).filter(Boolean))];
+    const places = allPlaces.filter((id) => !excluded.has(id));
     if (places.length === 1) {
       const location = db.prepare('SELECT * FROM locations WHERE id = ?').get(places[0]);
       return { ok: true, location };
     }
-    return { ok: false, reason: places.length ? 'several' : 'none', rows: [] };
+    return {
+      ok: false,
+      reason: places.length ? 'several' : (allPlaces.length ? 'only_excluded' : 'none'),
+      rows: [],
+    };
   }
 
-  const rows = draft.lotId
+  const allRows = draft.lotId
     ? db
         .prepare(
           `SELECT lb.location_id AS id, l.name, lb.quantity AS onHand
@@ -625,12 +686,18 @@ function inferSource(db, workspaceId, draft) {
             ORDER BY b.on_hand DESC`
         )
         .all(workspaceId, draft.skuId);
+  const rows = allRows.filter((row) => !excluded.has(row.id));
 
   if (rows.length === 1) {
     const location = db.prepare('SELECT * FROM locations WHERE id = ?').get(rows[0].id);
     return { ok: true, location, onHand: rows[0].onHand };
   }
-  return { ok: false, reason: rows.length ? 'several' : 'none', rows };
+  return {
+    ok: false,
+    reason: rows.length ? 'several' : (allRows.length ? 'only_excluded' : 'none'),
+    rows,
+    excludedRows: allRows.filter((row) => excluded.has(row.id)),
+  };
 }
 
 /** What this action is about, in the words a person would use. */
@@ -712,12 +779,12 @@ function shapeOperation(db, workspaceId, intent, draft) {
   };
 
   /** Resolves the named source, or works it out when it can only be one place. */
-  const resolveSource = (text, role) => {
+  const resolveSource = (text, role, options = {}) => {
     if (String(text || '').trim()) {
       return noteFrom(draft, resolver.resolveLocation(db, workspaceId, text, { role }));
     }
 
-    const inferred = inferSource(db, workspaceId, draft);
+    const inferred = inferSource(db, workspaceId, draft, options);
     if (inferred.ok) {
       draft.assumptions.push(
         draft.serialUnitIds.length
@@ -733,6 +800,16 @@ function shapeOperation(db, workspaceId, intent, draft) {
         ok: false,
         empty: true,
         message: `There is no ${subjectName(draft)} in stock anywhere in this inventory.`,
+      };
+    }
+
+    if (inferred.reason === 'only_excluded') {
+      return {
+        ok: false,
+        onlyAtExcludedLocation: true,
+        location: inferred.excludedRows && inferred.excludedRows[0]
+          ? inferred.excludedRows[0]
+          : null,
       };
     }
 
@@ -851,12 +928,6 @@ function shapeOperation(db, workspaceId, intent, draft) {
       };
     }
 
-    const from = resolveSource(intent.sourceLocation, 'source location');
-    if (!from.ok) {
-      return from.empty
-        ? { ok: false, question: null, unsupported: `${from.message} Receive some before moving any.` }
-        : unresolved(from);
-    }
     const to = noteFrom(draft, resolver.resolveLocation(db, workspaceId, intent.destinationLocation, { role: 'destination' }));
     if (!to.ok) {
       return {
@@ -868,6 +939,25 @@ function shapeOperation(db, workspaceId, intent, draft) {
           ? { role: 'destination', name: String(intent.destinationLocation).trim() }
           : null,
       };
+    }
+    // Resolve the stated destination first. A destination is not a plausible
+    // source merely because it already holds some of the same SKU. Without
+    // this order, "move 12 to Monroe" offered Monroe as a place to take stock
+    // from — an unnecessary and actively misleading question.
+    const from = resolveSource(intent.sourceLocation, 'source location', {
+      excludeLocationIds: String(intent.sourceLocation || '').trim() ? [] : [to.value.id],
+    });
+    if (!from.ok) {
+      if (from.onlyAtExcludedLocation) {
+        return {
+          ok: false,
+          question: null,
+          unsupported: `${subjectName(draft)} is only recorded at ${to.value.name}, which is already the destination. Choose a different destination or receive stock elsewhere first.`,
+        };
+      }
+      return from.empty
+        ? { ok: false, question: null, unsupported: `${from.message} Receive some before moving any.` }
+        : unresolved(from);
     }
     if (from.value.id === to.value.id) {
       return { ok: false, question: null, unsupported: 'That is the same location on both sides.' };
@@ -1230,6 +1320,25 @@ function revalidate(db, ctx, proposal, options = {}) {
         else if (!location.is_active) problems.push('The receiving location has been archived.');
       }
     }
+    if (proposal.actionType === removals.ACTION_TYPE) {
+      const kind = removals.kindOf(proposal);
+      if (!kind) problems.push('Foundry no longer knows how to remove that sort of record.');
+      else if (kind.isGone(db, workspaceId, proposal.settings.recordId)) {
+        problems.push(`${proposal.settings.recordName} has already been removed.`);
+      } else {
+        // Between proposing and approving, somebody may have raised an order
+        // against this record, or the last thing referring to it may have gone.
+        // Either changes which of the two outcomes is correct, so it is decided
+        // again rather than trusted from the preview.
+        const now = removals.decide(db, workspaceId, kind, proposal.settings.recordId);
+        if (now.blocked) problems.push(`${proposal.settings.recordName} cannot be removed now — ${now.blocked}`);
+        else if (now.deletable !== proposal.settings.deletable) {
+          problems.push(now.deletable
+            ? `${proposal.settings.recordName} is no longer referred to anywhere, so it would now be deleted outright rather than archived.`
+            : `${proposal.settings.recordName} is now referred to by ${now.heldBy}, so it would be archived rather than deleted.`);
+        }
+      }
+    }
     if (proposal.actionType === 'archive_item') {
       const scope = proposal.settings.archiveScope;
       const row = scope === 'item'
@@ -1349,6 +1458,13 @@ function rebaseForPlan(proposal, applied) {
 }
 
 function currentState(db, workspaceId, proposal) {
+  if (proposal.actionType === removals.ACTION_TYPE) {
+    const kind = removals.kindOf(proposal);
+    return {
+      total: 0,
+      active: kind ? !kind.isGone(db, workspaceId, proposal.settings.recordId) : false,
+    };
+  }
   if (proposal.actionType === 'archive_item') {
     const scope = proposal.settings.archiveScope;
     const row = scope === 'item'

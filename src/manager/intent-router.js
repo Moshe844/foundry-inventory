@@ -6,6 +6,7 @@ const { newId, nowIso, requireText } = require('../lib/util');
 const managerContext = require('./context');
 const capabilityPlanner = require('./capability-planner');
 const capabilityRegistry = require('./capability-registry');
+const removals = require('../actions/removals');
 
 const INTENT_CLASSES = [
   'QUESTION', 'INVENTORY_ACTION', 'CATALOG_CHANGE', 'IMPORT', 'PHYSICAL_EVENT',
@@ -97,6 +98,24 @@ function fallbackClassify(message) {
   }
   if (/(?:\breorder\b.*\b(?:at|below|when|to)\b)|\b(restock(?:ing)?|replenish(?:ment|ing)?|stock (?:level|reaches)|order[- ]?up[- ]?to|safety stock|keep(?: at least)?|never let|days? of stock|lead time|minimum order|moq|purchase unit|order multiple|preferred supplier|use .+ for|transfer before (?:buying|purchasing)|cooldown)\b/i.test(clean)) {
     return result('OPERATING_INSTRUCTION', 'This teaches a lasting inventory operating rule.');
+  }
+  /*
+   * Retiring one of the records Foundry keeps around its stock.
+   *
+   * This sits above purchasing deliberately. "Get rid of One Step Vendor, we
+   * do not buy from them any more" is a sentence about ending a relationship,
+   * but it contains the word buy, and the purchasing rule below matched it
+   * first — so asking Foundry to drop a supplier set it planning a purchase
+   * instead. A removal verb beside one of these records outranks that.
+   *
+   * The vocabulary comes from the removal registry, so a kind added there is
+   * recognised here too. This only decides which pipeline reads the sentence;
+   * which record is meant, and whether it may go, are still settled by the
+   * grounded action pipeline.
+   */
+  if (/\b(archive|remove|delete|deactivate|retire|drop|get rid of|no longer use|don'?t use)\b/i.test(clean)
+      && new RegExp(`\\b(${removals.nounPattern()})\\b`, 'i').test(clean)) {
+    return result('CATALOG_CHANGE', 'This retires a record Foundry keeps.');
   }
   if (/^\s*order\b|\b(order what|what should (?:i|we) order|buy|purchase|reorder|purchase order|supplier order)\b/i.test(clean)) {
     return result('PURCHASING_REQUEST', 'This explicitly asks about purchasing or replenishment.');

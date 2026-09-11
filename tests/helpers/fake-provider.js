@@ -14,9 +14,28 @@
  * Splits one complete understanding fixture into the two responses the service
  * asks for (core, then advice), so tests script the fixture, not the wire.
  */
+/**
+ * Answers by which pass is asking, not by call order.
+ *
+ * Understanding is read in three passes now — structure, records typed into the
+ * description, then advice — because the provider refuses to compile one
+ * grammar that large. A positional queue silently handed the records pass the
+ * advice payload and left the structural pass validating against a contract it
+ * no longer matched, so the fixture answers the schema it is given instead.
+ */
 function fakeUnderstandingProvider(understanding, options = {}) {
-  const { recommendations, unresolvedDecisions, ...core } = understanding;
-  return fakeProvider([core, { recommendations, unresolvedDecisions }], options);
+  const { recommendations, unresolvedDecisions, ownerProvidedInventory, ...core } = understanding;
+  const records = {
+    ownerProvidedInventory: ownerProvidedInventory
+      || { hasRecords: false, lines: [], ambiguities: [] },
+  };
+  return fakeProvider((request) => {
+    if (request.schemaName === 'inventory_understanding_records') return records;
+    if (request.schemaName === 'inventory_understanding_advice') {
+      return { recommendations, unresolvedDecisions };
+    }
+    return core;
+  }, options);
 }
 
 function fakeProvider(responses, { name = 'fake', model = 'fake-model' } = {}) {
@@ -52,6 +71,7 @@ function buildUnderstanding(overrides = {}) {
     businessType: 'Wholesale distribution',
     inventoryPurpose: 'Knowing how many widgets are on hand.',
     inventoryExamples: ['Widget A', 'Widget B'],
+    ownerProvidedInventory: { hasRecords: false, lines: [], ambiguities: [] },
     inventoryArchetypes: ['quantity'],
     productStructure: { summary: 'Flat list of products.', levels: ['Product'], certainty: 'inferred_confidently' },
     variantDimensions: [],

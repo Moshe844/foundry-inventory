@@ -198,6 +198,18 @@ test('the order offers to ask for payment, keeps the link, and a reply may use i
   } finally { undo(); }
 });
 
+test('an order does not offer an online charge until this business has connected its payment account', async () => {
+  const env = setup();
+  const { order } = invoicedOrder(env);
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const words = plain((await agent.get(`/orders/${order.id}`)).text);
+  assert.match(words, /Online payment is not set up for this business yet/i);
+  assert.match(words, /Set up Stripe payments/i);
+  assert.doesNotMatch(words, /Take \$1,500\.00 now/i);
+});
+
 test('the Orders list leads with what is stuck, and says what it is stuck on', async () => {
   /*
    * Found by walking the page rather than reading the code. The list showed
@@ -322,6 +334,8 @@ test('a finished order stops explaining itself and stops showing empty columns',
   assert.doesNotMatch(text, /waiting for stock/,
     'and nothing is waiting');
   assert.match(text, /12\s*shipped/, 'what did happen is still said');
+  assert.doesNotMatch(text, /On account|nothing agreed/i,
+    'a fully paid order must not present payment-term setup as unfinished work');
 
   const columns = [...page.text.slice(page.text.indexOf('Order lines'))
     .matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((m) => m[1].trim());
@@ -528,6 +542,12 @@ test('a payment taken in the room is recorded on the order, through the same eng
     reference: 'Counter, Tuesday',
   });
   assert.equal(recorded.status, 303);
+  assert.match(recorded.headers.location, /payment=paid#money$/,
+    'the completed state must immediately expose the receipt action');
+
+  page = await agent.get(`/orders/${order.id}`);
+  assert.match(plain(page.text), /Recorded \$105\.00/);
+  assert.match(plain(page.text), /Paid/);
 
   const balance = Number(env.db.prepare('SELECT balance_minor FROM accounting_customer_invoices WHERE id = ?')
     .get(invoiceId).balance_minor);
@@ -538,16 +558,41 @@ test('a payment taken in the room is recorded on the order, through the same eng
   assert.equal(receipt.method, 'cash');
   assert.equal(receipt.reference, 'Counter, Tuesday');
   assert.ok(receipt.journal_entry_id, 'the same journal entry a card payment would make');
+  assert.match(plain((await agent.get(`/orders/${order.id}/receipt/${receipt.id}`).expect(200)).text),
+    /Receipt.*ABC School.*\$105\.00/i);
 
-  page = await agent.get(`/orders/${order.id}`);
-  assert.match(plain(page.text), /Recorded \$105\.00/);
-  assert.match(plain(page.text), /Paid/);
+  // Older order payments recorded the exact invoice allocation but omitted
+  // the redundant direct order ID. That provable link must still print.
+  env.db.prepare('UPDATE accounting_payments SET sales_order_id = NULL WHERE id = ?').run(receipt.id);
+  assert.match(plain((await agent.get(`/orders/${order.id}/receipt/${receipt.id}`).expect(200)).text),
+    /Receipt.*ABC School.*\$105\.00/i);
+
+  const completed = await agent.get(recorded.headers.location);
+  assert.match(plain(completed.text), /Payment recorded.*fully paid.*receipt is ready to print.*Print receipt/i);
 
   // And it will not take more than is owed.
   const tooMuch = await agent.post(`/sales/orders/${order.id}/payment`).type('form')
     .send({ _csrf: csrfFrom(page.text), amount: '50.00', method: 'cash' });
   assert.equal(tooMuch.status, 303);
   assert.match(plain((await agent.get(`/orders/${order.id}`)).text), /more than the \$0\.00 still owed/);
+});
+
+test('a partial payment confirmation says what remains instead of implying the order is paid', async () => {
+  const env = setup();
+  const { order } = invoicedOrder(env, 7);
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const page = await agent.get(`/orders/${order.id}`);
+  const recorded = await agent.post(`/sales/orders/${order.id}/payment`).type('form').send({
+    _csrf: csrfFrom(page.text), amount: '40.00', method: 'cash', paymentDate: TODAY,
+  });
+  const confirmation = plain((await agent.get(recorded.headers.location)).text);
+  assert.match(confirmation, /Payment recorded.*customer still owes \$65\.00.*receipt is ready/i);
+  assert.doesNotMatch(confirmation, /fully paid|payment completed/i);
+  const first = env.db.prepare(`SELECT * FROM accounting_payments
+    WHERE workspace_id = ? AND direction = 'CUSTOMER_RECEIPT'`).get(env.workspace.workspaceId);
+  const receipt = plain((await agent.get(`/orders/${order.id}/receipt/${first.id}`).expect(200)).text);
+  assert.match(receipt, /This payment \$40\.00 Paid after this receipt \$40\.00 Balance after this receipt \$65\.00/i);
 });
 
 test('orders that shipped before shipments existed get their record rebuilt', async () => {
@@ -654,6 +699,12 @@ test('the ship form asks where the parcel is going and how it travels', async ()
   const page = await agent.get(`/orders/${order.id}`);
   assert.match(page.text, /name="trackingNumber"/, 'it asks for a tracking number');
   assert.match(page.text, /name="carrier"/, 'and a carrier');
+  assert.match(page.text, /Planned: Sent by carrier.*came from the delivery choice on the order/s,
+    'the original delivery choice is carried forward instead of being asked again');
+  assert.match(page.text, /value="CARRIER" required checked/,
+    'the known handover is selected by default');
+  assert.match(page.text, /Change how the goods actually left/,
+    'a changed real-world handover remains available without competing with the plan');
 
   await agent.post(`/sales/orders/${order.id}/fulfill`).type('form').send({
     _csrf: csrfFrom(page.text), lineId: order.lines[0].id,

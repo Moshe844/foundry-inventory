@@ -19,7 +19,7 @@ const { requireAuth, asyncRoute } = require('../middleware');
 const router = express.Router();
 
 function homeSignature(db, workspaceId) {
-  const tables = ['domain_events', 'work_items', 'attention_items', 'inventory_investigations', 'purchase_orders', 'sales_orders', 'sales_order_events', 'movements', 'accounting_journal_entries'];
+  const tables = ['domain_events', 'work_items', 'attention_items', 'inventory_investigations', 'purchase_orders', 'sales_orders', 'sales_order_events', 'movements', 'accounting_journal_entries', 'accounting_payments', 'payment_requests'];
   return tables.map((table) => {
     const row = db.prepare(`SELECT COALESCE(MAX(rowid), 0) AS last, COUNT(*) AS total FROM ${table} WHERE workspace_id = ?`).get(workspaceId);
     return `${table}:${row.last}:${row.total}`;
@@ -57,8 +57,7 @@ router.get(
     // most needs a clear next step; sending it to the traditional overview made
     // the guided setup invisible until after products already existed.
     const wantsClassic = req.path === '/overview';
-    const foundryConfigured = Boolean(configuration && configuration.configuredAt);
-    if (!wantsClassic && foundryConfigured) {
+    if (!wantsClassic) {
       const home = autopilotPresenter.operatorHome(req.db, req.ctx.workspaceId);
       home.guidance = guidance.build(req.db, req.ctx.workspaceId);
       let brain = null;
@@ -75,7 +74,15 @@ router.get(
           financialPulse = { from: brain.period.from, to: brain.period.to,
             currency: brain.currency, pnl: brain.finance.pnl,
             cashMinor: brain.finance.currentCashMinor,
-            receivableMinor: brain.finance.customers.balanceMinor,
+            // Home answers the owner's broad question, "what are customers
+            // expected to pay me?" This includes confirmed orders awaiting
+            // fulfilment as well as completed, invoiced sales. Profit remains
+            // based only on earned revenue in the P&L above.
+            receivableMinor: brain.finance.customerMoneyOutstandingMinor,
+            invoicedReceivableMinor: brain.finance.customers.balanceMinor,
+            confirmedOrderBalanceMinor: brain.finance.confirmedOrders.balanceMinor,
+            customerCashReceivedMinor: brain.finance.cashActivity.customerReceivedMinor,
+            customerPrepaymentsMinor: brain.finance.confirmedOrders.prepaymentMinor,
             payableMinor: brain.finance.suppliers.balanceMinor };
         }
       } catch {
@@ -111,14 +118,32 @@ router.get(
           LIMIT 4`).all(req.ctx.workspaceId);
       } catch { noticed = []; }
 
-      return res.page('operator-home', {
+      return res.page('foundry/brief', {
         title: 'Foundry',
         nav: 'home',
+        room: true,
+        /*
+         * A brand-new inventory has nothing to be under control yet, and the
+         * brief has to say so and hand over the first step. Sending somebody to
+         * a calm morning briefing about an empty database is the friendliest
+         * possible way to leave them stuck.
+         */
+        isEmpty: stats.itemCount === 0 && stats.locationCount === 0,
+        foundryConfigured: Boolean(configuration && configuration.configuredAt),
+        /*
+         * The real inventory sources, so the first screen offers the same five
+         * paths the onboarding chooser does and every one of them starts
+         * something. The three buttons this replaced pointed at a generic
+         * import page and at the connections page, where the first thing an
+         * owner with no products met was Stripe.
+         */
+        sourceOptions: require('../../onboarding/paths').SOURCE_OPTIONS,
         home,
         whatsNext,
         noticed,
         homeSignature: homeSignature(req.db, req.ctx.workspaceId),
         brief,
+        observedBrief: briefService.deterministicObservationBrief(items, context),
         stats,
         terminology,
         canOperate: permissions.can(req.user, permissions.OPERATE),
@@ -143,7 +168,9 @@ router.get(
       // say "All clear" about the same inventory that Needs You said had a
       // thing waiting, which leaves a new customer with two screens
       // contradicting each other and no way to tell which is lying.
-      operatingDecisions: needsYouInbox.inbox(req.db, req.ctx.workspaceId),
+      operatingDecisions: needsYouInbox.inbox(req.db, req.ctx.workspaceId, req.user, {
+        productBrain: req.app.locals.productBrain,
+      }),
       guidance: guidance.build(req.db, req.ctx.workspaceId),
       isEmpty: stats.itemCount === 0 && stats.locationCount === 0,
     });

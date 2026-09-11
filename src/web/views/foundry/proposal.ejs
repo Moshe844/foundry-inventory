@@ -1,4 +1,20 @@
 <%
+  /*
+   * The review. Everything Foundry would do, before it does any of it.
+   *
+   * The order on this page is load-bearing and has not changed: what the paper
+   * proves, what Foundry will change, what it is deliberately leaving alone,
+   * and only then the catalogue. A summary of products and quantities looks
+   * identical whether the goods exist or not, and somebody approving an import
+   * once read one and assumed the other — a proforma invoice for shoes still
+   * being made became 800 pairs on the shelf and $21,390 of inventory asset.
+   *
+   * What changed is that the page no longer says all of it in the same voice.
+   * Thirteen sections were thirteen identical cards, so the thing that puts
+   * stock on a shelf looked exactly like a note about wording. Now the answer
+   * you are being asked for is a card, the consequences are columns, the
+   * reference tables are tables, and the audit detail is closed.
+   */
   var u = understanding;
   var mode = helpers.TRACKING_MODES[u.recommendedConfiguration.trackingMode];
   var configRecs = recommendations.filter(function (r) { return r.scope === 'configuration'; });
@@ -12,117 +28,125 @@
   var docStyles = new Set(docLines.map(function (line) { return [line.styleName, line.color].filter(Boolean).join(' / ').toLowerCase(); })).size;
   var docCodeLabel = setupDocument ? setupDocument.supplierCodeLabel : 'Supplier code';
   var addingToExisting = Boolean(doc && alreadyConfigured);
+  var evidenceFirst = Boolean(locals.onboardingPriority && onboardingPriority.kind === 'source_business_records');
+  var ownerRecordFlow = Boolean(locals.onboardingPriority && (onboardingPriority.kind === 'clarify_owner_records' || onboardingPriority.kind === 'confirm_owner_records'));
+  var focusedOnboarding = evidenceFirst || ownerRecordFlow;
+  var deferConfigurationQuestions = focusedOnboarding && onboardingPriority.deferConfigurationQuestions;
+  var factGroups = u.factClassification || null;
+  var ownerInput = u.ownerProvidedInventory || { hasRecords: false, lines: [], ambiguities: [] };
+  var ownerLines = ownerInput.lines && ownerInput.lines.length ? ownerInput.lines : [{ productName: '', variantLabel: '', quantity: 0, quantityKnown: false, locationName: '' }];
 %>
 
-<div class="foundry-hero foundry-hero--tight">
-  <span class="foundry-mark"><%- helpers.icon('foundry', { size: 22 }) %></span>
+<%- include('../partials/setup-steps', { step: 2 }) %>
+
+<div class="rm-head">
+  <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Nothing has been created yet</p>
   <h1><%= addingToExisting ? "Here's what Foundry read from your file" : "Here's how I'd organize your inventory" %></h1>
   <% if (u.businessDescription) { %>
-    <details class="foundry-quote-fold">
-      <summary>How Foundry described this file</summary>
-      <p class="foundry-quote">“<%= u.businessDescription %>”</p>
-    </details>
+    <p>“<%= u.businessDescription %>”</p>
   <% } %>
 </div>
 
 <form method="post" action="/foundry/proposal/<%= understandingId %>/configure">
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
 
-  <%#
-    What this document means, before anything about what Foundry would build.
-
-    The order is the point. A summary of products and quantities looks identical
-    whether the goods exist or not, so somebody approving an import read one and
-    assumed the other — a proforma invoice for shoes still being made became 800
-    pairs on the shelf and $21,390 of inventory asset.
-
-    So the page says what the paper proves, what Foundry will change, and what it
-    is deliberately leaving alone, and only then describes the catalogue.
-  %>
+  <%# --------------------------------------------- what this document means %>
   <% if (locals.documentMeaning) { var dm = documentMeaning; %>
-    <section class="doc-meaning">
-      <p class="eyebrow">What I think this is</p>
-      <h2><%= dm.headline %></h2>
-      <p class="doc-meaning-because"><%= dm.means %>.</p>
+    <section class="rm-panel" style="margin-bottom:16px;border-color:var(--brand-line)">
+      <div class="rm-panel__head">
+        <%- helpers.icon('eye', { size: 15 }) %>
+        <h2>What I think this is</h2>
+      </div>
+      <div style="padding:16px 16px 4px">
+        <p class="rm-figure" style="font-size:20px;margin-bottom:6px"><%= dm.headline %></p>
+        <p style="font-size:14.5px;color:var(--ink-2);margin:0 0 4px;max-width:74ch"><%= dm.means %>.</p>
+      </div>
+    </section>
 
-      <div class="doc-meaning-grid">
-        <div class="doc-panel">
-          <h3>What I found</h3>
-          <ul>
-            <% dm.found.forEach(function (f) { %><li><%= f %></li><% }) %>
-          </ul>
-        </div>
-
-        <div class="doc-panel doc-panel--will">
-          <h3>What I'll do</h3>
-          <% if (dm.willDo.length) { %>
-            <ul>
-              <% dm.willDo.forEach(function (d) { %><li><%= d %></li><% }) %>
-            </ul>
-          <% } else { %>
-            <p class="t-muted">Nothing yet — see what I need from you.</p>
-          <% } %>
-        </div>
-
-        <% if (dm.wontDo.length) { %>
-          <div class="doc-panel doc-panel--wont">
-            <h3>What I will <em>not</em> do</h3>
-            <ul>
-              <% dm.wontDo.forEach(function (d) { %>
-                <li><strong><%= d.what %></strong><span class="t-xs t-muted"><%= d.why %></span></li>
-              <% }) %>
-            </ul>
-          </div>
+    <div class="rm-cols">
+      <div class="rm-col">
+        <h3><%- helpers.icon('eye', { size: 14 }) %> What I found</h3>
+        <ul><% dm.found.forEach(function (f) { %><li><%= f %></li><% }) %></ul>
+      </div>
+      <div class="rm-col rm-col--will">
+        <h3><%- helpers.icon('check', { size: 14 }) %> What I'll do</h3>
+        <% if (dm.willDo.length) { %>
+          <ul><% dm.willDo.forEach(function (d) { %><li><%= d %></li><% }) %></ul>
+        <% } else { %>
+          <p style="font-size:13.5px;color:var(--muted);margin:0">Nothing yet — see what I need from you.</p>
         <% } %>
       </div>
-
-      <% if (dm.totals.goodsMinor || dm.totals.chargesMinor) { %>
-        <%#
-          The whole bill, not just the products. These figures used to be thrown
-          away at extraction, so a document totalling one number imported as
-          another and the difference was nowhere on the page.
-        %>
-        <table class="table doc-money">
-          <tbody>
-            <tr><td>Goods</td><td class="num"><%= helpers.money(dm.totals.goodsMinor, dm.totals.currency) %></td></tr>
-            <% (setupDocument.interpretation.charges || []).forEach(function (c) { %>
-              <tr><td><%= c.label %> <span class="t-xs t-muted">· <%= c.kind %></span></td>
-                <td class="num"><%= helpers.money(c.amountMinor, dm.totals.currency) %></td></tr>
+      <% if (dm.wontDo.length) { %>
+        <div class="rm-col rm-col--wont">
+          <h3><%- helpers.icon('hand', { size: 14 }) %> What I will <em>not</em> do</h3>
+          <ul>
+            <% dm.wontDo.forEach(function (d) { %>
+              <li><strong><%= d.what %></strong><span><%= d.why %></span></li>
             <% }) %>
-            <tr class="doc-money-total">
-              <td><strong>Total on this document</strong></td>
-              <td class="num"><strong><%= helpers.money(dm.totals.goodsMinor + dm.totals.chargesMinor, dm.totals.currency) %></strong></td>
-            </tr>
-            <% if (dm.totals.statedTotalMinor !== null) {
-                 var reckoned = dm.totals.goodsMinor + dm.totals.chargesMinor; %>
-              <tr>
-                <td colspan="2" class="t-xs t-muted">
-                  The document itself states <%= helpers.money(dm.totals.statedTotalMinor, dm.totals.currency) %><%
-                    if (reckoned !== dm.totals.statedTotalMinor) { %> — <%= helpers.money(Math.abs(dm.totals.statedTotalMinor - reckoned), dm.totals.currency)
-                    %> away from the lines above. Foundry has not adjusted anything to make them agree.<% } else { %>, and these lines come to the same.<% } %>
-                </td>
-              </tr>
-            <% } %>
-          </tbody>
-        </table>
-      <% } %>
-
-      <% if (dm.needsYou.length) { %>
-        <div class="doc-panel doc-panel--asks">
-          <h3>What I need from you</h3>
-          <% dm.needsYou.forEach(function (n) { %>
-            <div class="doc-ask">
-              <p class="doc-ask-q"><%= n.question %></p>
-              <% if (n.because) { %><p class="t-xs t-muted"><%= n.because %></p><% } %>
-            </div>
-          <% }) %>
-          <p class="t-xs t-muted">The answer is at the bottom of this page, once you have seen what it would do.</p>
+          </ul>
         </div>
       <% } %>
-    </section>
+    </div>
+
+    <% if (dm.totals.goodsMinor || dm.totals.chargesMinor) { %>
+      <%# The whole bill, not just the products. These figures used to be thrown
+          away at extraction, so a document totalling one number imported as
+          another and the difference was nowhere on the page. %>
+      <section class="rm-panel" style="margin-bottom:16px">
+        <div class="rm-panel__head">
+          <%- helpers.icon('wallet', { size: 15, className: 'rm-quiet' }) %>
+          <h2>What this document comes to</h2>
+        </div>
+        <div class="rm-ledger" style="border:0;border-radius:0;box-shadow:none;margin:0">
+          <div class="rm-ledger__row">
+            <span class="rm-ledger__k">Goods</span>
+            <span class="rm-ledger__v"><%= helpers.money(dm.totals.goodsMinor, dm.totals.currency) %></span>
+            <span class="rm-ledger__n"></span>
+          </div>
+          <% (setupDocument.interpretation.charges || []).forEach(function (c) { %>
+            <div class="rm-ledger__row">
+              <span class="rm-ledger__k"><%= c.label %></span>
+              <span class="rm-ledger__v"><%= helpers.money(c.amountMinor, dm.totals.currency) %></span>
+              <span class="rm-ledger__n"><%= c.kind %></span>
+            </div>
+          <% }) %>
+          <div class="rm-ledger__row" style="background:var(--surface-2)">
+            <span class="rm-ledger__k"><strong>Total on this document</strong></span>
+            <span class="rm-ledger__v"><%= helpers.money(dm.totals.goodsMinor + dm.totals.chargesMinor, dm.totals.currency) %></span>
+            <span class="rm-ledger__n"></span>
+          </div>
+        </div>
+        <% if (dm.totals.statedTotalMinor !== null) {
+             var reckoned = dm.totals.goodsMinor + dm.totals.chargesMinor; %>
+          <p class="rm-quiet" style="font-size:12.5px;padding:12px 16px;border-top:1px solid var(--line-2);margin:0">
+            The document itself states <%= helpers.money(dm.totals.statedTotalMinor, dm.totals.currency) %><%
+              if (reckoned !== dm.totals.statedTotalMinor) { %> — <%= helpers.money(Math.abs(dm.totals.statedTotalMinor - reckoned), dm.totals.currency)
+              %> away from the lines above. Foundry has not adjusted anything to make them agree.<% } else { %>, and these lines come to the same.<% } %>
+          </p>
+        <% } %>
+      </section>
+    <% } %>
+
+    <% if (dm.needsYou.length) { %>
+      <section class="rm-panel" style="margin-bottom:16px;border-color:var(--flag-line)">
+        <div class="rm-panel__head">
+          <%- helpers.icon('hand', { size: 15 }) %>
+          <h2>What I need from you</h2>
+          <span class="right">Answered at the bottom of this page</span>
+        </div>
+        <ul class="rm-checks">
+          <% dm.needsYou.forEach(function (n) { %>
+            <li class="is-flag">
+              <span class="rm-checks__ic"><%- helpers.icon('question', { size: 13 }) %></span>
+              <span><strong><%= n.question %></strong><% if (n.because) { %><br><span class="rm-quiet"><%= n.because %></span><% } %></span>
+            </li>
+          <% }) %>
+        </ul>
+      </section>
+    <% } %>
   <% } %>
 
-
+  <%# ------------------------------------------------------- scope warning %>
   <% if (doc && scopeWarning && scopeWarning.needsConfirmation && !setupDocument.scopeConfirmedAt) { %>
     <dialog class="modal scope-warning" open data-scope-warning aria-labelledby="scope-warning-title">
       <div class="modal-head"><h2 id="scope-warning-title">This file looks different from <%= scopeWarning.workspaceName %></h2></div>
@@ -135,253 +159,442 @@
         <p class="muted">Foundry has read the file, but nothing has been added. Continue only if these records belong in the inventory currently open.</p>
       </div>
       <div class="modal-foot">
-        <a class="btn" href="/">Cancel</a>
-        <button class="btn btn--primary" type="submit" name="scopeDecision" value="confirm" formnovalidate>Continue with <%= scopeWarning.workspaceName %></button>
+        <a class="rm-btn rm-btn--ghost" href="/">Cancel</a>
+        <button class="rm-btn" type="submit" name="scopeDecision" value="confirm" formnovalidate>Continue with <%= scopeWarning.workspaceName %></button>
       </div>
     </dialog>
   <% } else if (doc && scopeWarning && scopeWarning.needsConfirmation && setupDocument.scopeConfirmedAt) { %>
-    <div class="notice notice--warn section"><%- helpers.icon('alert', { size: 16 }) %><span>You confirmed that this file belongs in <strong><%= scopeWarning.workspaceName %></strong>. Nothing changes until you approve the exact records below.</span></div>
+    <div class="rm-note rm-note--warn">
+      <%- helpers.icon('alert', { size: 16 }) %>
+      <span>You confirmed that this file belongs in <strong><%= scopeWarning.workspaceName %></strong>. Nothing changes until you approve the exact records below.</span>
+    </div>
   <% } %>
 
+  <%# ---------------------------------------------------- the document read %>
   <% if (doc) { %>
-    <section class="card section setup-document-preview">
-      <div class="card-head">
-        <%- helpers.icon('document', { size: 18 }) %>
-        <div>
-          <h2>What Foundry read from <%= setupDocument.sourceName %></h2>
-          <p class="hint"><%= doc.documentType.replace('_', ' ') %><% if (doc.documentNumber) { %> · <%= doc.documentNumber %><% } %><% if (doc.documentDate) { %> · <%= doc.documentDate %><% } %></p>
-        </div>
-        <span class="badge badge--ok" style="margin-left:auto;">Read from file</span>
+    <p class="rm-stamp">
+      <%- helpers.icon('import', { size: 14 }) %>
+      What Foundry read from <%= setupDocument.sourceName %>
+      <span class="rm-pillbadge is-ok">Read from file</span>
+      <span class="rm-quiet"><%= doc.documentType.replace('_', ' ') %><% if (doc.documentNumber) { %> · <%= doc.documentNumber %><% } %><% if (doc.documentDate) { %> · <%= doc.documentDate %><% } %></span>
+    </p>
+
+    <div class="rm-facts">
+      <div class="rm-fact">
+        <span class="rm-fact__k"><%- helpers.icon('purchasing', { size: 14 }) %> Supplier</span>
+        <span class="rm-fact__v" style="font-size:17px"><%= doc.supplierName || 'Not shown' %></span>
       </div>
-      <div class="card-body">
-        <div class="document-facts">
-          <div><span>Supplier</span><strong><%= doc.supplierName || 'Not shown' %></strong></div>
-          <div><span>Stock goes to</span><strong><%= doc.destinationName %></strong></div>
-          <div><span>Inventory</span><strong><%= docUnits %> <%= docUnitText %> · <%= docStyles %> styles · <%= docLines.length %> variants</strong></div>
-          <div><span>Merchandise</span><strong><%= doc.currency %> <%= docValue.toFixed(2) %></strong></div>
-        </div>
-        <div class="notice" style="margin-top:16px;max-width:700px;">
-          <%- helpers.icon('document', { size: 16 }) %>
-          <span>This file calls the vendor's product identifier <strong><%= setupDocument.detectedSupplierCodeLabel %></strong>. Foundry read every value in that column as the vendor's code.</span>
-        </div>
-        <label class="field document-vocabulary" style="margin-top:16px;max-width:620px;">
-          <span class="field-label">What do you want Foundry to call that field for <%= doc.supplierName || 'this vendor' %>?</span>
-          <input class="input" type="text" name="supplierCodeLabel" value="<%= docCodeLabel %>" maxlength="60" required data-vendor-code-label-input>
-          <span class="field-help">Examples: Style #, Item No., Vendor SKU, or Catalogue number. Set it once. Future documents from this vendor may use different headings; Foundry will recognize them as the same field and keep showing your chosen name.</span>
+      <div class="rm-fact">
+        <span class="rm-fact__k"><%- helpers.icon('locations', { size: 14 }) %> Stock goes to</span>
+        <span class="rm-fact__v" style="font-size:17px"><%= doc.destinationName %></span>
+      </div>
+      <div class="rm-fact">
+        <span class="rm-fact__k"><%- helpers.icon('layers', { size: 14 }) %> Inventory</span>
+        <%# One phrase, not three fields: what the file amounts to is read as a
+            single sentence, and it is checked as one. %>
+        <span class="rm-fact__v" style="font-size:17px"><%= docUnits %> <%= docUnitText %> · <%= docStyles %> styles · <%= docLines.length %> variants</span>
+      </div>
+      <div class="rm-fact">
+        <span class="rm-fact__k"><%- helpers.icon('wallet', { size: 14 }) %> Merchandise</span>
+        <span class="rm-fact__v" style="font-size:17px"><%= doc.currency %> <%= docValue.toFixed(2) %></span>
+      </div>
+    </div>
+
+    <div class="rm-note">
+      <%- helpers.icon('tag', { size: 16 }) %>
+      <span>
+        This file calls the vendor's product identifier <strong><%= setupDocument.detectedSupplierCodeLabel %></strong>.
+        Foundry read every value in that column as the vendor's code.
+      </span>
+    </div>
+
+    <section class="rm-panel" style="margin-bottom:16px">
+      <div class="rm-panel__head">
+        <%- helpers.icon('serial', { size: 15, className: 'rm-quiet' }) %>
+        <h2>What should Foundry call that field?</h2>
+      </div>
+      <div style="padding:16px">
+        <label class="rm-field" style="max-width:520px;margin:0">
+          <span>For <%= doc.supplierName || 'this vendor' %></span>
+          <input type="text" name="supplierCodeLabel" value="<%= docCodeLabel %>" maxlength="60" required data-vendor-code-label-input>
+          <small>
+            Examples: Style #, Item No., Vendor SKU, or Catalogue number. Set it once — future
+            documents from this vendor may use different headings, and Foundry will recognize them as
+            the same field and keep showing your chosen name.
+          </small>
         </label>
-        <%#
-          Forty-one rows of size run is a reference table, not a thing anybody
-          reads top to bottom. The totals above already say what it comes to;
-          this is here for the person who wants to check a line.
-        %>
-        <details class="doc-lines-fold" <%= docLines.length <= 8 ? 'open' : '' %>>
-          <summary>
-            <%= docLines.length %> line<%= docLines.length === 1 ? '' : 's' %> read from the file
-            — <%= docUnits %> <%= docUnitText %>, <%= docStyles %> style<%= docStyles === 1 ? '' : 's' %>
-          </summary>
-        <div class="table-wrap" style="margin-top:16px;">
-          <table class="table table--stack table--tight">
-            <thead><tr><th>Style</th><th>Color</th><th>Size</th><th data-vendor-code-label><%= docCodeLabel %></th><th>Foundry action</th><th class="right">Qty</th><th class="right">Unit cost</th></tr></thead>
+      </div>
+    </section>
+
+    <%# Forty-one rows of size run is a reference table, not a thing anybody
+        reads top to bottom. The totals above already say what it comes to;
+        this is here for the person who wants to check a line. %>
+    <details class="rm-work" style="margin:0 0 16px" <%= docLines.length <= 8 ? 'open' : '' %>>
+      <summary>
+        <%= docLines.length %> line<%= docLines.length === 1 ? '' : 's' %> read from the file
+        — <%= docUnits %> <%= docUnitText %>, <%= docStyles %> style<%= docStyles === 1 ? '' : 's' %>
+      </summary>
+      <div class="rm-work__body" style="overflow-x:auto">
+        <table class="rm-qty">
+          <thead>
+            <tr>
+              <th>Style</th><th>Color</th><th>Size</th>
+              <th data-vendor-code-label><%= docCodeLabel %></th>
+              <th>Foundry action</th><th>Qty</th><th>Unit cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% docLines.forEach(function (line, lineIndex) { var documentMatch = documentMatches[lineIndex]; %>
+              <tr>
+                <td><strong><%= line.styleName %></strong></td>
+                <td><%= line.color || '—' %></td>
+                <td><%= line.size || '—' %></td>
+                <td data-vendor-code-cell style="font-family:var(--f-num);font-size:12px"><%= line.supplierSku || '—' %></td>
+                <td>
+                  <span class="rm-pillbadge <%= documentMatch && documentMatch.status === 'match' ? 'is-ok' : '' %>">
+                    <%= documentMatch ? documentMatch.label : 'Create as new' %>
+                  </span>
+                </td>
+                <% if (line.locationQuantities && line.locationQuantities.length) { %>
+                  <td colspan="2"><%= line.locationQuantities.map(function (entry) { return entry.locationName + ': ' + entry.quantity; }).join(' · ') %></td>
+                <% } else { %>
+                  <td><strong><%= line.quantity %></strong></td>
+                  <td><%= line.unitCost == null ? '—' : doc.currency + ' ' + line.unitCost.toFixed(2) %></td>
+                <% } %>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  <% } %>
+
+  <%# ------------------------------------------------- evidence-first flow %>
+  <% if (evidenceFirst) { %>
+    <section class="rm-panel" style="margin-bottom:16px">
+      <div class="rm-panel__head">
+        <%- helpers.icon('spark', { size: 15, className: 'rm-quiet' }) %>
+        <h2>What Foundry understood</h2>
+      </div>
+      <div style="padding:16px">
+        <p class="rm-figure" style="font-size:19px;margin-bottom:6px"><%= u.businessType || 'Your inventory operation' %></p>
+        <p style="font-size:14.5px;color:var(--ink-2);margin:0;max-width:74ch"><%= u.recommendedConfiguration.summary || mode.blurb %></p>
+        <% if (factGroups && factGroups.safeStructuralInferences.length) { %>
+          <ul class="plain-list" style="margin-top:10px">
+            <% factGroups.safeStructuralInferences.slice(0, 3).forEach(function (line) { %><li><%= line %></li><% }) %>
+          </ul>
+        <% } %>
+      </div>
+    </section>
+
+    <div class="rm-decision">
+      <span class="rm-decision__txt">
+        <span class="rm-stamp"><%- helpers.icon('hand', { size: 13 }) %> What Foundry needs next</span>
+        <%= onboardingPriority.question %>
+        <small>
+          <%= onboardingPriority.reason %>
+          <strong>You do not need to clean or reorganize anything first.</strong>
+          Foundry reads what you already have and shows you the exact records before changing anything.
+        </small>
+      </span>
+      <span class="rm-decision__go">
+        <a class="rm-btn" href="/onboarding">Choose where my records are <%- helpers.icon('arrowRight', { size: 15 }) %></a>
+      </span>
+    </div>
+  <% } %>
+
+  <%# ------------------------------------------------ owner-typed records %>
+  <% if (ownerRecordFlow) { %>
+    <section class="rm-panel" style="margin-bottom:16px">
+      <div class="rm-panel__head">
+        <%- helpers.icon('chat', { size: 15, className: 'rm-quiet' }) %>
+        <h2>You entered inventory records here</h2>
+        <span class="right">Your message is the source</span>
+      </div>
+      <div style="padding:16px">
+        <% if (ownerInput.ambiguities && ownerInput.ambiguities.length) { %>
+          <div class="rm-note rm-note--warn">
+            <%- helpers.icon('alert', { size: 16 }) %>
+            <span>
+              <strong>I did not guess the unclear parts.</strong>
+              <ul class="plain-list" style="margin-top:6px">
+                <% ownerInput.ambiguities.forEach(function (line) { %><li><%= line %></li><% }) %>
+              </ul>
+            </span>
+          </div>
+        <% } %>
+        <p style="font-size:14.5px;margin:0 0 14px;max-width:74ch">
+          <strong><%= onboardingPriority.question %></strong> <%= onboardingPriority.reason %>
+        </p>
+        <input type="hidden" name="owner_records_present" value="1">
+        <input type="hidden" name="owner_record_count" value="<%= ownerLines.length %>">
+        <div style="overflow-x:auto">
+          <table class="rm-qty">
+            <thead>
+              <tr><th>Product</th><th>Size / variant</th><th>Quantity physically on hand</th><th>Where it is</th></tr>
+            </thead>
             <tbody>
-              <% docLines.forEach(function (line, lineIndex) { var documentMatch = documentMatches[lineIndex]; %>
+              <% ownerLines.forEach(function (line, index) {
+                   var oneKnownLocation = line.locationName || (u.likelyLocations.length === 1 ? u.likelyLocations[0].name : (existingLocations.length === 1 ? existingLocations[0].name : ''));
+              %>
                 <tr>
-                  <td class="cell-main"><span class="cell-title"><%= line.styleName %></span></td>
-                  <td data-label="Color"><%= line.color || '—' %></td>
-                  <td data-label="Size"><%= line.size || '—' %></td>
-                  <td data-label="<%= docCodeLabel %>" data-vendor-code-cell class="mono"><%= line.supplierSku || '—' %></td>
-                  <td data-label="Foundry action"><span class="badge <%= documentMatch && documentMatch.status === 'match' ? 'badge--ok' : 'badge--muted' %>"><%= documentMatch ? documentMatch.label : 'Create as new' %></span></td>
-                  <% if (line.locationQuantities && line.locationQuantities.length) { %><td data-label="Locations" colspan="2"><%= line.locationQuantities.map(function(entry) { return entry.locationName + ': ' + entry.quantity; }).join(' · ') %></td><% } else { %>
-                  <td data-label="Qty" class="right"><strong><%= line.quantity %></strong></td>
-                  <td data-label="Unit cost" class="right"><%= line.unitCost == null ? '—' : doc.currency + ' ' + line.unitCost.toFixed(2) %></td>
-                  <% } %>
+                  <td style="text-align:left"><input type="text" style="width:100%;text-align:left" name="owner_product_<%= index %>" value="<%= line.productName %>" maxlength="160" required aria-label="Product name row <%= index + 1 %>"></td>
+                  <td><input type="text" style="width:100%;text-align:left" name="owner_variant_<%= index %>" value="<%= line.variantLabel %>" maxlength="160" aria-label="Size or variant row <%= index + 1 %>"></td>
+                  <td><input type="number" min="1" max="100000000" step="1" name="owner_quantity_<%= index %>" value="<%= line.quantityKnown ? line.quantity : '' %>" required aria-label="Quantity row <%= index + 1 %>"></td>
+                  <td><input type="text" style="width:100%;text-align:left" name="owner_location_<%= index %>" value="<%= oneKnownLocation %>" maxlength="120" placeholder="e.g. Main Warehouse" required aria-label="Location row <%= index + 1 %>"></td>
                 </tr>
               <% }) %>
             </tbody>
           </table>
         </div>
-        </details>
+        <p class="rm-quiet" style="font-size:13px;margin:12px 0 0">
+          Check each row. Foundry will create exactly these products and variants, then record these
+          quantities as opening stock at the locations shown.
+        </p>
       </div>
     </section>
+
+    <div class="rm-confirm">
+      <span class="rm-confirm__t">
+        <strong>Ready when you are.</strong>
+        <span>Nothing exists until you press this, and what it creates is exactly the rows above.</span>
+      </span>
+      <span class="rm-choices">
+        <a class="rm-btn rm-btn--ghost" href="/foundry">Start over</a>
+        <% if (currentUser.role === 'owner') { %>
+          <button class="rm-btn" type="submit">Create these exact inventory records</button>
+        <% } else { %>
+          <span class="rm-quiet" style="font-size:13px">Only an owner can apply this.</span>
+        <% } %>
+      </span>
+    </div>
   <% } %>
 
-  <div class="proposal">
-    <section class="proposal-block">
-      <div class="proposal-label"><%= helpers.plural(2, term('item')) %></div>
-      <div class="proposal-body">
-        <h2>
+  <%# ------------------------------------------------------- audit detail %>
+  <% if (factGroups && focusedOnboarding) { %>
+    <details class="rm-work" style="margin:16px 0">
+      <summary>What Foundry knows / Why Foundry decided this</summary>
+      <div class="rm-work__body">
+        <div class="rm-cols" style="margin-bottom:12px">
+          <div class="rm-col">
+            <h3><span class="rm-pillbadge is-ok">Verified fact</span></h3>
+            <% if (factGroups.verifiedFacts.length) { %>
+              <ul><% factGroups.verifiedFacts.forEach(function (line) { %><li><%= line %></li><% }) %></ul>
+            <% } else { %>
+              <p style="font-size:13.5px;color:var(--muted);margin:0">No source records have verified operational facts yet.</p>
+            <% } %>
+          </div>
+          <div class="rm-col">
+            <h3><span class="rm-pillbadge">Safe structural inference</span></h3>
+            <ul><% factGroups.safeStructuralInferences.forEach(function (line) { %><li><%= line %></li><% }) %></ul>
+          </div>
+          <div class="rm-col">
+            <h3><span class="rm-pillbadge">Provisional default</span></h3>
+            <ul><% factGroups.provisionalDefaults.forEach(function (line) { %><li><%= line %></li><% }) %></ul>
+          </div>
+          <div class="rm-col rm-col--wont">
+            <h3><span class="rm-pillbadge is-warn">Missing business fact</span></h3>
+            <ul><% factGroups.missingBusinessFacts.forEach(function (line) { %><li><%= line %></li><% }) %></ul>
+          </div>
+          <div class="rm-col">
+            <h3><span class="rm-pillbadge">Authority decision</span></h3>
+            <ul><% factGroups.authorityDecisions.forEach(function (line) { %><li><%= line %></li><% }) %></ul>
+          </div>
+        </div>
+        <h3 class="sub-head">Structural detail</h3>
+        <ul class="plain-list">
+          <li><strong>Tracking:</strong> <%= mode.label %><%= u.recommendedConfiguration.usesVariants ? ' with ' + u.variantDimensions.map(function (d) { return d.name; }).join(', ') + ' variant support' : '' %>.</li>
+          <li><strong>Locations:</strong> <%= u.locationModel.summary %></li>
+          <li><strong>Receiving:</strong> <%= u.receivingWorkflow %></li>
+          <% if (u.locationModel.transfersExpected) { %><li><strong>Transfers:</strong> <%= u.transferWorkflow %></li><% } %>
+          <li><strong>Corrections:</strong> <%= u.adjustmentWorkflow %></li>
+        </ul>
+      </div>
+    </details>
+  <% } %>
+
+  <%# ------------------------------------------------------- the structure %>
+  <% if (!focusedOnboarding) { %>
+    <p class="rm-stamp"><%- helpers.icon('layers', { size: 14 }) %> How this inventory would be organised</p>
+    <div class="rm-cols">
+      <div class="rm-col">
+        <h3><%- helpers.icon('box', { size: 14 }) %> <%= helpers.plural(2, term('item')) %></h3>
+        <p class="rm-figure" style="font-size:17px;margin:0 0 6px">
           <% if (u.recommendedConfiguration.usesVariants && u.variantDimensions.length) { %>
             <%= u.variantDimensions.map(function (d) { return d.name; }).join(' → ') %>
           <% } else { %>
             <%= mode.label %>
           <% } %>
-        </h2>
-        <p><%= u.recommendedConfiguration.summary || mode.blurb %></p>
-        <div class="badge-row">
-          <span class="<%= helpers.trackingBadgeClass(u.recommendedConfiguration.trackingMode) %>"><%= mode.label %></span>
-          <% if (u.recommendedConfiguration.usesVariants) { %><span class="badge badge--variant">Variants</span><% } %>
-          <% if (u.expirationTracking.applies) { %><span class="badge badge--warn">Expiration dates</span><% } %>
+        </p>
+        <p style="font-size:13.5px;color:var(--ink-2);margin:0"><%= u.recommendedConfiguration.summary || mode.blurb %></p>
+        <div class="rm-badges">
+          <span class="rm-pillbadge is-ok"><%= mode.label %></span>
+          <% if (u.recommendedConfiguration.usesVariants) { %><span class="rm-pillbadge">Variants</span><% } %>
+          <% if (u.expirationTracking.applies) { %><span class="rm-pillbadge is-warn">Expiration dates</span><% } %>
         </div>
         <% if (u.variantDimensions.length) { %>
-          <ul class="proposal-list">
+          <ul style="margin-top:10px">
             <% u.variantDimensions.forEach(function (dim) { %>
-              <li><strong><%= dim.name %></strong> — <%= dim.exampleValues.join(', ') %></li>
+              <li><strong><%= dim.name %></strong><span><%= dim.exampleValues.length ? dim.exampleValues.join(', ') + ' — verified from what you supplied' : 'Actual values will come from your records.' %></span></li>
             <% }) %>
           </ul>
         <% } %>
       </div>
-    </section>
 
-    <section class="proposal-block">
-      <div class="proposal-label"><%= helpers.plural(2, term('location')) %></div>
-      <div class="proposal-body">
+      <div class="rm-col">
+        <h3><%- helpers.icon('locations', { size: 14 }) %> <%= helpers.plural(2, term('location')) %></h3>
         <% if (u.likelyLocations.length) { %>
-          <ul class="proposal-list">
+          <ul>
             <% u.likelyLocations.forEach(function (loc) { %>
-              <li><strong><%= loc.name %></strong> <span class="muted">· <%= helpers.locationKindLabel(loc.kind) %></span></li>
+              <li><strong><%= loc.name %></strong><span><%= helpers.locationKindLabel(loc.kind) %> · verified from your description</span></li>
             <% }) %>
           </ul>
-          <p><%= u.locationModel.summary || 'Stock will be tracked separately at each location.' %></p>
+          <p style="font-size:13px;color:var(--muted);margin:10px 0 0"><%= u.locationModel.summary || 'Stock will be tracked separately at each location.' %></p>
         <% } else { %>
-          <p>No locations mentioned yet — you can add them any time.</p>
+          <p style="font-size:13.5px;color:var(--muted);margin:0">No locations mentioned yet — you can add them any time.</p>
         <% } %>
       </div>
-    </section>
 
-    <section class="proposal-block">
-      <div class="proposal-label">Receiving</div>
-      <div class="proposal-body"><p><%= u.receivingWorkflow || 'Stock is received into a location and counted from there.' %></p></div>
-    </section>
-
-    <% if (u.locationModel.transfersExpected) { %>
-      <section class="proposal-block">
-        <div class="proposal-label">Transfers</div>
-        <div class="proposal-body"><p><%= u.transferWorkflow || 'Inventory can move between locations while preserving the full movement history.' %></p></div>
-      </section>
-    <% } %>
-
-    <section class="proposal-block">
-      <div class="proposal-label">Adjustments</div>
-      <div class="proposal-body"><p><%= u.adjustmentWorkflow || 'Physical-count corrections require a reason and remain auditable.' %></p></div>
-    </section>
-
-    <% if (terms.length) { %>
-      <section class="proposal-block">
-        <div class="proposal-label">Wording</div>
-        <div class="proposal-body">
-          <p>Foundry will use your words:</p>
-          <div class="badge-row">
+      <div class="rm-col">
+        <h3><%- helpers.icon('receive', { size: 14 }) %> How stock moves</h3>
+        <ul>
+          <li><strong>Receiving</strong><span><%= u.receivingWorkflow || 'Stock is received into a location and counted from there.' %></span></li>
+          <% if (u.locationModel.transfersExpected) { %>
+            <li><strong>Transfers</strong><span><%= u.transferWorkflow || 'Inventory can move between locations while preserving the full movement history.' %></span></li>
+          <% } %>
+          <li><strong>Adjustments</strong><span><%= u.adjustmentWorkflow || 'Physical-count corrections require a reason and remain auditable.' %></span></li>
+        </ul>
+        <% if (terms.length) { %>
+          <p style="font-size:12.5px;color:var(--muted);margin:12px 0 0">Foundry will use your words:</p>
+          <div class="rm-badges">
             <% terms.forEach(function (key) { %>
-              <span class="pill"><%= key %> → <strong><%= u.terminology[key] %></strong></span>
+              <span class="rm-pillbadge"><%= key %> → <%= u.terminology[key] %></span>
             <% }) %>
           </div>
-        </div>
-      </section>
-    <% } %>
-  </div>
-
-  <% if (!addingToExisting) { %>
-    <section class="card section">
-      <%#
-        True, and not a decision. It was six paragraphs of what Foundry can do
-        sitting between somebody and the button they came here to press.
-      %>
-      <div class="card-head"><div><p class="eyebrow">The whole business stays connected</p>
-        <h2>What starts working after this setup</h2>
-        <p class="hint">This page chooses how stock is organized. The rest of Foundry is already built in and updates from the same verified activity.</p></div></div>
-      <div class="card-body">
-        <div class="explain-grid">
-          <div><strong>Inventory</strong><p>Receipts, sales, transfers and counts keep physical stock current.</p></div>
-          <div><strong>Customer orders</strong><p>Confirmed orders hold available stock; fulfilment updates inventory and the customer balance.</p></div>
-          <div><strong>Purchasing</strong><p>Foundry calculates replenishment, prepares supplier orders and keeps incoming quantities separate from stock already here.</p></div>
-          <div><strong>Supplier email</strong><p>Connect Gmail or Microsoft 365 and approve the supplier sender; Foundry then matches replies, invoices and shipment updates.</p></div>
-          <div><strong>Accounting</strong><p>It is on automatically. Verified receipts, bills, sales and payments update what you own, owe, earned and received—without starting Accounting manually.</p></div>
-          <div><strong>Needs you</strong><p>Foundry handles supported routine work and asks only when evidence, authority or a real business decision is missing.</p></div>
-        </div>
-      </div>
-    </section>
-  <% } %>
-
-  <% if (u.unresolvedDecisions.length) { %>
-    <div class="card section">
-      <div class="card-head">
-        <%- helpers.icon('question', { size: 17 }) %>
-        <h2><%= u.unresolvedDecisions.length === 1 ? 'One thing worth deciding' : 'A few things worth deciding' %></h2>
-      </div>
-      <div class="card-body">
-        <% u.unresolvedDecisions.forEach(function (decision) { %>
-          <fieldset class="decision">
-            <legend><%= decision.question %></legend>
-            <p class="hint"><%= decision.whyItMatters %></p>
-            <div class="choice-grid">
-              <% decision.options.forEach(function (option) { %>
-                <label class="choice">
-                  <input type="radio" name="answer_<%= decision.id %>" value="<%= option.id %>"
-                         <%= option.id === decision.recommendedOptionId ? 'checked' : '' %>>
-                  <span class="choice-body">
-                    <strong>
-                      <%= option.label %>
-                      <% if (option.id === decision.recommendedOptionId) { %><span class="badge badge--ok">Foundry recommends</span><% } %>
-                    </strong>
-                    <span><%= option.consequence %></span>
-                  </span>
-                </label>
-              <% }) %>
-              <label class="choice choice--muted">
-                <input type="radio" name="answer_<%= decision.id %>" value="__foundry__">
-                <span class="choice-body">
-                  <strong>Let Foundry decide</strong>
-                  <span>Foundry picks the option it recommends and records that it decided.</span>
-                </span>
-              </label>
-            </div>
-          </fieldset>
-        <% }) %>
+        <% } %>
       </div>
     </div>
   <% } %>
 
-  <% if (configRecs.length || futureRecs.length) { %>
-    <div class="card section">
-      <div class="card-head"><h2>A few things I'd recommend</h2></div>
-      <div class="card-body">
-        <% if (configRecs.length) { %>
-          <p class="muted" style="margin:0 0 12px;">
-            Tick anything you want to act on. Ticking it does not change the setup
-            below — it records that you agreed, and Foundry lists it on the next
-            screen with what to do about it. Leaving one unticked simply means no.
-          </p>
-        <% } %>
+  <%# -------------------------------------------------- what starts working %>
+  <% if (!addingToExisting && !focusedOnboarding) { %>
+    <%# True, and not a decision. It was six paragraphs of what Foundry can do
+        sitting between somebody and the button they came here to press. %>
+    <details class="rm-work" style="margin:0 0 16px">
+      <summary>What starts working after this setup</summary>
+      <div class="rm-work__body">
+        <p class="rm-quiet" style="font-size:13px;margin:0 0 12px;max-width:74ch">
+          This page chooses how stock is organised. The rest of Foundry is already built in and
+          updates from the same verified activity.
+        </p>
+        <div class="rm-cols" style="margin:0">
+          <div class="rm-col">
+            <ul>
+              <li><strong>Inventory</strong><span>Receipts, sales, transfers and counts keep physical stock current.</span></li>
+              <li><strong>Customer orders</strong><span>Confirmed orders hold available stock; fulfilment updates inventory and the customer balance.</span></li>
+            </ul>
+          </div>
+          <div class="rm-col">
+            <ul>
+              <li><strong>Purchasing</strong><span>Foundry calculates replenishment, prepares supplier orders and keeps incoming quantities separate from stock already here.</span></li>
+              <li><strong>Supplier email</strong><span>Connect Gmail or Microsoft 365 and approve the supplier sender; Foundry then matches replies, invoices and shipment updates.</span></li>
+            </ul>
+          </div>
+          <div class="rm-col">
+            <ul>
+              <li><strong>Accounting</strong><span>On automatically. Verified receipts, bills, sales and payments update what you own, owe, earned and received.</span></li>
+              <li><strong>Needs you</strong><span>Foundry handles supported routine work and asks only when evidence, authority or a real business decision is missing.</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </details>
+  <% } %>
+
+  <%# ---------------------------------------------------------- decisions %>
+  <% if (!deferConfigurationQuestions && u.unresolvedDecisions.length) { %>
+    <p class="rm-stamp">
+      <%- helpers.icon('question', { size: 14 }) %>
+      <%= u.unresolvedDecisions.length === 1 ? 'One thing worth deciding' : 'A few things worth deciding' %>
+    </p>
+    <% u.unresolvedDecisions.forEach(function (decision) { %>
+      <fieldset style="border:0;padding:0;margin:0 0 18px">
+        <legend style="font-size:15px;font-weight:650;letter-spacing:-0.02em;padding:0;margin-bottom:4px"><%= decision.question %></legend>
+        <p class="rm-quiet" style="font-size:13px;margin:0 0 10px"><%= decision.whyItMatters %></p>
+        <div class="rm-picks">
+          <% decision.options.forEach(function (option) { %>
+            <label class="rm-pick">
+              <input type="radio" name="answer_<%= decision.id %>" value="<%= option.id %>"
+                     <%= option.id === decision.recommendedOptionId ? 'checked' : '' %>>
+              <span class="rm-pick__box" aria-hidden="true"></span>
+              <span>
+                <span class="rm-pick__t">
+                  <%= option.label %>
+                  <% if (option.id === decision.recommendedOptionId) { %><span class="rm-pillbadge is-ok">Foundry recommends</span><% } %>
+                </span>
+                <span class="rm-pick__d"><%= option.consequence %></span>
+              </span>
+            </label>
+          <% }) %>
+          <label class="rm-pick rm-pick--quiet">
+            <input type="radio" name="answer_<%= decision.id %>" value="__foundry__">
+            <span class="rm-pick__box" aria-hidden="true"></span>
+            <span>
+              <span class="rm-pick__t">Let Foundry decide</span>
+              <span class="rm-pick__d">Foundry picks the option it recommends and records that it decided.</span>
+            </span>
+          </label>
+        </div>
+      </fieldset>
+    <% }) %>
+  <% } %>
+
+  <%# ---------------------------------------------------- recommendations %>
+  <% if (!deferConfigurationQuestions && (configRecs.length || futureRecs.length)) { %>
+    <p class="rm-stamp"><%- helpers.icon('spark', { size: 14 }) %> A few things I'd recommend</p>
+    <% if (configRecs.length) { %>
+      <p class="rm-quiet" style="font-size:13px;margin:0 0 10px;max-width:74ch">
+        Tick anything you want to act on. Ticking it does not change the setup below — it records
+        that you agreed, and Foundry lists it on the next screen with what to do about it. Leaving
+        one unticked simply means no.
+      </p>
+      <div class="rm-picks" style="margin-bottom:16px">
         <% configRecs.forEach(function (rec) { %>
-          <label class="rec">
+          <label class="rm-pick rm-pick--check">
             <input type="checkbox" name="acceptRecommendation" value="<%= rec.id %>">
-            <span class="rec-body">
-              <strong><%= rec.title %></strong>
-              <span class="rec-noticed">I noticed: <%= rec.noticed %></span>
-              <span><%= rec.recommendation %></span>
-              <span class="rec-why">Why it matters: <%= rec.why_it_matters %></span>
+            <span class="rm-pick__box" aria-hidden="true"></span>
+            <span>
+              <span class="rm-pick__t"><%= rec.title %></span>
+              <span class="rm-pick__d">I noticed: <%= rec.noticed %></span>
+              <span class="rm-pick__d" style="color:var(--ink-2)"><%= rec.recommendation %></span>
+              <span class="rm-pick__d">Why it matters: <%= rec.why_it_matters %></span>
             </span>
           </label>
         <% }) %>
-
-        <% if (futureRecs.length) { %>
-          <div class="rec-future">
-            <h3>Not available yet</h3>
-            <% futureRecs.forEach(function (rec) { %>
-              <div class="rec rec--future">
-                <span class="rec-body">
-                  <strong><%= rec.title %> <span class="badge badge--muted">Future</span></strong>
-                  <span class="rec-noticed">I noticed: <%= rec.noticed %></span>
-                  <span><%= rec.recommendation %></span>
-                  <span class="rec-why">Why it matters: <%= rec.why_it_matters %></span>
-                </span>
-              </div>
-            <% }) %>
-          </div>
-        <% } %>
       </div>
-    </div>
+    <% } %>
+
+    <% if (futureRecs.length) { %>
+      <details class="rm-work" style="margin:0 0 16px">
+        <summary>Not available yet · <%= futureRecs.length %></summary>
+        <div class="rm-work__body">
+          <ul class="rm-checks">
+            <% futureRecs.forEach(function (rec) { %>
+              <li>
+                <span class="rm-checks__ic"><%- helpers.icon('clock', { size: 13 }) %></span>
+                <span>
+                  <strong><%= rec.title %></strong> <span class="rm-pillbadge">Future</span><br>
+                  <span class="rm-quiet">I noticed: <%= rec.noticed %> · <%= rec.recommendation %> · Why it matters: <%= rec.why_it_matters %></span>
+                </span>
+              </li>
+            <% }) %>
+          </ul>
+        </div>
+      </details>
+    <% } %>
   <% } %>
 
+  <%# -------------------------------------------------------------- caveats %>
   <%
     var caveats = [];
     (u.assumptions || []).forEach(function (line) { caveats.push(String(line).trim()); });
@@ -393,20 +606,21 @@
     });
     caveats = caveats.filter(Boolean);
   %>
-  <% if (caveats.length) { %>
-    <details class="card section proposal-caveats">
+  <% if (caveats.length && !focusedOnboarding) { %>
+    <details class="rm-work proposal-caveats" style="margin:0 0 16px">
       <summary>
         <%= caveats.length %> thing<%= caveats.length === 1 ? '' : 's' %> Foundry had to assume
         or could not read cleanly
       </summary>
-      <div class="card-body">
-        <ul class="proposal-list">
+      <div class="rm-work__body">
+        <ul class="plain-list">
           <% caveats.forEach(function (caveat) { %><li><%= caveat %></li><% }) %>
         </ul>
       </div>
     </details>
   <% } %>
 
+  <%# -------------------------------------------------------- the decision %>
   <%
     // Does approving this actually put stock on a shelf? The document says so
     // or it does not, and the button has to agree with the answer.
@@ -416,34 +630,37 @@
     var askedOptions = (locals.documentMeaning && documentMeaning.needsYou.length
       && documentMeaning.needsYou[0].options) || [];
   %>
-  <div class="foundry-confirm">
-    <div>
-      <strong><%= askedOptions.length ? 'What should Foundry do with this?' : 'Ready when you are.' %></strong>
-      <% if (askedOptions.length) { %>
-        <span class="muted">Three different answers, and they do different things. Nothing happens
-          until you pick one.</span>
-      <% } else if (!doc) { %>
-        <span class="muted">Foundry sets up structure only — no products, stock or serial numbers are invented.</span>
-      <% } else if (arrivesAsStock) { %>
-        <span class="muted"><%= addingToExisting ? 'This adds the shown products and supplier records, then puts ' : 'This creates the shown structure and puts ' %><%= docUnits %> <%= docUnitText %> from <%= setupDocument.sourceName %> into stock, because the file is evidence they arrived.</span>
-      <% } else { %>
-        <span class="muted">This creates the products<%= doc.supplierName ? ' and records ' + doc.supplierName + ' as a supplier' : '' %>. <strong>No stock is added and no money is recorded as owed</strong> — <%= locals.documentMeaning ? documentMeaning.means : 'this file is not evidence that anything arrived' %>.</span>
-      <% } %>
+  <% if (!focusedOnboarding) { %>
+    <div class="rm-confirm">
+      <span class="rm-confirm__t">
+        <strong><%= askedOptions.length ? 'What should Foundry do with this?' : 'Ready when you are.' %></strong>
+        <% if (askedOptions.length) { %>
+          <span>Three different answers, and they do different things. Nothing happens until you pick one.</span>
+        <% } else if (syntheticSetup) { %>
+          <span><strong>This is a synthetic test environment.</strong> Foundry will generate realistic test products, variants, suppliers, stock, transactions, and history within the approved scope.</span>
+        <% } else if (!doc) { %>
+          <span>Foundry sets up structure only — no products, stock or serial numbers are invented.</span>
+        <% } else if (arrivesAsStock) { %>
+          <span><%= addingToExisting ? 'This adds the shown products and supplier records, then puts ' : 'This creates the shown structure and puts ' %><%= docUnits %> <%= docUnitText %> from <%= setupDocument.sourceName %> into stock, because the file is evidence they arrived.</span>
+        <% } else { %>
+          <span>This creates the products<%= doc.supplierName ? ' and records ' + doc.supplierName + ' as a supplier' : '' %>. <strong>No stock is added and no money is recorded as owed</strong> — <%= locals.documentMeaning ? documentMeaning.means : 'this file is not evidence that anything arrived' %>.</span>
+        <% } %>
+      </span>
+      <span class="rm-choices">
+        <a class="rm-btn rm-btn--ghost" href="/foundry">Start over</a>
+        <% if (currentUser.role !== 'owner') { %>
+          <span class="rm-quiet" style="font-size:13px">Only an owner can apply this.</span>
+        <% } else if (askedOptions.length) { %>
+          <%# Nothing here; the answers are laid out below with what each one does. %>
+        <% } else { %>
+          <button class="rm-btn" type="submit"><%- helpers.icon('check', { size: 15 }) %> <%= doc
+            ? (arrivesAsStock ? (addingToExisting ? 'Add ' : 'Set up and add ') + docUnits + ' ' + docUnitText + ' to stock'
+               : 'Set up these products')
+            : (syntheticSetup ? 'Configure structure and generate synthetic data' : 'Configure my inventory') %></button>
+        <% } %>
+      </span>
     </div>
-    <div class="btn-row">
-      <a class="btn" href="/foundry">Start over</a>
-      <% if (currentUser.role !== 'owner') { %>
-        <span class="muted">Only an owner can apply this.</span>
-      <% } else if (askedOptions.length) { %>
-        <%# Nothing here; the answers are laid out below with what each one does. %>
-      <% } else { %>
-        <button class="btn btn--primary btn--lg" type="submit"><%= doc
-          ? (arrivesAsStock ? (addingToExisting ? 'Add ' : 'Set up and add ') + docUnits + ' ' + docUnitText + ' to stock'
-             : 'Set up these products')
-          : 'Configure my inventory' %></button>
-      <% } %>
-    </div>
-  </div>
+  <% } %>
 
   <%#
     The answers, each saying what it does.
@@ -455,9 +672,9 @@
     consequence written next to it.
   %>
   <% if (askedOptions.length && currentUser.role === 'owner') { %>
-    <div class="doc-answers">
+    <div class="rm-answers">
       <% askedOptions.forEach(function (option, index) { %>
-        <button class="doc-answer <%= index === 0 ? 'is-primary' : '' %>"
+        <button class="rm-answer <%= index === 0 ? 'is-primary' : '' %>"
           type="submit" name="documentIntent" value="<%= option.label || option %>">
           <strong><%= option.label || option %></strong>
           <% if (option.does) { %><span><%= option.does %></span><% } %>

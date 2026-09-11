@@ -6,29 +6,37 @@ const request = require('supertest');
 
 const { makeApp, cleanupAll, seedWorkspace, signIn } = require('../helpers');
 const { configure } = require('../helpers/scenarios');
+const workItems = require('../../src/autopilot/work-items');
 
 test.after(cleanupAll);
 
-test('the global Tell Foundry link always points at an input that exists', async () => {
+/*
+ * Telling Foundry something is one box, and the link to it always works.
+ *
+ * There used to be two: "Ask Foundry" answered questions on one page and
+ * "Tell Foundry" carried instructions from somewhere else, and the shell had
+ * to guess which of them a given workspace could use — which is how a global
+ * button came to point at a fragment that did not exist on the page it opened.
+ *
+ * There is one line now, at one address, and it is the same for every
+ * workspace whether or not Foundry has been configured.
+ */
+test('the line is one address, and the box it promises is on it', async () => {
   const { db, app } = makeApp();
   const workspace = seedWorkspace(db);
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
 
-  // A manually-created inventory has the command on the action page, not on
-  // the traditional overview. The shell must not point to a missing fragment.
   const manualHome = (await agent.get('/')).text;
-  assert.match(manualHome, /href="\/actions#action-instruction"/);
-  assert.match(manualHome, /href="\/guide"[^>]*>[^<]*.*How do I use Foundry\?/s);
-  assert.match((await agent.get('/actions')).text, /id="action-instruction"/);
+  assert.match(manualHome, /href="\/ask"/, 'the chrome offers the line');
 
-  // Once Foundry is configured, its universal command lives on Foundry Home.
+  // Once Foundry is configured, the same link goes to the same place.
   configure(db, workspace.workspaceId);
-  const foundryHome = (await agent.get('/')).text;
-  assert.match(foundryHome, /href="\/#tell-foundry"/);
-  assert.match(foundryHome, /href="\/guide"/);
-  assert.match(foundryHome, /id="tell-foundry"/);
-  assert.match(foundryHome, /id="ask-question"/);
+  assert.match((await agent.get('/')).text, /href="\/ask"/);
+
+  const line = (await agent.get('/ask')).text;
+  assert.match(line, /<textarea[^>]*id="ask-question"/, 'and the box is actually there');
+  assert.match(line, /action="\/foundry\/tell"/, 'posting to the router that reads a sentence');
 
   const guide = (await agent.get('/guide')).text;
   assert.match(guide, /How do I use Foundry\?/);
@@ -41,68 +49,58 @@ test('the global Tell Foundry link always points at an input that exists', async
 });
 
 /**
- * The sidebar must highlight the page you are actually on.
+ * The chrome must say where you are, and never say it wrongly.
  *
- * Found by clicking, not by a test: opening Home lit Inventory, and opening
- * Connections lit Settings. Both came from a page reusing another destination's
- * key — "/" renders a view that calls itself 'overview' when Foundry has not
- * been configured, and the connections routes were still labelling themselves
- * 'settings' from when they lived inside that page.
+ * This used to be a sidebar of eight departments, and the bug it was written
+ * for was a wrong highlight: opening Home lit Inventory, opening Connections
+ * lit Settings. An answer to "where am I" that is confidently wrong is worse
+ * than none at all.
  *
- * A wrong highlight is not cosmetic. The sidebar is the product's answer to
- * "where am I", and an answer that is confidently wrong is worse than none.
+ * There are three states now, because there are three things somebody does in
+ * a day: read the brief, settle what is waiting, say something. Everything
+ * else is reached from a story or by asking, and marks nothing — which is not
+ * a gap. Those pages carry their own name and their own way back, and a rail
+ * that claimed one of three states while you were reading an order would be
+ * the same confident lie in a smaller frame.
  */
-test('the sidebar highlights the page you are on, and only that page', async () => {
+test('the rail marks the state you are in, and only that one', async () => {
   const { db, app } = makeApp();
   const workspace = seedWorkspace(db);
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
 
-  /** The labels of every sidebar entry currently marked active. */
+  /** The labels of every rail entry currently marked current. */
   const activeOn = async (path) => {
     const html = (await agent.get(path)).text;
-    const sidebar = html.split('<nav class="nav"')[1].split('</nav>')[0];
-    return (sidebar.match(/<a[^>]*class="nav-item is-active"[\s\S]*?<\/a>/g) || [])
-      .map((anchor) => (anchor.match(/<span>([^<]+)<\/span>/) || [])[1])
+    const rail = html.split('<header class="rm-rail"')[1].split('</header>')[0];
+    return (rail.match(/<a[^>]*class="rm-tab is-on"[\s\S]*?<\/a>/g) || [])
+      .map((anchor) => anchor.replace(/<[^>]*>/g, '').replace(/\d+/g, '').trim())
       .filter(Boolean);
   };
 
-  // Unconfigured: "/" is still Home, whichever view it renders underneath.
-  assert.deepEqual(await activeOn('/'), ['Home'], 'Home lights Home, not Inventory');
+  // Unconfigured: "/" is still the brief, whichever view it renders underneath.
+  assert.deepEqual(await activeOn('/'), ['Brief']);
 
-  // And configured, where "/" renders the other view entirely.
+  // And configured, where "/" has a whole operation to report on.
   configure(db, workspace.workspaceId);
-  assert.deepEqual(await activeOn('/'), ['Home']);
+  assert.deepEqual(await activeOn('/'), ['Brief']);
 
-  assert.deepEqual(await activeOn('/inventory'), ['Inventory']);
   assert.deepEqual(await activeOn('/needs-you'), ['Needs you']);
-  assert.deepEqual(await activeOn('/activity'), ['Activity']);
-  assert.deepEqual(await activeOn('/settings'), ['Settings']);
-  assert.deepEqual(await activeOn('/settings/connections'), ['Connections'],
-    'Connections is its own destination, not a corner of Settings');
+  assert.deepEqual(await activeOn('/ask'), ['Ask']);
 
   /*
-   * A page that belongs to a section lights that section.
-   *
-   * The sidebar used to name every department: Sales, Fulfilment, Mail,
-   * Purchasing, Accounting. Each of those is now part of something the owner
-   * recognises as a job rather than a module, and the highlight has to agree
-   * with that, or the nav says one thing and the page says another.
+   * Everything that used to be a department marks nothing, and that is the
+   * design: these are places you arrive at from a story, not states you live
+   * in. Each one still has to be a working address.
    */
-  assert.deepEqual(await activeOn('/purchasing'), ['Inventory'],
-    'buying stock is how inventory arrives');
-  assert.deepEqual(await activeOn('/orders'), ['Orders']);
-  assert.deepEqual(await activeOn('/sales'), ['Orders'],
-    'the older address is the same page and lights the same entry');
-  assert.deepEqual(await activeOn('/fulfilment'), ['Orders'],
-    'picking and shipping are what happens to an order');
-  assert.deepEqual(await activeOn('/mail'), ['Orders'],
-    'mail is about an order or a supplier, never a department of its own');
-  assert.deepEqual(await activeOn('/money'), ['Money']);
-  assert.deepEqual(await activeOn('/accounting'), ['Money']);
+  for (const path of ['/inventory', '/orders', '/purchasing', '/money', '/activity',
+    '/fulfilment', '/mail', '/settings', '/settings/connections']) {
+    assert.deepEqual(await activeOn(path), [], `${path} claims no state`);
+    assert.equal((await agent.get(path)).status, 200, `${path} must still work`);
+  }
 });
 
-test('the sidebar offers what an owner does, not what the software contains', async () => {
+test('the chrome offers three states, not a directory of departments', async () => {
   const { db, app } = makeApp();
   const workspace = seedWorkspace(db);
   const agent = request.agent(app);
@@ -110,21 +108,25 @@ test('the sidebar offers what an owner does, not what the software contains', as
   configure(db, workspace.workspaceId);
 
   const html = (await agent.get('/')).text;
-  const sidebar = html.split('<nav class="nav"')[1].split('</nav>')[0];
-  const labels = (sidebar.match(/<a[^>]*class="nav-item[^"]*"[\s\S]*?<\/a>/g) || [])
-    .map((anchor) => (anchor.match(/<span>([^<]+)<\/span>/) || [])[1])
+  const rail = html.split('<header class="rm-rail"')[1].split('</header>')[0];
+  const labels = (rail.match(/<a[^>]*class="rm-tab[^"]*"[\s\S]*?<\/a>/g) || [])
+    .map((anchor) => anchor.replace(/<[^>]*>/g, '').replace(/\d+/g, '').trim())
     .filter(Boolean);
 
-  assert.deepEqual(labels, ['Home', 'Needs you', 'Inventory', 'Orders', 'Money', 'Activity',
-    'Connections', 'Settings']);
+  assert.deepEqual(labels, ['Brief', 'Needs you', 'Ask']);
 
-  // The departments that were folded in are gone from the sidebar and still
-  // reachable: consolidating is not the same as removing.
-  for (const gone of ['Sales', 'Fulfilment', 'Mail', 'Purchasing', 'Accounting']) {
-    assert.ok(!labels.includes(gone), `${gone} should no longer be its own department`);
-  }
-  for (const path of ['/fulfilment', '/mail', '/purchasing']) {
+  /*
+   * Consolidating is not removing. Every department that came off the rail is
+   * still a working address, and every one of them is listed at /everything —
+   * which is the page that makes this arrangement honest rather than merely
+   * emptier.
+   */
+  const vault = (await agent.get('/everything')).text;
+  for (const path of ['/fulfilment', '/mail', '/purchasing', '/orders', '/inventory/table',
+    '/accounting/books', '/activity', '/settings']) {
     assert.equal((await agent.get(path)).status, 200, `${path} must still work`);
+    assert.match(vault, new RegExp(`href="${path.replace(/\//g, '\\/')}"`),
+      `${path} is listed with everything else`);
   }
 });
 
@@ -165,10 +167,17 @@ test('what was folded into a section is reachable from inside it', async () => {
 
   const orders = await bodyOf('/orders');
   assert.match(orders, /href="\/fulfilment"/, 'picking and shipping live under Orders');
-  assert.match(orders, /href="\/mail"/, 'customer mail lives under Orders');
 
-  assert.match(await bodyOf('/inventory'), /href="\/purchasing"/,
-    'ordering and suppliers live under Inventory');
+  assert.match(await bodyOf('/inventory'), /href="\/purchasing/,
+    'ordering and suppliers live under what you hold');
+
+  /*
+   * Mail is no longer a department, and no longer something Orders links to as
+   * one. What a customer was told is a line of their order's own story, and
+   * the whole mailbox is listed with everything else.
+   */
+  assert.match(await bodyOf('/everything'), /href="\/mail"/,
+    'the mailbox is still reachable, just not as a department');
 });
 
 /*
@@ -205,11 +214,12 @@ test('a page opened from Settings offers the way back, and one opened elsewhere 
     assert.match(opened, /Back to Settings/);
   }
 
-  // Reached from a purchase order instead, it must not claim they came from
-  // Settings — including after an earlier visit that did.
+  // Reached from Purchasing instead, it must replace the older Settings trail
+  // with the journey the person is actually on now.
   const elsewhere = (await agent.get('/suppliers').set('Referer', `${base}/purchasing`)).text;
-  assert.ok(!/class="page-back"/.test(elsewhere),
-    'a back link to a page somebody has not been is worse than none');
+  assert.match(elsewhere, /class="page-back" href="\/purchasing"/);
+  assert.match(elsewhere, /Back to Purchasing/,
+    'the most recent real hub replaces an older remembered origin');
 
   // Settings itself never offers to go back to itself.
   const settings = (await agent.get('/settings').set('Referer', origin)).text;
@@ -234,5 +244,60 @@ test('saving on a page opened from Settings keeps the way back', async () => {
   await agent.get('/locations').set('Referer', `${base}/settings`);
   const afterSaving = (await agent.get('/locations').set('Referer', `${base}/locations`)).text;
   assert.match(afterSaving, /class="page-back" href="\/settings"/);
+  server.close();
+});
+
+test('a decision opened from Needs you returns to the decision inbox', async () => {
+  const { db, app } = makeApp();
+  const workspace = seedWorkspace(db);
+  configure(db, workspace.workspaceId);
+  const item = workItems.upsert(db, workspace.workspaceId, {
+    category: 'attention_review', source: 'navigation-test',
+    sourceEvidence: [{ label: 'Difference', value: 3 }],
+    affectedEntities: { displayName: 'Count difference' },
+    recommendedAction: { actionType: 'review' },
+    approvalRequirement: 'REQUIRED',
+    executionStatus: workItems.STATUS.WAITING_FOR_APPROVAL,
+    idempotencyKey: 'navigation:return-to-needs-you',
+  }).item;
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const agent = request.agent(server);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const fromInbox = (await agent.get(`/autopilot/work/${item.id}`)
+    .set('Referer', `${base}/needs-you`)).text;
+  assert.match(fromInbox, /class="page-back" href="\/needs-you"/);
+  assert.match(fromInbox, /Back to Needs you/);
+
+  const briefAgent = request.agent(server);
+  await signIn(briefAgent, workspace.account.email, workspace.account.password);
+  const fromBrief = (await briefAgent.get(`/autopilot/work/${item.id}`)
+    .set('Referer', `${base}/`)).text;
+  assert.match(fromBrief, /class="page-back" href="\/"/);
+  assert.match(fromBrief, /Back to Brief/,
+    'a decision opened from the owner brief returns to the owner brief');
+
+  const purchasingAgent = request.agent(server);
+  await signIn(purchasingAgent, workspace.account.email, workspace.account.password);
+  const fromPurchasing = (await purchasingAgent.get(`/autopilot/work/${item.id}`)
+    .set('Referer', `${base}/purchasing`)).text;
+  assert.match(fromPurchasing, /class="page-back" href="\/purchasing"/);
+  assert.match(fromPurchasing, /Back to Purchasing/,
+    'a decision opened from the purchasing plan returns to that plan');
+
+  const fromPurchaseOrderAgent = request.agent(server);
+  await signIn(fromPurchaseOrderAgent, workspace.account.email, workspace.account.password);
+  const fromPurchaseOrder = (await fromPurchaseOrderAgent.get(`/autopilot/work/${item.id}`)
+    .set('Referer', `${base}/purchasing/orders/po_exact_record`)).text;
+  assert.match(fromPurchaseOrder, /class="page-back" href="\/purchasing\/orders\/po_exact_record"/);
+  assert.match(fromPurchaseOrder, /Back to Purchase order/,
+    'a decision opened from an exact PO returns to that exact record');
+
+  const directAgent = request.agent(server);
+  await signIn(directAgent, workspace.account.email, workspace.account.password);
+  const direct = (await directAgent.get(`/autopilot/work/${item.id}`)).text;
+  assert.match(direct, /class="page-back" href="\/autopilot"/,
+    'a direct/bookmarked decision keeps the safe Automatic work fallback');
   server.close();
 });

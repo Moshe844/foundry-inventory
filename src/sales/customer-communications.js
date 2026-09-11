@@ -207,13 +207,16 @@ function composeShippingNotice(db, workspaceId, shipmentId) {
     FROM sales_order_lines WHERE sales_order_id = ? AND workspace_id = ?`)
     .get(shipment.order_id, workspaceId);
   const outstanding = Number(totals.ordered) - Number(totals.fulfilled);
+  const collected = shipment.handover === 'COLLECTED';
 
   const body = [
     `Hello${shipment.customer_name ? ` ${shipment.customer_name}` : ''},`,
     '',
-    `Your order ${shipment.order_number} is on its way.`,
+    collected
+      ? `Your order ${shipment.order_number} was collected.`
+      : `Your order ${shipment.order_number} is on its way.`,
     '',
-    'In this shipment:',
+    collected ? 'Items collected:' : 'In this shipment:',
     ...lines.map((line) => {
       const name = line.variant_label ? `${line.item_name} / ${line.variant_label}` : line.item_name;
       return `- ${name}${line.sku_code ? ` (${line.sku_code})` : ''}: ${line.quantity}`;
@@ -228,7 +231,7 @@ function composeShippingNotice(db, workspaceId, shipmentId) {
         ? `This order is travelling in ${shipment.package_count} packages.` : null,
     ].filter(Boolean),
     outstanding > 0
-      ? ['', `${outstanding} ${outstanding === 1 ? 'item' : 'items'} on this order have not shipped yet. We will let you know when they do.`].join('\n')
+      ? ['', `${outstanding} ${outstanding === 1 ? 'item' : 'items'} on this order ${collected ? 'have not been collected' : 'have not shipped'} yet. We will let you know when they do.`].join('\n')
       : null,
     '',
     'Thank you.',
@@ -239,7 +242,9 @@ function composeShippingNotice(db, workspaceId, shipmentId) {
     shipment,
     customerId: shipment.customer_id,
     recipient: trimOrNull(shipment.customer_email),
-    subject: `Your order ${shipment.order_number} has shipped`,
+    subject: collected
+      ? `Your order ${shipment.order_number} was collected`
+      : `Your order ${shipment.order_number} has shipped`,
     body,
   };
 }
@@ -497,13 +502,9 @@ function onShipped(db, ctx, shipmentId) {
 async function autoSend(db, ctx, message) {
   if (!message || message.status !== 'PREPARED') return { sent: false, reason: null };
   if (policy(db, ctx.workspaceId).shippingNotice !== 'send') return { sent: false, reason: null };
-  /*
-   * Telling a customer their parcel has gone is its own authority. It is the
-   * least consequential thing on the list and it is still mail leaving in the
-   * owner's name, so it is granted separately from everything else.
-   */
-  const permitted = require('../autopilot/capabilities').may(db, ctx.workspaceId, 'shipping_notices');
-  if (!permitted.allowed) return { sent: false, reason: permitted.because };
+  /* "Send these for me" is the explicit, workspace-scoped authority for this
+     exact notice type. Requiring a second hidden autonomy policy after the
+     owner selected it made the visible setting lie about what would happen. */
   try {
     const sent = await sendThroughMailbox(db, ctx.workspaceId, message.id, ctx.actorId || null);
     return { sent: sent.status === 'SENT', reason: null, message: sent };

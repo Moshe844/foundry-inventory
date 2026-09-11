@@ -400,7 +400,7 @@ test('pause retains every taught rule while execution remains stopped, and resum
   assert.equal(automationPolicies.list(env.db, env.workspace.workspaceId, { activeOnly: true }).length, 1);
 });
 
-test('approving a taught transfer boundary immediately reconsiders real pending evidence and executes only inside it', async () => {
+test('approving a taught transfer boundary reconsiders evidence and prepares work only inside it', async () => {
   const { db } = makeDatabase();
   const env = seedAuthorityWorkspace(db, { requiredQuantity: 5, workspaceName: 'Taught Transfer Event' });
   const beforeSource = balanceAt(env, env.source.id);
@@ -410,8 +410,12 @@ test('approving a taught transfer boundary immediately reconsiders real pending 
       provider: provider(read([{ ...blank(), domain: 'transfer_authority', sourceLocationText: env.source.name, locationText: env.destination.name, maximumQuantity: 5 }], 'Five-unit transfer authority')),
     });
   operating.approve(db, env.ctx, env.membership, proposal.id, proposal.integrityHash);
-  assert.equal(balanceAt(env, env.source.id), beforeSource - 5);
-  assert.equal(balanceAt(env, env.destination.id), beforeDestination + 5);
+  assert.equal(balanceAt(env, env.source.id), beforeSource);
+  assert.equal(balanceAt(env, env.destination.id), beforeDestination);
+  const transfer = db.prepare(
+    'SELECT status FROM inventory_transfers WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1'
+  ).get(env.workspace.workspaceId);
+  assert.equal(transfer.status, 'APPROVED');
   const policy = automationPolicies.list(db, env.workspace.workspaceId, { activeOnly: true })[0];
   assert.equal(policy.maximumQuantity, 5);
   assert.equal(modes.get(db, env.workspace.workspaceId).mode, modes.MODES.POLICY_AUTOMATED);
@@ -444,5 +448,8 @@ test('pause keeps a newly taught policy inert and resume safely replays the elig
   modes.resume(db, env.ctx, env.membership);
   require('../../src/manager/reactions').publishAndReact(db, env.workspace.workspaceId,
     require('../../src/manager/events').TYPES.FOUNDRY_RESUMED, { change: 'resumed' }, { idempotencyKey: `resume:test:${env.workspace.workspaceId}` });
-  assert.equal(balanceAt(env, env.destination.id), before + 5);
+  assert.equal(balanceAt(env, env.destination.id), before);
+  assert.equal(db.prepare(
+    'SELECT COUNT(*) AS n FROM inventory_transfers WHERE workspace_id = ? AND status = ?'
+  ).get(env.workspace.workspaceId, 'APPROVED').n, 1);
 });

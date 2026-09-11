@@ -145,17 +145,19 @@ test('D — school devices become serialized assets', { skip: !LIVE, timeout: TI
   assert.equal(u.recommendedConfiguration.trackingMode, 'serial');
   assert.equal(u.serializedTracking.applies, true);
   assert.equal(school.plan.serialRules.enabled, true);
-  assert.ok(school.plan.locations.length >= 1, 'a storage location was described');
+  assert.equal(school.plan.locations.length, 0,
+    '"a storage location" describes structure, not a verified location name');
 });
 
 test('E — an ambiguous description is handled honestly, not elaborately', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const { ambiguous } = await results();
   const u = ambiguous.understanding;
 
-  // What it does know: quantity inventory, and two locations were explicit.
+  // What it does know: quantity inventory and that multiple locations are
+  // required. "Two stores" gives a count/type, not two real location names.
   assert.equal(u.recommendedConfiguration.trackingMode, 'quantity');
   assert.equal(u.locationModel.multipleLocations, true);
-  assert.ok(u.likelyLocations.length >= 2, 'two stores were stated outright');
+  assert.equal(u.likelyLocations.length, 0, 'unnamed stores must not become invented records');
 
   // What it must not invent from "we sell building supplies".
   assert.equal(u.serializedTracking.applies, false, 'nothing implied per-unit identity');
@@ -196,9 +198,15 @@ test('the four businesses produce materially different results', { skip: !LIVE, 
   const models = four.map((r) => `${r.plan.inventoryModel.primaryArchetype}:${r.plan.inventoryModel.usesVariants}`);
   assert.ok(new Set(models).size >= 3, `expected varied models, got ${models.join(', ')}`);
 
-  // Different locations — no shared boilerplate set.
-  const locationSets = four.map((r) => r.plan.locations.map((l) => l.name.toLowerCase()).sort().join('|'));
-  assert.equal(new Set(locationSets).size, 4, 'each business should get its own locations');
+  // Only actual names supplied by the owner may become location records. A
+  // structural phrase such as "storage location" is not a business name.
+  assert.deepEqual(all.rental.plan.locations, []);
+  assert.deepEqual(all.food.plan.locations, []);
+  assert.deepEqual(all.school.plan.locations, []);
+  assert.deepEqual(all.ambiguous.plan.locations, []);
+  assert.equal(all.clothing.plan.locations.length, 2);
+  assert.ok(all.clothing.plan.locations.some((row) => /brooklyn/i.test(row.name)));
+  assert.ok(all.clothing.plan.locations.some((row) => /new jersey/i.test(row.name)));
 
   // Different recommendations, and no recommendation text reused across businesses.
   const titles = four.flatMap((r) => r.understanding.recommendations.map((rec) => rec.title.toLowerCase()));
@@ -302,7 +310,8 @@ test('applying a live plan configures structure and never invents inventory', { 
       { items: 0, skus: 0, movements: 0, units: 0, lots: 0, onHand: 0 },
       `${key}: Foundry must create structure only`
     );
-    assert.ok(repo.listLocations(r.db, r.workspace.workspaceId).length >= 1, `${key}: locations were configured`);
+    assert.equal(repo.listLocations(r.db, r.workspace.workspaceId).length, r.plan.locations.length,
+      `${key}: only verified location names were configured`);
   }
 });
 
@@ -332,7 +341,7 @@ test('Foundry answers a question about the real configuration', { skip: !LIVE, t
   );
 });
 
-test('Foundry refuses to pretend it can forecast', { skip: !LIVE, timeout: TIMEOUT }, async () => {
+test('Foundry truthfully reports its implemented forecasting capability', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const { food } = await results();
   const answer = await assistant.ask(
     food.db,
@@ -342,12 +351,6 @@ test('Foundry refuses to pretend it can forecast', { skip: !LIVE, timeout: TIMEO
 
   // `supportedToday` is the structured contract and the thing the UI keys on;
   // asserting on prose phrasing would just make this test flaky.
-  assert.equal(answer.supportedToday, false, `expected an honest no, got: ${answer.answer}`);
-
-  // And it must not claim otherwise in the prose either.
-  assert.doesNotMatch(
-    answer.answer.toLowerCase(),
-    /\b(i|foundry) (can|will) (forecast|predict|calculate your reorder)/,
-    `Foundry must not promise forecasting: ${answer.answer}`
-  );
+  assert.equal(answer.supportedToday, true, `expected the canonical capability truth, got: ${answer.answer}`);
+  assert.match(answer.answer, /forecast|demand history|confidence/i);
 });

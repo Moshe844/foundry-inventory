@@ -16,6 +16,7 @@ const {
   UNDERSTANDING_SCHEMA,
   CORE_SCHEMA,
   ADVICE_SCHEMA,
+  RECORDS_SCHEMA,
 } = require('./understanding-schema');
 const { validate } = require('./validator');
 const { toWireSchema, clampToSchema, slugify } = require('./schema-tools');
@@ -23,6 +24,8 @@ const prompts = require('./prompts');
 const { ValidationError } = require('../domain/errors');
 const { TRACKING_MODE_IDS, LOCATION_KIND_IDS } = require('../domain/constants');
 const { newId, nowIso, requireText } = require('../lib/util');
+const dataMode = require('../synthetic/data-mode');
+const realBusinessGrounding = require('./real-business-grounding');
 
 const MIN_DESCRIPTION = 12;
 const MAX_DESCRIPTION = 4000;
@@ -39,15 +42,17 @@ async function describeBusiness(db, ctx, description, options = {}) {
   }
 
   const provider = options.provider || createProviderForTier('deep');
+  const executionContext = { workspaceMode: dataMode.workspaceMode(db, ctx.workspaceId) };
 
   // Two passes: read the operation, then advise on it. See understanding-schema
   // for why the wire schema is split; the contract validated below is whole.
   onStage('reading');
   const core = await provider.complete({
-    system: prompts.understandingSystemPrompt(),
+    system: prompts.understandingSystemPrompt(executionContext),
     prompt: prompts.understandingPrompt(clean),
     schema: CORE_SCHEMA,
     schemaName: 'inventory_understanding_core',
+    signal: options.signal,
   });
 
   // Validated against the wire form: the model is judged on the contract it was
@@ -60,12 +65,44 @@ async function describeBusiness(db, ctx, description, options = {}) {
     );
   }
 
+  /*
+   * Records the owner typed into the description, read on their own.
+   *
+   * A separate call because the schema for them is an array of objects, and
+   * asking for those alongside the structural contract produced a grammar the
+   * provider refuses to compile — the whole understanding then failed, and the
+   * owner was told "Foundry could not finish reading that."
+   *
+   * Defensive on purpose: somebody describing the shape of their business and
+   * listing no products at all is the normal case, so a failure to extract
+   * records must not lose the structural understanding that already succeeded.
+   */
+  onStage('records');
+  let records = { hasRecords: false, lines: [], ambiguities: [] };
+  try {
+    const typed = await provider.complete({
+      system: prompts.understandingSystemPrompt(executionContext),
+      prompt: prompts.recordsPrompt(clean),
+      schema: RECORDS_SCHEMA,
+      schemaName: 'inventory_understanding_records',
+      signal: options.signal,
+    });
+    const typedResult = validate(toWireSchema(RECORDS_SCHEMA), typed.data, { key: 'understanding-records-wire' });
+    if (typedResult.ok && typedResult.data.ownerProvidedInventory) {
+      records = typedResult.data.ownerProvidedInventory;
+    }
+  } catch {
+    // No records read is not the same as no understanding. The structural pass
+    // stands, and the owner is asked for quantities in the ordinary way.
+  }
+
   onStage('advising');
   const advice = await provider.complete({
-    system: prompts.understandingSystemPrompt(),
+    system: prompts.understandingSystemPrompt(executionContext),
     prompt: prompts.advicePrompt(clean, coreResult.data),
     schema: ADVICE_SCHEMA,
     schemaName: 'inventory_understanding_advice',
+    signal: options.signal,
   });
 
   const adviceResult = validate(toWireSchema(ADVICE_SCHEMA), advice.data, { key: 'understanding-advice-wire' });
@@ -78,7 +115,11 @@ async function describeBusiness(db, ctx, description, options = {}) {
 
   // Repair what is safely repairable (identifier shapes, over-long lists), then
   // enforce Foundry's own stricter contract on the result.
-  const merged = normalise({ ...coreResult.data, ...adviceResult.data }, clean);
+  const merged = normalise(
+    { ...coreResult.data, ownerProvidedInventory: records, ...adviceResult.data },
+    clean,
+    executionContext
+  );
   const whole = validate(UNDERSTANDING_SCHEMA, merged, { key: 'understanding' });
   if (!whole.ok) {
     throw new ValidationError(
@@ -104,7 +145,7 @@ async function describeBusiness(db, ctx, description, options = {}) {
  * Clamp a validated understanding to what the engine supports. Schema
  * validation proves the shape; this proves the meaning.
  */
-function normalise(raw, description) {
+function normalise(raw, description, executionContext = {}) {
   const understanding = clampToSchema(JSON.parse(JSON.stringify(raw)), UNDERSTANDING_SCHEMA);
   understanding.businessDescription = description;
 
@@ -171,6 +212,10 @@ function normalise(raw, description) {
     })
     .filter((decision) => decision.options.length >= 2);
 
+
+  if (executionContext.workspaceMode === 'production') {
+    realBusinessGrounding.ground(understanding, description);
+  }
 
   return understanding;
 }

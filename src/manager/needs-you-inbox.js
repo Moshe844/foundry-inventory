@@ -35,6 +35,40 @@ const proposals = require('../actions/proposal-service');
 const importPlans = require('../imports/plan-service');
 const autopilotPolicies = require('../autopilot/policy-service');
 const operatingInstructions = require('./operating-instructions');
+const dismissals = require('./needs-you-dismissals');
+const permissions = require('../actions/permissions');
+const { humanizeUnitMarkers } = require('../lib/util');
+
+/** SKUs already covered by a Foundry-prepared order that still needs placing. */
+function preparedReplenishmentSkus(db, workspaceId) {
+  return new Set(db.prepare(`SELECT DISTINCT pol.sku_id
+    FROM purchase_order_lines pol
+    JOIN purchase_orders po ON po.id = pol.purchase_order_id
+    WHERE pol.workspace_id = ? AND po.status IN ('DRAFT','AWAITING_APPROVAL')
+      AND po.source = 'foundry_recommendation'`).all(workspaceId).map((row) => row.sku_id));
+}
+
+/** Customer promises whose shortage the prepared supplier order is intended to cover. */
+function customerImpactForPurchase(db, workspaceId, purchaseOrderId) {
+  if (!purchaseOrderId) return '';
+  const skuIds = new Set(db.prepare(`SELECT sku_id FROM purchase_order_lines
+    WHERE workspace_id = ? AND purchase_order_id = ?`).all(workspaceId, purchaseOrderId)
+    .map((row) => row.sku_id));
+  if (!skuIds.size) return '';
+  const affected = require('../sales/sales-order-service').waitingForStock(db, workspaceId)
+    .flatMap((order) => order.lines
+      .filter((line) => skuIds.has(line.sku_id) && Number(line.backordered) > 0)
+      .map((line) => ({ orderNumber: order.order_number, quantity: Number(line.backordered),
+        displayName: line.displayName })));
+  if (affected.length === 1) {
+    const row = affected[0];
+    return `${row.orderNumber} is waiting for ${row.quantity} ${row.displayName}.`;
+  }
+  if (affected.length > 1) {
+    return `${affected.length} customer orders are waiting for ${affected.reduce((sum, row) => sum + row.quantity, 0)} units covered by this purchase.`;
+  }
+  return '';
+}
 
 /**
  * What Foundry does not know about a reported event.
@@ -131,6 +165,60 @@ function fromInvestigations(db, workspaceId) {
     });
 }
 
+function fromRepairCases(db, workspaceId) {
+  return require('../repairs/service').list(db, workspaceId, {
+    statuses: ['NEEDS_AUTHORITY', 'FAILED', 'INCONCLUSIVE'], limit: 100,
+  }).map((repairCase) => ({
+    id: `repair:${repairCase.id}`,
+    kind: 'repair',
+    title: repairCase.symptom,
+    happened: `Foundry found that ${repairCase.failedInvariant}.`,
+    why: repairCase.status === 'FAILED'
+      ? 'The domain repair ran or resumed, but its post-repair checks did not all pass. Foundry has not called it fixed.'
+      : repairCase.status === 'INCONCLUSIVE'
+        ? 'The records do not prove a safe correction yet, so Foundry stopped instead of forcing the numbers to agree.'
+        : 'Foundry diagnosed the cause and simulated the correction, but the materiality or permissions require your approval.',
+    recommendation: repairCase.simulation.summary
+      || 'Open the repair case to review the evidence and simulated consequences.',
+    missing: repairCase.status === 'NEEDS_AUTHORITY' ? 'Your approval for the simulated repair.'
+      : repairCase.status === 'INCONCLUSIVE' ? 'The exact source record that proves the correction.'
+        : 'A repair whose verification checks pass.',
+    actionLabel: repairCase.status === 'NEEDS_AUTHORITY'
+      ? 'Authorize the repair'
+      : repairCase.status === 'INCONCLUSIVE'
+        ? 'Provide the missing evidence'
+        : 'Resolve the failed repair',
+    href: `/repairs/${repairCase.id}`,
+    at: repairCase.updatedAt,
+    priority: repairCase.materiality === 'high' ? 96 : repairCase.materiality === 'medium' ? 90 : 82,
+  }));
+}
+
+/** Transfer requests are one custody decision, not a generic stock warning. */
+function fromTransfers(db, workspaceId) {
+  return db.prepare(`SELECT t.id, t.transfer_number, t.created_at, src.name AS source_name,
+      dst.name AS destination_name,
+      COALESCE((SELECT SUM(requested_quantity) FROM inventory_transfer_lines WHERE transfer_id = t.id),0) AS quantity
+    FROM inventory_transfers t
+    JOIN locations src ON src.id = t.source_location_id
+    JOIN locations dst ON dst.id = t.destination_location_id
+    WHERE t.workspace_id = ? AND t.status = 'REQUESTED'
+    ORDER BY t.created_at`).all(workspaceId).map((transfer) => ({
+      id: `transfer:${transfer.id}`,
+      kind: 'decision',
+      title: `${transfer.transfer_number} is waiting for approval`,
+      happened: `${transfer.quantity} units were requested from ${transfer.source_name} to ${transfer.destination_name}. No stock has moved.`,
+      why: 'Requesting a transfer does not authorize assets to leave a location.',
+      recommendation: 'Approve it only if the quantity, source, destination, and physical stock are correct.',
+      missing: 'Transfer approval.',
+      actionLabel: 'Approve the transfer',
+      href: `/transfers/${transfer.id}`,
+      at: transfer.created_at,
+      priority: 85,
+      requiredPermission: permissions.APPROVE_TRANSFER,
+    }));
+}
+
 function fromCorrections(db, workspaceId) {
   return proposals
     .listOpen(db, workspaceId, { limit: 20 })
@@ -185,11 +273,15 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
     if (item.category === 'purchase_approval') {
       const po = action.poNumber || 'A purchase order';
       const exception = item.source === 'price_exception';
+      const customerImpact = customerImpactForPurchase(
+        db, workspaceId, item.purchaseOrderId || action.purchaseOrderId
+      );
       return {
         ...base,
         kind: 'decision',
         title: exception ? `${po} costs more than your rule allows` : `${po} is ready to send`,
-        happened: (item.policyEvaluation || {}).reason || `${po} for ${action.supplierName || 'a supplier'}.`,
+        happened: `${(item.policyEvaluation || {}).reason || `${po} for ${action.supplierName || 'a supplier'}.`}` +
+          `${customerImpact ? ` ${customerImpact}` : ''}`,
         why: exception
           ? 'Your rule caps how far a price may move, and this order is over it, so Foundry stopped.'
           : 'Foundry prepared it but will not place an order with a supplier by itself.',
@@ -199,6 +291,21 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
         missing: exception ? 'Whether to accept the new price.' : 'Your decision to place it.',
         actionLabel: exception ? 'Approve the new price' : 'Place the order',
         priority: 84,
+      };
+    }
+
+    if (item.category === 'balance_transfer') {
+      return {
+        ...base,
+        kind: 'decision',
+        title: `Move ${action.quantity} ${action.displayName || named || 'units'} to ${action.toLocationName || 'the location that needs them'}?`,
+        happened: `${action.fromLocationName || 'Another location'} has stock available while ${action.toLocationName || 'another location'} needs it.`,
+        why: (item.policyEvaluation || {}).reason
+          || 'Foundry prepared the transfer but does not have authority to move this stock automatically.',
+        recommendation: `Move the recorded quantity only if the stock is physically available at ${action.fromLocationName || 'the source location'}.`,
+        missing: 'Your approval to make this transfer.',
+        actionLabel: 'Approve the transfer',
+        priority: ageDays >= 3 ? 92 : 90,
       };
     }
 
@@ -214,6 +321,34 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
         actionLabel: 'Add supplier',
         href: action.skuId ? `/purchasing/supplier-for/${action.skuId}` : '/purchasing/setup',
         priority: 86,
+      };
+    }
+
+    if (item.category === 'replenishment_plan') {
+      const approval = autopilotPresenter.explain(db, workspaceId, item.id).approvalCopy;
+      const skuId = action.skuId || item.affectedEntities?.skuId;
+      const customerShortages = skuId
+        ? require('../sales/sales-order-service').waitingForStock(db, workspaceId)
+          .flatMap((order) => order.lines
+            .filter((line) => line.sku_id === skuId && Number(line.backordered) > 0)
+            .map((line) => ({ orderNumber: order.order_number,
+              quantity: Number(line.backordered), displayName: line.displayName })))
+        : [];
+      const customerImpact = customerShortages.length === 1
+        ? `${customerShortages[0].orderNumber} is waiting for ${customerShortages[0].quantity} ${customerShortages[0].displayName}.`
+        : customerShortages.length > 1
+          ? `${customerShortages.length} customer orders are waiting for ${customerShortages.reduce((sum, row) => sum + row.quantity, 0)} units of this product.`
+          : '';
+      if (approval) return {
+        ...base,
+        kind: 'decision',
+        title: approval.heading,
+        happened: `${approval.summary}${customerImpact ? ` ${customerImpact}` : ''}`,
+        why: action.explanation || 'Foundry combined the stock need and the safest available response into one plan.',
+        recommendation: approval.approvalEffect,
+        missing: 'Your approval of this exact plan.',
+        actionLabel: approval.primaryLabel,
+        priority: ageDays >= 3 ? 92 : 85,
       };
     }
 
@@ -237,19 +372,22 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
   // and Check-now result disagree with the page named “Needs you”.
   const drafts = autopilotPresenter.whatFoundryPrepared(db, workspaceId, { limit: 100 })
     .filter((entry) => entry.kind === 'purchase')
-    .map((entry) => ({
-      id: `purchase:${entry.id}`,
-      kind: 'decision',
-      title: entry.title,
-      happened: entry.because,
-      why: 'Foundry prepared the order but will not place it with a supplier by itself.',
-      recommendation: 'Place the order if the supplier, price and quantity are correct.',
-      missing: 'Your decision to place it.',
-      actionLabel: entry.action,
-      href: entry.link,
-      at: null,
-      priority: entry.priority || 55,
-    }));
+    .map((entry) => {
+      const customerImpact = customerImpactForPurchase(db, workspaceId, entry.id);
+      return {
+        id: `purchase:${entry.id}`,
+        kind: 'decision',
+        title: entry.title,
+        happened: `${entry.because}${customerImpact ? ` ${customerImpact}` : ''}`,
+        why: 'Foundry prepared the order but will not place it with a supplier by itself.',
+        recommendation: 'Place the order if the supplier, price and quantity are correct.',
+        missing: 'Your decision to place it.',
+        actionLabel: entry.action,
+        href: entry.link,
+        at: null,
+        priority: entry.priority || 55,
+      };
+    });
 
   return [...controlled, ...drafts];
 }
@@ -1009,9 +1147,22 @@ function fromSalesOrders(db, workspaceId) {
   const today = new Date();
   const dayMs = 24 * 60 * 60 * 1000;
   const entries = [];
+  const coveredByPreparedOrder = preparedReplenishmentSkus(db, workspaceId);
   for (const order of salesOrders.waitingForStock(db, workspaceId)) {
     for (const line of order.lines.filter((entry) => entry.backordered > 0)) {
+      // A prepared replenishment plan already owns this exact stock decision.
+      // Showing a second customer-shortage card made one problem look like two
+      // and its button led to an explanation page with no completion action.
+      if (workItems.awaitingReplenishmentForSku(db, workspaceId, line.sku_id)) continue;
+      // Once Foundry has prepared the supplier order, placing that order is the
+      // one owner decision. The customer consequence is printed on that PO
+      // decision instead of becoming a second card for the same shortage.
+      if (coveredByPreparedOrder.has(line.sku_id)) continue;
       const incoming = position.onOrderForSku(db, workspaceId, line.sku_id);
+      // Fully covered demand with no customer-promised date is status, not a
+      // decision. The order remains visibly waiting for incoming stock, but
+      // there is no date to renegotiate and no additional supply to choose.
+      if (!order.needed_by && incoming.onOrder >= Number(line.backordered)) continue;
       const incomingInTime = order.needed_by && incoming.onOrder >= line.backordered && incoming.nextExpectedDate
         && incoming.nextExpectedDate <= order.needed_by;
       if (incomingInTime) continue;
@@ -1145,6 +1296,59 @@ function fromConnections(db, workspaceId) {
   });
 }
 
+/** Approved purchase orders that have not actually reached their supplier. */
+function fromPendingSupplierCommunications(db, workspaceId) {
+  const rows = db.prepare(`SELECT sc.*, po.po_number, po.id AS po_id,
+      s.id AS supplier_id, s.name AS supplier_name
+    FROM supplier_communications sc
+    JOIN purchase_orders po ON po.id = sc.purchase_order_id
+    JOIN suppliers s ON s.id = sc.supplier_id
+    WHERE sc.workspace_id = ? AND po.status = 'ORDERED'
+      AND sc.status IN ('PREPARED','QUEUED','FAILED')
+      AND NOT EXISTS (
+        SELECT 1 FROM supplier_communications sent
+        WHERE sent.workspace_id = sc.workspace_id
+          AND sent.purchase_order_id = sc.purchase_order_id
+          AND sent.status = 'SENT'
+      )
+    ORDER BY sc.updated_at DESC`).all(workspaceId);
+  return rows.map((row) => {
+    const missingEmail = !row.recipient;
+    const missingMailbox = !row.connector_id;
+    return {
+      id: `supplier-communication:${row.id}`,
+      kind: missingEmail || missingMailbox ? 'setup' : 'decision',
+      title: missingEmail
+        ? `${row.po_number} needs ${row.supplier_name}'s email before it can be sent`
+        : missingMailbox
+          ? `${row.po_number} needs a sending mailbox`
+          : `${row.po_number} is approved but has not been sent`,
+      happened: row.status === 'FAILED'
+        ? `Foundry tried to send the order, but the message failed: ${row.error_message || 'the provider did not accept it'}.`
+        : `The purchase order is approved inside Foundry, but ${row.supplier_name} has not received it.`,
+      why: missingEmail
+        ? `There is no email address on ${row.supplier_name}'s supplier record.`
+        : missingMailbox
+          ? 'No approved connected mailbox is selected for this supplier.'
+          : 'The supplier message is prepared, but Foundry does not have authority to send it automatically.',
+      recommendation: missingEmail
+        ? 'Add the real supplier email. Foundry will use it for this order and future communication.'
+        : missingMailbox
+          ? 'Choose the connected mailbox Foundry should use for this supplier.'
+          : 'Send the prepared order.',
+      missing: missingEmail ? 'The supplier email address.'
+        : missingMailbox ? 'A sending mailbox.' : 'Permission to send this message.',
+      actionLabel: missingEmail ? 'Add supplier email'
+        : missingMailbox ? 'Choose mailbox' : 'Send order',
+      href: missingEmail || missingMailbox
+        ? `/suppliers/${row.supplier_id}`
+        : `/purchasing/orders/${row.po_id}`,
+      at: row.updated_at,
+      priority: 90,
+    };
+  });
+}
+
 function fromAccounting(db, workspaceId) {
   const rows = db.prepare(`SELECT aei.*, so.id AS sales_order_id, so.order_number
     FROM accounting_event_inbox aei
@@ -1206,6 +1410,9 @@ function fromBusinessConsistency(db, workspaceId) {
   const state = require('./business-brain').build(db, workspaceId);
   return state.attention
     .filter((entry) => ['consistency', 'missing-bill'].includes(entry.kind))
+    .filter((entry) => entry.kind !== 'consistency' || !db.prepare(`SELECT 1 FROM repair_cases
+      WHERE workspace_id = ? AND failed_invariant = ? AND status <> 'RESOLVED' LIMIT 1`)
+      .get(workspaceId, entry.title))
     .map((entry, index) => ({
       id: `business:${entry.kind}:${entry.id || index}`,
       kind: entry.kind === 'consistency' ? 'investigation' : 'decision',
@@ -1225,30 +1432,25 @@ function fromBusinessConsistency(db, workspaceId) {
     }));
 }
 
-/** Everything waiting, newest and most urgent first, as one list. */
-function inbox(db, workspaceId) {
-  // Clean up the legacy false-positive before reading the inbox. This is
-  // intentionally idempotent and makes the corrected behavior immediate for
-  // workspaces that have not yet run a scheduled reconciliation.
-  try {
-    investigations.resolveByTrigger(
-      db,
-      workspaceId,
-      'business_consistency_inventory-cost-coverage',
-      'Foundry reclassified this as missing financial evidence, not a disagreement in the business records.'
-    );
-  } catch {
-    // The defensive filter in fromInvestigations still prevents stale UI if a
-    // read-only or partially migrated database cannot record the cleanup.
-  }
+/**
+ * Owner decisions produced by the operational engines.
+ *
+ * This deliberately excludes the unified-business consistency projection:
+ * business-brain consumes this function when it builds that projection, so
+ * including it here would make the brain recursively ask itself what needs
+ * attention. Keeping this boundary explicit lets Home, Ask and Needs You share
+ * one source for actual waiting work without copying its classification logic.
+ */
+function operationalEntries(db, workspaceId) {
   const safely = (fn) => {
     try { return fn(db, workspaceId) || []; } catch { return []; }
   };
-
-  const entries = [
+  return [
     ...safely(fromPhysicalEvents),
     ...safely(fromWorkItems),
     ...safely(fromInvestigations),
+    ...safely(fromRepairCases),
+    ...safely(fromTransfers),
     ...safely(fromCorrections),
     ...safely(fromImports),
     ...safely(fromMailboxRemovedImportChoices),
@@ -1264,15 +1466,84 @@ function inbox(db, workspaceId) {
     ...safely(fromPolicies),
     ...safely(fromAutomationSuggestions),
     ...safely(fromSalesOrders),
+    ...safely(fromPendingSupplierCommunications),
     ...safely(fromConnections),
     ...safely(fromAccounting),
-    ...safely(fromBusinessConsistency),
+    ...safely(fromCountsReturnsAndWaves),
     ...safely(fromFindings),
+  ];
+}
+
+/** Mission 8 exceptions, compressed to one exact decision per workflow. */
+function fromCountsReturnsAndWaves(db, workspaceId) {
+  const entries = [];
+  for (const row of db.prepare(`SELECT s.id,s.status,s.created_at,c.name FROM inventory_count_sessions s
+    JOIN inventory_count_campaigns c ON c.id=s.campaign_id WHERE s.workspace_id=?
+      AND s.status IN ('RECOUNT_REQUIRED','AWAITING_APPROVAL')`).all(workspaceId)) {
+    const recount = row.status === 'RECOUNT_REQUIRED';
+    entries.push({ id:`count:${row.id}`,kind:'count',title:`${row.name} ${recount?'needs a blind recount':'has a variance to approve'}`,
+      happened: recount?'The first blind count disagreed with the recorded stock.':'Two count passes produced a recorded variance.',
+      why: recount?'Foundry cannot change stock from one disputed count.':'Counting and approving a stock correction are separate authorities.',
+      recommendation: recount?'Count the affected products again without showing the first answer.':'Review the revealed variance, then approve or reject the correction.',
+      missing: recount?'An independent physical recount.':'Variance approval.',actionLabel:recount?'Start recount':'Review variance',
+      href:`/warehouse/counts/${row.id}`,at:row.created_at,priority:88,
+      requiredPermission:recount?permissions.COUNT_STOCK:permissions.APPROVE_COUNT_VARIANCE });
+  }
+  for (const row of db.prepare(`SELECT id,return_number,status,created_at FROM customer_returns
+    WHERE workspace_id=? AND status='AWAITING_REFUND'`).all(workspaceId)) entries.push({id:`rma:${row.id}`,kind:'customer_return',
+      title:`${row.return_number} is inspected and waiting for its refund`,happened:'The returned goods were received and their physical condition was recorded.',
+      why:'Foundry cannot decide a refund amount or payment destination without authority.',recommendation:'Approve the evidence-backed refund and let accounting reconcile it.',missing:'Refund amount and approval.',
+      actionLabel:'Finish the return',href:`/warehouse/returns/customer/${row.id}`,at:row.created_at,priority:85,requiredPermission:permissions.REFUND_CUSTOMER_RETURN});
+  for (const row of db.prepare(`SELECT id,return_number,status,created_at FROM supplier_returns
+    WHERE workspace_id=? AND status IN ('AWAITING_CREDIT','CREDIT_MISMATCH')`).all(workspaceId)) {const mismatch=row.status==='CREDIT_MISMATCH';entries.push({id:`rtv:${row.id}`,kind:'supplier_return',
+      title:mismatch?`${row.return_number} supplier credit does not match`:`${row.return_number} is waiting for the supplier credit`,
+      happened:mismatch?'The supplier recorded a different credit from the amount expected.':'The goods left inventory and were returned to the supplier.',
+      why:mismatch?'Foundry will not silently force a difference into agreement.':'No supplier credit is recorded yet.',
+      recommendation:'Open the return and reconcile it against the supplier evidence.',missing:mismatch?'A decision about the credit difference.':'The supplier credit note.',
+      actionLabel:'Reconcile supplier return',href:`/warehouse/returns/supplier/${row.id}`,at:row.created_at,priority:mismatch?92:78,requiredPermission:permissions.RECONCILE_SUPPLIER_RETURN});}
+  for (const row of db.prepare(`SELECT id,wave_number,title,created_at FROM fulfillment_waves WHERE workspace_id=? AND status='BLOCKED'`).all(workspaceId)) entries.push({id:`wave:${row.id}`,kind:'wave',title:`Wave #${row.wave_number} stopped on a scan or shortage`,
+    happened:'A product/location scan failed or the shelf quantity was short.',why:'Foundry stopped before substituting an identity or pretending the units were picked.',
+    recommendation:'Review the failed scan, recount or replenish, then resume the exact line.',missing:'Correct physical identity or stock evidence.',actionLabel:'Open blocked wave',href:`/warehouse/waves/${row.id}`,at:row.created_at,priority:90,requiredPermission:permissions.MANAGE_FULFILLMENT_WAVES});
+  return entries;
+}
+
+/** Everything waiting, newest and most urgent first, as one list. */
+function inbox(db, workspaceId, membership = null, options = {}) {
+  // Clean up the legacy false-positive before reading the inbox. This is
+  // intentionally idempotent and makes the corrected behavior immediate for
+  // workspaces that have not yet run a scheduled reconciliation.
+  try {
+    investigations.resolveByTrigger(
+      db,
+      workspaceId,
+      'business_consistency_inventory-cost-coverage',
+      'Foundry reclassified this as missing financial evidence, not a disagreement in the business records.'
+    );
+  } catch {
+    // The defensive filter in fromInvestigations still prevents stale UI if a
+    // read-only or partially migrated database cannot record the cleanup.
+  }
+  const rawEntries = [
+    ...operationalEntries(db, workspaceId),
+    ...fromBusinessConsistency(db, workspaceId),
     // Learning demand is not a decision. Home teaches the user to record real
     // sales in context; Needs You remains reserved for something Foundry is
     // genuinely blocked on, such as a mismatch, approval or unknown mapping.
-  ].map((entry) => ({
+  ];
+  const dismissedEntryIds = dismissals.dismissedIds(db, workspaceId, rawEntries.map((entry) => entry.id));
+  const entries = rawEntries
+    .filter((entry) => !dismissedEntryIds.has(entry.id))
+    .filter((entry) => !entry.requiredPermission || !membership
+      || permissions.can(membership, entry.requiredPermission)).map((entry) => ({
     ...entry,
+    // Presentation repair for immutable records created before natural
+    // pluralisation was introduced. Never show "unit(s)" to an owner.
+    title: humanizeUnitMarkers(entry.title),
+    happened: humanizeUnitMarkers(entry.happened),
+    why: humanizeUnitMarkers(entry.why),
+    recommendation: humanizeUnitMarkers(entry.recommendation),
+    missing: humanizeUnitMarkers(entry.missing),
+    actionLabel: humanizeUnitMarkers(entry.actionLabel),
     importance: entry.priority >= 90 ? 'Urgent' : entry.priority >= 80 ? 'Important' : 'Needs You',
   }));
 
@@ -1298,12 +1569,27 @@ function inbox(db, workspaceId) {
     if (!kept || (entry.priority || 0) > (kept.priority || 0)) seen.set(key, entry);
   }
 
-  return [...seen.values()]
+  const ordered = [...seen.values()]
     .sort((a, b) => (b.priority - a.priority) || String(b.at || '').localeCompare(String(a.at || '')));
+  return require('../product-brain/destinations').attach(ordered, membership, {
+    brain: options.productBrain,
+    strict: options.strictDestinations !== false,
+  }).map((entry) => ({
+    ...entry,
+    // Imports may supply a domain-specific destructive discard action. All
+    // other prompts get the one universal, persistent close action.
+    dismiss: entry.dismiss || {
+      action: '/needs-you/dismiss',
+      entryId: entry.id,
+      label: 'Dismiss completely',
+      confirm: 'Dismiss this from Foundry everywhere? This does not delete or change the underlying business record.',
+    },
+  }));
 }
 
 module.exports = {
   inbox,
+  operationalEntries,
   fromEmailOrders,
   fromMoneyHeldOnCancelledOrders,
   fromSupplierMoneyNotOnAnyBill,
@@ -1312,6 +1598,8 @@ module.exports = {
   missingFromEvent,
   fromPhysicalEvents,
   fromInvestigations,
+  fromRepairCases,
+  fromTransfers,
   fromCorrections,
   fromImports,
   fromMailboxInventory,
@@ -1320,10 +1608,12 @@ module.exports = {
   fromPolicies,
   fromAutomationSuggestions,
   fromSalesOrders,
+  fromPendingSupplierCommunications,
   fromConnections,
   fromAccounting,
   fromBusinessConsistency,
   fromWorkItems,
   fromFindings,
   fromReadiness,
+  fromCountsReturnsAndWaves,
 };

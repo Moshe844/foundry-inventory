@@ -11,6 +11,7 @@
 
 const policy = require('./policy');
 const resolver = require('./resolver');
+const removals = require('./removals');
 
 const ACTION_LABEL = {
   receive: 'receive',
@@ -81,6 +82,26 @@ function subjectOf(db, workspaceId, proposal) {
   }
 
   if (!proposal.skuId) {
+    const removalKind = removals.kindOf(proposal);
+    if (removalKind) {
+      const deletable = Boolean(proposal.settings.deletable);
+      return {
+        name: proposal.settings.recordName,
+        detail: removalKind.label,
+        recordKind: removalKind.kind,
+        deletable,
+        heldBy: proposal.settings.heldBy || null,
+        // Which of the two outcomes, in a sentence, because "remove" means one
+        // thing to the person and two things to the database. They should not
+        // have to guess which one they are approving.
+        note: removals.describe(removalKind, proposal.settings.recordName, {
+          deletable,
+          blocked: null,
+          heldBy: proposal.settings.heldBy || null,
+          used: proposal.settings.used || [],
+        }),
+      };
+    }
     if (proposal.actionType === 'add_location') {
       return { name: proposal.settings.name, detail: 'new location' };
     }
@@ -135,6 +156,11 @@ function subjectOf(db, workspaceId, proposal) {
 
 /** One sentence, for lists and for telling the model what is already pending. */
 function oneLine(db, workspaceId, proposal) {
+  const removalKind = removals.kindOf(proposal);
+  if (removalKind) {
+    return `${proposal.settings.deletable ? 'Delete' : 'Archive'} the ${removalKind.label} `
+      + `${proposal.settings.recordName}`;
+  }
   const subject = subjectOf(db, workspaceId, proposal);
   const name = [subject.name, subject.detail].filter(Boolean).join(' / ');
   const before = proposal.expectedBeforeState || {};
@@ -145,7 +171,7 @@ function oneLine(db, workspaceId, proposal) {
     case 'issue':
       return `Issue ${proposal.quantity} ${name} from ${before.sourceLocationName || 'a location'}`;
     case 'transfer':
-      return `Transfer ${proposal.quantity} ${name} from ${before.sourceLocationName || 'somewhere'} to ${before.destinationLocationName || 'somewhere'}`;
+      return `Request transfer of ${proposal.quantity} ${name} from ${before.sourceLocationName || 'somewhere'} to ${before.destinationLocationName || 'somewhere'}`;
     case 'adjust':
       return `Correct ${name} at ${before.sourceLocationName || 'a location'} to ${proposal.adjustmentTarget}`;
     case 'create_item': {
@@ -183,6 +209,9 @@ function present(db, workspaceId, proposal, options = {}) {
       label: before.sourceLocationName || 'Source',
       before: before.sourceOnHand ?? 0,
       after:
+        proposal.actionType === 'transfer'
+          ? before.sourceOnHand ?? 0
+          :
         proposal.actionType === 'adjust'
           ? proposal.adjustmentTarget
           : (before.sourceOnHand ?? 0) - (proposal.quantity || 0),
@@ -193,7 +222,9 @@ function present(db, workspaceId, proposal, options = {}) {
     rows.push({
       label: before.destinationLocationName || 'Destination',
       before: before.destinationOnHand ?? 0,
-      after: (before.destinationOnHand ?? 0) + (proposal.quantity || 0),
+      after: proposal.actionType === 'transfer'
+        ? before.destinationOnHand ?? 0
+        : (before.destinationOnHand ?? 0) + (proposal.quantity || 0),
       direction: 'in',
     });
   }
@@ -205,7 +236,7 @@ function present(db, workspaceId, proposal, options = {}) {
   const lotScoped = Boolean(proposal.lotId);
   const lotName = lotScoped && subject.detail ? subject.detail : null;
 
-  const total = proposal.actionType === 'archive_item'
+  const total = proposal.actionType === 'archive_item' || removals.kindOf(proposal)
     ? { before: before.total ?? 0, after: before.total ?? 0 }
     : {
     before: before.total ?? 0,
@@ -233,18 +264,48 @@ function present(db, workspaceId, proposal, options = {}) {
       })()
     : null;
 
+  /*
+   * Some actions do not move a number, they change what a record IS. The panel
+   * still needs a bottom line, so they get one in words — Active → Archived —
+   * instead of a stock total that would be the same on both sides of the arrow
+   * and read as though something had been counted.
+   */
+  const removalKind = removals.kindOf(proposal);
+  const statusRow = proposal.actionType === 'archive_item'
+    ? { label: 'Catalogue status', note: 'stock remains unchanged', before: 'Active', after: 'Archived' }
+    : removalKind
+      ? {
+        label: `${removalKind.label.charAt(0).toUpperCase()}${removalKind.label.slice(1)} record`,
+        note: 'no stock count changes',
+        before: 'Active',
+        after: subject.deletable ? 'Deleted' : 'Archived',
+      }
+      : null;
+
   return {
     ...proposal,
+    statusRow,
+    operationName: removalKind
+      ? `${subject.deletable ? 'Deleted' : 'Archived'} a ${removalKind.label}`
+      : null,
     lotScoped,
     lotName,
     productTotal,
-    title: proposal.actionType === 'create_item' && proposal.settings.initialStock
+    title: subject.recordKind
+      ? `Foundry is ready to ${subject.deletable ? 'delete' : 'archive'} a ${subject.detail}`
+      : proposal.actionType === 'transfer'
+      ? 'Foundry is ready to prepare a real transfer'
+      : proposal.actionType === 'create_item' && proposal.settings.initialStock
       ? 'Foundry is ready to add a product and receive its stock'
       : ACTION_TITLE[proposal.actionType] || 'Foundry is ready',
-    verb: proposal.actionType === 'create_item' && proposal.settings.initialStock
+    verb: subject.recordKind
+      ? (subject.deletable ? 'delete' : 'archive')
+      : proposal.actionType === 'create_item' && proposal.settings.initialStock
       ? 'add and receive'
       : ACTION_LABEL[proposal.actionType] || proposal.actionType,
-    pastVerb: proposal.actionType === 'create_item' && proposal.settings.initialStock
+    pastVerb: subject.recordKind
+      ? (subject.deletable ? 'deleted' : 'archived')
+      : proposal.actionType === 'create_item' && proposal.settings.initialStock
       ? 'added and received'
       : ACTION_PAST_LABEL[proposal.actionType] || `${proposal.actionType}d`,
     subject,
@@ -298,16 +359,33 @@ function outcome(db, workspaceId, proposal, execution) {
       })()
     : null;
 
+  // The same bottom line as the preview: a record that changed state reports
+  // that state, because "Total on hand 0 → 0" is not what happened to it.
+  const removalKind = removals.kindOf(proposal);
+  const statusRow = removalKind
+    ? {
+      label: `${removalKind.label.charAt(0).toUpperCase()}${removalKind.label.slice(1)} record`,
+      from: 'Active',
+      to: (execution.result && execution.result.recordDeleted) || proposal.settings.deletable ? 'Deleted' : 'Archived',
+    }
+    : proposal.actionType === 'archive_item'
+      ? { label: 'Catalogue status', from: 'Active', to: 'Archived' }
+      : null;
+
   return {
     name,
     lines,
     lotScoped,
     lotName,
     productTotal,
+    statusRow,
     total: { from: before.total ?? 0, to: after.total ?? 0 },
     verified: execution.verified,
     problems: (execution.verification && execution.verification.problems) || [],
     checks: (execution.verification && execution.verification.checks) || [],
+    transferId: execution.transferId || null,
+    transferNumber: execution.transferNumber || null,
+    transferStatus: execution.transferStatus || null,
   };
 }
 

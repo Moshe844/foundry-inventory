@@ -1,0 +1,475 @@
+<%
+  /*
+   * Home is the operation, running.
+   *
+   * Not a dashboard of widgets and not a letter. The first thing on the screen
+   * is proof that Foundry is working — a live state, then the operation in four
+   * numbers, then the one thing that needs a person. Underneath, two columns:
+   * what it did and what is coming on the left, how the business is doing and
+   * what it is deliberately unsure about on the right.
+   *
+   * Every number here is a state something is in right now, and every one of
+   * them opens what is inside it. None of them is a vanity metric.
+   */
+  var hour = new Date().getHours();
+  var greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
+  var today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  var needs = home.needsYou || [];
+  var needsCount = needs.length;
+  var handled = (home.did && home.did.actions) || [];
+  var counts = (home.did && home.did.counts) || {};
+  var handling = home.handling || [];
+  var paused = home.status.paused || home.status.suspended;
+  var isEmpty = !!locals.isEmpty;
+  var isSettingUp = !!home.setup || !!(home.guidance && !home.guidance.operationalReady);
+  var next = locals.whatsNext || [];
+  var guide = home.guidance || {};
+  /* A summary number must open the records behind that number. With one
+     handled item there is no reason to make somebody search a general log;
+     with several, the handled list immediately below is the useful index. */
+  var handledHref = handled.length === 1 && handled[0].link
+    ? handled[0].link
+    : (handled.length ? '/#foundry-handled' : null);
+  var handlingHref = handling.length === 1 && handling[0].link
+    ? handling[0].link
+    : (handling.length ? '/#foundry-handled' : null);
+
+  var verdict = paused
+    ? 'Foundry is paused.'
+    : isEmpty
+      ? 'This inventory is empty.'
+      : isSettingUp
+        ? 'Getting Foundry ready.'
+        : needsCount === 1
+          ? '1 thing needs your attention.'
+          : needsCount > 1
+            ? needsCount + ' things need your attention.'
+            : 'Everything is under control.';
+  var verdictAside = paused || isEmpty
+    ? null
+    : null;
+
+  /* A line's icon comes from what it is about, so the feed can be read down
+     the left edge without reading a word of it. */
+  function nextIcon(line) {
+    var t = String(line.text || '').toLowerCase();
+    if (/pack|carrier|ship/.test(t)) return 'ship';
+    if (/deliver|arriv|due|expect/.test(t)) return 'arrive';
+    if (/pick/.test(t)) return 'box';
+    if (/pay|owe|invoice/.test(t)) return 'wallet';
+    return 'clock';
+  }
+%>
+
+<% if (isEmpty) { %>
+<%
+  /*
+   * The first run.
+   *
+   * Nothing that follows a working inventory belongs here — no setup
+   * checklist, no command box, no "what Foundry handled", no decision card.
+   * There is exactly one thing to decide on a first morning, and every option
+   * on this screen is a real path that starts it. The three buttons this
+   * replaced went to a generic import screen and to the connections page,
+   * where the first thing an owner met was Stripe.
+   */
+  var sources = locals.sourceOptions || [];
+%>
+<section class="rm-hero">
+  <span class="rm-hero__badge"><span class="rm-dot" aria-hidden="true"></span> Foundry is ready</span>
+  <h1>This inventory is empty. Let's fill it.</h1>
+  <p>
+    Set it up with Foundry: tell me where your inventory lives and I will read it, work out how it
+    should be tracked, and show you exactly what I would create before anything is created.
+    After that I watch it, prepare the ordering and the supplier email, keep the books, and bring
+    you only what I cannot settle myself.
+  </p>
+  <div class="rm-hero__foot">
+    <span><%- helpers.icon('shield', { size: 15 }) %> Nothing is created until you approve it</span>
+    <span><%- helpers.icon('clock', { size: 15 }) %> Most of this takes a few minutes</span>
+  </div>
+</section>
+
+<p class="rm-stamp"><%- helpers.icon('layers', { size: 14 }) %> Where should I get your inventory from?</p>
+<div class="rm-choices-grid">
+  <% sources.forEach(function (source) { %>
+    <% if (source.href) { %>
+      <a class="rm-choice" href="<%= source.href %>">
+        <span class="rm-choice__ic"><%- helpers.icon(source.icon || 'box', { size: 19 }) %></span>
+        <span class="rm-choice__t"><%= source.label %></span>
+        <span class="rm-choice__b"><%= source.blurb %></span>
+        <span class="rm-choice__d"><%= source.detail %></span>
+        <% if (source.providers) { %>
+          <span class="rm-choice__tags"><% source.providers.forEach(function (name) { %><span><%= name %></span><% }) %></span>
+        <% } %>
+        <span class="rm-choice__go">Choose this <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+      </a>
+    <% } else { %>
+      <form class="rm-choice__form" method="post" action="/onboarding/choose">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="path" value="<%= source.id %>">
+        <input type="hidden" name="chosenBy" value="customer">
+        <button class="rm-choice" type="submit">
+          <span class="rm-choice__ic"><%- helpers.icon(source.icon || 'box', { size: 19 }) %></span>
+          <span class="rm-choice__t"><%= source.label %></span>
+          <span class="rm-choice__b"><%= source.blurb %></span>
+          <span class="rm-choice__d"><%= source.detail %></span>
+          <% if (source.providers) { %>
+            <span class="rm-choice__tags"><% source.providers.forEach(function (name) { %><span><%= name %></span><% }) %></span>
+          <% } %>
+          <span class="rm-choice__go">Choose this <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+        </button>
+      </form>
+    <% } %>
+  <% }) %>
+</div>
+
+<p class="rm-disclose">
+  <a href="/onboarding">Not sure — help me choose</a>
+  <a href="/guide">What Foundry does once it has this</a>
+  <a href="/everything">Everything else</a>
+</p>
+
+<% } else { %>
+
+<%# ------------------------------------------------------------ live header %>
+<p class="rm-stamp">
+  <span class="rm-live <%= paused ? 'rm-live--paused' : '' %>">
+    <span class="rm-dot" aria-hidden="true"></span>
+    <%= paused ? 'Foundry is paused' : 'Foundry is working' %>
+  </span>
+  <span><%= greeting %><%= firstName ? ', ' + firstName : '' %> · <%= today %></span>
+  <span>· checked <%= home.status.lastEvaluatedText %></span>
+  <% if (!paused && canOperate) { %>
+    <form method="post" action="/autopilot/pause" data-confirm="Pause Foundry? Nothing will happen automatically until you resume it." style="margin:0">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="back" value="/">
+      <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Pause</button>
+    </form>
+  <% } %>
+</p>
+
+<h1 class="rm-verdict">
+  <%= verdict %><% if (verdictAside) { %> <span class="q"><%= verdictAside %></span><% } %>
+</h1>
+
+<% if (paused) { %>
+  <p class="rm-prose">
+    <%= home.status.suspendedReason || home.status.pausedReason || 'Nothing happens automatically until you resume Foundry.' %>
+  </p>
+  <% if (canOperate) { %>
+    <form method="post" action="/autopilot/resume" style="margin:0 0 20px">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="rm-btn" type="submit"><%- helpers.icon('play', { size: 15 }) %> Resume Foundry</button>
+    </form>
+  <% } %>
+
+<% } else if (isEmpty) { %>
+<% } else { %>
+
+  <%# ----------------------------------------------------------- the pulse %>
+  <div class="rm-pulse">
+    <<%= handledHref ? 'a' : 'div' %> class="rm-stat rm-stat--brand"<% if (handledHref) { %> href="<%= handledHref %>"<% } %>>
+      <span class="rm-stat__top"><%- helpers.icon('check', { size: 15 }) %> Handled</span>
+      <span class="rm-stat__n"><%= counts.handled || 0 %></span>
+      <span class="rm-stat__d"><%= counts.handled === 1 ? 'automatic action completed in the last day' : (counts.handled ? 'automatic actions completed in the last day' : 'no automatic actions in the last day') %></span>
+    </<%= handledHref ? 'a' : 'div' %>>
+    <<%= handlingHref ? 'a' : 'div' %> class="rm-stat <%= handling.length ? 'rm-working' : '' %>"<% if (handlingHref) { %> href="<%= handlingHref %>"<% } %>>
+      <span class="rm-stat__top"><%- helpers.icon('bolt', { size: 15 }) %> In progress</span>
+      <span class="rm-stat__n"><%= handling.length %></span>
+      <span class="rm-stat__d"><%= handling.length ? 'Foundry is on it now' : 'nothing part-finished' %></span>
+    </<%= handlingHref ? 'a' : 'div' %>>
+    <a class="rm-stat" href="/inventory">
+      <span class="rm-stat__top"><%- helpers.icon('eye', { size: 15 }) %> Watching</span>
+      <span class="rm-stat__n"><%= counts.positionsWatched || 0 %></span>
+      <span class="rm-stat__d">stock positions, continuously</span>
+    </a>
+    <a class="rm-stat <%= needsCount ? 'rm-stat--flag' : '' %>" href="<%= needsCount ? '/#needs-you' : '/needs-you' %>">
+      <span class="rm-stat__top"><%- helpers.icon('hand', { size: 15 }) %> Needs you</span>
+      <span class="rm-stat__n"><%= needsCount %></span>
+      <span class="rm-stat__d"><%= needsCount ? 'decisions only you can make' : 'nothing is waiting' %></span>
+    </a>
+  </div>
+
+<% } %>
+
+<%
+  /*
+   * Getting ready is a different ask from settling a decision, so it gets its
+   * own quieter treatment. There is never more than one amber card on a page.
+   */
+  var showChecklist = guide.checklistActive && guide.next;
+  var completedSteps = showChecklist ? guide.steps.filter(function (s) { return s.complete; }).length : 0;
+%>
+<% if (guide.next && !needsCount) { %>
+  <div class="rm-next">
+    <p class="rm-stamp"><%- helpers.icon('spark', { size: 13 }) %> <%= showChecklist ? 'Do this next' : (guide.next.eyebrow || 'Do this next') %></p>
+    <p class="rm-next__t"><%= guide.next.title %></p>
+    <% if (guide.next.recommendation) { %><p class="rm-next__d"><%= guide.next.recommendation %></p><% } %>
+    <% if (!showChecklist && guide.next.what) { %><p class="rm-next__d"><%= guide.next.what %></p><% } %>
+    <% if (guide.next.href && guide.next.action) { %>
+      <p class="rm-choices" style="margin-top:11px"><a class="rm-btn rm-btn--sm" href="<%= guide.next.href %>"><%= guide.next.action %></a></p>
+    <% } %>
+  </div>
+<% } %>
+<% if (showChecklist) { %>
+  <details class="rm-work" style="margin:-6px 0 16px">
+    <summary><%= guide.operationalReady ? 'Optional setup' : 'Setup progress' %> · <%= completedSteps %> of <%= guide.steps.length %> complete</summary>
+    <div class="rm-work__body" style="padding-bottom:6px">
+      <div class="rm-feed">
+        <% guide.steps.forEach(function (step) { %>
+          <div class="rm-feed__row" style="padding-left:0;padding-right:0">
+            <span class="rm-feed__ic <%= step.complete ? 'is-done' : '' %>"><%- helpers.icon(step.complete ? 'check' : 'clock', { size: 14 }) %></span>
+            <span class="rm-feed__t"><%= step.title %><% if (step.current || step.complete) { %><small><%= step.detail %></small><% } %></span>
+            <span class="rm-feed__m">
+              <% if (step.complete) { %>done<% } else if (step.href && step.action) { %><a href="<%= step.href %>"><%= step.action %></a><% } %>
+            </span>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+  </details>
+<% } %>
+
+<%
+  /* The count above is never a mystery number. This compact index shows every
+     decision by name and opens its own decision context. The detailed guided
+     page still presents one decision at a time. */
+%>
+<% if (needsCount) { %>
+  <section class="rm-panel" id="needs-you" style="margin-bottom:18px;scroll-margin-top:22px">
+    <div class="rm-panel__head">
+      <%- helpers.icon('hand', { size: 15, className: 'rm-quiet' }) %>
+      <h2><%= needsCount %> <%= needsCount === 1 ? 'thing needs' : 'things need' %> you</h2>
+      <span class="right"><a href="/needs-you/all">See all together</a></span>
+    </div>
+    <div class="rm-feed">
+      <% needs.forEach(function (item, i) { %>
+        <a class="rm-feed__row" href="<%= item.link || item.href || ('/needs-you?at=' + i) %>">
+          <span class="rm-feed__ic is-flag"><%= i + 1 %></span>
+          <span class="rm-feed__t"><%= item.title %><% if (item.because) { %><small><%= item.because %></small><% } %></span>
+          <span class="rm-feed__m"><%= item.action || 'Open' %></span>
+        </a>
+      <% }) %>
+    </div>
+  </section>
+<% } %>
+
+<% if (!paused && !isEmpty) { %>
+<div class="rm-split">
+
+  <%# ------------------------------------------------------- what happened %>
+  <div class="rm-stack">
+    <section class="rm-panel" id="foundry-handled" style="scroll-margin-top:22px">
+      <div class="rm-panel__head">
+        <%- helpers.icon('check', { size: 15, className: 'rm-quiet' }) %>
+        <h2><%= handled.length ? 'What Foundry handled' : 'What Foundry checked' %></h2>
+        <span class="right"><a href="/activity">Everything that happened</a></span>
+      </div>
+      <div class="rm-feed">
+        <% if (handling.length) { %>
+          <% handling.slice(0, 3).forEach(function (item) { %>
+            <a class="rm-feed__row rm-working" href="<%= item.link %>">
+              <span class="rm-feed__ic is-live"><%- helpers.icon('bolt', { size: 14 }) %></span>
+              <span class="rm-feed__t"><%= item.title %><small><%= item.because %></small></span>
+              <span class="rm-feed__m">working</span>
+            </a>
+          <% }) %>
+        <% } %>
+        <% if (handled.length) { %>
+          <% handled.slice(0, 6).forEach(function (action) { %>
+            <a class="rm-feed__row" href="<%= action.link || '/activity' %>">
+              <span class="rm-feed__ic is-done"><%- helpers.icon('check', { size: 14 }) %></span>
+              <span class="rm-feed__t"><%= action.headline %><% if (action.detail) { %><small><%= action.detail %></small><% } %></span>
+              <span class="rm-feed__m"><%= action.verified ? 'verified' : '' %></span>
+            </a>
+          <% }) %>
+        <% } else if (!handling.length) { %>
+          <div class="rm-feed__row">
+            <span class="rm-feed__ic"><%- helpers.icon('eye', { size: 14 }) %></span>
+            <span class="rm-feed__t"><%= home.did.headline %><% if (/Nothing needed doing/i.test(home.did.headline || '')) { %><small>No automatic action was necessary.</small><% } %></span>
+            <span class="rm-feed__m"></span>
+          </div>
+        <% } %>
+      </div>
+    </section>
+
+    <%# ---------------------------------------------------------- coming up %>
+    <section class="rm-panel">
+      <div class="rm-panel__head">
+        <%- helpers.icon('calendar', { size: 15, className: 'rm-quiet' }) %>
+        <h2>Coming up</h2>
+      </div>
+      <div class="rm-feed">
+        <% if (next.length) { %>
+          <% next.forEach(function (line) { %>
+            <a class="rm-feed__row" href="<%= line.href %>">
+              <span class="rm-feed__ic <%= line.tone === 'late' ? 'is-flag' : '' %>"><%- helpers.icon(nextIcon(line), { size: 14 }) %></span>
+              <span class="rm-feed__t"><%= line.text %></span>
+              <span class="rm-feed__m"><%= line.tone === 'late' ? 'late' : '' %></span>
+            </a>
+          <% }) %>
+        <% } else { %>
+          <div class="rm-feed__row">
+            <span class="rm-feed__ic"><%- helpers.icon('calendar', { size: 14 }) %></span>
+            <span class="rm-feed__t">Nothing is dated in the next few days.<small>No shipment waiting on a carrier, no delivery expected, nothing falling due.</small></span>
+            <span class="rm-feed__m"></span>
+          </div>
+        <% } %>
+      </div>
+    </section>
+  </div>
+
+  <%# ------------------------------------------------------------- the side %>
+  <div class="rm-stack">
+    <% if (locals.financialPulse) { %>
+      <%
+        var fp = financialPulse;
+        var cash = function (minor) {
+          var amount = Number(minor || 0) / 100;
+          return (amount < 0 ? '-' : '') + (fp.currency === 'USD' ? '$' : fp.currency + ' ')
+            + Math.abs(amount).toLocaleString('en-US', { maximumFractionDigits: 0 });
+        };
+        var net = fp.pnl ? fp.pnl.netIncomeMinor : null;
+        /* Bars are drawn from the three real figures beside them and share one
+           scale, so their heights can be compared to each other and to nothing
+           else. */
+        var owed = Number(fp.receivableMinor || 0);
+        var owe = Number(fp.payableMinor || 0);
+        var bank = Number(fp.cashMinor || 0);
+        var customerCash = Number(fp.customerCashReceivedMinor || 0);
+        var prepayments = Number(fp.customerPrepaymentsMinor || 0);
+        var top = Math.max(owed, owe, bank, customerCash, 1);
+        var pct = function (v) { return Math.max(3, Math.round((Number(v || 0) / top) * 100)); };
+      %>
+      <section class="rm-panel">
+        <div class="rm-panel__head">
+          <%- helpers.icon('accounting', { size: 15, className: 'rm-quiet' }) %>
+          <h2>The business</h2>
+          <span class="right"><a href="/money">Money</a></span>
+        </div>
+        <% if (net !== null) { %>
+          <a href="/accounting/reports/profit-and-loss?from=<%= fp.from %>&to=<%= fp.to %>" style="display:block;padding:14px 16px 8px;text-decoration:none;color:inherit">
+            <div class="rm-stat__top" style="margin-bottom:2px">
+              <%- helpers.icon(net < 0 ? 'trendDown' : 'trendUp', { size: 15 }) %>
+              <%= net < 0 ? 'Loss after fulfilled sales' : 'Profit from fulfilled sales' %>
+            </div>
+            <div class="rm-stat__n" style="color:<%= net < 0 ? 'var(--bad)' : 'var(--ink)' %>"><%= cash(Math.abs(net)) %></div>
+            <div class="rm-stat__top" style="margin-top:4px;font-weight:400;color:var(--muted)">
+              Customer payments appear below immediately. Profit appears after the goods leave and their recorded cost is applied.
+            </div>
+          </a>
+        <% } %>
+        <div class="rm-feed">
+          <a class="rm-feed__row" href="/accounting#cash" style="grid-template-columns:minmax(0,1fr) auto">
+            <span class="rm-feed__t">Customer cash received this period
+              <small>Payments from customers that Foundry has recorded.</small>
+              <span class="rm-meter is-good" style="margin-top:6px"><span style="width:<%= pct(customerCash) %>%"></span></span>
+            </span>
+            <span class="rm-feed__m" style="font-size:13px;color:var(--ink);font-weight:650"><%= cash(customerCash) %></span>
+          </a>
+          <% if (prepayments > 0) { %>
+            <a class="rm-feed__row" href="/accounting#customers" style="display:block">
+              <span class="rm-feed__t"><%= cash(prepayments) %> was paid before delivery.
+                <small>It is cash received, but it is not earned revenue or profit until the goods leave.</small>
+              </span>
+            </a>
+          <% } %>
+          <a class="rm-feed__row" href="/accounting#customers" style="grid-template-columns:minmax(0,1fr) auto">
+            <span class="rm-feed__t">Customers still need to pay
+              <small>Confirmed orders and completed sales, minus payments recorded.</small>
+              <span class="rm-meter is-good" style="margin-top:6px"><span style="width:<%= pct(owed) %>%"></span></span>
+            </span>
+            <span class="rm-feed__m" style="font-size:13px;color:var(--ink);font-weight:650"><%= cash(owed) %></span>
+          </a>
+          <a class="rm-feed__row" href="/accounting#suppliers" style="grid-template-columns:minmax(0,1fr) auto">
+            <span class="rm-feed__t">You owe
+              <span class="rm-meter is-flag" style="margin-top:6px"><span style="width:<%= pct(owe) %>%"></span></span>
+            </span>
+            <span class="rm-feed__m" style="font-size:13px;color:var(--ink);font-weight:650"><%= cash(owe) %></span>
+          </a>
+          <a class="rm-feed__row" href="/accounting#cash" style="grid-template-columns:minmax(0,1fr) auto">
+            <span class="rm-feed__t">Cash Foundry has recorded
+              <small>This is not a verified bank balance unless a bank connection supplies it.</small>
+              <span class="rm-meter" style="margin-top:6px"><span style="width:<%= pct(bank) %>%"></span></span>
+            </span>
+            <span class="rm-feed__m" style="font-size:13px;color:var(--ink);font-weight:650"><%= cash(bank) %></span>
+          </a>
+        </div>
+      </section>
+    <% } %>
+
+    <%
+      /*
+       * What Foundry has noticed and not turned into a decision, plus where it
+       * is deliberately silent. The doctrine is that it never states what it
+       * cannot support, so silence is information — and information nobody can
+       * see is doing no work. This is the panel that makes the rest credible.
+       */
+      // Needs You already names every actionable issue from the unified inbox.
+      // The older stock-only daily brief can contain a smaller count, so do
+      // not repeat it here beside a broader authoritative count.
+      var noticedLine = !needsCount && locals.observedBrief ? String(locals.observedBrief).trim() : '';
+      var gaps = (home.readiness && home.readiness.evidenceGaps) || [];
+      var notes = (home.readiness && home.readiness.notes) || [];
+    %>
+    <% if (noticedLine || gaps.length || notes.length) { %>
+      <section class="rm-panel">
+        <div class="rm-panel__head">
+          <%- helpers.icon('eye', { size: 15, className: 'rm-quiet' }) %>
+          <h2>Noticed, and not yet sure</h2>
+        </div>
+        <div class="rm-bands">
+          <% if (noticedLine) { %>
+            <div class="rm-band" style="grid-template-columns:minmax(0,1fr)">
+              <span class="rm-band__v"><%= noticedLine %></span>
+            </div>
+          <% } %>
+          <% if (gaps.length) { %>
+            <div class="rm-band" style="grid-template-columns:minmax(0,1fr)">
+              <span class="rm-band__v"><span class="dim"><%= gaps.length %> product<%= gaps.length === 1 ? ' has' : 's have' %>
+                no outbound history, so I cannot judge demand for <%= gaps.length === 1 ? 'it' : 'them' %> and will not guess.</span></span>
+            </div>
+          <% } %>
+          <% notes.slice(0, 2).forEach(function (note) { %>
+            <div class="rm-band" style="grid-template-columns:minmax(0,1fr)">
+              <span class="rm-band__v"><span class="dim"><%= note %></span></span>
+            </div>
+          <% }) %>
+        </div>
+      </section>
+    <% } %>
+  </div>
+</div>
+<% } %>
+
+<%# ------------------------------------------------------------- the command %>
+<div style="margin-top:20px">
+  <p class="rm-stamp"><%- helpers.icon('foundry', { size: 14 }) %> Tell Foundry</p>
+  <%- include('../partials/composer', {
+    composerPlaceholder: (guide.examples && guide.examples[0]) || 'Tell me what happened, or ask me anything…',
+  }) %>
+  <% var couldSay = (guide.examples || []).slice(0, 3); %>
+  <% if (couldSay.length) { %>
+    <div class="rm-suggest">
+      <% couldSay.forEach(function (line) { %>
+        <a href="/ask?q=<%= encodeURIComponent(line) %>"><%= line %></a>
+      <% }) %>
+    </div>
+  <% } %>
+</div>
+
+<p class="rm-disclose">
+  <a href="/inventory">What you hold</a>
+  <a href="/orders">Customer orders</a>
+  <a href="/purchasing/orders">Purchases</a>
+  <a href="/money">Money</a>
+  <a href="/activity">Everything that happened</a>
+  <a href="/everything">Everything else</a>
+</p>
+
+<% } %>
+
+<div data-live-home data-signature="<%= homeSignature %>" hidden></div>

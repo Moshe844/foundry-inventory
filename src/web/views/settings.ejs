@@ -1,118 +1,327 @@
-<div class="page-head">
-  <div class="titles">
-    <h1>Settings</h1>
-    <div class="page-sub">This inventory, the people on it, and what your plan allows.</div>
+<%
+  /*
+   * Settings is the technical half. The owner-facing half — the standing rules
+   * in the words they were said — is at /what-you-told-me, and this page links
+   * to it rather than competing with it.
+   *
+   * What this replaced was eight sections of identically-weighted cards: a list
+   * of destinations, a stock-guard list, rule history, a live feed with a code
+   * sample, the plan, the people, the account, an Advanced heading and an
+   * integrity check. Every one looked the same, so nothing on the page had a
+   * shape and finding anything meant reading all of it.
+   *
+   * Now: where to go, as a grid of real destinations with icons; then the
+   * facts about this inventory; then everything technical behind disclosures
+   * that are closed until somebody wants them.
+   */
+  var isOwner = currentUser.role === 'owner';
+%>
+
+<div class="rm-head">
+  <p class="rm-head__eyebrow"><%- helpers.icon('settings', { size: 14 }) %> Settings</p>
+  <h1>The technical side of this inventory.</h1>
+  <p>
+    What Foundry may do, where stock lives, who can see it, and the record behind its decisions.
+    What you have <em>told</em> Foundry — the standing rules in your own words — lives on its own page.
+  </p>
+</div>
+
+<div class="rm-next">
+  <p class="rm-stamp"><%- helpers.icon('chat', { size: 13 }) %> Most things are set by saying them</p>
+  <p class="rm-next__t">Foundry is taught by talking to it, not by filling in this page.</p>
+  <p class="rm-next__d">Tell it a rule and it writes the rule down for you to check, change or take away.</p>
+  <p class="rm-choices" style="margin-top:11px">
+    <a class="rm-btn rm-btn--sm" href="/what-you-told-me">What you've told me</a>
+    <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask">Tell Foundry something</a>
+  </p>
+</div>
+
+<%# ------------------------------------------------------------ destinations %>
+<p class="rm-stamp"><%- helpers.icon('bolt', { size: 14 }) %> How Foundry runs this inventory</p>
+<div class="rm-choices-grid" style="margin-bottom:18px">
+  <a class="rm-choice" href="/autopilot">
+    <span class="rm-choice__ic"><%- helpers.icon('shield', { size: 19 }) %></span>
+    <span class="rm-choice__t">Standing authority</span>
+    <span class="rm-choice__b">Whether Foundry asks first, or handles routine work inside limits you set.</span>
+    <span class="rm-choice__go">Open <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+  </a>
+  <a class="rm-choice" href="/purchasing/setup">
+    <span class="rm-choice__ic"><%- helpers.icon('purchasing', { size: 19 }) %></span>
+    <span class="rm-choice__t">Reorder rules</span>
+    <span class="rm-choice__b">Reorder points, targets, safety stock and who supplies what.</span>
+    <span class="rm-choice__go">Open <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+  </a>
+  <a class="rm-choice" href="/foundry">
+    <span class="rm-choice__ic"><%- helpers.icon('spark', { size: 19 }) %></span>
+    <span class="rm-choice__t">How stock is tracked</span>
+    <span class="rm-choice__b">What you call things, and whether they need variants, serials or lots.</span>
+    <span class="rm-choice__go">Open <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+  </a>
+</div>
+
+<p class="rm-stamp"><%- helpers.icon('layers', { size: 14 }) %> Your operation</p>
+<div class="rm-choices-grid" style="margin-bottom:18px">
+  <a class="rm-choice" href="/locations">
+    <span class="rm-choice__ic"><%- helpers.icon('locations', { size: 19 }) %></span>
+    <span class="rm-choice__t">Locations</span>
+    <span class="rm-choice__b">Where stock is kept and moved between.</span>
+    <span class="rm-choice__go">Open <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+  </a>
+  <a class="rm-choice" href="/suppliers">
+    <span class="rm-choice__ic"><%- helpers.icon('purchasing', { size: 19 }) %></span>
+    <span class="rm-choice__t">Suppliers</span>
+    <span class="rm-choice__b">Who you buy from, on what terms, at what lead time.</span>
+    <span class="rm-choice__go">Open <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+  </a>
+  <a class="rm-choice" href="/settings/connections">
+    <span class="rm-choice__ic"><%- helpers.icon('link', { size: 19 }) %></span>
+    <span class="rm-choice__t">Connections</span>
+    <span class="rm-choice__b">Mailbox, shop, payments and carrier — what keeps Foundry informed.</span>
+    <span class="rm-choice__go">Manage <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+  </a>
+  <a class="rm-choice" href="/settings/shipping">
+    <span class="rm-choice__ic"><%- helpers.icon('ship', { size: 19 }) %></span>
+    <span class="rm-choice__t">Shipping</span>
+    <span class="rm-choice__b">Which carrier and service Foundry may buy on its own, and up to what.</span>
+    <span class="rm-choice__go">Open <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+  </a>
+  <a class="rm-choice" href="/imports">
+    <span class="rm-choice__ic"><%- helpers.icon('import', { size: 19 }) %></span>
+    <span class="rm-choice__t">Imports</span>
+    <span class="rm-choice__b">Bring in spreadsheets, and review the exact changes first.</span>
+    <span class="rm-choice__go">Open <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+  </a>
+  <% if (isOwner) { %><a class="rm-choice" href="/settings/operations">
+    <span class="rm-choice__ic"><%- helpers.icon('shield', { size: 19 }) %></span>
+    <span class="rm-choice__t">Production operations</span>
+    <span class="rm-choice__b">Readiness gates, alerts, backups, restore evidence and dead-letter review.</span>
+    <span class="rm-choice__go">Review <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+  </a><% } %>
+</div>
+
+<%# ------------------------------------------------------- stock protection %>
+<% if (stockGuards.length) { %>
+  <section class="rm-panel" style="margin-bottom:16px" id="stock-protection">
+    <div class="rm-panel__head">
+      <%- helpers.icon('shield', { size: 15, className: 'rm-quiet' }) %>
+      <h2>Stock protection &amp; alerts</h2>
+      <span class="right"><%= stockGuards.length %> active</span>
+    </div>
+    <div class="rm-told" style="border:0;border-radius:0;box-shadow:none">
+      <% stockGuards.forEach(function (rule) { %>
+        <div class="rm-told__row">
+          <span class="rm-told__t">
+            <%= rule.itemName %><%= rule.variantLabel ? ' / ' + rule.variantLabel : '' %><%= rule.locationName ? ' at ' + rule.locationName : '' %>
+            <small>
+              <% if (rule.enforcementMode === 'warn') { %>
+                Warn when on-hand stock is <%= rule.boundary.blockedWhen %>. Outgoing stock stays allowed.
+              <% } else { %>
+                Block a sale or issue that would leave stock <%= rule.boundary.blockedWhen %>.
+                <%= rule.boundary.permittedExplanation %>
+                <%= rule.releaseCondition === 'on_order' ? 'Resume after a supplier order is placed.'
+                  : rule.releaseCondition === 'stock_recovered' ? 'Resume after on-hand stock recovers to ' + rule.releaseThreshold + '.'
+                  : 'An owner must release it.' %>
+              <% } %>
+            </small>
+          </span>
+          <span class="rm-told__m">
+            <span class="rm-pillbadge <%= rule.enforcementMode === 'warn' ? '' : 'is-warn' %>">
+              <%= rule.enforcementMode === 'warn' ? 'warns' : 'blocks' %>
+            </span>
+            <% if (rule.instructionId) { %><a href="/operating-instructions/<%= rule.instructionId %>">Manage</a><% } %>
+          </span>
+        </div>
+      <% }) %>
+    </div>
+  </section>
+<% } %>
+
+<%# ------------------------------------------------------------- the facts %>
+<div class="rm-split" style="margin-bottom:16px">
+  <div class="rm-stack">
+    <section class="rm-panel">
+      <div class="rm-panel__head">
+        <%- helpers.icon('user', { size: 15, className: 'rm-quiet' }) %>
+        <h2>People</h2>
+        <span class="right">
+          <% if (isOwner) { %>
+            <button class="rm-btn rm-btn--sm rm-btn--ghost" type="button" data-modal-open="modal-person">
+              <%- helpers.icon('plus', { size: 13 }) %> Add person
+            </button>
+          <% } %>
+        </span>
+      </div>
+      <div class="rm-told" style="border:0;border-radius:0;box-shadow:none">
+        <% users.forEach(function (user) { %>
+          <div class="rm-told__row">
+            <span class="rm-told__t">
+              <%= user.name %><%= user.id === currentUser.id ? ' (you)' : '' %>
+              <small><%= user.email %></small>
+            </span>
+            <span class="rm-told__m"><span class="rm-pillbadge"><%= helpers.roleLabel(user.role) %></span></span>
+          </div>
+        <% }) %>
+      </div>
+      <p class="rm-quiet" style="font-size:12.5px;padding:12px 16px;border-top:1px solid var(--line-2);margin:0">
+        Owners manage locations, people and settings. Staff do the day-to-day inventory work.
+      </p>
+    </section>
+
+    <section class="rm-panel">
+      <div class="rm-panel__head">
+        <%- helpers.icon('inventory', { size: 15, className: 'rm-quiet' }) %>
+        <h2>This inventory</h2>
+      </div>
+      <form method="post" action="/settings/workspace" style="padding:16px">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label class="rm-field">
+          <span>Inventory name</span>
+          <input type="text" id="workspace-name" name="name" value="<%= workspace.name %>" required <%= isOwner ? '' : 'disabled' %>>
+          <small>
+            Shown in the switcher and on every screen your team uses. This names the whole
+            inventory, not a place inside it — <a href="/locations">locations</a> live within it.
+          </small>
+        </label>
+        <% if (isOwner) { %><button class="rm-btn rm-btn--sm" type="submit">Save</button><% } %>
+      </form>
+    </section>
+  </div>
+
+  <div class="rm-stack">
+    <section class="rm-panel">
+      <div class="rm-panel__head">
+        <%- helpers.icon('wallet', { size: 15, className: 'rm-quiet' }) %>
+        <h2>Your plan</h2>
+        <span class="right"><span class="rm-pillbadge"><%= entitlements.plan.label %></span></span>
+      </div>
+      <div class="rm-told" style="border:0;border-radius:0;box-shadow:none">
+        <% entitlements.limits.forEach(function (limit) { %>
+          <%
+            var label = { workspaces: 'Inventories', members: 'People on this inventory',
+              locations: 'Locations here', skus: 'Tracked variants here' }[limit.key] || limit.key;
+            var pct = limit.unlimited || !limit.limit
+              ? 0 : Math.min(100, Math.round((limit.used / limit.limit) * 100));
+          %>
+          <div class="rm-told__row">
+            <span class="rm-told__t">
+              <%= label %>
+              <% if (!limit.unlimited) { %>
+                <span class="rm-meter <%= pct >= 90 ? 'is-flag' : '' %>" style="margin-top:6px;max-width:200px">
+                  <span style="width:<%= Math.max(3, pct) %>%"></span>
+                </span>
+              <% } %>
+            </span>
+            <span class="rm-told__m">
+              <%= limit.used %><% if (!limit.unlimited) { %> of <%= limit.limit %><% } else { %> · unlimited<% } %>
+            </span>
+          </div>
+        <% }) %>
+      </div>
+      <p class="rm-quiet" style="font-size:12.5px;padding:12px 16px;border-top:1px solid var(--line-2);margin:0">
+        Inventories are counted across your whole account; everything else within this one.
+      </p>
+    </section>
+
+    <section class="rm-panel">
+      <div class="rm-panel__head">
+        <%- helpers.icon(integrity.ok ? 'shield' : 'alert', { size: 15, className: 'rm-quiet' }) %>
+        <h2>Inventory integrity</h2>
+        <span class="right">
+          <span class="rm-pillbadge <%= integrity.ok ? 'is-ok' : 'is-warn' %>">
+            <%= integrity.ok ? 'all balanced' : integrity.problems.length + ' to check' %>
+          </span>
+        </span>
+      </div>
+      <div style="padding:14px 16px">
+        <% if (integrity.ok) { %>
+          <p style="font-size:13.5px;color:var(--ink-2);margin:0">
+            Every balance matches its movement history, lot quantities and tracked units.
+          </p>
+        <% } else { %>
+          <ul class="plain-list" style="font-family:var(--f-num);font-size:12px">
+            <% integrity.problems.slice(0, 10).forEach(function (problem) { %>
+              <li><%= problem.kind %>: <%= problem.detail %></li>
+            <% }) %>
+          </ul>
+        <% } %>
+        <p class="rm-quiet" style="font-size:12.5px;margin:10px 0 0">
+          Recomputed from the ledger every time you open this page.
+        </p>
+      </div>
+    </section>
+
+    <section class="rm-panel">
+      <div class="rm-panel__head">
+        <%- helpers.icon('user', { size: 15, className: 'rm-quiet' }) %>
+        <h2>Your account</h2>
+      </div>
+      <div class="rm-told" style="border:0;border-radius:0;box-shadow:none">
+        <div class="rm-told__row"><span class="rm-told__t">Name</span><span class="rm-told__m"><%= currentUser.name %></span></div>
+        <div class="rm-told__row"><span class="rm-told__t">Email</span><span class="rm-told__m"><%= currentUser.email %></span></div>
+        <div class="rm-told__row"><span class="rm-told__t">Role</span><span class="rm-told__m"><%= helpers.roleLabel(currentUser.role) %></span></div>
+      </div>
+    </section>
   </div>
 </div>
 
-<%
-  /*
-   * Settings, grouped the way a person would group them.
-   *
-   * One list held seven destinations of every kind at once: how stock is
-   * managed, where it is kept, how spreadsheets come in, and "System & audit —
-   * advanced record of what Foundry checked, decided and carried out", which is
-   * a debugging tool sitting between Locations and Connections. Alongside it, a
-   * right-hand column carried Inventory integrity and Your account, so related
-   * settings sat in two columns by accident of when they were written — People
-   * in one place and the button that adds a person in another.
-   *
-   * Now: how Foundry works, then the operation, then this inventory, then the
-   * people on it, and everything technical behind one Advanced heading. One
-   * column, because none of it is a sidebar.
-   */
-%>
-<div class="settings">
-    <section class="section">
-      <div class="section-head"><h2>How Foundry manages this inventory</h2></div>
-      <div class="panel">
-        <a class="list-row" href="/purchasing/setup"><div><strong>Stock management</strong><p>Reorder points, targets, safety stock and suppliers.</p></div><span>Adjust rules</span></a>
-        <a class="list-row" href="/autopilot"><div><strong>Automatic work</strong><p>Whether Foundry asks first, or handles routine work inside your limits.</p></div><span>Choose</span></a>
-        <a class="list-row" href="/foundry"><div><strong>Inventory configuration</strong><p>What you call things, and how they are tracked.</p></div><span>Open</span></a>
-      </div>
-    </section>
+<%# --------------------------------------------------------------- advanced %>
+<%# Everything below is for auditing and integrating. It is real and it is
+    kept, but it is not what somebody opens Settings to change, so it is closed
+    until they want it. %>
+<p class="rm-stamp"><%- helpers.icon('serial', { size: 14 }) %> Advanced — the record behind Foundry's decisions, and the ways in</p>
 
-    <section class="section">
-      <div class="section-head"><h2>Your operation</h2></div>
-      <div class="panel">
-        <a class="list-row" href="/locations"><div><strong>Locations</strong><p>Where inventory is stored and moved.</p></div><span>Open</span></a>
-        <a class="list-row" href="/suppliers"><div><strong>Suppliers</strong><p>Who you buy from, and on what terms.</p></div><span>Open</span></a>
-        <a class="list-row" href="/settings/shipping"><div><strong>Shipping rules</strong><p>Which carrier and service Foundry may buy on its own, and up to what.</p></div><span>Open</span></a>
-        <a class="list-row" href="/settings/connections"><div><strong>Connections</strong><p>Keep Foundry informed automatically from the systems where you sell.</p></div><span>Manage</span></a>
-        <a class="list-row" href="/imports"><div><strong>Imports</strong><p>Bring in spreadsheets and review the exact changes first.</p></div><span>Open</span></a>
-      </div>
-    </section>
-
-    <% if (stockGuards.length) { %>
-      <div class="card" id="stock-protection">
-        <div class="card-head"><div><h2>Stock protection & alerts</h2><p class="muted">Warnings and optional hard stops for low stock.</p></div><span class="spacer"></span><span class="badge"><%= stockGuards.length %> active</span></div>
-        <div class="card-body grid">
-          <% stockGuards.forEach(function(rule) { %>
-            <div class="list-row">
-              <div>
-                <strong><%= rule.itemName %><%= rule.variantLabel ? ' / ' + rule.variantLabel : '' %><%= rule.locationName ? ' at ' + rule.locationName : '' %></strong>
-                <% if (rule.enforcementMode === 'warn') { %>
-                  <p>Warn when on-hand stock is <%= rule.boundary.blockedWhen %>. Outgoing stock remains allowed.</p>
-                <% } else { %>
-                  <p>Block a sale or issue that would leave stock <%= rule.boundary.blockedWhen %>. <%= rule.boundary.permittedExplanation %> <%= rule.releaseCondition === 'on_order' ? 'Resume after a supplier order is placed.' : rule.releaseCondition === 'stock_recovered' ? 'Resume after on-hand stock recovers to ' + rule.releaseThreshold + '.' : 'An owner must release it.' %></p>
-                <% } %>
-              </div>
-              <% if (rule.instructionId) { %>
-                <a class="btn btn--sm" href="/operating-instructions/<%= rule.instructionId %>">Manage</a>
-              <% } %>
-            </div>
-          <% }) %>
-        </div>
-      </div>
-    <% } %>
-
-    <% if (learnedInstructions.length) { %>
-      <details class="card advanced-settings" id="learned-instructions">
-        <summary class="card-head">
-          <div><h2>Rule history</h2><p class="muted">Original instructions and previous versions, kept for audit.</p></div>
-          <span class="spacer"></span><span class="badge"><%= learnedInstructions.length %> record<%= learnedInstructions.length === 1 ? '' : 's' %></span>
-        </summary>
-        <div class="card-body grid">
-          <% learnedInstructions.forEach(function(instruction) { %>
-            <div class="list-row" style="align-items:flex-start;">
-              <div><strong><%= instruction.status === 'APPROVED' ? 'Current instruction' : instruction.status === 'SUPERSEDED' ? 'Previous instruction' : 'Removed instruction' %></strong><p>“<%= instruction.statedAs %>”</p></div>
-              <div class="actions-inline">
-                <a class="btn btn--sm" href="/operating-instructions/<%= instruction.id %>">Inspect</a>
-              </div>
-            </div>
-          <% }) %>
-        </div>
-      </details>
-    <% } %>
-
-    <details class="card advanced-settings" id="live-event-feed" <%= newFeedToken || eventFeed.connected ? 'open' : '' %>>
-      <summary class="card-head">
-        <div>
-          <h2>Live operating feed</h2>
-          <p class="muted">Sales and warehouse systems can push real movements to Foundry as they happen.</p>
-        </div>
-        <span class="spacer"></span>
-        <span class="badge <%= eventFeed.connected ? 'badge--ok' : eventFeed.configured ? 'badge--warn' : 'badge--muted' %>"><%= eventFeed.connected ? 'Connected' : eventFeed.configured ? 'Waiting for first event' : 'Not configured' %></span>
-      </summary>
-      <div class="card-body grid">
-        <% if (newFeedToken) { %>
-          <div class="notice notice--warn">
-            <div>
-              <strong>Copy this token now. It will not be shown again.</strong>
-              <input class="input mono" value="<%= newFeedToken %>" readonly aria-label="New event feed token" onclick="this.select()">
-            </div>
+<% if (learnedInstructions.length) { %>
+  <details class="card advanced-settings" id="learned-instructions">
+    <summary>Rule history · <%= learnedInstructions.length %> record<%= learnedInstructions.length === 1 ? '' : 's' %></summary>
+    <div class="rm-work__body">
+      <div class="rm-told" style="border:0;border-radius:0;box-shadow:none">
+        <% learnedInstructions.forEach(function (instruction) { %>
+          <div class="rm-told__row">
+            <span class="rm-told__t">
+              <%= instruction.status === 'APPROVED' ? 'Current instruction'
+                : instruction.status === 'SUPERSEDED' ? 'Previous instruction' : 'Removed instruction' %>
+              <small>“<%= instruction.statedAs %>”</small>
+            </span>
+            <span class="rm-told__m"><a href="/operating-instructions/<%= instruction.id %>">Inspect</a></span>
           </div>
-        <% } %>
+        <% }) %>
+      </div>
+    </div>
+  </details>
+<% } %>
 
-        <div>
-          <div class="label">Event endpoint</div>
-          <input class="input mono" value="<%= origin %>/api/v1/feed/events" readonly aria-label="Event feed endpoint" onclick="this.select()">
-          <p class="hint">Authenticate with <code class="mono">Authorization: Bearer YOUR_TOKEN</code>. Event IDs are idempotent: retrying one never moves stock twice.</p>
-        </div>
+<details class="rm-work" style="margin:0 0 12px" id="live-event-feed" <%= newFeedToken || eventFeed.connected ? 'open' : '' %>>
+  <summary>
+    Live operating feed ·
+    <%= eventFeed.connected ? 'Connected' : eventFeed.configured ? 'Waiting for first event' : 'Not configured' %>
+  </summary>
+  <div class="rm-work__body">
+    <p style="font-size:13.5px;color:var(--ink-2);margin:0 0 14px;max-width:70ch">
+      Sales and warehouse systems can push real movements to Foundry as they happen. Event IDs are
+      idempotent: retrying one never moves stock twice.
+    </p>
 
-        <details>
-          <summary>Event format</summary>
-          <pre class="mono" style="margin-top:10px; padding:12px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; overflow:auto; font-size:12px;">{
+    <% if (newFeedToken) { %>
+      <div class="rm-note rm-note--warn">
+        <%- helpers.icon('alert', { size: 16 }) %>
+        <span>
+          <strong>Copy this token now — it will not be shown again.</strong>
+          <input class="rm-field" style="font-family:var(--f-num);margin-top:6px" value="<%= newFeedToken %>"
+                 readonly aria-label="New event feed token" onclick="this.select()">
+        </span>
+      </div>
+    <% } %>
+
+    <label class="rm-field">
+      <span>Event endpoint</span>
+      <input style="font-family:var(--f-num)" value="<%= origin %>/api/v1/feed/events" readonly
+             aria-label="Event feed endpoint" onclick="this.select()">
+      <small>Authenticate with <code style="font-family:var(--f-num)">Authorization: Bearer YOUR_TOKEN</code>.</small>
+    </label>
+
+    <details style="margin-bottom:14px">
+      <summary style="font-size:13px;font-weight:600;color:var(--muted);cursor:pointer">Event format</summary>
+      <pre style="margin-top:10px;padding:12px;background:var(--surface-3);border:1px solid var(--line);border-radius:var(--r-sm);overflow:auto;font-family:var(--f-num);font-size:12px">{
   "eventId": "sale-10482-line-1",
   "type": "sale",
   "skuCode": "SH-101-BLK-23",
@@ -120,182 +329,61 @@
   "quantity": 2,
   "occurredAt": "2026-08-17T14:30:00Z"
 }</pre>
-          <p class="hint">Also supported: receive, customer_return, damage, count, adjustment and transfer. Use <code class="mono">supplierCode</code> when an external system knows the vendor’s code rather than Foundry’s SKU.</p>
-        </details>
-
-        <% if (currentUser.role === 'owner') { %>
-          <% if (eventFeed.configured) { %>
-            <div class="form-actions">
-              <form method="post" action="/settings/event-feed/enable" data-confirm="Rotate the feed token? The existing token will stop working immediately.">
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <button class="btn" type="submit">Rotate token</button>
-              </form>
-              <form method="post" action="/settings/event-feed/disconnect" data-confirm="Disconnect the live feed and revoke its token?">
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <button class="btn btn--danger" type="submit">Disconnect</button>
-              </form>
-            </div>
-          <% } else { %>
-            <form method="post" action="/settings/event-feed/enable">
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <button class="btn btn--primary" type="submit">Connect live feed</button>
-            </form>
-          <% } %>
-        <% } %>
-
-        <% if (eventFeed.recentEvents.length) { %>
-          <div>
-            <div class="label">Recent events</div>
-            <ul class="plain-list">
-              <% eventFeed.recentEvents.slice(0, 6).forEach(function (event) { %>
-                <li>
-                  <strong><%= event.eventId %></strong>
-                  <span class="badge <%= event.status === 'COMPLETED' ? 'badge--ok' : 'badge--danger' %>"><%= event.status %></span>
-                  <span class="muted"> <%= event.type %> · <%= helpers.timeAgo(event.processedAt) %></span>
-                  <% if (event.error) { %><div class="is-warn"><%= event.error %></div><% } %>
-                </li>
-              <% }) %>
-            </ul>
-          </div>
-        <% } %>
-      </div>
+      <p class="rm-quiet" style="font-size:12.5px">
+        Also supported: receive, customer_return, damage, count, adjustment and transfer. Use
+        <code style="font-family:var(--f-num)">supplierCode</code> when an external system knows the
+        vendor's code rather than Foundry's SKU.
+      </p>
     </details>
 
-    <div class="card">
-      <div class="card-head"><h2>This inventory</h2></div>
-      <div class="card-body">
-        <form method="post" action="/settings/workspace">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <div class="field">
-            <label class="label" for="workspace-name">Inventory name</label>
-            <input class="input" id="workspace-name" name="name" value="<%= workspace.name %>" required <%= currentUser.role === 'owner' ? '' : 'disabled' %>>
-            <div class="hint">
-              Shown in the switcher and on every screen your team uses. This names the whole
-              inventory, not a location inside it — <a href="/locations">locations</a> live within it.
-            </div>
-          </div>
-          <% if (currentUser.role === 'owner') { %>
-            <div class="form-actions"><button class="btn btn--primary" type="submit">Save</button></div>
-          <% } %>
-        </form>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-head">
-        <h2>Your plan</h2>
-        <span class="spacer"></span>
-        <span class="badge badge--muted"><%= entitlements.plan.label %></span>
-      </div>
-      <div class="table-wrap">
-        <table class="table">
-          <tbody>
-            <% entitlements.limits.forEach(function (limit) { %>
-              <tr>
-                <td class="muted">
-                  <%= { workspaces: 'Inventories', members: 'People on this inventory',
-                        locations: 'Locations here', skus: 'Tracked variants here' }[limit.key] || limit.key %>
-                </td>
-                <td class="right num">
-                  <%= limit.used %><% if (!limit.unlimited) { %> of <%= limit.limit %><% } %>
-                </td>
-              </tr>
-            <% }) %>
-          </tbody>
-        </table>
-      </div>
-      <div class="card-foot muted" style="font-size:12px;">
-        Inventories are counted across your whole account; everything else is counted
-        within this one.
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-head">
-        <h2>People</h2>
-        <span class="spacer"></span>
-        <% if (currentUser.role === 'owner') { %>
-          <button class="btn btn--sm" type="button" data-modal-open="modal-person"><%- helpers.icon('plus', { size: 14 }) %> Add person</button>
+    <% if (isOwner) { %>
+      <div class="rm-choices">
+        <% if (eventFeed.configured) { %>
+          <form method="post" action="/settings/event-feed/enable" data-confirm="Rotate the feed token? The existing token will stop working immediately." style="margin:0">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Rotate token</button>
+          </form>
+          <form method="post" action="/settings/event-feed/disconnect" data-confirm="Disconnect the live feed and revoke its token?" style="margin:0">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Disconnect</button>
+          </form>
+        <% } else { %>
+          <form method="post" action="/settings/event-feed/enable" style="margin:0">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="rm-btn rm-btn--sm" type="submit">Connect live feed</button>
+          </form>
         <% } %>
       </div>
-      <div class="table-wrap">
-        <table class="table table--stack">
-          <thead><tr><th>Name</th><th>Email</th><th class="right">Role</th></tr></thead>
-          <tbody>
-            <% users.forEach(function (user) { %>
-              <tr>
-                <td class="cell-main">
-                  <span class="cell-title"><%= user.name %><%= user.id === currentUser.id ? ' (you)' : '' %></span>
-                </td>
-                <td data-label="Email"><span class="muted"><%= user.email %></span></td>
-                <td class="right cell-end" data-label="Role"><span class="badge"><%= helpers.roleLabel(user.role) %></span></td>
-              </tr>
-            <% }) %>
-          </tbody>
-        </table>
-      </div>
-      <div class="card-foot muted">
-        Owners manage locations, people and settings. Staff do the day-to-day inventory work.
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-head"><h2>Your account</h2></div>
-      <div class="card-body">
-        <dl class="kv">
-          <dt>Name</dt><dd><%= currentUser.name %></dd>
-          <dt>Email</dt><dd><%= currentUser.email %></dd>
-          <dt>Role</dt><dd><%= helpers.roleLabel(currentUser.role) %></dd>
-        </dl>
-      </div>
-    </div>
-
-    <%# Everything below is for auditing and debugging. It is real and it is
-        kept, but it is not what somebody opens Settings to change. %>
-    <div class="section-head" style="margin-top:32px;"><h2>Advanced</h2></div>
-    <p class="page-sub" style="margin-bottom:16px;">
-      The record behind Foundry's decisions, and the checks it runs on its own data.
-    </p>
-
-    <a class="list-row panel" href="/autopilot/history">
-      <div><strong>System &amp; audit</strong><p>What Foundry checked, decided and carried out.</p></div>
-      <span>Open</span>
-    </a>
-
-    <% if (currentUser.role === 'owner') { %>
-      <a class="list-row panel" href="/settings/export">
-        <div><strong>Export this workspace</strong><p>Download the complete workspace-scoped business record. Passwords, OAuth secrets, sessions, and connection credentials are excluded.</p></div>
-        <span>Download</span>
-      </a>
     <% } %>
 
-    <div class="card">
-      <div class="card-head"><h2>Inventory integrity</h2></div>
-      <div class="card-body">
-        <% if (integrity.ok) { %>
-          <div class="notice" style="background: var(--ok-bg); border-color:#bbf7d0; color:#14532d;">
-            <%- helpers.icon('shield', { size: 16 }) %>
-            <span>Every balance matches its movement history, lot quantities and tracked units.</span>
+    <% if (eventFeed.recentEvents.length) { %>
+      <p class="rm-stamp" style="margin-top:16px">Recent events</p>
+      <div class="rm-feed">
+        <% eventFeed.recentEvents.slice(0, 6).forEach(function (event) { %>
+          <div class="rm-feed__row" style="padding-left:0;padding-right:0">
+            <span class="rm-feed__ic <%= event.status === 'COMPLETED' ? 'is-done' : 'is-flag' %>">
+              <%- helpers.icon(event.status === 'COMPLETED' ? 'check' : 'alert', { size: 14 }) %>
+            </span>
+            <span class="rm-feed__t">
+              <%= event.eventId %>
+              <small><%= event.type %> · <%= helpers.timeAgo(event.processedAt) %><% if (event.error) { %> · <%= event.error %><% } %></small>
+            </span>
+            <span class="rm-feed__m"><%= event.status %></span>
           </div>
-        <% } else { %>
-          <div class="notice notice--warn">
-            <%- helpers.icon('alert', { size: 16 }) %>
-            <span><%= integrity.problems.length %> <%= helpers.plural(integrity.problems.length, 'discrepancy', 'discrepancies') %> found.</span>
-          </div>
-          <ul class="mono" style="margin:10px 0 0; padding-left:18px; font-size:12px; color:var(--muted);">
-            <% integrity.problems.slice(0, 10).forEach(function (problem) { %>
-              <li><%= problem.kind %>: <%= problem.detail %></li>
-            <% }) %>
-          </ul>
-        <% } %>
-        <p class="hint" style="margin-top:10px;">
-          Foundry recomputes this from the ledger every time you open this page.
-        </p>
+        <% }) %>
       </div>
-    </div>
-</div>
+    <% } %>
+  </div>
+</details>
 
-<% if (currentUser.role === 'owner') { %>
+<p class="rm-disclose">
+  <a href="/autopilot/history">System &amp; audit — what Foundry checked, decided and carried out</a>
+  <% if (isOwner) { %><a href="/settings/export">Export this inventory</a><% } %>
+  <a href="/what-you-told-me">What you've told me</a>
+  <a href="/everything">Everything else</a>
+</p>
+
+<% if (isOwner) { %>
   <dialog class="modal" id="modal-person">
     <form method="post" action="/settings/people">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -304,31 +392,25 @@
         <button class="btn btn--ghost btn--sm close" type="button" data-modal-close aria-label="Close"><%- helpers.icon('close', { size: 16 }) %></button>
       </div>
       <div class="modal-body">
-        <div class="field">
-          <label class="label" for="person-name">Name</label>
-          <input class="input" id="person-name" name="name" required>
-        </div>
-        <div class="field">
-          <label class="label" for="person-email">Email</label>
-          <input class="input" id="person-email" name="email" type="email" required>
-        </div>
-        <div class="field">
-          <label class="label" for="person-password">Temporary password</label>
-          <input class="input" id="person-password" name="password" type="text" minlength="8" required>
-          <div class="hint">At least 8 characters. Share it with them directly.</div>
-        </div>
-        <div class="field">
-          <label class="label" for="person-role">Role</label>
-          <select class="select" id="person-role" name="role" required>
+        <label class="rm-field"><span>Name</span><input type="text" id="person-name" name="name" required></label>
+        <label class="rm-field"><span>Email</span><input type="email" id="person-email" name="email" required></label>
+        <label class="rm-field">
+          <span>Temporary password</span>
+          <input type="text" id="person-password" name="password" minlength="8" required>
+          <small>At least 8 characters. Share it with them directly.</small>
+        </label>
+        <label class="rm-field">
+          <span>Role</span>
+          <select id="person-role" name="role" required>
             <% helpers.ROLES.forEach(function (role) { %>
               <option value="<%= role.id %>" <%= role.id === 'staff' ? 'selected' : '' %>><%= role.label %> — <%= role.blurb %></option>
             <% }) %>
           </select>
-        </div>
+        </label>
       </div>
       <div class="modal-foot">
-        <button class="btn" type="button" data-modal-close>Cancel</button>
-        <button class="btn btn--primary" type="submit">Add person</button>
+        <button class="rm-btn rm-btn--ghost" type="button" data-modal-close>Cancel</button>
+        <button class="rm-btn" type="submit">Add person</button>
       </div>
     </form>
   </dialog>

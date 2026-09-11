@@ -17,6 +17,7 @@
 
 const { createProviderForTier } = require('../ai/provider');
 const config = require('../config');
+const removals = require('./removals');
 const { validate } = require('../foundry/validator');
 const { toWireSchema } = require('../foundry/schema-tools');
 const { ADJUSTMENT_REASON_IDS, ISSUE_REASON_IDS } = require('../domain/constants');
@@ -34,6 +35,13 @@ const ACTION_TYPES = [
   'rename_terminology',
   'create_item',
   'archive_item',
+  /*
+   * Retiring something that is not stock: a supplier, a customer, a location.
+   * One action type for all of them, because what changes between them is the
+   * table it lives in, not what the person meant. Which kinds exist is the
+   * registry's business, not this file's — see actions/removals.js.
+   */
+  removals.ACTION_TYPE,
   // Mission 6: buying, and taking delivery of what was bought. Neither one
   // moves stock by itself — a purchase becomes a draft order to approve, and a
   // delivery opens the receiving screen for the orders it might be.
@@ -98,7 +106,7 @@ const LINE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: [
-    'actionType', 'item', 'variant', 'lotCode', 'serials',
+    'actionType', 'item', 'variant', 'recordKind', 'recordName', 'lotCode', 'serials',
     'sourceLocation', 'destinationLocation', 'quantity', 'adjustmentTarget', 'reasonCode',
     'terminologyKey', 'terminologyValue',
     'productName', 'productCode', 'variantAxes', 'unitLabel',
@@ -112,6 +120,21 @@ const LINE_SCHEMA = {
     item: { type: 'string' },
     // The version they named: a colour, a size, both. '' when none.
     variant: { type: 'string' },
+    /*
+     * archive_record only: which sort of record, and its name.
+     *
+     * These sit here, beside item and variant, because that is what they are —
+     * the identity of the thing the action is about. Written at the tail of the
+     * line instead, after every empty string, the reader had nothing left to
+     * anchor on and padded the name out: "Downtown Store Location Store Store
+     * Store". A name it invents matches no record, so the request dead-ends in
+     * a question about a record nobody named.
+     *
+     * The enum is the registry's list, so a kind added there is a kind the
+     * reader may return — and one removed there stops being accepted.
+     */
+    recordKind: { type: 'string', enum: ['', ...removals.kinds()] },
+    recordName: { type: 'string' },
     // The shortest exact part of the original instruction that describes this
     // line. It is provenance for multi-action requests, never an invented
     // paraphrase. Older providers may omit it; deterministic alignment then
@@ -166,7 +189,11 @@ const LINE_SCHEMA = {
  * "Foundry could not work out what that meant". So the wire demands them and
  * the check on the way back does not; normaliseLine fills the blanks.
  */
-const OPTIONAL_ON_READ = ['amount', 'reference', 'recipient', 'messageBody'];
+const OPTIONAL_ON_READ = ['amount', 'reference', 'recipient', 'messageBody',
+  // Same bargain for the removal fields: demanded on the wire so the reader
+  // fills them in, forgiven on the way back so every reply written before
+  // they existed is still a perfectly good answer about something else.
+  'recordKind', 'recordName'];
 const ACCEPTED_LINE_SCHEMA = {
   ...LINE_SCHEMA,
   required: LINE_SCHEMA.required.filter((key) => !OPTIONAL_ON_READ.includes(key)),
@@ -220,6 +247,7 @@ Operations you may choose:
   record is active; it is never a stock-count correction. Copy the named
   product/code into item and any named variation into variant. Foundry will
   refuse safely if the record still has stock on hand.
+${removals.promptSection()}
 - purchase: they want to BUY something from a supplier — "order 5 cases of
   navy 8 from ABC", "reorder the low stock shoes", "buy enough to cover the
   next month". Put the supplier in supplier if they named one, and the unit
@@ -258,6 +286,14 @@ Operations you may choose:
 - unsupported: it is not one of the above.
 
 Rules:
+- archive_item and archive_record are both "remove this", and what separates
+  them is what is being removed, never the verb. A product or variant — a thing
+  they hold stock of — is archive_item. ${removals.labelList('A ')} is
+  archive_record. "delete the navy 8" is archive_item; "delete ABC Apparel", a
+  supplier, is archive_record with recordKind "supplier". When they say which
+  sort of record it is, take them at their word rather than guessing from the
+  name. When the sentence truly does not say — a bare name that could be either
+  — choose 'clarify' and ask which one they mean.
 - Never choose between issue and adjust when the sentence does not make it
   clear. Issuing says stock physically left; adjusting says the record was
   wrong. Getting that wrong falsifies their history. Choose 'clarify' and ask.
@@ -369,6 +405,10 @@ function normaliseLine(raw) {
     productCode: String(raw.productCode || '').trim(),
     supplier: String(raw.supplier || '').trim(),
     purchaseUnit: String(raw.purchaseUnit || '').trim(),
+    // An unknown kind is dropped rather than passed on: the proposal builder
+    // would only fail to find a registry entry for it, later and less clearly.
+    recordKind: removals.get(raw.recordKind) ? String(raw.recordKind).trim().toLowerCase() : '',
+    recordName: String(raw.recordName || '').trim(),
     /*
      * What was paid, kept in minor units from here on so no later step has to
      * guess whether "140" meant dollars or cents. -1 when no figure was given,
@@ -528,6 +568,31 @@ function deterministicCatalogueList(instruction) {
 }
 
 /**
+ * An explicit email address plus an explicit message body is already complete
+ * routing evidence. Preserve both literally instead of making availability of
+ * this safe draft path depend on a model response. This recognizes a grammar,
+ * not a particular recipient or sentence; names and implicit recipients still
+ * go through the language reader and deterministic business-record lookup.
+ */
+function deterministicOutboundMessage(instruction) {
+  const source = String(instruction || '').trim();
+  const match = /^(?:please\s+)?(?:email|e-mail|message|write\s+to|send\s+(?:an?\s+)?(?:email|message)\s+to)\s+([^\s@]+@[^\s@]+\.[^\s@]+)\s+(?:that|saying|to\s+say)\s+(.+?)\s*[.!]?$/i.exec(source);
+  if (!match || !match[2].trim()) return null;
+  return {
+    lines: [normaliseLine({
+      actionType: 'send_message',
+      recipient: match[1],
+      messageBody: match[2].trim(),
+      sourceText: source,
+      quantity: -1,
+      adjustmentTarget: -1,
+    })],
+    clarifyingQuestion: '',
+    unsupportedReason: '',
+  };
+}
+
+/**
  * Common, fully explicit stock instructions do not need a model round trip.
  * Every product and location still comes from the workspace context and is
  * resolved again by the normal proposal builder; this parser grants no
@@ -535,6 +600,8 @@ function deterministicCatalogueList(instruction) {
  */
 function deterministicInstruction(instruction, context = {}) {
   const clean = String(instruction || '').trim();
+  const outboundMessage = deterministicOutboundMessage(clean);
+  if (outboundMessage) return outboundMessage;
   const catalogue = deterministicCatalogueList(clean);
   if (catalogue) return catalogue;
   const correction = /^(?:set|correct|adjust)\s+(.+?)\s+to\s+(\d+)\s+(?:after|from|based on)\s+(?:a\s+)?physical count\s*$/i.exec(clean);
@@ -649,6 +716,7 @@ module.exports = {
   needsNumberedClauseRetry,
   expandSimpleNumberedTransfer,
   deterministicInstruction,
+  deterministicOutboundMessage,
   deterministicCatalogueList,
   intentPrompt,
 };

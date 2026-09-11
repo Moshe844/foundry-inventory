@@ -96,8 +96,19 @@ function pluralUnit(word) {
   return `${clean}s`;
 }
 
+/**
+ * Old stored work records may contain machine shorthand such as "8 case(s)".
+ * Keep the immutable record intact and make it human when it is presented.
+ */
+function humanizeUnitMarkers(value) {
+  if (value === undefined || value === null) return value;
+  return String(value).replace(/\b(\d+(?:\.\d+)?)\s+([A-Za-z][A-Za-z-]*)\(s\)/g,
+    (_match, quantity, unit) => `${quantity} ${Number(quantity) === 1 ? unit : pluralUnit(unit)}`);
+}
+
 module.exports = {
   pluralUnit,
+  humanizeUnitMarkers,
   newId,
   nowIso,
   trimOrNull,

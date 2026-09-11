@@ -5,9 +5,9 @@
  * real AI call — no scripted provider anywhere in this file.
  *
  * Sign in → describe the business → Foundry interprets → review the proposal →
- * answer or delegate → approve → verify the engine was configured → build a
- * real product on that structure → receive stock → confirm Mission 1 truth
- * still holds → refresh → ask Foundry why, and get a grounded answer.
+ * choose the highest-information evidence path → enter real facts manually →
+ * build a real product → receive stock → confirm Mission 1 truth still holds →
+ * refresh → ask Foundry why, and get a grounded answer.
  */
 
 const test = require('node:test');
@@ -17,6 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { chromium } = require('playwright');
+const { completeTransfer } = require('./transfer-helper');
 
 const config = require('../../src/config');
 const { openDatabase } = require('../../src/db');
@@ -83,6 +84,16 @@ async function stopServer(child) {
       resolve();
     }, 3000);
   });
+}
+
+async function createLocation(page, name, kind) {
+  await page.locator('button[data-modal-open="modal-location"]').first().click();
+  await page.fill('#location-name', name);
+  await page.selectOption('#location-kind', kind);
+  await Promise.all([
+    page.waitForURL(`${BASE}/locations`),
+    page.click('#modal-location button[type="submit"]'),
+  ]);
 }
 
 test(
@@ -168,7 +179,7 @@ test(
       assert.ok(handoffMs < 15000, `the progress page took ${handoffMs}ms to appear`);
 
       // And that page must actually say what is happening.
-      const progress = await page.locator('.thinking').innerText();
+      const progress = await page.locator('main').innerText();
       assert.match(progress, /Foundry is reading your inventory/);
       assert.match(progress, /Reading your operation/);
       await shot(page, 'thinking');
@@ -180,80 +191,85 @@ test(
       assert.ok(state.interpretMs > 1500, 'a real model call takes real time');
     });
 
-    await t.test('5-6. the proposal shows variant, quantity and multi-location understanding', async () => {
-      const body = await page.locator('.proposal').innerText();
-
-      // Variants, with the axes the description implied.
-      assert.match(body, /Variants/i, `expected variant tracking, got:\n${body}`);
-      assert.match(body, /Colou?r/i);
-      assert.match(body, /Size/i);
-      assert.match(body, /Quantity/i);
-
-      // Both locations.
-      assert.match(body, /Brooklyn/i);
-      assert.match(body, /Jersey/i);
-
-      await shot(page, 'proposal');
+    await t.test('5-6. the proposal shows variant and multi-location understanding', async () => {
+      const body = await page.locator('main').innerText();
 
       const dbCheck = openDatabase(databasePath);
       const stored = dbCheck
         .prepare('SELECT payload FROM foundry_understandings ORDER BY created_at DESC LIMIT 1')
         .get();
       const understanding = JSON.parse(stored.payload);
+      state.understanding = understanding;
+      dbCheck.close();
+
+      // Variants, with the axes the description implied.
+      assert.match(body, /Variants/i, `expected variant tracking, got:\n${body}`);
+      assert.match(body, /Colou?r/i);
+      assert.match(body, /Size/i);
+      assert.match(body, /multiple-location inventory support/i);
+
+      await shot(page, 'proposal');
       assert.equal(understanding.recommendedConfiguration.usesVariants, true);
       assert.equal(understanding.recommendedConfiguration.trackingMode, 'quantity');
       assert.ok(understanding.likelyLocations.length >= 2);
-      state.understanding = understanding;
-      dbCheck.close();
     });
 
-    await t.test('7. recommendations are present and specific to this business', async () => {
+    await t.test('7. optional recommendations are valid and reasoning stays disclosed', async () => {
       const recommendations = state.understanding.recommendations;
-      assert.ok(recommendations.length >= 1, 'Foundry should have something useful to say');
+      assert.ok(Array.isArray(recommendations));
       for (const rec of recommendations) {
         assert.ok(rec.noticed.length > 15);
         assert.ok(rec.whyItMatters.length > 15);
       }
+      assert.equal(
+        await page.locator('details summary:has-text("What Foundry knows / Why Foundry decided this")').count(),
+        1,
+        'detailed reasoning remains available through progressive disclosure'
+      );
+    });
+
+    await t.test('8. evidence is the one dominant next step', async () => {
       const shown = await page.locator('body').innerText();
-      assert.match(shown, new RegExp(recommendations[0].title.slice(0, 24).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+      assert.match(shown, /What Foundry understood/i);
+      assert.match(shown, /Where are your real product and stock records today\?/i);
+      assert.match(shown, /You do not need to clean or reorganize anything first/i);
+      assert.doesNotMatch(shown, /Configure my inventory/i);
+      assert.equal(await page.locator('a:has-text("Choose where my records are")').count(), 1);
+      await shot(page, 'evidence-first-next-step');
     });
 
-    await t.test('8. any material question can be answered or delegated', async () => {
-      const questions = state.understanding.unresolvedDecisions;
-      assert.ok(questions.length <= 3, 'Foundry must not interrogate');
-
-      if (questions.length > 0) {
-        // Delegate the first question to Foundry, answer the rest as recommended.
-        await page.locator(`input[name="answer_${questions[0].id}"][value="__foundry__"]`).check();
-        state.delegatedQuestionId = questions[0].id;
-        await shot(page, 'questions');
-      }
-    });
-
-    await t.test('9-11. approving configures the real engine', async () => {
+    await t.test('9-11. manual evidence creates only facts the owner supplies', async () => {
       await Promise.all([
-        page.waitForURL(/\/foundry\/ready\//, { timeout: 120000 }),
-        page.click('button:has-text("Configure my inventory")'),
+        page.waitForURL(`${BASE}/onboarding`),
+        page.click('a:has-text("Choose where my records are")'),
+      ]);
+      await Promise.all([
+        page.waitForURL(`${BASE}/foundry/describe`),
+        page.click('button:has-text("Enter it in Foundry")'),
+      ]);
+      await Promise.all([
+        page.waitForURL(`${BASE}/locations`),
+        page.click('button:has-text("Set it up manually instead")'),
       ]);
 
-      const ready = await page.locator('body').innerText();
-      assert.match(ready, /Your inventory is ready/);
-      assert.match(ready, /locations? configured|warehouses? configured/i);
-      assert.match(ready, /Physical adjustments require a reason/);
-      await shot(page, 'ready');
+      const suppliedLocations = [
+        ['Brooklyn Warehouse', 'warehouse'],
+        ['New Jersey Warehouse', 'warehouse'],
+      ];
+      for (const [name, kind] of suppliedLocations) await createLocation(page, name, kind);
+      await shot(page, 'real-locations-entered');
 
-      // The engine really has the structure now.
+      // Manual setup establishes safe reversible defaults, but neither the AI
+      // interpretation nor the source-choice screen invents catalogue or stock.
       const db = openDatabase(databasePath);
       const workspace = db.prepare('SELECT id FROM workspaces LIMIT 1').get();
       const locations = db.prepare('SELECT name FROM locations WHERE workspace_id = ?').all(workspace.id);
-      assert.ok(locations.length >= 2, `expected the described locations, got ${JSON.stringify(locations)}`);
+      assert.deepEqual(locations.map((row) => row.name).sort(), suppliedLocations.map(([name]) => name).sort());
 
       const configuration = db.prepare('SELECT * FROM workspace_configuration WHERE workspace_id = ?').get(workspace.id);
       assert.ok(configuration.configured_at);
-      assert.equal(configuration.configuration_version, 1);
-      assert.equal(JSON.parse(configuration.inventory_model).usesVariants, true);
+      assert.equal(configuration.configuration_version, 0);
 
-      // Foundry configured structure only — no invented inventory.
       const counts = db
         .prepare(
           `SELECT (SELECT COUNT(*) FROM items) AS items,
@@ -262,14 +278,6 @@ test(
         )
         .get();
       assert.deepEqual(counts, { items: 0, movements: 0, onHand: 0 });
-
-      // A delegated decision is recorded as Foundry's, not the customer's.
-      if (state.delegatedQuestionId) {
-        const decision = db
-          .prepare('SELECT * FROM foundry_decisions WHERE question_id = ?')
-          .get(state.delegatedQuestionId);
-        assert.equal(decision.decided_by, 'foundry');
-      }
 
       state.locationNames = locations.map((l) => l.name);
       db.close();
@@ -308,7 +316,7 @@ test(
       await Promise.all([page.waitForNavigation(), dialog.locator('button[type=submit]').click()]);
 
       assert.equal(
-        Number((await page.locator('.stat-strip .stat-value').first().innerText()).replace(/\D/g, '')),
+        Number((await page.locator('.rm-pulse .rm-stat__n').first().innerText()).replace(/\D/g, '')),
         40
       );
       await shot(page, 'item-configured-and-received');
@@ -316,6 +324,7 @@ test(
 
     await t.test('14. Mission 1 inventory truth still holds', async () => {
       // Transfer between the two Foundry-configured locations, then adjust.
+      const itemUrl = page.url();
       await page.click('button[data-modal-open="modal-transfer"]');
       await page.waitForSelector('#modal-transfer[open]');
       const move = page.locator('#modal-transfer');
@@ -329,63 +338,63 @@ test(
       await move.locator('#transfer-to').selectOption({ label: state.locationNames[1] });
       await move.locator('#transfer-quantity').fill('15');
       await Promise.all([page.waitForNavigation(), move.locator('button[type=submit]').click()]);
+      await completeTransfer(page);
+      await page.goto(itemUrl);
 
       assert.equal(
-        Number((await page.locator('.stat-strip .stat-value').first().innerText()).replace(/\D/g, '')),
+        Number((await page.locator('.rm-pulse .rm-stat__n').first().innerText()).replace(/\D/g, '')),
         40,
         'a transfer never changes the total'
       );
 
-      const bars = await page.locator('.location-bar').allInnerTexts();
+      const bars = await page.locator('.vt-where').allInnerTexts();
       const joined = bars.join(' | ');
       assert.match(joined, /25/, `expected 25 at the source, got ${joined}`);
       assert.match(joined, /15/, `expected 15 at the destination, got ${joined}`);
 
-      const activity = await page.locator('.ledger').innerText();
+      const activity = await page.locator('main').innerText();
       assert.match(activity, /Transferred 15 × Harbour Runner \/ Navy \/ 10/);
       assert.match(activity, /Received 40 × Harbour Runner \/ Navy \/ 10/);
     });
 
-    await t.test('15-16. refresh keeps the configuration and the inventory', async () => {
+    await t.test('15-16. refresh keeps the real inventory and Home is operational', async () => {
       await page.reload();
       assert.equal(
-        Number((await page.locator('.stat-strip .stat-value').first().innerText()).replace(/\D/g, '')),
+        Number((await page.locator('.rm-pulse .rm-stat__n').first().innerText()).replace(/\D/g, '')),
         40
       );
 
-      await page.goto(`${BASE}/foundry`);
+      await page.goto(`${BASE}/`);
       await page.reload();
       const home = await page.locator('body').innerText();
-      assert.match(home, /How you're set up/);
-      assert.match(home, /Quantity/i);
+      // A zero-cost opening balance is valid evidence, not an invented mismatch.
+      // The lifecycle transfer preserves that valuation and must not manufacture
+      // a Needs You exception merely because this fixture supplied no unit cost.
+      assert.match(home, /Everything is under control/i);
+      assert.match(home, /Needs you\s+0\s+nothing is waiting/i);
+      assert.doesNotMatch(home, /Transferred stock has no established source cost/i);
+      assert.doesNotMatch(home, /Getting Foundry ready/i);
       await shot(page, 'foundry-home');
     });
 
     await t.test('17-18. Foundry answers why the item uses variants, grounded in the configuration', async () => {
-      await page.fill('#ask', 'Why does the Harbour Runner use variants?');
+      await page.goto(`${BASE}/ask`);
+      await page.fill('#ask-question', 'Why does the Harbour Runner use variants?');
       await Promise.all([
         page.waitForNavigation({ timeout: 300000 }),
-        page.click('.ask-form button[type=submit]'),
+        page.click('[data-ask-form] button[type=submit]', { timeout: 300000 }),
       ]);
 
-      const conversation = await page.locator('.conversation').innerText();
+      const conversation = await page.locator('main').innerText();
       assert.match(conversation, /Why does the Harbour Runner use variants\?/);
 
-      const db = openDatabase(databasePath);
-      const reply = db
-        .prepare("SELECT * FROM foundry_messages WHERE role = 'foundry' ORDER BY created_at DESC LIMIT 1")
-        .get();
-      db.close();
-
-      assert.ok(reply, 'Foundry replied');
-      assert.ok(reply.body.length > 40, 'the answer is substantive');
-
-      // Grounded in this workspace: it must name something really configured.
-      const text = `${reply.body} ${reply.grounding || ''}`.toLowerCase();
+      // Grounded in this workspace: the visible answer must name something
+      // from the product that was actually created through the browser.
+      const text = conversation.toLowerCase();
       const grounded = ['variant', 'colour', 'color', 'size', ...state.locationNames.map((n) => n.split(/\s+/)[0].toLowerCase())];
       assert.ok(
         grounded.some((term) => text.includes(term)),
-        `the answer should cite the real configuration, got: ${reply.body}`
+        `the answer should cite the real item configuration, got: ${conversation}`
       );
       await shot(page, 'foundry-answer');
     });

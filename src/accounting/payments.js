@@ -135,6 +135,18 @@ function record(db, ctx, membership, input) {
             now, allocation.bill.id, ctx.workspaceId);
       }
     }
+    const graph = require('../provenance/service');
+    graph.record(db, ctx.workspaceId, { type: 'POSTED_AS',
+      from: { type: 'payment', id }, to: { type: 'journal_entry', id: posted.entry.id },
+      basis: 'DIRECT_RECORD' });
+    if (input.salesOrderId) graph.record(db, ctx.workspaceId, { type: 'PAID_BY',
+      from: { type: 'sales_order', id: input.salesOrderId }, to: { type: 'payment', id },
+      basis: 'DIRECT_RECORD' });
+    for (const allocation of allocations) graph.record(db, ctx.workspaceId, { type: 'PAID_BY',
+      from: { type: allocation.invoice ? 'customer_invoice' : 'supplier_bill',
+        id: allocation.invoice ? allocation.invoice.id : allocation.bill.id },
+      to: { type: 'payment', id }, basis: 'DIRECT_RECORD',
+      metadata: { amountMinor: allocation.amount } });
 
     /*
      * Money taken against an order pays that order's invoice.

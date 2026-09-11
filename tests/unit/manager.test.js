@@ -209,11 +209,13 @@ test('future vendor documents receive remembered code vocabulary and learn newly
   order = poService.approve(env.db, env.workspace.ctx, env.membership, order.id,
     { expectedHash: order.integrityHash, markOrdered: true });
   const provider = fakeProvider({
-    documentType: 'invoice', businessDescription: 'ABC Supply delivered Filter Cartridge inventory.', unitLabel: 'unit',
+    documentType: 'invoice', goodsHaveArrived: true, referencedOrderNumber: order.poNumber,
+    businessDescription: 'ABC Supply delivered Filter Cartridge inventory.', unitLabel: 'unit',
     supplierName: 'ABC Supply', supplierCodeLabel: 'Catalogue Ref', supplierEmail: '', documentNumber: 'DEL-901',
     documentDate: '2026-08-17', paymentTerms: '', currency: 'USD', destinationName: 'Main Warehouse',
     destinationAddress: '', lines: [{ styleName: 'Filter Cartridge', color: '', variantDimension: '', size: '',
-      supplierSku: 'FC-100', description: 'Filter Cartridge', quantity: 12, unitCost: 4.5 }], warnings: [],
+      supplierSku: 'FC-100', description: 'Filter Cartridge', quantity: 12, unitCost: 4.5 }],
+    charges: [], documentTotal: 54, warnings: [],
   });
   const understood = await documentEvents.understand(env.db, env.workspace.ctx, {
     filename: 'delivery.txt', buffer: Buffer.from('ABC Supply Catalogue Ref FC-100 quantity 12 to Main Warehouse'),

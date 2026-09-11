@@ -39,6 +39,34 @@ function uniqueCode(db, workspaceId, candidate, taken) {
   return code;
 }
 
+/*
+ * Reading a list of choices the way somebody actually types one.
+ *
+ * The field said "separated by commas" and split on nothing else, so a shoe
+ * shop typing its size run — "25 27 29 31 33" — got a single variant named
+ * "25 27 29 31 33" carrying one stock figure for five different shoes. The
+ * count was then wrong for every one of them, and there was no way to give
+ * each size its own number, because there was only ever one row to type into.
+ *
+ * Commas, slashes, semicolons, pipes and newlines are unambiguous separators.
+ * Spaces are not — "0-6 months, 6-12 months" is two values each containing one
+ * — so a run of space-separated tokens is split only when every token is a
+ * size in its own right: a bare number, or one of the letter sizes. That
+ * covers the case above and leaves ordinary prose alone.
+ */
+const ATOMIC_VALUE = /^(?:\d{1,4}(?:\.\d{1,2})?|[2-6]?X{0,3}[SML]|OS)$/i;
+
+function splitOptionValues(raw) {
+  if (Array.isArray(raw)) return raw;
+  const text = String(raw === undefined || raw === null ? '' : raw).trim();
+  if (!text) return [];
+  const SEPARATORS = /[,;/|\r\n]+/;
+  if (SEPARATORS.test(text)) return text.split(SEPARATORS);
+  const tokens = text.split(/\s+/);
+  if (tokens.length > 1 && tokens.every((token) => ATOMIC_VALUE.test(token))) return tokens;
+  return [text];
+}
+
 /**
  * Parses the option axes captured by the item-creation form.
  * Input shape: [{ name: 'Color', values: 'Navy, Cream' }, ...]
@@ -48,7 +76,7 @@ function parseOptions(rawOptions) {
   for (const raw of rawOptions || []) {
     if (!raw) continue;
     const name = trimOrNull(raw.name);
-    const valuesRaw = typeof raw.values === 'string' ? raw.values.split(',') : raw.values || [];
+    const valuesRaw = splitOptionValues(raw.values);
     const values = valuesRaw.map((v) => trimOrNull(v)).filter(Boolean);
     if (!name && values.length === 0) continue;
     if (!name) throw new ValidationError('Give each option a name, such as Color or Size.');

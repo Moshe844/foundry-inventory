@@ -243,6 +243,7 @@ async function interpret(text, options = {}) {
   const response = await provider.complete({
     system: SYSTEM, prompt: `Source document text:\n\n${text}${vocabularyPrompt}`, schema: DOCUMENT_SCHEMA,
     schemaName: 'inventory_setup_document',
+    signal: options.signal,
   });
   const result = validate(toWireSchema(DOCUMENT_SCHEMA), response.data, { key: 'setup-document-wire' });
   if (!result.ok) throw new ValidationError('Foundry could not reliably read the inventory lines in that document.');
@@ -287,6 +288,7 @@ function understandingFromDocument(interpretation, sourceName) {
     businessType: `Inventory operation documented by ${evidence}`,
     inventoryPurpose: `Track the products, quantities, costs, supplier and destination evidenced by ${sourceName}.`,
     inventoryExamples: products,
+    ownerProvidedInventory: { hasRecords: false, lines: [], ambiguities: [] },
     inventoryArchetypes: usesVariants ? ['quantity', 'variant'] : ['quantity'],
     productStructure: {
       summary: usesVariants
@@ -368,10 +370,15 @@ function prepareFromInterpretation(db, ctx, membership, file, interpretation, ex
 }
 
 async function prepare(db, ctx, membership, file, options = {}) {
-  if (options.onStage) options.onStage('reading');
+  // Three real waits, reported as three: getting the text out of the file, the
+  // model call that reads it, and matching what it found against this
+  // inventory. They used to be reported as two, and the middle one — by far
+  // the longest — shared a label with the first.
+  if (options.onStage) options.onStage('extracting');
   const text = await extractText(file);
+  if (options.onStage) options.onStage('reading');
   const interpretation = await interpret(text, options);
-  if (options.onStage) options.onStage('advising');
+  if (options.onStage) options.onStage('preparing');
   return prepareFromInterpretation(db, ctx, membership, file, interpretation, text);
 }
 
@@ -678,7 +685,8 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
      * what it will not do is invent a purchase nobody told it about.
      */
     const expectsGoods = options.documentIntent === 'Yes, they are coming';
-    const billsOnly = isSupplierInvoice && (Boolean(matchedOrder) || !expectsGoods);
+    const billsOnly = isSupplierInvoice && (Boolean(matchedOrder)
+      || (!expectsGoods && !interpretation.goodsHaveArrived));
 
     let order = matchedOrder;
     if (wantsOrder && !billsOnly && !matchedOrder) {
@@ -746,6 +754,20 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
           locationId: line.destinationLocationId || location.id })),
       })
       : null;
+    // An invoice can prove a freight/duty/insurance charge and the posted
+    // supplier bill proves its accounting source. A receipt proves which
+    // goods are eligible. Only when all three exist do we prepare a draft
+    // allocation; approval and application remain separate owner decisions.
+    let landedCostProposal = null;
+    if (isSupplierInvoice && billing?.bill && matchedOrder && (interpretation.charges || []).length) {
+      try {
+        landedCostProposal = require('./landed-cost-proposal').propose(db, ctx, membership, {
+          interpretation, bill: billing.bill, purchaseOrder: matchedOrder, sourceDocumentId: row.id,
+        });
+      } catch (error) {
+        landedCostProposal = { proposed: false, reason: String(error.message || error) };
+      }
+    }
     /*
      * The charges go onto the order, not into the product costs.
      *
@@ -774,6 +796,7 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
       billedAgainstOrder: matchedOrder ? matchedOrder.po_number : null,
       billDifferences: billMatch ? billMatch.differences : [],
       billNotRecorded: billing && !billing.billed ? billing.because : null,
+      landedCostProposal,
       unitsOnOrder: (received || opened) ? 0 : orderedUnits,
       charges: interpretation.charges || [],
       documentTotalMinor: interpretation.documentTotalMinor ?? null,

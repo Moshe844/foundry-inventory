@@ -7,6 +7,7 @@
  */
 
 const needsYouInbox = require('./needs-you-inbox');
+const { canonical: productBrain } = require('../product-brain/registry');
 
 const openingWords = /\b(opening|starting|initial|beginning|migrat)/i;
 
@@ -328,7 +329,15 @@ function buildChecklist(state) {
       foundCurrent = true;
     }
   }
-  return { steps, active: !setup || !opening || !supplier || !replenishmentReady || !authority };
+  return {
+    steps,
+    active: !setup || !opening || !supplier || !replenishmentReady || !authority,
+    // Products, locations and a movement-backed opening balance are enough for
+    // Foundry to operate truthfully. Supplier, replenishment and automatic-
+    // authority choices increase what it can handle, but they must not make a
+    // working inventory look as though the product itself is still booting.
+    operationalReady: setup && opening,
+  };
 }
 
 function activeAuthorityCopy(state) {
@@ -338,8 +347,8 @@ function activeAuthorityCopy(state) {
   return 'You reviewed the automatic-work mode; Foundry will follow that choice.';
 }
 
-function nextBestAction(db, workspaceId, state) {
-  const inbox = needsYouInbox.inbox(db, workspaceId);
+function nextBestAction(db, workspaceId, state, membership = null, productBrain = null) {
+  const inbox = needsYouInbox.inbox(db, workspaceId, membership, { productBrain });
   // A source the owner already chose outranks a generic manual-setup prompt.
   // This is especially important for unattended mailbox checks: Foundry can
   // finish reading a file while the browser is closed, and Home must expose
@@ -475,31 +484,35 @@ function nextBestAction(db, workspaceId, state) {
   };
 }
 
-function build(db, workspaceId) {
+function build(db, workspaceId, membership = null, options = {}) {
   const state = facts(db, workspaceId);
   const checklist = buildChecklist(state);
-  const inbox = needsYouInbox.inbox(db, workspaceId);
+  const inbox = needsYouInbox.inbox(db, workspaceId, membership, { productBrain: options.productBrain });
   return {
     state,
     checklistActive: checklist.active,
+    operationalReady: checklist.operationalReady,
     steps: checklist.steps,
-    next: nextBestAction(db, workspaceId, state),
+    next: nextBestAction(db, workspaceId, state, membership, options.productBrain),
     examples: examples(state),
     firstNeedsYou: inbox[0] || null,
     needsYouCount: inbox.length,
   };
 }
 
-const screenDescriptions = {
-  inventory: 'See what you have, receive stock, record usage, move inventory, count it, and control replenishment.',
-  locations: 'See every warehouse, store or other place where stock can be held.',
-  sales: 'See completed sales, customer commitments, reserved stock, shortages and fulfillment.',
-  purchasing: 'See what Foundry wants to buy, orders already placed, what is arriving, and what still needs receiving.',
-  connections: 'Connect where sales and inventory activity happen so Foundry learns about them automatically.',
-  attention: 'Make only the decisions Foundry cannot safely settle by itself.',
-  activity: 'See the meaningful inventory changes Foundry and your team have recorded.',
-  settings: 'Choose how this inventory works and what Foundry may handle automatically.',
+const navDestination = {
+  inventory: 'inventory', locations: 'locations', sales: 'sales', purchasing: 'purchasing',
+  connections: 'connections', attention: 'needs-you', activity: 'activity', settings: 'settings',
 };
+const screenDescriptions = Object.fromEntries(Object.entries(navDestination).map(([nav, destinationId]) => {
+  const destination = productBrain.destination(destinationId);
+  const capability = destination && productBrain.capability(destination.capability);
+  return [nav, capability ? capability.description : ''];
+}));
+
+function canonicalHref(id, fallback) {
+  return (productBrain.destination(id) || {}).href || fallback;
+}
 
 function screenContext(guidance, nav) {
   if (!guidance || !screenDescriptions[nav]) return null;
@@ -511,7 +524,7 @@ function screenContext(guidance, nav) {
           href: `/inventory/${state.missingPrice.item_id}#selling-price` }
       : state.sellingConnectionCount
       ? { title: 'Record a customer commitment', action: 'New sales order', href: '/sales/new' }
-      : { title: 'Connect where sales happen', action: 'Choose a sales system', href: '/settings/connections#connection-group-selling' };
+      : { title: 'Connect where sales happen', action: 'Choose a sales system', href: `${canonicalHref('connections', '/settings/connections')}#connection-group-selling` };
   } else if (nav === 'connections') {
     // "Connected systems run automatically" is a status, not a task. If
     // something genuinely needs the owner, show that exact next action;
@@ -574,8 +587,8 @@ function guideTopics(db, workspaceId) {
     { title: 'Set low-stock/reorder rules', path: 'Open the exact variant and set its reorder point, order-up-to level, safety stock and preferred supplier.', tell: `“Set a reorder point for ${item}.”`, href: replenish.href, action: replenish.action },
     { title: 'Set up suppliers and purchase orders', path: 'Add the supplier, connect the variants it sells, and record price, pack size, minimum and lead time. Foundry can then prepare a PO.', tell: `“Help me add a supplier for ${item}.”`, href: state.missingSupplier ? `/purchasing/supplier-for/${state.missingSupplier.sku_id}` : '/purchasing/setup', action: 'Set up purchasing' },
     { title: 'Receive a purchase order', path: state.openOrder ? `Open ${state.openOrder.po_number}, count what arrived, and record a partial or full receipt.` : 'Open the placed purchase order when the delivery arrives, count the box, and record only what actually arrived.', tell: state.openOrder ? `“We received stock for ${state.openOrder.po_number}.”` : '“The purchase order arrived.”', href: state.openOrder ? `/purchasing/orders/${state.openOrder.id}` : '/purchasing', action: state.openOrder ? `Open ${state.openOrder.po_number}` : 'View purchase orders' },
-    { title: 'Control what Foundry may do automatically', path: 'Choose Ask me first or explicitly enable bounded routine transfers and purchasing. Custom contains the advanced policy engine.', tell: '“Automatically transfer up to 5 units at a time.”', href: '/autopilot', action: 'Choose automatic work' },
-    { title: 'Find what needs my attention', path: 'Needs you is the inbox for real decisions and physical facts. Each item says what happened, why Foundry stopped, and the one action to take.', tell: '“What needs my attention?”', href: '/needs-you', action: 'Open Needs you' },
+    { title: 'Control what Foundry may do automatically', path: 'Choose Ask me first or explicitly enable bounded routine transfers and purchasing. Custom contains the advanced policy engine.', tell: '“Automatically transfer up to 5 units at a time.”', href: canonicalHref('autopilot', '/autopilot'), action: 'Choose automatic work' },
+    { title: 'Find what needs my attention', path: 'Needs you is the inbox for real decisions and physical facts. Each item says what happened, why Foundry stopped, and the one action to take.', tell: '“What needs my attention?”', href: canonicalHref('needs-you', '/needs-you'), action: 'Open Needs you' },
   ];
 }
 

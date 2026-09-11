@@ -20,6 +20,7 @@ const operatingGuards = require('../../src/domain/operating-guards');
 const attention = require('../../src/attention/attention-engine');
 const planService = require('../../src/imports/plan-service');
 const importRemovals = require('../../src/manager/import-removals');
+const priceService = require('../../src/pricing/price-service');
 
 test.after(cleanupAll);
 
@@ -196,7 +197,7 @@ test('"order what we need" runs the manager loop and prepares supported purchasi
   assert.equal((plan.affectedEntities || {}).displayName, 'Packing Tape', 'and it names the product');
 
   const next = plain((await env.agent.get('/')).text);
-  assert.match(next, /Packing Tape needs replenishing/, 'named on the home page too');
+  assert.match(next, /Create a draft order for 2 cases \(12 units\) of Packing Tape/, 'named on the home page too');
   assert.doesNotMatch(next, /No purchase is currently supported/,
     'a plan was prepared, so saying nothing is supported is false');
   env.db.close();
@@ -466,15 +467,16 @@ test('newly added products resolve to the latest import and allow subset or sele
   env.db.close();
 });
 
-test('an unmatched supplier invoice becomes an exact inventory review instead of a generic exception', async () => {
+test('an unmatched supplier invoice becomes an exact review without pretending the goods were received', async () => {
   const interpretation = {
-    documentType: 'invoice', businessDescription: 'New shoe inventory from Step & Style Wholesale.', unitLabel: 'pair',
+    documentType: 'invoice', goodsHaveArrived: false, referencedOrderNumber: '',
+    businessDescription: 'New shoe inventory from Step & Style Wholesale.', unitLabel: 'pair',
     supplierName: 'Step & Style Wholesale', supplierCodeLabel: 'Style #', supplierEmail: '',
     documentNumber: 'INV-NEW-1', documentDate: '2026-08-26', paymentTerms: '', currency: 'USD',
     destinationName: 'Main Warehouse', destinationAddress: '',
     lines: [{ styleName: 'Kids Loafer', color: 'Black', variantDimension: 'Size', size: '23',
       supplierSku: 'SH-101-BLK', description: 'Kids Loafer Black size 23', quantity: 12, unitCost: 11.5 }],
-    warnings: [],
+    charges: [], documentTotal: 138, warnings: [],
   };
   const env = await setup(interpretation);
   env.db.prepare(
@@ -534,7 +536,8 @@ test('an unmatched supplier invoice becomes an exact inventory review instead of
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId,
     env.db.prepare("SELECT sku_id AS id FROM supplier_items WHERE workspace_id = ? AND supplier_sku = 'SH-101-BLK'")
       .get(env.workspace.workspaceId).id,
-    env.workspace.main.id), 12);
+    env.workspace.main.id), 0,
+  'a supplier invoice establishes the bill and catalogue evidence, not a physical receipt');
 
   const afterImport = await env.agent.get('/');
   const removalRequest = await env.agent.post('/foundry/tell').type('form').send({
@@ -547,7 +550,7 @@ test('an unmatched supplier invoice becomes an exact inventory review instead of
   const removalText = plain(removalPage.text);
   assert.match(removalText, /Foundry traced these products to new-shoes\.txt/i);
   assert.match(removalText, /Kids Loafer - Black/i);
-  assert.match(removalText, /Current stock 12/i);
+  assert.match(removalText, /Current stock 0/i);
   assert.doesNotMatch(removalText, /Attach the spreadsheet, PDF or document/i);
   const approvalFormStart = removalPage.text.indexOf(`action="${removalRequest.headers.location}/approve"`);
   const approvalFormEnd = removalPage.text.indexOf('</form>', approvalFormStart);
@@ -596,11 +599,13 @@ test('a photo is kept as physical evidence instead of being forced through sprea
 
 test('an operational document is read, matched to one PO, and becomes a verified receipt preview', async () => {
   const interpretation = {
-    documentType: 'invoice', businessDescription: 'ABC Supply delivered Filter Cartridge inventory.', unitLabel: 'unit',
+    documentType: 'invoice', goodsHaveArrived: true, referencedOrderNumber: '',
+    businessDescription: 'ABC Supply delivered Filter Cartridge inventory.', unitLabel: 'unit',
     supplierName: 'ABC Supply', supplierCodeLabel: 'Vendor Item No.', supplierEmail: '', documentNumber: 'DEL-900', documentDate: '2026-08-17',
     paymentTerms: '', currency: 'USD', destinationName: 'Main Warehouse', destinationAddress: '',
     lines: [{ styleName: 'Filter Cartridge', color: '', variantDimension: '', size: '', supplierSku: 'FC-100',
-      description: 'Filter Cartridge', quantity: 12, unitCost: 4.5 }], warnings: [],
+      description: 'Filter Cartridge', quantity: 12, unitCost: 4.5 }],
+    charges: [], documentTotal: 54, warnings: [],
   };
   const env = await setup(interpretation);
   const membership = authService.getMembership(env.db, env.workspace.workspaceId, env.workspace.accountId);
@@ -728,7 +733,7 @@ test('confirming a count prepares the correction, and Needs you stays actionable
   assert.doesNotMatch(settled, /A change is prepared and waiting for you/,
     'once approved it leaves the inbox immediately');
   assert.doesNotMatch(settled, /does not match the records/, 'and so does the investigation');
-  assert.doesNotMatch(settled, /Black T-shirt.*8.*5/);
+  assert.doesNotMatch(settled, /Black T-shirt.*\b8\b.*\b5\b/);
   env.db.close();
 });
 
@@ -1087,6 +1092,217 @@ test('Tell Foundry routes a direct currency assignment to a selling-price previe
   assert.match(preview, /\$12\.00/);
   assert.match(preview, /Nothing changes until you approve/i);
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM sku_prices WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 0);
+  env.db.close();
+});
+
+test('Tell Foundry asks once before adding a named missing supplier, then approves the exact PO', async () => {
+  const actionIntent = {
+    lines: [{
+      actionType: 'purchase', item: 'Sol shoes', variant: '', lotCode: '', serials: [],
+      sourceLocation: '', destinationLocation: '', quantity: 2, adjustmentTarget: -1,
+      reasonCode: '', terminologyKey: '', terminologyValue: '', productName: '', productCode: '',
+      variantAxes: '', unitLabel: '', supplier: 'ABC Footwear', purchaseUnit: '',
+      amount: -1, reference: '', recipient: '', messageBody: '',
+    }],
+    clarifyingQuestion: '', unsupportedReason: '',
+  };
+  const env = await setup((request) => request.schemaName === 'manager_intent'
+    ? {
+        capabilityId: 'purchasing.manage', intentClass: 'PURCHASING_REQUEST', confidence: 'high',
+        goal: 'Prepare the requested purchase order', reason: 'The owner asked for a PO.',
+        resolvedReference: '', clarifyingQuestion: '',
+        parameters: { fromText: '', toText: '', transformMode: '', documentReference: '' },
+      }
+    : actionIntent);
+  const item = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Sol shoes', baseCode: 'SOL' });
+
+  const home = await env.agent.get('/');
+  const routed = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'Create a PO from ABC Footwear for 2 sol shoes at $10 each',
+  });
+  assert.equal(routed.status, 303);
+  assert.equal(routed.headers.location, '/actions');
+
+  const confirmation = await env.agent.get('/actions');
+  const confirmationPage = plain(confirmation.text);
+  assert.match(confirmationPage, /ABC Footwear is not in your suppliers yet/i);
+  assert.match(confirmationPage, /Add ABC Footwear and approve order/i);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM suppliers WHERE workspace_id = ? AND name = ?')
+    .get(env.workspace.workspaceId, 'ABC Footwear').n, 0);
+  const continuationId = (confirmation.text.match(/name="continuationId" value="([^"]+)"/) || [])[1];
+  const confirmed = await env.agent.post('/actions/ask').type('form').send({
+    _csrf: csrfFrom(confirmation.text),
+    original: 'Create a PO from ABC Footwear for 2 sol shoes at $10 each',
+    answer: '__create_purchase_supplier__',
+    continuationId,
+  });
+  assert.equal(confirmed.status, 303);
+  assert.match(confirmed.headers.location, /^\/purchasing\/orders\/po_/);
+
+  const orderPage = plain((await env.agent.get(confirmed.headers.location)).text);
+  assert.match(orderPage, /ABC Footwear/);
+  assert.match(orderPage, /Sol shoes/);
+  assert.match(orderPage, /2 units/);
+  assert.match(orderPage, /10\.00/);
+  assert.match(orderPage, /approved/i);
+  assert.match(orderPage, /has no email on file/i);
+  assert.match(orderPage, /nothing was sent/i);
+  assert.doesNotMatch(orderPage, /Ready for your approval/i);
+  assert.match(orderPage, /Add supplier email/i);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM suppliers WHERE workspace_id = ? AND name = ?')
+    .get(env.workspace.workspaceId, 'ABC Footwear').n, 1);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM purchase_orders WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 1);
+  assert.equal(env.db.prepare('SELECT status FROM purchase_orders WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).status, 'ORDERED');
+  const needsYou = plain((await env.agent.get('/needs-you')).text);
+  assert.match(needsYou, /needs ABC Footwear's email before it can be sent/i);
+  assert.equal(env.db.prepare('SELECT unit_cost FROM purchase_order_lines WHERE sku_id = ?').get(item.skuId).unit_cost, 10);
+  env.db.close();
+});
+
+test('a specific PO request with a non-catalogue product description asks for the product instead of returning Home', async () => {
+  const actionIntent = {
+    lines: [{
+      actionType: 'purchase', item: 'shoes', variant: '', lotCode: '', serials: [],
+      sourceLocation: '', destinationLocation: '', quantity: 2, adjustmentTarget: -1,
+      reasonCode: '', terminologyKey: '', terminologyValue: '', productName: '', productCode: '',
+      variantAxes: '', unitLabel: '', supplier: 'ABC Footwear', purchaseUnit: '',
+      amount: -1, reference: '', recipient: '', messageBody: '',
+    }],
+    clarifyingQuestion: '', unsupportedReason: '',
+  };
+  const env = await setup((request) => request.schemaName === 'manager_intent'
+    ? {
+        capabilityId: 'purchasing.manage', intentClass: 'PURCHASING_REQUEST', confidence: 'high',
+        goal: 'Prepare the requested purchase order', reason: 'The owner asked for a specific PO.',
+        resolvedReference: '', clarifyingQuestion: '',
+        parameters: { fromText: '', toText: '', transformMode: '', documentReference: '' },
+      }
+    : actionIntent);
+  const shirts = makeVariantItem(env.db, env.workspace.ctx, {
+    name: 'T-shirt',
+    baseCode: 'TSHIRT',
+    options: [
+      { name: 'Colour', values: 'Black, White' },
+      { name: 'Size', values: 'Small, Large' },
+    ],
+  });
+
+  const home = await env.agent.get('/');
+  const routed = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'Create a PO from ABC Footwear for 2 shoes at $10 each',
+  });
+  assert.equal(routed.status, 303);
+  assert.equal(routed.headers.location, '/actions');
+  const productQuestion = await env.agent.get('/actions');
+  const page = plain(productQuestion.text);
+  assert.match(page, /ABC Footwear is not in your suppliers yet/i);
+  assert.match(page, /Choose the product below to add this supplier and approve/i);
+  assert.match(page, /T-shirt/);
+  assert.match(page, /Black \/ Small/);
+  assert.doesNotMatch(page, /No purchase is currently supported/i);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM suppliers').get().n, 0);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM purchase_orders').get().n, 0);
+
+  const productContinuationId = (productQuestion.text.match(/name="continuationId" value="([^"]+)"/) || [])[1];
+  const selectedProduct = await env.agent.post('/actions/ask').type('form').send({
+    _csrf: csrfFrom(productQuestion.text),
+    original: 'Create a PO from ABC Footwear for 2 shoes at $10 each',
+    answer: `__purchase_sku__:${shirts.byLabel('Black / Small').id}`,
+    continuationId: productContinuationId,
+  });
+  assert.equal(selectedProduct.status, 303);
+  assert.match(selectedProduct.headers.location, /^\/purchasing\/orders\/po_/);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM purchase_orders').get().n, 1,
+    'the exact SKU choice must create the draft instead of asking for its variant again');
+  const line = env.db.prepare('SELECT quantity_units, unit_cost FROM purchase_order_lines').get();
+  assert.equal(line.quantity_units, 2);
+  assert.equal(line.unit_cost, 10);
+  env.db.close();
+});
+
+test('Tell Foundry treats an owner-stated supplier price as purchase cost for the real inventory, never as a product name', async () => {
+  const env = await setup({});
+  const membership = authService.getMembership(env.db, env.workspace.workspaceId, env.workspace.accountId);
+  const loafers = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Loafers', baseCode: 'LOAFER' });
+  const boots = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Boots', baseCode: 'BOOT' });
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: loafers.skuId, locationId: env.workspace.main.id, quantity: 20, reasonCode: 'opening',
+  });
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: boots.skuId, locationId: env.workspace.main.id, quantity: 10, reasonCode: 'opening',
+  });
+  const supplier = supplierService.createSupplier(env.db, env.workspace.ctx, membership, { name: 'Shoe Supply' });
+  const supplierItem = supplierService.linkItem(env.db, env.workspace.ctx, membership, {
+    supplierId: supplier.id, skuId: loafers.skuId, lastUnitCost: 80, isPreferred: true,
+  });
+  priceService.setPrice(env.db, env.workspace.ctx, { skuId: loafers.skuId, amount: '100', currency: 'USD' });
+  priceService.setPrice(env.db, env.workspace.ctx, { skuId: boots.skuId, amount: '200', currency: 'USD' });
+
+  const home = await env.agent.get('/');
+  const response = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'Can you add the price I pay suppliers to my inventory items to $150 each',
+  });
+
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.location, '/pricing/purchase-costs/batch');
+  const focused = await env.agent.get(response.headers.location);
+  const visible = plain(focused.text);
+  assert.match(visible, /current purchase cost/i);
+  assert.match(visible, /1 product would sell for less than the new purchase cost/i);
+  assert.match(visible, /Loafers.*Shoe Supply.*\$80\.00.*\$150\.00.*\$100\.00.*Loses \$50\.00/i);
+  assert.match(visible, /Boots.*No supplier linked yet.*Not set.*\$150\.00.*\$200\.00.*\$50\.00 above cost/i);
+  assert.match(visible, /does not rewrite the historical value or COGS/i);
+  assert.doesNotMatch(visible, /Do now:/i, 'the active cost decision must not compete with unrelated setup guidance');
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM sku_purchase_costs WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 0, 'the preview changes nothing');
+  assert.equal(env.db.prepare('SELECT last_unit_cost FROM supplier_items WHERE id = ?').get(supplierItem.id).last_unit_cost, 80);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM accounting_inventory_cost_balances WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 0, 'the preview changes nothing');
+
+  const pending = env.db.prepare(`SELECT id, integrity_hash FROM purchase_cost_change_proposals
+    WHERE workspace_id = ? AND status = 'PENDING' ORDER BY id`).all(env.workspace.workspaceId);
+  const approval = { _csrf: csrfFrom(focused.text), approval: {} };
+  pending.forEach((proposal) => { approval.approval[proposal.id] = proposal.integrity_hash; });
+  const approved = await env.agent.post('/pricing/purchase-costs/batch/approve').type('form').send(approval);
+  assert.equal(approved.status, 303);
+  assert.equal(approved.headers.location, '/inventory');
+  const costs = env.db.prepare(`SELECT sku_id, amount_minor FROM sku_purchase_costs
+    WHERE workspace_id = ? ORDER BY sku_id`).all(env.workspace.workspaceId);
+  assert.equal(costs.length, 2);
+  assert.ok(costs.every((row) => row.amount_minor === 15000));
+  assert.equal(env.db.prepare('SELECT last_unit_cost FROM supplier_items WHERE id = ?').get(supplierItem.id).last_unit_cost, 150);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM accounting_inventory_cost_balances WHERE workspace_id = ?')
+    .get(env.workspace.workspaceId).n, 0, 'a current cost still does not rewrite historical stock valuation');
+  const inventoryPage = plain((await env.agent.get(`/inventory/${loafers.itemId}`)).text);
+  assert.match(inventoryPage, /purchase cost \$150\.00.*Shoe Supply/i);
+  assert.match(inventoryPage, /Warning: sells \$50\.00 below purchase cost/i);
+  env.db.close();
+});
+
+test('Tell Foundry routes a profit question with dollar amounts to Ask, not selling-price changes', async () => {
+  const env = await setup({
+    intentClass: 'QUESTION', confidence: 'high',
+    reason: 'The owner is asking why profit differs from customer cash.',
+    resolvedReference: '', clarifyingQuestion: '',
+  });
+  makeQuantityItem(env.db, env.workspace.ctx, { name: 'Black Jeans', baseCode: 'JEANS-BLACK-S' });
+
+  const home = await env.agent.get('/');
+  const response = await env.agent.post('/foundry/tell').type('form').send({
+    _csrf: csrfFrom(home.text),
+    message: 'Why did I only make $1,560 when customers paid $2,080?',
+  });
+
+  assert.equal(response.status, 303);
+  assert.match(response.headers.location, /^\/ask\?q=/);
+  assert.match(decodeURIComponent(response.headers.location), /Why did I only make \$1,560/);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM price_change_proposals WHERE workspace_id = ?')
     .get(env.workspace.workspaceId).n, 0);
   env.db.close();
 });

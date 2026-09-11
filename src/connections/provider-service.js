@@ -11,6 +11,9 @@ const credentialsStore = require('./credentials');
 const providers = require('./providers/registry');
 const mailRelevance = require('./mail-relevance');
 const setAside = require('./mail-set-aside');
+const locationService = require('../domain/location-service');
+const catalogImport = require('./catalog-import');
+const accountingSync = require('../accounting/integration-sync');
 
 const stateHash = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 
@@ -111,11 +114,30 @@ async function loadProviderCredentials(db, connection, adapter) {
   let providerCredentials = credentialsStore.get(db, connection.workspace_id, connection.id, 'provider');
   if (!providerCredentials) throw new AuthenticationError('Reconnect this provider before syncing.');
   if (adapter?.refreshCredentials) {
-    const refreshed = await adapter.refreshCredentials(providerCredentials);
+    let refreshed;
+    try {
+      refreshed = await adapter.refreshCredentials(providerCredentials);
+    } catch (error) {
+      const now = nowIso();
+      db.prepare(`UPDATE workspace_connectors SET status = 'error', setup_status = 'REAUTHORIZATION_REQUIRED',
+        last_error = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`)
+        .run(String(error.message).slice(0, 500), now, connection.workspace_id, connection.id);
+      connections.issue(db, { workspaceId: connection.workspace_id, connectorId: connection.id,
+        issueType: 'CONNECTION_AUTHORIZATION_REVOKED', fingerprint: `provider-auth:${connection.id}`,
+        title: `${connection.display_name} needs to be reconnected`,
+        detail: 'The provider rejected Foundry\'s saved authorization or token refresh. No external write was attempted.',
+        resolutionHint: 'Reconnect on the provider authorization screen. Existing mappings and audit history are preserved.' });
+      throw error;
+    }
     providerCredentials = refreshed.credentials;
     if (refreshed.refreshed) {
       credentialsStore.put(db, connection.workspace_id, connection.id, 'provider', providerCredentials,
         refreshed.expiresAt || null);
+      require('../operations/checkpoints').record(db, 'integration.token_refresh', 'PASS', {
+        refreshed: true, provider: connection.provider_type, connectorId: connection.id,
+        liveMode: refreshed.credentials?.environment !== 'sandbox',
+        releaseRef: config.operations.releaseRef,
+      });
     }
   }
   return providerCredentials;
@@ -182,6 +204,16 @@ async function finishAuthorization(db, connection, actorId, result, requestOrigi
   deactivateDuplicateProviderAccounts(db, connection.workspace_id, connection.id,
     connection.provider_type, result.accountId);
   const current = connections.get(db, connection.workspace_id, connection.id);
+  // Accounting providers are deliberately not catalog/event providers.  A
+  // successful OAuth return proves only that Foundry can read one real fact.
+  // It must not start importing, reconciling, or posting until the owner has
+  // chosen a source of truth and an authority level on the next screen.
+  if (adapter.integrationClass === 'accounting') {
+    const verifiedFact = result.verifiedFact
+      || await adapter.verifyReadOnly({ credentials: result.credentials, connection: current });
+    accountingSync.initialize(db, current, actorId, verifiedFact);
+    return connections.get(db, current.workspace_id, current.id);
+  }
   const origin = providerOrigin(requestOrigin);
   if (adapter.registerWebhooks && (origin.startsWith('https://') || process.env.NODE_ENV === 'test')) {
     const webhookUrl = adapter.webhookUrl
@@ -211,7 +243,7 @@ async function finishAuthorization(db, connection, actorId, result, requestOrigi
         .run(`Webhook setup: ${error.message}`, nowIso(), connection.id);
     }
   }
-  await sync(db, current.workspace_id, current.id, actorId, { adapter });
+  await sync(db, current.workspace_id, current.id, actorId, { adapter, bootstrapEmpty: true });
   return connections.get(db, current.workspace_id, current.id);
 }
 
@@ -229,10 +261,28 @@ function deactivateDuplicateProviderAccounts(db, workspaceId, connectorId, provi
 }
 
 function exactTarget(db, workspaceId, record) {
-  if (record.entityType === 'sku' && record.code) {
-    const rows = db.prepare(`${repo.SKU_SELECT} WHERE s.workspace_id = ? AND s.code = ? COLLATE NOCASE`)
-      .all(workspaceId, record.code);
-    return rows.length === 1 ? rows[0].id : null;
+  if (record.entityType === 'sku') {
+    if (record.code) {
+      const rows = db.prepare(`${repo.SKU_SELECT} WHERE s.workspace_id = ? AND s.code = ? COLLATE NOCASE`)
+        .all(workspaceId, record.code);
+      if (rows.length === 1) return rows[0].id;
+    }
+    if (record.providerData?.barcode) {
+      const rows = db.prepare(`${repo.SKU_SELECT} WHERE s.workspace_id = ? AND s.barcode = ? COLLATE NOCASE`)
+        .all(workspaceId, record.providerData.barcode);
+      if (rows.length === 1) return rows[0].id;
+    }
+    // A provider may omit SKU codes. An exact, unique product + variant name
+    // is still deterministic evidence; partial or duplicate names remain for
+    // the owner instead of being guessed.
+    const itemName = String(record.providerData?.itemName || '').trim();
+    const variantName = String(record.providerData?.variationName || '').trim();
+    if (itemName) {
+      const rows = db.prepare(`${repo.SKU_SELECT} WHERE s.workspace_id = ? AND i.name = ? COLLATE NOCASE
+        AND COALESCE(s.variant_label, '') = ? COLLATE NOCASE`).all(workspaceId, itemName, variantName);
+      if (rows.length === 1) return rows[0].id;
+    }
+    return null;
   }
   if (record.entityType === 'location') {
     const rows = db.prepare('SELECT id FROM locations WHERE workspace_id = ? AND name = ? COLLATE NOCASE AND is_active = 1')
@@ -297,6 +347,9 @@ async function sync(db, workspaceId, connectorId, actorId, options = {}) {
   const connection = connections.get(db, workspaceId, connectorId);
   const adapter = options.adapter || providers.get(connection.provider_type);
   if (!adapter?.discover) throw new ValidationError('This connection does not use provider catalog discovery.');
+  const registeredAdapter = providers.get(connection.provider_type);
+  const providerMetadata = (typeof adapter.metadata === 'function' ? adapter.metadata() : null)
+    || (typeof registeredAdapter?.metadata === 'function' ? registeredAdapter.metadata() : {});
   const providerCredentials = await loadProviderCredentials(db, connection, adapter);
   const runId = newId('csync'); const started = nowIso();
   db.prepare(`INSERT INTO connection_sync_runs (id, workspace_id, connector_id, sync_kind, status, started_at)
@@ -304,12 +357,34 @@ async function sync(db, workspaceId, connectorId, actorId, options = {}) {
     .run(runId, workspaceId, connectorId, started);
   try {
     const found = await adapter.discover({ credentials: providerCredentials, connection });
-    let autoMapped = 0; let needsMapping = 0;
+    let autoMapped = 0; let needsMapping = 0; let imported = null;
+    const mayBootstrap = options.bootstrapEmpty && connection.provider_type === 'square'
+      && db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(workspaceId).n === 0;
+    const importsCatalogAutomatically = providerMetadata.catalogImportMode === 'automatic';
     inTransaction(db, () => {
       for (const record of [...(found.products || []), ...(found.locations || [])]) {
         const result = cacheRecord(db, connection, actorId, record);
         if (result === 'mapped') autoMapped += 1;
         else if (result === 'unmapped') needsMapping += 1;
+      }
+      if (mayBootstrap || importsCatalogAutomatically) {
+        const ctx = { workspaceId, actorId,
+          accountId: db.prepare('SELECT account_id FROM users WHERE id = ? AND workspace_id = ?').get(actorId, workspaceId)?.account_id };
+        for (const external of found.locations || []) {
+          const cached = db.prepare(`SELECT mapping_status FROM connection_external_records
+            WHERE workspace_id = ? AND connector_id = ? AND entity_type = 'location' AND external_id = ?`)
+            .get(workspaceId, connectorId, String(external.externalId));
+          if (cached?.mapping_status === 'MAPPED') continue;
+          let location = db.prepare('SELECT id FROM locations WHERE workspace_id = ? AND name = ? COLLATE NOCASE AND is_active = 1')
+            .get(workspaceId, external.displayName);
+          if (!location) location = locationService.createLocation(db, ctx, { name: external.displayName, kind: 'store' });
+          connections.mapExternal(db, ctx, connectorId, { entityType: 'location', externalId: String(external.externalId), foundryRecordId: location.id });
+        }
+        imported = catalogImport.importProducts(db, ctx, connection, (found.products || []).map((row) => String(row.externalId)));
+        needsMapping = db.prepare(`SELECT COUNT(*) AS n FROM connection_external_records
+          WHERE workspace_id = ? AND connector_id = ? AND selected = 1 AND mapping_status = 'UNMAPPED'`)
+          .get(workspaceId, connectorId).n;
+        autoMapped = (found.products || []).length + (found.locations || []).length - needsMapping;
       }
       const done = nowIso();
       db.prepare(`UPDATE connection_sync_runs SET status = 'COMPLETED', discovered_products = ?,
@@ -319,7 +394,7 @@ async function sync(db, workspaceId, connectorId, actorId, options = {}) {
         last_error = NULL, updated_at = ? WHERE workspace_id = ? AND id = ?`)
         .run(needsMapping ? 'MAPPING' : 'CONNECTED', done, done, workspaceId, connectorId);
     });
-    return { products: (found.products || []).length, locations: (found.locations || []).length, autoMapped, needsMapping };
+    return { products: (found.products || []).length, locations: (found.locations || []).length, autoMapped, needsMapping, imported };
   } catch (error) {
     const done = nowIso();
     db.prepare(`UPDATE connection_sync_runs SET status = 'FAILED', error_message = ?, completed_at = ? WHERE id = ?`)
@@ -693,4 +768,4 @@ module.exports = { beginAuthorization, completeOAuth, completeWooCallback, sync,
   bringInSetAside, prepareReply, maintainMailboxWatch, sendMailboxMessage,
   reviewHistory, setSelectedLocations,
   createSandboxCheckout, ignoreExternal, webhookContext, createState, readState, stateConnection, providerOrigin,
-  deactivateDuplicateProviderAccounts };
+  deactivateDuplicateProviderAccounts, loadProviderCredentials };

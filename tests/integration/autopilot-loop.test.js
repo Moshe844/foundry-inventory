@@ -170,7 +170,7 @@ test('supervised: Foundry prepares the transfer and waits', () => {
   assert.match(note.title, /Move 12 Kids Tights \/ Black \/ 5/);
 });
 
-test('on autopilot: Foundry moves the stock, verifies it, and records why', () => {
+test('on autopilot: Foundry prepares the governed transfer, verifies it, and records why', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
@@ -182,9 +182,9 @@ test('on autopilot: Foundry moves the stock, verifies it, and records why', () =
   const [done] = result.results;
   assert.equal(done.verified, true, JSON.stringify(done.checks));
 
-  // The stock actually moved, and the total is unchanged.
-  assert.equal(balanceOf(env, env.brooklyn.id), before.brooklyn + 12);
-  assert.equal(balanceOf(env, env.jersey.id), before.jersey - 12);
+  // Approval creates a real transfer, but cannot impersonate the warehouse.
+  assert.equal(balanceOf(env, env.brooklyn.id), before.brooklyn);
+  assert.equal(balanceOf(env, env.jersey.id), before.jersey);
   assert.equal(
     balanceOf(env, env.brooklyn.id) + balanceOf(env, env.jersey.id),
     before.brooklyn + before.jersey
@@ -204,16 +204,18 @@ test('on autopilot: Foundry moves the stock, verifies it, and records why', () =
   const evidence = item.sourceEvidence.map((entry) => `${entry.label}: ${entry.value}`).join(' | ');
   assert.match(evidence, /Main Warehouse on hand: 8/);
   assert.match(evidence, /Downtown Store on hand: 61/);
-  assert.deepEqual(item.outcome.checks.map((check) => check.ok), [true, true, true]);
+  assert.ok(item.outcome.transferId);
+  assert.equal(item.outcome.transferStatus, 'APPROVED');
+  assert.ok(item.outcome.checks.every((check) => check.ok));
 
   // …and it said so.
   const note = env.db
     .prepare("SELECT * FROM notifications WHERE workspace_id = ? AND kind = 'action_completed'")
     .get(env.workspace.workspaceId);
-  assert.match(note.title, /Moved 12 Kids Tights \/ Black \/ 5 to Main Warehouse/);
+  assert.match(note.title, /Prepared transfer of 12 Kids Tights \/ Black \/ 5 to Main Warehouse/);
 });
 
-test('running the loop again does not move it twice', () => {
+test('running the loop again does not prepare the same transfer twice', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
@@ -231,12 +233,18 @@ test('running the loop again does not move it twice', () => {
   assert.equal(
     env.db.prepare("SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ? AND operation = 'transfer'")
       .get(env.workspace.workspaceId).n,
-    2,   // one transfer is two movements: out and in
-    'exactly one transfer happened'
+    0,
+    'approval alone produced no physical movement'
+  );
+  assert.equal(
+    env.db.prepare('SELECT COUNT(*) AS n FROM inventory_transfers WHERE workspace_id = ?')
+      .get(env.workspace.workspaceId).n,
+    1,
+    'exactly one transfer was prepared'
   );
 });
 
-test('approving prepared work carries it out', () => {
+test('approving prepared work creates the transfer and leaves execution to the warehouse', () => {
   const env = tights();
   balancing(env);
   runner.run(env.db, env.ctx, env.membership, { trigger: 'test' });
@@ -246,7 +254,8 @@ test('approving prepared work carries it out', () => {
   const done = runner.executeWorkItem(env.db, env.ctx, env.membership, waiting.id);
 
   assert.equal(done.verified, true);
-  assert.equal(balanceOf(env, env.brooklyn.id), 20);
+  assert.equal(balanceOf(env, env.brooklyn.id), 8);
+  assert.equal(done.transfer.status, 'APPROVED');
   assert.equal(workItems.get(env.db, env.workspace.workspaceId, waiting.id).approvedAt !== null, true);
 });
 

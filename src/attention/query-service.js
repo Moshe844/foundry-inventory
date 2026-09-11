@@ -29,6 +29,7 @@ const INTENTS = [
   'expiring_soon',
   'idle_stock',
   'top_moving',
+  'top_customers',
   'attention_summary',
   // Not a question at all: they are asking Foundry to do something. Answering
   // "I can't" would be false — Foundry can, on the actions page — so this
@@ -70,6 +71,8 @@ const INTENTS = [
   'sales_tax_summary',
   'bills_due',
   'customer_payments',
+  'period_profit_and_customer_cash',
+  'sale_profit_and_payment',
   'supplier_spend',
   'product_profitability',
   'location_profitability',
@@ -572,6 +575,9 @@ const EXECUTORS = {
     const pnl = reports.profitAndLoss(db, workspaceId, { from, to });
     const balance = reports.balanceSheet(db, workspaceId, { asOf: to });
     const ar = reports.arAging(db, workspaceId, { asOf: to });
+    const confirmed = require('../accounting/owner-dashboard')
+      .confirmedOrderBalances(db, workspaceId, to);
+    const customerMoneyOutstandingMinor = ar.totalMinor + confirmed.balanceMinor;
     const ap = reports.apAging(db, workspaceId, { asOf: to });
     const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
     const cash = balance.assets.filter((a) => a.subtype === 'CASH').reduce((sum, a) => sum + a.net_minor, 0);
@@ -580,39 +586,52 @@ const EXECUTORS = {
       { measure: 'Gross profit', amountMinor: pnl.grossProfitMinor, display: money(pnl.grossProfitMinor) },
       { measure: 'Net income', amountMinor: pnl.netIncomeMinor, display: money(pnl.netIncomeMinor) },
       { measure: 'Cash', amountMinor: cash, display: money(cash) },
-      { measure: 'Customers owe', amountMinor: ar.totalMinor, display: money(ar.totalMinor) },
+      { measure: 'Customers still need to pay', amountMinor: customerMoneyOutstandingMinor,
+        display: money(customerMoneyOutstandingMinor) },
       { measure: 'Bills to pay', amountMinor: ap.totalMinor, display: money(ap.totalMinor) },
     ];
     return { rows, columns: ['measure', 'display'],
-      answer: `For ${from} through ${to}, revenue is ${money(pnl.revenueMinor)}, gross profit is ${money(pnl.grossProfitMinor)}, and recorded net income is ${money(pnl.netIncomeMinor)}. Cash is ${money(cash)}; customers owe ${money(ar.totalMinor)} and open supplier bills total ${money(ap.totalMinor)}. Net income includes only expenses recorded in Foundry; it is incomplete if costs such as rent or payroll have not been entered.` };
+      answer: `For ${from} through ${to}, revenue is ${money(pnl.revenueMinor)}, gross profit is ${money(pnl.grossProfitMinor)}, and recorded net income is ${money(pnl.netIncomeMinor)}. Cash is ${money(cash)}; customers still need to pay ${money(customerMoneyOutstandingMinor)} across confirmed orders and completed sales, and open supplier bills total ${money(ap.totalMinor)}. Net income includes only completed sales and expenses recorded in Foundry; confirmed unshipped orders are not called earned revenue.` };
   },
 
   business_health(db, workspaceId) {
     const brain = require('../manager/business-brain').build(db, workspaceId);
-    const rows = [
+    const needsRows = brain.briefing.needsYou.map((entry) => ({
+      measure: entry.title, value: entry.because, href: entry.href,
+    }));
+    const rows = [...needsRows, ...[
       { measure: 'Physical stock', value: brain.inventory.onHand },
       { measure: 'Committed to customers', value: brain.inventory.committed },
       { measure: 'Available now', value: brain.inventory.available },
       { measure: 'Incoming from suppliers', value: brain.inventory.incoming },
       { measure: 'Open customer orders', value: brain.sales.open },
       { measure: 'Open purchase orders', value: brain.purchasing.open },
-      { measure: 'Customers still owe', value: brain.finance ? moneyForBrain(brain.finance.customers.balanceMinor, brain.currency) : 'No evidence' },
+      { measure: 'Customers still need to pay', value: brain.finance ? moneyForBrain(brain.finance.customerMoneyOutstandingMinor, brain.currency) : 'No evidence' },
       { measure: 'Still owed to suppliers', value: brain.finance ? moneyForBrain(brain.acquisition.supplierOwedMinor, brain.currency) : 'No evidence' },
-    ];
-    return { rows, columns: ['measure', 'value'], handoff: { href: '/', label: 'Open the business briefing' },
-      answer: [brain.briefing.headline, ...brain.briefing.lines].join(' ') };
+    ]];
+    const attentionSummary = brain.briefing.needsYou.map((entry, index) => {
+      const title = /[?.!]$/.test(entry.title) ? entry.title : `${entry.title}.`;
+      return `${index === 0 ? 'First' : index === 1 ? 'Second' : 'Also'}: ${title} ${entry.because}`;
+    });
+    const businessSummary = (brain.briefing.businessLines || []).filter((line) =>
+      !/received inventory still has no supplier bill/i.test(line)).slice(0, 2);
+    return { rows, columns: ['measure', 'value'], answerMode: 'verified',
+      handoff: brain.attention.length
+        ? { href: '/needs-you', label: `Open the ${brain.attention.length} ${brain.attention.length === 1 ? 'thing' : 'things'} that need you` }
+        : { href: '/', label: 'Open the business briefing' },
+      answer: [brain.briefing.headline, ...attentionSummary, ...businessSummary].join(' ') };
   },
 
   cash_pressure(db, workspaceId) {
     const brain = require('../manager/business-brain').build(db, workspaceId);
     if (!brain.finance) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
     const causes = [];
-    if (brain.finance.customers.balanceMinor > 0) causes.push(`${moneyForBrain(brain.finance.customers.balanceMinor, brain.currency)} is still with customers`);
+    if (brain.finance.customerMoneyOutstandingMinor > 0) causes.push(`${moneyForBrain(brain.finance.customerMoneyOutstandingMinor, brain.currency)} is still with customers across confirmed orders and completed sales`);
     if (brain.acquisition.stillOwnedMinor > 0) causes.push(`${moneyForBrain(brain.acquisition.stillOwnedMinor, brain.currency)} remains tied up in products still owned`);
     if (brain.acquisition.supplierPaidMinor > brain.finance.cashActivity.customerReceivedMinor) causes.push(`supplier payments exceed customer receipts for the period by ${moneyForBrain(brain.acquisition.supplierPaidMinor - brain.finance.cashActivity.customerReceivedMinor, brain.currency)}`);
     const rows = [
       { measure: 'Cash currently recorded', value: moneyForBrain(brain.finance.currentCashMinor, brain.currency) },
-      { measure: 'Customer money still outstanding', value: moneyForBrain(brain.finance.customers.balanceMinor, brain.currency) },
+      { measure: 'Customer money still outstanding', value: moneyForBrain(brain.finance.customerMoneyOutstandingMinor, brain.currency) },
       { measure: 'Cost still held in inventory', value: moneyForBrain(brain.acquisition.stillOwnedMinor, brain.currency) },
       { measure: 'Supplier bills still owed', value: moneyForBrain(brain.acquisition.supplierOwedMinor, brain.currency) },
     ];
@@ -765,16 +784,97 @@ const EXECUTORS = {
     const accounting = require('../accounting/ledger').settings(db, workspaceId);
     if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
     const report = require('../accounting/reports').arAging(db, workspaceId);
+    const asOf = new Date().toISOString().slice(0, 10);
+    const confirmed = require('../accounting/owner-dashboard')
+      .confirmedOrderBalances(db, workspaceId, asOf);
     const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
-    return { rows: report.rows.slice(0, 25), handoff: { href: '/accounting/receivables', label: 'Open receivables' },
-      answer: `Customers owe ${money(report.totalMinor)} across ${report.rows.length} open invoice${report.rows.length === 1 ? '' : 's'}. ${money(report.buckets.over90)} is more than 90 days past due.` };
+    const confirmedRows = confirmed.rows.map((row) => ({
+      customer_name: row.customer_name,
+      document: row.order_number,
+      status: 'CONFIRMED ORDER',
+      balance_minor: row.balanceMinor,
+      href: `/sales/orders/${row.id}`,
+    }));
+    const rows = [...report.rows, ...confirmedRows].slice(0, 25);
+    const totalMinor = report.totalMinor + confirmed.balanceMinor;
+    const parts = [];
+    if (confirmed.rows.length) parts.push(`${money(confirmed.balanceMinor)} across ${confirmed.rows.length} confirmed order${confirmed.rows.length === 1 ? '' : 's'} not yet invoiced`);
+    if (report.rows.length) parts.push(`${money(report.totalMinor)} across ${report.rows.length} completed-sale invoice${report.rows.length === 1 ? '' : 's'}`);
+    const handoff = confirmed.rows.length === 1 && report.rows.length === 0
+      ? { href: `/sales/orders/${confirmed.rows[0].id}`, label: `Open ${confirmed.rows[0].order_number}` }
+      : confirmed.rows.length
+        ? { href: '/sales', label: 'Open customer orders' }
+        : { href: '/accounting/receivables', label: 'Open completed-sale invoices' };
+    return { rows, handoff,
+      verdict: {
+        yes: totalMinor > 0,
+        asserts: ['owe me', 'owed', 'unpaid', 'customers owe', 'receivable'],
+        opposite: ['paid', 'settled'],
+        summary: totalMinor > 0
+          ? `customers still need to pay you ${money(totalMinor)}.`
+          : 'no customer currently needs to pay you anything.',
+      },
+      answer: totalMinor > 0
+        ? `This is ${parts.join('; ')}. ${report.buckets.over90 > 0
+          ? `${money(report.buckets.over90)} is more than 90 days past due.`
+          : 'None is more than 90 days past due.'}`
+        : 'There are no unpaid confirmed orders or completed-sale invoices right now.' };
   },
 
-  payables_aging(db, workspaceId) {
+  payables_aging(db, workspaceId, plan, options = {}) {
     const accounting = require('../accounting/ledger').settings(db, workspaceId);
     if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
     const report = require('../accounting/reports').apAging(db, workspaceId);
     const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+
+    /*
+     * A zero open balance does not erase the evidence that made it zero.
+     * When the owner names a supplier, find that supplier from live records
+     * and show its bills and recorded payments, including settled bills.  This
+     * is deliberately entity-driven rather than a collection of sample
+     * phrasings: any supplier name in any otherwise-valid payables question
+     * receives the same treatment.
+     */
+    const asked = String(options.question || '').toLocaleLowerCase();
+    const namedSupplier = db.prepare(`SELECT id, name FROM suppliers
+      WHERE workspace_id = ? AND status = 'active' ORDER BY length(name) DESC, name`)
+      .all(workspaceId)
+      .find((supplier) => asked.includes(String(supplier.name).toLocaleLowerCase()));
+    if (namedSupplier) {
+      const bills = require('../accounting/payables').list(db, workspaceId,
+        { supplierId: namedSupplier.id }).filter((bill) => bill.status !== 'DRAFT');
+      const totalMinor = bills.reduce((sum, bill) => sum + Number(bill.total_minor), 0);
+      const balanceMinor = bills.reduce((sum, bill) => sum + Number(bill.balance_minor), 0);
+      const paidMinor = Number(db.prepare(`SELECT COALESCE(SUM(a.amount_minor), 0) AS amount
+        FROM accounting_payment_allocations a
+        JOIN accounting_payments p ON p.id = a.payment_id
+        JOIN accounting_supplier_bills b ON b.id = a.supplier_bill_id
+        WHERE a.workspace_id = ? AND b.supplier_id = ?
+          AND p.direction = 'SUPPLIER_PAYMENT' AND p.status = 'POSTED'`)
+        .get(workspaceId, namedSupplier.id).amount);
+      const latest = bills[0] || null;
+      const wantsPaymentProof = /\b(?:paid|payment|payments|proof|prove|evidence|receipt)\b/i
+        .test(String(options.question || ''));
+      const href = bills.length === 1
+        ? `/accounting#${wantsPaymentProof ? 'supplier-payment' : 'supplier'}-${latest.id}`
+        : '/accounting#suppliers';
+      return {
+        rows: bills,
+        handoff: latest ? { href,
+          label: wantsPaymentProof ? `Show ${namedSupplier.name} payment proof` : `Show ${namedSupplier.name} bills` } : null,
+        verdict: {
+          yes: balanceMinor > 0,
+          asserts: ['owe', 'supplier', 'payable', 'unpaid'],
+          opposite: ['paid up', 'settled', 'clear'],
+          summary: balanceMinor > 0
+            ? `you still owe ${namedSupplier.name} ${money(balanceMinor)}.`
+            : `you do not owe ${namedSupplier.name} anything right now.`,
+        },
+        answer: bills.length
+          ? `${namedSupplier.name} billed you ${money(totalMinor)} across ${bills.length} bill${bills.length === 1 ? '' : 's'}. Foundry has recorded ${money(paidMinor)} in supplier payments, and ${money(balanceMinor)} remains owed.`
+          : `Foundry has no supplier bill recorded for ${namedSupplier.name}, so it has no evidence of an amount owed or paid.`,
+      };
+    }
     return { rows: report.rows.slice(0, 25), handoff: { href: '/accounting/payables', label: 'Open bills' },
       answer: `Open supplier bills total ${money(report.totalMinor)} across ${report.rows.length} bill${report.rows.length === 1 ? '' : 's'}. ${money(report.buckets.over90)} is more than 90 days past due.` };
   },
@@ -838,6 +938,142 @@ const EXECUTORS = {
     return { rows, handoff: { href: '/accounting/receivables', label: 'Open receivables' },
       answer: rows.length ? `${plan.entityQuery || 'Customers'} paid ${money(total)} in ${rows.length} recorded payment${rows.length === 1 ? '' : 's'} during the last ${plan.windowDays} days.`
         : `No matching customer payments were recorded in the last ${plan.windowDays} days.` };
+  },
+
+  /*
+   * Whole-period version of the joined sale question below.
+   *
+   * “Why is profit $1,560 when customers paid $2,080?” is not asking which
+   * one sale happened to resemble those numbers. It is asking Foundry to
+   * reconcile two business totals. Keep every contributing order visible so
+   * the owner can open the exact sale instead of accepting an aggregate on
+   * trust.
+   */
+  period_profit_and_customer_cash(db, workspaceId, plan) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
+    const to = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const reports = require('../accounting/reports');
+    const pnl = reports.profitAndLoss(db, workspaceId, { from, to });
+    const paidMinor = Number(db.prepare(`SELECT COALESCE(SUM(amount_minor), 0) AS amount
+      FROM accounting_payments
+      WHERE workspace_id = ? AND direction = 'CUSTOMER_RECEIPT' AND status = 'POSTED'
+        AND payment_date >= ? AND payment_date <= ?`).get(workspaceId, from, to).amount || 0);
+    const balances = require('../accounting/owner-dashboard').customerBalances(db, workspaceId, to).rows
+      .filter((row) => row.issue_date >= from && row.sales_order_id);
+    const money = (n) => new Intl.NumberFormat('en-US', {
+      style: 'currency', currency: accounting.currency,
+    }).format(Number(n || 0) / 100);
+    const rows = balances.map((row) => {
+      const saleMinor = row.lines.reduce((sum, line) => sum + Number(line.line_total_minor || 0), 0);
+      const costMinor = row.productCostMinor;
+      return {
+        order: row.order_number,
+        customer: row.customer_name,
+        sale: money(saleMinor),
+        productCost: costMinor === null ? 'missing' : money(costMinor),
+        grossProfit: costMinor === null ? 'unknown' : money(saleMinor - Number(costMinor)),
+        paid: money(row.paidMinor),
+        stillOwed: money(row.balance_minor),
+        href: `/orders/${row.sales_order_id}`,
+      };
+    }).slice(0, plan.limit);
+    const missingCost = balances.some((row) => row.productCostMinor === null);
+    const costSentence = missingCost
+      ? 'Some sold products do not have exact cost evidence, so the recorded profit is incomplete.'
+      : `Those sold products cost ${money(pnl.cogsMinor)}, leaving ${money(pnl.grossProfitMinor)} gross profit.`;
+    const expenseSentence = pnl.operatingExpenseMinor
+      ? `After ${money(pnl.operatingExpenseMinor)} of other recorded business expenses, recorded net profit is ${money(pnl.netIncomeMinor)}.`
+      : `No other business expenses are recorded for this period, so recorded net profit is ${money(pnl.netIncomeMinor)}.`;
+    return {
+      rows,
+      columns: ['order', 'customer', 'sale', 'productCost', 'grossProfit', 'paid', 'stillOwed'],
+      handoff: { href: `/accounting/reports/profit-and-loss?from=${from}&to=${to}`, label: 'Open the full profit breakdown' },
+      answerMode: 'verified', progressiveDisclosure: true,
+      answer: `For ${from} through ${to}, customers paid ${money(paidMinor)}. That is cash received, not profit. Completed sales produced ${money(pnl.revenueMinor)} of revenue. ${costSentence} ${expenseSentence} If rent, payroll, shipping, fees, or other costs happened but are not recorded, actual profit is lower than Foundry can currently prove.`,
+    };
+  },
+
+  /*
+   * One sale, as an owner experiences it.
+   *
+   * People do not ask accounting questions one column at a time. "Why did I
+   * make $30 on that sale, and did they pay?" is one perfectly ordinary
+   * question. Sending it through either the profitability report or the
+   * payments report alone produces a polished half-answer and can contradict
+   * the other half. This read model deliberately joins the posted customer
+   * invoice, its exact product-cost posting, and its allocated payments before
+   * a sentence is written.
+   */
+  sale_profit_and_payment(db, workspaceId, plan) {
+    const accounting = require('../accounting/ledger').settings(db, workspaceId);
+    if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
+    const asOf = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
+    const invoices = require('../accounting/owner-dashboard').customerBalances(db, workspaceId, asOf).rows
+      .filter((row) => row.issue_date >= from && row.sales_order_id)
+      .sort((a, b) => String(b.issue_date).localeCompare(String(a.issue_date))
+        || String(b.created_at).localeCompare(String(a.created_at)));
+
+    const filler = new Set([
+      'why', 'did', 'does', 'the', 'that', 'this', 'there', 'make', 'made', 'earn', 'earned',
+      'profit', 'margin', 'dollar', 'sale', 'order', 'customer', 'actually', 'already', 'paid',
+      'payment', 'pay', 'owing', 'owe', 'received', 'have', 'has', 'been', 'were', 'from', 'with',
+      'and', 'but', 'what', 'much', 'about', 'before', 'after', 'product', 'item', 'cost', 'gross',
+    ]);
+    const terms = String(plan.entityQuery || '').toLowerCase().split(/[^a-z0-9]+/)
+      .filter((word) => word.length >= 2 && !filler.has(word) && !/^\d+$/.test(word));
+    const compact = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const scored = invoices.map((row) => {
+      const names = row.lines.map((line) => `${line.item_name || ''} ${line.variant_label || ''} ${line.code || ''}`).join(' ');
+      const haystack = compact(`${row.order_number} ${row.customer_name} ${names}`);
+      return { row, score: terms.reduce((n, term) => n + (haystack.includes(compact(term)) ? 1 : 0), 0) };
+    });
+    const matched = terms.length ? scored.filter((candidate) => candidate.score > 0) : scored;
+    matched.sort((a, b) => b.score - a.score);
+    if (!matched.length || (terms.length && matched[0].score === 0)) {
+      return { rows: [], answerMode: 'verified',
+        answer: 'I can answer this only when I can tie the sale, its product cost, and the customer payment to the same recorded order. I could not identify that sale from the words in this question.' };
+    }
+    if (terms.length && matched.length > 1 && matched[0].score === matched[1].score) {
+      return { rows: matched.slice(0, plan.limit).map(({ row }) => ({
+        order: row.order_number, customer: row.customer_name,
+        href: `/orders/${row.sales_order_id}`,
+      })), columns: ['order', 'customer'], answerMode: 'verified',
+      answer: 'I found more than one recorded sale that matches. Open the intended order so I do not guess which customer payment belongs to your question.' };
+    }
+
+    const row = matched[0].row;
+    const saleMinor = row.lines.reduce((sum, line) => sum + Number(line.line_total_minor || 0), 0);
+    const costMinor = row.productCostMinor;
+    const grossMinor = costMinor === null ? null : saleMinor - Number(costMinor);
+    const paidMinor = Number(row.paidMinor || 0);
+    const owedMinor = Number(row.balance_minor || 0);
+    const currency = row.currency || accounting.currency;
+    const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Number(n || 0) / 100);
+    const profitSentence = costMinor === null
+      ? `${row.order_number} records a ${money(saleMinor)} sale, but some exact product cost evidence is missing, so I cannot state its gross profit.`
+      : `${row.order_number} records a ${money(saleMinor)} sale. The exact products sold cost ${money(costMinor)}, so the sale created ${money(grossMinor)} gross profit before other expenses.`;
+    const paymentSentence = paidMinor > 0
+      ? `The customer paid ${money(paidMinor)} and now owes ${money(owedMinor)}.`
+      : `No customer payment is recorded for this order, so ${money(owedMinor)} is still owed.`;
+    return {
+      rows: [{
+        order: row.order_number,
+        customer: row.customer_name,
+        sale: money(saleMinor),
+        productCost: costMinor === null ? 'missing' : money(costMinor),
+        grossProfit: grossMinor === null ? 'unknown' : money(grossMinor),
+        paid: money(paidMinor),
+        stillOwed: money(owedMinor),
+        href: `/orders/${row.sales_order_id}`,
+      }],
+      columns: ['order', 'customer', 'sale', 'productCost', 'grossProfit', 'paid', 'stillOwed'],
+      handoff: { href: `/orders/${row.sales_order_id}`, label: `Open ${row.order_number}` },
+      answerMode: 'verified',
+      answer: `${profitSentence} ${paymentSentence}`,
+    };
   },
 
   supplier_spend(db, workspaceId, plan) {
@@ -1049,10 +1285,15 @@ const EXECUTORS = {
     };
   },
   sales_summary(db, workspaceId) {
-    const orders = db.prepare(
-      `SELECT COUNT(*) AS openOrders FROM sales_orders
-        WHERE workspace_id = ? AND status NOT IN ('FULFILLED','CANCELLED')`
-    ).get(workspaceId).openOrders;
+    const orderCounts = db.prepare(
+      `SELECT
+         SUM(CASE WHEN status NOT IN ('FULFILLED','CANCELLED') THEN 1 ELSE 0 END) AS openOrders,
+         SUM(CASE WHEN status = 'FULFILLED' THEN 1 ELSE 0 END) AS completedOrders
+       FROM sales_orders
+       WHERE workspace_id = ?`
+    ).get(workspaceId);
+    const openOrders = Number(orderCounts.openOrders || 0);
+    const completedOrders = Number(orderCounts.completedOrders || 0);
     const totals = db.prepare(
       `SELECT COALESCE(SUM(sol.quantity_ordered), 0) AS ordered,
               COALESCE(SUM(sol.quantity_fulfilled), 0) AS fulfilled,
@@ -1063,7 +1304,8 @@ const EXECUTORS = {
     ).get(workspaceId);
     const waiting = Math.max(0, Number(totals.ordered) - Number(totals.fulfilled) - Number(totals.committed));
     const rows = [
-      { measure: 'Open orders', value: orders },
+      { measure: 'Completed orders', value: completedOrders },
+      { measure: 'Open orders', value: openOrders },
       { measure: 'Ordered units', value: totals.ordered },
       { measure: 'Committed units', value: totals.committed },
       { measure: 'Waiting for stock', value: waiting },
@@ -1071,8 +1313,31 @@ const EXECUTORS = {
     ];
     return {
       rows,
-      answer: `${orders} open sales order${orders === 1 ? '' : 's'}; ${totals.committed} units committed and ${waiting} waiting for stock.`,
+      answer: `${completedOrders} completed sales order${completedOrders === 1 ? '' : 's'}; `
+        + `${openOrders} open; ${totals.committed} units committed and ${waiting} waiting for stock.`,
       columns: ['measure', 'value'],
+    };
+  },
+  top_customers(db, workspaceId, plan) {
+    const cutoff = new Date(Date.now() - Number(plan.windowDays || 30) * 86400000).toISOString();
+    const rows = db.prepare(`SELECT c.name AS customer,
+        COUNT(DISTINCT so.id) AS orders,
+        COALESCE(SUM(sol.quantity_ordered), 0) AS units,
+        COALESCE(SUM(sol.quantity_ordered * sol.unit_price_minor), 0) AS orderedMinor
+      FROM sales_orders so
+      JOIN customers c ON c.id = so.customer_id
+      JOIN sales_order_lines sol ON sol.sales_order_id = so.id
+      WHERE so.workspace_id = ? AND so.status <> 'CANCELLED' AND so.created_at >= ?
+      GROUP BY c.id, c.name
+      ORDER BY orderedMinor DESC, units DESC, c.name
+      LIMIT ?`).all(workspaceId, cutoff, plan.limit);
+    return {
+      rows,
+      columns: ['customer', 'orders', 'units', 'orderedMinor'],
+      handoff: { href: '/sales', label: 'Open customer orders' },
+      answer: rows.length
+        ? `${rows[0].customer} ordered the most in the last ${plan.windowDays} days: ${rows[0].units} units across ${rows[0].orders} order${rows[0].orders === 1 ? '' : 's'}.`
+        : `No customer orders were recorded in the last ${plan.windowDays} days.`,
     };
   },
   connection_summary(db, workspaceId) {
@@ -1471,15 +1736,245 @@ function foundryActivity(db, workspaceId, plan, options = {}) {
  * Answered from the most recent matching piece of work: the measurements that
  * triggered it, the policy that allowed it, and the verified result.
  */
-function foundryWhy(db, workspaceId, plan) {
+function foundryWhy(db, workspaceId, plan, options = {}) {
   const autopilotPresenter = require('../autopilot/presenter');
   const workItems = require('../autopilot/work-items');
-  const businessBrain = require('../manager/business-brain');
+  const provenance = require('../provenance/presenter');
+
+  const question = String(options.question || '');
+  const currentPurchaseDecision = /\bwhy\b/i.test(question) && (
+    /\b(?:buying|ordering|reordering|purchasing|replenishing)\b/i.test(question)
+    || /\b(?:recommend(?:ed|ing)?|propos(?:e|ed|ing)|plan(?:ned|ning)?|need|should|about to|going to)\b.*\b(?:buy|order|reorder|purchase|replenish)\b/i.test(question)
+  );
+
+  const transferQuestion = /\b(?:move|moved|moving|transfer|transferred|transferring|rebalance|rebalanced|shift|shifted)\b/i
+    .test(question);
+
+  /*
+   * A completed replenishment plan may contain a transfer and a purchase.
+   * The owner's verb says which decision they are asking about. Searching POs
+   * first made "Why did you move 20 T-shirts?" select the 96-unit purchase
+   * merely because both records named the same product. Resolve the operation
+   * before resolving the document.
+   */
+  if (transferQuestion) {
+    const asked = `${question} ${plan.entityQuery || ''}`.toLowerCase();
+    const terms = searchTerms(plan.entityQuery || question)
+      .filter((term) => !['move', 'moved', 'moving', 'transfer', 'transferred', 'transferring', 'rebalance', 'shift', 'shifted', 'why', 'did', 'you'].includes(term));
+    const askedNumbers = new Set((asked.match(/\b\d+(?:\.\d+)?\b/g) || []).map(Number));
+    const candidates = workItems.list(db, workspaceId, { limit: 100 })
+      .flatMap((item) => {
+        const action = item.recommendedAction || {};
+        const transfers = item.category === 'balance_transfer'
+          ? [{ quantity: action.quantity, fromLocationName: action.fromLocationName,
+            toLocationName: action.toLocationName }]
+          : (action.transfers || []);
+        if (!transfers.length) return [];
+        const searchable = [
+          (item.affectedEntities || {}).displayName,
+          action.displayName,
+          ...transfers.flatMap((move) => [move.fromLocationName, move.toLocationName]),
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (terms.length && !terms.every((term) => searchable.includes(term))) return [];
+        const exact = transfers.filter((move) => askedNumbers.has(Number(move.quantity)));
+        const chosen = exact.length === 1 ? exact[0] : transfers.length === 1 ? transfers[0] : null;
+        if (!chosen) return [];
+        let score = terms.reduce((total, term) => total + (searchable.includes(term) ? 4 : 0), 0);
+        if (askedNumbers.has(Number(chosen.quantity))) score += 20;
+        if (item.executionStatus === workItems.STATUS.COMPLETED) score += 2;
+        return [{ item, move: chosen, score }];
+      })
+      .sort((a, b) => b.score - a.score || String(b.item.completedAt || b.item.createdAt)
+        .localeCompare(String(a.item.completedAt || a.item.createdAt)));
+    const selected = candidates[0] && (!candidates[1] || candidates[0].score > candidates[1].score)
+      ? candidates[0] : candidates.length === 1 ? candidates[0] : null;
+
+    if (selected) {
+      const explanation = autopilotPresenter.explain(db, workspaceId, selected.item.id);
+      const approval = explanation.approvalCopy || {};
+      const transferCheck = ((selected.item.outcome || {}).checks || [])
+        .find((check) => check.kind === 'transfer' && Number(check.quantity) === Number(selected.move.quantity));
+      let liveTransfer = null;
+      if (transferCheck && transferCheck.transferId) {
+        try {
+          liveTransfer = require('../transfers/transfer-service')
+            .get(db, workspaceId, transferCheck.transferId);
+        } catch {
+          liveTransfer = null;
+        }
+      }
+      const transferStatus = liveTransfer ? liveTransfer.status : transferCheck?.status || null;
+      const transferNumber = liveTransfer ? liveTransfer.transfer_number : transferCheck?.transferNumber || 'The transfer';
+      const physicallyReceived = transferStatus === 'RECEIVED';
+      const inTransit = ['SHIPPED', 'IN_TRANSIT', 'PARTIALLY_RECEIVED'].includes(transferStatus);
+      const verifiedBase = (explanation.verification || []).find((check) => check.ok !== false)?.text || null;
+      const verified = transferCheck && verifiedBase
+        ? `${verifiedBase} Total unchanged at ${Number(transferCheck.sourceAfter) + Number(transferCheck.destinationAfter)}.`
+        : verifiedBase;
+      const displayName = (selected.item.affectedEntities || {}).displayName || 'stock';
+      const authority = selected.item.approvedAt
+        ? 'You approved this transfer.'
+        : explanation.policy ? `Your approved policy “${explanation.policy.name}” allowed it.` : null;
+      const happened = physicallyReceived
+        ? `${transferNumber} received ${selected.move.quantity} ${displayName} at ${selected.move.toLocationName} ` +
+          `after dispatch from ${selected.move.fromLocationName}.`
+        : inTransit
+          ? `${transferNumber} is carrying ${selected.move.quantity} ${displayName} from ` +
+            `${selected.move.fromLocationName} to ${selected.move.toLocationName}.`
+          : `Foundry prepared ${transferNumber} for ${selected.move.quantity} ${displayName} from ` +
+            `${selected.move.fromLocationName} to ${selected.move.toLocationName}. No stock moved when it was approved.`;
+      const destination = ((selected.item.recommendedAction || {}).byLocation || [])
+        .find((location) => location.locationId === selected.move.toLocationId);
+      const destinationAvailable = destination && Number.isFinite(Number(destination.available))
+        ? Number(destination.available) : Number(destination?.onHand || 0);
+      const destinationCommitted = Number(destination?.committed || 0);
+      const destinationTarget = Number(destination?.need || 0);
+      const recordedTransferReason = destination
+        ? `${selected.move.toLocationName} had ${Number(destination.onHand || 0)} physically on hand`
+          + `${destinationCommitted ? `, with ${destinationCommitted} reserved for customers` : ''}, leaving ${destinationAvailable} available. `
+          + `Its available-stock target was ${destinationTarget}, so ` +
+          (physicallyReceived
+            ? `receiving ${selected.move.quantity} restored that target without buying more stock.`
+            : `the ${selected.move.quantity}-unit transfer is intended to restore that target without buying more stock.`)
+        : null;
+      const why = recordedTransferReason || approval.orderRule || explanation.paragraphs[0]
+        || 'The recorded plan required stock at the destination.';
+      return {
+        answer: [happened, why, authority, verified].filter(Boolean).join(' '),
+        handoff: { href: `/autopilot/work/${selected.item.id}`, label: 'See the transfer decision' },
+        rows: [
+          { measure: 'What happened', value: happened },
+          { measure: 'Why', value: why },
+          ...(authority ? [{ measure: 'Authority', value: authority }] : []),
+          ...(verified ? [{ measure: 'Verified result', value: verified }] : []),
+        ],
+        columns: ['measure', 'value'],
+        progressiveDisclosure: true,
+        answerMode: 'verified',
+      };
+    }
+  }
+
+  /*
+   * A question about a decision that is still in front of the owner belongs to
+   * that live decision, not to an older document which happens to contain the
+   * same quantity.  The work item is the canonical record of the proposed
+   * action; customer orders provide the consequence that made it urgent.
+   */
+  if (currentPurchaseDecision) {
+    const salesOrders = require('../sales/sales-order-service');
+    const waiting = salesOrders.waitingForStock(db, workspaceId);
+    const active = workItems.awaitingApproval(db, workspaceId)
+      .filter((item) => item.category === 'replenishment_plan');
+    const asked = `${question} ${plan.entityQuery || ''}`.toLowerCase();
+    const askedNumbers = new Set((asked.match(/\b\d+(?:\.\d+)?\b/g) || []).map(Number));
+
+    const candidates = active.map((item) => {
+      const action = item.recommendedAction || {};
+      const skuId = (item.affectedEntities || {}).skuId || action.skuId;
+      const demand = waiting.flatMap((order) => order.lines
+        .filter((line) => line.sku_id === skuId && Number(line.backordered) > 0)
+        .map((line) => ({
+          orderId: order.id,
+          orderNumber: order.order_number,
+          customerName: order.customer.name,
+          displayName: line.displayName,
+          quantity: Number(line.backordered),
+        })));
+      const name = String((item.affectedEntities || {}).displayName || action.displayName || '');
+      const supplier = String((action.purchase || {}).supplierName || '');
+      const quantities = [
+        (action.purchase || {}).quantityUnits,
+        (action.purchase || {}).quantityPurchaseUnits,
+        action.reorderPoint,
+        action.target,
+        action.onHandTotal,
+        action.networkPosition,
+        ...demand.map((entry) => entry.quantity),
+      ].map(Number).filter(Number.isFinite);
+      let score = quantities.reduce((total, quantity) => total + (askedNumbers.has(quantity) ? 8 : 0), 0);
+      score += searchTerms(name).reduce((total, term) => total + (asked.includes(term) ? 3 : 0), 0);
+      score += searchTerms(supplier).reduce((total, term) => total + (asked.includes(term) ? 2 : 0), 0);
+      score += demand.reduce((total, entry) => total + (asked.includes(entry.orderNumber.toLowerCase()) ? 12 : 0), 0);
+      return { item, action, demand, score };
+    }).sort((a, b) => b.score - a.score);
+
+    const selected = candidates.length === 1
+      ? candidates[0]
+      : candidates[0] && candidates[0].score > (candidates[1] || {}).score
+        ? candidates[0]
+        : null;
+
+    if (selected) {
+      const explanation = autopilotPresenter.explain(db, workspaceId, selected.item.id);
+      const approval = explanation.approvalCopy;
+      const demandText = selected.demand.length
+        ? selected.demand.map((entry) =>
+            `${entry.orderNumber} for ${entry.customerName} is waiting for ${entry.quantity} ${entry.displayName}`
+          ).join('; ') + '.'
+        : '';
+      const answer = [
+        (() => {
+          const proposed = Number((selected.action.purchase || {}).quantityUnits);
+          const named = question.match(/\b(?:buying|ordering|reordering|purchasing)\s+(\d+)\b/i);
+          return named && Number.isFinite(proposed) && Number(named[1]) !== proposed
+            ? `The current plan is for ${proposed} units, not ${Number(named[1])}.`
+            : '';
+        })(),
+        demandText,
+        selected.demand.length
+          ? (() => {
+              const onHand = Number(selected.action.onHandTotal || 0);
+              const committed = Number(selected.action.committed || 0);
+              return `${onHand - committed} units are available now because ${committed} of ` +
+                `${onHand} on hand are already reserved for customers.`;
+            })()
+          : selected.action.explanation,
+        approval && approval.orderRule,
+        approval && approval.approvalEffect,
+        approval && approval.approvalLimit,
+      ].filter(Boolean).join(' ');
+      return {
+        answer,
+        handoff: {
+          href: `/autopilot/work/${selected.item.id}`,
+          label: approval?.primaryLabel || 'Review this replenishment plan',
+        },
+        rows: [
+          ...selected.demand.map((entry) => ({
+            measure: 'Customer demand waiting for stock',
+            value: `${entry.orderNumber}: ${entry.quantity} ${entry.displayName}`,
+            href: `/orders/${entry.orderId}`,
+          })),
+          ...(explanation.evidence || []).map((fact) => ({ measure: fact.label, value: String(fact.value) })),
+        ],
+        columns: ['measure', 'value'],
+        answerMode: 'verified',
+      };
+    }
+
+    if (candidates.length > 1) {
+      return {
+        answer: 'There is more than one current replenishment decision. Name the product or open Needs You to choose the one you mean.',
+        handoff: { href: '/needs-you', label: 'See current replenishment decisions' },
+        rows: candidates.map(({ item, action }) => ({
+          measure: (item.affectedEntities || {}).displayName || 'Replenishment plan',
+          value: (action.purchase || {}).quantityUnits
+            ? `${action.purchase.quantityUnits} units proposed`
+            : 'Current replenishment decision',
+          href: `/autopilot/work/${item.id}`,
+        })),
+        columns: ['measure', 'value'],
+        answerMode: 'verified',
+      };
+    }
+  }
 
   // Purchasing is a cross-business story, not only an autopilot work item.
   // Match against the PO, supplier, products, variants and ordered quantities,
   // then use the shared trace that also powers consistency and owner reporting.
-  const purchaseCandidates = db.prepare(`SELECT po.id, po.po_number, s.name AS supplier_name,
+  const purchaseCandidates = db.prepare(`SELECT po.id, po.po_number, po.status, po.source,
+      SUM(pol.quantity_units) AS ordered_units, s.name AS supplier_name,
       GROUP_CONCAT(i.name || ' ' || COALESCE(sk.variant_label, '') || ' '
         || CAST(pol.quantity_units AS TEXT), ' ') AS line_text
     FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id
@@ -1493,19 +1988,83 @@ function foundryWhy(db, workspaceId, plan) {
     return wantedTerms.every((term) => evidence.includes(term));
   }) : null;
   if (purchase) {
-    const story = businessBrain.purchaseOrderStory(db, workspaceId, purchase.id);
-    const explanation = story.explanation;
+    const explanation = provenance.explainWhy(db, workspaceId,
+      { type: 'purchase_order', id: purchase.id }, { membership: options.membership || null });
+    const decisionRelation = explanation.evidence.find((entry) => entry.relation === 'DECIDED_BY'
+      && entry.to.type === 'work_item');
+    const decisionItem = decisionRelation ? workItems.find(db, workspaceId, decisionRelation.to.id) : null;
+    const decision = decisionItem?.recommendedAction || {};
+    const purchaseAction = decision.purchase || {};
+    const displayName = decisionItem?.affectedEntities?.displayName || 'units';
+    const shortfall = Number.isFinite(Number(decision.target)) && Number.isFinite(Number(decision.networkPosition))
+      ? Math.max(0, Number(decision.target) - Number(decision.networkPosition)) : null;
+    const waiting = Number(decision.backordered || 0);
+    const quantity = Number(purchase.ordered_units || purchaseAction.quantityUnits || 0);
+    const purchaseUnits = Number(purchaseAction.quantityPurchaseUnits || 0);
+    const unitsPerPurchaseUnit = Number(purchaseAction.unitsPerPurchaseUnit || 0);
+    const purchaseUnit = purchaseAction.purchaseUnit || 'purchase unit';
+    const purchaseUnitPlural = purchaseUnits === 1 ? purchaseUnit : `${purchaseUnit}s`;
+    const unitRule = purchaseUnits && unitsPerPurchaseUnit
+      ? `${purchase.supplier_name} packs this item in ${purchaseUnit}s of ${unitsPerPurchaseUnit}, so Foundry rounded ${shortfall} up to ${purchaseUnits} ${purchaseUnitPlural} (${quantity} units).`
+      : null;
+    const why = decisionItem
+      ? [
+          waiting ? `${waiting} units were waiting for customer orders.` : null,
+          shortfall !== null
+            ? `The recorded target was ${decision.target}, and the stock position was ${decision.networkPosition}, so ${shortfall} units were needed.`
+            : null,
+          unitRule,
+        ].filter(Boolean).join(' ')
+      : 'Foundry has no linked purchase decision for this order and will not invent one.';
+    const happened = `${purchase.po_number} ordered ${quantity} ${displayName} from ${purchase.supplier_name}.`;
+    const authority = decisionItem?.approvedAt ? 'You approved this purchase.' : null;
+    const outcome = purchase.status === 'RECEIVED'
+      ? `All ${quantity} units have been received.`
+      : purchase.status === 'PARTIALLY_RECEIVED'
+        ? `The order is partly received; the purchase page shows what is still coming.`
+        : explanation.next;
+    const evidenceUsed = [
+      `${purchase.po_number} and its exact product lines`,
+      waiting ? `${waiting} units of recorded customer demand waiting for stock` : null,
+      shortfall !== null ? `the recorded target of ${decision.target} and stock position of ${decision.networkPosition}` : null,
+      unitRule ? `${purchase.supplier_name}'s recorded ${purchaseUnit} size of ${unitsPerPurchaseUnit}` : null,
+      decisionItem?.approvedAt ? 'your approval record' : null,
+      purchase.status === 'RECEIVED' || purchase.status === 'PARTIALLY_RECEIVED'
+        ? `receipts recorded against ${purchase.po_number}` : null,
+    ].filter(Boolean).join('; ');
     return {
-      answer: [explanation.whatHappened, explanation.whyKeeperConcludedThis,
-        explanation.keeperAction, explanation.whatHappensNext].join(' '),
+      answer: [happened, why, authority, outcome].filter(Boolean).join(' '),
       handoff: { href: `/purchasing/orders/${purchase.id}`, label: `Open ${purchase.po_number}` },
       rows: [
-        { measure: 'What happened', value: explanation.whatHappened },
-        { measure: 'Why Foundry concluded this', value: explanation.whyKeeperConcludedThis },
-        { measure: 'Evidence used', value: `${explanation.evidenceUsed.length} linked business record(s)` },
-        { measure: 'What Foundry did', value: explanation.keeperAction },
-        { measure: 'What happens next', value: explanation.whatHappensNext },
+        { measure: 'What happened', value: happened },
+        { measure: 'Why Foundry concluded this', value: why },
+        { measure: 'Evidence used', value: evidenceUsed },
+        { measure: 'What Foundry did', value: outcome },
+        { measure: 'What happens next', value: explanation.next },
       ],
+      columns: ['measure', 'value'],
+      progressiveDisclosure: true,
+    };
+  }
+
+  const salesCandidates = db.prepare(`SELECT so.id, so.order_number, c.name AS customer_name,
+      GROUP_CONCAT(i.name || ' ' || COALESCE(sk.variant_label, ''), ' ') AS line_text
+    FROM sales_orders so JOIN customers c ON c.id = so.customer_id
+    JOIN sales_order_lines sol ON sol.sales_order_id = so.id
+    JOIN skus sk ON sk.id = sol.sku_id JOIN items i ON i.id = sk.item_id
+    WHERE so.workspace_id = ? GROUP BY so.id ORDER BY so.created_at DESC LIMIT 50`).all(workspaceId);
+  const sale = wantedTerms.length ? salesCandidates.find((row) => {
+    const evidence = `${row.order_number} ${row.customer_name} ${row.line_text}`.toLowerCase();
+    return wantedTerms.every((term) => evidence.includes(term));
+  }) : null;
+  if (sale) {
+    const explanation = provenance.explainWhy(db, workspaceId,
+      { type: 'sales_order', id: sale.id }, { membership: options.membership || null });
+    return {
+      answer: explanation.answer,
+      handoff: { href: `/orders/${sale.id}`, label: `Open ${sale.order_number}` },
+      rows: explanation.details.map((entry) => ({ measure: entry.from.title,
+        value: `${entry.phrase} ${entry.to.title}` })),
       columns: ['measure', 'value'],
     };
   }
@@ -1690,6 +2249,7 @@ const MEASURE_SYNONYMS = [
   ['ordered', 'demand', 'requested'],
   ['waiting', 'backordered', 'short', 'outstanding', 'unfulfilled'],
   ['open', 'unfinished', 'in progress'],
+  ['completed', 'complete', 'finished', 'fulfilled', 'closed'],
   ['owed', 'owe', 'outstanding', 'unpaid', 'balance', 'due'],
   ['paid', 'received', 'collected', 'settled'],
   ['profit', 'earned', 'made', 'income'],
@@ -1730,17 +2290,24 @@ function expand(words) {
  */
 function leadWithTheMeasure(question, result) {
   if (!result || !Array.isArray(result.rows) || !result.answer) return result;
+  if (result.answerMode === 'verified') return result;
   const columns = result.columns || [];
   const labelColumn = ['measure', 'label', 'name'].find((column) => columns.includes(column));
   const valueColumn = ['value', 'display', 'amount'].find((column) => columns.includes(column));
   if (!labelColumn || !valueColumn || result.rows.length < 2) return result;
 
-  const asked = expand(wordsOf(question));
+  const askedWords = wordsOf(question);
+  const asked = expand(askedWords);
+  const askedExactly = new Set(askedWords);
   if (!asked.size) return result;
 
   const scored = result.rows.map((row) => {
     const label = wordsOf(row[labelColumn]).filter((word) => !GENERIC_LABEL_WORDS.has(word));
-    const hits = label.filter((word) => asked.has(word)).length;
+    // A word the owner actually used is stronger evidence than a synonym.
+    // This keeps "completed orders" focused on Completed orders even though
+    // completed and fulfilled are related concepts and both rows are useful.
+    const hits = label.reduce((score, word) => score
+      + (askedExactly.has(word) ? 2 : asked.has(word) ? 1 : 0), 0);
     return { row, hits };
   }).filter((entry) => entry.hits > 0).sort((a, b) => b.hits - a.hits);
 
@@ -1755,8 +2322,14 @@ function leadWithTheMeasure(question, result) {
 
   const lead = `${label}: ${value}.`;
   // Do not repeat a figure the sentence already leads with.
-  if (String(result.answer).startsWith(lead)) return result;
-  return { ...result, answer: `${lead} ${result.answer}` };
+  if (String(result.answer).startsWith(lead)) {
+    return { ...result, primaryMeasure: { label, value } };
+  }
+  return {
+    ...result,
+    primaryMeasure: { label, value },
+    answer: `${lead} ${result.answer}`,
+  };
 }
 
 /**
@@ -1846,6 +2419,9 @@ function execute(db, workspaceId, rawPlan, options = {}) {
     columns: result.columns || [],
     rowCount: result.rows.length,
     durationMs: round(Date.now() - started, 0),
+    answerMode: result.answerMode || 'phraseable',
+    progressiveDisclosure: result.progressiveDisclosure === true,
+    primaryMeasure: result.primaryMeasure || null,
   };
 }
 

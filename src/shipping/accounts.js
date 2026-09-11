@@ -194,6 +194,20 @@ function connect(db, ctx, membership, input = {}) {
   return describe(db, ctx.workspaceId);
 }
 
+/** Proves a pasted credential can reach its account before Foundry stores it. */
+async function verifyInput(input = {}) {
+  const provider = requireProvider(input.provider);
+  const apiKey = requireText(input.apiKey, 'API key', { max: 400 });
+  if (provider === 'shipengine') {
+    await require('./providers/shipengine').call({ shipengineApiKey: apiKey }, '/carriers');
+  } else if (provider === 'easypost') {
+    await require('./providers/easypost').call({ easypostApiKey: apiKey }, '/users');
+  } else {
+    await require('./providers/shippo').call({ shippoApiKey: apiKey }, '/carrier_accounts/?results=1');
+  }
+  return { provider, testMode: isTestKey(provider, apiKey) };
+}
+
 function disconnect(db, ctx, membership) {
   permissions.assertCan(membership, permissions.ADMIN,
     'disconnect a shipping account');
@@ -258,4 +272,5 @@ function describe(db, workspaceId) {
   };
 }
 
-module.exports = { PROVIDERS, forWorkspace, contextFor, connect, disconnect, describe, connectorFor, isTestKey };
+module.exports = { PROVIDERS, forWorkspace, contextFor, connect, verifyInput,
+  disconnect, describe, connectorFor, isTestKey };

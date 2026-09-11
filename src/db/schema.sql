@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
   id               TEXT PRIMARY KEY,
   name             TEXT NOT NULL,
   owner_account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
+  data_mode        TEXT NOT NULL DEFAULT 'production' CHECK (data_mode IN ('production','synthetic')),
   created_at       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_account_id);
@@ -62,7 +63,10 @@ CREATE TABLE IF NOT EXISTS locations (
   id         TEXT PRIMARY KEY,
   workspace_id     TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   name       TEXT NOT NULL,
-  kind       TEXT NOT NULL CHECK (kind IN ('warehouse', 'store', 'stockroom', 'truck', 'office', 'other')),
+  kind       TEXT NOT NULL CHECK (kind IN ('warehouse', 'store', 'stockroom', 'truck', 'office', 'zone', 'aisle', 'shelf', 'bin', 'dock', 'staging', 'other')),
+  parent_location_id TEXT REFERENCES locations(id) ON DELETE RESTRICT,
+  barcode    TEXT,
+  pick_sequence INTEGER NOT NULL DEFAULT 0,
   note       TEXT,
   is_active  INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,

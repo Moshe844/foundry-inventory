@@ -65,7 +65,9 @@ router.post(
     const name = trimOrNull(req.body.name) || '';
     let created;
     try {
-      created = workspaceService.createWorkspace(req.db, req.account.id, name);
+      created = workspaceService.createWorkspace(req.db, req.account.id, name, {
+        dataMode: req.body.dataMode,
+      });
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       return res.status(err.status).page('workspaces/new', {
@@ -78,7 +80,9 @@ router.post(
     }
 
     req.session.workspaceId = created.workspaceId;
-    req.flash('success', `${created.name} is ready. Tell Foundry how you manage it today.`);
+    req.flash('success', created.dataMode === 'synthetic'
+      ? `${created.name} is a test inventory. Foundry can generate the realistic synthetic business data you request.`
+      : `${created.name} is ready. Tell Foundry how you manage it today.`);
     return req.session.save(() => res.redirect(303, '/onboarding'));
   })
 );

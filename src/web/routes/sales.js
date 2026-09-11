@@ -11,7 +11,7 @@ const orderStatus = require('../../sales/order-status');
 const connections = require('../../connections/service');
 const repo = require('../../domain/repository');
 const permissions = require('../../actions/permissions');
-const { requireAuth, asyncRoute } = require('../middleware');
+const { requireAuth, requirePermission, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 const { ValidationError } = require('../../domain/errors');
 const prices = require('../../pricing/price-service');
@@ -30,13 +30,6 @@ router.use(['/sales', '/orders'], requireAuth);
 // Fulfilment lives on its own path because it is its own job, so it needs
 // the same guard stated separately rather than inherited from /sales.
 router.use('/fulfilment', requireAuth);
-
-function requirePermission(permission, what) {
-  return (req, res, next) => {
-    try { permissions.assertCan(req.user, permission, what); return next(); }
-    catch (error) { return next(error); }
-  };
-}
 
 function catalogue(db, workspaceId) {
   return db.prepare(`SELECT s.id, s.code, s.variant_label, i.id AS item_id, i.name AS item_name,
@@ -132,9 +125,14 @@ router.get(['/orders', '/sales'], requirePermission(permissions.VIEW, 'view sale
    * the judgement in a template, where it cannot be tested.
    */
   const ranked = orderStatus.decorate(req.db, req.ctx.workspaceId,
-    sales.listOrders(req.db, req.ctx.workspaceId, { status, limit: 200 }));
+    sales.listOrders(req.db, req.ctx.workspaceId, { status, limit: 200 }))
+    .map((order) => {
+      if (order.status !== 'FULFILLED') return order;
+      const fulfilment = shipments.fulfilmentState(req.db, req.ctx.workspaceId, order);
+      return { ...order, fulfilmentLabel: fulfilment.label || fulfilment.state || 'Gone' };
+    });
   res.page('sales/orders', {
-    title: 'Orders', nav: 'sales', status,
+    title: 'Orders', nav: 'sales', room: true, status,
     sellingConnectionCount,
     orders: ranked,
     summary: orderStatus.summarise(ranked),
@@ -149,11 +147,16 @@ router.get(['/orders/new', '/sales/new'], requirePermission(permissions.OPERATE,
     title: 'New sales order', nav: 'sales', customers: sales.listCustomers(req.db, req.ctx.workspaceId),
     skus, locations: repo.listLocations(req.db, req.ctx.workspaceId), form: {}, formError: null,
     unpricedCount: skus.filter((sku) => !sku.price.isSet).length,
+    // A focused form explains its own missing fields in context. A global
+    // setup task above it creates two unrelated "next" actions.
+    screenGuide: null,
   });
 }));
 
 router.get('/sales/customers/new', requirePermission(permissions.OPERATE, 'create customers'), asyncRoute(async (req, res) => {
-  res.page('sales/customer-new', { title: 'New customer', nav: 'sales', form: {}, formError: null });
+  res.page('sales/customer-new', {
+    title: 'New customer', nav: 'sales', form: {}, formError: null, screenGuide: null,
+  });
 }));
 
 router.post('/sales/customers', requirePermission(permissions.OPERATE, 'create customers'), asyncRoute(async (req, res) => {
@@ -188,6 +191,7 @@ router.get('/sales/customers/:id', requirePermission(permissions.VIEW, 'view cus
     WHERE workspace_id = ? AND customer_id = ? AND status IN ('OPEN','PARTIALLY_PAID')`)
     .get(req.ctx.workspaceId, req.params.id);
   res.page('sales/customer', {
+    usage: sales.customerUsage(req.db, req.ctx.workspaceId, req.params.id),
     title: 'Customer', nav: 'sales', customer: { ...customer, orders: history },
     customerOwes: { minor: Number(owed.owed), invoices: Number(owed.invoices), soonest: owed.soonest },
     terms: paymentTerms.forCustomer(req.db, req.ctx.workspaceId, req.params.id),
@@ -204,6 +208,36 @@ router.post('/sales/customers/:id', requirePermission(permissions.OPERATE, 'chan
   });
   req.flash('success', `${customer.name} was updated.`);
   res.redirect(303, `/sales/customers/${customer.id}`);
+}));
+
+/*
+ * Retiring a customer, and bringing one back.
+ *
+ * Archive rather than delete: orders, invoices and payments reference this
+ * record. The service refuses while an order of theirs is still live.
+ */
+router.post('/sales/customers/:id/archive', requirePermission(permissions.OPERATE, 'change customers'), asyncRoute(async (req, res) => {
+  const restore = req.body.restore === '1';
+  try {
+    if (restore) {
+      const customer = sales.setCustomerActive(req.db, req.ctx, req.params.id, true);
+      req.flash('success', `${customer.name} is active again.`);
+      return res.redirect(303, `/sales/customers/${req.params.id}`);
+    }
+    const result = sales.removeCustomer(req.db, req.ctx, req.params.id);
+    if (result.deleted) {
+      req.flash('success', `${result.customer.name} was deleted. Nothing referred to them.`);
+      return res.redirect(303, '/orders');
+    }
+    const kept = result.usage.used.map((u) => `${u.count} ${u.label}`).join(', ');
+    req.flash('success',
+      `${result.customer.name} was archived rather than deleted, because ${kept} still refer to them. `
+      + 'They will not appear when you write an order.');
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, `/sales/customers/${req.params.id}`);
 }));
 
 router.post('/sales/orders', requirePermission(permissions.OPERATE, 'create sales orders'), asyncRoute(async (req, res) => {
@@ -293,7 +327,15 @@ router.post('/sales/orders/:id/resolve-delivery',
     res.redirect(303, `/orders/${req.params.id}`);
   }));
 
-router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.VIEW, 'view sales orders'), asyncRoute(async (req, res) => {
+router.get(['/orders/:id', '/sales/orders/:id', '/orders/:id/detail', '/sales/orders/:id/detail'],
+  requirePermission(permissions.VIEW, 'view sales orders'), asyncRoute(async (req, res) => {
+  /*
+   * One address tells the story; the same address with /detail on the end is
+   * the working page it was before. Nothing was removed — the operational
+   * forms are where somebody who wants to work on the order will look, and the
+   * story is what everybody else opens.
+   */
+  const wantsDetail = req.path.endsWith('/detail');
   const order = sales.getOrder(req.db, req.ctx.workspaceId, req.params.id);
 
   /*
@@ -316,15 +358,21 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
       shortButAvailable += Math.min(Number(line.backordered), Math.max(0, free));
       const suppliers = require('../../purchasing/supplier-service')
         .suppliersForSku(req.db, req.ctx.workspaceId, line.sku_id);
+      const preparedReplenishment = require('../../autopilot/work-items')
+        .awaitingReplenishmentForSku(req.db, req.ctx.workspaceId, line.sku_id);
       shortageDetails.push({
         skuId: line.sku_id,
         displayName: line.displayName,
         missing: Number(line.backordered),
         availableNow: Math.min(Number(line.backordered), Math.max(0, free)),
-        actionHref: suppliers.length
-          ? `/purchasing/why/${line.sku_id}`
-          : `/purchasing/supplier-for/${line.sku_id}`,
-        actionLabel: suppliers.length ? 'Review replenishment for this product' : 'Add a supplier for this product',
+        actionHref: preparedReplenishment
+          ? `/autopilot/work/${preparedReplenishment.id}`
+          : suppliers.length
+            ? `/purchasing/why/${line.sku_id}`
+            : `/purchasing/supplier-for/${line.sku_id}`,
+        actionLabel: preparedReplenishment
+          ? 'Review the prepared replenishment plan'
+          : suppliers.length ? 'Review replenishment for this product' : 'Add a supplier for this product',
       });
     }
   }
@@ -341,8 +389,58 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
   try { await require('../../payments/collection').refreshForOrder(req.db, req.ctx, order.id); }
   catch { /* The page shows what is recorded; being unable to ask is not news about the customer. */ }
   const askedFor = require('../../payments/collection').forOrder(req.db, req.ctx.workspaceId, order.id);
-  res.page('sales/order', {
-    title: 'Order', nav: 'sales', order,
+  const orderShipments = shipments.listForOrder(req.db, req.ctx.workspaceId, order.id);
+  const orderNotices = notices.forOrder(req.db, req.ctx.workspaceId, order.id);
+  const orderMoney = moneyForOrder(req.db, req.ctx.workspaceId, order);
+  const orderFulfilment = shipments.fulfilmentState(req.db, req.ctx.workspaceId, order);
+  const orderNext = orderStatus.nextStep(req.db, req.ctx.workspaceId, order, {
+    payment: orderMoney,
+    fulfilment: orderFulfilment,
+  });
+  const openSection = wantsDetail && ['fulfilment', 'money'].includes(String(req.query.open || ''))
+    ? String(req.query.open) : null;
+  const orderReceipts = req.db.prepare(`SELECT DISTINCT p.id, p.payment_number, p.amount_minor,
+        p.payment_date, p.method,
+        COALESCE((SELECT SUM(apa2.amount_minor)
+          FROM accounting_payment_allocations apa2
+          JOIN accounting_customer_invoices aci2 ON aci2.id = apa2.customer_invoice_id
+          WHERE apa2.workspace_id = p.workspace_id AND apa2.payment_id = p.id
+            AND aci2.sales_order_id = ?), p.amount_minor) AS order_amount_minor
+      FROM accounting_payments p
+      WHERE p.workspace_id = ? AND p.direction = 'CUSTOMER_RECEIPT' AND p.status = 'POSTED'
+        AND (p.sales_order_id = ? OR EXISTS (
+          SELECT 1 FROM accounting_payment_allocations apa
+          JOIN accounting_customer_invoices aci ON aci.id = apa.customer_invoice_id
+          WHERE apa.workspace_id = p.workspace_id AND apa.payment_id = p.id
+            AND aci.sales_order_id = ?))
+      ORDER BY p.payment_date, p.created_at`).all(order.id, req.ctx.workspaceId, order.id, order.id);
+  res.page(wantsDetail ? 'sales/order' : 'sales/story', {
+    title: wantsDetail ? 'Order' : `${(order.customer && order.customer.name) || order.order_number}`,
+    nav: 'sales', order,
+    room: !wantsDetail,
+    /*
+     * The order as one story: what was promised, what Foundry committed, what
+     * the customer was told, what shipped, what is owed, and what happens
+     * next. Composed here from what this page already gathered rather than
+     * from a second set of queries, so the story and the detail can never
+     * disagree about the same order.
+     */
+    story: wantsDetail ? null : require('../story').salesOrder(req.db, req.ctx.workspaceId, order, {
+      shipments: orderShipments,
+      customerNotices: orderNotices,
+      customerReceipts: orderReceipts,
+      money: orderMoney,
+      shortageDetails,
+      accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
+      fulfilment: orderFulfilment,
+    }),
+    evidenceTrace: wantsDetail ? null : require('../../provenance/presenter').salesOrderStory(
+      req.db, req.ctx.workspaceId, order, {
+        shipments: orderShipments,
+        customerReceipts: orderReceipts,
+        money: orderMoney,
+        accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
+      }, { membership: req.user }),
     // A focused order already has one state-derived next action. The generic
     // Sales strip can point at an unrelated product price or connector and
     // make the page appear to have two competing instructions.
@@ -352,22 +450,20 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
     cameFromEmail: cameFromEmail(req.db, req.ctx.workspaceId, order),
     goneWord: shipments.wordForOrder(req.db, req.ctx.workspaceId, order.id),
     accounting: accountingForOrder(req.db, req.ctx.workspaceId, order.id),
-    money: moneyForOrder(req.db, req.ctx.workspaceId, order),
-    shipments: shipments.listForOrder(req.db, req.ctx.workspaceId, order.id),
+    money: orderMoney,
+    orderNext,
+    openSection,
+    shipments: orderShipments,
     pickable: order.status === 'DRAFT' ? [] : shipments.pickable(req.db, req.ctx.workspaceId, order.id),
-    fulfilment: shipments.fulfilmentState(req.db, req.ctx.workspaceId, order),
+    fulfilment: orderFulfilment,
     /*
      * What this customer has been told, on the same page as the thing they
      * were told about. Bouncing between the order, the shipment and a mailbox
      * to answer "does she know it shipped?" is the failure this page exists to
      * avoid.
      */
-    customerNotices: notices.forOrder(req.db, req.ctx.workspaceId, order.id),
-    customerReceipts: req.db.prepare(`SELECT id, payment_number, amount_minor, payment_date, method
-      FROM accounting_payments
-      WHERE workspace_id = ? AND sales_order_id = ? AND direction = 'CUSTOMER_RECEIPT'
-        AND status = 'POSTED'
-      ORDER BY payment_date, created_at`).all(req.ctx.workspaceId, order.id),
+    customerNotices: orderNotices,
+    customerReceipts: orderReceipts,
     paymentRequests: askedFor,
     paymentCompleted: req.query.payment === 'paid',
     /*
@@ -383,6 +479,8 @@ router.get(['/orders/:id', '/sales/orders/:id'], requirePermission(permissions.V
       return found ? found.hostedUrl : null;
     }()),
     paymentProviders: require('../../payments/provider').list(),
+    paymentAccount: require('../../payments/accounts').describe(req.db, req.ctx.workspaceId),
+    canManagePaymentAccount: req.user && req.user.role === 'owner',
     customers: sales.listCustomers(req.db, req.ctx.workspaceId),
     skus: catalogue(req.db, req.ctx.workspaceId),
   });
@@ -407,7 +505,11 @@ async function moneyChased(req, orderId, customerName) {
     const amount = require('../../sales/payment-terms').money(outcome.request.amountMinor, outcome.request.currency);
     return ` Foundry made a ${amount} payment link and wrote the email — ${outcome.because} It is on the order, ready to send.`;
   }
-  return outcome.because ? ` Nothing was asked for: ${outcome.because}` : '';
+  // A shipment confirmation is about the parcel that just left. When Foundry
+  // could not prepare or send a payment request, the order's Money section is
+  // the right place to explain why. Appending a payment-account prerequisite
+  // here makes a successful shipment read like a failed, unrelated task.
+  return '';
 }
 
 /**
@@ -442,11 +544,15 @@ router.get('/sales/orders/:id/payment-state',
      * The receipt for the money that just arrived, so the page can offer to
      * print it the moment it does rather than sending somebody to find it.
      */
-    const receipt = req.db.prepare(`SELECT p.id, p.payment_number, p.amount_minor
+    const receipt = req.db.prepare(`SELECT DISTINCT p.id, p.payment_number, p.amount_minor
       FROM accounting_payments p
-      WHERE p.workspace_id = ? AND p.sales_order_id = ? AND p.direction = 'CUSTOMER_RECEIPT'
-        AND p.status = 'POSTED'
-      ORDER BY p.created_at DESC LIMIT 1`).get(req.ctx.workspaceId, order.id);
+      WHERE p.workspace_id = ? AND p.direction = 'CUSTOMER_RECEIPT' AND p.status = 'POSTED'
+        AND (p.sales_order_id = ? OR EXISTS (
+          SELECT 1 FROM accounting_payment_allocations apa
+          JOIN accounting_customer_invoices aci ON aci.id = apa.customer_invoice_id
+          WHERE apa.workspace_id = p.workspace_id AND apa.payment_id = p.id
+            AND aci.sales_order_id = ?))
+      ORDER BY p.created_at DESC LIMIT 1`).get(req.ctx.workspaceId, order.id, order.id);
 
     return res.json({
       paid: Number(money.outstandingMinor) <= 0,
@@ -482,18 +588,52 @@ router.get('/orders/:id/receipt/:paymentId',
     }
     const payment = require('../../accounting/payments')
       .hydrate(req.db, req.ctx.workspaceId, req.params.paymentId);
-    if (!payment || payment.sales_order_id !== order.id) {
+    const allocatedToOrder = payment && payment.allocations.some((allocation) => {
+      if (!allocation.customer_invoice_id) return false;
+      return Boolean(req.db.prepare(`SELECT 1 FROM accounting_customer_invoices
+        WHERE id = ? AND workspace_id = ? AND sales_order_id = ?`)
+        .get(allocation.customer_invoice_id, req.ctx.workspaceId, order.id));
+    });
+    if (!payment || (payment.sales_order_id !== order.id && !allocatedToOrder)) {
       req.flash('error', 'That receipt does not belong to this order.');
       return res.redirect(303, `/orders/${order.id}`);
     }
-    const money = moneyForOrder(req.db, req.ctx.workspaceId, order);
+    const linkedPayments = req.db.prepare(`SELECT DISTINCT p.id, p.amount_minor, p.status, p.created_at,
+        COALESCE((SELECT SUM(apa2.amount_minor)
+          FROM accounting_payment_allocations apa2
+          JOIN accounting_customer_invoices aci2 ON aci2.id = apa2.customer_invoice_id
+          WHERE apa2.workspace_id = p.workspace_id AND apa2.payment_id = p.id
+            AND aci2.sales_order_id = ?), p.amount_minor) AS order_amount_minor
+      FROM accounting_payments p
+      WHERE p.workspace_id = ? AND p.direction = 'CUSTOMER_RECEIPT'
+        AND (p.sales_order_id = ? OR EXISTS (
+          SELECT 1 FROM accounting_payment_allocations apa
+          JOIN accounting_customer_invoices aci ON aci.id = apa.customer_invoice_id
+          WHERE apa.workspace_id = p.workspace_id AND apa.payment_id = p.id
+            AND aci.sales_order_id = ?))
+      ORDER BY p.created_at, p.id`).all(order.id, req.ctx.workspaceId, order.id, order.id);
+    let paidAfterReceiptMinor = 0;
+    let receiptAmountMinor = Number(payment.amount_minor || 0);
+    for (const linked of linkedPayments) {
+      const amount = Number(linked.order_amount_minor || 0);
+      if (linked.status === 'POSTED') paidAfterReceiptMinor += amount;
+      if (linked.id === payment.id) {
+        receiptAmountMinor = amount;
+        break;
+      }
+    }
+    const outstandingAfterReceiptMinor = Math.max(0,
+      Number(order.pricing.totalMinor || 0) - paidAfterReceiptMinor);
     const workspace = req.db.prepare('SELECT name FROM workspaces WHERE id = ?').get(req.ctx.workspaceId);
     return res.page('sales/receipt', {
       title: `Receipt ${payment.payment_number}`,
       nav: 'sales',
+      screenGuide: null,
       order,
       payment,
-      outstandingMinor: Number(money.outstandingMinor || 0),
+      receiptAmountMinor,
+      paidAfterReceiptMinor,
+      outstandingAfterReceiptMinor,
       businessName: require('../../sales/customer-communications')
         .policy(req.db, req.ctx.workspaceId).businessName || (workspace ? workspace.name : 'Us'),
     });
@@ -678,6 +818,7 @@ router.get('/fulfilment', requirePermission(permissions.VIEW, 'view fulfilment')
 
 router.get('/fulfilment/:id', requirePermission(permissions.VIEW, 'view fulfilment'), asyncRoute(async (req, res) => {
   const list = shipments.pickList(req.db, req.ctx.workspaceId, req.params.id);
+  const shipment = shipments.getShipment(req.db, req.ctx.workspaceId, req.params.id);
   /*
    * What a carrier would do with this box, if there is one connected.
    *
@@ -686,15 +827,16 @@ router.get('/fulfilment/:id', requirePermission(permissions.VIEW, 'view fulfilme
    * asks for fresh ones.
    */
   const shipping = require('../../shipping');
-  const state = shipping.service.readiness(req.db, req.ctx.workspaceId, req.params.id);
-  const rates = shipping.service.ratesFor(req.db, req.ctx.workspaceId, req.params.id);
-  const promised = shipping.service.promisedDate(req.db, req.ctx.workspaceId, state.shipment);
+  const state = shipment.delivery_method === 'PICKUP' ? null
+    : shipping.service.readiness(req.db, req.ctx.workspaceId, req.params.id);
+  const rates = state ? shipping.service.ratesFor(req.db, req.ctx.workspaceId, req.params.id) : [];
+  const promised = state ? shipping.service.promisedDate(req.db, req.ctx.workspaceId, state.shipment) : null;
   const ruled = rates.length ? shipping.rules.decide(req.db, req.ctx.workspaceId, rates, { promisedDate: promised }) : null;
 
   res.page('sales/shipment', {
     title: list.shipment.shipment_number, nav: 'fulfilment',
-    shipment: shipments.getShipment(req.db, req.ctx.workspaceId, req.params.id),
-    shipping: {
+    shipment,
+    shipping: state ? {
       ready: state.ready,
       blocked: state.blocked,
       provider: state.provider,
@@ -707,7 +849,7 @@ router.get('/fulfilment/:id', requirePermission(permissions.VIEW, 'view fulfilme
       recommended: rates.length ? shipping.rules.recommend(rates, promised) : null,
       rules: shipping.rules.list(req.db, req.ctx.workspaceId),
       events: shipping.tracking.eventsFor(req.db, req.ctx.workspaceId, req.params.id),
-    },
+    } : null,
     pickList: list, carriers: carriers.list(),
     notices: notices.forShipment(req.db, req.ctx.workspaceId, req.params.id),
     noticePolicy: notices.policy(req.db, req.ctx.workspaceId),
@@ -847,7 +989,9 @@ router.post('/fulfilment/:id/ship', requirePermission(permissions.OPERATE, 'fulf
    * way that could undo it.
    */
   const chasedBox = await moneyChased(req, shipment.sales_order_id, shipment.customer_name || 'the customer');
-  req.flash('success', `${shipment.shipment_number} has gone. ${shipment.units} left stock and the sale is on the books.${told}${chasedBox}`);
+  const completedAs = shipment.handover === 'COLLECTED' ? 'collected by the customer'
+    : shipment.handover === 'DELIVERED_BY_US' ? 'delivered by you' : 'handed to the carrier';
+  req.flash('success', `${shipment.shipment_number} is recorded as ${completedAs}. ${shipment.units} left stock, and the sale is now in Accounting.${told}${chasedBox}`);
   res.redirect(303, `/fulfilment/${shipment.id}`);
 }));
 
@@ -1033,6 +1177,7 @@ router.post('/sales/orders/:id/payment', requirePermission(permissions.OPERATE, 
     payments.record(req.db, req.ctx, req.user, {
       direction: 'CUSTOMER_RECEIPT',
       customerId: (position.invoices[0] || order).customer_id,
+      salesOrderId: order.id,
       paymentDate: trimOrNull(req.body.paymentDate) || undefined,
       amountMinor,
       method: trimOrNull(req.body.method) || 'other',
@@ -1051,7 +1196,7 @@ router.post('/sales/orders/:id/payment', requirePermission(permissions.OPERATE, 
     if (!err.status || err.status >= 500) throw err;
     req.flash('warn', err.message);
   }
-  res.redirect(303, `/orders/${req.params.id}#money`);
+  res.redirect(303, `/orders/${req.params.id}?payment=paid#money`);
 }));
 
 module.exports = router;

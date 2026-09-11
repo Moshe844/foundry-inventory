@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const { newId, nowIso } = require('../lib/util');
 const investigations = require('./investigations');
 const inventoryEngine = require('../domain/inventory-engine');
+const repairs = require('../repairs/service');
 
 const json = (value, fallback) => {
   try { return JSON.parse(value) ?? fallback; } catch { return fallback; }
@@ -169,7 +170,7 @@ function reconcileUnifiedBusinessState(db, workspaceId) {
         checks: [{ name: check.title, passed: check.passed, detail: check.detail }],
         evidence: Array.isArray(check.evidence) ? check.evidence : [check.evidence],
       });
-      if (!check.passed && check.needsOwner !== false) investigations.create(db, workspaceId, {
+      if (!check.passed && check.needsOwner !== false && check.key !== 'inventory-value') investigations.create(db, workspaceId, {
         trigger: `business_consistency_${check.key}`,
         affectedEntities: { workspaceId, consistencyKey: check.key },
         observedDifference: { detail: check.detail, evidence: check.evidence },
@@ -177,6 +178,21 @@ function reconcileUnifiedBusinessState(db, workspaceId) {
         recommendedNextStep: `Review ${check.title.toLowerCase()} before making another related change.`,
         idempotencyKey: `reconciliation:${result.id}`,
       });
+      if (!check.passed && check.key === 'inventory-value') {
+        const failedAccounting = db.prepare(`SELECT domain_event_id FROM accounting_event_inbox
+          WHERE workspace_id = ? AND status IN ('NEEDS_REVIEW','FAILED')
+          ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(workspaceId);
+        repairs.openAndAssess(db, { workspaceId, actorId: null }, {
+          kind: 'inventory_accounting_mismatch',
+          symptom: 'Inventory value and Accounting do not agree',
+          failedInvariant: check.title,
+          affectedRecords: { eventId: failedAccounting && failedAccounting.domain_event_id,
+            consistencyKey: check.key },
+          evidence: Array.isArray(check.evidence) ? check.evidence : [check.evidence],
+          confidence: failedAccounting ? 'high' : 'medium',
+          idempotencyKey: `repair:inventory-accounting:${result.id}`,
+        });
+      }
       else investigations.resolveByTrigger(db, workspaceId, `business_consistency_${check.key}`,
         check.complete === false
           ? 'Foundry reclassified this as missing financial evidence, not a contradiction in the business records.'

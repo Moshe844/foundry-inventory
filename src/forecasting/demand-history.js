@@ -96,7 +96,7 @@ function movementsFor(db, workspaceId, skuId, { locationId = null, throughIso = 
   if (throughIso) { clauses.push('occurred_at <= ?'); params.push(throughIso); }
   return db.prepare(`SELECT seq, operation, leg, reason_code, notes, reference,
       location_id, quantity_delta, balance_after, occurred_at
-    FROM movements WHERE ${clauses.join(' AND ')} ORDER BY seq`).all(...params);
+    FROM movements WHERE ${clauses.join(' AND ')} ORDER BY occurred_at, seq`).all(...params);
 }
 
 /**

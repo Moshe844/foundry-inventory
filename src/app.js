@@ -39,9 +39,17 @@ const pricingRoutes = require('./web/routes/pricing');
 const connectionRoutes = require('./web/routes/connections');
 const accountingRoutes = require('./web/routes/accounting');
 const planningRoutes = require('./web/routes/planning');
+const repairRoutes = require('./web/routes/repairs');
 const { createFeedApi } = require('./web/routes/feed-api');
 const { createConnectionsApi } = require('./web/routes/connections-api');
 const { createProviderWebhooks } = require('./web/routes/provider-webhooks');
+const { createOperationsApi } = require('./web/routes/operations-api');
+const { createPublicApi } = require('./web/routes/public-api');
+const operationsRoutes = require('./web/routes/operations');
+const warehouseRoutes = require('./web/routes/warehouse');
+const transferRoutes = require('./web/routes/transfers');
+const readiness = require('./operations/readiness');
+const { ProductBrain } = require('./product-brain/registry');
 
 /**
  * Builds the Express application around an already-open database handle.
@@ -52,7 +60,11 @@ function createApp(options = {}) {
   const isProduction = (options.env || config.env) === 'production';
 
   const app = express();
+  const productBrain = new ProductBrain();
   app.locals.db = db;
+  app.locals.productBrain = productBrain;
+  const registered = (name, router, mountPath = '') =>
+    productBrain.registerRouter(name, router, { mountPath });
   // Explicit provider override. Undefined means the configured provider is
   // built per request, so there is no accidental production fallback.
   app.locals.aiProvider = options.aiProvider || null;
@@ -77,11 +89,49 @@ function createApp(options = {}) {
    * Everything between the two — sessions, CSRF, the signed-in context — is
    * deliberately skipped: a provider arrives with no cookie and no token, and
    * its signature is the whole authentication.
-   */
+  */
   app.use((req, res, next) => { req.db = db; next(); });
-  app.use(paymentRoutes.webhooks);
+
+  // Orchestrator probes must never create browser sessions or CSRF state. At
+  // production polling rates, even an empty session per probe becomes millions
+  // of rows. Mount both probes before every session-aware middleware.
+  app.get('/healthz', (req, res) => {
+    try {
+      db.prepare('SELECT 1 AS ok').get();
+      const schemaVersion = db.prepare("SELECT value FROM schema_meta WHERE key = 'version'").get()?.value || null;
+      return res.json({ ok: true, database: 'available', uptimeSeconds: Math.floor(process.uptime()),
+        releaseRef: config.operations.releaseRef, schemaVersion });
+    } catch {
+      return res.status(503).json({ ok: false, database: 'unavailable' });
+    }
+  });
+  productBrain.registerRoute('health', '/healthz', 'GET');
+  // A readiness snapshot validates every workspace's inventory/accounting
+  // invariants. Orchestrators may poll this endpoint several times per second;
+  // recomputing the same immutable snapshot for every concurrent probe starves
+  // customer requests on the single-writer database. The owner Operations page
+  // and certification runner still request fresh snapshots directly.
+  let readinessCache = null;
+  app.get('/readyz', (req, res) => {
+    const now = Date.now();
+    if (!readinessCache || now - readinessCache.createdAt >= config.operations.readinessCacheMs) {
+      readinessCache = {
+        createdAt: now,
+        state: readiness.snapshot(db, { env: options.env || config.env }),
+      };
+    }
+    const state = readinessCache.state;
+    res.set('X-Foundry-Readiness-Age-Ms', String(Math.max(0, now - readinessCache.createdAt)));
+    return res.status(state.ok ? 200 : 503).json({
+      ok: state.ok, environment: state.environment,
+      checks: state.checks.map((row) => ({ key: row.key, status: row.status, message: row.message })),
+    });
+  });
+  productBrain.registerRoute('readiness', '/readyz', 'GET');
+
+  app.use(registered('payment-webhooks', paymentRoutes.webhooks));
   // Same treatment, same reason: the carrier signs the raw bytes.
-  app.use(shippingRoutes.webhooks);
+  app.use(registered('shipping-webhooks', shippingRoutes.webhooks));
 
   app.use(express.urlencoded({ extended: true, limit: '256kb' }));
   app.use(express.json({ limit: '256kb', verify(req, res, buffer) { req.rawBody = Buffer.from(buffer); } }));
@@ -91,11 +141,16 @@ function createApp(options = {}) {
   // not depend on a person being signed in.
   app.use('/api/v1', middleware.rateLimit({ windowMs: 60_000, max: 300,
     key: (req) => req.ip || req.socket.remoteAddress || 'api' }));
-  app.use('/api/v1/feed', createFeedApi(db));
-  app.use('/api/v1/connections', createProviderWebhooks(db));
-  app.use('/api/v1', createConnectionsApi(db));
+  app.use('/api/v1/feed', registered('feed-api', createFeedApi(db), '/api/v1/feed'));
+  app.use('/api/v1/connections', registered('provider-webhooks', createProviderWebhooks(db), '/api/v1/connections'));
+  app.use('/api/v1', registered('connections-api', createConnectionsApi(db), '/api/v1'));
+  app.use('/api/v1/operations', registered('operations-api', createOperationsApi(db), '/api/v1/operations'));
+  app.use('/api/v1/public', registered('public-api', createPublicApi(db), '/api/v1/public'));
 
-  const store = createSessionStore(db);
+  // Refuse abusive login traffic before it can allocate a CSRF/browser session.
+  app.use('/login', middleware.rateLimit({ windowMs: 15 * 60_000, max: 30 }));
+
+  const store = createSessionStore(db, { anonymousMaxAgeMs: config.sessions.anonymousMaxAgeMs });
   app.locals.sessionStore = store;
   app.use(
     session({
@@ -129,43 +184,40 @@ function createApp(options = {}) {
   app.use(middleware.foundryContext(db));
   app.use(middleware.pageRenderer);
 
-  app.use('/login', middleware.rateLimit({ windowMs: 15 * 60_000, max: 30 }));
-
-  app.get('/healthz', (req, res) => {
-    try {
-      db.prepare('SELECT 1 AS ok').get();
-      return res.json({ ok: true, database: 'available', uptimeSeconds: Math.floor(process.uptime()) });
-    } catch {
-      return res.status(503).json({ ok: false, database: 'unavailable' });
-    }
-  });
-
-  app.use(authRoutes);
-  app.use(managerRoutes);
-  app.use(salesRoutes);
-  app.use(messageRoutes);
-  app.use(mailRoutes);
-  app.use(paymentRoutes.actions);
-  app.use(shippingRoutes.router);
-  app.use(pricingRoutes);
-  app.use(connectionRoutes);
-  app.use(accountingRoutes);
-  app.use(foundryRoutes);
-  app.use(workspaceRoutes);
-  app.use(actionRoutes);
-  app.use(importRoutes);
-  app.use(onboardingRoutes);
-  app.use(autopilotRoutes);
-  app.use(purchasingRoutes);
+  app.use(registered('auth', authRoutes));
+  app.use(registered('manager', managerRoutes));
+  app.use(registered('repairs', repairRoutes));
+  app.use(registered('sales', salesRoutes));
+  app.use(registered('messages', messageRoutes));
+  app.use(registered('mail', mailRoutes));
+  app.use(registered('payment-actions', paymentRoutes.actions));
+  app.use(registered('shipping', shippingRoutes.router));
+  app.use(registered('pricing', pricingRoutes));
+  app.use(registered('connections', connectionRoutes));
+  app.use(registered('accounting', accountingRoutes));
+  app.use(registered('foundry', foundryRoutes));
+  app.use(registered('workspaces', workspaceRoutes));
+  app.use(registered('actions', actionRoutes));
+  app.use(registered('imports', importRoutes));
+  app.use(registered('onboarding', onboardingRoutes));
+  app.use(registered('autopilot', autopilotRoutes));
+  app.use(registered('purchasing', purchasingRoutes));
+  app.use(registered('warehouse', warehouseRoutes));
+  app.use(registered('transfers', transferRoutes));
   // Reads everything above it, writes only replenishment levels.
-  app.use(planningRoutes);
-  app.use(attentionRoutes);
-  app.use(overviewRoutes);
-  app.use(inventoryRoutes);
-  app.use(locationRoutes);
-  app.use(activityRoutes);
-  app.use(searchRoutes);
-  app.use(settingsRoutes);
+  app.use(registered('planning', planningRoutes));
+  app.use(registered('attention', attentionRoutes));
+  app.use(registered('overview', overviewRoutes));
+  app.use(registered('inventory', inventoryRoutes));
+  app.use(registered('locations', locationRoutes));
+  app.use(registered('activity', activityRoutes));
+  app.use(registered('search', searchRoutes));
+  app.use(registered('settings', settingsRoutes));
+  app.use(registered('operations', operationsRoutes));
+
+  // Fail startup and CI when a real route is outside the product contract.
+  // This happens after every router is registered and before the 404 handler.
+  app.locals.productBrainCoverage = productBrain.validate();
 
   app.use((req, res, next) => {
     res.status(404);

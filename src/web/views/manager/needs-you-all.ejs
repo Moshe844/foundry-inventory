@@ -1,0 +1,35 @@
+<%
+  /*
+   * Every decision at once, for somebody who wants to see the shape of the day
+   * before starting on it.
+   *
+   * Deliberately secondary, and deliberately not a card per entry: each one is
+   * a line with what happened underneath it, so the list can be read in one
+   * pass. The place decisions are actually made is the desk — this page exists
+   * because a stack with no way to see its contents is a black box, not
+   * because triage is a good way to work.
+   */
+  var items = locals.inbox || [];
+%>
+
+<p class="rm-stamp"><a href="/needs-you">← The desk</a></p>
+<h1 class="rm-h"><%= items.length %> decision<%= items.length === 1 ? '' : 's' %>, in the order Foundry would take them.</h1>
+
+<% if (!items.length) { %>
+  <p class="rm-prose">Nothing is waiting.</p>
+<% } else { %>
+  <div class="rm-told">
+    <% items.forEach(function (entry, i) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t">
+          <a class="rm-u" href="/needs-you?at=<%= i %>"><%= entry.title %></a>
+          <% if (entry.happened) { %><small><%= entry.happened %></small><% } %>
+        </span>
+        <span class="rm-told__m <%= entry.importance === 'Urgent' ? 'is-paused' : '' %>">
+          <%= entry.importance === 'Needs You' ? '' : entry.importance %>
+        </span>
+      </div>
+    <% }) %>
+  </div>
+  <p class="rm-disclose"><a href="/needs-you">Start at the first one</a><% if (currentUser.role === 'owner') { %><a href="/repairs/report">Report something else wrong</a><% } %><a href="/">Back to the brief</a></p>
+<% } %>

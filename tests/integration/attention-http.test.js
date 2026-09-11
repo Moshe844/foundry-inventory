@@ -235,8 +235,48 @@ test('Ask Foundry answers from the ledger and shows how it read the question', a
   const page = plain((await agent.get('/ask').query({ q: 'How many navy oxfords do we have?' })).text);
   assert.match(page, /How many navy oxfords do we have\?/);
   assert.match(page, /10 units on hand/);
-  assert.match(page, /Foundry read this as .stock level./);
+  assert.match(page, /Read as .stock level./);
   assert.match(page, /changes are approved on the actions page/);
+});
+
+test('Ask Foundry reports completed sales orders without relabelling open-order zero', async () => {
+  const provider = fakeProvider({
+    intent: 'sales_summary',
+    entityQuery: '',
+    locationQuery: '',
+    windowDays: 30,
+    limit: 10,
+    unsupportedReason: '',
+  });
+  const { app, workspace, db, scenario } = setup({ provider, scenario: 'healthy' });
+  const sales = require('../../src/sales/sales-order-service');
+  require('../../src/pricing/price-service').setPrice(db, workspace.ctx, {
+    skuId: scenario.skuId,
+    amount: '10.00',
+    currency: 'USD',
+  });
+  const order = sales.createOrder(db, workspace.ctx, {
+    customerName: 'Completed Order Customer',
+    orderDate: '2026-09-09',
+    lines: [{ skuId: scenario.skuId, quantity: 1 }],
+  });
+  sales.confirm(db, workspace.ctx, order.id, { idempotencyKey: `confirm:${order.id}` });
+  const line = sales.getOrder(db, workspace.workspaceId, order.id).lines[0];
+  sales.fulfill(db, workspace.ctx, order.id, {
+    lineId: line.id,
+    locationId: workspace.main.id,
+    quantity: 1,
+    idempotencyKey: `fulfil:${order.id}`,
+  });
+
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  const question = 'How many completed sales orders do i already have?';
+  const page = plain((await agent.get('/ask').query({ q: question })).text);
+
+  assert.match(page, /Completed orders: 1\./);
+  assert.match(page, /1 completed sales order; 0 open/);
+  assert.doesNotMatch(page, /0 completed sales orders?/i);
 });
 
 test('Ask Foundry distinguishes no realized margin from a zero-profit claim', async () => {
@@ -509,14 +549,32 @@ test('Home, the sidebar and Needs you agree on how much needs a person', async (
     assert.match(text, /Everything is under control|All clear/);
   }
 
-  // The sidebar badge beside "Needs you" counts the same thing.
-  const sidebar = home.text.split('<nav class="nav"')[1].split('</nav>')[0];
-  const badge = /<span class="nav-count"[^>]*>(\d+)<\/span>/.exec(sidebar);
-  assert.equal(badge ? Number(badge[1]) : 0, inbox.length, 'the sidebar agrees');
+  // The badge beside "Needs you" in the rail counts the same thing. The
+  // sidebar it used to sit in is gone; the invariant it protected is not.
+  const chrome = home.text.split('<header class="rm-rail"')[1].split('</header>')[0];
+  const badge = /<span[^>]*class="[^"]*nav-count[^"]*"[^>]*>(\d+)<\/span>/.exec(chrome);
+  assert.equal(badge ? Number(badge[1]) : 0, inbox.length, 'the rail agrees');
 
-  // And the page it links to lists exactly that many.
-  const needsYou = (await agent.get('/needs-you')).text;
-  assert.equal((needsYou.match(/class="need__title"/g) || []).length, inbox.length);
+  // And the desk it links to is a stack of exactly that many decisions.
+  const desk = (await agent.get('/needs-you')).text;
+  if (inbox.length) {
+    const of = /Decision \d+ of (\d+)/.exec(desk);
+    assert.ok(of, 'the desk states the size of the stack');
+    assert.equal(Number(of[1]), inbox.length);
+
+    // Home must expose the records behind the number. Previously it showed
+    // only the count and sometimes suppressed even the first decision because
+    // the setup guidance happened to point at the same record.
+    const operatorHome = (await agent.get('/')).text;
+    assert.match(operatorHome, /id="needs-you"/);
+    inbox.forEach((entry, index) => {
+      assert.ok(operatorHome.includes(`href="${entry.href}"`),
+        'Home opens the exact actionable record behind the decision');
+      assert.ok(operatorHome.includes(entry.title), `Home names waiting item ${index + 1}`);
+    });
+  } else {
+    assert.match(desk, /Nothing is waiting for you/);
+  }
 
   // Findings are still surfaced, but not as a second thing needing a person.
   assert.doesNotMatch(text, /Separately, \d+ things? (is|are) waiting for you/);

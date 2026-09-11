@@ -19,6 +19,7 @@ const backups = require('../../src/operations/backup');
 const reconciliation = require('../../src/manager/reconciliation');
 const investigations = require('../../src/manager/investigations');
 const needsYouInbox = require('../../src/manager/needs-you-inbox');
+const workItems = require('../../src/autopilot/work-items');
 const { makeDatabase, cleanupAll, seedWorkspace, seedAnotherWorkspace,
   makeQuantityItem } = require('../helpers');
 
@@ -134,6 +135,38 @@ test('cross-business questions route deterministically and answer from one state
   assert.ok(result.rows.some((row) => row.measure === 'Available now'));
 });
 
+test('the business briefing uses Needs You work and cannot have separate facts causally rewritten', async () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  automatic.ensure(db, workspace.workspaceId, { actorId: workspace.ownerId });
+  workItems.upsert(db, workspace.workspaceId, {
+    category: 'discrepancy_review', source: 'test',
+    affectedEntities: { displayName: 'Main Warehouse stock difference' },
+    recommendedAction: { message: 'Choose which physical count is correct.' },
+    approvalRequirement: 'REQUIRED', executionStatus: workItems.STATUS.WAITING_FOR_APPROVAL,
+    priority: 90, urgency: 'soon', confidence: 'high',
+    idempotencyKey: 'business-health-owner-decision',
+  });
+
+  const state = brain.build(db, workspace.workspaceId);
+  assert.ok(state.attention.some((entry) => /Main Warehouse stock difference/i.test(entry.title)));
+  assert.match(state.briefing.headline, /thing needs your attention/i);
+  assert.match(state.briefing.lines.join(' '), /Main Warehouse stock difference/i);
+
+  let phrasingCalls = 0;
+  const provider = { complete: async () => {
+    phrasingCalls += 1;
+    return { data: { sentence: 'Fixing the supplier bill will also fix every missing product cost.' } };
+  } };
+  const answer = await planner.ask(db, workspace.workspaceId,
+    'How are we doing? Is there anything I should worry about?', { provider });
+  assert.equal(answer.plan.intent, 'business_health');
+  assert.equal(answer.answerMode, 'verified');
+  assert.equal(answer.spoken, null);
+  assert.equal(phrasingCalls, 0, 'a model may not rewrite a multi-domain statement of record');
+  assert.match(answer.answer, /Main Warehouse stock difference/i);
+});
+
 test('why Foundry ordered a PO is answered from the linked purchasing story', async () => {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db);
@@ -157,6 +190,8 @@ test('why Foundry ordered a PO is answered from the linked purchasing story', as
   assert.deepEqual(result.rows.map((row) => row.measure), [
     'What happened', 'Why Foundry concluded this', 'Evidence used', 'What Foundry did', 'What happens next',
   ]);
+  assert.match(result.rows.find((row) => row.measure === 'Evidence used').value, new RegExp(order.poNumber));
+  assert.doesNotMatch(result.rows.find((row) => row.measure === 'Evidence used').value, /linked business record/i);
 });
 
 test('backup is actually restored and critical record counts match', async () => {

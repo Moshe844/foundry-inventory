@@ -32,6 +32,7 @@ const PLAN_SCHEMA = {
     'customerDecisions',
     'foundryDecisions',
     'assumptions',
+    'ownerProvidedInventory',
     'configurationVersion',
     'integrityHash',
   ],
@@ -193,6 +194,40 @@ const PLAN_SCHEMA = {
     },
 
     assumptions: { type: 'array', items: { type: 'string', maxLength: 300 } },
+    ownerProvidedInventory: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['lines'],
+      properties: {
+        lines: {
+          type: 'array',
+          maxItems: 100,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['productName', 'variantLabel', 'quantity', 'locationName'],
+            properties: {
+              productName: { type: 'string', minLength: 1, maxLength: 160 },
+              variantLabel: { type: 'string', maxLength: 160 },
+              quantity: { type: 'integer', minimum: 1, maximum: 100000000 },
+              locationName: { type: 'string', minLength: 1, maxLength: 120 },
+            },
+          },
+        },
+      },
+    },
+    syntheticGeneration: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['workspaceMode', 'products', 'skus', 'suppliers', 'historyMonths'],
+      properties: {
+        workspaceMode: { type: 'string', enum: ['synthetic'] },
+        products: { type: 'integer', minimum: 1, maximum: 500 },
+        skus: { type: 'integer', minimum: 1, maximum: 3000 },
+        suppliers: { type: 'integer', minimum: 1, maximum: 50 },
+        historyMonths: { type: 'integer', minimum: 1, maximum: 24 },
+      },
+    },
     configurationVersion: { type: 'integer', minimum: 1 },
     integrityHash: { type: 'string', pattern: '^[a-f0-9]{64}$' },
   },

@@ -76,6 +76,16 @@ function usage(db, scope, key) {
 
 /** Throws if adding one more of `key` would pass the plan's limit. */
 function assertWithin(db, scope, key, { adding = 1 } = {}) {
+  // Synthetic workspaces are isolated rehearsal environments. Their generated
+  // catalogue must be able to exercise production-scale behavior without
+  // consuming or weakening the owner's live-business plan limits.
+  if (scope.workspaceId && ['locations', 'skus'].includes(key)) {
+    const workspace = db.prepare('SELECT data_mode FROM workspaces WHERE id = ?').get(scope.workspaceId);
+    if (workspace?.data_mode === 'synthetic') {
+      return { key, planId: 'synthetic', limit: null, used: USAGE[key](db, scope), unlimited: true,
+        remaining: null, exceeded: false };
+    }
+  }
   const state = usage(db, scope, key);
   if (state.unlimited) return state;
   if (state.used + adding <= state.limit) return state;

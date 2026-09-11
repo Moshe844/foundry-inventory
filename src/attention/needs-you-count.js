@@ -16,11 +16,11 @@
  * Requires are lazy so this can be used from both the request middleware and
  * the workspace list without either pulling a cycle through the other.
  */
-function countNeedsYou(db, workspaceId) {
+function countNeedsYou(db, workspaceId, membership = null, options = {}) {
   // The inbox is the customer-facing source of truth. Counting its entries
   // keeps the sidebar, workspace switcher and Needs you page identical as new
   // decision types (such as uncovered customer orders) are added.
-  return require('../manager/needs-you-inbox').inbox(db, workspaceId).length;
+  return require('../manager/needs-you-inbox').inbox(db, workspaceId, membership, options).length;
 }
 
 module.exports = { countNeedsYou };

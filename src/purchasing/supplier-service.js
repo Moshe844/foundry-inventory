@@ -248,6 +248,112 @@ function updateSupplier(db, ctx, membership, supplierId, input) {
   return saved;
 }
 
+/*
+ * What still points at this supplier.
+ *
+ * Fifteen tables can reference one: purchase orders, bills, payments, price
+ * history, code mappings, mailbox rules, planning recommendations. Knowing
+ * whether any of them do is the difference between a supplier that can simply
+ * be deleted and one that must be kept for the paper trail — and the person
+ * deciding deserves to be told which it will be before they press anything.
+ */
+const SUPPLIER_REFS = [
+  ['purchase_orders', 'supplier_id', 'purchase orders'],
+  ['accounting_supplier_bills', 'supplier_id', 'bills'],
+  ['accounting_payments', 'supplier_id', 'payments'],
+  ['accounting_supplier_credits', 'supplier_id', 'credits'],
+  ['accounting_journal_lines', 'supplier_id', 'ledger entries'],
+  ['supplier_items', 'supplier_id', 'linked products'],
+  ['supplier_price_history', 'supplier_id', 'price history'],
+  ['supplier_communications', 'supplier_id', 'messages'],
+  ['supplier_documents', 'supplier_id', 'documents'],
+  ['supplier_code_mappings', 'supplier_id', 'code mappings'],
+  ['supplier_code_mapping_proposals', 'supplier_id', 'code proposals'],
+  ['connection_email_rules', 'supplier_id', 'mailbox rules'],
+  ['connection_email_messages', 'supplier_id', 'mailbox messages'],
+  ['planning_recommendations', 'supplier_id', 'recommendations'],
+  ['reorder_policies', 'preferred_supplier_id', 'reorder settings'],
+];
+
+function tableExists(db, name) {
+  return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(name);
+}
+
+/** Every trace of a supplier, so the interface can promise the right thing. */
+function supplierUsage(db, workspaceId, supplierId) {
+  const used = [];
+  let total = 0;
+  for (const [table, column, label] of SUPPLIER_REFS) {
+    if (!tableExists(db, table)) continue;
+    const n = db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ?`).get(supplierId).n;
+    if (n) { used.push({ label, count: n }); total += n; }
+  }
+  const openOrders = tableExists(db, 'purchase_orders')
+    ? db.prepare(`SELECT COUNT(*) AS n FROM purchase_orders WHERE workspace_id = ? AND supplier_id = ?
+        AND status NOT IN ('RECEIVED', 'CANCELLED')`).get(workspaceId, supplierId).n
+    : 0;
+  return { used, total, openOrders, deletable: total === 0 };
+}
+
+/*
+ * Removing a supplier, in the only two honest ways.
+ *
+ * One that has never been used is simply deleted — there is nothing to protect
+ * and pretending otherwise leaves people staring at a list of ghosts. One that
+ * has been used is archived, because fifteen tables point at it and deleting
+ * the row would leave a purchase order attributed to nobody.
+ *
+ * Either way it stops appearing when you go to buy something.
+ */
+function removeSupplier(db, ctx, supplierId) {
+  const supplier = getSupplier(db, ctx.workspaceId, supplierId);
+  if (!supplier) throw new NotFoundError('That supplier does not exist.');
+  const usage = supplierUsage(db, ctx.workspaceId, supplierId);
+
+  if (usage.deletable) {
+    db.prepare('DELETE FROM suppliers WHERE id = ? AND workspace_id = ?').run(supplierId, ctx.workspaceId);
+    return { supplier, deleted: true, usage };
+  }
+  if (usage.openOrders) {
+    throw new ValidationError(
+      `${supplier.name} still has ${usage.openOrders} purchase order${usage.openOrders === 1 ? '' : 's'} open. `
+      + 'Receive or cancel them first.'
+    );
+  }
+  setSupplierActive(db, ctx, supplierId, false);
+  return { supplier, deleted: false, usage };
+}
+
+/*
+ * Retiring a supplier.
+ *
+ * The same reasoning as a customer: purchase orders, bills and price history
+ * point at this row, so it is marked inactive rather than removed.
+ * `listSuppliers` already hides anything that is not active, so this takes them
+ * out of every picker while the paper trail stays intact.
+ *
+ * Refused while a purchase order is still running, because a supplier who owes
+ * you goods is not one you have finished with.
+ */
+function setSupplierActive(db, ctx, supplierId, active) {
+  const supplier = getSupplier(db, ctx.workspaceId, supplierId);
+  if (!supplier) throw new NotFoundError('That supplier does not exist.');
+  if (!active) {
+    const open = db.prepare(`SELECT COUNT(*) AS n FROM purchase_orders
+      WHERE workspace_id = ? AND supplier_id = ?
+        AND status NOT IN ('RECEIVED', 'CANCELLED')`).get(ctx.workspaceId, supplierId).n;
+    if (open) {
+      throw new ValidationError(
+        `${supplier.name} still has ${open} purchase order${open === 1 ? '' : 's'} open. `
+        + 'Receive or cancel them before archiving the supplier.'
+      );
+    }
+  }
+  db.prepare('UPDATE suppliers SET status = ?, updated_at = ? WHERE id = ? AND workspace_id = ?')
+    .run(active ? 'active' : 'inactive', nowIso(), supplierId, ctx.workspaceId);
+  return getSupplier(db, ctx.workspaceId, supplierId);
+}
+
 function getSupplier(db, workspaceId, supplierId) {
   const row = db
     .prepare('SELECT * FROM suppliers WHERE id = ? AND workspace_id = ?')
@@ -448,6 +554,17 @@ function getSupplierItem(db, workspaceId, supplierItemId) {
   return hydrateSupplierItem(row);
 }
 
+function updateItemCost(db, ctx, membership, supplierItemId, amount) {
+  permissions.assertCan(membership, permissions.MANAGE_SUPPLIERS, 'manage suppliers');
+  const existing = getSupplierItem(db, ctx.workspaceId, supplierItemId);
+  const cost = optionalMoney(amount, 'Unit cost');
+  if (cost === null) throw new ValidationError('Enter the price paid per inventory unit.');
+  const now = nowIso();
+  db.prepare(`UPDATE supplier_items SET last_unit_cost = ?, last_cost_at = ?, updated_at = ?
+    WHERE id = ? AND workspace_id = ?`).run(cost, now, now, existing.id, ctx.workspaceId);
+  return getSupplierItem(db, ctx.workspaceId, existing.id);
+}
+
 function unlinkItem(db, ctx, membership, supplierItemId) {
   permissions.assertCan(membership, permissions.MANAGE_SUPPLIERS, 'manage suppliers');
   const existing = getSupplierItem(db, ctx.workspaceId, supplierItemId);
@@ -539,6 +656,7 @@ module.exports = {
   hydrate,
   hydrateSupplierItem,
   createSupplier,
+  setSupplierActive, removeSupplier, supplierUsage,
   updateSupplier,
   getSupplier,
   findSupplier,
@@ -547,6 +665,7 @@ module.exports = {
   rememberItemCodeAlias,
   documentVocabulary,
   linkItem,
+  updateItemCost,
   unlinkItem,
   getSupplierItem,
   suppliersForSku,

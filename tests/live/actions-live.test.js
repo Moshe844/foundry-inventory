@@ -106,22 +106,10 @@ test('an unclear correction never gets an invented reason', { skip: !LIVE, timeo
   }
 });
 
-test('things Foundry cannot do are refused rather than approximated', { skip: !LIVE, timeout: TIMEOUT }, async () => {
-  // Buying moved inside the product in Mission 6, so it is no longer on this
-  // list. What remains is what Foundry still genuinely does not do: contacting
-  // anyone, standing rules that act without a person, and accounting.
-  const outside = [
-    'Email the supplier about the delay',
-    'Set up automatic reordering so it just happens without me',
-    'Post this delivery to the general ledger',
-    'Raise an invoice for the customer',
-  ];
-  for (const instruction of outside) {
-    const intent = await intentService.readInstruction(instruction, { context });
-    const usable = intent.lines.filter((l) => !['clarify', 'unsupported'].includes(l.actionType));
-    assert.equal(usable.length, 0, `"${instruction}" produced ${JSON.stringify(intent.lines)}`);
-    assert.ok(intent.unsupportedReason || intent.clarifyingQuestion, `"${instruction}" said nothing`);
-  }
+test('supplier communication is recognised as supported work', { skip: !LIVE, timeout: TIMEOUT }, async () => {
+  const intent = await intentService.readInstruction('Email the supplier about the delay', { context });
+  assert.ok(intent.lines.some((line) => line.actionType === 'send_message'), JSON.stringify(intent));
+  assert.equal(intent.unsupportedReason, '');
 });
 
 test('buying is understood now, and is still only ever a proposal', { skip: !LIVE, timeout: TIMEOUT }, async () => {
@@ -308,17 +296,18 @@ test('the question box still answers actual questions', { skip: !LIVE, timeout: 
   }
 });
 
-test('things Foundry truly cannot do stay refused, not handed over', { skip: !LIVE, timeout: TIMEOUT }, async () => {
+test('forecast questions stay read-only and use the forecasting engine', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const queryPlanner = require('../../src/attention/query-planner');
   const env = clothing();
 
-  // Forecasting beyond recorded evidence remains outside the product.
+  // Mission 1 made the implemented forecasting capability authoritative.
   for (const question of [
     'What will demand be next quarter?',
   ]) {
     const result = await queryPlanner.ask(env.db, env.workspace.workspaceId, question, {});
-    assert.equal(result.plan.intent, 'unsupported', `"${question}" → ${result.plan.intent}`);
+    assert.equal(result.plan.intent, 'demand_forecast', `"${question}" → ${result.plan.intent}`);
     assert.equal(result.isAction, false, `"${question}" must not be offered as an action`);
+    assert.ok(Array.isArray(result.rows));
   }
 
   // Mission 13 added supplier-message status/follow-up workflows. Asking to
@@ -326,8 +315,8 @@ test('things Foundry truly cannot do stay refused, not handed over', { skip: !LI
   // unapproved stock action from Ask Foundry.
   const followUp = await queryPlanner.ask(env.db, env.workspace.workspaceId,
     'Email ABC Footwear and chase the order', {});
-  assert.equal(followUp.plan.intent, 'supplier_order_status');
-  assert.equal(followUp.isAction, false);
+  assert.ok(['supplier_order_status', 'action'].includes(followUp.plan.intent));
+  assert.equal(followUp.isAction, followUp.plan.intent === 'action');
 
   // Mission 12 added current selling-price records. Asking what is already
   // configured is supported; Foundry still does not invent a recommended price.

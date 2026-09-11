@@ -19,7 +19,7 @@
     <input type="hidden" name="resumeInstructionId" value="<%= resumeInstructionId %>">
   <% } %>
 
-  <div class="card" style="max-width: 720px;">
+  <div class="card measure">
     <div class="card-head"><h2>What are you tracking?</h2></div>
     <div class="card-body">
       <div class="field">
@@ -46,7 +46,7 @@
     </div>
   </div>
 
-  <div class="card section reveal-host" style="max-width: 720px;">
+  <div class="card section reveal-host measure">
     <div class="card-head"><h2>How should Foundry track it?</h2></div>
     <div class="card-body">
       <div class="choice-grid">
@@ -91,6 +91,10 @@
           <%- helpers.icon('tag', { size: 16 }) %>
           <span>List the choices for each option, separated by commas. Foundry creates one tracked variant per combination.</span>
         </div>
+        <%# Every variant is counted, priced and reordered separately, so getting
+            five sizes instead of one matters before saving rather than after.
+            The preview reads the boxes the same way the item service does. %>
+        <p class="variant-preview" data-variant-preview hidden></p>
         <div class="option-row">
           <label class="field"><span class="field-label">Option name</span><input class="input" name="options[0][name]" aria-label="First option name" placeholder="Colour" value="<%= (form.options && form.options[0] && form.options[0].name) || '' %>"></label>
           <label class="field"><span class="field-label">Choices</span><input class="input" name="options[0][values]" aria-label="First option choices" placeholder="Black, White" value="<%= (form.options && form.options[0] && form.options[0].values) || '' %>"></label>

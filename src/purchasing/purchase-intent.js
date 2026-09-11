@@ -77,10 +77,62 @@ function resolveSupplier(db, workspaceId, text) {
 function build(db, ctx, membership, line, options = {}) {
   permissions.assertCan(membership, permissions.CREATE_PO, 'prepare purchase orders');
 
-  const sku = resolver.resolveSku(db, ctx.workspaceId, line.item, line.variant, {
-    instruction: options.instruction,
-  });
+  // A SKU selected from Foundry's own clarification buttons is already a
+  // deterministic record choice. Do not feed that choice back through the
+  // language resolver: the original wording may have been deliberately vague
+  // ("shoes"), and grounding against it would discard the exact selection and
+  // ask the owner to choose the variant a second time.
+  const selectedSku = options.selectedSkuId
+    ? db.prepare(
+        `SELECT s.*, i.name AS item_name, i.tracking_mode, i.unit_label, i.has_variants
+           FROM skus s JOIN items i ON i.id = s.item_id
+          WHERE s.workspace_id = ? AND s.id = ? AND s.is_active = 1 AND i.is_active = 1`
+      ).get(ctx.workspaceId, options.selectedSkuId)
+    : null;
+  if (options.selectedSkuId && !selectedSku) {
+    throw new ValidationError('That product choice is no longer available. Please choose again.');
+  }
+  const sku = selectedSku
+    ? { ok: true, value: selectedSku }
+    : resolver.resolveSku(db, ctx.workspaceId, line.item, line.variant, {
+        instruction: options.instruction,
+      });
   if (!sku.ok) {
+    const rows = ['not_found', 'not_understood'].includes(sku.reason)
+      ? db.prepare(
+          `SELECT s.id, i.name AS item_name, s.variant_label, s.code
+             FROM skus s JOIN items i ON i.id = s.item_id
+            WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
+            ORDER BY i.name, s.position LIMIT 13`
+        ).all(ctx.workspaceId)
+      : [];
+    if (rows.length > 0 && rows.length <= 12) {
+      const namedSupplier = String(line.supplier || '').trim();
+      const genericSupplier = /^(?:our|my|the|a|a regular|regular|usual|default)\s+supplier$/i.test(namedSupplier);
+      const supplierResult = namedSupplier && !genericSupplier
+        ? resolveSupplier(db, ctx.workspaceId, namedSupplier)
+        : null;
+      const supplierCreationName = supplierResult
+        && !supplierResult.ok
+        && ['none_exist', 'not_found'].includes(supplierResult.reason)
+        ? namedSupplier
+        : null;
+      const productChoices = rows.map((row) => ({
+        value: `__purchase_sku__:${row.id}`,
+        label: `${row.item_name}${row.variant_label ? ` — ${row.variant_label}` : ''}`,
+        skuId: row.id,
+        item: row.item_name,
+        variant: row.variant_label || '',
+      }));
+      return {
+        ok: false,
+        question: supplierCreationName
+          ? `${supplierCreationName} is not in your suppliers yet. Choose the product below to add this supplier and approve the purchase order in one step.`
+          : `Which product should be on this purchase order? Foundry could not safely match “${line.item || line.variant}”.`,
+        choices: productChoices.map(({ label, value }) => ({ label, value })),
+        missingProduct: { choices: productChoices, supplierCreationName },
+      };
+    }
     return {
       ok: false,
       question: sku.message,
@@ -98,17 +150,36 @@ function build(db, ctx, membership, line, options = {}) {
   if (line.supplier) {
     const found = resolveSupplier(db, ctx.workspaceId, line.supplier);
     if (!found.ok) {
-      return found.reason === 'none_exist'
-        ? { ok: false, unsupported: `${found.message} Add one before ordering.` }
-        : {
+      if (['none_exist', 'not_found'].includes(found.reason)) {
+        if (/^(?:our|my|the|a|a regular|regular|usual|default)\s+supplier$/i.test(String(line.supplier).trim())) {
+          return { ok: false, question: `Which supplier should provide ${sku.value.item_name}?` };
+        }
+        if (String(options.confirmedSupplierCreationName || '').trim().toLowerCase()
+            !== String(line.supplier).trim().toLowerCase()) {
+          return {
             ok: false,
-            question: found.message,
-            clarification: found.clarification || null,
-            choices: found.clarification ? found.clarification.choices : null,
+            question: `${line.supplier} is not in your suppliers yet. Add it and approve this purchase order?`,
+            choices: [{
+              label: `Add ${line.supplier} and approve order`,
+              value: '__create_purchase_supplier__',
+            }],
+            missingSupplier: { name: line.supplier, skuId: sku.value.id },
           };
+        }
+        supplier = supplierService.createSupplier(db, ctx, membership, { name: line.supplier });
+        assumptions.push(`${supplier.name} was added after you confirmed it was a new supplier.`);
+      } else {
+        return {
+          ok: false,
+          question: found.message,
+          clarification: found.clarification || null,
+          choices: found.clarification ? found.clarification.choices : null,
+        };
+      }
+    } else {
+      supplier = found.value;
+      if (found.note) assumptions.push(found.note);
     }
-    supplier = found.value;
-    if (found.note) assumptions.push(found.note);
   } else {
     const options_ = supplierService.suppliersForSku(db, ctx.workspaceId, sku.value.id);
     if (options_.length === 0) {
@@ -127,16 +198,28 @@ function build(db, ctx, membership, line, options = {}) {
     assumptions.push(`${chosen.because}.`);
   }
 
-  const supplierItem = db
+  let supplierItem = db
     .prepare('SELECT * FROM supplier_items WHERE workspace_id = ? AND supplier_id = ? AND sku_id = ? AND is_active = 1')
     .get(ctx.workspaceId, supplier.id, sku.value.id);
   if (!supplierItem) {
-    return {
-      ok: false,
-      unsupported:
-        `${supplier.name} is not on file as a supplier for ${sku.value.item_name}. ` +
-        'Link the product to them first, so Foundry knows the pack size and price.',
-    };
+    const statedPurchaseUnit = String(line.purchaseUnit || '').trim().toLowerCase();
+    if (statedPurchaseUnit && !['unit', 'units', 'item', 'items', 'each'].includes(statedPurchaseUnit)) {
+      return {
+        ok: false,
+        question: `How many inventory units are in one ${line.purchaseUnit} from ${supplier.name}?`,
+      };
+    }
+    supplierService.linkItem(db, ctx, membership, {
+      supplierId: supplier.id,
+      skuId: sku.value.id,
+      purchaseUnit: 'unit',
+      unitsPerPurchaseUnit: 1,
+      lastUnitCost: statedUnitCost(options.instruction),
+    });
+    supplierItem = db
+      .prepare('SELECT * FROM supplier_items WHERE workspace_id = ? AND supplier_id = ? AND sku_id = ? AND is_active = 1')
+      .get(ctx.workspaceId, supplier.id, sku.value.id);
+    assumptions.push(`${supplier.name} was linked to ${sku.value.item_name} from your request; no supplier SKU or pack size was invented.`);
   }
 
   // How much. A quantity in the supplier's own units ("5 cases") is taken as
@@ -190,10 +273,23 @@ function build(db, ctx, membership, line, options = {}) {
     supplierId: supplier.id,
     source: 'instruction',
     sourceDetail: { instruction: options.instruction || null, assumptions },
-    lines: [{ skuId: sku.value.id, quantityPurchaseUnits: purchaseUnits }],
+    lines: [{
+      skuId: sku.value.id,
+      quantityPurchaseUnits: purchaseUnits,
+      unitCost: statedUnitCost(options.instruction),
+    }],
   });
 
   return { ok: true, order, assumptions };
+}
+
+/** A price is a business fact only when the owner wrote an explicit amount. */
+function statedUnitCost(instruction) {
+  const text = String(instruction || '');
+  const match = /(?:USD\s*)?\$\s*(\d[\d,]*(?:\.\d{1,4})?)\s*(?:each|apiece|per\s+(?:unit|item|piece|shoe|pair))\b/i.exec(text);
+  if (!match) return undefined;
+  const amount = Number(match[1].replace(/,/g, ''));
+  return Number.isFinite(amount) && amount >= 0 ? amount : undefined;
 }
 
 /** Did they say "cases" (the supplier's unit) or a bare number of items? */
@@ -205,4 +301,4 @@ function looksLikePurchaseUnit(said, purchaseUnit) {
   return text === unit || text === `${unit}s` || unit.startsWith(text) || text.startsWith(unit);
 }
 
-module.exports = { build, resolveSupplier, looksLikePurchaseUnit };
+module.exports = { build, resolveSupplier, looksLikePurchaseUnit, statedUnitCost };

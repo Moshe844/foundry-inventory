@@ -380,8 +380,39 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
     return { applied: true, amountMinor: newlyPaidMinor, paymentId: payment && payment.id };
   });
 
+  const settledRequest = get(db, ctx.workspaceId, matched.id);
+  const controls = require('../accounting/reports').controlReconciliation(db, ctx.workspaceId);
+  const reconciled = Boolean(controls.ar.reconciled && controls.ap.reconciled);
+  const paymentAccount = providerName === 'stripe'
+    ? require('./accounts').describe(db, ctx.workspaceId) : { liveMode: false };
+  require('../operations/checkpoints').record(db, 'integration.payment_settlement',
+    settledRequest && settledRequest.status === 'PAID' && reconciled ? 'PASS' : 'FAIL', {
+      settled: Boolean(settledRequest && settledRequest.status === 'PAID'), reconciled,
+      provider: providerName, paymentRequestId: matched.id,
+      liveMode: paymentAccount.liveMode === true,
+      releaseRef: require('../config').operations.releaseRef,
+      arDifferenceMinor: controls.ar.differenceMinor, apDifferenceMinor: controls.ap.differenceMinor,
+    });
+
   return { ...outcome, request: get(db, ctx.workspaceId, matched.id),
     outcome: `Recorded ${(newlyPaidMinor / 100).toFixed(2)}.` };
+}
+
+function recordTransportEvidence(db, provider, transport, liveMode) {
+  const checkpoints = require('../operations/checkpoints');
+  const prior = checkpoints.get(db, 'integration.webhook_fallback');
+  const sameProvider = prior?.detail?.provider === provider;
+  const priorHasTransport = sameProvider && (prior.detail.webhookVerified === true
+    || prior.detail.pollFallbackVerified === true);
+  checkpoints.record(db, 'integration.webhook_fallback', 'PASS', {
+    provider,
+    webhookVerified: transport === 'webhook'
+      || (sameProvider && prior.detail.webhookVerified === true),
+    pollFallbackVerified: transport === 'poll'
+      || (sameProvider && prior.detail.pollFallbackVerified === true),
+    liveMode: liveMode === true && (!priorHasTransport || prior.detail.liveMode === true),
+    releaseRef: require('../config').operations.releaseRef,
+  });
 }
 
 /**
@@ -425,6 +456,8 @@ async function refresh(db, ctx, requestId, options = {}) {
   }
 
   db.prepare('UPDATE payment_requests SET checked_at = ? WHERE id = ?').run(nowIso(), request.id);
+  recordTransportEvidence(db, request.provider, 'poll', request.provider === 'stripe'
+    && require('./accounts').describe(db, ctx.workspaceId).liveMode === true);
   const event = provider.eventFromInvoice(invoice);
   if (!event) return { checked: true, applied: false, because: 'Nothing has happened to it yet.' };
   const outcome = receiveEvent(db, ctx, request.provider, event);
@@ -455,5 +488,5 @@ async function refreshForOrder(db, ctx, orderId, options = {}) {
 
 module.exports = {
   get, forInvoice, forOrder, openLinkForOrder, amountToRequest,
-  request, voidRequest, receiveEvent, refresh, refreshForOrder,
+  request, voidRequest, receiveEvent, refresh, refreshForOrder, recordTransportEvidence,
 };

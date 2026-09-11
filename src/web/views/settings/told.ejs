@@ -1,0 +1,166 @@
+<%
+  /*
+   * Settings is a transcript, not a control panel.
+   *
+   * Foundry is taught by talking to it. So the thing an owner needs is not a
+   * tree of forms — it is a readable record of what they have already said,
+   * with the ability to change, pause or revoke any line of it.
+   *
+   * The last column is the point of the page. "Acted 11 times" is the trust
+   * surface: a rule that has never fired is a rule that is wrong, or one that
+   * was never needed, and nowhere else in the product would ever show that.
+   *
+   * Every technical control still exists. Authority limits, capability opt-ins,
+   * terminology, mapping, exports and the audit trail are behind one line at
+   * the bottom, and listed in full at /everything.
+   */
+  var rules = locals.rules || [];
+  var policies = locals.policies || [];
+  var connections = locals.connections || [];
+  var preferences = locals.preferences || [];
+  var live = rules.filter(function (r) { return r.status === 'APPROVED'; });
+  var waiting = rules.filter(function (r) { return r.status === 'PENDING'; });
+  var gone = rules.filter(function (r) { return r.status === 'REMOVED' || r.status === 'CANCELLED'; });
+%>
+
+<p class="rm-stamp">What you've told me</p>
+<h1 class="rm-figure">
+  <% if (live.length) { %>
+    <%= live.length %> standing rule<%= live.length === 1 ? '' : 's' %>, in the words you said them.
+  <% } else { %>
+    You haven't told me any standing rules yet.
+  <% } %>
+</h1>
+<p class="rm-sub">
+  <% if (live.length) { %>
+    Each one can be changed, paused or taken away. I only do what these say, plus what you approve
+    one at a time.
+  <% } else { %>
+    Say something like “never let Downtown have fewer than 10 Black Small” and I will write it
+    down here, in your words, before it takes effect.
+  <% } %>
+</p>
+
+<% if (waiting.length) { %>
+  <% waiting.forEach(function (rule) { %>
+    <div class="rm-rule">
+      <p class="rm-rule__k">Waiting for you · not in force yet</p>
+      <p class="rm-rule__t"><%= rule.summary || rule.statedAs %></p>
+      <p class="rm-rule__m"><a href="/operating-instructions/<%= rule.id %>">Check it and turn it on</a></p>
+    </div>
+  <% }) %>
+<% } %>
+
+<% if (live.length) { %>
+  <div class="rm-told">
+    <% live.forEach(function (rule) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t">
+          <%= rule.summary || rule.statedAs %>
+          <% if (rule.summary && rule.statedAs && rule.summary !== rule.statedAs) { %>
+            <small>You said: “<%= rule.statedAs %>”</small>
+          <% } %>
+        </span>
+        <span class="rm-told__m is-ok">
+          <%= helpers.shortDate(rule.approvedAt || rule.createdAt) %>
+          · acted <%= (rule.appliedRecords || []).length %>×
+          <a href="/operating-instructions/<%= rule.id %>">Change</a>
+        </span>
+      </div>
+    <% }) %>
+  </div>
+<% } %>
+
+<%
+  /*
+   * Authority is a different kind of sentence from a rule, so it is a
+   * different group: a rule says what should be true, a standing authority
+   * says what Foundry may do about it without asking.
+   */
+%>
+<% if (policies.length) { %>
+  <p class="rm-stamp">What I may do without asking</p>
+  <div class="rm-told">
+    <% policies.forEach(function (policy) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t">
+          <%= policy.description || policy.name %>
+          <small>
+            <%= (policy.allowedActionTypes || []).join(', ').replaceAll('_', ' ') || 'no actions' %><%
+            %><% if (policy.maximumValue) { %> · up to <%= policy.maximumValue %> a time<% } %><%
+            %><% if (policy.dailyLimit) { %> · <%= policy.dailyLimit %> a day<% } %>
+          </small>
+        </span>
+        <span class="rm-told__m <%= policy.enabled && policy.isApproved ? 'is-ok' : 'is-paused' %>">
+          <%= !policy.isApproved ? 'not approved' : policy.enabled ? 'in force' : 'paused' %>
+          <a href="/autopilot/policies/<%= policy.id %>">Change</a>
+        </span>
+      </div>
+    <% }) %>
+  </div>
+<% } else { %>
+  <p class="rm-stamp">What I may do without asking</p>
+  <div class="rm-told">
+    <div class="rm-told__row">
+      <span class="rm-told__t">
+        Nothing. I prepare consequential work and wait for you every time.
+        <small>That is the safe default, and it stays until you give me a limit you are happy with.</small>
+      </span>
+      <span class="rm-told__m"><a href="/autopilot">Give me some</a></span>
+    </div>
+  </div>
+<% } %>
+
+<% if (preferences.length) { %>
+  <p class="rm-stamp">How you like things done</p>
+  <div class="rm-told">
+    <% preferences.forEach(function (pref) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t"><%= pref.text %></span>
+        <span class="rm-told__m"><a href="<%= pref.href %>">Change</a></span>
+      </div>
+    <% }) %>
+  </div>
+<% } %>
+
+<p class="rm-stamp">What I'm plugged into</p>
+<% if (connections.length) { %>
+  <div class="rm-told">
+    <% connections.forEach(function (row) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t">
+          <a class="rm-u" href="/settings/connections/<%= row.id %>"><%= row.name %></a> — <%= row.doing %>
+        </span>
+        <span class="rm-told__m <%= row.healthy ? 'is-ok' : 'is-paused' %>"><%= row.state %></span>
+      </div>
+    <% }) %>
+  </div>
+<% } else { %>
+  <div class="rm-told">
+    <div class="rm-told__row">
+      <span class="rm-told__t">
+        Nothing yet.
+        <small>Connect a mailbox and I can read supplier and customer mail; connect a shop and orders arrive on their own.</small>
+      </span>
+      <span class="rm-told__m"><a href="/settings/connections">Connect something</a></span>
+    </div>
+  </div>
+<% } %>
+
+<% if (gone.length) { %>
+  <p class="rm-stamp">No longer in force · <%= gone.length %></p>
+  <div class="rm-told">
+    <% gone.slice(0, 6).forEach(function (rule) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t rm-quiet"><%= rule.summary || rule.statedAs %></span>
+        <span class="rm-told__m is-paused"><%= rule.status === 'REMOVED' ? 'removed' : 'never turned on' %></span>
+      </div>
+    <% }) %>
+  </div>
+<% } %>
+
+<p class="rm-disclose">
+  <a href="/ask">Tell me something new</a>
+  <a href="/settings">Advanced — people, plan, terminology, exports</a>
+  <a href="/everything">Everything else</a>
+</p>

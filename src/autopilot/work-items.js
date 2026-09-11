@@ -276,6 +276,22 @@ function awaitingApproval(db, workspaceId) {
   return list(db, workspaceId, { status: STATUS.WAITING_FOR_APPROVAL });
 }
 
+/**
+ * The one prepared replenishment decision for a product, if it exists.
+ *
+ * Order pages and Needs You both need this destination. Keeping the lookup
+ * here prevents each surface from inventing a different idea of which work
+ * item owns the shortage.
+ */
+function awaitingReplenishmentForSku(db, workspaceId, skuId) {
+  return list(db, workspaceId, {
+    status: STATUS.WAITING_FOR_APPROVAL,
+    category: 'replenishment_plan',
+    limit: 200,
+  }).find((item) => item.affectedEntities?.skuId === skuId
+    || item.recommendedAction?.skuId === skuId) || null;
+}
+
 /** What Foundry actually completed, for "what did you do today". */
 function completedSince(db, workspaceId, since) {
   return db
@@ -379,6 +395,7 @@ module.exports = {
   find,
   list,
   awaitingApproval,
+  awaitingReplenishmentForSku,
   completedSince,
   transition,
   recordEvent,

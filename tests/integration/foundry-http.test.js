@@ -24,7 +24,7 @@ const {
 test.after(cleanupAll);
 
 const SHOE_UNDERSTANDING = buildUnderstanding({
-  businessDescription: "We wholesale children's shoes in colors and sizes across two warehouses.",
+  businessDescription: "We wholesale children's shoes in colors Navy and Cream, sizes 4 and 5, at Brooklyn Warehouse and New Jersey Warehouse.",
   variantDimensions: [
     { name: 'Color', exampleValues: ['Navy', 'Cream'] },
     { name: 'Size', exampleValues: ['4', '5'] },
@@ -79,7 +79,25 @@ async function post(agent, path, body, formPath) {
  * Reading a business is a background job now, so tests follow it the way the
  * browser does: post, land on the progress page, poll until it redirects.
  */
-async function understand(agent, description = 'We wholesale shoes in two warehouses.') {
+/**
+ * Answers the three understanding passes from the shoe fixture, and anything
+ * else with the response the test is really about.
+ */
+function understandingThen(request, other) {
+  if (request.schemaName === 'inventory_understanding_records') {
+    return { ownerProvidedInventory: { hasRecords: false, lines: [], ambiguities: [] } };
+  }
+  if (request.schemaName === 'inventory_understanding_advice') {
+    return { recommendations: SHOE_UNDERSTANDING.recommendations, unresolvedDecisions: [] };
+  }
+  if (request.schemaName === 'inventory_understanding_core') {
+    const { recommendations, unresolvedDecisions, ownerProvidedInventory, ...core } = SHOE_UNDERSTANDING;
+    return core;
+  }
+  return other;
+}
+
+async function understand(agent, description = 'We wholesale shoes in colors Navy and Cream, sizes 4 and 5, at Brooklyn Warehouse and New Jersey Warehouse.') {
   const started = await post(agent, '/foundry/understand', { description }, '/foundry/describe');
   if (started.status !== 303) return started;
   assert.match(started.headers.location, /^\/foundry\/thinking\//, 'the POST must not block');
@@ -137,7 +155,7 @@ test('the whole approval flow works end to end over HTTP', async () => {
 
   const understood = await understand(
     agent,
-    "We wholesale children's shoes in colors and sizes across two warehouses."
+    "We wholesale children's shoes in colors Navy and Cream, sizes 4 and 5, at Brooklyn Warehouse and New Jersey Warehouse."
   );
   assert.equal(understood.status, 303);
   assert.match(understood.headers.location, /^\/foundry\/proposal\//);
@@ -148,19 +166,19 @@ test('the whole approval flow works end to end over HTTP', async () => {
   assert.match(proposal, /Color → Size|Color/);
   assert.match(proposal, /Brooklyn Warehouse/);
   assert.match(proposal, /New Jersey Warehouse/);
-  assert.match(proposal, /Track low stock by size/);
-  assert.match(proposal, /One thing worth deciding/);
-  assert.match(proposal, /Let Foundry decide/);
-  assert.match(proposal, /What starts working after this setup/);
-  assert.match(proposal, /Accounting.*on automatically/);
-  assert.match(proposal, /Confirmed orders hold available stock/);
-  assert.match(proposal, /Connect Gmail or Microsoft 365/);
+  assert.match(proposal, /Where are your real product and stock records today/);
+  assert.doesNotMatch(proposal, /One thing worth deciding|Let Foundry decide/);
+  assert.match(proposal, /What Foundry understood/);
+  assert.match(proposal, /What Foundry needs next/);
+  assert.match(proposal, /Choose where my records are/);
+  assert.match(proposal, /What Foundry knows \/ Why Foundry decided this/);
+  assert.doesNotMatch(proposal, /What starts working after this setup|Save the safe structure/);
 
   const understandingId = proposalPath.split('/').pop();
   const configured = await post(
     agent,
     `/foundry/proposal/${understandingId}/configure`,
-    { [`answer_${buildQuestion().id}`]: 'yes' },
+    {},
     proposalPath
   );
   assert.equal(configured.status, 303);
@@ -179,14 +197,16 @@ test('the whole approval flow works end to end over HTTP', async () => {
     repo.listLocations(db, workspace.workspaceId).map((l) => l.name).sort(),
     ['Brooklyn Warehouse', 'New Jersey Warehouse']
   );
-  // The customer's answer took effect.
-  assert.equal(configuration.operationalDefaults.allowNegativeStock, true);
+  // The reversible safe default was applied without interrogating the owner.
+  assert.equal(configuration.operationalDefaults.allowNegativeStock, false);
 });
 
-test('a first invoice is read, previewed, and becomes configured inventory on one approval', async () => {
+test('a first stock report is read, previewed, and becomes configured inventory on one approval', async () => {
   const interpretation = {
-    documentType: 'invoice',
-    businessDescription: 'The business buys children’s shoes as size variants from Step & Style Wholesale and receives them into Brooklyn Warehouse.',
+    documentType: 'stock_report',
+    goodsHaveArrived: true,
+    referencedOrderNumber: '',
+    businessDescription: 'This stock report establishes children’s shoes as size variants from Step & Style Wholesale in Brooklyn Warehouse.',
     unitLabel: 'pair',
     supplierName: 'Step & Style Wholesale', supplierCodeLabel: 'Supplier Code', supplierEmail: 'sales@example.com',
     documentNumber: 'INV-2026-0816', documentDate: '2026-08-16', paymentTerms: 'Net 15', currency: 'USD',
@@ -196,7 +216,7 @@ test('a first invoice is read, previewed, and becomes configured inventory on on
       { styleName: 'Kids Classic Loafer', color: 'Black', variantDimension: 'Size', size: '24', supplierSku: 'SH-101-BLK', description: 'Kids Classic Loafer - Black', quantity: 10, unitCost: 11.5 },
       { styleName: 'Boys Dress Oxford', color: 'Brown', variantDimension: 'Size', size: '28', supplierSku: 'SH-204-BRN', description: 'Boys Dress Oxford - Brown', quantity: 8, unitCost: 14.75 },
     ],
-    warnings: [],
+    charges: [], documentTotal: 371, warnings: [],
   };
   const understanding = buildUnderstanding({
     businessDescription: interpretation.businessDescription,
@@ -236,7 +256,7 @@ test('a first invoice is read, previewed, and becomes configured inventory on on
   assert.match(proposalPage.text, /name="supplierCodeLabel"[^>]*value="Supplier Code"/);
   assert.match(proposal, /This file calls the vendor's product identifier Supplier Code/);
   assert.match(proposal, /You will not have to map them again|recognize them as the same field/);
-  assert.match(proposal, /Configure and add 30 pairs/);
+  assert.match(proposal, /Set up and add 30 pairs to stock/);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(workspace.workspaceId).n, 0);
 
   const understandingId = proposalPath.split('/').pop();
@@ -447,12 +467,9 @@ test('a change is proposed, shown with its impact, and only applied on confirmat
     db: store.db,
     env: 'test',
     sessionSecret: 'foundry-change-test',
-    aiProvider: fakeProvider([
-      // understanding: core, then advice
-      (() => { const { recommendations, unresolvedDecisions, ...core } = SHOE_UNDERSTANDING; return core; })(),
-      { recommendations: SHOE_UNDERSTANDING.recommendations, unresolvedDecisions: [] },
-      changeResponse,
-    ]),
+    // Understanding is read in three passes, so the fixture answers the schema
+    // it is asked for rather than counting calls.
+    aiProvider: fakeProvider((request) => understandingThen(request, changeResponse)),
   });
 
   const agent = request.agent(app);
@@ -510,11 +527,7 @@ test('an unsupported change is explained, not faked', async () => {
     db: store.db,
     env: 'test',
     sessionSecret: 'foundry-unsupported-test',
-    aiProvider: fakeProvider([
-      (() => { const { recommendations, unresolvedDecisions, ...core } = SHOE_UNDERSTANDING; return core; })(),
-      { recommendations: [], unresolvedDecisions: [] },
-      unsupported,
-    ]),
+    aiProvider: fakeProvider((request) => understandingThen(request, unsupported)),
   });
 
   const agent = request.agent(app);

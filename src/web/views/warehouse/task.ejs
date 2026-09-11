@@ -1,0 +1,48 @@
+<p class="rm-stamp">Warehouse task #<%= task.task_number %></p>
+<div class="rm-titleline"><div><h1 class="rm-figure"><%= task.title %></h1><p class="rm-sub"><%= task.task_type %> · <%= task.status.replace('_', ' ') %><%= task.reference ? ' · ' + task.reference : '' %></p></div><a class="rm-button" href="/warehouse">Back to queue</a></div>
+
+<section class="rm-panel">
+  <div class="rm-list"><% task.lines.forEach(function(line) { %><div class="rm-row">
+    <span><strong><%= line.item_name %><%= line.variant_label ? ' — ' + line.variant_label : '' %></strong><small><%= line.sku_code %> · <%= line.from_name || 'outside inventory' %> → <%= line.to_name || 'count only' %><%= line.lot_code ? ' · lot ' + line.lot_code : '' %></small></span>
+    <span><%= task.task_type === 'COUNT' ? line.counted_quantity + ' counted' : line.processed_quantity + ' / ' + line.planned_quantity %></span>
+  </div><% }) %></div>
+</section>
+
+<section class="rm-panel rm-scan" id="scan">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Scan</p><h2>Location, then product</h2></div></div>
+  <% if (canScan && ['OPEN','IN_PROGRESS'].includes(task.status)) { %>
+    <form method="post" action="/warehouse/tasks/<%= task.id %>/scans" data-scan-form class="rm-scan__form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <input type="hidden" name="clientScanId" data-scan-id value="">
+      <input type="hidden" name="deviceId" data-device-id value="">
+      <label>Location barcode<input name="locationBarcode" autocomplete="off" autocapitalize="off" required autofocus placeholder="Scan bin, dock or staging location"></label>
+      <label>Product barcode<input name="itemBarcode" autocomplete="off" autocapitalize="off" required placeholder="Scan SKU, UPC, EAN or alias"></label>
+      <div class="rm-form-grid">
+        <label>Lot/batch <span class="optional">when tracked</span><input name="lotBarcode" autocomplete="off" placeholder="Scan lot"></label>
+        <label>Serial <span class="optional">when tracked</span><input name="serialBarcode" autocomplete="off" placeholder="Scan serial"></label>
+        <label>Quantity<input name="quantity" type="number" min="1" step="1" value="1" required></label>
+      </div>
+      <button class="rm-button rm-button--primary rm-scan__submit" type="submit">Accept scan</button>
+    </form>
+  <% } else { %><p class="rm-muted"><%= ['OPEN','IN_PROGRESS'].includes(task.status) ? 'You do not have permission to scan this task.' : 'This task is not accepting scans.' %></p><% } %>
+  <p class="rm-note">Unknown, wrong-location, wrong-lot and wrong-serial scans are rejected before stock changes. Replayed offline scan IDs return the first result and cannot post twice.</p>
+</section>
+
+<% if (task.task_type === 'COUNT' && ['OPEN','IN_PROGRESS'].includes(task.status)) { %><form method="post" action="/warehouse/tasks/<%= task.id %>/count-finish"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <% if (task.lines.every(function(line) { return Number(line.counted_quantity) === 0; })) { %><label class="rm-check"><input type="checkbox" name="confirmEmpty" value="1" required> I physically checked this location and found none of the listed stock.</label><% } %>
+  <button class="rm-button rm-button--primary" type="submit">Review and post this count</button></form><% } %>
+<% if (!['COMPLETED','CANCELLED'].includes(task.status)) { %><div class="rm-actions"><form method="post" action="/warehouse/tasks/<%= task.id %>/status"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="status" value="<%= task.status === 'PAUSED' ? 'IN_PROGRESS' : 'PAUSED' %>"><button class="rm-button" type="submit"><%= task.status === 'PAUSED' ? 'Resume task' : 'Pause task' %></button></form></div><% } %>
+
+<section class="rm-panel"><div class="rm-panel__head"><div><p class="rm-kicker">Evidence</p><h2>Recent scans</h2></div></div>
+  <% if (!task.scans.length) { %><p class="rm-muted">Nothing scanned yet.</p><% } else { %><div class="rm-list"><% task.scans.forEach(function(scan) { %><div class="rm-row"><span><strong><%= scan.status %> · <%= scan.item_barcode || 'no product' %></strong><small><%= scan.message %></small></span><time><%= helpers.dateTime(scan.scanned_at) %></time></div><% }) %></div><% } %>
+</section>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var form = document.querySelector('[data-scan-form]'); if (!form) return;
+  var device = localStorage.getItem('foundry.warehouse.device');
+  if (!device) { device = 'device-' + (crypto.randomUUID ? crypto.randomUUID() : Date.now()); localStorage.setItem('foundry.warehouse.device', device); }
+  form.querySelector('[data-device-id]').value = device;
+  form.querySelector('[data-scan-id]').value = crypto.randomUUID ? crypto.randomUUID() : device + '-' + Date.now();
+});
+</script>

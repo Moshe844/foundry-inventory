@@ -1,16 +1,56 @@
-<div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span>New customer order</span></div>
-<div class="page-head"><div class="titles"><p class="eyebrow">Customer order</p><h1>What did the customer order?</h1><p>Enter the customer, product, and quantity once. Foundry records customer demand before stock leaves, then you choose whether to reserve it or record that the customer already received it.</p></div></div>
-<% if (locals.formError) { %><div class="notice notice--warn"><strong>This order is not ready.</strong> <%= locals.formError %></div><% } %>
+<%
+  /*
+   * Writing down what a customer ordered.
+   *
+   * The form asked the right questions in the right order and looked like a
+   * database entry screen doing it: three numbered headings dropped inside a
+   * field grid, a fieldset of radios styled as a legend and two labels, and
+   * eleven optional fields folded behind a summary that read like a disabled
+   * input. Everything below is the same set of questions, the same field names
+   * and the same live stock check — laid out as three steps somebody can see
+   * the shape of before they start typing.
+   */
+%>
 
-<form class="card form-card" method="post" action="/sales/orders">
+<div class="rm-head">
+  <a class="rm-head__back" href="/orders"><span aria-hidden="true">←</span> Orders</a>
+  <p class="rm-head__eyebrow"><%- helpers.icon('sales', { size: 15 }) %> Customer order</p>
+  <h1>What did the customer order?</h1>
+  <p>
+    Enter the customer, product, and quantity once. Foundry records customer demand before stock
+    leaves, then you choose whether to reserve it or record that the customer already received it.
+  </p>
+</div>
+
+<% if (locals.formError) { %>
+  <div class="rm-note rm-note--warn">
+    <%- helpers.icon('alert', { size: 16 }) %>
+    <div><strong>This order is not ready.</strong> <%= locals.formError %></div>
+  </div>
+<% } %>
+
+<form method="post" action="/sales/orders" class="card form-card" data-step-form>
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
   <input type="hidden" name="currency" value="USD">
-  <div class="card-head"><div><h2>Create the order</h2><p class="hint">Customer → delivery → product. Foundry handles the rest after you save.</p></div></div>
-  <div class="card-body">
-    <h3>1. Who ordered?</h3>
-    <div class="form-grid">
-      <label class="field field--full"><span>Customer</span><select name="customerId" id="order-customer"><option value="">+ Create a new customer with this order</option><% customers.forEach(function(c){ %><option value="<%= c.id %>" data-email="<%= c.email || '' %>" data-address="<%= c.shipping_address || '' %>" <%= form.customerId === c.id ? 'selected' : '' %>><%= c.name %><%= c.email ? ' · ' + c.email : '' %></option><% }) %></select></label>
-      <div class="field field--full" id="order-new-customer"><label class="field"><span>New customer's name</span><input name="customerName" value="<%= form.customerName || '' %>" placeholder="Person or business name"></label></div>
+
+  <section class="rm-step-panel">
+    <div class="rm-step-panel__h"><span class="rm-step-panel__n">1</span><h2>Who ordered?</h2></div>
+    <div class="rm-step-panel__b">
+      <label class="rm-field">
+        <span>Customer</span>
+        <select name="customerId" id="order-customer">
+          <option value="">+ Create a new customer with this order</option>
+          <% customers.forEach(function (c) { %>
+            <option value="<%= c.id %>" data-email="<%= c.email || '' %>" data-address="<%= c.shipping_address || '' %>" <%= form.customerId === c.id ? 'selected' : '' %>><%= c.name %><%= c.email ? ' · ' + c.email : '' %></option>
+          <% }) %>
+        </select>
+      </label>
+      <div id="order-new-customer">
+        <label class="rm-field">
+          <span>New customer's name</span>
+          <input name="customerName" value="<%= form.customerName || '' %>" placeholder="Person or business name">
+        </label>
+      </div>
       <%#
         The two things Foundry cannot work without, asked for once.
 
@@ -20,43 +60,123 @@
         they are asked, which is the difference between "you did not tell me"
         and "I never asked".
       %>
-      <label class="field"><span>Their email</span><input id="order-customer-email" type="email" name="customerEmail" value="<%= form.customerEmail || '' %>" placeholder="Where order and shipping updates go"><small>Foundry cannot tell them anything without this. Filled in for an existing customer who has none.</small></label>
-      <div class="field field--full"><h3>2. How will they receive it?</h3></div>
-      <fieldset class="field field--full">
-        <legend>How will they receive it?</legend>
-        <label class="choice"><input type="radio" name="deliveryMethod" value="SHIP" <%= form.deliveryMethod !== 'PICKUP' ? 'checked' : '' %>><span>Ship it</span></label>
-        <label class="choice"><input type="radio" name="deliveryMethod" value="PICKUP" <%= form.deliveryMethod === 'PICKUP' ? 'checked' : '' %>><span>Customer pickup</span></label>
-      </fieldset>
-      <div class="field field--full" id="order-destination">
-        <label class="field"><span>Delivery address for this order</span><textarea id="order-customer-address" name="customerShippingAddress" rows="3" placeholder="Street, town, state, postcode"><%= form.customerShippingAddress || '' %></textarea><small>Saved on this Sales Order. Changing the customer's address later will not change this order.</small></label>
-        <label class="choice" style="margin-top:8px;"><input type="checkbox" name="saveCustomerAddress" value="1" <%= form.saveCustomerAddress === '1' ? 'checked' : '' %>><span>Also make this the customer's default address for future orders</span></label>
-      </div>
-      <div class="field field--full"><h3>3. What did they order?</h3></div>
-      <label class="field"><span>Product or variant</span><select id="order-sku" name="skuId" required><option value="">Choose a product</option><% skus.forEach(function(s){ %><option value="<%= s.id %>" <%= form.skuId === s.id ? 'selected' : '' %>><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %> · <%= s.stock.available %> available now</option><% }) %></select><small>“Available now” excludes stock already reserved for other customers.</small></label>
-      <label class="field"><span>Quantity</span><input id="order-quantity" type="number" name="quantity" min="1" step="1" value="<%= form.quantity || '' %>" required></label>
-      <div id="order-stock-check" class="notice notice--info field--full" aria-live="polite"><div><strong>Choose a product and quantity.</strong><br>Foundry will show what can be reserved before you create the order.</div></div>
-      <label class="field"><span>Order price <small>only if the product has no selling price</small></span><input name="unitPrice" inputmode="decimal" value="<%= form.unitPrice || '' %>" placeholder="Leave blank to use the inventory price"><small>Blank never means free. Enter 0 only when intentionally free.</small></label>
+      <label class="rm-field">
+        <span>Their email <small>where order and shipping updates go</small></span>
+        <input id="order-customer-email" type="email" name="customerEmail" value="<%= form.customerEmail || '' %>" placeholder="name@example.com">
+        <small>Foundry cannot tell them anything without this. Filled in for an existing customer who has none.</small>
+      </label>
     </div>
+  </section>
 
-    <details class="advanced-settings" style="margin-top:16px;">
-      <summary><strong>Optional order details</strong><span class="hint"> Dates, location, tax, discount, reference, and notes</span></summary>
-      <div class="form-grid" style="margin-top:16px;">
-        <label class="field"><span>Order number <small>optional</small></span><input name="orderNumber" value="<%= form.orderNumber || '' %>" placeholder="Foundry will assign one"></label>
-        <label class="field"><span>Order date</span><input type="date" name="orderDate" value="<%= form.orderDate || new Date().toISOString().slice(0,10) %>"></label>
-        <label class="field"><span>Needed by <small>optional</small></span><input type="date" name="neededBy" value="<%= form.neededBy || '' %>"></label>
-        <label class="field"><span>Ship from <small>optional</small></span><select id="order-location" name="fulfillmentLocationId"><option value="">Let Foundry use available stock at any location</option><% locations.forEach(function(l){ %><option value="<%= l.id %>" <%= form.fulfillmentLocationId === l.id ? 'selected' : '' %>><%= l.name %></option><% }) %></select></label>
-        <label class="field"><span>Discount amount <small>optional</small></span><input name="discount" inputmode="decimal" value="<%= form.discount || '' %>" placeholder="0.00"></label>
-        <label class="field"><span>Tax amount <small>optional</small></span><input name="tax" inputmode="decimal" value="<%= form.tax || '' %>" placeholder="0.00"></label>
-        <label class="field field--full"><span>Reference <small>optional</small></span><input name="reference" value="<%= form.reference || '' %>"></label>
-        <label class="field field--full"><span>Notes <small>optional</small></span><textarea name="notes"><%= form.notes || '' %></textarea></label>
+  <section class="rm-step-panel">
+    <div class="rm-step-panel__h"><span class="rm-step-panel__n">2</span><h2>How will they receive it?</h2></div>
+    <div class="rm-step-panel__b">
+      <fieldset class="rm-picks" style="border:0;padding:0;margin:0">
+        <legend class="visually-hidden">How will they receive it?</legend>
+        <label class="rm-pick">
+          <input type="radio" name="deliveryMethod" value="SHIP" <%= form.deliveryMethod !== 'PICKUP' ? 'checked' : '' %>>
+          <span class="rm-pick__box" aria-hidden="true"></span>
+          <span><span class="rm-pick__t">Send by carrier</span>
+            <span class="rm-pick__d">This records the delivery plan. Nothing is shipped yet; Foundry asks for a destination and can buy the label later.</span></span>
+        </label>
+        <label class="rm-pick">
+          <input type="radio" name="deliveryMethod" value="PICKUP" <%= form.deliveryMethod === 'PICKUP' ? 'checked' : '' %>>
+          <span class="rm-pick__box" aria-hidden="true"></span>
+          <span><span class="rm-pick__t">Customer pickup</span>
+            <span class="rm-pick__d">No address is needed and no carrier is involved.</span></span>
+        </label>
+      </fieldset>
+
+      <div id="order-destination" style="margin-top:14px">
+        <label class="rm-field">
+          <span>Delivery address for this order</span>
+          <textarea id="order-customer-address" name="customerShippingAddress" rows="3" placeholder="Street, town, state, postcode"><%= form.customerShippingAddress || '' %></textarea>
+          <small>Saved on this Sales Order. Changing the customer's address later will not change this order.</small>
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" name="saveCustomerAddress" value="1" <%= form.saveCustomerAddress === '1' ? 'checked' : '' %>>
+          <span class="checkbox-text">Also make this the customer's default address for future orders</span>
+        </label>
       </div>
-    </details>
+    </div>
+  </section>
 
-    <div class="notice <%= locals.unpricedCount ? 'notice--warn' : 'notice--info' %>"><div><strong>Every customer order needs a price. Foundry will never invent one.</strong><br>It uses the product’s selling price or the order price above. Accounting updates only after items physically leave.</div></div>
+  <section class="rm-step-panel">
+    <div class="rm-step-panel__h"><span class="rm-step-panel__n">3</span><h2>What did they order?</h2></div>
+    <div class="rm-step-panel__b">
+      <div class="form-grid">
+        <label class="rm-field">
+          <span>Product or variant</span>
+          <select id="order-sku" name="skuId" required>
+            <option value="">Choose a product</option>
+            <% skus.forEach(function (s) { %>
+              <option value="<%= s.id %>" <%= form.skuId === s.id ? 'selected' : '' %>><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %> · <%= s.stock.available %> available now</option>
+            <% }) %>
+          </select>
+          <small>“Available now” excludes stock already reserved for other customers.</small>
+        </label>
+        <label class="rm-field">
+          <span>Quantity</span>
+          <input id="order-quantity" type="number" name="quantity" min="1" step="1" value="<%= form.quantity || '' %>" required>
+        </label>
+      </div>
 
-    <div class="form-actions"><button class="btn btn--primary" id="order-confirm-button" type="submit" name="nextStep" value="confirm">Create order and continue</button><button class="btn btn--ghost" type="submit" name="nextStep" value="draft">Save draft</button></div>
-    <p class="hint">Create order and continue reserves available stock. Nothing leaves inventory until the order page says it was shipped, delivered, or collected.</p>
-    <a class="btn btn--ghost" href="/sales">Cancel</a>
+      <div id="order-stock-check" class="notice notice--info" aria-live="polite">
+        <div><strong>Choose a product and quantity.</strong><br>Foundry will show what can be reserved before you create the order.</div>
+      </div>
+
+      <label class="rm-field">
+        <span>Order price <small>only if the product has no selling price</small></span>
+        <input name="unitPrice" inputmode="decimal" value="<%= form.unitPrice || '' %>" placeholder="Leave blank to use the inventory price">
+        <small>Blank never means free. Enter 0 only when intentionally free.</small>
+      </label>
+    </div>
+  </section>
+
+  <details class="rm-work">
+    <summary>Optional order details — dates, location, tax, discount, reference, and notes</summary>
+    <div class="rm-work__body">
+      <div class="form-grid" style="margin-top:12px">
+        <label class="rm-field"><span>Order number <small>optional</small></span><input name="orderNumber" value="<%= form.orderNumber || '' %>" placeholder="Foundry will assign one"></label>
+        <label class="rm-field"><span>Order date</span><input type="date" name="orderDate" value="<%= form.orderDate || new Date().toISOString().slice(0,10) %>"></label>
+        <label class="rm-field"><span>Needed by <small>optional</small></span><input type="date" name="neededBy" value="<%= form.neededBy || '' %>"></label>
+        <label class="rm-field">
+          <span>Ship from <small>optional</small></span>
+          <select id="order-location" name="fulfillmentLocationId">
+            <option value="">Let Foundry use available stock at any location</option>
+            <% locations.forEach(function (l) { %>
+              <option value="<%= l.id %>" <%= form.fulfillmentLocationId === l.id ? 'selected' : '' %>><%= l.name %></option>
+            <% }) %>
+          </select>
+        </label>
+        <label class="rm-field"><span>Discount amount <small>optional</small></span><input name="discount" inputmode="decimal" value="<%= form.discount || '' %>" placeholder="0.00"></label>
+        <label class="rm-field"><span>Tax amount <small>optional</small></span><input name="tax" inputmode="decimal" value="<%= form.tax || '' %>" placeholder="0.00"></label>
+      </div>
+      <label class="rm-field"><span>Reference <small>optional</small></span><input name="reference" value="<%= form.reference || '' %>"></label>
+      <label class="rm-field"><span>Notes <small>optional</small></span><textarea name="notes"><%= form.notes || '' %></textarea></label>
+    </div>
+  </details>
+
+  <div class="rm-note<%= locals.unpricedCount ? ' rm-note--warn' : '' %>">
+    <%- helpers.icon('shield', { size: 16 }) %>
+    <div>
+      <strong>Every customer order needs a price. Foundry will never invent one.</strong>
+      It uses the product’s selling price or the order price above. Accounting updates only after
+      items physically leave.
+    </div>
+  </div>
+
+  <div class="rm-confirm">
+    <span class="rm-confirm__t">
+      <strong>Nothing leaves inventory yet</strong>
+      <span>Create order and continue reserves available stock. Nothing leaves inventory until the
+        order page says it was shipped, delivered, or collected.</span>
+    </span>
+    <span class="rm-choices">
+      <button class="rm-btn" id="order-confirm-button" type="submit" name="nextStep" value="confirm">Create order and continue</button>
+      <button class="rm-btn rm-btn--ghost" type="submit" name="nextStep" value="draft">Save draft</button>
+      <a class="rm-btn rm-btn--ghost" href="/sales">Cancel</a>
+    </span>
   </div>
 </form>
 
@@ -95,7 +215,7 @@
     var selected = sku && sku.value ? stock[sku.value] : null;
     var requested = quantity ? Number(quantity.value) : 0;
     if (!selected || !Number.isFinite(requested) || requested < 1) {
-      stockCheck.className = 'notice notice--info field--full';
+      stockCheck.className = 'notice notice--info';
       stockCheck.innerHTML = '<div><strong>Choose a product and quantity.</strong><br>Foundry will show what can be reserved before you create the order.</div>';
       if (confirmButton) confirmButton.textContent = 'Create order and continue';
       return;
@@ -110,14 +230,14 @@
     var reserved = Math.min(requested, Math.max(0, available));
     var short = Math.max(0, requested - reserved);
     if (short) {
-      stockCheck.className = 'notice notice--warn field--full';
+      stockCheck.className = 'notice notice--warn';
       stockCheck.innerHTML = '<div><strong>This order is ' + short + ' unit' + (short === 1 ? '' : 's') + ' over the available stock.</strong><br>'
         + requested + ' requested · ' + available + ' available now at ' + locationName + ' · ' + reserved + ' can be reserved · '
         + short + ' will wait for stock. You may continue, but Foundry cannot promise the full order immediately.</div>';
       if (confirmButton) confirmButton.textContent = 'Create order — ' + short + ' will wait for stock';
       return;
     }
-    stockCheck.className = 'notice notice--success field--full';
+    stockCheck.className = 'notice notice--success';
     stockCheck.innerHTML = '<div><strong>All ' + requested + ' can be reserved now.</strong><br>'
       + available + ' available at ' + locationName + ' before this order.</div>';
     if (confirmButton) confirmButton.textContent = 'Create order and reserve ' + requested;

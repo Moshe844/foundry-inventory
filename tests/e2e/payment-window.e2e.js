@@ -100,7 +100,7 @@ test('a successful Stripe popup closes and returns to a visibly paid order', { t
     };
     await popup.close();
 
-    await page.getByText(`Payment completed and recorded on ${order.order_number}.`).waitFor();
+    await page.getByText(`Payment recorded on ${order.order_number}.`).waitFor();
     assert.match(page.url(), /payment=paid/);
     await page.getByRole('link', { name: 'Print receipt', exact: true }).waitFor();
     await page.getByRole('link', { name: 'View or print Stripe invoice', exact: true }).waitFor();

@@ -67,6 +67,9 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
   const committedByPosition = new Map(committedRows.map((row) => [
     `${row.sku_id}:${row.location_id}`, Number(row.committed),
   ]));
+  const backorderedBySku = new Map(salesOrders.backorderedBySku(db, workspaceId, {
+    skuIds: skus.map((sku) => sku.id),
+  }).map((row) => [row.sku_id, Number(row.backordered)]));
 
   const windowStart = daysAgoIso(windowDays, now);
   const priorStart = daysAgoIso(windowDays * 2, now);
@@ -85,6 +88,7 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
     const onHand = balances.reduce((sum, row) => sum + row.on_hand, 0);
     const committed = balances.reduce((sum, row) =>
       sum + (committedByPosition.get(`${sku.id}:${row.location_id}`) || 0), 0);
+    const backordered = backorderedBySku.get(sku.id) || 0;
     const available = onHand - committed;
 
     // Consumption is what actually leaves the workspace. A transfer moves
@@ -172,6 +176,7 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
       measured: {
         onHand,
         committed,
+        backordered,
         available,
         locationsHoldingStock: perLocation.filter((l) => l.onHand > 0).length,
         issuedInWindow: flow.issued,

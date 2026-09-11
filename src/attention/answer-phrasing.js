@@ -67,9 +67,42 @@ function promptFor(question, result) {
   return [
     `Question: ${question}`,
     '',
+    result.primaryMeasure
+      ? `The exact measure asked for is: ${result.primaryMeasure.label} = ${result.primaryMeasure.value}. Lead with this fact.`
+      : '',
     `Verified answer: ${result.answer}`,
     rows ? `\nThe figures behind it:\n${rows}` : '',
   ].join('\n');
+}
+
+/**
+ * A grounded number can still be attached to the wrong label. For example,
+ * when the evidence contained 0 open orders and 1 completed order, a wording
+ * model once said "0 completed orders". Both numbers existed, but the claim
+ * was false. When the query service identifies the exact measure asked for,
+ * the closest number to that measure in the sentence must be its value.
+ */
+function primaryMeasureIsGrounded(sentence, primaryMeasure) {
+  if (!primaryMeasure) return true;
+  const significant = String(primaryMeasure.label || '').toLowerCase()
+    .split(/[^a-z0-9]+/).filter((word) => word && !['order', 'orders', 'unit', 'units', 'amount', 'value'].includes(word));
+  if (!significant.length) return true;
+
+  const tokens = String(sentence).toLowerCase().match(/-?\d[\d,]*\.?\d*|[a-z]+/g) || [];
+  const labelPositions = [];
+  const numberPositions = [];
+  tokens.forEach((token, index) => {
+    if (significant.includes(token)) labelPositions.push(index);
+    if (/^-?\d/.test(token)) numberPositions.push({ index, value: Number(token.replace(/,/g, '')) });
+  });
+  if (!labelPositions.length || !numberPositions.length) return false;
+
+  let nearest = null;
+  for (const number of numberPositions) {
+    const distance = Math.min(...labelPositions.map((position) => Math.abs(position - number.index)));
+    if (!nearest || distance < nearest.distance) nearest = { ...number, distance };
+  }
+  return nearest !== null && nearest.value === Number(primaryMeasure.value);
 }
 
 /**
@@ -100,8 +133,9 @@ async function phrase(question, result, options = {}) {
 
   // The whole guarantee: a number it was not given is a number it made up.
   if (!interpretation.numbersAreGrounded(sentence, permittedFrom(result))) return null;
+  if (!primaryMeasureIsGrounded(sentence, result.primaryMeasure)) return null;
   if (interpretation.FORBIDDEN.some((pattern) => pattern.test(sentence))) return null;
   return sentence;
 }
 
-module.exports = { phrase, permittedFrom, SYSTEM };
+module.exports = { phrase, permittedFrom, primaryMeasureIsGrounded, SYSTEM };

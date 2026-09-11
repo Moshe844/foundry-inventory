@@ -30,7 +30,19 @@ const ANSWER_EFFECTS = [
 ];
 
 /** Foundry must say which of the four honest states each conclusion is in. */
-const CERTAINTY = ['inferred_confidently', 'assumed_safely', 'needs_customer_decision', 'unsupported_today'];
+const CERTAINTY = [
+  'verified_fact',
+  'safe_structural_inference',
+  'provisional_default',
+  'missing_business_fact',
+  'authority_decision',
+  'unsupported_today',
+  // Accepted for older stored understandings and model fixtures. New real-
+  // business understandings are normalised into the explicit states above.
+  'inferred_confidently',
+  'assumed_safely',
+  'needs_customer_decision',
+];
 
 /**
  * Optional prose fields are plain strings rather than string|null unions:
@@ -60,6 +72,7 @@ const UNDERSTANDING_SCHEMA = {
     'businessType',
     'inventoryPurpose',
     'inventoryExamples',
+    'ownerProvidedInventory',
     'inventoryArchetypes',
     'productStructure',
     'variantDimensions',
@@ -88,6 +101,38 @@ const UNDERSTANDING_SCHEMA = {
     businessType: optionalText,
     inventoryPurpose: optionalText,
     inventoryExamples: stringList,
+
+    /**
+     * Actual catalogue/on-hand facts typed directly by the owner. Their words
+     * are evidence too; an upload or connection is not required. Unclear
+     * mappings stay explicit instead of being guessed.
+     */
+    ownerProvidedInventory: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['hasRecords', 'lines', 'ambiguities'],
+      properties: {
+        hasRecords: { type: 'boolean' },
+        lines: {
+          type: 'array',
+          maxItems: 100,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['productName', 'variantLabel', 'quantity', 'quantityKnown', 'locationName', 'sourceText'],
+            properties: {
+              productName: { type: 'string', maxLength: 160 },
+              variantLabel: { type: 'string', maxLength: 160 },
+              quantity: { type: 'integer', minimum: 0, maximum: 100000000 },
+              quantityKnown: { type: 'boolean' },
+              locationName: { type: 'string', maxLength: 120 },
+              sourceText: { type: 'string', maxLength: 500 },
+            },
+          },
+        },
+        ambiguities: stringList,
+      },
+    },
 
     /** The archetypes in play. Combinations are normal, not exceptional. */
     inventoryArchetypes: {
@@ -250,6 +295,18 @@ const UNDERSTANDING_SCHEMA = {
 
     confidence: { type: 'string', enum: CONFIDENCE },
     rationale: { type: 'string', minLength: 1, maxLength: 3000 },
+    factClassification: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['verifiedFacts', 'safeStructuralInferences', 'provisionalDefaults', 'missingBusinessFacts', 'authorityDecisions'],
+      properties: {
+        verifiedFacts: stringList,
+        safeStructuralInferences: stringList,
+        provisionalDefaults: stringList,
+        missingBusinessFacts: stringList,
+        authorityDecisions: stringList,
+      },
+    },
   },
 };
 
@@ -267,17 +324,38 @@ function subsetSchema(keys) {
 }
 
 const ADVICE_KEYS = ['recommendations', 'unresolvedDecisions'];
-const CORE_KEYS = UNDERSTANDING_SCHEMA.required.filter((key) => !ADVICE_KEYS.includes(key));
+
+/*
+ * Records the owner typed straight into their description come out in a pass
+ * of their own.
+ *
+ * This is not an aesthetic split. `ownerProvidedInventory` is an array of
+ * six-field objects, and nesting that inside the structural pass pushed the
+ * compiled grammar past the size the provider will accept — the whole
+ * understanding then failed with "the compiled grammar is too large", which
+ * reached the owner as "Foundry could not finish reading that."
+ *
+ * Measured rather than guessed: core with this block is refused, core without
+ * it compiles at 4,413 characters, and this block on its own compiles at 709.
+ * Trimming enums elsewhere did not get under the ceiling; taking the nested
+ * array out did.
+ */
+const RECORDS_KEYS = ['ownerProvidedInventory'];
+const CORE_KEYS = UNDERSTANDING_SCHEMA.required
+  .filter((key) => !ADVICE_KEYS.includes(key) && !RECORDS_KEYS.includes(key));
 
 const CORE_SCHEMA = subsetSchema(CORE_KEYS);
 const ADVICE_SCHEMA = subsetSchema(ADVICE_KEYS);
+const RECORDS_SCHEMA = subsetSchema(RECORDS_KEYS);
 
 module.exports = {
   UNDERSTANDING_SCHEMA,
   CORE_SCHEMA,
   ADVICE_SCHEMA,
+  RECORDS_SCHEMA,
   CORE_KEYS,
   ADVICE_KEYS,
+  RECORDS_KEYS,
   CONFIDENCE,
   CERTAINTY,
   ANSWER_EFFECTS,

@@ -68,6 +68,99 @@ function updateCustomer(db, ctx, customerId, input) {
   });
 }
 
+/*
+ * What still points at this customer.
+ *
+ * Six tables can: orders, invoices, payments, messages, payment terms and
+ * payment links. If none of them do, the record is a name somebody typed and
+ * never used, and it can simply go. If any do, deleting the row would leave an
+ * invoice addressed to nobody.
+ */
+const CUSTOMER_REFS = [
+  ['sales_orders', 'orders'],
+  ['accounting_customer_invoices', 'invoices'],
+  ['accounting_payments', 'payments'],
+  ['customer_communications', 'messages'],
+  ['customer_payment_terms', 'agreed terms'],
+  ['payment_requests', 'payment links'],
+];
+
+function customerUsage(db, workspaceId, customerId) {
+  const used = [];
+  let total = 0;
+  for (const [table, label] of CUSTOMER_REFS) {
+    const there = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(table);
+    if (!there) continue;
+    const n = db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE customer_id = ?`).get(customerId).n;
+    if (n) { used.push({ label, count: n }); total += n; }
+  }
+  const open = db.prepare(`SELECT COUNT(*) AS n FROM sales_orders
+    WHERE workspace_id = ? AND customer_id = ? AND status NOT IN ('FULFILLED', 'CANCELLED')`)
+    .get(workspaceId, customerId).n;
+  return { used, total, openOrders: open, deletable: total === 0 };
+}
+
+/*
+ * Removing a customer, in the only two honest ways: deleted when nothing refers
+ * to them, archived when something does. Either way they stop being offered
+ * when you write an order.
+ */
+function removeCustomer(db, ctx, customerId) {
+  const customer = requireCustomer(db, ctx.workspaceId, customerId);
+  const usage = customerUsage(db, ctx.workspaceId, customerId);
+  if (usage.deletable) {
+    db.prepare('DELETE FROM customers WHERE id = ? AND workspace_id = ?').run(customerId, ctx.workspaceId);
+    return { customer, deleted: true, usage };
+  }
+  setCustomerActive(db, ctx, customerId, false);
+  return { customer, deleted: false, usage };
+}
+
+/*
+ * Retiring a customer.
+ *
+ * Not a delete. A customer who has ever ordered is referenced by sales orders,
+ * invoices and payments, and removing the row would leave the books pointing at
+ * nothing — so the record stays and stops being offered. `listCustomers`
+ * already filters on record_state, so archiving is enough to take somebody out
+ * of every picker in the product while their history stays exactly as it was.
+ *
+ * Refused while an order is still live, because a customer with stock committed
+ * to them is not somebody you have finished with.
+ */
+function setCustomerActive(db, ctx, customerId, active) {
+  const customer = requireCustomer(db, ctx.workspaceId, customerId);
+  if (!active) {
+    const open = db.prepare(`SELECT COUNT(*) AS n FROM sales_orders
+      WHERE workspace_id = ? AND customer_id = ?
+        AND status NOT IN ('FULFILLED', 'CANCELLED')`).get(ctx.workspaceId, customerId).n;
+    if (open) {
+      throw new ValidationError(
+        `${customer.name} still has ${open} order${open === 1 ? '' : 's'} that ${open === 1 ? 'is' : 'are'} not finished. `
+        + 'Fulfil or cancel them before archiving the customer.'
+      );
+    }
+  }
+  try {
+    db.prepare('UPDATE customers SET record_state = ?, updated_at = ? WHERE id = ? AND workspace_id = ?')
+      .run(active ? 'ACTIVE' : 'ARCHIVED', nowIso(), customerId, ctx.workspaceId);
+  } catch (err) {
+    /*
+     * `customers.record_state` is constrained to ACTIVE or PROVISIONAL, so a
+     * database that has not had the constraint widened rejects ARCHIVED. Say
+     * that plainly rather than failing as an unexplained server error.
+     */
+    if (err && err.code === 'SQLITE_CONSTRAINT_CHECK') {
+      throw new ValidationError(
+        'This inventory cannot archive customers yet: the customer table still only allows '
+        + 'ACTIVE or PROVISIONAL. Suppliers, products and locations can be archived today.'
+      );
+    }
+    throw err;
+  }
+  return requireCustomer(db, ctx.workspaceId, customerId);
+}
+
 function nextOrderNumber(db, workspaceId) {
   const rows = db.prepare('SELECT order_number FROM sales_orders WHERE workspace_id = ?').all(workspaceId);
   let highest = 1000;
@@ -104,6 +197,15 @@ function recordEvent(db, ctx, orderId, eventType, detail = {}, idempotencyKey = 
     (id, workspace_id, sales_order_id, event_type, detail, actor_user_id, idempotency_key, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, ctx.workspaceId, orderId, eventType, JSON.stringify(detail || {}), ctx.actorId, key, nowIso());
+  require('../provenance/service').record(db, ctx.workspaceId, { type: 'HAS_EVENT',
+    from: { type: 'sales_order', id: orderId }, to: { type: 'sales_order_event', id },
+    basis: 'DIRECT_RECORD' });
+  if (detail && detail.triggerEventId) {
+    require('../provenance/service').record(db, ctx.workspaceId, { type: 'RESPONDS_TO',
+      from: { type: 'sales_order_event', id },
+      to: { type: 'domain_event', id: detail.triggerEventId },
+      domainEventId: detail.triggerEventId, basis: 'EVENT' });
+  }
   return db.prepare('SELECT * FROM sales_order_events WHERE id = ?').get(id);
 }
 
@@ -220,8 +322,8 @@ function createOrder(db, ctx, input) {
       (id, workspace_id, customer_id, order_number, order_date, needed_by, fulfillment_location_id,
        delivery_method, ship_to_address, ship_to_source, customer_decision_required,
        delivery_decision_required, notes, reference, currency,
-       discount_minor, tax_minor, status, created_by_user_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?)`)
+       discount_minor, tax_minor, allocation_priority, status, created_by_user_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?)`)
       .run(id, ctx.workspaceId, customer.id, orderNumber, trimOrNull(input.orderDate) || now.slice(0, 10),
         trimOrNull(input.neededBy), input.fulfillmentLocationId || null,
         destination.method, destination.address, destination.source,
@@ -229,7 +331,9 @@ function createOrder(db, ctx, input) {
         (input.deliveryDecisionRequired
           || (input.requireDeliveryDecision && destination.method === 'SHIP' && !destination.address)) ? 1 : 0,
         trimOrNull(input.notes),
-        trimOrNull(input.reference), currency, discountMinor, taxMinor, ctx.actorId, now, now);
+        trimOrNull(input.reference), currency, discountMinor, taxMinor,
+        Number.isSafeInteger(Number(input.allocationPriority)) ? Number(input.allocationPriority) : 100,
+        ctx.actorId, now, now);
     for (const line of pricedLines) {
       db.prepare(`INSERT INTO sales_order_lines
         (id, workspace_id, sales_order_id, sku_id, quantity_ordered, quantity_fulfilled,
@@ -242,6 +346,12 @@ function createOrder(db, ctx, input) {
       orderNumber, customerId: customer.id, deliveryMethod: destination.method,
       shipToSource: destination.source, hasShipToAddress: Boolean(destination.address),
     }, `sales-order-created:${id}`);
+    const graph = require('../provenance/service');
+    graph.recordMany(db, ctx.workspaceId,
+      db.prepare('SELECT id FROM sales_order_lines WHERE sales_order_id = ?').all(id)
+        .map((line) => ({ type: 'HAS_PART', from: { type: 'sales_order', id },
+          to: { type: 'sales_order_line', id: line.id } })),
+      { basis: 'DIRECT_RECORD' });
     return getOrder(db, ctx.workspaceId, id);
   });
 }
@@ -559,8 +669,11 @@ function fulfill(db, ctx, orderId, input = {}, options = {}) {
     const prior = db.prepare('SELECT * FROM sales_order_events WHERE workspace_id = ? AND idempotency_key = ?')
       .get(ctx.workspaceId, eventKey);
     if (prior) return { order: getOrder(db, ctx.workspaceId, orderId), event: null, replayed: true };
-    const requested = new Map((Array.isArray(input.lines) ? input.lines : [])
-      .map((line) => [`${line.lineId}:${line.locationId}`, positive(line.quantity)]));
+    const requested = new Map();
+    for(const line of (Array.isArray(input.lines)?input.lines:[])){
+      const key=`${line.lineId}:${line.locationId}`;
+      const list=requested.get(key)||[];list.push({...line,quantity:positive(line.quantity)});requested.set(key,list);
+    }
     const allocations = db.prepare(`SELECT soa.*, sol.sku_id, sol.quantity_fulfilled, sol.quantity_ordered,
         i.tracking_mode, l.name AS location_name
       FROM sales_order_allocations soa
@@ -573,17 +686,26 @@ function fulfill(db, ctx, orderId, input = {}, options = {}) {
     const fulfilled = [];
     for (const allocation of allocations) {
       const key = `${allocation.sales_order_line_id}:${allocation.location_id}`;
-      const quantity = requested.size ? Number(requested.get(key) || 0) : Number(allocation.quantity);
+      const requestedLines=requested.get(key)||[];
+      const quantity = requested.size ? requestedLines.reduce((sum,line)=>sum+Number(line.quantity),0) : Number(allocation.quantity);
       if (!quantity) continue;
       if (quantity > Number(allocation.quantity)) throw new ValidationError('You cannot fulfill more than the quantity allocated at that location.');
-      if (allocation.tracking_mode !== 'quantity') {
+      if (allocation.tracking_mode !== 'quantity' && !requestedLines.length) {
         throw new ValidationError('Choose the exact serial numbers or lots on the inventory screen before fulfilling this tracked item.');
       }
-      const result = inventory.issue(db, ctx, {
-        skuId: allocation.sku_id, locationId: allocation.location_id, quantity,
-        reasonCode: 'sold', reference: order.order_number,
-        notes: `Fulfilled ${order.order_number}`,
-      });
+      const movementIds=[];
+      if(allocation.tracking_mode==='quantity'){
+        const result=inventory.issue(db,ctx,{skuId:allocation.sku_id,locationId:allocation.location_id,quantity,
+          reasonCode:'sold',reference:order.order_number,notes:`Fulfilled ${order.order_number}`});movementIds.push(...result.movementIds);
+      }else if(allocation.tracking_mode==='serial'){
+        const ids=requestedLines.flatMap((line)=>Array.isArray(line.serialUnitIds)?line.serialUnitIds:[]);
+        if(ids.length!==quantity)throw new ValidationError('Name every serial unit being fulfilled.');
+        const result=inventory.issue(db,ctx,{skuId:allocation.sku_id,locationId:allocation.location_id,serialUnitIds:ids,
+          reasonCode:'sold',reference:order.order_number,notes:`Fulfilled ${order.order_number}`});movementIds.push(...result.movementIds);
+      }else{
+        for(const line of requestedLines){if(!line.lotId)throw new ValidationError('Name the exact lot being fulfilled.');const result=inventory.issue(db,ctx,
+          {skuId:allocation.sku_id,locationId:allocation.location_id,lotId:line.lotId,quantity:Number(line.quantity),reasonCode:'sold',reference:order.order_number,notes:`Fulfilled ${order.order_number}`});movementIds.push(...result.movementIds);}
+      }
       const left = Number(allocation.quantity) - quantity;
       if (left > 0) db.prepare('UPDATE sales_order_allocations SET quantity = ?, updated_at = ? WHERE id = ?')
         .run(left, nowIso(), allocation.id);
@@ -595,7 +717,7 @@ function fulfill(db, ctx, orderId, input = {}, options = {}) {
         // The inventory engine returns immutable movement IDs directly. Keep
         // them on the sales event so downstream accounting and audit consumers
         // can trace COGS to the exact physical issue without guessing by time.
-        movementIds: result.movementIds || [] });
+        movementIds });
     }
     if (!fulfilled.length) throw new ValidationError('Choose at least one allocated quantity to fulfill.');
     const status = currentStatus(db, orderId);
@@ -844,7 +966,8 @@ function commitmentsForSku(db, workspaceId, skuId) {
     JOIN customers c ON c.id = so.customer_id JOIN locations l ON l.id = soa.location_id
     WHERE soa.workspace_id = ? AND sol.sku_id = ?
       AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
-    ORDER BY so.needed_by, so.created_at`).all(workspaceId, skuId);
+    ORDER BY so.allocation_priority, CASE WHEN so.needed_by IS NULL THEN 1 ELSE 0 END,
+      so.needed_by, so.created_at`).all(workspaceId, skuId);
 }
 
 /**
@@ -861,6 +984,22 @@ function reconcileForSkus(db, ctx, skuIds, options = {}) {
     const changedOrders = new Map();
     for (const skuId of wanted) {
       ensureSku(db, ctx.workspaceId, skuId);
+      // Rebuild this SKU's promises in declared customer priority order. The
+      // previous algorithm only released allocations when stock disappeared,
+      // so a high-priority order arriving later could remain backordered while
+      // an ordinary order held every unit. Allocations are promises, not stock
+      // movements; rebuilding them changes no physical or accounting truth.
+      const existingAllocations = db.prepare(`SELECT soa.id, sol.sales_order_id
+        FROM sales_order_allocations soa
+        JOIN sales_order_lines sol ON sol.id = soa.sales_order_line_id
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE soa.workspace_id = ? AND sol.sku_id = ?
+          AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')`)
+        .all(ctx.workspaceId, skuId);
+      for (const allocation of existingAllocations) {
+        db.prepare('DELETE FROM sales_order_allocations WHERE id = ?').run(allocation.id);
+        changedOrders.set(allocation.sales_order_id, { released: true, allocated: false });
+      }
       const positions = db.prepare(`SELECT l.id AS location_id, COALESCE(b.on_hand, 0) AS on_hand,
           COALESCE((SELECT SUM(soa.quantity) FROM sales_order_allocations soa
             JOIN sales_order_lines sol ON sol.id = soa.sales_order_line_id
@@ -879,7 +1018,8 @@ function reconcileForSkus(db, ctx, skuIds, options = {}) {
           JOIN sales_orders so ON so.id = sol.sales_order_id
           WHERE soa.workspace_id = ? AND soa.location_id = ? AND sol.sku_id = ?
             AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
-          ORDER BY so.confirmed_at DESC, so.created_at DESC, soa.created_at DESC, soa.id DESC`)
+          ORDER BY so.allocation_priority DESC, so.confirmed_at DESC, so.created_at DESC,
+            soa.created_at DESC, soa.id DESC`)
           .all(ctx.workspaceId, position.location_id, skuId);
         for (const allocation of newestFirst) {
           if (!excess) break;
@@ -893,11 +1033,12 @@ function reconcileForSkus(db, ctx, skuIds, options = {}) {
         }
       }
 
-      const waitingLines = db.prepare(`SELECT sol.*, so.fulfillment_location_id, so.confirmed_at, so.created_at AS order_created_at
+      const waitingLines = db.prepare(`SELECT sol.*, so.fulfillment_location_id, so.confirmed_at,
+          so.allocation_priority, so.created_at AS order_created_at
         FROM sales_order_lines sol JOIN sales_orders so ON so.id = sol.sales_order_id
         WHERE sol.workspace_id = ? AND sol.sku_id = ?
           AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
-        ORDER BY so.confirmed_at, so.created_at, sol.created_at, sol.id`).all(ctx.workspaceId, skuId);
+        ORDER BY so.allocation_priority, so.confirmed_at, so.created_at, sol.created_at, sol.id`).all(ctx.workspaceId, skuId);
       for (const line of waitingLines) {
         const allocation = allocateLine(db, ctx.workspaceId, line, line.fulfillment_location_id);
         if (allocation.allocated > 0) {
@@ -924,17 +1065,61 @@ function reconcileForSkus(db, ctx, skuIds, options = {}) {
 
 function react(db, workspaceId, salesEvent, type, order) {
   const skuIds = [...new Set(order.lines.map((line) => line.sku_id))];
+  const detail = json(salesEvent.detail, {});
+  const fulfillmentRelations = ['FULFILLED','PARTIALLY_FULFILLED'].includes(salesEvent.event_type)
+    ? [
+      { type: 'FULFILLED_BY', from: { type: 'sales_order', id: order.id },
+        to: { type: 'sales_order_event', id: salesEvent.id } },
+      ...(detail.fulfilled || []).flatMap((entry) => (entry.movementIds || []).map((movementId) => ({
+        type: 'CAUSED_MOVEMENT', from: { type: 'sales_order_event', id: salesEvent.id },
+        to: { type: 'inventory_movement', id: movementId },
+      }))),
+    ] : [];
   reactions.publishAndReact(db, workspaceId, type, {
     salesOrderId: order.id, orderNumber: order.order_number, customerId: order.customer_id,
     skuIds, neededBy: order.needed_by, backordered: order.totals.backordered,
   }, { source: 'sales_order', sourceRecordType: 'sales_order_event', sourceRecordId: salesEvent.id,
-    idempotencyKey: `${type}:sales-order-event:${salesEvent.id}` });
+    idempotencyKey: `${type}:sales-order-event:${salesEvent.id}`,
+    relations: [
+      { type: 'HAS_EVENT', from: { type: 'sales_order', id: order.id },
+        to: { type: 'sales_order_event', id: salesEvent.id } },
+      ...fulfillmentRelations,
+    ] });
+}
+
+function setAllocationPriority(db, ctx, orderId, priority) {
+  const value = Number(priority);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 1000) {
+    throw new ValidationError('Customer allocation priority must be a whole number from 0 to 1000. Lower numbers are served first.');
+  }
+  const order = getOrder(db, ctx.workspaceId, orderId);
+  db.prepare(`UPDATE sales_orders SET allocation_priority = ?, updated_at = ?, version = version + 1
+    WHERE id = ? AND workspace_id = ?`).run(value, nowIso(), order.id, ctx.workspaceId);
+  reconcileForSkus(db, ctx, order.lines.map((line) => line.sku_id));
+  return getOrder(db, ctx.workspaceId, order.id);
+}
+
+/** Confirmed customer demand which could not yet be reserved from on-hand stock. */
+function backorderedBySku(db, workspaceId, { skuIds = null } = {}) {
+  const ids = skuIds && skuIds.length ? [...new Set(skuIds)] : null;
+  const clause = ids ? ` AND sol.sku_id IN (${ids.map(() => '?').join(',')})` : '';
+  return db.prepare(`SELECT sol.sku_id,
+      SUM(MAX(0, sol.quantity_ordered - sol.quantity_fulfilled -
+        COALESCE((SELECT SUM(soa.quantity) FROM sales_order_allocations soa
+          WHERE soa.sales_order_line_id = sol.id), 0))) AS backordered
+    FROM sales_order_lines sol
+    JOIN sales_orders so ON so.id = sol.sales_order_id
+    WHERE sol.workspace_id = ?
+      AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')${clause}
+    GROUP BY sol.sku_id`).all(workspaceId, ...(ids || []));
 }
 
 module.exports = {
   OPEN, createCustomer, listCustomers, getCustomer, updateCustomer, requireCustomer,
+  setCustomerActive, removeCustomer, customerUsage,
   createOrder, confirm, allocateAvailable, addLine, setLineQuantity, fulfill, cancel, cancelLine,
   resolveEmailCustomer, resolveDelivery,
-  getOrder, listOrders, listCompletedSales, waitingForStock, committedByPosition, availabilityForSku,
+  getOrder, listOrders, listCompletedSales, waitingForStock, committedByPosition, backorderedBySku, availabilityForSku,
   commitmentsForSku, reconcileForSkus,
+  setAllocationPriority,
 };

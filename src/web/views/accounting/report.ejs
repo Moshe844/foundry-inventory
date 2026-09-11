@@ -10,7 +10,13 @@
     <div class="report-line report-line--total"><span>Gross profit</span><strong><%= helpers.money(report.grossProfitMinor, report.currency) %></strong></div>
     <div class="report-line"><span>Operating expenses</span><span>(<%= helpers.money(report.operatingExpenseMinor, report.currency) %>)</span></div>
     <div class="report-line report-line--total"><span>Net income</span><strong><%= helpers.money(report.netIncomeMinor, report.currency) %></strong></div>
-  </div><p class="hint">Gross profit is revenue minus product cost. Net income also includes operating expenses.</p></div></section>
+  </div>
+  <p class="hint">Gross profit is revenue minus product cost. Net income also includes operating expenses.</p>
+  <p class="actions">
+    <a class="btn btn--sm" href="/accounting?period=custom&amp;from=<%= from %>&amp;to=<%= to %>#customers">Show the exact sales and product cost</a>
+    <a class="btn btn--sm btn--ghost" href="/accounting?period=custom&amp;from=<%= from %>&amp;to=<%= to %>#expenses">Show other business expenses</a>
+  </p>
+  </div></section>
 <% } else if (kind === 'balance-sheet') { %>
   <section class="card"><div class="card-head"><h2>As of <%= report.asOf %></h2><span class="badge <%= report.balanced ? 'badge--success' : 'badge--warning' %>"><%= report.balanced ? 'Balanced' : 'Needs review' %></span></div><div class="card-body"><div class="report-lines">
     <div class="report-line report-line--total"><span>Assets</span><strong><%= helpers.money(report.assetMinor, report.currency) %></strong></div>

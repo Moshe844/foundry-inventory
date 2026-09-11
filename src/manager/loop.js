@@ -7,11 +7,30 @@ const triggers = require('./triggers');
 const investigations = require('./investigations');
 const reconciliation = require('./reconciliation');
 const brief = require('./brief');
+const repairs = require('../repairs/service');
+const workItems = require('../autopilot/work-items');
 
 function run(db, ctx, membership, options = {}) {
   const workspaceId = ctx.workspaceId;
   const recoveredTriggers = triggers.recover(db);
   const recoveredInvestigations = investigations.recover(db, workspaceId);
+  const recoveredRepairs = repairs.recover(db, ctx, membership);
+  // Interrupted work becomes a durable repair case before anything decides
+  // what to do with it. A prior successful execution can be reconciled and
+  // verified automatically; an unknown outcome remains one owner decision.
+  for (const item of workItems.inFlight(db, workspaceId)) {
+    const assessed = repairs.openAndAssess(db, ctx, {
+      kind: 'stuck_job',
+      symptom: `${item.categoryLabel || 'Foundry work'} was interrupted`,
+      failedInvariant: 'Every started job must end with one independently verified outcome',
+      affectedRecords: { workItemId: item.id },
+      idempotencyKey: `repair:work-item:${item.id}`,
+    }).repairCase;
+    if (assessed.status === 'SIMULATED') {
+      try { recoveredRepairs.push(repairs.execute(db, ctx, membership, assessed.id).repairCase); }
+      catch { /* The failed case itself is now the durable Needs You item. */ }
+    }
+  }
   const state = modes.ensure(db, workspaceId);
   let work;
   if (state.paused || state.suspended || state.mode === modes.MODES.OBSERVE) {
@@ -20,7 +39,7 @@ function run(db, ctx, membership, options = {}) {
   } else {
     work = options.planOnly
       ? (() => { const planned = runner.planWork(db, ctx, membership, options); return { planned: (planned.created || []).length, executed: 0, planId: planned.planId }; })()
-      : runner.run(db, ctx, membership, options);
+      : runner.run(db, ctx, membership, { ...options, skipRecovery: true });
   }
 
   const investigated = [];
@@ -29,7 +48,8 @@ function run(db, ctx, membership, options = {}) {
   }
   const reconciled = reconciliation.scanWorkspace(db, workspaceId);
   const dailyBrief = brief.build(db, workspaceId, { now: options.now || Date.now() });
-  return { ...work, recoveredTriggers, recoveredInvestigations, investigated: investigated.length, reconciled, brief: dailyBrief };
+  return { ...work, recoveredTriggers, recoveredInvestigations, recoveredRepairs: recoveredRepairs.length,
+    investigated: investigated.length, reconciled, brief: dailyBrief };
 }
 
 function processPending(db, authorityFor, { limit = 25, now = Date.now() } = {}) {

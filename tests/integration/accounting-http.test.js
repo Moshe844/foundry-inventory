@@ -12,6 +12,7 @@ const receivingService = require('../../src/purchasing/receiving-service');
 const inventory = require('../../src/domain/inventory-engine');
 const prices = require('../../src/pricing/price-service');
 const sales = require('../../src/sales/sales-order-service');
+const payments = require('../../src/accounting/payments');
 const { newId, nowIso } = require('../../src/lib/util');
 const authService = require('../../src/domain/auth-service');
 const reactions = require('../../src/manager/reactions');
@@ -68,16 +69,88 @@ test('Accounting starts with automatic posting and keeps opening amounts in a se
   const env = await setup();
   const page = await env.agent.get('/accounting').expect(200);
   const text = plain(page.text);
-  assert.match(text, /Foundry.*A Keeper product.*Accounting Web Co.*Your business right now.*Up to date/i);
-  assert.match(text, /Customers owe you.*You owe suppliers.*Customer cash received.*Cash paid to suppliers.*Inventory you own/i);
+  assert.match(text, /Foundry.*Accounting Web Co.*Your business right now.*Up to date/i);
+  assert.doesNotMatch(text, /A Keeper product/i, 'the customer-facing product is Foundry');
+  assert.match(text, /Customers still need to pay.*You owe suppliers.*Customer cash received.*Cash paid to suppliers.*Inventory you own/i);
   assert.match(text, /What that means.*Show me the accounting details.*Where the product cost went.*What updates automatically/i);
   assert.doesNotMatch(text, /Every product currently in inventory|complete on-hand list/i);
   assert.match(text, /Orders, history, and accountant reports.*source records or formal reports/i);
-  assert.match(page.text, /aria-current="page"[^>]*>[\s\S]*Accounting/);
+  /*
+   * The chrome no longer names a department per section — it carries the three
+   * things somebody does in a day, and the books are one door away from Money.
+   * What still has to be true is that this page says what it is and offers the
+   * way back to the owner-facing view.
+   */
+  assert.match(page.text, /href="\/money"|Money/);
   assert.equal(ledger.settings(env.db, env.workspace.workspaceId).enabled, true);
   const migration = await env.agent.get('/accounting/migration').expect(200);
   assert.match(plain(migration.text), /Accounting is already working automatically.*One-time migration only.*Migration step 1 of 3.*Migration step 2 of 3.*Migration step 3 of 3/i);
   assert.match(text, /No completed customer sale is recorded yet.*Cost of products still in stock.*0 units you still own/i);
+});
+
+test('Home shows money on a confirmed unpaid order before it becomes earned revenue', async () => {
+  const env = await setup();
+  const product = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Customer Order Shoe' });
+  prices.setPrice(env.db, env.workspace.ctx, {
+    skuId: product.skuId, amount: '100.00', currency: 'USD',
+  });
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: product.skuId, locationId: env.workspace.main.id, quantity: 25,
+  });
+  const order = sales.createOrder(env.db, env.workspace.ctx, {
+    customerName: 'Moshe Ekstein', fulfillmentLocationId: env.workspace.main.id,
+    lines: [{ skuId: product.skuId, quantity: 25 }],
+  });
+  sales.confirm(env.db, env.workspace.ctx, order.id);
+
+  const homePage = await env.agent.get('/').expect(200);
+  const home = plain(homePage.text);
+  assert.match(home, /Profit from fulfilled sales\s*\$0/i);
+  assert.match(home, /Customers still need to pay.*\$2,500/i);
+  assert.match(homePage.text, /href="\/accounting\/reports\/profit-and-loss\?from=[^"]+&(?:amp;)?to=[^"]+"/,
+    'the headline profit opens its exact report period');
+  for (const destination of ['cash', 'customers', 'suppliers']) {
+    assert.match(homePage.text, new RegExp(`href="/accounting#${destination}"`),
+      `the home money summary drills into ${destination} evidence`);
+  }
+
+  const money = plain((await env.agent.get('/money').expect(200)).text);
+  assert.match(money, /\$0\.00 earned this period.*You're owed.*\$2,500\.00.*1 confirmed order awaiting payment/i);
+
+  const accounting = plain((await env.agent.get('/accounting').expect(200)).text);
+  assert.match(accounting,
+    /Customers still need to pay.*\$2,500\.00.*Confirmed orders not yet invoiced.*\$2,500\.00/i);
+  assert.match(accounting, /SO-1001.*Moshe Ekstein.*\$2,500\.00 still to pay/i);
+
+  require('../../src/accounting/automatic').ensure(env.db, env.workspace.workspaceId, {
+    actorId: env.workspace.ctx.actorId,
+  });
+  const confirmed = sales.getOrder(env.db, env.workspace.workspaceId, order.id);
+  const recorded = payments.record(env.db, env.workspace.ctx, env.membership, {
+    direction: 'CUSTOMER_RECEIPT', customerId: confirmed.customer.id,
+    salesOrderId: order.id, paymentDate: new Date().toISOString().slice(0, 10),
+    amountMinor: 250000, method: 'card', sourceKey: `home-prepayment:${order.id}`,
+  });
+
+  const paidHome = plain((await env.agent.get('/').expect(200)).text);
+  assert.match(paidHome, /Profit from fulfilled sales\s*\$0/i,
+    'prepayment is not called revenue or profit before fulfilment');
+  assert.match(paidHome, /Customer cash received this period.*\$2,500/i);
+  assert.match(paidHome, /Customers still need to pay.*\$0/i);
+  assert.match(paidHome, /\$2,500 was paid before delivery.*cash received.*not earned revenue or profit until the goods leave/i);
+
+  const cashProof = await env.agent.get('/accounting').expect(200);
+  assert.match(cashProof.text,
+    new RegExp(`href="/orders/${order.id}/receipt/${recorded.payment.id}"`),
+    'the cash total drills through its movement row to the exact customer receipt');
+
+  const paidOrder = await env.agent.get(`/orders/${order.id}`).expect(200);
+  const paidOrderText = plain(paidOrder.text);
+  assert.match(paidOrderText, /Paid in full.*ready to pick/i);
+  assert.match(paidOrderText, /customer paid \$2,500\.00.*owes \$0\.00/i);
+  assert.match(paidOrderText, /goods have not left yet.*cash received, not earned revenue or profit yet/i);
+  assert.match(paidOrderText, /Show order history/i);
+  assert.match(paidOrder.text, new RegExp(`/orders/${order.id}/detail\\?open=fulfilment#fulfilment`));
 });
 
 test('the missing-cost action opens a focused product-cost screen instead of the full migration form', async () => {
@@ -109,8 +182,22 @@ test('Foundry automatically applies the proven PO portion when older stock has m
     occurredAt: '2026-08-22T12:00:00.000Z' });
 
   const page = plain((await env.agent.get('/accounting').expect(200)).text);
-  assert.match(page, /Inventory you own.*\$180\.00 recorded.*91 units physically in stock; cost is missing for 55/i);
+  assert.match(page, /Known inventory cost.*\$180\.00.*Full value unavailable: cost is missing for 55 of 91 units/i);
+  assert.match(page, /91 units on hand.*36 costed × \$5\.00 = \$180\.00 recorded.*55 missing cost/i,
+    'mixed-cost stock must never look like all 91 units were multiplied by the known cost');
+  assert.doesNotMatch(page, /Less adjustments and other removals\s*−\s*\$180\.00/i,
+    'recovered cost cannot appear both still owned and already removed');
   assert.match(page, /I need the original purchase cost for 55 units/i);
+  const moneyPage = await env.agent.get('/money').expect(200);
+  assert.match(plain(moneyPage.text), /Known stock cost.*\$180\.00.*91 units.*55 missing cost/i);
+  assert.match(moneyPage.text, /href="\/accounting#inventory"/,
+    'the summary valuation must drill into quantity × cost evidence');
+  const inventoryPage = await env.agent.get('/inventory').expect(200);
+  assert.match(plain(inventoryPage.text),
+    /91 units on hand, \$180 known cost.*Purchase cost is still missing for 55 units.*not the full inventory value/i,
+    'Inventory uses the same qualified valuation truth as Accounting');
+  assert.match(inventoryPage.text, /href="\/accounting#inventory"[^>]*>Show the units and recorded cost/,
+    'the Inventory headline has an exact quantity × cost evidence path');
   const balance = env.db.prepare(`SELECT quantity_units,total_cost_minor
     FROM accounting_inventory_cost_balances WHERE workspace_id=? AND sku_id=? AND location_id=?`)
     .get(env.workspace.workspaceId, product.skuId, env.workspace.main.id);
@@ -153,10 +240,18 @@ test('automatic setup carries forward exact PO receipt costs and a shipped Sales
    * "Gone", which is the most Foundry can honestly claim. The accounting
    * sentence — the thing this test is actually about — is unchanged.
    */
-  assert.match(plain(orderPage.text), /Gone.*Accounting updated automatically.*Revenue, the customer receivable, product cost, and inventory value/i);
+  assert.match(plain(orderPage.text),
+    /went on the books automatically: revenue, the customer receivable, product cost, and inventory value/i);
+  const saleEvidence = await env.agent.get(`/accounting/entries/${entry.id}`).expect(200);
+  const saleEvidenceText = plain(saleEvidence.text);
+  assert.match(saleEvidenceText, /How Foundry worked out this sale.*Clear Workflow Customer bought \$70\.00 of products/i);
+  assert.match(saleEvidenceText, /products cost the business \$45\.50.*\$24\.50 gross profit/i);
+  assert.match(saleEvidenceText, /Exactly what was sold.*7 × Verified Cost Shirt.*\$45\.50 product cost/i);
+  assert.match(saleEvidence.text, /<details class="card disclose">[\s\S]*Advanced accounting details/i,
+    'debits and credits remain available but are not the primary owner experience');
   const dashboard = await env.agent.get('/accounting').expect(200);
   const dashboardText = plain(dashboard.text);
-  assert.match(dashboardText, /No cash profit is proven yet.*Customers still owe you \$70\.00/i);
+  assert.match(dashboardText, /No customer cash has been recorded yet.*Customers still need to pay you \$70\.00/i);
   assert.match(dashboardText, /Product cost recorded from later receipts.*\$130\.00.*Cost of products already sold.*\$45\.50/i);
   assert.match(dashboardText, /Cost of products still in stock.*\$84\.50.*13 units you still own/i);
   assert.match(dashboardText, /Customer sales completed.*\$70\.00.*Customer cash actually received.*\$0\.00.*Customers still need to pay you.*\$70\.00/i);
@@ -279,7 +374,7 @@ test('all core reports and ledger drill-down render from posted entries', async 
     assert.match(plain(page.text), /Ledger-backed report/i);
   }
   const detail = await env.agent.get(`/accounting/entries/${entry.id}`).expect(200);
-  assert.match(plain(detail.text), /Posted journal entry.*Opening cash.*Debits?|Debit.*Credit.*Why this exists/i);
+  assert.match(plain(detail.text), /Accounting evidence.*Opening cash.*Advanced accounting details.*Debit.*Credit/i);
 });
 
 test('the complete accounting workspace is reachable and explains each control', async () => {
@@ -365,7 +460,7 @@ test('owner accounting UI carries exact PO and Sales evidence through partial pa
     .get(`/accounting/payables/new?purchaseOrderId=${purchaseOrder.id}`).expect(200);
   const billFormText = plain(billForm.text);
   assert.match(billFormText, new RegExp(`${purchaseOrder.poNumber}.*Owner Evidence Shirt.*10 units.*10\\.00`, 'i'));
-  await env.agent.post('/accounting/payables').type('form').send({
+  const billPosted = await env.agent.post('/accounting/payables').type('form').send({
     _csrf: csrfFrom(billForm.text), counterpartyId: supplier.id,
     purchaseOrderId: purchaseOrder.id, documentNumber: 'OE-INV-1', issueDate: '2026-09-01',
     description: 'Owner Evidence Shirt', quantity: '10', unitAmount: '10.00',
@@ -373,6 +468,9 @@ test('owner accounting UI carries exact PO and Sales evidence through partial pa
     paymentStatus: 'partially_paid', paymentAmount: '40.00', paymentDate: '2026-09-01',
     paymentReference: 'CHECK-40',
   }).expect(303);
+  const billConfirmation = plain((await env.agent.get(billPosted.headers.location)).text);
+  assert.match(billConfirmation,
+    /OE-INV-1 was recorded as the supplier bill.*payment of \$40\.00 was recorded.*owe \$60\.00.*Inventory was not received again/i);
   let bill = env.db.prepare(`SELECT * FROM accounting_supplier_bills
     WHERE workspace_id = ? AND supplier_invoice_number = 'OE-INV-1'`)
     .get(env.workspace.workspaceId);
@@ -391,10 +489,26 @@ test('owner accounting UI carries exact PO and Sales evidence through partial pa
 
   const ownerPage = await env.agent.get('/accounting?period=all_time').expect(200);
   const ownerText = plain(ownerPage.text);
-  assert.match(ownerText, /Your business right now.*Customers owe you.*You owe suppliers.*Customer cash received.*Cash paid to suppliers.*Inventory you own/i);
+  assert.match(ownerText, /Your business right now.*Customers still need to pay.*You owe suppliers.*Customer cash received.*Cash paid to suppliers.*Inventory you own/i);
   assert.match(ownerText, /Show what was bought.*Owner Evidence Shirt.*10.*\$10\.00.*\$100\.00/i);
   assert.match(ownerText, /Show what was sold.*Owner Evidence Shirt.*5.*\$20\.00.*Recorded cost \$50\.00.*Gross profit \$50\.00/i);
   assert.match(ownerText, /Show what I own.*5 units.*\$10\.00.*\$50\.00/i);
+
+  const moneyPage = await env.agent.get('/money?period=all_time').expect(200);
+  assert.match(moneyPage.text, /href="\/accounting\/reports\/profit-and-loss\?from=[^"]+(?:&|&amp;)to=[^"]+"/,
+    'earned profit opens its source report');
+  assert.match(moneyPage.text, /rm-ledger__v[^>]*><a href="\/accounting\/payables">/,
+    'supplier balance drills down even when it is zero');
+  assert.match(moneyPage.text, /rm-ledger__v[^>]*><a href="\/accounting\/receivables">/,
+    'customer balance drills down even when it is zero');
+  assert.match(moneyPage.text, /rm-ledger__v[^>]*><a href="\/accounting\/banking">/,
+    'cash drills down to its recorded movements');
+  assert.match(moneyPage.text, /rm-ledger__v[^>]*><a href="\/accounting#inventory">/,
+    'owned stock cost drills down to exact units and cost');
+  const profitPage = await env.agent
+    .get('/accounting/reports/profit-and-loss?from=2026-09-01&to=2026-09-08').expect(200);
+  assert.match(plain(profitPage.text), /Show the exact sales and product cost.*Show other business expenses/i,
+    'the aggregate profit report continues to exact operational evidence');
 
   await env.agent.post(`/accounting/receivables/${invoice.id}/payment`).type('form').send({
     _csrf: csrfFrom(ownerPage.text), paymentDate: '2026-09-01', amount: '40.00',

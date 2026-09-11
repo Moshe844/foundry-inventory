@@ -53,13 +53,14 @@
   <div class="receipt__totals">
     <div><span>Order total</span><strong><%= helpers.money(order.pricing.totalMinor, order.currency) %></strong></div>
     <div class="receipt__paid">
-      <span><%= payment.status === 'VOID' ? 'This receipt was for' : 'Paid' %></span>
-      <strong><%= helpers.money(payment.amount_minor, payment.currency || order.currency) %></strong>
+      <span><%= payment.status === 'VOID' ? 'This receipt was for' : 'This payment' %></span>
+      <strong><%= helpers.money(receiptAmountMinor, payment.currency || order.currency) %></strong>
     </div>
-    <% if (outstandingMinor > 0) { %>
-      <div><span>Still owed on this order</span><strong><%= helpers.money(outstandingMinor, order.currency) %></strong></div>
+    <div><span>Paid after this receipt</span><strong><%= helpers.money(paidAfterReceiptMinor, order.currency) %></strong></div>
+    <% if (outstandingAfterReceiptMinor > 0) { %>
+      <div><span>Balance after this receipt</span><strong><%= helpers.money(outstandingAfterReceiptMinor, order.currency) %></strong></div>
     <% } else { %>
-      <div><span>Still owed on this order</span><strong>Nothing</strong></div>
+      <div><span>Balance after this receipt</span><strong>Nothing</strong></div>
     <% } %>
   </div>
 

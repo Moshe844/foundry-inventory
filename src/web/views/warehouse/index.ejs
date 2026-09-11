@@ -1,0 +1,86 @@
+<p class="rm-stamp">Warehouse</p>
+<div class="rm-titleline">
+  <div><h1 class="rm-figure">Work that starts with a scan.</h1>
+    <p class="rm-sub">Bins are real stock locations. Every accepted stock-changing scan uses the same inventory engine as the rest of Foundry.</p></div>
+</div>
+
+<section class="rm-panel">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Operational workflows</p><h2>Counts, returns and fulfillment waves</h2></div><a class="rm-button rm-button--primary" href="/warehouse/operations">Open operations</a></div>
+  <p class="rm-note">Run blind cycle counts, inspect customer returns through quarantine, reconcile supplier returns, and pick several orders as one scan-verified wave.</p>
+</section>
+
+<section class="rm-panel">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Task queue</p><h2>What the warehouse is doing</h2></div></div>
+  <% if (!tasks.length) { %><div class="rm-empty"><p>No warehouse tasks are waiting.</p></div><% } else { %>
+    <div class="rm-list"><% tasks.forEach(function(task) { %>
+      <a class="rm-row" href="/warehouse/tasks/<%= task.id %>">
+        <span><strong>#<%= task.task_number %> · <%= task.title %></strong><small><%= task.task_type %> · <%= task.lines.processed %> of <%= task.lines.planned %> processed</small></span>
+        <span class="rm-chip"><%= task.status.replace('_', ' ') %></span>
+      </a>
+    <% }) %></div>
+  <% } %>
+</section>
+
+<section class="rm-panel" id="new-task">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Prepare work</p><h2>Create one scan task</h2></div></div>
+  <% if (canOperate) { %><form method="post" action="/warehouse/tasks" class="rm-form-grid">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Task type<select name="taskType" required><option>RECEIVE</option><option>PUTAWAY</option><option>PICK</option><option>COUNT</option><option>TRANSFER</option></select></label>
+    <label>Product<select name="skuId" required><% skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %><%= sku.variant_label ? ' — ' + sku.variant_label : '' %> · <%= sku.code %></option><% }) %></select></label>
+    <label>Source<select name="fromLocationId"><option value="">None</option><% locations.forEach(function(location) { %><option value="<%= location.id %>"><%= '› '.repeat(location.depth) %><%= location.name %></option><% }) %></select></label>
+    <label>Destination<select name="toLocationId"><option value="">Use putaway rule / none</option><% locations.forEach(function(location) { %><option value="<%= location.id %>"><%= '› '.repeat(location.depth) %><%= location.name %></option><% }) %></select></label>
+    <label>Quantity<input name="quantity" type="number" min="1" step="1" required value="1"></label>
+    <label>Exact lot <span class="optional">lot counts only</span><select name="lotId"><option value="">None</option><% lots.forEach(function(lot) { %><option value="<%= lot.id %>"><%= lot.item_name %> · <%= lot.sku_code %> · lot <%= lot.code %></option><% }) %></select></label>
+    <label>Container<select name="containerId"><option value="">No container</option><% containers.filter(c => c.status === 'OPEN').forEach(function(container) { %><option value="<%= container.id %>"><%= container.code %></option><% }) %></select></label>
+    <label class="rm-span-2">Reference <span class="optional">optional</span><input name="reference" placeholder="PO, order, count sheet or transfer reference"></label>
+    <div class="rm-span-2"><button class="rm-button rm-button--primary" type="submit">Create scan task</button></div>
+  </form><% } else { %><p class="rm-muted">You can see tasks, but your role cannot perform warehouse work.</p><% } %>
+</section>
+
+<section class="rm-panel" id="layout">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Physical layout</p><h2>Warehouses, zones, aisles, shelves, bins and docks</h2></div><a href="/locations">Manage layout</a></div>
+  <div class="rm-list"><% locations.forEach(function(location) { %>
+    <div class="rm-row" style="padding-left:calc(16px + <%= location.depth %> * 22px)">
+      <span><strong><%= location.name %></strong><small><%= helpers.locationKindLabel(location.kind) %><%= location.barcode ? ' · ' + location.barcode : ' · no scan code' %></small></span>
+      <span><%= helpers.qty(location.on_hand) %> on hand</span>
+    </div>
+  <% }) %></div>
+  <p class="rm-note">Existing stock remains at its existing location until somebody scans or records a real move. Foundry never invents bins during migration.</p>
+</section>
+
+<section class="rm-panel" id="containers">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Containers</p><h2>Totes, cartons, pallets and packages</h2></div></div>
+  <div class="rm-list"><% containers.forEach(function(container) { %><div class="rm-row"><span><strong><%= container.code %></strong><small><%= container.kind %> · <%= container.location_name || 'not placed' %></small></span><span><%= container.units %> units · <a href="/warehouse/labels/container/<%= container.id %>">Print label</a></span></div><% }) %></div>
+  <% if (canOperate) { %><form method="post" action="/warehouse/containers" class="rm-inline-form">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input name="code" required placeholder="TOTE-01"><input name="barcode" placeholder="Scan code (defaults to code)"><select name="kind"><option>tote</option><option>carton</option><option>pallet</option><option>package</option><option>other</option></select><button class="rm-button" type="submit">Create container</button>
+  </form><% } %>
+</section>
+
+<% if (canAdmin) { %><section class="rm-panel" id="barcodes">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Barcode aliases</p><h2>Teach Foundry an exact existing scan code</h2></div></div>
+  <p class="rm-note">An alias is a deterministic identity, not an AI guess. Once saved, that code can identify only this record in this inventory.</p>
+  <div class="rm-form-grid">
+    <form method="post" action="/warehouse/barcodes" class="rm-inline-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="targetKind" value="sku">
+      <select name="targetId" required><% skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %> · <%= sku.code %></option><% }) %></select>
+      <input name="barcode" required placeholder="Product barcode alias"><button class="rm-button" type="submit">Add product code</button>
+    </form>
+    <form method="post" action="/warehouse/barcodes" class="rm-inline-form">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="targetKind" value="location">
+      <select name="targetId" required><% locations.forEach(function(location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select>
+      <input name="barcode" required placeholder="Location barcode alias"><button class="rm-button" type="submit">Add location code</button>
+    </form>
+  </div>
+</section><% } %>
+
+<% if (canAdmin) { %><section class="rm-panel" id="putaway">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Putaway</p><h2>Rules that choose a real destination</h2></div></div>
+  <% if (!rules.length) { %><p class="rm-muted">No putaway rules yet. Foundry will ask instead of guessing a bin.</p><% } %>
+  <div class="rm-list"><% rules.forEach(function(rule) { %><div class="rm-row"><span><strong><%= rule.item_name || 'Any product' %><%= rule.sku_code ? ' · ' + rule.sku_code : '' %></strong><small>From <%= rule.from_name || 'anywhere' %></small></span><span>→ <%= rule.destination_name %></span></div><% }) %></div>
+  <form method="post" action="/warehouse/putaway-rules" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label>Product<select name="skuId"><option value="">Any product</option><% skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %> · <%= sku.code %></option><% }) %></select></label>
+    <label>Received at<select name="fromLocationId"><option value="">Anywhere</option><% locations.forEach(function(location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select></label>
+    <label>Put into<select name="destinationLocationId" required><% locations.forEach(function(location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) %></select></label>
+    <label>Priority<input type="number" name="priority" value="100" min="0"></label><div class="rm-span-2"><button class="rm-button" type="submit">Save rule</button></div>
+  </form>
+</section><% } %>

@@ -83,6 +83,13 @@ test('a supplier-cost instruction is not mistaken for a customer selling price',
   assert.equal(changes.matchesInstruction('Update the purchase price to $9.50'), false);
 });
 
+test('money and profit questions are not mistaken for catalogue price changes', () => {
+  assert.equal(changes.matchesInstruction('Why did I only make $1,560 when customers paid $2,080?'), false);
+  assert.equal(changes.matchesInstruction('What is the selling price of JEANS-BLACK-S?'), false);
+  assert.equal(changes.matchesInstruction('How much did we make on the $500 sale?'), false);
+  assert.equal(changes.matchesInstruction('Can you set JEANS-BLACK-S to $12 each?'), true);
+});
+
 test('one instruction can preview and atomically approve different prices for multiple SKUs', async () => {
   const env = setup();
   const navy = makeQuantityItem(env.db, env.ctx, { name: 'Navy Jeans', baseCode: 'JEANS-NAVY-M' });

@@ -22,6 +22,9 @@ const authService = require('../../src/domain/auth-service');
 const itemService = require('../../src/domain/item-service');
 const inventory = require('../../src/domain/inventory-engine');
 const repo = require('../../src/domain/repository');
+const sales = require('../../src/sales/sales-order-service');
+const prices = require('../../src/pricing/price-service');
+const ledger = require('../../src/accounting/ledger');
 const { makeDatabase, cleanupAll, seedWorkspace } = require('../helpers');
 
 test.after(cleanupAll);
@@ -84,6 +87,25 @@ function balancing(env) {
 
 const ask = (env, plan) => queryService.execute(env.db, env.workspace.workspaceId, plan);
 
+test('customer-money questions include confirmed unpaid orders without calling them earned revenue', () => {
+  const env = tights();
+  ledger.configure(env.db, env.ctx, env.membership, {
+    startDate: new Date().toISOString().slice(0, 10), currency: 'USD',
+    costingMethod: 'WEIGHTED_AVERAGE',
+  });
+  prices.setPrice(env.db, env.ctx, { skuId: env.black5.id, amount: '25.00', currency: 'USD' });
+  const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
+    customerName: 'ABC School', fulfillmentLocationId: env.workspace.main.id,
+    lines: [{ skuId: env.black5.id, quantity: 4 }],
+  }).id);
+
+  const answer = queryService.execute(env.db, env.workspace.workspaceId,
+    { intent: 'receivables_aging' }, { question: 'Does any customer owe me money?' });
+  assert.match(answer.answer, /Yes.*\$100\.00.*confirmed order/i);
+  assert.equal(answer.rows.some((row) => row.document === order.order_number), true);
+  assert.equal(answer.handoff.href, `/sales/orders/${order.id}`);
+});
+
 // --- what did you do ---------------------------------------------------------
 
 test('"what did you do today" is answered from the work records', () => {
@@ -96,7 +118,7 @@ test('"what did you do today" is answered from the work records', () => {
 
   const answer = ask(env, { intent: 'foundry_activity' });
 
-  assert.match(answer.answer, /Moved 12 Kids Tights/);
+  assert.match(answer.answer, /Prepared transfer for 12 Kids Tights/);
   assert.match(answer.answer, /Downtown Store to Main Warehouse/);
   assert.equal(answer.rows.length, 1);
   assert.equal(answer.rows[0].verified, 'yes');
@@ -229,7 +251,7 @@ test('work that is only proposed is never described as done', () => {
   assert.match(presenter.describeCompleted(proposed).headline, /^Wants to move/);
 });
 
-test('once it is done, it says so in the past tense', () => {
+test('once preparation is done, it says exactly what is and is not complete', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
@@ -242,12 +264,13 @@ test('once it is done, it says so in the past tense', () => {
   const [done] = workItems.list(env.db, env.workspace.workspaceId, { category: 'balance_transfer' });
 
   const prose = presenter.explain(env.db, env.workspace.workspaceId, done.id).paragraphs.join(' ');
-  assert.match(prose, /I transferred 12\./);
+  assert.match(prose, /I prepared TR-\d+ for 12/);
+  assert.match(prose, /Approval did not move stock/);
   assert.match(prose, /Total unchanged/);
-  assert.match(presenter.describeCompleted(done).headline, /^Moved 12/);
+  assert.match(presenter.describeCompleted(done).headline, /^Prepared transfer for 12/);
 });
 
-test('"nothing needed doing" is not said while something is waiting', () => {
+test('prepared suggestions are not misrepresented as automatic work', () => {
   const env = tights();
   const presenter = require('../../src/autopilot/presenter');
 
@@ -255,6 +278,36 @@ test('"nothing needed doing" is not said while something is waiting', () => {
   const did = presenter.whatFoundryDid(env.db, env.workspace.workspaceId);
 
   assert.doesNotMatch(did.headline, /Nothing needed doing/);
-  assert.match(did.headline, /prepared 1 thing for you/);
-  assert.match(did.headline, /Carried nothing out on its own/);
+  assert.match(did.headline, /Prepared suggestions are available/);
+  assert.match(did.headline, /completed no automatic action/);
+});
+
+test('the handled-without-you count excludes owner sales and includes connector work', () => {
+  const env = tights();
+  const presenter = require('../../src/autopilot/presenter');
+  prices.setPrice(env.db, env.ctx, { skuId: env.black5.id, amount: '20.00', currency: 'USD' });
+  const customer = sales.createCustomer(env.db, env.ctx, { name: 'Counter customer' });
+
+  const ownerOrder = sales.createOrder(env.db, env.ctx, {
+    customerId: customer.id,
+    lines: [{ skuId: env.black5.id, quantity: 1 }],
+  });
+  sales.confirm(env.db, env.ctx, ownerOrder.id, { idempotencyKey: `web-confirm:${ownerOrder.id}` });
+
+  let did = presenter.whatFoundryDid(env.db, env.workspace.workspaceId);
+  assert.equal(did.counts.handled, 0, 'an owner confirmation is not credited to Foundry');
+  assert.ok(!did.actions.some((entry) => entry.link === `/sales/orders/${ownerOrder.id}`));
+
+  const connectorOrder = sales.createOrder(env.db, env.ctx, {
+    customerId: customer.id,
+    lines: [{ skuId: env.black5.id, quantity: 1 }],
+  });
+  sales.confirm(env.db, env.ctx, connectorOrder.id, {
+    idempotencyKey: `external:square:test:${connectorOrder.id}:confirm`,
+  });
+
+  did = presenter.whatFoundryDid(env.db, env.workspace.workspaceId);
+  assert.equal(did.counts.handled, 1);
+  assert.equal(did.actions[0].link, `/sales/orders/${connectorOrder.id}`,
+    'the handled record links to the exact order rather than a general activity page');
 });

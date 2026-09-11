@@ -86,6 +86,27 @@ test('a notice states nothing Foundry was not given', () => {
   assert.doesNotMatch(body, /undefined|null|NaN/);
 });
 
+test('a pickup confirmation never tells the customer their order shipped', () => {
+  const env = setup();
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10,
+  });
+  const customer = sales.createCustomer(env.db, env.ctx, {
+    name: 'Pickup Customer', email: 'pickup@example.test',
+    shippingAddress: 'An old address that is irrelevant to pickup',
+  });
+  const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
+    customerId: customer.id, deliveryMethod: 'PICKUP',
+    lines: [{ skuId: env.item.skuId, quantity: 2 }],
+  }).id);
+  const box = shipments.startPicking(env.db, env.ctx, order.id);
+  const collected = shipments.ship(env.db, env.ctx, box.id, { handover: 'COLLECTED' });
+
+  assert.equal(collected.customerNotice.subject, `Your order ${order.order_number} was collected`);
+  assert.match(collected.customerNotice.body, /was collected.*Items collected:/s);
+  assert.doesNotMatch(collected.customerNotice.body, /shipped|on its way|carrier|tracking/i);
+});
+
 test('a part shipment tells the customer what is still coming', () => {
   const env = setup();
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 30 });

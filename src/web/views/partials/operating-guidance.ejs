@@ -14,7 +14,7 @@
     <a class="btn btn--primary" href="<%= guidance.next.href %>"><%= guidance.next.action %></a>
   <% } %>
   <details class="setup-progress">
-    <summary>Setup progress · <%= completedSteps %> of <%= guidance.steps.length %> complete</summary>
+    <summary><%= guidance.operationalReady ? 'Optional setup' : 'Setup progress' %> · <%= completedSteps %> of <%= guidance.steps.length %> complete</summary>
     <ol class="operating-checklist">
       <% guidance.steps.forEach(function (step, index) { %>
         <li class="operating-step <%= step.complete ? 'is-complete' : step.current ? 'is-current' : '' %>">

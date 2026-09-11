@@ -14,18 +14,11 @@ const express = require('express');
 const notices = require('../../sales/customer-communications');
 const connections = require('../../connections/service');
 const permissions = require('../../actions/permissions');
-const { requireAuth, asyncRoute } = require('../middleware');
+const { requireAuth, requirePermission, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 
 const router = express.Router();
 router.use('/messages', requireAuth);
-
-function requirePermission(permission, what) {
-  return (req, res, next) => {
-    try { permissions.assertCan(req.user, permission, what); return next(); }
-    catch (error) { return next(error); }
-  };
-}
 
 function mailboxes(req) {
   return connections.list(req.db, req.ctx.workspaceId)

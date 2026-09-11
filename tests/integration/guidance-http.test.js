@@ -49,6 +49,31 @@ test('a fresh inventory asks for the real source instead of assuming manual entr
   assert.doesNotMatch(page, /Learn more/);
 });
 
+test('an operating inventory is not called getting ready while optional setup remains', async () => {
+  const env = setup();
+  configure(env.db, env.workspace.workspaceId);
+  const item = itemService.createItem(env.db, env.ctx, {
+    name: 'Working Shoe', baseCode: 'WORK-SHOE', trackingMode: 'quantity',
+  });
+  const sku = repo.listSkusForItem(env.db, env.workspace.workspaceId, item.itemId)[0];
+  engine.receive(env.db, env.ctx, {
+    skuId: sku.id, locationId: env.workspace.main.id, quantity: 3,
+    reasonCode: 'opening_inventory', notes: 'Opening inventory',
+  });
+
+  const state = guidance.build(env.db, env.workspace.workspaceId);
+  assert.equal(state.operationalReady, true);
+  assert.equal(state.checklistActive, true,
+    'supplier, replenishment and authority choices may still be unfinished');
+
+  const agent = await ownerAgent(env);
+  const page = plain((await agent.get('/')).text);
+  assert.doesNotMatch(page, /Getting Foundry ready/i);
+  assert.match(page, /Everything is under control/i);
+  assert.match(page, /Optional setup · 2 of 5 complete/i);
+  env.db.close();
+});
+
 test('a completed source review outranks generic manual setup on Home', () => {
   const env = setup();
   const connection = connectionService.create(env.db, env.ctx, env.membership, {
@@ -255,8 +280,10 @@ test('the next action reuses the real Needs you decision and links to the exact 
   // asked of the reader — each answered once, beside one specific action.
   const needsYou = plain((await agent.get('/needs-you')).text);
   assert.match(needsYou, /Canvas Tote/);
-  assert.match(needsYou, /Why Foundry stopped/i);
-  assert.match(needsYou, /Your decision/i);
+  // The desk speaks in the first person — "Why I stopped" — because it is
+  // Foundry answering, not a report about it. The four questions are unchanged.
+  assert.match(needsYou, /Why I stopped/i);
+  assert.match(needsYou, /What I need/i);
   assert.match(needsYou, /Resolve the difference/, 'the action names the decision, not "Review"');
 });
 

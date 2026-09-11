@@ -1,137 +1,158 @@
 <%
   /*
-   * Needs you is the one screen where a person makes decisions, so it is built
-   * as an inbox and not as a report.
+   * The Desk. One decision at a time, at full size.
    *
-   * Every entry arrives having already answered the same questions — the
-   * inbox builder refuses to show one that cannot — so the work here is making
-   * those answers scannable rather than making the reader parse four labelled
-   * paragraphs per item. The title and what happened carry the item; why
-   * Foundry stopped and what it suggests sit underneath in a quieter register;
-   * the decision being asked for is stated last, immediately beside the button
-   * that makes it.
+   * What this replaced was a scrolling list of cards, which is a triage
+   * interface: you can read everything on it and settle nothing, and the page
+   * looks the same afterwards. A stack behaves differently — it has a position,
+   * it visibly shortens, and the only way to reach the end of it is to decide.
    *
-   * Two things this page used to do to itself. It printed the recommendation
-   * and the decision as separate answers even when the source had filled both
-   * from the same string, so several items said the same sentence twice. And
-   * every item wore an importance badge, including the third tier whose label
-   * is the words "Needs You" — repeating the heading of the page it is on.
+   * The four questions every entry has already answered — what happened, why
+   * Foundry stopped, what it recommends, what it needs — are typeset as a
+   * structure rather than four paragraphs of equal weight, so the
+   * recommendation is visibly the recommendation. It is the only line on the
+   * screen in the accent, because it is the only line that is Foundry's
+   * opinion rather than its record.
+   *
+   * Evidence is a disclosure inside the decision, never a link to a further
+   * page. Nothing in this product is more than one story deep.
    */
   var items = locals.inbox || [];
-  var mode = locals.show || 'all';
+  var at = Math.max(0, Math.min(items.length - 1, Number(locals.at || 0) || 0));
+  var entry = items[at];
+  var total = items.length;
 
-  var urgent = items.filter(function (entry) { return entry.importance === 'Urgent'; });
-  var important = items.filter(function (entry) { return entry.importance === 'Important'; });
+  // The source fills the recommendation and the decision from one string often
+  // enough that the page has to notice. Saying it once is the whole fix.
+  var recommendation = entry ? (entry.recommendation || '') : '';
+  var missing = entry ? (entry.missing || '') : '';
+  var sameAnswer = recommendation && missing
+    && recommendation.trim().toLowerCase() === missing.trim().toLowerCase();
 
-  var shown = mode === 'urgent' ? urgent : mode === 'important' ? important : items;
-
-  var filters = [
-    { key: 'all', label: 'Everything', count: items.length, href: '/needs-you' },
-    { key: 'urgent', label: 'Urgent', count: urgent.length, href: '/needs-you?show=urgent' },
-    { key: 'important', label: 'Important', count: important.length, href: '/needs-you?show=important' },
-  ];
-
-  var headline = items.length === 0
-    ? 'Nothing is waiting'
-    : items.length === 1 ? '1 decision is waiting' : items.length + ' decisions are waiting';
+  var nextAt = at + 1 < total ? at + 1 : null;
+  var prevAt = at > 0 ? at - 1 : null;
 %>
 
-<div class="page-head">
-  <div>
-    <h1>Needs you</h1>
-    <p class="page-sub">
-      Only the things Foundry cannot settle by itself — a number it cannot know, a difference it
-      cannot explain, or permission it does not have. Everything else it is getting on with.
-    </p>
-  </div>
-</div>
+<% if (!total) { %>
 
-<% if (!items.length) { %>
-  <div class="empty-state">
-    <span class="empty-state__icon"><%- helpers.icon('check', { size: 20 }) %></span>
-    <p class="empty-state__title">Nothing is waiting</p>
-    <p class="empty-state__body">
-      You do not need to watch Foundry all day. When it needs something from you, it waits here
-      and says why.
-    </p>
-    <a class="btn" href="/">Back to Home</a>
-  </div>
+  <p class="rm-stamp">Nothing on the desk</p>
+  <h1 class="rm-verdict">Nothing is waiting for you.</h1>
+  <p class="rm-prose">
+    You do not have to watch Foundry. Only what it cannot settle by itself reaches you — a number
+    it cannot know, a difference it cannot explain, or permission it does not have — and when that
+    happens it stops there, waits here, and says why.
+  </p>
+  <p class="rm-choices">
+    <a class="rm-btn" href="/">Back to the brief</a>
+    <a class="rm-btn rm-btn--ghost" href="/ask">Ask Foundry something</a>
+    <% if (currentUser.role === 'owner') { %><a class="rm-btn rm-btn--ghost" href="/repairs/report">Report something wrong</a><% } %>
+  </p>
+
 <% } else { %>
 
-  <div class="inbox-bar">
-    <span class="inbox-bar__count"><%= headline %></span>
-    <%# Filters are links, so they work before any script has run and each slice
-        of the inbox has an address somebody can return to. %>
-    <div class="segmented" role="group" aria-label="Filter by importance">
-      <% filters.forEach(function (filter) { %>
-        <% if (filter.count || filter.key === 'all') { %>
-          <a class="segmented__item <%= mode === filter.key ? 'is-on' : '' %>"
-             href="<%= filter.href %>"
-             <%= mode === filter.key ? 'aria-current="true"' : '' %>><%= filter.label %>
-            <span class="segmented__count"><%= filter.count %></span>
-          </a>
-        <% } %>
-      <% }) %>
+  <div class="rm-desk">
+    <div class="rm-desk__count">
+      <span>Decision <%= at + 1 %> of <%= total %></span>
+      <span class="rm-pips" aria-hidden="true">
+        <% items.forEach(function (unused, i) { %><span class="rm-pip <%= i < at ? 'is-done' : i === at ? 'is-now' : '' %>"></span><% }) %>
+      </span>
+      <%# The importance badge keeps the class the rest of the product colours by,
+          so orange means the same thing here as everywhere else. %>
+      <% if (entry.importance === 'Urgent' || entry.importance === 'Important') { %>
+        <span class="rm-desk__flag badge <%= entry.importance === 'Urgent' ? 'badge--danger' : 'badge--warn' %>"><%= entry.importance %></span>
+      <% } %>
+      <span class="right">
+        <% if (prevAt !== null) { %><a href="/needs-you?at=<%= prevAt %>">← Back</a><% } %>
+        <% if (nextAt !== null) { %><a href="/needs-you?at=<%= nextAt %>">Skip for now →</a><% } %>
+      </span>
     </div>
-  </div>
 
-  <% if (!shown.length) { %>
-    <div class="quiet-note">Nothing in this group right now. <a href="/needs-you">See everything</a>.</div>
-  <% } %>
+    <h1 class="rm-h"><%= entry.title %></h1>
+    <%#
+      What this queue is for, said once, on the entry somebody starts at. Only
+      what Foundry cannot settle by itself arrives here: a number it cannot
+      know, a difference it cannot explain, or permission it does not have.
+      Everything else it is getting on with.
+    %>
+    <% if (at === 0) { %>
+      <p class="rm-stamp rm-stamp--lede">
+        Only what I cannot settle myself reaches you — a number I cannot know, a difference
+        I cannot explain, or permission I do not have.
+      </p>
+    <% } %>
 
-  <div class="inbox">
-    <% shown.forEach(function (entry) { %>
-      <%
-        // The source fills both fields from one string often enough that the
-        // page has to notice. Saying it once is the whole fix.
-        var recommendation = entry.recommendation || '';
-        var decision = entry.missing || '';
-        var sameAnswer = recommendation && decision
-          && recommendation.trim().toLowerCase() === decision.trim().toLowerCase();
+    <div class="rm-qa">
+      <% if (entry.happened) { %>
+        <div class="rm-qa__row"><span class="rm-qa__k">What happened</span><span class="rm-qa__v"><%= entry.happened %></span></div>
+      <% } %>
+      <% if (entry.why) { %>
+        <div class="rm-qa__row"><span class="rm-qa__k">Why I stopped</span><span class="rm-qa__v"><%= entry.why %></span></div>
+      <% } %>
+      <% if (recommendation && !sameAnswer) { %>
+        <div class="rm-qa__row rm-qa__row--rec"><span class="rm-qa__k">What I'd do</span><span class="rm-qa__v"><%= recommendation %></span></div>
+      <% } %>
+      <% if (missing) { %>
+        <div class="rm-qa__row"><span class="rm-qa__k">What I need</span><span class="rm-qa__v"><%= missing %></span></div>
+      <% } %>
+    </div>
+
+    <div class="rm-choices">
+      <a class="rm-btn" href="<%= entry.href %>"><%= entry.actionLabel %></a>
+      <%#
+        Saying no, in the same place as saying yes. Every decision here used to
+        offer one button and it was always the one that goes ahead; a file
+        uploaded twice sat in the queue twice with no way to be rid of either
+        copy. A decision you can only agree to is not a decision.
       %>
-      <article class="need <%= entry.importance === 'Urgent' ? 'need--urgent' : entry.importance === 'Important' ? 'need--important' : '' %>">
-        <div class="need__main">
-          <% if (entry.importance === 'Urgent' || entry.importance === 'Important') { %>
-            <span class="badge <%= entry.importance === 'Urgent' ? 'badge--danger' : 'badge--warn' %>"><%= entry.importance %></span>
-          <% } %>
-          <h2 class="need__title"><%= entry.title %></h2>
-          <% if (entry.happened) { %><p class="need__happened"><%= entry.happened %></p><% } %>
+      <% if (entry.dismiss) { %>
+        <form method="post" action="<%= entry.dismiss.action %>"
+          <%= entry.dismiss.confirm ? 'data-confirm="' + entry.dismiss.confirm + '"' : '' %>>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="returnTo" value="/needs-you">
+          <% if (entry.dismiss.entryId) { %><input type="hidden" name="entryId" value="<%= entry.dismiss.entryId %>"><% } %>
+          <button class="rm-btn rm-btn--ghost" type="submit"><%= entry.dismiss.label %></button>
+        </form>
+      <% } %>
+      <%#
+        The third choice, and the one that separates a manager from a modal:
+        a decision surface you can hold a conversation with. It carries the
+        entry so the question opens with what is on screen already said.
+      %>
+      <a class="rm-btn rm-btn--wash" href="/ask?about=<%= encodeURIComponent(entry.title) %>">Ask me something first</a>
+    </div>
 
-          <% if (entry.why || recommendation) { %>
-            <dl class="need__detail">
-              <% if (entry.why) { %>
-                <div><dt>Why Foundry stopped</dt><dd><%= entry.why %></dd></div>
-              <% } %>
-              <% if (recommendation && !sameAnswer) { %>
-                <div><dt>Foundry suggests</dt><dd><%= recommendation %></dd></div>
-              <% } %>
-            </dl>
-          <% } %>
-        </div>
+    <%
+      /*
+       * What else is in the stack, by name.
+       *
+       * One decision at a time is the point of this page, but a stack whose
+       * contents cannot be seen is a black box: somebody who has just been told
+       * a product is running out has no way to know whether the next card is
+       * about the same product. Names only, no detail, each going straight to
+       * its own position — visible without becoming a second queue to triage.
+       */
+      var rest = items.filter(function (unused, i) { return i !== at; });
+    %>
+    <% if (rest.length) { %>
+      <p class="rm-stamp" style="margin-top:30px;margin-bottom:8px"><%= rest.length %> other <%= rest.length === 1 ? 'thing' : 'things' %> waiting</p>
+      <div class="rm-feed" style="margin-top:0">
+        <% items.forEach(function (other, i) { %><% if (i !== at) { %>
+          <a class="rm-feed__row" href="/needs-you?at=<%= i %>">
+            <span class="rm-feed__ic"><%= i + 1 %></span>
+            <span class="rm-feed__t"><%= other.title %><% if (other.happened) { %><small><%= other.happened %></small><% } %></span>
+            <span class="rm-feed__m">Open</span>
+          </a>
+        <% } %><% }) %>
+      </div>
+    <% } %>
 
-        <div class="need__decide">
-          <% if (decision) { %>
-            <p class="need__ask"><span>Your decision</span><%= decision %></p>
-          <% } %>
-          <a class="btn btn--primary" href="<%= entry.href %>"><%= entry.actionLabel %></a>
-          <%#
-            Saying no, in the same place as saying yes.
-
-            Every decision on this page offered one button, and it was always
-            the one that goes ahead. A file uploaded twice sat here twice with
-            no way to get rid of either copy except by opening it and hunting
-            for the cancel. A decision you can only agree to is not a decision.
-          %>
-          <% if (entry.dismiss) { %>
-            <form method="post" action="<%= entry.dismiss.action %>" class="need__dismiss"
-              <%= entry.dismiss.confirm ? 'data-confirm="' + entry.dismiss.confirm + '"' : '' %>>
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <input type="hidden" name="returnTo" value="/needs-you">
-              <button class="btn btn--ghost btn--sm" type="submit"><%= entry.dismiss.label %></button>
-            </form>
-          <% } %>
-        </div>
-      </article>
-    <% }) %>
+    <p class="rm-disclose">
+      <a href="<%= entry.href %>">The evidence behind this</a>
+      <% if (nextAt !== null) { %><a href="/needs-you?at=<%= nextAt %>">Leave it and see the next one</a><% } %>
+      <a href="/needs-you/all">See all <%= total %> at once</a>
+      <% if (currentUser.role === 'owner') { %><a href="/repairs/report">Report something else wrong</a><% } %>
+      <a href="/">Back to the brief</a>
+    </p>
   </div>
+
 <% } %>

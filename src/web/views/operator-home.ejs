@@ -19,7 +19,7 @@
   var firstName = currentUser && currentUser.name ? currentUser.name.split(/\s+/)[0] : '';
   var needsCount = home.needsYou.length;
   var handlingCount = home.handling.length;
-  var isSettingUp = !!home.setup || !!(home.guidance && home.guidance.checklistActive);
+  var isSettingUp = !!home.setup || !!(home.guidance && !home.guidance.operationalReady);
   var paused = home.status.paused || home.status.suspended;
   var learningCount = home.readiness.evidenceGaps ? home.readiness.evidenceGaps.length : 0;
 

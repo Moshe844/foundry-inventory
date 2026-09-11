@@ -38,18 +38,13 @@ function confirmedOrder(env, quantity = 5) {
   }).id);
 }
 
-test('a shipment nobody can describe is not recorded', () => {
+test('the delivery choice on the order carries through without asking twice', () => {
   const env = setup();
   const order = confirmedOrder(env);
   const box = shipments.startPicking(env.db, env.ctx, order.id);
-
-  assert.throws(() => shipments.ship(env.db, env.ctx, box.id, {}),
-    /Say how these goods left/,
-    'no method, no shipment — Foundry does not pick the flattering word');
-
-  // And the stock is still here, because nothing happened.
-  const still = env.db.prepare(`SELECT status FROM sales_shipments WHERE id = ?`).get(box.id);
-  assert.equal(still.status, 'PICKING');
+  const shipped = shipments.ship(env.db, env.ctx, box.id, {});
+  assert.equal(shipped.handover, 'CARRIER',
+    'the order already recorded Send by carrier, so fulfilment does not ask again');
 });
 
 test('a tracking number is somebody saying it went by carrier', () => {

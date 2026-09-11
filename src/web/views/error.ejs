@@ -1,4 +1,14 @@
-<div class="card">
+<%
+  /*
+   * The screen somebody lands on when Foundry could not do what they asked.
+   *
+   * It says which of the two things happened — the address is wrong, or the
+   * server is — offers the two places worth going next, and keeps the
+   * developer detail in a bounded, scrollable block rather than letting a
+   * stack trace set the width of the page.
+   */
+%>
+<div class="card errorpage">
   <div class="empty">
     <div class="icon-wrap"><%- helpers.icon(status === 404 ? 'empty' : 'alert', { size: 22 }) %></div>
     <h3><%= status === 404 ? 'We could not find that' : 'Something went wrong' %></h3>
@@ -7,8 +17,11 @@
       <a class="btn btn--primary" href="/">Back to overview</a>
       <a class="btn" href="/inventory">Go to inventory</a>
     </div>
-    <% if (typeof detail !== 'undefined' && detail) { %>
-      <pre class="mono" style="text-align:left; margin-top:20px; padding:12px; background:var(--surface-2); border:1px solid var(--line); border-radius:8px; overflow:auto; font-size:12px;"><%= detail %></pre>
-    <% } %>
   </div>
+  <% if (typeof detail !== 'undefined' && detail) { %>
+    <details class="disclose errorpage__detail">
+      <summary>Technical detail</summary>
+      <div class="disclose__body"><pre class="errorpage__trace"><%= detail %></pre></div>
+    </details>
+  <% } %>
 </div>

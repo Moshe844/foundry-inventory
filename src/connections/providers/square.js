@@ -13,8 +13,12 @@ const WEBHOOK_EVENTS = ['payment.created', 'payment.updated', 'refund.created', 
 function base() { return config.connections.square.environment === 'sandbox' ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com'; }
 function metadata() {
   return { type: 'square', name: 'Square', mark: '□', category: 'selling', authMode: 'oauth', available: config.connections.square.configured,
-    description: 'Automatically receive completed Square sales and returns, and map catalog items and business locations.',
+    description: 'Automatically import and keep mapping Square products, variants, prices, inventory and business locations, then receive completed sales and returns.',
     provides: ['completed POS sales', 'returns', 'catalog SKUs and locations'],
+    // Square is a source of real business evidence, not a suggestion list.
+    // An external id is durable, so a new Square record can safely become a
+    // Foundry record once; later discovery maps back to that same record.
+    catalogImportMode: 'automatic',
     sandboxMode: config.connections.square.environment === 'sandbox',
     unavailableReason: config.connections.square.configured ? null : 'Foundry’s Square app credentials have not been configured on this installation.',
   };
@@ -94,6 +98,7 @@ async function discover({ credentials }) {
     providerData: { version: variation.version,
       itemName: itemNames.get(variation.item_variation_data?.item_id) || 'Square item',
       variationName: variation.item_variation_data?.name || null,
+      barcode: variation.item_variation_data?.upc || null,
       trackInventory: !!variation.item_variation_data?.track_inventory,
       priceMoney: variation.item_variation_data?.price_money || null,
       inventoryCounts: countsByVariation.get(variation.id) || [] },

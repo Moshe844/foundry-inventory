@@ -39,7 +39,7 @@ function withEnvironment(values, action) {
   });
 }
 
-test('shipping settings explain the safe platform requirement instead of using a shared developer key', async () => {
+test('shipping settings require a business-owned provider account instead of using shared developer funds', async () => {
   await withEnvironment({
     SHIPENGINE_PLATFORM_API_KEY: null,
     SHIPENGINE_PARTNER_ID: null,
@@ -58,8 +58,10 @@ test('shipping settings explain the safe platform requirement instead of using a
     const page = await agent.get('/settings/shipping');
     const words = plain(page.text);
     assert.equal(page.status, 200);
-    assert.match(words, /ShipEngine's embedded setup is not connected/);
-    assert.match(words, /normal sandbox API key alone cannot create isolated customer sellers/);
+    assert.match(words, /No carrier account is connected/);
+    assert.match(words, /Use a free account owned by this business/);
+    assert.match(words, /postage is charged to that business's provider account, not Foundry/);
+    assert.match(words, /embedded seller-account flow requires partner credentials/);
     assert.doesNotMatch(words, /Set up shipping Keeper will not be charged/);
     store.db.close();
   });
@@ -95,7 +97,7 @@ test('workspace seller opens embedded onboarding, mints a scoped token, and beco
     assert.equal(page.status, 200);
     assert.match(words, /ShipEngine for Merchant funded postage/);
     assert.match(words, /setup unfinished/);
-    assert.match(words, /Foundry never charges Keeper's developer account/);
+    assert.match(words, /Foundry never charges Foundry's platform account/);
     assert.match(page.text, /shipengine-elements-sdk\.mjs/);
     assert.match(page.text, /12 Main Street/);
     assert.match(page.text, /enabledShipEngineCarriers: \['stamps_com', 'dhl_express_worldwide'\]/);

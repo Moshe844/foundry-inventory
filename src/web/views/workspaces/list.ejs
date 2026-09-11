@@ -39,6 +39,7 @@
         </div>
 
         <div class="wsp-meta">
+          <% if (workspace.dataMode === 'synthetic') { %><span class="badge badge--variant">Test environment</span><% } %>
           <span class="badge badge--muted"><%= helpers.roleLabel(workspace.role) %></span>
           <% if (workspace.configuredByFoundry) { %>
             <span class="badge badge--muted"><%- helpers.icon('foundry', { size: 11 }) %> Set up by Foundry</span>

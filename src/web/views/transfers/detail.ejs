@@ -1,0 +1,77 @@
+<%
+  var stages = [
+    { key: 'READY', label: 'Ready to move' },
+    { key: 'IN_TRANSIT', label: 'On the way' },
+    { key: 'RECEIVED', label: 'Complete' }
+  ];
+  var stageIndex = { REQUESTED: 0, APPROVED: 0, PICKED: 0, SHIPPED: 1, IN_TRANSIT: 1, PARTIALLY_RECEIVED: 1, RECEIVED: 2, CANCELLED: -1 }[transfer.status];
+  var nextFacts = {
+    REQUESTED: 'Approve this move',
+    APPROVED: 'Ready to move',
+    PICKED: 'Ready to move',
+    SHIPPED: 'Confirm it is on the way',
+    IN_TRANSIT: 'Confirm what arrived',
+    PARTIALLY_RECEIVED: 'Settle the remaining units',
+    RECEIVED: 'This transfer is complete.',
+    CANCELLED: 'This transfer was cancelled before the stock left.'
+  };
+%>
+<p class="rm-stamp"><a href="/transfers">Transfers</a> / <%= transfer.transfer_number %></p>
+<div class="rm-titleline"><div><h1 class="rm-figure"><%= transfer.source_name %> → <%= transfer.destination_name %></h1>
+  <p class="rm-sub"><%= transfer.transfer_number %> · <%= transfer.totals.requested %> units requested<%= transfer.expected_arrival_date ? ' · expected ' + transfer.expected_arrival_date : '' %></p></div></div>
+
+<section class="rm-stages" aria-label="Transfer progress">
+  <% stages.forEach(function(stage, index) { %>
+    <div class="rm-stage <%= stageIndex > index ? 'is-done' : stageIndex === index ? 'is-now' : '' %>"><div class="rm-stage__bar"></div><span class="rm-stage__t"><%= stage.label %></span></div>
+  <% }) %>
+</section>
+
+<section class="rm-panel rm-transfer-next">
+  <div class="rm-panel__head"><div><p class="rm-kicker">Next physical fact</p><h2><%= nextFacts[transfer.status] %></h2></div><span class="rm-transfer-status"><%= transfer.status === 'APPROVED' ? 'Ready to move' : transfer.status.replaceAll('_', ' ') %></span></div>
+  <div class="rm-panel__body">
+    <% if (transfer.status === 'REQUESTED') { %>
+      <p class="rm-transfer-next__summary"><strong><%= transfer.totals.requested %> units</strong> will be held at <strong><%= transfer.source_name %></strong> for <strong><%= transfer.destination_name %></strong>. Nothing has physically moved.</p>
+      <% if (canApprove) { %><form method="post" action="/transfers/<%= transfer.id %>/approve" class="rm-title__do"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn">Approve this move</button></form><% } %>
+    <% } else if ((transfer.status === 'APPROVED' || transfer.status === 'PICKED') && canPick && canDispatch) { %>
+      <p class="rm-transfer-next__summary"><strong><%= transfer.totals.approved %> units</strong> are held at <strong><%= transfer.source_name %></strong> for <strong><%= transfer.destination_name %></strong>. Confirm once when they physically leave; Foundry records the internal pick, dispatch, and in-transit custody together.</p>
+      <form method="post" action="/transfers/<%= transfer.id %>/pick-and-dispatch" class="rm-title__do"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= dispatchToken %>"><button class="rm-btn">Confirm <%= transfer.totals.approved %> units left <%= transfer.source_name %></button></form>
+    <% } else if (transfer.status === 'APPROVED' && canPick) { %>
+      <p class="rm-sub">The picker can confirm that the units are ready. Dispatch remains a separate permission.</p>
+      <form method="post" action="/transfers/<%= transfer.id %>/pick" class="rm-title__do"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn">Mark ready to move</button></form>
+    <% } else if (transfer.status === 'PICKED' && canDispatch) { %>
+      <p class="rm-sub">Confirm only when the units physically leave <strong><%= transfer.source_name %></strong>.</p>
+      <form method="post" action="/transfers/<%= transfer.id %>/pick-and-dispatch" class="rm-title__do"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= dispatchToken %>"><button class="rm-btn">Confirm units left <%= transfer.source_name %></button></form>
+    <% } else if (transfer.status === 'SHIPPED' && canDispatch) { %>
+      <p class="rm-sub">The dispatch is recorded. Confirm that it is travelling so Foundry can include it in destination availability and forecasting.</p>
+      <form method="post" action="/transfers/<%= transfer.id %>/in-transit" class="rm-title__do"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn">Confirm it is on the way</button></form>
+    <% } else if (['IN_TRANSIT','PARTIALLY_RECEIVED'].includes(transfer.status) && canReceive) { %>
+      <% transfer.lines.filter(function(line) { return line.in_transit_quantity > 0; }).forEach(function(line) { %>
+        <div class="rm-transfer-receipt">
+          <strong><%= line.item_name %><%= line.variant_label ? ' / ' + line.variant_label : '' %></strong>
+          <span><%= line.in_transit_quantity %> units in transit to <%= transfer.destination_name %></span>
+          <% if (line.tracking_mode === 'serial') { %>
+            <p class="rm-note">Choose the outcome for each serial unit. Foundry never assumes a serial identity.</p>
+            <form method="post" action="/transfers/<%= transfer.id %>/receive" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= receiptToken %>:<%= line.id %>"><input type="hidden" name="lineId" value="<%= line.id %>">
+              <% line.serials.filter(function(serial) { return serial.state === 'IN_TRANSIT'; }).forEach(function(serial) { %><label><%= serial.serial %><select name="serialOutcome_<%= serial.serial_unit_id %>" required><option value="RECEIVED">Arrived in usable condition</option><% if (canAdjust) { %><option value="DAMAGED">Damaged / written off</option><option value="LOST">Lost in transit</option><% } %></select></label><% }) %>
+              <div class="rm-span-2"><button class="rm-btn">Record serial outcomes</button></div>
+            </form>
+          <% } else { %>
+            <form method="post" action="/transfers/<%= transfer.id %>/receive" class="rm-title__do"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= receiptToken %>:all:<%= line.id %>"><input type="hidden" name="lineId" value="<%= line.id %>"><input type="hidden" name="received" value="<%= line.in_transit_quantity %>"><input type="hidden" name="lost" value="0"><input type="hidden" name="damaged" value="0"><button class="rm-btn">Confirm all <%= line.in_transit_quantity %> arrived</button></form>
+            <% if (canAdjust) { %><details class="rm-more"><summary>Something arrived short, lost, or damaged</summary><div><form method="post" action="/transfers/<%= transfer.id %>/receive" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= receiptToken %>:difference:<%= line.id %>"><input type="hidden" name="lineId" value="<%= line.id %>"><label>Arrived usable<input type="number" min="0" max="<%= line.in_transit_quantity %>" name="received" value="<%= line.in_transit_quantity %>"></label><label>Lost<input type="number" min="0" max="<%= line.in_transit_quantity %>" name="lost" value="0"></label><label>Damaged / written off<input type="number" min="0" max="<%= line.in_transit_quantity %>" name="damaged" value="0"></label><div class="rm-span-2"><button class="rm-btn rm-btn--ghost">Record this difference</button></div></form></div></details><% } %>
+          <% } %>
+        </div>
+      <% }) %>
+    <% } else { %>
+      <p class="rm-note"><%= nextFacts[transfer.status] %></p>
+    <% } %>
+  </div>
+</section>
+
+<section class="rm-panel rm-transfer-custody">
+  <div class="rm-panel__head"><div><p class="rm-kicker">What Foundry is tracking</p><h2>Transfer contents</h2></div></div>
+  <div class="rm-panel__body rm-transfer-lines"><% transfer.lines.forEach(function(line) { var settled = []; if (line.received_quantity) settled.push(line.received_quantity + ' received at ' + transfer.destination_name); if (line.lost_quantity) settled.push(line.lost_quantity + ' lost'); if (line.damaged_quantity) settled.push(line.damaged_quantity + ' damaged'); %><div class="rm-transfer-line"><div><strong><%= line.item_name %><%= line.variant_label ? ' / ' + line.variant_label : '' %></strong><small><%= line.lot_code ? 'Lot ' + line.lot_code : '' %></small></div><div><strong><%= transfer.status === 'APPROVED' ? line.approved_quantity + ' held at ' + transfer.source_name : line.in_transit_quantity ? line.in_transit_quantity + ' in transit' : settled.join(' · ') %></strong><span><%= line.in_transit_quantity || transfer.status === 'APPROVED' ? 'Going to ' + transfer.destination_name : 'Settled' %></span></div></div><% }) %></div>
+</section>
+
+<% if (['REQUESTED','APPROVED','PICKED'].includes(transfer.status) && canApprove) { %><details class="rm-panel rm-transfer-disclosure"><summary>Cancel this transfer</summary><div class="rm-panel__body"><p class="rm-note">Cancellation releases the held stock because nothing has left yet.</p><form method="post" action="/transfers/<%= transfer.id %>/cancel" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="rm-span-2">Why is it cancelled?<input name="reason" required placeholder="For example: the store no longer needs it"></label><div class="rm-span-2"><button class="rm-btn rm-btn--ghost">Cancel transfer</button></div></form></div></details><% } %>
+
+<details class="rm-panel rm-transfer-disclosure"><summary>Timeline and evidence</summary><div class="rm-panel__body"><div class="rm-transfer-events"><% transfer.events.forEach(function(event) { %><div><strong><%= event.event_type.replaceAll('_',' ') %></strong><span><%= event.created_at %><%= event.actor_name ? ' · ' + event.actor_name : '' %></span></div><% }) %></div></div></details>

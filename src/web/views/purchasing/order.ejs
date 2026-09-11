@@ -183,6 +183,9 @@
   </div>
   <div class="card-foot">
     <div class="btn-row">
+      <% if ((locals.receipts || []).length && permissions.landedCosts) { %>
+        <a class="btn btn--secondary" href="/purchasing/orders/<%= order.id %>/landed-costs">Allocate freight, duty or handling</a>
+      <% } %>
       <% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status) && order.hasCosts && permissions.approve) { %>
         <form method="post" action="/purchasing/orders/<%= order.id %>/approve" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -254,7 +257,7 @@
 <% } %>
 
 <% if (receipts.length) { %>
-  <div class="card section">
+  <div class="card section" id="receipts">
     <div class="card-head"><h2>Deliveries</h2></div>
     <div class="card-body">
       <% receipts.forEach(function (receipt) { %>

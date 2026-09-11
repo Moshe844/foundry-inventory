@@ -4,10 +4,10 @@
  * Multi-inventory acceptance run, in a real browser, from a clean database,
  * with two real Foundry configurations.
  *
- * Sign up → create "Clothing Business" → configure it through Foundry as
- * variant inventory → add a second inventory → create "Equipment Company" →
- * configure it through Foundry as serialized inventory → switch between them →
- * confirm each has its own configuration, vocabulary, data and intelligence →
+ * Sign up → create "Clothing Business" → let Foundry understand its structure →
+ * supply its real locations and variant item → add "Equipment Company" → let
+ * Foundry understand serialized tracking → supply its real locations and item →
+ * switch between them → confirm each has its own facts, data and intelligence →
  * confirm nothing whatsoever leaks between them.
  */
 
@@ -122,21 +122,48 @@ async function createItem(page, { name, code, mode, options }) {
   return page.url();
 }
 
-/** Describe the business to Foundry and approve whatever it proposes. */
-async function configureThroughFoundry(page, description) {
+async function createLocation(page, name, kind) {
+  await page.locator('button[data-modal-open="modal-location"]').first().click();
+  await page.fill('#location-name', name);
+  await page.selectOption('#location-kind', kind);
+  await Promise.all([
+    page.waitForURL(`${BASE}/locations`),
+    page.click('#modal-location button[type="submit"]'),
+  ]);
+}
+
+/**
+ * Describe the business, verify Foundry asks for evidence rather than creating
+ * inferred facts, then choose manual entry and supply the exact real locations.
+ */
+async function understandThenEnterFacts(page, description, locations) {
   await page.fill('#description', description);
   await Promise.all([
     page.waitForURL(/\/foundry\/thinking\//, { timeout: 30000 }),
     page.click('button:has-text("Understand my inventory")'),
   ]);
   await page.waitForURL(/\/foundry\/proposal\//, { timeout: 600000 });
-  await page.click('button:has-text("Configure my inventory")');
-  await page.waitForURL(/\/foundry\/ready\//, { timeout: 120000 });
+  const proposal = await page.locator('body').innerText();
+  assert.match(proposal, /Where are your real product and stock records today\?/i);
+  assert.doesNotMatch(proposal, /Configure my inventory/i);
+  await Promise.all([
+    page.waitForURL(`${BASE}/onboarding`),
+    page.click('a:has-text("Choose where my records are")'),
+  ]);
+  await Promise.all([
+    page.waitForURL(`${BASE}/foundry/describe`),
+    page.click('button:has-text("Enter it in Foundry")'),
+  ]);
+  await Promise.all([
+    page.waitForURL(`${BASE}/locations`),
+    page.click('button:has-text("Set it up manually instead")'),
+  ]);
+  for (const [name, kind] of locations) await createLocation(page, name, kind);
 }
 
 /** The inventory the console is currently showing, read from the switcher. */
 async function currentInventory(page) {
-  return (await page.locator('.wsp-switch-text strong').first().innerText()).trim();
+  return (await page.locator('[data-switcher-toggle]').first().innerText()).trim();
 }
 
 async function switchTo(page, name) {
@@ -211,26 +238,33 @@ test(
       await shot(page, 'first-inventory-setup');
     });
 
-    await t.test('3. Foundry configures it as variant inventory', async () => {
-      await configureThroughFoundry(page, CLOTHING.description);
-      await shot(page, 'clothing-configured');
+    await t.test('3. Foundry understands variants and the owner supplies real locations', async () => {
+      const suppliedLocations = [
+        ['Brooklyn Warehouse', 'warehouse'],
+        ['New Jersey Warehouse', 'warehouse'],
+      ];
+      await understandThenEnterFacts(page, CLOTHING.description, suppliedLocations);
+      await shot(page, 'clothing-understood');
 
       state.clothingId = inspect(databasePath, (db) =>
         db.prepare('SELECT id FROM workspaces WHERE name = ?').get(CLOTHING.name).id
       );
-      const model = inspect(databasePath, (db) =>
-        JSON.parse(
-          db.prepare('SELECT inventory_model FROM workspace_configuration WHERE workspace_id = ?')
-            .get(state.clothingId).inventory_model
-        )
+      state.clothingUnderstanding = inspect(databasePath, (db) =>
+        JSON.parse(db.prepare(
+          'SELECT payload FROM foundry_understandings WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1'
+        ).get(state.clothingId).payload)
       );
-      assert.equal(model.usesVariants, true, `clothing should use variants: ${JSON.stringify(model)}`);
-      assert.notEqual(model.primaryArchetype, 'serial');
+      assert.equal(state.clothingUnderstanding.recommendedConfiguration.usesVariants, true);
+      assert.equal(state.clothingUnderstanding.recommendedConfiguration.trackingMode, 'quantity');
 
       state.clothingLocations = inspect(databasePath, (db) =>
         db.prepare('SELECT name FROM locations WHERE workspace_id = ?').all(state.clothingId).map((l) => l.name)
       );
-      assert.ok(state.clothingLocations.length >= 1);
+      assert.deepEqual(state.clothingLocations.sort(), suppliedLocations.map(([name]) => name).sort());
+      const empty = inspect(databasePath, (db) =>
+        db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(state.clothingId).n
+      );
+      assert.equal(empty, 0, 'understanding structure must not invent products');
     });
 
     await t.test('4-5. add a second inventory: Equipment Company', async () => {
@@ -258,42 +292,35 @@ test(
       await shot(page, 'second-inventory-setup');
     });
 
-    await t.test('6. Foundry configures it as serialized inventory', async () => {
-      await configureThroughFoundry(page, EQUIPMENT.description);
-      await shot(page, 'equipment-configured');
+    await t.test('6. Foundry understands serial tracking and the owner supplies real locations', async () => {
+      const suppliedLocations = [
+        ['Main Yard', 'warehouse'],
+        ['Service Center', 'other'],
+      ];
+      await understandThenEnterFacts(page, EQUIPMENT.description, suppliedLocations);
+      await shot(page, 'equipment-understood');
 
       state.equipmentId = inspect(databasePath, (db) =>
         db.prepare('SELECT id FROM workspaces WHERE name = ?').get(EQUIPMENT.name).id
       );
-      const model = inspect(databasePath, (db) =>
-        JSON.parse(
-          db.prepare('SELECT inventory_model FROM workspace_configuration WHERE workspace_id = ?')
-            .get(state.equipmentId).inventory_model
-        )
+      state.equipmentUnderstanding = inspect(databasePath, (db) =>
+        JSON.parse(db.prepare(
+          'SELECT payload FROM foundry_understandings WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1'
+        ).get(state.equipmentId).payload)
       );
-      assert.equal(model.primaryArchetype, 'serial', `equipment should be serialized: ${JSON.stringify(model)}`);
-      assert.equal(Boolean(model.serialRules && model.serialRules.enabled), true);
+      assert.equal(state.equipmentUnderstanding.recommendedConfiguration.trackingMode, 'serial');
+      assert.equal(state.equipmentUnderstanding.serializedTracking.applies, true);
       assert.notEqual(state.clothingId, state.equipmentId);
     });
 
-    await t.test('7. each inventory got a genuinely different configuration', async () => {
-      const [clothing, equipment] = inspect(databasePath, (db) =>
-        [state.clothingId, state.equipmentId].map((id) =>
-          db.prepare('SELECT * FROM workspace_configuration WHERE workspace_id = ?').get(id)
-        )
-      );
-
-      const clothingModel = JSON.parse(clothing.inventory_model);
-      const equipmentModel = JSON.parse(equipment.inventory_model);
-      assert.notEqual(clothingModel.primaryArchetype, equipmentModel.primaryArchetype);
+    await t.test('7. each inventory got a genuinely different evidence-backed understanding', async () => {
+      const clothingModel = state.clothingUnderstanding.recommendedConfiguration;
+      const equipmentModel = state.equipmentUnderstanding.recommendedConfiguration;
+      assert.notEqual(clothingModel.trackingMode, equipmentModel.trackingMode);
       assert.notEqual(clothingModel.usesVariants, equipmentModel.usesVariants);
 
-      // Foundry chose the wording for each business separately.
-      const clothingTerms = JSON.parse(clothing.terminology);
-      const equipmentTerms = JSON.parse(equipment.terminology);
-      assert.notDeepEqual(clothingTerms, equipmentTerms, 'the vocabularies are not the same');
-
-      // And separate locations, which are inside a workspace, not the same thing as one.
+      // The locations were explicitly supplied by the owner and remain inside
+      // their own workspace; none came from a model inference.
       const locations = inspect(databasePath, (db) => ({
         clothing: db.prepare('SELECT name FROM locations WHERE workspace_id = ?').all(state.clothingId).map((l) => l.name),
         equipment: db.prepare('SELECT name FROM locations WHERE workspace_id = ?').all(state.equipmentId).map((l) => l.name),
@@ -349,14 +376,14 @@ test(
       const clothingBody = await page.locator('body').innerText();
       assert.match(clothingBody, new RegExp(CLOTHING.name));
 
-      await page.goto(`${BASE}/inventory`);
+      await page.goto(`${BASE}/inventory/table`);
       const clothingItems = await page.locator('body').innerText();
       assert.match(clothingItems, /Harbour Tee/);
       assert.ok(!clothingItems.includes('Site Generator'), 'the other inventory is not here');
       await shot(page, 'clothing-console');
 
       await switchTo(page, EQUIPMENT.name);
-      await page.goto(`${BASE}/inventory`);
+      await page.goto(`${BASE}/inventory/table`);
       const equipmentItems = await page.locator('body').innerText();
       assert.match(equipmentItems, /Site Generator/);
       assert.ok(!equipmentItems.includes('Harbour Tee'), 'and neither is the first');

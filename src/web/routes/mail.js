@@ -15,18 +15,11 @@ const drafting = require('../../connections/reply-drafting');
 const setAside = require('../../connections/mail-set-aside');
 const providerService = require('../../connections/provider-service');
 const permissions = require('../../actions/permissions');
-const { requireAuth, asyncRoute } = require('../middleware');
+const { requireAuth, requirePermission, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 
 const router = express.Router();
 router.use('/mail', requireAuth);
-
-function requirePermission(permission, what) {
-  return (req, res, next) => {
-    try { permissions.assertCan(req.user, permission, what); return next(); }
-    catch (error) { return next(error); }
-  };
-}
 
 /*
  * The fourth drawer is not a state a message can be in — it is the mail

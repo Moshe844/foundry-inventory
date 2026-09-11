@@ -16,6 +16,7 @@ const replenishmentPlan = require('../../purchasing/replenishment-plan');
 const signalEngine = require('../../signals/signal-engine');
 const permissions = require('../../actions/permissions');
 const salesOrders = require('../../sales/sales-order-service');
+const transferService = require('../../transfers/transfer-service');
 const purchasingPosition = require('../../purchasing/position');
 const prices = require('../../pricing/price-service');
 const operatingInstructions = require('../../manager/operating-instructions');
@@ -94,9 +95,49 @@ function normaliseOptionInput(raw) {
   return list.filter(Boolean).map((entry) => ({ name: entry.name, values: entry.values }));
 }
 
+/*
+ * What you hold, before what is in the table.
+ *
+ * /inventory answers "is my stock all right" in six lines; /inventory/table is
+ * the product list it used to be, unchanged, one link away. Nothing was
+ * removed — the entry point moved to the question somebody actually arrives
+ * with.
+ */
+/** Anything that narrows or explains the list means somebody wants the list. */
+const TABLE_QUERIES = ['q', 'location', 'tracking', 'archived', 'sort', 'page',
+  'sourceDocument', 'fromConnection', 'fromMessage', 'group'];
+
 router.get(
   '/inventory',
   asyncRoute(async (req, res) => {
+    /*
+     * A filtered, searched or explained inventory is the table, not the
+     * summary. Coming back from a mailbox import to "4 running low" would
+     * answer a question nobody asked, and lose the way back to the message the
+     * products came from.
+     */
+    if (TABLE_QUERIES.some((key) => req.query[key] !== undefined && req.query[key] !== '')) {
+      // Rendered here rather than redirected, so a link that carries where it
+      // came from keeps its address and its way back.
+      return renderTable(req, res);
+    }
+    let stockValue = null;
+    try { stockValue = require('../../accounting/costing').valuation(req.db, req.ctx.workspaceId); }
+    catch { stockValue = null; }
+    return res.page('inventory/position', {
+      title: 'What you hold',
+      nav: 'inventory',
+      room: true,
+      position: require('../stock-view').build(req.db, req.ctx.workspaceId),
+      stockValue,
+    });
+  })
+);
+
+router.get('/inventory/table', asyncRoute(renderTable));
+
+async function renderTable(req, res) {
+  {
     const limit = 25;
     const page = Math.max(Number(req.query.page) || 1, 1);
     const sourceDocument = /^sdoc_[a-z0-9]+$/i.test(String(req.query.sourceDocument || ''))
@@ -217,8 +258,8 @@ router.get(
       sourceDocument: sourceLabel ? sourceDocument : null,
       sourceLabel,
     });
-  })
-);
+  }
+}
 
 router.get(
   '/inventory/new',
@@ -379,6 +420,7 @@ router.get(
     res.page('inventory/item', {
       title: detail.item.name,
       nav: 'inventory',
+      room: true,
       ...detail,
       attention: presentItemFindings(req.db, req.ctx.workspaceId, findings),
       purchasingLines,
@@ -498,12 +540,14 @@ router.post(
     };
     if (item.tracking_mode === 'serial') input.serialUnitIds = toArray(req.body.serialUnitIds);
     if (item.tracking_mode === 'lot') input.lotId = req.body.lotId;
-    const result = engine.transfer(req.db, req.ctx, input);
-    reevaluate.afterMovement(req.db, req.ctx.workspaceId, [input.skuId], 'transfer');
-    const from = repo.requireLocation(req.db, req.ctx.workspaceId, input.fromLocationId);
-    const to = repo.requireLocation(req.db, req.ctx.workspaceId, input.toLocationId);
-    req.flash('success', `Transferred ${result.quantity} from ${from.name} to ${to.name}.`);
-    res.redirect(303, `/inventory/${req.params.id}`);
+    const transfer = transferService.request(req.db, req.ctx, req.user, {
+      fromLocationId: input.fromLocationId, toLocationId: input.toLocationId,
+      notes: input.notes, reference: input.reference,
+      lines: [{ skuId: input.skuId, quantity: input.serialUnitIds?.length || input.quantity, lotId: input.lotId,
+        serialUnitIds: input.serialUnitIds }],
+    });
+    req.flash('success', `${transfer.transfer_number} was requested. Stock stays at the source until dispatch.`);
+    res.redirect(303, `/transfers/${transfer.id}`);
   })
 );
 

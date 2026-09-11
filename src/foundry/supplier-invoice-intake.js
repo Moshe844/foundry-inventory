@@ -121,10 +121,6 @@ function bill(db, ctx, membership, { interpretation, supplierId, order, sourceNa
       purchaseOrderLineId: ordered ? ordered.id : null,
     };
   }).filter((line) => line.quantity > 0);
-  if (!lines.length) {
-    return { billed: false, because: 'The invoice has no billable lines.' };
-  }
-
   /*
    * Charges are billed too. Freight on a supplier invoice is money the
    * supplier is asking for, and leaving it off the bill would mean paying an
@@ -133,6 +129,9 @@ function bill(db, ctx, membership, { interpretation, supplierId, order, sourceNa
   for (const charge of interpretation.charges || []) {
     if (!charge.amountMinor) continue;
     lines.push({ description: charge.label, quantity: 1, unitCostMinor: charge.amountMinor });
+  }
+  if (!lines.length) {
+    return { billed: false, because: 'The invoice has no billable lines.' };
   }
 
   const draft = payables.createDraft(db, ctx, membership, {

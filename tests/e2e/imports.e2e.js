@@ -220,8 +220,12 @@ test(
       assert.match(text, /8 rows read/, text.slice(0, 800));
       assert.match(text, /Item Description/);
       assert.match(text, /Qty On Hand/);
-      // The price column is named as something deliberately left out.
-      assert.match(text, /Unit Cost[\s\S]{0,120}does not track/i);
+      // Purchase cost is now a first-class inventory/accounting fact, so the
+      // source column must be mapped rather than discarded by an old rule.
+      const costLabel = page.locator('form[action$="/mapping"] tbody td:first-child > strong')
+        .filter({ hasText: /^Unit Cost$/ });
+      const costMapping = costLabel.locator('xpath=../following-sibling::td/select');
+      assert.equal(await costMapping.inputValue(), 'unitCost');
       // The row with no number, and the row that says "call".
       assert.match(text, /not a number Foundry can count/);
       assert.match(text, /no opening stock/);
@@ -278,7 +282,7 @@ test(
       assert.equal(rows.receipts, 6);
       assert.equal(rows.north, 240 + 120 + 60);
 
-      await page.goto(`${BASE}/inventory`);
+      await page.goto(`${BASE}/inventory/table`);
       await shot(page, 'inventory-after');
       const inventoryText = await page.locator('body').innerText();
       assert.match(inventoryText, /Strong White Flour 16kg/);

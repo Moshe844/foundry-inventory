@@ -1,7 +1,7 @@
 <div class="page-head">
   <div class="titles">
     <h1>Locations</h1>
-    <div class="page-sub">Everywhere your stock can sit.</div>
+    <div class="page-sub">Buildings and the exact zones, aisles, shelves, bins, docks or staging areas inside them.</div>
   </div>
   <% if (currentUser.role === 'owner') { %>
     <div class="page-actions">
@@ -15,7 +15,7 @@
     <div class="empty">
       <div class="icon-wrap"><%- helpers.icon('locations', { size: 22 }) %></div>
       <h3>No locations yet</h3>
-      <p>Add the first place stock can live — a warehouse, store, stockroom, truck or office. Foundry needs this before it can record quantities.</p>
+      <p>Add the first place stock can live. Add bins only when they are real; Foundry never invents them.</p>
       <% if (currentUser.role === 'owner') { %>
         <button class="btn btn--primary" type="button" data-modal-open="modal-location">Add your first location</button>
       <% } %>
@@ -30,7 +30,8 @@
           <% locations.forEach(function (location) { %>
             <tr>
               <td class="cell-main">
-                <a class="cell-title" href="/inventory?location=<%= location.id %>"><%= location.name %></a>
+                <a class="cell-title" style="padding-left:<%= location.depth * 18 %>px" href="/inventory?location=<%= location.id %>"><%= location.depth ? '↳ ' : '' %><%= location.name %></a>
+                <% if (location.barcode) { %><span class="cell-sub">Scan code: <%= location.barcode %> · <a href="/warehouse/labels/location/<%= location.id %>">Print label</a></span><% } %>
                 <% if (location.note) { %><span class="cell-sub"><%= location.note %></span><% } %>
                 <% if (!location.is_active) { %><span class="badge badge--muted">Archived</span><% } %>
               </td>
@@ -93,6 +94,13 @@
           </select>
         </div>
         <div class="field">
+          <label class="label" for="location-parent">Inside <span class="optional">optional</span></label>
+          <select class="select" id="location-parent" name="parentLocationId"><option value="">Top-level location</option><% locations.filter(l => l.is_active).forEach(function(parent) { %><option value="<%= parent.id %>"><%= parent.display_path %></option><% }) %></select>
+          <p class="field-hint">Use this for a real zone, aisle, shelf, bin, dock or staging area inside another location.</p>
+        </div>
+        <div class="field"><label class="label" for="location-barcode">Scan code <span class="optional">recommended</span></label><input class="input" id="location-barcode" name="barcode" autocomplete="off" placeholder="BIN-A-01-02"></div>
+        <div class="field"><label class="label" for="location-sequence">Pick sequence</label><input class="input" id="location-sequence" name="pickSequence" type="number" min="0" step="1" value="0"></div>
+        <div class="field">
           <%#
             Its own field rather than a line in the note, because a carrier
             needs it as an address and will not quote a rate without one.
@@ -140,6 +148,9 @@
               <% }) %>
             </select>
           </div>
+          <div class="field"><label class="label" for="edit-parent-<%= location.id %>">Inside</label><select class="select" id="edit-parent-<%= location.id %>" name="parentLocationId"><option value="">Top-level location</option><% locations.filter(l => l.id !== location.id && l.is_active).forEach(function(parent) { %><option value="<%= parent.id %>" <%= location.parent_location_id === parent.id ? 'selected' : '' %>><%= parent.display_path %></option><% }) %></select></div>
+          <div class="field"><label class="label" for="edit-barcode-<%= location.id %>">Scan code</label><input class="input" id="edit-barcode-<%= location.id %>" name="barcode" value="<%= location.barcode || '' %>"></div>
+          <div class="field"><label class="label" for="edit-sequence-<%= location.id %>">Pick sequence</label><input class="input" id="edit-sequence-<%= location.id %>" name="pickSequence" type="number" min="0" value="<%= location.pick_sequence || 0 %>"></div>
           <div class="field">
             <label class="label" for="edit-address-<%= location.id %>">Postal address</label>
             <textarea class="input textarea" id="edit-address-<%= location.id %>" name="address" rows="3"

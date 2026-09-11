@@ -43,6 +43,7 @@ router.get(
       paths: paths.PATHS,
       sourceOptions: paths.SOURCE_OPTIONS,
       recommendation: null,
+      recommendedOption: null,
       sourcePrompt: null,
       description: '',
       canOperate: permissions.can(req.user, permissions.OPERATE),
@@ -78,6 +79,11 @@ router.post(
       paths: paths.PATHS,
       sourceOptions: paths.SOURCE_OPTIONS,
       recommendation,
+      /* The chooser offers a mailbox that PATHS does not carry, so the button
+         for a recommendation has to come from the list the page renders. */
+      recommendedOption: recommendation
+        ? paths.SOURCE_OPTIONS.find((option) => option.id === recommendation.id) || null
+        : null,
       sourcePrompt: description && !recommendation
         ? 'That explains the kind of business, but it does not contain the actual product names, variants, locations, or quantities. Choose where Foundry should get those real records.'
         : null,

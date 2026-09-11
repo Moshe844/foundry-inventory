@@ -1,0 +1,47 @@
+<div class="rm-head">
+  <a class="rm-head__back" href="/inventory"><span aria-hidden="true">←</span> Inventory</a>
+  <div class="rm-title"><div><h1>Review purchase costs</h1><p>The current price you pay per inventory unit. Nothing changes until you approve.</p></div></div>
+</div>
+
+<% var below = proposals.filter(function (proposal) { return proposal.belowCost; }); %>
+<% if (below.length) { %>
+  <div class="rm-note rm-note--warn" role="alert">
+    <%- helpers.icon('alert', { size: 18 }) %>
+    <div><strong><%= below.length %> product<%= below.length === 1 ? '' : 's' %> would sell for less than the new purchase cost.</strong>
+      Check the highlighted lines. Approve only if that is intentional; otherwise cancel and correct either the purchase cost or selling price.</div>
+  </div>
+<% } %>
+
+<section class="rm-panel">
+  <div class="rm-panel__head"><h2>Exactly what will change</h2><span class="right"><%= proposals.length %> product<%= proposals.length === 1 ? '' : 's' %></span></div>
+  <div class="table-wrap">
+    <table class="table table--stack">
+      <thead><tr><th>Product or variant</th><th>Supplier</th><th class="right">Current purchase cost</th><th class="right">New purchase cost</th><th class="right">Selling price</th><th>Result per unit</th></tr></thead>
+      <tbody>
+        <% proposals.forEach(function (proposal) { %>
+          <tr<%= proposal.belowCost ? ' class="is-warn"' : '' %>>
+            <td class="cell-main"><strong><%= proposal.displayName %></strong><small class="mono"><%= proposal.code %></small></td>
+            <td><%= proposal.supplier_name || 'No supplier linked yet' %></td>
+            <td class="right"><%= proposal.currentFormatted %></td>
+            <td class="right"><strong><%= proposal.proposedFormatted %></strong></td>
+            <td class="right"><%= proposal.sellingPrice.formatted %></td>
+            <td>
+              <% if (!proposal.sellingPrice.isSet) { %><strong>Selling price missing</strong>
+              <% } else if (proposal.belowCost) { %><strong class="is-warn">Loses <%= proposal.marginFormatted %></strong>
+              <% } else { %><strong><%= proposal.marginFormatted %> above cost</strong><% } %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+  <p class="rm-panel__foot"><strong>This updates purchasing and margin decisions.</strong> It does not rewrite the historical value or COGS of stock already received. If old stock has missing cost evidence, Accounting will continue to show that separately.</p>
+  <div class="rm-panel__body"><div class="rm-choices">
+    <form method="post" action="/pricing/purchase-costs/batch/approve">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <% proposals.forEach(function (proposal) { %><input type="hidden" name="approval[<%= proposal.id %>]" value="<%= proposal.integrity_hash %>"><% }) %>
+      <button class="rm-btn" type="submit"><%= below.length ? 'Yes, update these costs' : 'Update purchase costs' %></button>
+    </form>
+    <form method="post" action="/pricing/purchase-costs/batch/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Cancel</button></form>
+  </div></div>
+</section>

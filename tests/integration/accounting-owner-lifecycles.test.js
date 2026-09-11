@@ -28,6 +28,36 @@ test.after(cleanupAll);
 // The books open the day the test runs; a date before that is refused, so fixtures are dated today.
 const TODAY = new Date().toISOString().slice(0, 10);
 
+test('a confirmed unpaid order is visible as customer money without becoming earned revenue', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db, { workspaceName: 'Confirmed Order Company' });
+  const membership = auth.getMembership(db, workspace.workspaceId, workspace.accountId);
+  ledger.configure(db, workspace.ctx, membership, {
+    startDate: TODAY, currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+  });
+  const product = makeQuantityItem(db, workspace.ctx, { name: 'Confirmed Order Shoe' });
+  prices.setPrice(db, workspace.ctx, { skuId: product.skuId, amount: '100.00', currency: 'USD' });
+  inventory.receive(db, workspace.ctx, {
+    skuId: product.skuId, locationId: workspace.main.id, quantity: 25,
+  });
+  const order = sales.confirm(db, workspace.ctx, sales.createOrder(db, workspace.ctx, {
+    customerName: 'Confirmed Customer', fulfillmentLocationId: workspace.main.id,
+    lines: [{ skuId: product.skuId, quantity: 25 }],
+  }).id);
+
+  const owner = ownerDashboard.ownerDashboard(db, workspace.workspaceId,
+    { from: TODAY, to: TODAY, asOf: TODAY });
+  assert.equal(owner.customers.balanceMinor, 0,
+    'an unshipped order is not misrepresented as a formal accounting receivable');
+  assert.equal(owner.confirmedOrders.balanceMinor, 250_000);
+  assert.equal(owner.confirmedOrders.rows[0].order_number, order.order_number);
+  assert.equal(owner.customerMoneyOutstandingMinor, 250_000,
+    'the owner-facing amount includes the confirmed customer commitment');
+  assert.equal(owner.pnl.revenueMinor, 0,
+    'confirming an order does not recognize revenue before the goods leave');
+  db.close();
+});
+
 test('Mission 14 owner accounting proves all twenty required lifecycle scenarios', async (t) => {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Twenty Lifecycle Company' });
@@ -170,9 +200,11 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
     assert.equal(pnl.netIncomeMinor, 200);
   });
   await t.test('18 cash movement calculated independently from profit', () => {
-    // From today, deliberately: the opening balances this workspace was set up
-    // with are not cash movement, and starting earlier would count them.
-    const cash = reports.cashFlow(db, workspace.workspaceId, { from: TODAY, to: '2026-09-30' });
+    // Begin with the first dated operating cash event, deliberately after the
+    // opening balance. Do not derive this boundary from wall-clock "today": a
+    // UTC date rollover would otherwise exclude the September 8 refund and
+    // make this deterministic lifecycle scenario change by time zone/hour.
+    const cash = reports.cashFlow(db, workspace.workspaceId, { from: '2026-09-08', to: '2026-09-30' });
     assert.equal(cash.netCashChangeMinor, -82_000);
     assert.notEqual(cash.netCashChangeMinor, reports.profitAndLoss(db, workspace.workspaceId,
       { from: '2026-09-01', to: '2026-09-30' }).netIncomeMinor);

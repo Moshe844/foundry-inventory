@@ -81,7 +81,8 @@ function build(db, workspaceId, options = {}) {
   const position = {
     cashMinor: balance.assets.filter((row) => row.subtype === 'CASH')
       .reduce((sum, row) => sum + number(row.net_minor), 0),
-    customersOweMinor: owner.customers.balanceMinor,
+    customersOweMinor: owner.customerMoneyOutstandingMinor,
+    confirmedCustomerOrders: owner.confirmedOrders.rows,
     suppliersOwedMinor: owner.suppliers.balanceMinor,
     supplierChargesCommittedMinor: committedCharges(db, workspaceId),
     inventoryMinor: owner.inventory.totalCostMinor,
@@ -134,7 +135,10 @@ function status(attention, db, workspaceId, { today }) {
   const total = waiting + stuck;
   return {
     caughtUp: false,
-    headline: `${total} thing${total === 1 ? '' : 's'} need${total === 1 ? 's' : ''} you.`,
+    // Scope this to Money. The global Needs You queue can also contain stock,
+    // supplier-email and authority decisions; calling this simply "1 thing"
+    // made two correct counts look contradictory on adjacent pages.
+    headline: `${total} money item${total === 1 ? '' : 's'} need${total === 1 ? 's' : ''} you.`,
     detail: stuck
       ? `${stuck} ${stuck === 1 ? 'entry could not be posted' : 'entries could not be posted'} `
         + 'and the rest is up to date.'

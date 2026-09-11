@@ -86,19 +86,46 @@ function publish(db, workspaceId, type, payload = {}, options = {}) {
   const existing = db.prepare(
     'SELECT * FROM domain_events WHERE workspace_id = ? AND idempotency_key = ?'
   ).get(workspaceId, key);
-  if (existing) return { event: hydrate(existing), created: false };
+  const graph = require('../provenance/service');
+  const sourceTypes = {
+    purchase_order_receipt: 'purchase_receipt', sales_order_event: 'sales_order_event',
+    payment: 'payment', supplier_bill: 'supplier_bill', customer_invoice: 'customer_invoice',
+    inventory_movement: 'inventory_movement', purchase_order: 'purchase_order', sales_order: 'sales_order',
+  };
+  const attach = (eventId) => {
+    const sourceType = sourceTypes[options.sourceRecordType];
+    if (sourceType && options.sourceRecordId
+        && graph.exists(db, workspaceId, { type: sourceType, id: options.sourceRecordId })) {
+      graph.record(db, workspaceId, { type: 'EMITTED_EVENT',
+        from: { type: sourceType, id: options.sourceRecordId },
+        to: { type: 'domain_event', id: eventId }, domainEventId: eventId, basis: 'EVENT' });
+    }
+    graph.recordMany(db, workspaceId, options.relations || [],
+      { domainEventId: eventId, basis: 'EVENT' });
+  };
+  if (existing) {
+    attach(existing.id);
+    return { event: hydrate(existing), created: false };
+  }
 
-  const id = newId('evt');
-  db.prepare(
-    `INSERT INTO domain_events
-       (id, workspace_id, event_type, payload, source, source_record_type,
-        source_record_id, idempotency_key, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`
-  ).run(
-    id, workspaceId, type, JSON.stringify(payload || {}), options.source || 'foundry',
-    options.sourceRecordType || null, options.sourceRecordId || null, key, nowIso()
-  );
-  return { event: get(db, workspaceId, id), created: true };
+  return inTransaction(db, () => {
+    const id = newId('evt');
+    db.prepare(
+      `INSERT INTO domain_events
+         (id, workspace_id, event_type, payload, source, source_record_type,
+          source_record_id, idempotency_key, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`
+    ).run(
+      id, workspaceId, type, JSON.stringify(payload || {}), options.source || 'foundry',
+      options.sourceRecordType || null, options.sourceRecordId || null, key, nowIso()
+    );
+    attach(id);
+    const event = get(db, workspaceId, id);
+    // The business event and its outbound delivery promises commit together.
+    // A crash can delay delivery, but can never lose it or enqueue it twice.
+    require('../connections/outbound-webhooks').enqueueForEvent(db, event);
+    return { event, created: true };
+  });
 }
 
 function get(db, workspaceId, eventId) {

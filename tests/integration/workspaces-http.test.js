@@ -76,20 +76,20 @@ test('switching changes what every page shows', async () => {
   const agent = request.agent(store.app);
   await signIn(agent, clothing.account.email, clothing.account.password);
 
-  const before = plain((await agent.get('/inventory')).text);
+  const before = plain((await agent.get('/inventory/table')).text);
   assert.match(before, /Oxford Shirt/);
   assert.ok(!before.includes('Core Drill'), 'the other inventory is not visible');
 
   const switched = await post(agent, '/inventories/switch', { workspaceId: equipment.workspaceId, next: '/' }, '/inventories');
   assert.equal(switched.status, 303);
 
-  const after = plain((await agent.get('/inventory')).text);
+  const after = plain((await agent.get('/inventory/table')).text);
   assert.match(after, /Core Drill/);
   assert.ok(!after.includes('Oxford Shirt'), 'and the first is now the one that is hidden');
 
   // The switcher itself names the one that is open.
   const shell = (await agent.get('/')).text;
-  assert.match(shell, /wsp-switch-text[\s\S]{0,200}Equipment Company/);
+  assert.match(shell, /rm-switch__btn[\s\S]{0,200}Equipment Company/);
 });
 
 test('the chosen inventory survives a refresh and a restart', async () => {
@@ -105,7 +105,7 @@ test('the chosen inventory survives a refresh and a restart', async () => {
 
   // Refresh: same inventory.
   for (let i = 0; i < 3; i += 1) {
-    assert.match(plain((await agent.get('/inventory')).text), /Core Drill/);
+    assert.match(plain((await agent.get('/inventory/table')).text), /Core Drill/);
   }
 
   // Restart: the session store is the database, so the choice outlives it.
@@ -117,7 +117,7 @@ test('the chosen inventory survives a refresh and a restart', async () => {
 
   const same = request.agent(restarted);
   await signIn(same, clothing.account.email, clothing.account.password);
-  assert.match(plain((await same.get('/inventory')).text), /Oxford|Core Drill|No items/);
+  assert.match(plain((await same.get('/inventory/table')).text), /Oxford|Core Drill|No items/);
   reopened.close();
 });
 
@@ -130,11 +130,11 @@ test('signing in again reopens the inventory you were last in', async () => {
   const agent = request.agent(store.app);
   await signIn(agent, clothing.account.email, clothing.account.password);
   await post(agent, '/inventories/switch', { workspaceId: equipment.workspaceId, next: '/' }, '/inventories');
-  assert.match(plain((await agent.get('/inventory')).text), /Core Drill/);
+  assert.match(plain((await agent.get('/inventory/table')).text), /Core Drill/);
 
   await post(agent, '/logout', {}, '/');
   await signIn(agent, clothing.account.email, clothing.account.password);
-  assert.match(plain((await agent.get('/inventory')).text), /Core Drill/, 'it remembered');
+  assert.match(plain((await agent.get('/inventory/table')).text), /Core Drill/, 'it remembered');
 });
 
 // --- hostile input -----------------------------------------------------------
@@ -156,7 +156,7 @@ test('switching to an inventory you do not belong to is refused', async () => {
   assert.match(listing, /could not be found/);
   assert.ok(!listing.includes('Theirs'));
 
-  const items = plain((await agent.get('/inventory')).text);
+  const items = plain((await agent.get('/inventory/table')).text);
   assert.ok(!items.includes('Their Widget'), 'and nothing of theirs is on screen');
 });
 
@@ -223,12 +223,12 @@ test('a session pointing at an inventory the account has left falls back safely'
   const agent = request.agent(store.app);
   await signIn(agent, guest.account.email, guest.account.password);
   await post(agent, '/inventories/switch', { workspaceId: owner.workspaceId, next: '/' }, '/inventories');
-  assert.match(plain((await agent.get('/inventory')).text), /Shared Widget/);
+  assert.match(plain((await agent.get('/inventory/table')).text), /Shared Widget/);
 
   // Access is removed while they are signed in and pointed at it.
   workspaceService.leaveWorkspace(store.db, owner.workspaceId, guest.accountId);
 
-  const after = await agent.get('/inventory');
+  const after = await agent.get('/inventory/table');
   assert.equal(after.status, 200, 'not an error page');
   assert.ok(!plain(after.text).includes('Shared Widget'), 'and not their data either');
   assert.match((await agent.get('/')).text, /Their Own Thing/, 'dropped back to their own');

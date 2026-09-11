@@ -13,8 +13,11 @@ CREATE TABLE IF NOT EXISTS customers (
   -- An email sender Foundry has never seen is kept as a provisional identity
   -- until the owner creates or matches the customer. It is not silently
   -- presented as a trusted customer record.
+  --
+  -- ARCHIVED is a customer who has been retired. The row stays because orders,
+  -- invoices and payments point at it; it simply stops being offered.
   record_state        TEXT NOT NULL DEFAULT 'ACTIVE'
-                        CHECK (record_state IN ('ACTIVE','PROVISIONAL')),
+                        CHECK (record_state IN ('ACTIVE','PROVISIONAL','ARCHIVED')),
   notes               TEXT,
   created_by_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   created_at          TEXT NOT NULL,
@@ -49,6 +52,7 @@ CREATE TABLE IF NOT EXISTS sales_orders (
   currency                 TEXT NOT NULL DEFAULT 'USD',
   discount_minor           INTEGER NOT NULL DEFAULT 0 CHECK (discount_minor >= 0),
   tax_minor                INTEGER NOT NULL DEFAULT 0 CHECK (tax_minor >= 0),
+  allocation_priority      INTEGER NOT NULL DEFAULT 100,
   status                   TEXT NOT NULL DEFAULT 'DRAFT'
                              CHECK (status IN ('DRAFT','CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED','FULFILLED','CANCELLED')),
   version                  INTEGER NOT NULL DEFAULT 1,
@@ -154,6 +158,46 @@ CREATE TABLE IF NOT EXISTS price_change_proposals (
 );
 CREATE INDEX IF NOT EXISTS idx_price_change_proposals_workspace
   ON price_change_proposals(workspace_id, status, created_at DESC);
+
+-- The current purchase/replacement cost of one inventory unit. This is not an
+-- opening-balance valuation and does not rewrite historical COGS. It is kept
+-- append-only for the same reason selling prices are: the owner must be able
+-- to see what Foundry knew when it made a purchasing or margin decision.
+CREATE TABLE IF NOT EXISTS sku_purchase_costs (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  sku_id                TEXT NOT NULL REFERENCES skus(id) ON DELETE CASCADE,
+  amount_minor          INTEGER NOT NULL CHECK (amount_minor >= 0),
+  currency              TEXT NOT NULL DEFAULT 'USD',
+  supplier_item_id      TEXT REFERENCES supplier_items(id) ON DELETE SET NULL,
+  source                TEXT NOT NULL,
+  source_detail         TEXT NOT NULL DEFAULT '{}',
+  created_by_user_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at            TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sku_purchase_costs_current
+  ON sku_purchase_costs(workspace_id, sku_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS purchase_cost_change_proposals (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  sku_id                TEXT NOT NULL REFERENCES skus(id) ON DELETE CASCADE,
+  amount_minor          INTEGER NOT NULL CHECK (amount_minor >= 0),
+  currency              TEXT NOT NULL DEFAULT 'USD',
+  supplier_item_id      TEXT REFERENCES supplier_items(id) ON DELETE SET NULL,
+  source_text           TEXT NOT NULL,
+  status                TEXT NOT NULL DEFAULT 'PENDING'
+                          CHECK (status IN ('PENDING','COMPLETED','CANCELLED')),
+  current_cost_id       TEXT,
+  integrity_hash        TEXT NOT NULL,
+  created_by_user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  approved_by_user_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at            TEXT NOT NULL,
+  completed_at          TEXT,
+  cancelled_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_purchase_cost_proposals_workspace
+  ON purchase_cost_change_proposals(workspace_id, status, created_at DESC);
 
 -- Fulfilment (Mission 14.6)
 --

@@ -22,6 +22,10 @@ const WORD = {
   4: 'Thursday', 5: 'Friday', 6: 'Saturday',
 };
 
+const sales = require('../sales/sales-order-service');
+const orderStatus = require('../sales/order-status');
+const paymentTerms = require('../sales/payment-terms');
+
 /**
  * A date said the way somebody would say it, when it is close enough to matter.
  *
@@ -65,17 +69,31 @@ function build(db, workspaceId, options = {}) {
 
   // Orders with stock committed and no box started.
   safely(() => {
-    const ready = db.prepare(`SELECT COUNT(DISTINCT so.id) AS n
+    const candidates = db.prepare(`SELECT DISTINCT so.id
       FROM sales_orders so
       JOIN sales_order_lines sol ON sol.sales_order_id = so.id
       JOIN sales_order_allocations soa ON soa.sales_order_line_id = sol.id
       WHERE so.workspace_id = ? AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
         AND NOT EXISTS (SELECT 1 FROM sales_shipments sh
-          WHERE sh.sales_order_id = so.id AND sh.status IN ('PICKING','PACKED'))`)
-      .get(workspaceId).n;
-    if (ready) {
+          WHERE sh.sales_order_id = so.id AND sh.status IN ('PICKING','PACKED'))
+      ORDER BY so.created_at, so.id`).all(workspaceId);
+    const ready = candidates.map((row) => {
+      const order = sales.getOrder(db, workspaceId, row.id);
+      const payment = paymentTerms.positionForOrder(db, workspaceId, order);
+      const next = orderStatus.nextStep(db, workspaceId, order, { payment });
+      return next.text === 'Ready to pick' ? { order, payment } : null;
+    }).filter(Boolean);
+    if (ready.length === 1) {
+      const entry = ready[0];
+      const fullyPaid = Number(entry.payment.totalMinor || 0) > 0
+        && Number(entry.payment.remainingMinor || 0) === 0;
       lines.push({
-        text: `${plural(ready, 'order is', 'orders are')} ready to pick.`,
+        text: `${entry.order.order_number} is ${fullyPaid ? 'paid in full and ' : ''}ready to pick.`,
+        href: `/orders/${entry.order.id}/detail?open=fulfilment#fulfilment`, tone: 'go',
+      });
+    } else if (ready.length > 1) {
+      lines.push({
+        text: `${plural(ready.length, 'order is', 'orders are')} ready to pick.`,
         href: '/fulfilment', tone: 'go',
       });
     }

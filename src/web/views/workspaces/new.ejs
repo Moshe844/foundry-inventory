@@ -8,7 +8,7 @@
   </div>
 </div>
 
-<div class="card section" style="max-width: 560px;">
+<div class="card section measure">
   <div class="card-body">
     <% if (error) { %>
       <p class="is-warn" style="margin-bottom:12px;"><%= error %></p>
@@ -25,6 +25,18 @@
           not a location inside it. You can add locations once it exists.
         </p>
       </div>
+
+      <fieldset class="field">
+        <legend class="label">What will this inventory contain?</legend>
+        <label class="choice">
+          <input type="radio" name="dataMode" value="production" <%= form.dataMode !== 'synthetic' ? 'checked' : '' %>>
+          <span><strong>My real business</strong><small>Foundry uses only records backed by your business evidence.</small></span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="dataMode" value="synthetic" <%= form.dataMode === 'synthetic' ? 'checked' : '' %>>
+          <span><strong>Test environment</strong><small>Foundry may generate realistic synthetic products, stock, suppliers, transactions and history here.</small></span>
+        </label>
+      </fieldset>
 
       <div class="form-actions">
         <a class="btn" href="/inventories">Cancel</a>

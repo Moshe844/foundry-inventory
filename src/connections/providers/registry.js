@@ -6,8 +6,10 @@ const clover = require('./clover');
 const woocommerce = require('./woocommerce');
 const gmail = require('./gmail');
 const microsoft365 = require('./microsoft365');
+const quickbooks = require('./quickbooks');
+const xero = require('./xero');
 
-const adapters = Object.freeze({ shopify, square, clover, woocommerce, gmail, microsoft365 });
+const adapters = Object.freeze({ shopify, square, clover, woocommerce, gmail, microsoft365, quickbooks, xero });
 
 const generic = Object.freeze({
   type: 'reference_webhook', name: 'Custom business system', mark: 'API', category: 'business', authMode: 'token',
@@ -24,6 +26,6 @@ const future = Object.freeze([
 
 function get(type) { return adapters[type] || null; }
 function catalog() { return [shopify.metadata(), square.metadata(), clover.metadata(), woocommerce.metadata(), generic,
-  ...future, gmail.metadata(), microsoft365.metadata()]; }
+  ...future, gmail.metadata(), microsoft365.metadata(), quickbooks.metadata(), xero.metadata()]; }
 
 module.exports = { get, catalog, generic };

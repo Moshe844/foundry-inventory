@@ -319,6 +319,10 @@ router.get(
         result = await queryPlanner.ask(req.db, req.ctx.workspaceId, question, {
           provider: req.app.locals.aiProvider || undefined,
           context: briefingContext(req.db, req.ctx.workspaceId),
+          membership: req.user,
+          productBrain: req.app.locals.productBrain,
+          actorId: req.ctx.actorId,
+          currentHref: req.get('referer') || '',
         });
         /*
          * An instruction typed into the question box.
@@ -344,9 +348,28 @@ router.get(
       }
     }
 
+    /*
+     * The rules already said, beside the box they were said into. A standing
+     * rule that never appears next to the place it was created is a setting
+     * somebody has to go looking for, which is the thing this replaces.
+     */
+    let recentRules = [];
+    let pendingRules = [];
+    try {
+      const instructions = require('../../manager/operating-instructions');
+      recentRules = instructions.list(req.db, req.ctx.workspaceId, { status: 'APPROVED' });
+      pendingRules = instructions.list(req.db, req.ctx.workspaceId, { status: 'PENDING' });
+    } catch {
+      // The conversation is worth more than the list beside it.
+    }
+
     res.page('attention/ask', {
       title: 'Ask Foundry',
-      nav: 'home',
+      nav: 'ask',
+      room: true,
+      recentRules,
+      pendingRules,
+      about: trimOrNull(req.query.about) || '',
       question: question || '',
       result,
       error,

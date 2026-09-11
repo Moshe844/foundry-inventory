@@ -1,5 +1,41 @@
 <div class="breadcrumb"><a href="/orders">Orders</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= customer.name %></span></div>
-<div class="page-head"><div class="titles"><h1><%= customer.name %><% if (customer.company) { %> <span class="t-muted"><%= customer.company %></span><% } %></h1></div><a class="btn btn--primary" href="/orders/new">New order</a></div>
+<%
+  /*
+   * Removing a customer, beside their name rather than at the foot of the page.
+   * The button says what will happen: one nothing refers to is deleted, one with
+   * orders or invoices behind it is archived, because deleting the row would
+   * leave an invoice addressed to nobody.
+   */
+  var use = typeof usage === 'undefined' ? { deletable: false, used: [] } : usage;
+  var archived = customer.record_state === 'ARCHIVED';
+  var trail = use.used.map(function (u) { return u.count + ' ' + u.label; }).join(', ');
+%>
+<div class="page-head">
+  <div class="titles">
+    <h1><%= customer.name %><% if (customer.company) { %> <span class="t-muted"><%= customer.company %></span><% } %>
+      <% if (archived) { %><span class="badge badge--muted">Archived</span><% } %></h1>
+  </div>
+  <div class="page-actions">
+    <% if (archived) { %>
+      <form method="post" action="/sales/customers/<%= customer.id %>/archive" style="margin:0">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="restore" value="1">
+        <button class="btn btn--sm" type="submit">Restore customer</button>
+      </form>
+    <% } else { %>
+      <form method="post" action="/sales/customers/<%= customer.id %>/archive" style="margin:0"
+            data-confirm="<%= use.deletable
+              ? 'Delete ' + customer.name + '? Nothing refers to them, so the record goes for good.'
+              : 'Archive ' + customer.name + '? ' + trail + ' still refer to them, so the record is kept and hidden instead of deleted. You can restore it.' %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--danger btn--sm" type="submit">
+          <%= use.deletable ? 'Delete customer' : 'Archive customer' %>
+        </button>
+      </form>
+      <a class="btn btn--primary" href="/orders/new">New order</a>
+    <% } %>
+  </div>
+</div>
 
 <%#
   What this relationship is, in one line.

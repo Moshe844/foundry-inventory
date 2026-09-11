@@ -6,6 +6,27 @@
       : locals.goneWord === 'delivered' ? 'Delivered' : 'Gone'),
     CANCELLED: 'Cancelled' };
   var setupRequired = Boolean(order.customer_decision_required || order.delivery_decision_required);
+
+  /*
+   * Two ways to get the goods out, offered at the same weight.
+   *
+   * "Record what physically left" opened as a full form under "Do this next",
+   * asking how the goods left and for a tracking number — while further down
+   * the page the Fulfilment panel offered "Start picking 25 units" for the
+   * same 25 units. Two primary actions for one job, one of them asking about a
+   * carrier before anybody had picked anything, and a set of handover options
+   * that read as a contradiction of the delivery method already chosen.
+   *
+   * The pick list is the ordinary path: it opens a box, nothing leaves stock
+   * until it is marked shipped, and the handover question is asked there where
+   * it belongs. Recording goods as gone without one is a real thing that
+   * happens — a customer walking out with them — but it is the exception, so
+   * it folds away under the exception's own name.
+   */
+  var pickableUnits = (locals.pickable || [])
+    .reduce(function (sum, row) { return sum + row.available; }, 0);
+  var pickingHeld = Boolean(locals.money && money.blocksPicking);
+  var pickFirst = pickableUnits > 0 && !pickingHeld;
   var currentStep = order.status === 'DRAFT' ? 1
     : ['CONFIRMED','BACKORDERED'].includes(order.status) ? 2
       : order.status === 'PARTIALLY_FULFILLED' ? 3 : 4;
@@ -275,10 +296,29 @@
     <a class="btn btn--primary" href="/fulfilment/<%= openBox.id %>">Open <%= openBox.shipment_number %></a>
   </div>
 <% } else if (!['FULFILLED','CANCELLED'].includes(order.status) && order.totals.allocated > 0) { %>
-  <form class="card sales-action-card sales-primary-action" method="post" action="/sales/orders/<%= order.id %>/fulfill">
+  <% if (pickFirst && locals.openSection !== 'fulfilment') { %>
+    <div class="card sales-action-card sales-primary-action">
+      <p class="eyebrow">Do this next</p>
+      <h2>Pick <%= pickableUnits %> <%= pickableUnits === 1 ? 'unit' : 'units' %></h2>
+      <p>
+        This opens a box and a pick list, and asks how the goods leave when they actually do.
+        Nothing leaves stock until you mark it shipped.
+      </p>
+      <form method="post" action="/sales/orders/<%= order.id %>/pick" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--primary" type="submit">Start picking <%= pickableUnits %> <%= pickableUnits === 1 ? 'unit' : 'units' %></button>
+      </form>
+    </div>
+  <% } %>
+  <details class="card fold <%= pickFirst ? 'sales-secondary-actions' : 'sales-action-card sales-primary-action' %>" <%= pickFirst ? '' : 'open' %>>
+    <summary class="card-head">
+      <h2>Record what physically left</h2>
+      <span class="spacer"></span>
+      <span class="fold-note"><%= pickFirst ? 'Only if they left without a pick list' : 'Do this next' %></span>
+    </summary>
+  <form method="post" action="/sales/orders/<%= order.id %>/fulfill" class="card-body">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="idempotencyKey" value="web-fulfill:<%= order.id %>:<%= order.version %>">
-    <p class="eyebrow">Do this next</p><h2>Record what physically left</h2>
     <p>Only use this when the items physically leave. Foundry will reduce on-hand once and update Accounting automatically.</p>
     <% order.lines.forEach(function(line){ line.allocations.forEach(function(a){ %><div class="form-row"><input type="hidden" name="lineId" value="<%= line.id %>"><input type="hidden" name="locationId" value="<%= a.location_id %>"><label class="field"><span><%= line.displayName %> from <%= a.location_name %> (maximum <%= a.quantity %>)</span><input type="number" name="quantity" min="0" max="<%= a.quantity %>" value="<%= a.quantity %>"></label></div><% }) }) %>
     <%#
@@ -289,23 +329,29 @@
       answer when somebody asked where it went. Both are optional, because a
       customer collecting from the counter needs neither, but they are asked.
     %>
-    <%#
-      How these goods left, asked before anything is claimed about them.
-
-      There is no default and no pre-selected option on purpose. This form used
-      to move the stock on one click and then report the order as "shipped" —
-      shipped by whom, to where, nobody had said. The question is three
-      buttons wide and it makes the record true.
+    <%
+      /* The order already contains the delivery plan. Carry it forward instead
+         of asking the owner the same question twice. Actual handover is still
+         evidence, so a changed plan remains available one disclosure down. */
+      var plannedHandover = order.delivery_method === 'PICKUP' ? 'COLLECTED' : 'CARRIER';
+      var plannedHandoverLabel = plannedHandover === 'COLLECTED'
+        ? 'Collected by the customer' : 'Sent by carrier';
     %>
-    <fieldset class="ship-method">
-      <legend>How did these goods leave?</legend>
-      <% [['CARRIER','Sent by carrier'],['COLLECTED','Collected by the customer'],['DELIVERED_BY_US','Delivered by us']].forEach(function (choice) { %>
-        <label class="choice">
-          <input type="radio" name="handover" value="<%= choice[0] %>" required>
-          <span><%= choice[1] %></span>
-        </label>
-      <% }) %>
-    </fieldset>
+    <div class="notice notice--info">
+      <div><strong>Planned: <%= plannedHandoverLabel %></strong><br>This came from the delivery choice on the order.</div>
+    </div>
+    <details class="advanced-settings">
+      <summary>Change how the goods actually left</summary>
+      <fieldset class="ship-method">
+        <legend class="visually-hidden">How did these goods leave?</legend>
+        <% [['CARRIER','Sent by carrier'],['COLLECTED','Collected by the customer'],['DELIVERED_BY_US','Delivered by us']].forEach(function (choice) { %>
+          <label class="choice">
+            <input type="radio" name="handover" value="<%= choice[0] %>" required <%= plannedHandover === choice[0] ? 'checked' : '' %>>
+            <span><%= choice[1] %></span>
+          </label>
+        <% }) %>
+      </fieldset>
+    </details>
     <div class="ship-details">
       <label class="field">
         <span>Carrier <small>optional</small></span>
@@ -328,8 +374,9 @@
         The customer's profile is only a default; the order needs its own confirmed destination.
       </p>
     <% } %>
-    <button class="btn btn--primary" type="submit">Record these goods as gone</button>
+    <button class="btn <%= pickFirst ? '' : 'btn--primary' %>" type="submit">Record these goods as gone</button>
   </form>
+  </details>
 <% } %>
 
 <%#
@@ -354,12 +401,16 @@
   <% if (accounting.status === 'POSTED') { %>
     <details class="card fold">
       <summary class="card-head">
-        <h2>Accounting updated automatically.</h2>
+        <h2>
+          Sale <%= helpers.money(accounting.outcome.revenueMinor || 0, order.currency) %>
+          − product cost <%= helpers.money(accounting.outcome.cogsMinor || 0, order.currency) %>
+          = gross profit <%= helpers.money((accounting.outcome.revenueMinor || 0) - (accounting.outcome.cogsMinor || 0), order.currency) %>.
+        </h2>
         <span class="spacer"></span><span class="fold-note">nothing for you to do</span>
       </summary>
       <div class="card-body">
-        <p>Revenue, the customer receivable, product cost, and inventory value were posted from this shipment.</p>
-        <a class="btn btn--sm" href="/accounting/entries/<%= accounting.journal_entry_id %>">See entry #<%= accounting.entry_number %></a>
+        <p>The sale, what the customer owes, the exact product cost, and the lower inventory value were recorded from this shipment.</p>
+        <a class="btn btn--sm" href="/accounting/entries/<%= accounting.journal_entry_id %>">Show the exact sale and product cost</a>
       </div>
     </details>
   <% } else if (accounting.status === 'NEEDS_REVIEW' || accounting.status === 'FAILED') { %>
@@ -390,7 +441,9 @@
   var freeUnits = free.reduce(function (sum, row) { return sum + row.available; }, 0);
 %>
 <% if (fulfilment && order.status !== 'DRAFT') { %>
-  <details class="panel section fold" id="fulfilment">
+  <%# Closed when the step above already carries the pick button: two of the
+      same button on one screen is the thing this page was full of. %>
+  <details class="panel section fold" id="fulfilment"<% if (locals.openSection === 'fulfilment') { %> open<% } %>>
     <summary class="panel-head">
       <div>
         <h2>Fulfilment</h2>
@@ -540,8 +593,8 @@
   <% if (locals.paymentCompleted) { %>
     <div class="notice notice--ok section" role="status">
       <div>
-        <strong>Payment completed and recorded on <%= order.order_number %>.</strong>
-        <span>Foundry updated what the customer owes. You can print either document now.</span>
+        <strong>Payment recorded on <%= order.order_number %>.</strong>
+        <span><% if (money.outstandingMinor > 0) { %>The customer still owes <%= helpers.money(money.outstandingMinor, money.currency) %>.<% } else { %>This order is now fully paid.<% } %> <%= completedRequest ? 'The receipt and Stripe invoice are ready.' : 'The receipt is ready to print.' %></span>
       </div>
       <div class="actions">
         <% if (completedReceipt) { %>
@@ -553,7 +606,7 @@
       </div>
     </div>
   <% } %>
-  <details class="panel section fold" id="money"<% if (locals.paymentCompleted) { %> open<% } %>>
+  <details class="panel section fold" id="money"<% if (locals.paymentCompleted || locals.openSection === 'money') { %> open<% } %>>
     <summary class="panel-head">
       <div>
         <h2>Money<%= money.outstandingMinor
@@ -624,11 +677,13 @@
           <% } %>
         </div>
       <% } %>
-      <p class="hint">
-        <strong><%= money.termsText %></strong>
-        <span class="t-muted">(<%= money.terms.source %>)</span>
-        <a href="/sales/customers/<%= order.customer.id %>#terms">Change</a>
-      </p>
+      <% if (money.outstandingMinor > 0) { %>
+        <p class="hint">
+          <strong><%= money.termsText %></strong>
+          <span class="t-muted">(<%= money.terms.source %>)</span>
+          <a href="/sales/customers/<%= order.customer.id %>#terms">Change</a>
+        </p>
+      <% } %>
 
       <%
         /*
@@ -649,7 +704,14 @@
         var requests = locals.paymentRequests || [];
         var live = requests.filter(function (rq) { return rq.status === 'OPEN' && rq.hostedUrl; })[0];
         var owed = money.outstandingMinor;
-        var askable = (locals.paymentProviders || []).length > 0 && owed > 0;
+        var registeredPaymentProviders = locals.paymentProviders || [];
+        // A registered adapter says Foundry knows how to speak to Stripe. It
+        // does not say this particular business has connected the account
+        // where its money should arrive. Non-Stripe adapters used by private
+        // deployments own their own account model; Stripe is workspace-bound.
+        var onlineReady = registeredPaymentProviders.some(function (name) { return name !== 'stripe'; })
+          || Boolean(locals.paymentAccount && locals.paymentAccount.connected);
+        var askable = onlineReady && owed > 0;
         var dueNow = money.dueNowMinor || 0;
         var askFor = dueNow && dueNow < owed ? dueNow : owed;
         var askPurpose = dueNow && dueNow < owed ? 'DEPOSIT' : 'BALANCE';
@@ -743,6 +805,17 @@
               they paid without anybody checking.
             <% } %>
           </p>
+        <% } else if (owed > 0) { %>
+          <div class="notice notice--info"><div>
+            <strong>Online payment is not set up for this business yet.</strong><br>
+            <% if (locals.canManagePaymentAccount) { %>
+              Connect this business's Stripe account before taking a card here.
+              <a href="/settings/connections#payments">Set up Stripe payments</a>.
+            <% } else { %>
+              A workspace owner needs to connect the business's Stripe account first.
+            <% } %>
+            Cash, cheque, bank transfer, or a separate card machine can still be recorded below.
+          </div></div>
         <% } %>
       </div>
       <% if (money.outstandingMinor) { %>
@@ -848,14 +921,14 @@
 </details>
 
 <% if (!['FULFILLED','CANCELLED'].includes(order.status)) { %>
-  <details class="card advanced-settings sales-secondary-actions" style="margin-top:16px;"><summary><strong>Change or cancel this order</strong><span class="hint">Optional</span></summary><div class="card-body grid grid--2">
+  <details class="card advanced-settings sales-secondary-actions"><summary><strong>Change or cancel this order</strong><span class="hint">Optional</span></summary><div class="card-body grid grid--2">
     <form class="sales-action-card" method="post" action="/sales/orders/<%= order.id %>/lines"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="web-line:<%= order.id %>:<%= order.version %>"><h2>Add another product</h2><p>Foundry will recalculate what can be held.</p><label class="field"><span>Product</span><select name="skuId" required><option value="">Choose a product</option><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %></option><% }) %></select></label><label class="field"><span>Quantity</span><input type="number" name="quantity" min="1" required></label><label class="field"><span>Selling price <small>only if not set in Inventory</small></span><input name="unitPrice" inputmode="decimal" placeholder="0.00"></label><button class="btn" type="submit">Add product</button></form>
     <form class="sales-action-card" method="post" action="/sales/orders/<%= order.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h2>Cancel what has not shipped</h2><p>Held stock is released. Anything already shipped remains in history.</p><label class="field"><span>Reason <small>optional</small></span><input name="reason"></label><button class="btn btn--danger" type="submit">Cancel unshipped remainder</button></form>
   </div></details>
 <% } %>
 
 <% var eventLabels = { CREATED: 'Order created', CONFIRMED: 'Customer order confirmed and stock checked', CHANGED: 'Order changed and reservations recalculated', ALLOCATION_CHANGED: 'Stock reservation updated automatically', PARTIALLY_FULFILLED: 'Part of the order left', FULFILLED: 'The whole order left', ALLOCATED_FROM_STOCK: 'Stock that arrived was committed to this customer', CANCELLED: 'Remaining order cancelled' }; %>
-<details class="card order-activity fold" style="margin-top:16px;"><summary class="card-head"><h2>Order activity</h2><span class="spacer"></span><span class="fold-note"><%= order.events.length %> <%= order.events.length === 1 ? 'entry' : 'entries' %></span></summary><div class="list-rows"><% order.events.slice().reverse().forEach(function(event){ %><div class="list-row"><span><strong><%= eventLabels[event.event_type] || event.event_type.replace(/_/g,' ').toLowerCase() %></strong><small><%= event.actor_name || 'Foundry' %> · <%= helpers.dateTime(event.created_at) %></small></span></div><% }) %></div></details>
+<details class="card order-activity fold"><summary class="card-head"><h2>Order activity</h2><span class="spacer"></span><span class="fold-note"><%= order.events.length %> <%= order.events.length === 1 ? 'entry' : 'entries' %></span></summary><div class="list-rows"><% order.events.slice().reverse().forEach(function(event){ %><div class="list-row"><span><strong><%= eventLabels[event.event_type] || event.event_type.replace(/_/g,' ').toLowerCase() %></strong><small><%= event.actor_name || 'Foundry' %> · <%= helpers.dateTime(event.created_at) %></small></span></div><% }) %></div></details>
 
 <%#
   Taking a payment without losing the order.

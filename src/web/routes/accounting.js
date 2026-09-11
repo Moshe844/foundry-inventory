@@ -2,7 +2,7 @@
 
 const express = require('express');
 const paymentIntent = require('../../accounting/payment-intent');
-const { requireAuth, asyncRoute } = require('../middleware');
+const { requireAuth, requirePermission: permit, asyncRoute } = require('../middleware');
 const permissions = require('../../actions/permissions');
 const ledger = require('../../accounting/ledger');
 const reports = require('../../accounting/reports');
@@ -36,13 +36,6 @@ const { trimOrNull, newId, nowIso } = require('../../lib/util');
  */
 const router = express.Router();
 router.use(['/accounting', '/money'], requireAuth);
-
-function permit(permission, action) {
-  return (req, res, next) => {
-    try { permissions.assertCan(req.user, permission, action); return next(); }
-    catch (error) { return next(error); }
-  };
-}
 
 function today() {
   const date = new Date();
@@ -123,7 +116,7 @@ router.post('/accounting/document-costs/:id',
       });
       req.flash('success', done.treatment === 'stock_value'
         ? `${documentCosts.money(done.netMinor)} added to what this stock cost. Inventory value now includes it.`
-        : `${documentCosts.money(done.netMinor)} recorded as expenses. It is in Other business expenses now.`);
+        : `${documentCosts.money(done.netMinor)} recorded as an expense. It is in Other business expenses now.`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);
@@ -147,11 +140,16 @@ router.get(['/money', '/money/briefing'], permit(permissions.VIEW_ACCOUNTING, 'v
     const throughDate = [today(), latestPosting, configured.startDate]
       .filter(Boolean).sort().at(-1);
     const period = ownerPeriod(req.query, throughDate, configured.startDate);
+    /* Older imports may predate the document-cost index. Its backfill derives
+       only from retained source evidence, so the owner sees those costs on
+       the first Money visit instead of an incorrectly empty expense story. */
+    try { require('../../accounting/document-costs').backfill(req.db, req.ctx.workspaceId); }
+    catch { /* Keep the briefing available from evidence already stored. */ }
     const story = require('../../accounting/money-story').build(req.db, req.ctx.workspaceId, {
       from: period.from, to: period.to, currency: configured.currency,
     });
     return res.page('accounting/money', {
-      title: 'Money', nav: 'accounting', story, configured, period,
+      title: 'Money', nav: 'accounting', room: true, story, configured, period,
     });
   }));
 
@@ -263,11 +261,14 @@ router.get(['/accounting', '/accounting/books', '/money/books'],
   const receivedCostMinor = Number(inventoryAcquired.cost_minor);
   const openingCostMinor = Number(openingInventory.cost_minor);
   const acquiredCostMinor = receivedCostMinor + openingCostMinor;
-  const otherInventoryReductionMinor = acquiredCostMinor
-    - Number(lifetimePnl.cogsMinor) - Number(inventoryEconomics.knownCostMinor);
   const owner = ownerAccounting.ownerDashboard(req.db, req.ctx.workspaceId, {
     from: periodStart, to: periodEnd, asOf: throughDate,
   });
+  // ownerDashboard can recover provable legacy receipt cost. Build this
+  // equation from that refreshed value; the pre-recovery snapshot made the
+  // same $180 appear both still owned and already removed.
+  const otherInventoryReductionMinor = Math.max(0, acquiredCostMinor
+    - Number(lifetimePnl.cogsMinor) - Number(owner.inventory.totalCostMinor));
 
   /*
    * Money in for goods that have not gone out.
@@ -330,10 +331,27 @@ router.get('/accounting/migration', permit(permissions.MANAGE_ACCOUNTING, 'revie
   const automatic = automaticAccounting.ensure(req.db, req.ctx.workspaceId, { actorId: req.ctx.actorId });
   const latest = req.db.prepare(`SELECT id FROM accounting_opening_balance_sets
     WHERE workspace_id = ? AND status = 'DRAFT' ORDER BY created_at DESC LIMIT 1`).get(req.ctx.workspaceId);
+  const focusInventoryCost = req.query.focus === 'inventory-cost';
+  const staged = focusInventoryCost ? req.session.pendingInventoryCostPrefill : null;
+  const validStage = staged && Number(staged.preparedAt) > Date.now() - (30 * 60 * 1000)
+    && Number.isSafeInteger(Number(staged.unitCostMinor)) && Number(staged.unitCostMinor) > 0
+    && Array.isArray(staged.skuIds) && staged.skuIds.length > 0;
+  if (staged && !validStage) delete req.session.pendingInventoryCostPrefill;
+  const selected = validStage ? new Set(staged.skuIds) : null;
+  const positions = setupPositions(req.db, req.ctx.workspaceId)
+    .filter((row) => !selected || selected.has(row.sku_id))
+    .map((row) => ({
+      ...row,
+      prefilledUnitCostMinor: validStage ? Number(staged.unitCostMinor) : null,
+      prefilledTotalCost: validStage
+        ? (Number(row.on_hand) * Number(staged.unitCostMinor) / 100).toFixed(2)
+        : '',
+    }));
   return res.page('accounting/setup', {
     title: 'Earlier balances', nav: 'accounting', configured: automatic.configured,
-    positions: setupPositions(req.db, req.ctx.workspaceId), latestOpeningId: latest?.id || null,
-    today: today(), automatic, focusInventoryCost: req.query.focus === 'inventory-cost',
+    positions, latestOpeningId: latest?.id || null,
+    today: today(), automatic, focusInventoryCost,
+    inventoryCostPrefill: validStage ? staged : null,
   });
 }));
 
@@ -450,6 +468,7 @@ router.post('/accounting/setup/review', permit(permissions.MANAGE_ACCOUNTING, 's
     costingMethod: req.body.costingMethod || 'WEIGHTED_AVERAGE', lines, inventory,
     sourceDescription: trimOrNull(req.body.sourceDescription),
   });
+  delete req.session.pendingInventoryCostPrefill;
   return res.redirect(303, `/accounting/opening/${opening.id}`);
 }));
 
@@ -483,7 +502,48 @@ router.get('/accounting/reports/:kind', permit(permissions.VIEW_ACCOUNTING, 'vie
 router.get('/accounting/entries/:id', permit(permissions.VIEW_ACCOUNTING, 'view journal entries'), asyncRoute(async (req, res) => {
   const entry = ledger.getEntry(req.db, req.ctx.workspaceId, req.params.id);
   if (!entry) throw new (require('../../domain/errors').NotFoundError)('That journal entry could not be found.');
-  res.page('accounting/entry', { title: `Entry ${entry.entry_number}`, nav: 'accounting', entry });
+  let ownerExplanation = null;
+  if (entry.source_type === 'sales_fulfillment' && entry.source_record_type === 'sales_order_event') {
+    const source = req.db.prepare(`SELECT soe.detail, so.id AS order_id, so.order_number,
+        c.name AS customer_name
+      FROM sales_order_events soe
+      JOIN sales_orders so ON so.id = soe.sales_order_id AND so.workspace_id = soe.workspace_id
+      LEFT JOIN customers c ON c.id = so.customer_id
+      WHERE soe.id = ? AND soe.workspace_id = ?`).get(entry.source_record_id, req.ctx.workspaceId);
+    if (source) {
+      let detail = {};
+      try { detail = JSON.parse(source.detail || '{}'); } catch { detail = {}; }
+      const product = req.db.prepare(`SELECT i.name, s.variant_label, s.code
+        FROM skus s JOIN items i ON i.id = s.item_id
+        WHERE s.id = ? AND s.workspace_id = ?`);
+      const location = req.db.prepare('SELECT name FROM locations WHERE id = ? AND workspace_id = ?');
+      const soldLines = (detail.fulfilled || []).map((line) => {
+        const sku = product.get(line.skuId, req.ctx.workspaceId) || {};
+        const costMinor = entry.lines.filter((journalLine) => journalLine.sku_id === line.skuId
+          && (!line.locationId || !journalLine.location_id || journalLine.location_id === line.locationId))
+          .reduce((sum, journalLine) => sum + Number(journalLine.debit_minor || 0), 0);
+        return {
+          quantity: Number(line.quantity || 0), name: sku.name || 'Product',
+          variant: sku.variant_label, code: sku.code,
+          location: line.locationId ? location.get(line.locationId, req.ctx.workspaceId)?.name : null,
+          costMinor,
+        };
+      });
+      const invoice = req.db.prepare(`SELECT balance_minor FROM accounting_customer_invoices
+        WHERE workspace_id = ? AND sales_order_id = ? ORDER BY created_at DESC LIMIT 1`)
+        .get(req.ctx.workspaceId, source.order_id);
+      const revenueMinor = Number(entry.metadata.revenueMinor || 0);
+      const cogsMinor = Number(entry.metadata.cogsMinor || 0);
+      ownerExplanation = {
+        kind: 'sale', orderId: source.order_id, orderNumber: source.order_number,
+        customerName: source.customer_name || 'The customer', revenueMinor, cogsMinor,
+        grossProfitMinor: revenueMinor - cogsMinor,
+        balanceMinor: Number(invoice?.balance_minor || 0), soldLines,
+      };
+    }
+  }
+  res.page('accounting/entry', { title: `Entry ${entry.entry_number}`, nav: 'accounting', entry,
+    ownerExplanation });
 }));
 
 router.post('/accounting/entries/:id/reverse', permit(permissions.MANAGE_ACCOUNTING, 'reverse journal entries'), asyncRoute(async (req, res) => {
@@ -627,6 +687,7 @@ router.post('/accounting/payables', permit(permissions.MANAGE_ACCOUNTING, 'creat
   });
   const bill = payables.open(req.db, req.ctx, req.user, draft.bill.id);
   const paymentStatus = String(req.body.paymentStatus || 'unpaid');
+  let paidNowMinor = 0;
   if (bill.status === 'OPEN' && ['paid', 'partially_paid'].includes(paymentStatus)) {
     const amountMinor = paymentStatus === 'paid' ? Number(bill.balance_minor)
       : pricing.toMinor(req.body.paymentAmount, 'Amount paid');
@@ -636,8 +697,14 @@ router.post('/accounting/payables', permit(permissions.MANAGE_ACCOUNTING, 'creat
       reference: trimOrNull(req.body.paymentReference),
       sourceKey: `bill-form-payment:${newId('form')}`,
       allocations: [{ billId: bill.id, amountMinor }] });
+    paidNowMinor = amountMinor;
   }
-  req.flash('success', `${bill.supplier_invoice_number || bill.bill_number} posted as a bill. No inventory quantity was changed.`);
+  const stillOwedMinor = Math.max(0, Number(bill.balance_minor) - paidNowMinor);
+  const currency = bill.currency || ledger.settings(req.db, req.ctx.workspaceId).currency;
+  const paymentResult = paidNowMinor
+    ? ` A supplier payment of ${pricing.formatMinor(paidNowMinor, currency)} was recorded; you now owe ${pricing.formatMinor(stillOwedMinor, currency)} on this bill.`
+    : ` No supplier payment was recorded; you owe ${pricing.formatMinor(stillOwedMinor, currency)} on this bill.`;
+  req.flash('success', `${bill.supplier_invoice_number || bill.bill_number} was recorded as the supplier bill.${paymentResult} Inventory was not received again.`);
   res.redirect(303, req.body.returnSection === 'expenses' ? '/accounting#expenses' : '/accounting/payables');
 }));
 

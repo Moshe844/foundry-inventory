@@ -1,117 +1,90 @@
 <%
   /*
-   * One purchase order lifecycle, shown as one progression.
+   * Purchases, as a list of stories.
    *
-   * The filters were six buttons in the same shape as the page's own actions,
-   * with the selected one wearing the primary style — so the current filter
-   * looked like the thing to click, next to "New order", which actually was.
-   * They are a segmented control now: one control, one selected state, nothing
-   * competing with a real action.
-   *
-   * The statuses were the stored enum run through a formatter, so the page said
-   * "Partially received" and left the reader to work out where that sits
-   * between ordered and done. Each row now says where it is in the lifecycle
-   * and, when something is still outstanding, how much is still to come — which
-   * is the number somebody is actually looking for when they open this page.
+   * Same shape as customer orders, because they are the same kind of thing:
+   * one line each, saying who and what is waiting on whom, ordered by whether
+   * anybody is waiting. The table this replaced sorted by creation date and
+   * printed the stored status enum, which answers neither question.
    */
-  var STAGES = {
-    DRAFT: { label: 'Prepared', tone: 'muted', step: 1 },
-    ORDERED: { label: 'Ordered', tone: 'info', step: 2 },
-    PARTIALLY_RECEIVED: { label: 'Part received', tone: 'warn', step: 3 },
-    RECEIVED: { label: 'Received', tone: 'ok', step: 4 },
-    CANCELLED: { label: 'Cancelled', tone: 'muted', step: 0 },
+  var today = new Date().toISOString().slice(0, 10);
+  var open = orders.filter(function (o) { return o.isOpen; });
+  var closed = orders.filter(function (o) { return !o.isOpen; });
+  var late = open.filter(function (o) { return o.expectedDate && o.expectedDate < today && o.outstandingUnits > 0; });
+  var waiting = open.filter(function (o) { return ['DRAFT', 'AWAITING_APPROVAL'].includes(o.status); });
+
+  var SAYS = {
+    DRAFT: 'a draft — the supplier has not been told anything',
+    AWAITING_APPROVAL: 'ready to send, and waiting on you',
+    APPROVED: 'approved and ready to go to the supplier',
+    ORDERED: 'with the supplier',
+    PARTIALLY_RECEIVED: 'part of it arrived',
+    RECEIVED: 'all of it arrived',
+    CANCELLED: 'cancelled',
   };
-  var FILTERS = ['DRAFT', 'ORDERED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED'];
 %>
 
-<div class="page-head">
-  <div>
-    <a class="back-link" href="/purchasing"><%- helpers.icon('chevron', { size: 14 }) %> Purchasing</a>
-    <h1>Purchase orders</h1>
-    <p class="page-sub">Everything prepared, ordered, arriving or received.</p>
-  </div>
-  <% if (permissions.create) { %>
-    <div class="page-actions"><a class="btn btn--primary" href="/purchasing/orders/new">New order</a></div>
+<p class="rm-stamp"><%= open.length %> open · <%= closed.length %> closed</p>
+<h1 class="rm-figure">
+  <% if (late.length) { %>
+    <%= late.length %> purchase<%= late.length === 1 ? '' : 's' %> should have arrived by now.
+  <% } else if (waiting.length) { %>
+    <%= waiting.length %> purchase<%= waiting.length === 1 ? ' is' : 's are' %> waiting on you.
+  <% } else if (open.length) { %>
+    <%= open.length %> purchase<%= open.length === 1 ? ' is' : 's are' %> on their way.
+  <% } else { %>
+    Nothing is on order.
   <% } %>
-</div>
+</h1>
+<p class="rm-sub">
+  <% if (!orders.length) { %>
+    Foundry prepares these when stock falls below where you want it. Nothing is ever sent to a
+    supplier without your approval, unless you have given it a limit you are happy with.
+  <% } else { %>
+    Each of these is a story: why it exists, who was told what, when it arrives and what it costs.
+  <% } %>
+</p>
 
-<div class="inbox-bar">
-  <span class="inbox-bar__count"><%= orders.length %> order<%= orders.length === 1 ? '' : 's' %></span>
-  <div class="segmented" role="group" aria-label="Filter by stage">
-    <a class="segmented__item <%= status ? '' : 'is-on' %>" href="/purchasing/orders">All</a>
-    <% FILTERS.forEach(function (value) { %>
-      <a class="segmented__item <%= status === value ? 'is-on' : '' %>"
-         href="/purchasing/orders?status=<%= value %>"
-         <%= status === value ? 'aria-current="true"' : '' %>><%= STAGES[value].label %></a>
+<% if (open.length) { %>
+  <div class="rm-told">
+    <% open.forEach(function (order) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t">
+          <a class="rm-u" href="/purchasing/orders/<%= order.id %>"><%= order.supplierName %></a>
+          <span class="rm-quiet">· <%= order.poNumber %></span>
+          <small>
+            <%= SAYS[order.status] || order.status %><%
+            %><% if (order.expectedDate && order.outstandingUnits) { %>
+              — <%= order.expectedDate < today ? 'was due' : 'due' %> <%= helpers.shortDate(order.expectedDate) %><%
+            %><% } else if (order.outstandingUnits && order.status === 'ORDERED') { %>
+              — nobody has said when<%
+            %><% } %>
+          </small>
+        </span>
+        <span class="rm-told__m <%= order.expectedDate && order.expectedDate < today && order.outstandingUnits ? 'is-paused' : '' %>">
+          <%= order.outstandingUnits || order.orderedUnits %> units
+          <% if (order.subtotal) { %>· $<%= Math.round(order.subtotal).toLocaleString('en-US') %><% } %>
+        </span>
+      </div>
     <% }) %>
   </div>
-</div>
+<% } %>
 
-<% if (orders.length === 0) { %>
-  <div class="empty-state">
-    <span class="empty-state__icon"><%- helpers.icon('purchasing', { size: 20 }) %></span>
-    <p class="empty-state__title"><%= status ? 'Nothing at this stage' : 'No purchase orders yet' %></p>
-    <p class="empty-state__body">
-      <% if (status) { %>
-        No order is <%= STAGES[status].label.toLowerCase() %> right now.
-      <% } else { %>
-        Foundry prepares orders once it knows who supplies a product and how fast it sells.
-        You can also write one yourself.
-      <% } %>
-    </p>
-    <% if (status) { %>
-      <a class="btn" href="/purchasing/orders">See all orders</a>
-    <% } else if (permissions.create) { %>
-      <a class="btn btn--primary" href="/purchasing/orders/new">Create a purchase order</a>
-    <% } %>
-  </div>
-<% } else { %>
-  <div class="panel">
-    <div class="table-wrap">
-      <table class="table table--stack">
-        <thead>
-          <tr>
-            <th>Order</th>
-            <th>Supplier</th>
-            <th>Stage</th>
-            <th>Expected</th>
-            <th class="num">Ordered</th>
-            <th class="num">Still to come</th>
-            <th class="num">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% orders.forEach(function (po) { %>
-            <%
-              var stage = STAGES[po.status] || { label: po.status, tone: 'muted', step: 0 };
-              var outstanding = Math.max(0, (po.orderedUnits || 0) - (po.receivedUnits || 0));
-              var settled = po.status === 'RECEIVED' || po.status === 'CANCELLED';
-            %>
-            <tr>
-              <td class="cell-main">
-                <a class="cell-title" href="/purchasing/orders/<%= po.id %>"><%= po.poNumber %></a>
-                <% if (po.source === 'foundry_recommendation') { %>
-                  <span class="cell-sub">Prepared by Foundry</span>
-                <% } %>
-              </td>
-              <td data-label="Supplier"><%= po.supplierName %></td>
-              <td data-label="Stage"><span class="badge badge--<%= stage.tone %>"><%= stage.label %></span></td>
-              <td data-label="Expected" class="t-muted"><%= po.expectedDate || '—' %></td>
-              <td class="num" data-label="Ordered"><%= po.orderedUnits %></td>
-              <td class="num" data-label="Still to come">
-                <% if (settled) { %>
-                  <span class="t-muted">—</span>
-                <% } else if (outstanding) { %>
-                  <strong><%= outstanding %></strong>
-                <% } else { %>
-                  <span class="t-muted">0</span>
-                <% } %>
-              </td>
-              <td class="num cell-end" data-label="Total"><%= po.hasCosts ? po.subtotal.toFixed(2) : '—' %></td>
-            </tr>
-          <% }) %>
-        </tbody>
-      </table>
-    </div>
+<% if (closed.length) { %>
+  <p class="rm-stamp">Closed · <%= closed.length %></p>
+  <div class="rm-told">
+    <% closed.slice(0, 8).forEach(function (order) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t rm-quiet"><a class="rm-u" href="/purchasing/orders/<%= order.id %>"><%= order.supplierName %></a> · <%= order.poNumber %></span>
+        <span class="rm-told__m <%= order.status === 'RECEIVED' ? 'is-ok' : '' %>"><%= SAYS[order.status] || order.status %></span>
+      </div>
+    <% }) %>
   </div>
 <% } %>
+
+<p class="rm-disclose">
+  <a href="/purchasing">What needs buying</a>
+  <% if (permissions.create) { %><a href="/purchasing/orders/new">Write a purchase order</a><% } %>
+  <a href="/purchasing/receive">Book in a delivery</a>
+  <a href="/suppliers">Suppliers and their terms</a>
+</p>

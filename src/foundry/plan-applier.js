@@ -6,9 +6,8 @@
  * This module is deliberately small and deliberately boring. It:
  *   - re-verifies the plan's integrity hash before doing anything, so a plan
  *     edited in storage after approval is refused;
- *   - creates only STRUCTURE — locations, terminology, operational defaults;
- *   - never creates items, SKUs, serial numbers, lots, or a single unit of
- *     stock, because real inventory records come from the customer;
+ *   - creates structure and, only when the sealed plan carries owner-provided
+ *     records, the exact products and opening quantities the owner approved;
  *   - is idempotent, so a double-submitted approval configures nothing twice.
  *
  * It imports the location service and nothing else from the domain. It has no
@@ -21,8 +20,11 @@ const locationService = require('../domain/location-service');
 const { verifyPlanIntegrity } = require('./plan-schema');
 const { NotFoundError, InvariantError } = require('../domain/errors');
 const { nowIso } = require('../lib/util');
+const syntheticGenerator = require('../synthetic/generator');
+const syntheticMode = require('../synthetic/data-mode');
+const ownerRecordIntake = require('./owner-record-intake');
 
-function applyPlan(db, ctx, planId) {
+function applyPlan(db, ctx, planId, options = {}) {
   return inTransaction(db, () => {
     const row = db
       .prepare('SELECT * FROM foundry_plans WHERE id = ? AND workspace_id = ?')
@@ -70,7 +72,7 @@ function applyPlan(db, ctx, planId) {
       created.push({ id: made.id, name: made.name, kind: made.kind });
     }
 
-    db.prepare(
+    if (options.updateConfiguration !== false) db.prepare(
       `INSERT INTO workspace_configuration (
          workspace_id, configured_at, configuration_version, applied_plan_id,
          terminology, operational_defaults, inventory_model, updated_at
@@ -113,6 +115,18 @@ function applyPlan(db, ctx, planId) {
       expirationTracking: plan.expirationRules.enabled,
       appliedAt: now,
     };
+
+    if (plan.ownerProvidedInventory?.lines?.length) {
+      summary.ownerProvidedInventory = ownerRecordIntake.apply(db, ctx, plan, existing, created);
+    }
+
+    if (plan.syntheticGeneration) {
+      if (plan.syntheticGeneration.workspaceMode !== 'synthetic'
+          || syntheticMode.workspaceMode(db, ctx.workspaceId) !== 'synthetic') {
+        throw new InvariantError('This plan no longer belongs to a Test environment. No synthetic records were created.', 'synthetic_mode_changed');
+      }
+      summary.syntheticGeneration = syntheticGenerator.generate(db, ctx, plan.syntheticGeneration);
+    }
 
     db.prepare(
       "UPDATE foundry_plans SET status = 'applied', applied_at = ?, applied_summary = ? WHERE id = ?"

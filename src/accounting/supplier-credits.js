@@ -9,7 +9,9 @@ const costing = require('./costing');
 const payables = require('./payables');
 
 function record(db, ctx, membership, input) {
-  permissions.assertCan(membership, permissions.MANAGE_ACCOUNTING, 'record supplier credits');
+  if (!permissions.can(membership, permissions.MANAGE_ACCOUNTING)) {
+    permissions.assertCan(membership, permissions.RECONCILE_SUPPLIER_RETURN, 'record supplier credits');
+  }
   const bill = payables.requireBill(db, ctx.workspaceId, input.billId);
   if (!['OPEN', 'PARTIALLY_PAID'].includes(bill.status)) {
     throw new ValidationError('Choose a supplier bill that still has money owed.');

@@ -62,6 +62,10 @@ function nextStep(db, workspaceId, order, options = {}) {
 
   const payment = options.payment || paymentTerms.positionForOrder(db, workspaceId, order);
   const fulfilment = options.fulfilment || shipments.fulfilmentState(db, workspaceId, order);
+  // The workflow state stays stable for domain logic. The label is the
+  // evidenced owner-facing truth: pickup is collected, local delivery is
+  // delivered, and only a carrier handoff is shipped.
+  const fulfilmentLabel = fulfilment.label || fulfilment.state;
   const today = String(options.today || new Date().toISOString().slice(0, 10));
   const late = order.needed_by && order.needed_by < today
     && !['Shipped', 'Delivered'].includes(fulfilment.state);
@@ -144,7 +148,7 @@ function nextStep(db, workspaceId, order, options = {}) {
   if (payment.remainingMinor > 0) {
     const overdue = payment.dueDate && payment.dueDate < today;
     return {
-      text: `${fulfilment.state} — ${money(payment.remainingMinor, payment.currency)} still owed`,
+      text: `${fulfilmentLabel} — ${money(payment.remainingMinor, payment.currency)} still owed`,
       detail: overdue ? `That was due ${payment.dueDate}.` : null,
       tone: overdue ? 'danger' : 'warn',
       rank: overdue ? RANK.LATE : RANK.GONE,
@@ -153,7 +157,7 @@ function nextStep(db, workspaceId, order, options = {}) {
     };
   }
   return {
-    text: fulfilment.state === 'Delivered' ? 'Delivered and paid' : 'Shipped and paid',
+    text: `${fulfilmentLabel} and paid`,
     detail: null,
     tone: 'ok',
     rank: RANK.SETTLED,

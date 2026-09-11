@@ -1,83 +1,129 @@
-<div class="foundry-hero foundry-hero--tight">
-  <span class="foundry-mark foundry-mark--done"><%- helpers.icon('check', { size: 24 }) %></span>
-  <h1>Your products are ready</h1>
+<%
+  /*
+   * The last step: what is actually on the shelves.
+   *
+   * Foundry has the structure but not the numbers, and it will never invent
+   * them — so this screen offers the three real ways of supplying them at equal
+   * weight, and says plainly what is recorded so far.
+   *
+   * The grid is one of the few genuine tables in the product: a number per
+   * variant per location is a matrix, and pretending otherwise would make it
+   * harder to fill in.
+   */
+%>
+
+<%- include('../partials/setup-steps', { step: 3 }) %>
+
+<div class="rm-head">
+  <p class="rm-head__eyebrow" style="color:var(--good)"><%- helpers.icon('check', { size: 14 }) %> Structure is live</p>
+  <h1>How should we get your current quantities into Foundry?</h1>
   <p>
-    <strong><%= item.name %></strong> is live with
-    <strong><%= skuCount %></strong> trackable <%= skuCount === 1 ? 'item' : 'variants' %>
-    across <strong><%= locations.length %></strong> <%= locations.length === 1 ? 'location' : 'locations' %>.
+    <strong><%= item.name %></strong> is live with <strong><%= skuCount %></strong>
+    trackable <%= skuCount === 1 ? 'item' : 'variants' %> across <strong><%= locations.length %></strong>
+    <%= locations.length === 1 ? 'location' : 'locations' %>. Foundry will never invent what is on
+    your shelves, so it needs the opening numbers from you.
   </p>
 </div>
 
-<section class="card quantity-takeover">
-  <div class="card-head">
-    <div>
-      <span class="setup-eyebrow">One last setup step</span>
-      <h2>How should we get your current quantities into Foundry?</h2>
-    </div>
+<div class="rm-facts" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">
+  <div class="rm-fact">
+    <span class="rm-fact__k"><%- helpers.icon('layers', { size: 14 }) %> Recorded so far</span>
+    <span class="rm-fact__v"><%= total %></span>
+    <span class="rm-fact__d"><%= total === 1 ? 'unit' : 'units' %> with a movement behind them</span>
   </div>
-  <div class="card-body">
-    <div class="quantity-status">
-      <span>Currently recorded</span>
-      <strong><%= total %> <%= total === 1 ? 'unit' : 'units' %></strong>
-      <span>Foundry will never invent what is on your shelves.</span>
-    </div>
-
-    <div class="quantity-options">
-      <% if (canEnterGrid) { %>
-        <form class="quantity-option quantity-option--primary opening-grid" method="post" action="/foundry/quantities/<%= item.id %>/save">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <div class="opening-grid__head">
-            <span class="quantity-option__icon"><%- helpers.icon('inventory', { size: 20 }) %></span>
-            <div><h3>Type quantities yourself</h3><p>Enter what is physically on hand now. Leave a box empty if there is none at that location.</p></div>
-          </div>
-          <div class="table-wrap"><table class="table table--tight">
-            <thead><tr><th>Variant</th><% locations.forEach(function (location) { %><th><%= location.name %></th><% }) %></tr></thead>
-            <tbody><% skus.forEach(function (sku) { %><tr>
-              <td><strong><%= sku.variant_label || item.name %></strong><small class="mono"><%= sku.code %></small></td>
-              <% locations.forEach(function (location) { %><td>
-                <input type="hidden" name="skuId" value="<%= sku.id %>">
-                <input type="hidden" name="locationId" value="<%= location.id %>">
-                <input class="input input--qty" type="number" min="0" step="1" name="quantity" aria-label="<%= sku.variant_label || item.name %> at <%= location.name %>" placeholder="0">
-              </td><% }) %>
-            </tr><% }) %></tbody>
-          </table></div>
-          <div><button class="btn btn--primary" type="submit">Save opening inventory</button></div>
-        </form>
-      <% } %>
-
-      <div class="quantity-option quantity-option--primary">
-        <span class="quantity-option__icon"><%- helpers.icon('foundry', { size: 20 }) %></span>
-        <div>
-          <h3>Tell Foundry</h3>
-          <p>Describe what is on hand in ordinary language. Foundry will translate it, preview the exact changes, and ask for approval.</p>
-          <form class="ask-form" method="post" action="/actions/ask" data-busy data-ask-form>
-            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-            <input class="input ask-input" type="text" name="instruction"
-                   placeholder="Tell Foundry what is on hand and where it is…"
-                   maxlength="500" autocomplete="off" autofocus>
-            <button class="btn btn--primary" type="submit">Preview quantities</button>
-          </form>
-        </div>
-      </div>
-
-      <a class="quantity-option" href="/imports">
-        <span class="quantity-option__icon"><%- helpers.icon('import', { size: 20 }) %></span>
-        <div><h3>Upload Excel</h3><p>Give Foundry a spreadsheet or CSV and let it work out the quantities.</p></div>
-        <%- helpers.icon('chevron', { size: 16 }) %>
-      </a>
-
-      <% if (!canEnterGrid) { %><a class="quantity-option" href="/inventory/<%= item.id %>?action=receive">
-        <span class="quantity-option__icon"><%- helpers.icon('receive', { size: 20 }) %></span>
-        <div><h3>Type quantities yourself</h3><p>Enter what you currently have for each variant and location.</p></div>
-        <%- helpers.icon('chevron', { size: 16 }) %>
-      </a><% } %>
-    </div>
+  <div class="rm-fact">
+    <span class="rm-fact__k"><%- helpers.icon('box', { size: 14 }) %> Positions to fill</span>
+    <span class="rm-fact__v"><%= skuCount * locations.length %></span>
+    <span class="rm-fact__d">variant × location combinations</span>
   </div>
-  <div class="card-foot quantity-complete">
-    <span class="muted">Already entered everything, or starting with no stock?</span>
-    <form method="post" action="/foundry/quantities/complete">
+</div>
+
+<% if (canEnterGrid) { %>
+  <section class="rm-panel" style="margin-bottom:16px">
+    <div class="rm-panel__head">
+      <%- helpers.icon('inventory', { size: 15, className: 'rm-quiet' }) %>
+      <h2>Type quantities yourself</h2>
+      <span class="right">Leave a box empty where there is none</span>
+    </div>
+    <form method="post" action="/foundry/quantities/<%= item.id %>/save">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <button class="btn" type="submit">Finish setup and let Foundry manage it</button>
+      <div style="padding:4px 16px 8px;overflow-x:auto">
+        <table class="rm-qty">
+          <thead>
+            <tr>
+              <th>Variant</th>
+              <% locations.forEach(function (location) { %><th><%= location.name %></th><% }) %>
+            </tr>
+          </thead>
+          <tbody>
+            <% skus.forEach(function (sku) { %>
+              <tr>
+                <td>
+                  <strong><%= sku.variant_label || item.name %></strong>
+                  <small><%= sku.code %></small>
+                </td>
+                <% locations.forEach(function (location) { %>
+                  <td>
+                    <input type="hidden" name="skuId" value="<%= sku.id %>">
+                    <input type="hidden" name="locationId" value="<%= location.id %>">
+                    <input type="number" min="0" step="1" name="quantity" placeholder="0"
+                           aria-label="<%= sku.variant_label || item.name %> at <%= location.name %>">
+                  </td>
+                <% }) %>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:0 16px 16px">
+        <button class="rm-btn" type="submit"><%- helpers.icon('check', { size: 15 }) %> Save opening inventory</button>
+      </div>
+    </form>
+  </section>
+<% } %>
+
+<p class="rm-stamp"><%- helpers.icon('layers', { size: 14 }) %> Or give Foundry the numbers another way</p>
+<div class="rm-opts">
+  <div class="rm-choice" style="cursor:default">
+    <span class="rm-choice__ic"><%- helpers.icon('spark', { size: 19 }) %></span>
+    <span class="rm-choice__t">Tell Foundry</span>
+    <span class="rm-choice__b">Describe what is on hand in ordinary language.</span>
+    <span class="rm-choice__d">Foundry translates it, previews the exact changes, and waits for your approval.</span>
+    <form method="post" action="/actions/ask" data-busy data-ask-form style="margin-top:8px;display:grid;gap:8px">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="rm-field" style="margin:0">
+        <span class="visually-hidden">What is on hand</span>
+        <input type="text" name="instruction" maxlength="500" autocomplete="off"
+               placeholder="40 Navy / 8 at the Warehouse, 12 at Downtown…">
+      </label>
+      <button class="rm-btn rm-btn--sm" type="submit">Preview those quantities</button>
     </form>
   </div>
-</section>
+
+  <a class="rm-choice" href="/imports">
+    <span class="rm-choice__ic"><%- helpers.icon('import', { size: 19 }) %></span>
+    <span class="rm-choice__t">Upload Excel</span>
+    <span class="rm-choice__b">The counts are already in a file.</span>
+    <span class="rm-choice__d">Give Foundry a spreadsheet or CSV and it works the quantities out, then shows you.</span>
+    <span class="rm-choice__go">Choose this <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+  </a>
+
+  <% if (!canEnterGrid) { %>
+    <a class="rm-choice" href="/inventory/<%= item.id %>?action=receive">
+      <span class="rm-choice__ic"><%- helpers.icon('receive', { size: 19 }) %></span>
+      <span class="rm-choice__t">Type quantities yourself</span>
+      <span class="rm-choice__b">Enter what you have for each variant and location.</span>
+      <span class="rm-choice__go">Choose this <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+    </a>
+  <% } %>
+</div>
+
+<div class="rm-spine-foot">
+  <form method="post" action="/foundry/quantities/complete" style="margin:0">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="rm-btn rm-btn--ghost" type="submit">Finish setup and let Foundry manage it</button>
+  </form>
+  <span class="rm-quiet" style="font-size:13px;align-self:center">
+    Already entered everything, or starting with no stock?
+  </span>
+</div>

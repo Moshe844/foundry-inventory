@@ -17,6 +17,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { chromium } = require('playwright');
+const { completeTransfer } = require('./transfer-helper');
 
 const config = require('../../src/config');
 const { openDatabase } = require('../../src/db');
@@ -180,6 +181,7 @@ function buildWorkspace(databasePath) {
 
     return {
       workspaceId,
+      ownerId: userId,
       itemId: item.itemId,
       size8: size8.id,
       size9: size9.id,
@@ -261,11 +263,11 @@ test(
 
     await t.test('3. Foundry proposes a specific transfer, and nothing has moved', async () => {
       const body = await page.locator('body').innerText();
-      assert.match(body, /Foundry is ready to transfer/);
+      assert.match(body, /Foundry is ready to prepare a real transfer/);
       assert.match(body, /Navy Oxford/);
       assert.match(body, /New Jersey Warehouse/);
       assert.match(body, /Brooklyn Warehouse/);
-      assert.match(body, /unchanged — stock only moves/);
+      assert.match(body, /total on hand[\s\S]{0,80}unchanged while the stock moves/i);
       await shot(page, 'proposal');
 
       assert.equal(balance(databasePath, state, state.size8, state.brooklyn), 4, 'still nothing moved');
@@ -280,22 +282,28 @@ test(
       assert.notEqual(state.proposalUrl, state.firstProposalUrl, 'a new number is a new proposal');
 
       const body = await page.locator('body').innerText();
-      assert.match(body, /New Jersey Warehouse[\s\S]{0,60}48[\s\S]{0,20}36/);
-      assert.match(body, /Brooklyn Warehouse[\s\S]{0,60}4[\s\S]{0,20}16/);
+      assert.match(body, /New Jersey Warehouse[\s\S]{0,100}on hand now/i);
+      assert.match(body, /Brooklyn Warehouse[\s\S]{0,100}only after receipt/i);
       assert.match(body, /Approve transfer/);
       await shot(page, 'revised');
 
       assert.equal(balance(databasePath, state, state.size8, state.brooklyn), 4);
     });
 
-    await t.test('5-7. approve, execute, and verify the resulting balances', async () => {
+    await t.test('5-7. approve, then execute the visible warehouse lifecycle', async () => {
       await page.click('button:has-text("Approve transfer")');
       await page.waitForURL(/\/actions\/act_/);
       await shot(page, 'done');
 
       const body = await page.locator('body').innerText();
-      assert.match(body, /Done/);
+      assert.match(body, /Transfer prepared/);
       assert.match(body, /Verified against your records/);
+      assert.match(body, /Nothing physically moved/);
+
+      assert.equal(balance(databasePath, state, state.size8, state.brooklyn), 4);
+      assert.equal(balance(databasePath, state, state.size8, state.jersey), 48);
+      await page.getByRole('link', { name: /^Continue TR-/ }).click();
+      await completeTransfer(page);
 
       assert.equal(balance(databasePath, state, state.size8, state.brooklyn), 16);
       assert.equal(balance(databasePath, state, state.size8, state.jersey), 36);
@@ -321,7 +329,11 @@ test(
       assert.equal(movements.length, 2, 'both legs, one group');
       assert.equal(movements[0].group_id, movements[1].group_id);
       assert.equal(movements[0].quantity_delta + movements[1].quantity_delta, 0, 'nothing created or destroyed');
-      assert.match(movements[0].reference, /^Foundry act_/, 'the ledger says Foundry was involved');
+      assert.match(movements[0].reference, /^TR-\d+$/, 'the ledger points to the durable transfer document');
+      const transfer = inspect(databasePath, (db) => db.prepare(
+        'SELECT approved_by_user_id FROM inventory_transfers WHERE workspace_id = ? AND transfer_number = ?'
+      ).get(state.workspaceId, movements[0].reference));
+      assert.equal(transfer.approved_by_user_id, state.ownerId, 'the transfer retains who approved it');
     });
 
     await t.test('9. the finding it came from resolves itself', async () => {
@@ -335,7 +347,7 @@ test(
       await page.goto(state.proposalUrl);
       await page.reload();
       const body = await page.locator('body').innerText();
-      assert.match(body, /Done/);
+      assert.match(body, /Transfer prepared/);
       assert.equal(balance(databasePath, state, state.size8, state.brooklyn), 16);
     });
 

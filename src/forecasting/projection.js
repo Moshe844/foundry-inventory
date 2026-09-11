@@ -71,8 +71,31 @@ function incomingFor(db, workspaceId, skuId, { now = Date.now(), leadTimeDays = 
       overdue: Boolean(line.expectedDate && dayOf(line.expectedDate) < today),
     });
   }
+  // Internal stock does not disappear while it is travelling. It is not
+  // destination on-hand yet, but it is real future supply and must prevent a
+  // forecast from ordering the same units again.
+  let transferUnits = 0;
+  const transferOrders = [];
+  try {
+    for (const transfer of require('../transfers/transfer-service').incomingForSku(db, workspaceId, skuId)) {
+      let date = transfer.expectedDate ? dayOf(transfer.expectedDate) : today;
+      let estimated = !transfer.expectedDate;
+      if (date < today) { date = today; estimated = true; }
+      transferUnits += Number(transfer.units);
+      transferOrders.push(transfer);
+      arrivals.push({ date, units: Number(transfer.units), transferNumber: transfer.transferNumber,
+        transferId: transfer.transferId, supplierName: transfer.sourceName,
+        source: 'INTERNAL_TRANSFER', estimated,
+        overdue: Boolean(transfer.expectedDate && dayOf(transfer.expectedDate) < today) });
+    }
+  } catch (error) {
+    // A database opened against a pre-Mission-6 schema during a migration
+    // remains readable; ordinary runtime databases always have this table.
+    if (!String(error.message || '').includes('no such table')) throw error;
+  }
   arrivals.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  return { onOrder: entry.onOrder || 0, arrivals, orders: entry.lines || [] };
+  return { onOrder: Number(entry.onOrder || 0) + transferUnits, arrivals,
+    orders: [...(entry.lines || []), ...transferOrders] };
 }
 
 /**
@@ -165,6 +188,18 @@ function project(db, workspaceId, skuId, options = {}) {
 
   const nextArrival = incoming.arrivals.length ? incoming.arrivals[0] : null;
   const coveredByIncoming = Boolean(stockoutDate && nextArrival && nextArrival.date <= stockoutDate);
+  const missedCommitment = promiseMissedDate
+    ? commitments.find((row) => row.date === promiseMissedDate) || null
+    : null;
+
+  // A customer with no requested date is conservatively due now, so an order
+  // arriving next week cannot make today's calendar projection non-negative.
+  // It can still fully cover the waiting quantity. Keep that fact distinct
+  // from `coveredByIncoming`: the customer is waiting, but the owner does not
+  // need to buy the same stock a second time.
+  const incomingCoversMissedCommitment = Boolean(
+    missedCommitment && incoming.onOrder >= firstShortfallUnits
+  );
 
   return {
     skuId,
@@ -181,8 +216,10 @@ function project(db, workspaceId, skuId, options = {}) {
     daysUntilStockout,
     shortfallUnits: firstShortfallUnits,
     promiseMissedDate,
+    missedCommitment,
     nextArrival,
     coveredByIncoming,
+    incomingCoversMissedCommitment,
 
     days,
     arrivals: incoming.arrivals,

@@ -1,76 +1,116 @@
-<div class="page-head">
-  <div class="titles">
-    <a class="back-link" href="/onboarding"><%- helpers.icon('chevron', { size: 14 }) %> Start over</a>
-    <h1><%= messy ? 'Give Foundry everything you have' : 'Give Foundry your spreadsheet' %></h1>
-    <div class="page-sub">
-      <% if (messy) { %>
-        Upload every file that holds part of the picture. Foundry works out what agrees, what does not,
-        and what only looks like a duplicate.
-      <% } else { %>
-        Upload the file you already keep your stock in. Foundry reads it and sets itself up from what it finds —
-        you do not need to configure anything first.
-      <% } %>
-    </div>
-  </div>
+<%
+  /*
+   * Give Foundry the files.
+   *
+   * What this replaced was a page-head, a card of two form fields and a table
+   * of what had been uploaded — the same shape as every other screen in the old
+   * product, so choosing "my inventory is in files" landed somewhere that gave
+   * no sense of being part of a setup at all.
+   *
+   * The table of uploaded files is a table no longer: each file is a row that
+   * says what Foundry read it as and how sure it is, because that is the thing
+   * somebody checks before pressing the button that reads them all.
+   */
+%>
+
+<a class="rm-head__back" href="/onboarding"><%- helpers.icon('chevron', { size: 13, className: 'rm-flip' }) %> Start over</a>
+<%- include('../partials/setup-steps', { step: 1 }) %>
+
+<div class="rm-head">
+  <p class="rm-head__eyebrow"><%- helpers.icon('import', { size: 14 }) %> Inventory source · files</p>
+  <h1><%= messy ? 'Give Foundry everything you have.' : 'Give Foundry your spreadsheet.' %></h1>
+  <p>
+    <% if (messy) { %>
+      Upload every file that holds part of the picture. Foundry works out what agrees, what does not,
+      and what only looks like a duplicate.
+    <% } else { %>
+      Upload the file you already keep your stock in. Foundry reads it and sets itself up from what it
+      finds — you do not need to configure anything first.
+    <% } %>
+  </p>
 </div>
 
-<div class="card section">
-  <div class="card-head"><h2>Files</h2></div>
+<section class="rm-panel" style="margin-bottom:16px">
+  <div class="rm-panel__head">
+    <%- helpers.icon('import', { size: 15, className: 'rm-quiet' }) %>
+    <h2>Add your files</h2>
+  </div>
   <form method="post" action="/onboarding/files" enctype="multipart/form-data" data-busy>
-    <div class="card-body">
+    <div style="padding:16px">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <label class="field">
-        <span class="field-label">Spreadsheets or CSVs</span>
-        <input class="input" type="file" name="files" accept=".csv,.tsv,.txt,.xlsx" multiple>
-        <span class="field-help">.xlsx, .csv or .tsv. Extra title rows, blank lines and stray columns are fine.</span>
+
+      <label class="rm-drop" style="margin-bottom:14px">
+        <span class="rm-drop__ic"><%- helpers.icon('import', { size: 20 }) %></span>
+        <span class="rm-drop__b">
+          <span class="rm-drop__t">Choose spreadsheets or CSVs</span>
+          <span class="rm-drop__d">.xlsx, .csv or .tsv · extra title rows, blank lines and stray columns are all fine</span>
+        </span>
+        <input type="file" name="files" accept=".csv,.tsv,.txt,.xlsx" multiple
+               style="position:absolute;width:1px;height:1px;opacity:0">
+        <span class="rm-btn rm-btn--ghost rm-btn--sm">Browse</span>
       </label>
-      <label class="field">
-        <span class="field-label">Or paste rows</span>
-        <textarea class="input" name="pasted" rows="4" placeholder="Paste straight out of a spreadsheet"></textarea>
+
+      <label class="rm-field">
+        <span>Or paste rows straight out of a spreadsheet</span>
+        <textarea name="pasted" rows="4" placeholder="Product	Location	Qty&#10;Navy Oxford / 8	Warehouse	42"></textarea>
       </label>
     </div>
-    <div class="card-foot">
-      <button class="btn" type="submit"><%- helpers.icon('import', { size: 15 }) %> Add</button>
+    <div style="padding:0 16px 16px">
+      <button class="rm-btn" type="submit"><%- helpers.icon('import', { size: 15 }) %> Add these</button>
     </div>
   </form>
-</div>
+</section>
 
 <% if (sources.length) { %>
-  <div class="card section">
-    <div class="card-head">
-      <h2>What Foundry has</h2>
-      <span class="spacer"></span>
-      <span class="badge badge--muted"><%= sources.length %> file<%= sources.length === 1 ? '' : 's' %></span>
+  <section class="rm-panel" style="margin-bottom:16px">
+    <div class="rm-panel__head">
+      <%- helpers.icon('layers', { size: 15, className: 'rm-quiet' }) %>
+      <h2>What Foundry has so far</h2>
+      <span class="right"><%= sources.length %> file<%= sources.length === 1 ? '' : 's' %></span>
     </div>
-    <table class="table">
-      <thead><tr><th>File</th><th>Foundry reads it as</th><th class="num">Rows</th><th class="num">Units</th><th>When</th><th></th></tr></thead>
-      <tbody>
-        <% sources.forEach(function (source) { %>
-          <tr>
-            <td><strong><%= source.name %></strong></td>
-            <td><%= source.purposeLabel %> <span class="muted">(<%= source.purposeConfidence %> confidence)</span></td>
-            <td class="num"><%= source.profile.totals ? source.profile.totals.rows : 0 %></td>
-            <td class="num"><%= source.profile.totals ? source.profile.totals.units : 0 %></td>
-            <td class="muted">
-              <% if (source.observedAt) { %><%= source.observedAt %><% } else { %>not dated<% } %>
-            </td>
-            <td>
-              <form method="post" action="/onboarding/files/<%= source.id %>/remove">
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <button class="btn btn--sm btn--ghost" type="submit">Remove</button>
-              </form>
-            </td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
-    <div class="card-foot">
-      <form method="post" action="/onboarding/understand" data-busy>
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button class="btn btn--primary" type="submit" <%= canOperate ? '' : 'disabled' %>>
-          <%- helpers.icon('foundry', { size: 15 }) %> Understand my inventory
-        </button>
-      </form>
+    <div class="rm-feed">
+      <% sources.forEach(function (source) { %>
+        <div class="rm-feed__row">
+          <span class="rm-feed__ic is-done"><%- helpers.icon('check', { size: 14 }) %></span>
+          <span class="rm-feed__t">
+            <%= source.name %>
+            <small>
+              Read as <%= source.purposeLabel %> · <%= source.purposeConfidence %> confidence
+              · <%= source.profile.totals ? source.profile.totals.rows : 0 %> rows,
+              <%= source.profile.totals ? source.profile.totals.units : 0 %> units
+              <% if (source.observedAt) { %> · dated <%= source.observedAt %><% } else { %> · not dated<% } %>
+            </small>
+          </span>
+          <span class="rm-feed__m">
+            <form method="post" action="/onboarding/files/<%= source.id %>/remove" style="margin:0">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Remove</button>
+            </form>
+          </span>
+        </div>
+      <% }) %>
     </div>
-  </div>
+  </section>
+
+  <form method="post" action="/onboarding/understand" data-busy style="margin-bottom:14px">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="rm-btn" type="submit" <%= canOperate ? '' : 'disabled' %>>
+      <%- helpers.icon('spark', { size: 15 }) %> Read these and show me what you found
+    </button>
+  </form>
 <% } %>
+
+<div class="rm-note">
+  <%- helpers.icon('shield', { size: 16 }) %>
+  <span>
+    <strong>Nothing becomes stock until you approve it.</strong>
+    Foundry reads the files as evidence, shows you every product and quantity it would create, and
+    waits. It never invents a number that is not in the file.
+  </span>
+</div>
+
+<p class="rm-disclose">
+  <a href="/onboarding">Choose a different source</a>
+  <a href="/onboarding/mailbox">These arrive by email instead</a>
+  <a href="/everything">Everything else</a>
+</p>

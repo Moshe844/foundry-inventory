@@ -21,10 +21,13 @@ const { nowIso } = require('../lib/util');
  * Creates an inventory for this account and makes them its owner.
  * Checked against the account's plan before anything is written.
  */
-function createWorkspace(db, accountId, name) {
+function createWorkspace(db, accountId, name, options = {}) {
   return inTransaction(db, () => {
     entitlements.assertWithin(db, { accountId }, 'workspaces');
-    return authService.createWorkspaceFor(db, accountId, name);
+    const created = authService.createWorkspaceFor(db, accountId, name);
+    const dataMode = options.dataMode === 'synthetic' ? 'synthetic' : 'production';
+    db.prepare('UPDATE workspaces SET data_mode = ? WHERE id = ?').run(dataMode, created.workspaceId);
+    return { ...created, dataMode };
   });
 }
 
@@ -66,6 +69,7 @@ function listForAccount(db, accountId) {
       membershipId: row.membership_id,
       isOwner: row.owner_account_id === accountId,
       createdAt: row.created_at,
+      dataMode: row.data_mode || 'production',
       ...counts,
       attentionCount,
       configured: Boolean(configuration && configuration.configured_at),

@@ -1,8 +1,49 @@
-<div class="page-head"><div><a class="back-link" href="/accounting/reports/general-ledger">‹ General ledger</a><p class="eyebrow">Posted journal entry</p><h1>Entry #<%= entry.entry_number %></h1><p class="lede"><%= entry.description %></p></div><span class="badge badge--success">Posted</span></div>
-<section class="card"><div class="card-head"><h2><%= entry.posting_date %></h2><span class="hint"><%= entry.engine_version %></span></div><div class="card-body">
-  <div class="table-wrap"><table class="table"><thead><tr><th>Account</th><th>Memo</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead><tbody>
-  <% entry.lines.forEach(function(line) { %><tr><td><%= line.account_code %> · <%= line.account_name %></td><td><%= line.memo || '—' %></td><td class="num"><%= line.debit_minor ? helpers.money(line.debit_minor, line.currency) : '—' %></td><td class="num"><%= line.credit_minor ? helpers.money(line.credit_minor, line.currency) : '—' %></td></tr><% }) %>
-  </tbody><tfoot><tr><th colspan="2">Total</th><th class="num"><%= helpers.money(entry.lines.reduce((n,l)=>n+Number(l.debit_minor),0), entry.lines[0].currency) %></th><th class="num"><%= helpers.money(entry.lines.reduce((n,l)=>n+Number(l.credit_minor),0), entry.lines[0].currency) %></th></tr></tfoot></table></div>
-</div></section>
-<section class="card"><div class="card-head"><h2>Why this exists</h2></div><div class="card-body grid grid--2"><div><span class="field-label">Source</span><p><%= entry.source_type.replaceAll('_',' ') %></p></div><div><span class="field-label">Source record</span><p><%= entry.source_record_type || '—' %> <%= entry.source_record_id || '' %></p></div><div><span class="field-label">Domain event</span><p><%= entry.source_event_id || 'Manual approved entry' %></p></div><div><span class="field-label">Correction</span><p><%= entry.reversal_of_entry_id ? 'Reverses an earlier posted entry' : 'Original entry' %></p></div></div></section>
+<%
+  var owner = locals.ownerExplanation || null;
+  var currency = (entry.lines[0] && entry.lines[0].currency) || 'USD';
+%>
+<div class="page-head"><div>
+  <a class="back-link" href="<%= owner && owner.orderId ? '/orders/' + owner.orderId : '/accounting' %>">‹ <%= owner && owner.orderNumber ? owner.orderNumber : 'Accounting' %></a>
+  <p class="eyebrow"><%= owner && owner.kind === 'sale' ? 'How Foundry worked out this sale' : 'Accounting evidence' %></p>
+  <h1><%= owner && owner.orderNumber ? owner.orderNumber : 'Entry #' + entry.entry_number %></h1>
+  <p class="lede"><%= owner && owner.kind === 'sale' ? 'The sale, exact product cost, gross profit, and customer balance—tied to the goods that left.' : entry.description %></p>
+</div><span class="badge badge--success">Recorded</span></div>
+
+<% if (owner && owner.kind === 'sale') { %>
+  <section class="card">
+    <div class="card-head"><h2>What this means</h2><span class="hint"><%= entry.posting_date %></span></div>
+    <div class="card-body">
+      <div class="accounting-explanation">
+        <strong><%= owner.customerName %> bought <%= helpers.money(owner.revenueMinor, currency) %> of products.</strong><br>
+        Those products cost the business <strong><%= helpers.money(owner.cogsMinor, currency) %></strong>.
+        The sale therefore created <strong><%= helpers.money(owner.grossProfitMinor, currency) %> gross profit</strong> before other expenses.
+        <% if (owner.balanceMinor > 0) { %>
+          No payment covering the remaining <strong><%= helpers.money(owner.balanceMinor, currency) %></strong> has been recorded yet.
+        <% } else { %>
+          The customer balance for this sale is fully paid.
+        <% } %>
+      </div>
+      <div class="accounting-next-list" style="margin-top:18px">
+        <h3>Exactly what was sold</h3>
+        <% owner.soldLines.forEach(function(line) { %>
+          <p>
+            <span><strong><%= line.quantity %> × <%= line.name %><%= line.variant ? ' / ' + line.variant : '' %></strong><%= line.code ? ' · ' + line.code : '' %><%= line.location ? ' · from ' + line.location : '' %></span>
+            <strong><%= helpers.money(line.costMinor, currency) %> product cost</strong>
+          </p>
+        <% }) %>
+      </div>
+      <p style="margin:18px 0 0"><a class="btn btn--primary" href="/orders/<%= owner.orderId %>">Back to <%= owner.orderNumber %></a></p>
+    </div>
+  </section>
+<% } %>
+
+<details class="card disclose">
+  <summary class="card-head"><div><h2>Advanced accounting details</h2><p class="hint">Optional audit detail. The owner explanation above is the business result.</p></div></summary>
+  <div class="card-body">
+    <div class="table-wrap"><table class="table"><thead><tr><th>Account</th><th>Memo</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead><tbody>
+    <% entry.lines.forEach(function(line) { %><tr><td><%= line.account_code %> · <%= line.account_name %></td><td><%= line.memo || '—' %></td><td class="num"><%= line.debit_minor ? helpers.money(line.debit_minor, line.currency) : '—' %></td><td class="num"><%= line.credit_minor ? helpers.money(line.credit_minor, line.currency) : '—' %></td></tr><% }) %>
+    </tbody><tfoot><tr><th colspan="2">Total</th><th class="num"><%= helpers.money(entry.lines.reduce((n,l)=>n+Number(l.debit_minor),0), currency) %></th><th class="num"><%= helpers.money(entry.lines.reduce((n,l)=>n+Number(l.credit_minor),0), currency) %></th></tr></tfoot></table></div>
+    <div class="grid grid--2" style="margin-top:20px"><div><span class="field-label">Source</span><p><%= entry.source_type.replaceAll('_',' ') %></p></div><div><span class="field-label">Source record</span><p><%= entry.source_record_type || '—' %> <%= entry.source_record_id || '' %></p></div><div><span class="field-label">Domain event</span><p><%= entry.source_event_id || 'Manual approved entry' %></p></div><div><span class="field-label">Correction</span><p><%= entry.reversal_of_entry_id ? 'Reverses an earlier posted entry' : 'Original entry' %></p></div></div>
+  </div>
+</details>
 <% if (!entry.reversal_of_entry_id) { %><details class="card"><summary class="card-head"><div><h2>Correct this entry</h2><p class="hint">The original is never edited or deleted. Foundry posts a linked reversal.</p></div></summary><form class="card-body form-inline" method="post" action="/accounting/entries/<%= entry.id %>/reverse"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Correction date</span><input class="input" type="date" name="postingDate" required></label><label class="field field--wide"><span class="field-label">Why</span><input class="input" name="reason" required maxlength="250"></label><button class="btn btn--danger" type="submit">Post reversal</button></form></details><% } %>

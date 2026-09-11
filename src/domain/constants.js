@@ -34,6 +34,12 @@ const LOCATION_KINDS = [
   { id: 'stockroom', label: 'Stockroom' },
   { id: 'truck', label: 'Truck' },
   { id: 'office', label: 'Office' },
+  { id: 'zone', label: 'Zone' },
+  { id: 'aisle', label: 'Aisle' },
+  { id: 'shelf', label: 'Shelf' },
+  { id: 'bin', label: 'Bin' },
+  { id: 'dock', label: 'Dock' },
+  { id: 'staging', label: 'Staging area' },
   { id: 'other', label: 'Other' },
 ];
 

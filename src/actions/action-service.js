@@ -17,6 +17,7 @@ const proposals = require('./proposal-service');
 const resolver = require('./resolver');
 const presenter = require('./presenter');
 const purchaseIntent = require('../purchasing/purchase-intent');
+const supplierService = require('../purchasing/supplier-service');
 const policy = require('./policy');
 const permissions = require('./permissions');
 const attention = require('../attention/attention-engine');
@@ -331,25 +332,76 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
 
   // Permission is checked before anything is written, so a person without it
   // is told plainly rather than shown a proposal they can never approve.
-  for (const line of usable) permissions.assertCanPerform(membership, line.actionType);
+  for (const line of usable) permissions.assertCanPerform(membership, line.actionType, line);
 
   // Purchasing is a different kind of thing from moving stock, and it has its
   // own object with its own approval. It leaves this pipeline here rather than
   // being forced into an action proposal that would mean something else.
   const purchase = usable.find((line) => line.actionType === 'purchase');
   if (purchase) {
-    const result = purchaseIntent.build(db, ctx, membership, purchase, { instruction: text });
+    const purchaseSpecific = Boolean(
+      String(purchase.item || purchase.variant || purchase.supplier || '').trim()
+      || (Number.isFinite(Number(purchase.quantity)) && Number(purchase.quantity) > 0)
+    );
+    const purchaseLineIndex = intent.lines.indexOf(purchase);
+    const selectedSkuId = options.selectedPurchaseLineIndex === purchaseLineIndex
+      ? options.selectedPurchaseSkuId
+      : null;
+    const result = purchaseIntent.build(db, ctx, membership, purchase, {
+      instruction: text,
+      selectedSkuId,
+      confirmedSupplierCreationName: options.confirmedSupplierCreationName || null,
+    });
     if (!result.ok) {
+      if (result.missingProduct) {
+        return {
+          kind: 'question',
+          purchaseSpecific,
+          question: result.question,
+          choices: result.choices,
+          continuation: {
+            kind: 'purchase_product_selection',
+            originalInstruction: text,
+            parsedIntent: intent,
+            lineIndex: intent.lines.indexOf(purchase),
+            choices: result.missingProduct.choices,
+            supplierCreationName: result.missingProduct.supplierCreationName || null,
+          },
+        };
+      }
+      if (result.missingSupplier) {
+        return {
+          kind: 'question',
+          purchaseSpecific,
+          question: result.question,
+          choices: result.choices,
+          continuation: {
+            kind: 'purchase_supplier_creation',
+            originalInstruction: text,
+            parsedIntent: intent,
+            lineIndex: intent.lines.indexOf(purchase),
+            supplierName: result.missingSupplier.name,
+            skuId: result.missingSupplier.skuId,
+          },
+        };
+      }
       return result.unsupported
-        ? { kind: 'unsupported', message: result.unsupported }
+        ? { kind: 'unsupported', message: result.unsupported, purchaseSpecific }
         : {
             kind: 'question',
+            purchaseSpecific,
             question: result.question,
             clarification: result.clarification || null,
             choices: result.choices || (result.clarification && result.clarification.choices) || null,
           };
     }
-    return { kind: 'purchase_order', order: result.order, assumptions: result.assumptions };
+    return {
+      kind: 'purchase_order',
+      order: result.order,
+      assumptions: result.assumptions,
+      purchaseSpecific,
+      approvedByConfirmation: Boolean(options.approveAfterCreation),
+    };
   }
 
   const shipment = usable.find((line) => line.actionType === 'receive_shipment');
@@ -629,6 +681,98 @@ async function continueInterpretation(db, ctx, membership, continuation, answer,
       parsedIntent,
     });
   }
+  if (continuation.kind === 'purchase_supplier_creation') {
+    if (String(answer || '').trim() !== '__create_purchase_supplier__') {
+      return {
+        kind: 'question',
+        question: `Add ${continuation.supplierName} as a supplier and approve this purchase order?`,
+        choices: [{
+          label: `Add ${continuation.supplierName} and approve order`,
+          value: '__create_purchase_supplier__',
+        }],
+        continuation,
+      };
+    }
+
+    // The owner explicitly named this supplier for this product. Record that
+    // verified relationship once, with a reversible one-unit purchase default
+    // and no invented supplier SKU, pack size or cost. The resulting PO stays
+    // a draft and its ordinary review collects the missing price before it can
+    // be approved or sent.
+    let resolved = purchaseIntent.resolveSupplier(db, ctx.workspaceId, continuation.supplierName);
+    let supplier;
+    if (resolved.ok) supplier = resolved.value;
+    else if (['none_exist', 'not_found'].includes(resolved.reason)) {
+      supplier = supplierService.createSupplier(db, ctx, membership, { name: continuation.supplierName });
+    } else {
+      return {
+        kind: 'question',
+        question: resolved.message,
+        choices: resolved.clarification ? resolved.clarification.choices : null,
+      };
+    }
+
+    const linked = db.prepare(
+      'SELECT id FROM supplier_items WHERE workspace_id = ? AND supplier_id = ? AND sku_id = ?'
+    ).get(ctx.workspaceId, supplier.id, continuation.skuId);
+    if (!linked) {
+      supplierService.linkItem(db, ctx, membership, {
+        supplierId: supplier.id,
+        skuId: continuation.skuId,
+        purchaseUnit: 'unit',
+        unitsPerPurchaseUnit: 1,
+        lastUnitCost: purchaseIntent.statedUnitCost(continuation.originalInstruction),
+      });
+    }
+
+    const parsedIntent = {
+      ...continuation.parsedIntent,
+      lines: continuation.parsedIntent.lines.map((line, index) =>
+        index === continuation.lineIndex ? { ...line, supplier: supplier.name } : { ...line }
+      ),
+    };
+    const resumed = await interpret(db, ctx, membership, continuation.originalInstruction, {
+      ...options,
+      parsedIntent,
+      confirmedSupplierCreationName: supplier.name,
+      approveAfterCreation: true,
+    });
+    if (resumed.kind === 'purchase_order') {
+      resumed.assumptions = [
+        ...(resumed.assumptions || []),
+        `${supplier.name} was added from your instruction. No supplier code, pack size or price was invented.`,
+      ];
+    }
+    return resumed;
+  }
+  if (continuation.kind === 'purchase_product_selection') {
+    const selected = (continuation.choices || []).find((choice) => choice.value === String(answer || '').trim());
+    if (!selected) {
+      return {
+        kind: 'question',
+        purchaseSpecific: true,
+        question: 'Which product should be on this purchase order?',
+        choices: (continuation.choices || []).map(({ label, value }) => ({ label, value })),
+        continuation,
+      };
+    }
+    const parsedIntent = {
+      ...continuation.parsedIntent,
+      lines: continuation.parsedIntent.lines.map((line, index) =>
+        index === continuation.lineIndex
+          ? { ...line, item: selected.item, variant: selected.variant }
+          : { ...line }
+      ),
+    };
+    return interpret(db, ctx, membership, continuation.originalInstruction, {
+      ...options,
+      parsedIntent,
+      selectedPurchaseSkuId: selected.skuId,
+      selectedPurchaseLineIndex: continuation.lineIndex,
+      confirmedSupplierCreationName: continuation.supplierCreationName || null,
+      approveAfterCreation: Boolean(continuation.supplierCreationName),
+    });
+  }
   if (continuation.kind !== 'adjustment_reason') {
     throw new ValidationError('That clarification is no longer available. Please send the instruction again.');
   }
@@ -852,7 +996,7 @@ function actionabilityMessage(item) {
 function recalculate(db, ctx, membership, proposalId) {
   const existing = proposals.get(db, ctx.workspaceId, proposalId);
   if (!existing) throw new NotFoundError('That action could not be found.');
-  permissions.assertCanPerform(membership, existing.actionType);
+  permissions.assertCanPerform(membership, existing.actionType, existing);
   if (!['AWAITING_APPROVAL', 'INVALIDATED'].includes(existing.status)) {
     throw new ValidationError('That action can no longer be worked out again.');
   }
@@ -886,7 +1030,7 @@ function recalculate(db, ctx, membership, proposalId) {
 function reviseQuantity(db, ctx, membership, proposalId, quantity) {
   const existing = proposals.get(db, ctx.workspaceId, proposalId);
   if (!existing) throw new NotFoundError('That action could not be found.');
-  permissions.assertCanPerform(membership, existing.actionType);
+  permissions.assertCanPerform(membership, existing.actionType, existing);
   if (!['AWAITING_APPROVAL', 'APPROVED', 'INVALIDATED'].includes(existing.status)) {
     throw new ValidationError('That action can no longer be changed.');
   }

@@ -98,6 +98,17 @@ test('a refused socket is waited out, not reported', async () => {
   assert.equal(attempts, 3, 'and Foundry kept trying across the window');
 });
 
+test('an attended bounded classification can abort provider retry backoff', async () => {
+  const controller = new AbortController();
+  const started = Date.now();
+  const waiting = anthropic.outlive(async () => {
+    throw connectionError('EACCES', 'connect EACCES 160.79.104.10:443');
+  }, [10_000, 10_000], controller.signal);
+  setTimeout(() => controller.abort(), 10);
+  await assert.rejects(waiting);
+  assert.ok(Date.now() - started < 500, 'abort stops the wait rather than leaving retries behind');
+});
+
 test('a refusal that never lifts is explained as the machine, not the network', async () => {
   let attempts = 0;
   await assert.rejects(

@@ -58,7 +58,7 @@ test('the briefing counts what is packed and what is ready to pick', () => {
   shipments.markPacked(env.db, env.ctx, box.id, {});
   lines = build(env).map((line) => line.text);
   assert.ok(lines.some((text) => text === '1 shipment is packed and waiting for a carrier.'), lines.join(' | '));
-  assert.ok(lines.some((text) => text === '1 order is ready to pick.'),
+  assert.ok(lines.some((text) => /SO-\d+ is ready to pick\./.test(text)),
     'the order now in a box is no longer waiting for one');
 });
 

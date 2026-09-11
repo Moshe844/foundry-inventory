@@ -23,6 +23,8 @@ function setup() {
 function invoiceInterpretation() {
   return {
     documentType: 'invoice',
+    goodsHaveArrived: true,
+    referencedOrderNumber: '',
     businessDescription: 'The business buys children’s shoes as size variants from Step & Style Wholesale and receives them into Brooklyn Warehouse.',
     unitLabel: 'pair',
     supplierName: 'Step & Style Wholesale', supplierCodeLabel: 'Supplier Code', supplierEmail: 'sales@example.com',
@@ -33,6 +35,7 @@ function invoiceInterpretation() {
       { styleName: 'Kids Classic Loafer', color: 'Black', variantDimension: 'Size', size: '24', supplierSku: 'SH-101-BLK', description: 'Kids Classic Loafer - Black', quantity: 10, unitCost: 11.5 },
       { styleName: 'Boys Dress Oxford', color: 'Brown', variantDimension: 'Size', size: '28', supplierSku: 'SH-204-BRN', description: 'Boys Dress Oxford - Brown', quantity: 8, unitCost: 14.75 },
     ],
+    charges: [], documentTotal: 610,
     warnings: [],
   };
 }

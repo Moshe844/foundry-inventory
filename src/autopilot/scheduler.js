@@ -38,6 +38,7 @@ const { inTransaction } = require('../db');
 const managerEvents = require('../manager/events');
 const patience = require('../ai/patience');
 const reactions = require('../manager/reactions');
+const os = require('os');
 
 /**
  * Quarter-hourly. Inventory does not change by the second, and a customer who
@@ -47,7 +48,21 @@ const reactions = require('../manager/reactions');
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
 
 const LEASE_ID = 'autopilot';
-const HOLDER = `${process.pid}@${require('os').hostname()}`;
+const HOLDER = `${process.pid}@${os.hostname()}`;
+
+/** A lease from a process on this host is stale as soon as that process is gone. */
+function holderIsAlive(holder) {
+  const match = String(holder || '').match(/^(\d+)@(.+)$/);
+  if (!match || match[2] !== os.hostname()) return true;
+  const pid = Number(match[1]);
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error && error.code !== 'ESRCH';
+  }
+}
 
 /**
  * Only one process may run the loop at a time.
@@ -61,7 +76,7 @@ function acquireLease(db, leaseMs, { now = Date.now() } = {}) {
   try {
     return inTransaction(db, () => {
       const held = db.prepare('SELECT * FROM autopilot_lease WHERE id = ?').get(LEASE_ID);
-      if (held && held.expires_at > now && held.holder !== HOLDER) return false;
+      if (held && held.expires_at > now && held.holder !== HOLDER && holderIsAlive(held.holder)) return false;
 
       db.prepare(
         `INSERT INTO autopilot_lease (id, holder, expires_at, acquired_at)
@@ -228,7 +243,14 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
 
     const ctx = { workspaceId, actorId: owner.id, accountId: owner.account_id };
     const planned = managerLoop.run(db, ctx, owner, {
-      trigger, triggerEventId, idempotencyKey: `event:${triggerEventId}`, now, planOnly: true,
+      trigger, triggerEventId,
+      // A replacement process must re-read current state even when it starts
+      // inside the same quarter-hour bucket as the process it replaced. Work
+      // item idempotency still prevents duplicate actions.
+      idempotencyKey: trigger === 'startup'
+        ? `startup:${HOLDER}:${now}`
+        : `event:${triggerEventId}`,
+      now, planOnly: true,
     });
     modes.recordEvaluation(db, workspaceId, { nextAt });
     return complete({
@@ -240,7 +262,11 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
   }
 
   const result = managerLoop.run(db, authority.ctx, authority.membership, {
-    trigger, triggerEventId, idempotencyKey: `event:${triggerEventId}`, now,
+    trigger, triggerEventId,
+    idempotencyKey: trigger === 'startup'
+      ? `startup:${HOLDER}:${now}`
+      : `event:${triggerEventId}`,
+    now,
   });
   modes.recordEvaluation(db, workspaceId, { nextAt });
   return complete({ workspaceId, ...result, under: authority.policy.name });
@@ -322,7 +348,17 @@ function start(db, { intervalMs = DEFAULT_INTERVAL_MS, immediate = true } = {}) 
     finally { running = false; }
   }, Math.min(intervalMs, 1000));
   if (typeof eventTimer.unref === 'function') eventTimer.unref();
-  return () => { clearInterval(timer); clearInterval(eventTimer); };
+  return () => {
+    clearInterval(timer);
+    clearInterval(eventTimer);
+    // A graceful restart must not make the replacement server wait out the
+    // old fifteen-minute lease before it can refresh visible business state.
+    try {
+      db.prepare('DELETE FROM autopilot_lease WHERE id = ? AND holder = ?').run(LEASE_ID, HOLDER);
+    } catch {
+      // Shutdown proceeds even if the database is already unavailable.
+    }
+  };
 }
 
 module.exports = {

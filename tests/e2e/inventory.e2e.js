@@ -16,6 +16,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { chromium } = require('playwright');
+const { completeTransfer } = require('./transfer-helper');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const SHOTS = path.join(ROOT, 'artifacts', 'screenshots', 'e2e');
@@ -136,33 +137,37 @@ async function selectSku(dialog, label) {
 }
 
 async function submitAction(page, dialog) {
-  // The POST returns to the same item URL through a 303. Playwright can keep
-  // waiting for a navigation it has already followed even though the ledger
-  // change and replacement document are complete, so observe the loaded page
-  // explicitly instead of using its implicit same-URL navigation wait.
+  // The action POST redirects back to the same item URL. A frame-navigation
+  // event does not prove the replacement document is ready. Wait for the
+  // navigation lifecycle itself, which remains valid even when the URL string
+  // does not change.
   await Promise.all([
-    page.waitForEvent('framenavigated', (frame) => frame === page.mainFrame()),
+    page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
     dialog.locator('button[type=submit]').click({ noWaitAfter: true }),
   ]);
-  await page.waitForLoadState('domcontentloaded');
+  // A 303 produces an intermediate navigation before the final GET. The page
+  // is ready for a person only when the item summary has been rendered.
+  if (!new URL(page.url()).pathname.startsWith('/transfers/')) {
+    await page.locator('.rm-pulse .rm-stat__n').first().waitFor({ state: 'visible' });
+  }
 }
 
 /** Total on hand shown at the top of an item page. */
 async function itemTotal(page) {
-  return Number((await page.locator('.stat-strip > div').first().locator('.stat-value').innerText())
+  return Number((await page.locator('.rm-pulse .rm-stat__n').first().innerText())
     .replace(/[^\d-]/g, ''));
 }
 
 /** Per-location total from the "Where it is" panel. */
 async function locationTotal(page, locationName) {
-  const bar = page.locator('.location-bar').filter({ hasText: locationName });
+  const bar = page.locator('.rm-where').filter({ hasText: locationName });
   if ((await bar.count()) === 0) return 0;
-  return Number((await bar.first().locator('.value').innerText()).replace(/[^\d-]/g, ''));
+  return Number((await bar.first().locator('.rm-where__v').innerText()).replace(/[^\d-]/g, ''));
 }
 
 async function rowQuantity(page, rowText) {
   const row = page.locator('tbody tr').filter({ hasText: rowText }).first();
-  const cell = row.locator('td.cell-end strong, td.right strong').last();
+  const cell = row.locator('td.num strong').last();
   return Number((await cell.innerText()).replace(/[^\d-]/g, ''));
 }
 
@@ -274,12 +279,15 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await shot(page, 'quantity-received');
   });
 
-  await t.test('quantity item: transfer 25 leaves Main 75, Downtown 25, total 100', async () => {
+  await t.test('quantity item: transfer 25 follows request through receipt', async () => {
+    const itemUrl = page.url();
     const dialog = await openAction(page, 'transfer');
     await dialog.locator('#transfer-from').selectOption({ label: 'Main Warehouse' });
     await dialog.locator('#transfer-to').selectOption({ label: 'Downtown Store' });
     await dialog.locator('#transfer-quantity').fill('25');
     await submitAction(page, dialog);
+    await completeTransfer(page);
+    await page.goto(itemUrl);
 
     assert.equal(await locationTotal(page, 'Main Warehouse'), 75);
     assert.equal(await locationTotal(page, 'Downtown Store'), 25);
@@ -340,7 +348,7 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await shot(page, 'variants');
   });
 
-  await t.test('serialized item: two units received, one moved, never in two places', async () => {
+  await t.test('serialized item: two units received, one follows the transfer lifecycle', async () => {
     state.laptopUrl = await createItem(page, {
       name: 'Dell Latitude 5450',
       code: 'DL-5450',
@@ -365,6 +373,8 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await transfer.locator('#transfer-to').selectOption({ label: 'Downtown Store' });
     await transfer.locator('.unit-option').filter({ hasText: 'DL-829193' }).locator('input').check();
     await submitAction(page, transfer);
+    await completeTransfer(page);
+    await page.goto(state.laptopUrl);
 
     const movedRow = page.locator('tbody tr').filter({ hasText: 'DL-829193' });
     const stayedRow = page.locator('tbody tr').filter({ hasText: 'DL-829194' });
@@ -386,7 +396,7 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     assert.equal(await itemTotal(page), 2);
   });
 
-  await t.test('lot item: two lots received, quantity moved from one lot', async () => {
+  await t.test('lot item: two lots received, one lot follows the transfer lifecycle', async () => {
     state.rationUrl = await createItem(page, {
       name: 'Trail Ration Pack',
       code: 'FOOD-200',
@@ -415,6 +425,8 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await transfer.locator('#transfer-lot').selectOption({ index: 1 });
     await transfer.locator('#transfer-quantity').fill('24');
     await submitAction(page, transfer);
+    await completeTransfer(page);
+    await page.goto(state.rationUrl);
 
     assert.equal(await rowQuantity(page, 'L240812'), 84, 'the lot total is unchanged by a move');
     assert.equal(await rowQuantity(page, 'L240902'), 120);
@@ -439,11 +451,14 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
   });
 
   await t.test('search finds items, serials and lots and leads to the record', async () => {
-    await page.goto(`${BASE}/inventory`);
-    await page.fill('#global-search', 'DL-829193');
-    await page.waitForSelector('.search-hit', { timeout: 5000 });
+    await page.goto(`${BASE}/inventory/table`);
+    await page.getByLabel('Search inventory').fill('DL-829193');
+    await Promise.all([
+      page.waitForURL(/\/inventory\?.*q=DL-829193/),
+      page.getByLabel('Search inventory').press('Enter'),
+    ]);
     await shot(page, 'search-typeahead');
-    await page.click('.search-hit >> nth=0');
+    await page.getByRole('link', { name: /Dell Latitude 5450/ }).first().click();
     await page.waitForURL(/\/inventory\/item_/);
     await assertVisibleText(page, 'Dell Latitude 5450');
 
@@ -464,15 +479,17 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await shot(page, 'activity');
 
     await page.locator('details.filter-more > summary').click();
-    await page.selectOption('select[name="operation"]', 'adjust');
-    await page.waitForLoadState('networkidle');
+    await Promise.all([
+      page.waitForURL(/operation=adjust/),
+      page.selectOption('select[name="operation"]', 'adjust'),
+    ]);
     const filtered = await page.locator('.raw-movement-ledger').textContent();
     assert.match(filtered, /Adjusted/);
     assert.doesNotMatch(filtered, /Received 100/);
   });
 
-  await t.test('the overview reports the same numbers', async () => {
-    await page.goto(`${BASE}/`);
+  await t.test('the inventory position reports the same numbers', async () => {
+    await page.goto(`${BASE}/inventory`);
     const text = await page.locator('main').innerText();
     assert.match(text, /326 units/);
     // 92 elbows + 28 sweaters + 2 laptops + 204 rations
@@ -545,14 +562,18 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await mobile.waitForURL(`${BASE}/`);
     await shot(mobile, 'mobile-overview');
 
-    // The bottom navigation is the mobile way around the app.
-    assert.equal(await mobile.locator('.mobilenav').isVisible(), true);
+    // The compact top rail is the mobile way around the app.
+    assert.equal(await mobile.locator('.rm-rail').isVisible(), true);
     assert.equal(await mobile.locator('.sidebar').isVisible(), false);
 
     // Search and item lookup.
-    await mobile.fill('#global-search', 'CE-100');
-    await mobile.waitForSelector('.search-hit');
-    await mobile.click('.search-hit >> nth=0');
+    await mobile.goto(`${BASE}/inventory/table`);
+    await mobile.getByLabel('Search inventory').fill('CE-100');
+    await Promise.all([
+      mobile.waitForURL(/\/inventory\?.*q=CE-100/),
+      mobile.getByLabel('Search inventory').press('Enter'),
+    ]);
+    await mobile.getByRole('link', { name: /Copper Elbow/ }).first().click();
     await mobile.waitForURL(/\/inventory\/item_/);
     assert.equal(await itemTotal(mobile), 92);
     await shot(mobile, 'mobile-item');
@@ -577,13 +598,15 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await mobile.click('button[data-modal-open="modal-transfer"]');
     await mobile.waitForSelector('#modal-transfer[open]');
     const move = mobile.locator('#modal-transfer');
+    const itemUrl = mobile.url();
     await move.locator('#transfer-from').selectOption({ label: 'Downtown Store' });
     await move.locator('#transfer-to').selectOption({ label: 'Main Warehouse' });
     await move.locator('#transfer-quantity').fill('3');
     await submitAction(mobile, move);
+    await completeTransfer(mobile);
+    await mobile.goto(itemUrl);
 
-    const main = mobile.locator('.location-bar').filter({ hasText: 'Main Warehouse' }).first();
-    assert.equal(Number((await main.locator('.value').innerText()).replace(/\D/g, '')), 75);
+    assert.equal(await locationTotal(mobile, 'Main Warehouse'), 75);
     assert.equal(await itemTotal(mobile), 100);
     await shot(mobile, 'mobile-after-transfer');
 

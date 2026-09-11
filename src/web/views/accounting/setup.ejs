@@ -23,6 +23,10 @@
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <div class="notice notice--warning"><div><strong><%= focusInventoryCost ? 'Use purchase cost—not selling price.' : 'These are opening balances, not routine transactions.' %></strong><br><%= focusInventoryCost ? 'Use a supplier invoice, old purchase record, or accountant-approved value. Foundry will show you a complete review before anything posts.' : 'Foundry cannot safely invent a bank balance or what older stock cost. Enter each starting total once from a statement, prior accounting system, or accountant-approved conversion sheet. Nothing posts until you review the complete balance.' %></div></div>
 
+    <% if (focusInventoryCost && inventoryCostPrefill) { %>
+      <div class="notice notice--success"><div><strong>Foundry understood <%= helpers.money(inventoryCostPrefill.unitCostMinor, inventoryCostPrefill.currency) %> per inventory unit.</strong><br>That applies to <%= inventoryCostPrefill.productCount %> product<%= inventoryCostPrefill.productCount === 1 ? '' : 's' %> with stock, <%= inventoryCostPrefill.units %> units currently on hand. The totals below are quantity × unit cost.<%= inventoryCostPrefill.excludedNoStockCount ? ` ${inventoryCostPrefill.excludedNoStockCount} product${inventoryCostPrefill.excludedNoStockCount === 1 ? '' : 's'} with no units on hand will not receive an inventory value.` : '' %> Nothing is posted until you review and approve the accounting entry. This records what the stock cost; it does not create a supplier bill or say that money is still owed.</div></div>
+    <% } %>
+
     <% if (focusInventoryCost) { %>
       <input type="hidden" name="startDate" value="<%= today %>">
       <input type="hidden" name="currency" value="USD">
@@ -30,7 +34,7 @@
       <input type="hidden" name="cash" value="0.00">
       <input type="hidden" name="receivables" value="0.00">
       <input type="hidden" name="payables" value="0.00">
-      <input type="hidden" name="sourceDescription" value="Missing historical inventory cost supplied from Accounting">
+      <input type="hidden" name="sourceDescription" value="<%= inventoryCostPrefill ? inventoryCostPrefill.instruction : 'Missing historical inventory cost supplied from Accounting' %>">
     <% } else { %>
     <section><div class="section-head"><div><p class="eyebrow">Migration step 1 of 3</p><h2>Choose the cutoff</h2><p class="hint">Transactions before this date remain operational history only and are not silently replayed.</p></div></div>
       <div class="grid grid--3">
@@ -54,12 +58,13 @@
     <p class="hint">Enter cost—not selling price. The quantity is read-only because Inventory remains the physical source of truth.</p></div></div>
     <div>
       <% if (!positions.length) { %><div class="empty"><strong>No opening stock to value.</strong><p>Your inventory currently has no units on hand.</p></div><% } else { %>
-      <div class="table-wrap"><table class="table"><thead><tr><th>Product</th><th>Location</th><th class="num">On hand</th><th>Total cost value</th></tr></thead><tbody>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Product</th><th>Location</th><th class="num">On hand</th><% if (inventoryCostPrefill) { %><th class="num">Cost each</th><% } %><th>Total cost value</th></tr></thead><tbody>
         <% positions.forEach(function(row) { %><tr>
           <td><strong><%= row.item_name %><%= row.variant_label ? ` / ${row.variant_label}` : '' %></strong><br><span class="muted"><%= row.code %></span></td>
           <td><%= row.location_name %></td><td class="num"><%= row.on_hand %></td>
+          <% if (inventoryCostPrefill) { %><td class="num"><strong><%= helpers.money(row.prefilledUnitCostMinor, inventoryCostPrefill.currency) %></strong></td><% } %>
           <td><input type="hidden" name="skuId" value="<%= row.sku_id %>"><input type="hidden" name="locationId" value="<%= row.location_id %>">
-            <label class="input-prefix"><span>$</span><input class="input" name="inventoryCost" inputmode="decimal" required placeholder="0.00" aria-label="Total cost value for <%= row.item_name %> at <%= row.location_name %>"></label></td>
+            <label class="input-prefix"><span>$</span><input class="input" name="inventoryCost" inputmode="decimal" required value="<%= row.prefilledTotalCost %>" placeholder="0.00" aria-label="Total cost value for <%= row.item_name %> at <%= row.location_name %>"></label></td>
         </tr><% }) %>
       </tbody></table></div><% } %>
     </div>

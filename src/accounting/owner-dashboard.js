@@ -98,6 +98,69 @@ function customerBalances(db, workspaceId, asOf) {
   };
 }
 
+/**
+ * Confirmed customer orders whose goods have not produced an invoice yet.
+ *
+ * Revenue and the formal accounting receivable are still raised only when the
+ * goods leave.  The owner-facing question on Home is broader: "what money are
+ * customers expected to pay me?"  A confirmed order is real customer evidence,
+ * even while its revenue is not earned yet.  Keeping this as a separate read
+ * model prevents that operational balance from being mistaken for revenue.
+ */
+function confirmedOrderBalances(db, workspaceId, asOf) {
+  const allRows = db.prepare(`SELECT so.id, so.order_number, so.status, so.currency,
+      so.discount_minor, so.tax_minor, so.created_at, c.id AS customer_id,
+      c.name AS customer_name,
+      COALESCE(SUM(sol.quantity_ordered * COALESCE(sol.unit_price_minor, 0)), 0) AS subtotal_minor,
+      COALESCE((SELECT SUM(p.amount_minor) FROM accounting_payments p
+        WHERE p.workspace_id = so.workspace_id AND p.status = 'POSTED'
+          AND p.direction = 'CUSTOMER_RECEIPT' AND p.payment_date <= ?
+          AND (p.sales_order_id = so.id OR p.source_key LIKE ('order-payment:' || so.id || ':%'))), 0) AS paid_minor
+    FROM sales_orders so
+    JOIN customers c ON c.id = so.customer_id
+    JOIN sales_order_lines sol ON sol.sales_order_id = so.id AND sol.workspace_id = so.workspace_id
+    WHERE so.workspace_id = ? AND so.status NOT IN ('DRAFT', 'CANCELLED')
+      AND date(so.created_at) <= ?
+      AND NOT EXISTS (SELECT 1 FROM accounting_customer_invoices i
+        WHERE i.workspace_id = so.workspace_id AND i.sales_order_id = so.id AND i.status <> 'VOID')
+    GROUP BY so.id
+    ORDER BY so.created_at, so.id`).all(asOf, workspaceId, asOf)
+    .map((row) => {
+      const subtotalMinor = number(row.subtotal_minor);
+      const totalMinor = subtotalMinor - Math.min(subtotalMinor, number(row.discount_minor))
+        + number(row.tax_minor);
+      const paidMinor = Math.min(totalMinor, number(row.paid_minor));
+      const lines = db.prepare(`SELECT sol.id, sol.quantity_ordered AS quantity,
+          sol.unit_price_minor, i.name AS item_name, s.code, s.variant_label
+        FROM sales_order_lines sol
+        JOIN skus s ON s.id = sol.sku_id JOIN items i ON i.id = s.item_id
+        WHERE sol.workspace_id = ? AND sol.sales_order_id = ?
+        ORDER BY sol.created_at, sol.id`).all(workspaceId, row.id)
+        .map((line) => ({ ...line, quantity: number(line.quantity),
+          lineTotalMinor: number(line.quantity) * number(line.unit_price_minor) }));
+      const payments = db.prepare(`SELECT id, payment_number, payment_date, amount_minor,
+          method, reference, created_at
+        FROM accounting_payments
+        WHERE workspace_id = ? AND status = 'POSTED' AND direction = 'CUSTOMER_RECEIPT'
+          AND payment_date <= ?
+          AND (sales_order_id = ? OR source_key LIKE ?)
+        ORDER BY payment_date, created_at, id`)
+        .all(workspaceId, asOf, row.id, `order-payment:${row.id}:%`)
+        .map((payment) => ({ ...payment, amount_minor: number(payment.amount_minor) }));
+      return { ...row, subtotalMinor, totalMinor, paidMinor, lines, payments,
+        balanceMinor: Math.max(0, totalMinor - paidMinor) };
+    });
+  const rows = allRows.filter((row) => row.balanceMinor > 0);
+  return { rows,
+    totalMinor: rows.reduce((sum, row) => sum + row.totalMinor, 0),
+    paidMinor: rows.reduce((sum, row) => sum + row.paidMinor, 0),
+    // Includes fully prepaid orders that disappear from the outstanding list.
+    // Home needs this independent fact to explain why cash rose while earned
+    // revenue stayed unchanged before the goods left.
+    prepaymentMinor: allRows.reduce((sum, row) => sum + row.paidMinor, 0),
+    balanceMinor: rows.reduce((sum, row) => sum + row.balanceMinor, 0) };
+}
+
 function supplierBalances(db, workspaceId, asOf) {
   const rows = db.prepare(`SELECT b.*, s.name AS supplier_name, po.po_number,
       po.status AS purchase_status, u.name AS recorded_by
@@ -182,7 +245,7 @@ function receivedWithoutBills(db, workspaceId) {
 function inventoryOwned(db, workspaceId) {
   // Start with physical balances so uncosted stock can never disappear from
   // the owner's accounting explanation. Cost is joined as separate evidence.
-  const rows = db.prepare(`SELECT b.sku_id, b.location_id, b.on_hand,
+  const physicalRows = db.prepare(`SELECT b.sku_id, b.location_id, b.on_hand,
       s.code, s.variant_label, i.name AS item_name, l.name AS location_name,
       COALESCE(cb.quantity_units, 0) AS costed_units,
       COALESCE(cb.total_cost_minor, 0) AS total_cost_minor
@@ -201,12 +264,37 @@ function inventoryOwned(db, workspaceId) {
       missingCostUnits: Math.max(0, quantityUnits - costedUnits), totalCostMinor,
       averageUnitCostMinor: costedUnits ? Math.round(totalCostMinor / costedUnits) : null };
   });
+  const transitRows = db.prepare(`SELECT tl.sku_id, NULL AS location_id,
+      (tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity) AS on_hand,
+      s.code, s.variant_label, i.name AS item_name,
+      ('In transit: ' || src.name || ' → ' || dst.name) AS location_name,
+      tl.cost_status,
+      CASE WHEN tl.shipped_quantity > 0 THEN ROUND(tl.dispatched_cost_minor *
+        (tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity)
+        / tl.shipped_quantity) ELSE 0 END AS total_cost_minor
+    FROM inventory_transfer_lines tl
+    JOIN inventory_transfers t ON t.id = tl.transfer_id
+    JOIN skus s ON s.id = tl.sku_id JOIN items i ON i.id = s.item_id
+    JOIN locations src ON src.id = t.source_location_id JOIN locations dst ON dst.id = t.destination_location_id
+    WHERE tl.workspace_id = ? AND t.status IN ('SHIPPED','IN_TRANSIT','PARTIALLY_RECEIVED')
+      AND (tl.shipped_quantity-tl.received_quantity-tl.lost_quantity-tl.damaged_quantity) > 0
+    ORDER BY i.name, s.code, t.created_at`).all(workspaceId).map((row) => {
+    const quantityUnits = number(row.on_hand);
+    const costedUnits = row.cost_status === 'RECORDED' ? quantityUnits : 0;
+    const totalCostMinor = number(row.total_cost_minor);
+    return { ...row, quantityUnits, costedUnits, inTransit: true,
+      missingCostUnits: quantityUnits - costedUnits, totalCostMinor,
+      averageUnitCostMinor: costedUnits ? Math.round(totalCostMinor / costedUnits) : null };
+  });
+  const rows = [...physicalRows, ...transitRows];
   return { rows, totalUnits: rows.reduce((sum, row) => sum + row.quantityUnits, 0),
     costedUnits: rows.reduce((sum, row) => sum + row.costedUnits, 0),
     missingCostUnits: rows.reduce((sum, row) => sum + row.missingCostUnits, 0),
     totalCostMinor: rows.reduce((sum, row) => sum + row.totalCostMinor, 0),
     skuCount: new Set(rows.map((row) => row.sku_id)).size,
-    locationCount: new Set(rows.map((row) => row.location_id)).size };
+    locationCount: new Set(physicalRows.map((row) => row.location_id)).size,
+    inTransitUnits: transitRows.reduce((sum, row) => sum + row.quantityUnits, 0),
+    inTransitCostMinor: transitRows.reduce((sum, row) => sum + row.totalCostMinor, 0) };
 }
 
 function removalCategory(row) {
@@ -267,6 +355,7 @@ function expenses(db, workspaceId, from, to) {
 
 function ownerDashboard(db, workspaceId, { from, to, asOf }) {
   const customers = customerBalances(db, workspaceId, asOf);
+  const confirmedOrders = confirmedOrderBalances(db, workspaceId, asOf);
   const suppliers = supplierBalances(db, workspaceId, asOf);
   const inventory = inventoryOwned(db, workspaceId);
   const removals = inventoryRemoved(db, workspaceId, from, to);
@@ -310,7 +399,7 @@ function ownerDashboard(db, workspaceId, { from, to, asOf }) {
   if (customers.overdueMinor > 0) insights.push({ kind: 'warning', text: `Customers owe money past its due date.`, amountMinor: customers.overdueMinor });
   if (suppliers.overdueMinor > 0) insights.push({ kind: 'warning', text: `Supplier bills are past their due date.`, amountMinor: suppliers.overdueMinor });
   if (slow.totalCostMinor > 0) insights.push({ kind: 'info', text: `Inventory with no recorded sale for at least 90 days.`, amountMinor: slow.totalCostMinor });
-  if (missingBills.length) insights.push({ kind: 'warning', text: `${missingBills.length} received purchase order${missingBills.length === 1 ? '' : 's'} still need supplier bill evidence.`, amountMinor: null });
+  if (missingBills.length) insights.push({ kind: 'warning', text: `${missingBills.length} received purchase order${missingBills.length === 1 ? ' still needs' : 's still need'} supplier bill evidence.`, amountMinor: null });
   if (number(unitFlow.received_units) > number(unitFlow.sold_units)) insights.push({ kind: 'info',
     text: `You received ${number(unitFlow.received_units)} units and sold ${number(unitFlow.sold_units)} during this period. Inventory increased by ${number(unitFlow.received_units) - number(unitFlow.sold_units)} units before other removals.`, amountMinor: null });
   if (suppliers.dueSoonMinor > number(cashPayments.customer_minor)) insights.push({ kind: 'warning',
@@ -320,7 +409,9 @@ function ownerDashboard(db, workspaceId, { from, to, asOf }) {
     text: `${duplicate.copies} identical-looking payments to ${duplicate.supplier_name} on ${duplicate.payment_date} should be reviewed for a duplicate.`,
     amountMinor: number(duplicate.amount_minor) });
   return {
-    customers, suppliers, inventory, removals, expenses: expenseActivity, pnl, cash,
+    customers, confirmedOrders,
+    customerMoneyOutstandingMinor: customers.balanceMinor + confirmedOrders.balanceMinor,
+    suppliers, inventory, removals, expenses: expenseActivity, pnl, cash,
     cashActivity: { customerReceivedMinor: number(cashPayments.customer_minor),
       supplierPaidMinor: number(cashPayments.supplier_minor) },
     missingBills, unconfirmedCustomerPayments, insights, slowInventory: slow,
@@ -329,5 +420,6 @@ function ownerDashboard(db, workspaceId, { from, to, asOf }) {
   };
 }
 
-module.exports = { ownerDashboard, customerBalances, supplierBalances, receivedWithoutBills,
+module.exports = { ownerDashboard, customerBalances, confirmedOrderBalances,
+  supplierBalances, receivedWithoutBills,
   inventoryOwned, inventoryRemoved, expenses };

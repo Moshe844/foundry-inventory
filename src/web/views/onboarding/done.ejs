@@ -1,70 +1,115 @@
-<div class="page-head">
-  <div class="titles">
-    <h1><%= run.verified ? 'Foundry is ready' : 'Migration needs checking' %></h1>
-    <div class="page-sub">
-      <% if (run.verified) { %>
-        Your inventory is in Foundry and the totals match your files.
-      <% } else { %>
-        The migration ran, but Foundry could not confirm the totals match. Please check these before
-        relying on them.
-      <% } %>
-    </div>
-  </div>
+<%
+  /*
+   * The migration ran. Whether it can be trusted is the only question this
+   * screen exists to answer, so that answer is the headline and the
+   * reconciliation is a table rather than a paragraph — a check that did not
+   * match must be impossible to skim past.
+   */
+  var checks = run.reconciliation ? run.reconciliation.checks : [];
+  var discrepancies = (run.reconciliation && run.reconciliation.discrepancies) || [];
+%>
+
+<%- include('../partials/setup-steps', { step: 3 }) %>
+
+<div class="rm-head">
+  <p class="rm-head__eyebrow" style="color:<%= run.verified ? 'var(--good)' : 'var(--flag-2)' %>">
+    <%- helpers.icon(run.verified ? 'check' : 'alert', { size: 14 }) %>
+    <%= run.verified ? 'Inventory totals match the source' : 'Totals do not match' %>
+  </p>
+  <h1><%= run.verified ? 'Foundry is ready.' : 'This migration needs checking.' %></h1>
+  <p>
+    <% if (run.verified) { %>
+      Your inventory is in Foundry and every total agrees with your files.
+    <% } else { %>
+      The migration ran, but Foundry could not confirm the totals match. Check these before you rely
+      on them — it will not tell you everything is fine when it cannot prove it.
+    <% } %>
+  </p>
 </div>
 
-<div class="card section <%= run.verified ? '' : 'card--warn' %>">
-  <div class="card-head">
+<section class="rm-panel" style="margin-bottom:16px">
+  <div class="rm-panel__head">
+    <%- helpers.icon('check', { size: 15, className: 'rm-quiet' }) %>
     <h2>What happened</h2>
-    <span class="spacer"></span>
-    <span class="badge badge--<%= run.verified ? 'ok' : 'danger' %>">
-      <%= run.verified ? 'Inventory totals match the source' : 'Totals do not match' %>
-    </span>
   </div>
-  <div class="card-body">
-    <ul class="plain-list">
-      <% (run.result.imports || []).forEach(function (entry) { %>
-        <li>
-          <strong><%= entry.source %></strong> —
-          <%= entry.itemsCreated %> product<%= entry.itemsCreated === 1 ? '' : 's' %> created<% if (entry.skusCreated > entry.itemsCreated) { %> (<%= entry.skusCreated %> versions)<% } %>,
-          <%= entry.unitsEstablished %> units established<% if (entry.rowsSkipped) { %>, <%= entry.rowsSkipped %> row(s) skipped<% } %>
+  <ul class="rm-checks">
+    <% (run.result.imports || []).forEach(function (entry) { %>
+      <li>
+        <span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
+        <span>
+          <strong><%= entry.source %></strong> — <%= entry.itemsCreated %> product<%= entry.itemsCreated === 1 ? '' : 's' %> created<%
+          %><% if (entry.skusCreated > entry.itemsCreated) { %> (<%= entry.skusCreated %> versions)<% } %>,
+          <%= entry.unitsEstablished %> units established<% if (entry.rowsSkipped) { %>, <%= entry.rowsSkipped %> row<%= entry.rowsSkipped === 1 ? '' : 's' %> skipped<% } %>
+        </span>
+      </li>
+    <% }) %>
+    <li>
+      <span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
+      <span><%= run.result.locationsCreated %> location<%= run.result.locationsCreated === 1 ? '' : 's' %> configured</span>
+    </li>
+    <% if (run.result.conflictsReviewed) { %>
+      <li>
+        <span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
+        <span><%= run.result.conflictsReviewed %> conflict<%= run.result.conflictsReviewed === 1 ? '' : 's' %> reviewed</span>
+      </li>
+    <% } %>
+  </ul>
+</section>
+
+<% if (checks.length) { %>
+  <section class="rm-panel" style="margin-bottom:16px">
+    <div class="rm-panel__head">
+      <%- helpers.icon('shield', { size: 15, className: 'rm-quiet' }) %>
+      <h2>Reconciliation</h2>
+      <span class="right">Your files against what Foundry holds</span>
+    </div>
+    <div style="padding:4px 16px 12px;overflow-x:auto">
+      <table class="rm-qty">
+        <thead><tr><th>Check</th><th>Your files</th><th>Foundry</th></tr></thead>
+        <tbody>
+          <% checks.forEach(function (check) { %>
+            <tr>
+              <td><strong><%= check.name %></strong></td>
+              <td style="font-family:var(--f-num)"><%= check.measured ? check.expected : '—' %></td>
+              <td style="font-family:var(--f-num);color:<%= check.measured && !check.ok ? 'var(--flag-2)' : 'var(--ink)' %>;font-weight:650">
+                <%= check.observed %>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+<% } %>
+
+<% if (discrepancies.length) { %>
+  <section class="rm-panel" style="margin-bottom:16px;border-color:var(--flag-line)">
+    <div class="rm-panel__head">
+      <%- helpers.icon('alert', { size: 15 }) %>
+      <h2>What does not add up</h2>
+    </div>
+    <ul class="rm-checks">
+      <% discrepancies.forEach(function (line) { %>
+        <li class="is-flag">
+          <span class="rm-checks__ic"><%- helpers.icon('alert', { size: 13 }) %></span>
+          <span><%= line %></span>
         </li>
       <% }) %>
-      <li><%= run.result.locationsCreated %> location<%= run.result.locationsCreated === 1 ? '' : 's' %> configured</li>
-      <% if (run.result.conflictsReviewed) { %>
-        <li><%= run.result.conflictsReviewed %> conflict<%= run.result.conflictsReviewed === 1 ? '' : 's' %> reviewed</li>
-      <% } %>
     </ul>
+  </section>
+<% } %>
 
-    <h3 class="sub-head">Reconciliation</h3>
-    <table class="table table--tight">
-      <thead><tr><th>Check</th><th class="num">Your files</th><th class="num">Foundry</th></tr></thead>
-      <tbody>
-        <% (run.reconciliation ? run.reconciliation.checks : []).forEach(function (check) { %>
-          <tr>
-            <td><%= check.name %></td>
-            <td class="num"><%= check.measured ? check.expected : '—' %></td>
-            <td class="num <%= check.measured && !check.ok ? 'is-warn' : '' %>"><%= check.observed %></td>
-          </tr>
-        <% }) %>
-      </tbody>
-    </table>
+<div class="rm-note">
+  <%- helpers.icon('eye', { size: 16 }) %>
+  <span>
+    <strong>No trading history yet, so no guesses about demand.</strong>
+    Foundry starts learning from activity from today. Until it has seen things leave, it will say it
+    cannot judge rather than invent a forecast.
+  </span>
+</div>
 
-    <% if (run.reconciliation && run.reconciliation.discrepancies.length) { %>
-      <ul class="plain-list">
-        <% run.reconciliation.discrepancies.forEach(function (line) { %><li class="is-warn"><%= line %></li><% }) %>
-      </ul>
-    <% } %>
-
-    <p class="muted">
-      Foundry has no trading history for this inventory yet, so it will not guess at demand. It starts
-      learning from activity from today.
-    </p>
-  </div>
-  <div class="card-foot">
-    <div class="btn-row">
-      <a class="btn btn--primary" href="/">Open Foundry</a>
-      <a class="btn" href="/inventory">See the inventory</a>
-      <a class="btn btn--ghost" href="/activity">See the movements</a>
-    </div>
-  </div>
+<div class="rm-spine-foot">
+  <a class="rm-btn" href="/"><%- helpers.icon('foundry', { size: 15 }) %> Open Foundry</a>
+  <a class="rm-btn rm-btn--ghost" href="/inventory">See the inventory</a>
+  <a class="rm-btn rm-btn--ghost" href="/activity">See the movements</a>
 </div>

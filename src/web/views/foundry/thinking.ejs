@@ -1,41 +1,90 @@
 <%
-  var order = ['reading', 'advising'];
-  var currentIndex = order.indexOf(job.stage);
+  /*
+   * The one screen in Foundry where waiting is the whole point of it.
+   *
+   * It used to show two steps for three model calls, both named in the
+   * abstract, with nothing on the page identifying what was being read. A
+   * minute in front of that is indistinguishable from a page that has hung.
+   *
+   * So it states the real work, in the real order, for the path actually being
+   * run — a file is opened, then read, then matched; or the structure is read,
+   * then the products are copied out, then the advice is worked out. Each step
+   * that finishes keeps the time it took. The subject of the whole thing — the
+   * customer's own filename, or the opening of their own sentence — sits at the
+   * top, because a progress screen that cannot name what it is working on is
+   * just an animation.
+   *
+   * Without JavaScript the page reloads itself and the route redirects when the
+   * job is done, so the wait never becomes a dead end.
+   */
+  var steps = job.steps || [];
+  var currentIndex = steps.findIndex(function (step) { return step.key === job.stage; });
   if (currentIndex < 0) currentIndex = 0;
+  var timeline = job.timeline || {};
+
+  // A step that has finished says how long it took: the difference between when
+  // it began and when the next one did. The one running says nothing yet,
+  // because it does not know.
+  function tookMs(index) {
+    var began = timeline[steps[index].key];
+    var next = steps[index + 1] ? timeline[steps[index + 1].key] : timeline.done;
+    if (began === undefined || next === undefined) return null;
+    return Math.max(0, next - began);
+  }
 %>
 
-<!-- Without JavaScript the page reloads itself; the route redirects when done. -->
 <noscript><meta http-equiv="refresh" content="4"></noscript>
 
-<div class="thinking" data-job="<%= job.id %>">
-  <span class="thinking-mark">
-    <span class="thinking-pulse"></span>
-    <%- helpers.icon('foundry', { size: 24 }) %>
-  </span>
+<div class="rm-thinking-steps"><%- include('../partials/setup-steps', { step: 1 }) %></div>
+
+<div class="rm-thinking" data-job="<%= job.id %>">
+  <span class="rm-thinking__mark"><%- helpers.icon('spark', { size: 26 }) %></span>
 
   <h1>Foundry is reading your inventory</h1>
-  <p class="thinking-sub">
-    This takes a minute or so — it is thinking properly about your operation, not
-    matching keywords. You can leave this page open.
+  <p>
+    This takes a minute or so — it is thinking properly about your operation rather than matching
+    keywords. You can leave this page open.
   </p>
 
-  <ol class="thinking-steps">
-    <% order.forEach(function (key, index) { %>
-      <li class="thinking-step <%= index < currentIndex ? 'is-done' : (index === currentIndex ? 'is-current' : '') %>"
-          data-step="<%= key %>">
-        <span class="thinking-dot">
-          <% if (index < currentIndex) { %><%- helpers.icon('check', { size: 13 }) %><% } %>
+  <% if (job.subject) { %>
+    <div class="rm-subject">
+      <span class="rm-subject__ic">
+        <%- helpers.icon(job.track === 'document' ? 'import' : 'chat', { size: 16 }) %>
+      </span>
+      <span class="rm-subject__b">
+        <strong><%= job.subject %></strong>
+        <span><%= job.subjectDetail %></span>
+      </span>
+    </div>
+  <% } %>
+
+  <ol class="rm-track">
+    <% steps.forEach(function (step, index) { %>
+      <%
+        var state = index < currentIndex ? 'is-done' : index === currentIndex ? 'is-current' : '';
+        var took = tookMs(index);
+      %>
+      <li class="<%= state %>" data-step="<%= step.key %>">
+        <span class="rm-track__dot">
+          <%- helpers.icon(index < currentIndex ? 'check' : index === currentIndex ? 'bolt' : 'clock', { size: 13 }) %>
         </span>
-        <span class="thinking-step-text">
-          <strong><%= stages[key].label %></strong>
-          <span><%= stages[key].detail %></span>
+        <span>
+          <strong><%= step.label %></strong>
+          <span class="d"><%= step.detail %></span>
         </span>
+        <span class="rm-track__t" data-step-time="<%= step.key %>"><%= took === null ? '' : Math.max(1, Math.round(took / 1000)) + 's' %></span>
       </li>
     <% }) %>
   </ol>
 
-  <div class="thinking-foot">
-    <span class="muted" data-elapsed><%= Math.round(job.elapsedMs / 1000) %>s elapsed</span>
-    <a class="btn btn--ghost btn--sm" href="/foundry">Cancel and start over</a>
+  <p class="rm-thinking__vow">
+    <%- helpers.icon('shield', { size: 14 }) %>
+    Nothing is created while this runs. You see the whole proposal, and approve it, before a single
+    product or count is written.
+  </p>
+
+  <div class="rm-thinking__foot">
+    <span data-elapsed><%= Math.round(job.elapsedMs / 1000) %>s elapsed</span>
+    <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/foundry">Cancel and start over</a>
   </div>
 </div>

@@ -56,6 +56,13 @@ function conservativeFacts(message, supplied = {}) {
   const po = text.match(/\bPO[-\s#:]*(\d{2,})\b/i);
   const invoice = text.match(/\b(?:invoice|inv)[-\s#:]*(\w[\w-]{1,40})\b/i);
   const tracking = text.match(/\btracking[-\s#:]*(\w[\w-]{3,80})\b/i);
+  const landedCostKinds = new Set(['freight', 'duty', 'insurance', 'handling', 'other']);
+  const charges = (Array.isArray(supplied.charges) ? supplied.charges : []).map((charge) => ({
+    kind: String(charge.kind || '').toLowerCase(), label: trimOrNull(charge.label),
+    // Supplier-email extraction represents currency in major units. Do not
+    // guess whether an arbitrary integer is dollars or cents.
+    amount: number(charge.amount),
+  })).filter((charge) => landedCostKinds.has(charge.kind) && charge.label && charge.amount !== null && charge.amount > 0);
   return {
     ...supplied,
     poNumber: trimOrNull(supplied.poNumber) || (po ? `PO-${po[1]}` : null),
@@ -64,6 +71,7 @@ function conservativeFacts(message, supplied = {}) {
     expectedShipDate: date(supplied.expectedShipDate),
     expectedArrivalDate: date(supplied.expectedArrivalDate || supplied.eta),
     lines: Array.isArray(supplied.lines) ? supplied.lines : [],
+    charges,
   };
 }
 

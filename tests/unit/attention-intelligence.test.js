@@ -169,6 +169,15 @@ test('the brief names the most urgent finding first', async () => {
   assert.match(brief.body, /navy oxford/i);
 });
 
+test('the Home watchlist never presents inventory observations as a second Needs You queue', () => {
+  const { items } = withStockout();
+  const body = briefService.deterministicObservationBrief(items, { stockNoun: 'inventory' });
+  assert.match(body, /Foundry is watching 1 inventory condition/i);
+  assert.match(body, /navy oxford/i);
+  assert.match(body, /not waiting for your decision/i);
+  assert.doesNotMatch(body, /needs your attention/i);
+});
+
 test('a model opening with an invented number is dropped', async () => {
   const { db, workspace } = withStockout();
   const provider = fakeProvider({ opening: 'You have 412 items running short across 9 sites.' });

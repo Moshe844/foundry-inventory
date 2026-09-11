@@ -1,251 +1,212 @@
 <%
-  const currency = story.currency;
-  const money = function (minor) {
-    const amount = Number(minor || 0) / 100;
-    const sign = amount < 0 ? '-' : '';
+  /*
+   * Money, as an accountant would tell it to you — not as accounting software.
+   *
+   * The page this replaced already asked the right questions in its headings:
+   * what needs you, what changed, coming up, worth knowing. Then it answered
+   * every one of them with a card, so the answer to "how is the business
+   * doing" was eight equally weighted boxes and a profit-and-loss equation.
+   *
+   * Here it is a sentence, then a four-line ledger — the one place in the
+   * product where a table is the right shape, because money genuinely is a
+   * column of figures — then the single thing that needs a person.
+   *
+   * The general ledger has not been removed. Forty routes of it sit behind one
+   * line at the bottom, named for the person who actually wants them. An owner
+   * should never land on a journal during ordinary work.
+   */
+  var currency = story.currency;
+  var money = function (minor) {
+    var amount = Number(minor || 0) / 100;
+    var sign = amount < 0 ? '-' : '';
     return sign + (currency === 'USD' ? '$' : currency + ' ')
       + Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
-  const day = function (value) {
+  var round = function (minor) {
+    var amount = Number(minor || 0) / 100;
+    var sign = amount < 0 ? '-' : '';
+    return sign + (currency === 'USD' ? '$' : currency + ' ')
+      + Math.abs(amount).toLocaleString('en-US', { maximumFractionDigits: 0 });
+  };
+  var day = function (value) {
     if (!value) return '';
-    const d = new Date(value + 'T00:00:00Z');
+    var d = new Date(value + 'T00:00:00Z');
     return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
   };
+  var net = story.profit.netMinor;
+  var out = (story.comingUp || []).filter(function (r) { return r.direction === 'out'; });
+  var inbound = (story.comingUp || []).filter(function (r) { return r.direction === 'in'; });
 %>
 
-<div class="page-head">
-  <div>
-    <p class="eyebrow">Foundry · A Keeper product · <%= workspace.name %></p>
-    <h1>Money</h1>
-    <p class="lede">
-      What your books say, in the words your accountant would use. You do not record anything here —
-      sales, deliveries, bills and payments arrive from the work itself.
-    </p>
+<p class="rm-stamp">
+  <%= story.status.caughtUp ? 'Books caught up' : story.status.headline %>
+  · <%= day(story.from) %> to <%= day(story.to) %>
+</p>
+
+<h1 class="rm-figure">
+  <a href="/accounting/reports/profit-and-loss?from=<%= story.from %>&to=<%= story.to %>"><%= money(Math.abs(net)) %> <%= net < 0 ? 'lost' : 'earned' %> this period.</a>
+</h1>
+<p class="rm-sub">
+  <% if (story.profit.why && story.profit.why.length) { %>
+    <%= story.profit.why.join(' ') %>
+  <% } else { %>
+    <%= money(story.profit.revenueMinor) %> of sales, <%= money(story.profit.cogsMinor) %> of stock sold,
+    <%= money(story.profit.expensesMinor) %> of other costs.
+    <%= story.profit.marginPct === null ? '' : story.profit.marginPct + '% gross margin.' %>
+  <% } %>
+</p>
+
+<div class="rm-ledger">
+  <div class="rm-ledger__row">
+    <span class="rm-ledger__k">You owe</span>
+    <span class="rm-ledger__v"><a href="/accounting/payables"><%= money(story.position.suppliersCommittedMinor) %></a></span>
+    <span class="rm-ledger__n">
+      <% if (out.length) { %><a href="<%= out[0].href %>"><%= out.length %> to pay · next <%= day(out[0].date) %></a>
+      <% } else { %>nothing dated<% } %>
+    </span>
   </div>
-  <a class="btn" href="/accounting/books">Books &amp; accounting detail</a>
+  <div class="rm-ledger__row">
+    <span class="rm-ledger__k">You're owed</span>
+    <span class="rm-ledger__v"><a href="/accounting/receivables"><%= money(story.position.customersOweMinor) %></a></span>
+    <span class="rm-ledger__n<%= inbound.length && inbound[0].date < story.to ? ' is-warn' : '' %>">
+      <% if (inbound.length) { %><a href="<%= inbound[0].href %>"><%= inbound.length %> completed-sale invoice<%= inbound.length === 1 ? '' : 's' %> · next <%= day(inbound[0].date) %></a>
+      <% } else if (story.position.confirmedCustomerOrders.length) { var waitingOrder = story.position.confirmedCustomerOrders[0]; %>
+        <a href="/sales/orders/<%= waitingOrder.id %>"><%= story.position.confirmedCustomerOrders.length %> confirmed order<%= story.position.confirmedCustomerOrders.length === 1 ? '' : 's' %> awaiting payment</a>
+      <% } else { %>nothing outstanding<% } %>
+    </span>
+  </div>
+  <div class="rm-ledger__row">
+    <span class="rm-ledger__k">In the bank</span>
+    <span class="rm-ledger__v"><a href="/accounting/banking"><%= money(story.position.cashMinor) %></a></span>
+    <span class="rm-ledger__n">what Foundry can prove you hold</span>
+  </div>
+  <div class="rm-ledger__row">
+    <span class="rm-ledger__k"><%= story.inventory.missingCostUnits ? 'Known stock cost' : 'Stock you own' %></span>
+    <span class="rm-ledger__v"><a href="/accounting#inventory"><%= money(story.position.inventoryMinor) %></a></span>
+    <span class="rm-ledger__n"><a href="/accounting#inventory"><%= story.position.inventoryUnits %> units · <%= story.inventory.missingCostUnits ? story.inventory.missingCostUnits + ' missing cost' : 'full cost recorded' %></a></span>
+  </div>
 </div>
 
-<%# ------------------------------------------------------------ 1. status %>
-<section class="money-status <%= story.status.caughtUp ? 'is-good' : 'is-waiting' %>">
-  <strong><%= story.status.headline %></strong>
-  <p><%= story.status.detail %></p>
-</section>
-
-<%# ---------------------------------------------------------- 2. position %>
-<section class="money-position" aria-label="Where the money is">
-  <div class="money-figure">
-    <span>Cash</span>
-    <strong><%= money(story.position.cashMinor) %></strong>
-    <small>What Foundry can prove you hold.</small>
+<%
+  /*
+   * The one thing that needs a person, in the same shape it takes everywhere
+   * else in the product. If there are several, this names the largest and says
+   * how many are behind it — a page with four equally weighted asks is a queue,
+   * and the queue has its own screen.
+   */
+  var first = (story.attention || [])[0];
+%>
+<% if (first) { %>
+  <div class="rm-decision">
+    <span class="rm-decision__arrow" aria-hidden="true">→</span>
+    <span class="rm-decision__txt">
+      <%= first.title %>
+      <small>
+        <%= first.why %>
+        <% if (story.attention.length > 1) { %>
+          <%= story.attention.length - 1 %> other<%= story.attention.length === 2 ? '' : 's' %> behind it.
+        <% } %>
+      </small>
+    </span>
+    <span class="rm-decision__go"><a class="rm-btn" href="<%= first.href %>"><%= first.actionLabel %></a></span>
   </div>
-  <div class="money-figure">
-    <span>Customers owe you</span>
-    <strong><%= money(story.position.customersOweMinor) %></strong>
-    <small>Completed sales not yet paid.</small>
-  </div>
-  <div class="money-figure">
-    <span>You owe suppliers</span>
-    <strong><%= money(story.position.suppliersCommittedMinor) %></strong>
-    <small>
-      <% if (story.position.supplierChargesCommittedMinor) { %>
-        <%= money(story.position.suppliersOwedMinor) %> invoiced,
-        plus <%= money(story.position.supplierChargesCommittedMinor) %> of freight and charges
-        agreed on your orders.
-      <% } else { %>
-        Approved bills not yet paid.
-      <% } %>
-    </small>
-  </div>
-  <div class="money-figure">
-    <span>Stock you own</span>
-    <strong><%= money(story.position.inventoryMinor) %></strong>
-    <small><%= story.position.inventoryUnits %> units, at what they cost you.</small>
-  </div>
-</section>
-
-<%# ------------------------------------------------------ 3. needs attention %>
-<% if (story.attention.length) { %>
-<section class="card section" id="attention">
-  <div class="card-head"><div>
-    <h2>What needs you</h2>
-    <p class="hint">Largest first. Each one names the thing that settles it.</p>
-  </div></div>
-  <div class="card-body stack">
-    <% story.attention.forEach(function (item) { %>
-      <article class="planning-item">
-        <strong><%= item.title %></strong>
-        <p class="t-muted"><%= item.why %></p>
-        <a class="btn btn--sm" href="<%= item.href %>"><%= item.actionLabel %></a>
-      </article>
-    <% }) %>
-  </div>
-</section>
 <% } %>
 
-<%# ------------------------------------------------------------- 4. profit %>
-<section class="card section" id="profit">
-  <div class="card-head"><div>
-    <p class="eyebrow">Are you making money?</p>
-    <h2><%= money(story.profit.netMinor) %> <%= story.profit.netMinor < 0 ? 'lost' : 'earned' %>
-      · <%= day(story.from) %> to <%= day(story.to) %></h2>
-  </div></div>
-  <div class="card-body">
-    <div class="accounting-equation">
-      <p><span>Sales</span><strong><%= money(story.profit.revenueMinor) %></strong></p>
-      <p><span>Cost of what you sold</span><strong>− <%= money(story.profit.cogsMinor) %></strong></p>
-      <p><span>Gross profit<%= story.profit.marginPct === null ? '' : ' (' + story.profit.marginPct + '% margin)' %></span><strong><%= money(story.profit.grossMinor) %></strong></p>
-      <p><span>Other expenses</span><strong>− <%= money(story.profit.expensesMinor) %></strong></p>
-      <p class="total"><span>Net profit</span><strong><%= money(story.profit.netMinor) %></strong></p>
+<div class="rm-bands">
+  <% if ((story.changed || []).length) { %>
+    <div class="rm-band">
+      <span class="rm-band__k">What changed</span>
+      <span class="rm-band__v">
+        <% story.changed.slice(0, 4).forEach(function (row, i) { %><%
+          %><% if (i) { %> <% } %><b><%= day(row.at) %></b> <%= row.what || row.headline || row.detail %>.<%
+        %><% }) %>
+        <% if (story.changed.length > 4) { %><span class="dim">and <%= story.changed.length - 4 %> more.</span><% } %>
+      </span>
     </div>
-    <div class="money-why">
-      <% story.profit.why.forEach(function (line) { %><p><%= line %></p><% }) %>
+  <% } %>
+
+  <% if ((story.comingUp || []).length) { %>
+    <div class="rm-band">
+      <span class="rm-band__k">Coming up</span>
+      <span class="rm-band__v">
+        <% story.comingUp.slice(0, 5).forEach(function (row, i) { %><%
+          %><% if (i) { %> · <% } %><a href="<%= row.href %>"><b><%= day(row.date) %></b> <%= row.what %> <%= round(row.amountMinor) %></a><%
+        %><% }) %>
+      </span>
     </div>
-  </div>
-</section>
+  <% } %>
 
-<%# ------------------------------------------------------- 5. what changed %>
-<section class="card section" id="changed">
-  <div class="card-head"><div>
-    <h2>What changed</h2>
-    <p class="hint">Newest first. Every line is something that happened, not a balance.</p>
-  </div></div>
-  <div class="card-body">
-    <% if (!story.changed.length) { %>
-      <p class="quiet-note">Nothing moved in this period.</p>
-    <% } %>
-    <ul class="money-feed">
-      <% story.changed.forEach(function (row) { %>
-        <li class="money-feed-item is-<%= row.direction %>">
-          <span class="money-feed-when"><%= day(row.at) %></span>
-          <span class="money-feed-what">
-            <a href="<%= row.href %>"><%= row.headline %></a>
-            <small><%= row.detail %></small>
-          </span>
-        </li>
-      <% }) %>
-    </ul>
-  </div>
-</section>
+  <% if ((story.noticed || []).length) { %>
+    <div class="rm-band">
+      <span class="rm-band__k">Worth knowing</span>
+      <span class="rm-band__v">
+        <% story.noticed.slice(0, 3).forEach(function (row) { %>
+          <b><%= row.headline %>.</b> <% if (row.detail) { %><span class="dim"><%= row.detail %></span><% } %>
+        <% }) %>
+      </span>
+    </div>
+  <% } %>
 
-<%# --------------------------------------------------------- 6. coming up %>
-<% if (story.comingUp.length) { %>
-<section class="card section" id="coming-up">
-  <div class="card-head"><div>
-    <h2>Coming up</h2>
-    <p class="hint">Money with a date on it, in both directions.</p>
-  </div></div>
-  <div class="card-body">
-    <ul class="money-feed">
-      <% story.comingUp.forEach(function (row) { %>
-        <li class="money-feed-item is-<%= row.direction %>">
-          <span class="money-feed-when"><%= day(row.date) %></span>
-          <span class="money-feed-what">
-            <a href="<%= row.href %>"><%= row.what %> <%= money(row.amountMinor) %></a>
-            <small><%= row.detail %></small>
-          </span>
-        </li>
-      <% }) %>
-    </ul>
-  </div>
-</section>
-<% } %>
+  <% if (story.fees && story.fees.totalMinor) { %>
+    <div class="rm-band">
+      <span class="rm-band__k">On top of goods</span>
+      <span class="rm-band__v">
+        <b><%= money(story.fees.totalMinor) %></b> of freight, duty and handling was billed on your purchases.
+        <% if (story.fees.needsPlacingMinor) { %>
+          <span class="dim"><%= money(story.fees.needsPlacingMinor) %> of it is not in your profit yet, because
+          nobody has said whether it is part of what the stock cost.</span>
+        <% } %>
+      </span>
+    </div>
+  <% } %>
+</div>
 
-<%# ----------------------------------------------------- 7. Foundry noticed %>
-<% if (story.noticed.length) { %>
-<section class="card section" id="noticed">
-  <div class="card-head"><div>
-    <p class="eyebrow">Foundry noticed</p>
-    <h2>Worth knowing without being asked</h2>
-  </div></div>
-  <div class="card-body stack">
-    <% story.noticed.forEach(function (item) { %>
-      <article class="planning-item">
-        <strong><%= item.headline %></strong>
-        <% if (item.detail) { %><p class="t-muted"><%= item.detail %></p><% } %>
-      </article>
-    <% }) %>
-  </div>
-</section>
-<% } %>
-
-<%# ---------------------------------------------------------------- 8. fees %>
-<% if (story.fees.totalMinor) { %>
-<section class="card section" id="fees">
-  <div class="card-head"><div>
-    <p class="eyebrow">Shipping, duty and every other charge</p>
-    <h2><%= money(story.fees.totalMinor) %> billed on top of the goods</h2>
-    <p class="hint">
-      Exactly as each supplier stated them. Foundry never spreads a charge across the units —
-      freight divided by 800 is a unit cost nobody agreed to.
-    </p>
-  </div></div>
-  <div class="card-body">
-    <div class="table-wrap">
-      <table class="table table--stack">
-        <thead><tr><th>Charge</th><th>On</th><th>Where it sits</th><th class="right">Amount</th></tr></thead>
-        <tbody>
-          <% story.fees.kinds.forEach(function (kind) { %>
-            <tr class="money-fee-group">
-              <td colspan="3"><strong><%= kind.label %></strong></td>
-              <td class="right"><strong><%= money(kind.totalMinor) %></strong></td>
-            </tr>
-            <% kind.lines.forEach(function (line) { %>
-              <tr>
-                <td><%= line.label %></td>
-                <td class="t-muted"><%= line.document || '—' %><%= line.supplier ? ' · ' + line.supplier : '' %></td>
-                <td class="t-muted"><%= line.where %></td>
-                <td class="right"><%= money(line.amountMinor) %></td>
-              </tr>
-            <% }) %>
+<% var unplacedDocuments = (story.fees && story.fees.documents || []).filter(function (doc) {
+     return doc.openedBooks && doc.unrecordedMinor;
+   }); %>
+<% if (unplacedDocuments.length) { %>
+  <details class="rm-work" id="fees" open>
+    <summary><%= money(story.fees.needsPlacingMinor) %> read off your documents and not in your books</summary>
+    <div class="rm-work__body">
+      <% unplacedDocuments.forEach(function (doc) { %>
+        <section class="stack" style="margin-bottom:18px">
+          <div>
+            <strong><%= doc.documentNumber || doc.sourceName || 'Supplier document' %></strong>
+            <% if (doc.supplierName) { %><span class="dim"> · <%= doc.supplierName %></span><% } %>
+          </div>
+          <% doc.charges.forEach(function (charge) { %>
+            <div class="rm-ledger__row">
+              <span class="rm-ledger__k"><%= charge.label %></span>
+              <span class="rm-ledger__v"><%= money(charge.amountMinor) %></span>
+              <span class="rm-ledger__n"><%= charge.status === 'UNRECORDED' ? 'waiting for your decision' : 'recorded' %></span>
+            </div>
           <% }) %>
-        </tbody>
-      </table>
+          <% if (doc.documentTotalMinor !== null) { %>
+            <p class="rm-sub">The document totals <strong><%= money(doc.documentTotalMinor) %></strong>. Foundry keeps every charge separate so this can be checked against the source.</p>
+          <% } %>
+          <div class="rm-choices">
+            <form method="post" action="/accounting/document-costs/<%= doc.documentId %>">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="treatment" value="stock_value">
+              <button class="rm-btn" type="submit">Part of what this stock cost</button>
+            </form>
+            <form method="post" action="/accounting/document-costs/<%= doc.documentId %>">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <input type="hidden" name="treatment" value="expense">
+              <button class="rm-btn rm-btn--quiet" type="submit">A separate expense</button>
+            </form>
+          </div>
+        </section>
+      <% }) %>
     </div>
-    <% if (story.fees.awaitingBillMinor) { %>
-      <p class="quiet-note">
-        <%= money(story.fees.awaitingBillMinor) %> of this is carried on a purchase order and becomes
-        money owed when the supplier actually invoices it. Nothing is waiting on you.
-      </p>
-    <% } %>
-    <% if (story.fees.needsPlacingMinor) { %>
-      <p class="quiet-note">
-        <%= money(story.fees.needsPlacingMinor) %> is waiting for you to say whether it is part of what
-        the stock cost, or an expense of its own. The two give different profit on every sale.
-        <a href="/accounting/books#document-costs">Decide</a>
-      </p>
-    <% } %>
-  </div>
-</section>
+  </details>
+<% } else if (story.fees && story.fees.documents && story.fees.documents.length) { %>
+  <p class="rm-sub">Every cost on your documents is in your books.</p>
 <% } %>
 
-<%# ------------------------------------------------------------ 9. ask %>
-<section class="card section" id="ask">
-  <div class="card-head"><div>
-    <h2>Ask Foundry</h2>
-    <p class="hint">Answered from these same records — never a second opinion.</p>
-  </div></div>
-  <div class="card-body">
-    <form method="get" action="/ask">
-      <label class="field">
-        <span class="visually-hidden">Ask about the money</span>
-        <input class="input" type="text" name="q" placeholder="Why is profit down?" maxlength="200">
-      </label>
-      <div class="button-row" style="margin-top:10px;">
-        <button class="btn btn--primary" type="submit">Ask</button>
-      </div>
-    </form>
-    <ul class="money-asks">
-      <li><a href="/ask?q=<%= encodeURIComponent('Why is profit down?') %>">Why is profit down?</a></li>
-      <li><a href="/ask?q=<%= encodeURIComponent('Who owes me money?') %>">Who owes me money?</a></li>
-      <li><a href="/ask?q=<%= encodeURIComponent('What bills do we need to pay?') %>">What do I owe, and when?</a></li>
-      <li><a href="/ask?q=<%= encodeURIComponent('Are we overstocked on anything?') %>">Are we overstocked on anything?</a></li>
-    </ul>
-  </div>
-</section>
-
-<p class="money-foot">
-  Everything above is posted automatically from the work itself: a sale records revenue and the cost
-  of what went out, a delivery records what you own, a supplier invoice records what you owe, and a
-  payment settles it. If you want the chart of accounts, journals, ledger and reconciliation, they are
-  all in <a href="/accounting/books">Books &amp; accounting detail</a>.
+<p class="rm-disclose">
+  <a href="/ask?about=<%= encodeURIComponent('my books') %>">Ask about your books</a>
+  <a href="/accounting/books">Books &amp; accounting detail — for your accountant</a>
+  <a href="/accounting/transactions">Every transaction</a>
+  <a href="/accounting/banking">Banking</a>
 </p>

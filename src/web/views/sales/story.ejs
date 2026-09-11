@@ -1,0 +1,152 @@
+<%
+  /*
+   * A customer order, end to end, on one page.
+   *
+   * This replaced five addresses: the order, the fulfilment queue, the
+   * mailbox, the receivable and the payment panel. Sales, purchasing,
+   * customer email, picking, shipping and the accounting consequence are all
+   * lines of one story, in one column, with no tabs — because from the
+   * owner's side they are one thing that is happening, and the fact that
+   * Foundry runs them in six services is Foundry's business rather than
+   * theirs.
+   *
+   * The operational detail — the lines, the prices, the payment controls, the
+   * picking form — has not gone anywhere. It is one link at the bottom, which
+   * is where somebody who wants to work on the order rather than understand it
+   * will look for it.
+   */
+  var short = locals.shortageDetails || [];
+  var pay = locals.money || {};
+  var paidInFull = Number(pay.totalMinor || 0) > 0 && Number(pay.remainingMinor || 0) === 0;
+  var held = Number(order.totals && order.totals.allocated || 0);
+  var next = locals.orderNext || {};
+  var nextSection = next.href === '#money' ? 'money' : 'fulfilment';
+  var postedAccounting = locals.accounting && locals.accounting.status === 'POSTED'
+    ? (locals.accounting.outcome || {}) : null;
+%>
+
+<%- include('../partials/spine', { story: story, collapseHistory: true }) %>
+
+<section class="rm-panel" style="margin-top:22px">
+  <div class="rm-panel__head">
+    <h2>This order right now</h2>
+    <span class="right"><%= paidInFull ? 'Paid in full' : (pay.state || '') %></span>
+  </div>
+  <div style="padding:18px 20px">
+    <h3 style="margin:0 0 8px"><%= paidInFull && next.text === 'Ready to pick' ? 'Paid in full — ready to pick' : next.text %></h3>
+    <% if (paidInFull) { %>
+      <p style="margin:0 0 8px">The customer paid <strong><%= helpers.money(pay.paidMinor, pay.currency) %></strong>. Foundry recorded the cash, and the customer now owes <strong><%= helpers.money(pay.remainingMinor, pay.currency) %></strong>.</p>
+      <% if (order.status !== 'FULFILLED') { %>
+        <p class="rm-sub" style="margin:0"><%= held %> <%= held === 1 ? 'unit is' : 'units are' %> held for this customer but the goods have not left yet. This is cash received, not earned revenue or profit yet.</p>
+      <% } %>
+    <% } else { %>
+      <% if (next.detail) { %><p style="margin:0"><%= next.detail %></p><% } %>
+      <% if (Number(pay.remainingMinor || 0) > 0) { %><p class="rm-sub" style="margin:8px 0 0">The customer still needs to pay <%= helpers.money(pay.remainingMinor, pay.currency) %>.</p><% } %>
+    <% } %>
+    <% if (postedAccounting) { %>
+      <div class="accounting-explanation" style="margin-top:14px">
+        You completed a <strong><%= helpers.money(postedAccounting.revenueMinor || 0, pay.currency) %></strong> sale.
+        The products cost <strong><%= helpers.money(postedAccounting.cogsMinor || 0, pay.currency) %></strong>,
+        creating <strong><%= helpers.money((postedAccounting.revenueMinor || 0) - (postedAccounting.cogsMinor || 0), pay.currency) %></strong>
+        gross profit before other expenses.
+        <% if (Number(pay.remainingMinor || 0) > 0) { %>
+          The customer still owes <strong><%= helpers.money(pay.remainingMinor, pay.currency) %></strong>.
+        <% } else { %>
+          The customer has paid in full.
+        <% } %>
+        <a href="/accounting/entries/<%= locals.accounting.journal_entry_id %>">Show the exact sale and product cost</a>.
+      </div>
+    <% } %>
+    <% if (next.action) { %>
+      <p style="margin:16px 0 0"><a class="rm-btn" href="/orders/<%= order.id %>/detail?open=<%= nextSection %>#<%= nextSection %>"><%= next.action %></a></p>
+    <% } %>
+  </div>
+</section>
+
+<% if (locals.evidenceTrace) { %>
+  <details class="rm-work" style="margin-top:24px">
+    <summary>See how this order is connected</summary>
+    <div class="rm-work__body">
+      <p style="margin-top:0"><%= evidenceTrace.ownerSummary %></p>
+      <div class="accounting-next-list">
+        <% evidenceTrace.ownerSteps.forEach(function (step, index) { %>
+          <p>
+            <strong><%= index + 1 %>. <%= step.label %></strong><br>
+            <span><%= step.text %></span>
+            <% if (step.href) { %> <a href="<%= step.href %>"><%= step.linkText %></a>.<% } %>
+          </p>
+        <% }) %>
+      </div>
+      <% evidenceTrace.unknown.forEach(function (gap) { %><p class="rm-sub"><%= gap %></p><% }) %>
+      <details class="disclose" style="margin-top:16px">
+        <summary>Advanced evidence records</summary>
+        <div class="disclose__body">
+          <p class="rm-sub">These are the immutable record links Foundry used. They are here for audit and troubleshooting, not for reading the order day to day.</p>
+          <% evidenceTrace.details.forEach(function (link) { %>
+            <p class="rm-sub">
+              <% if (link.from.href) { %><a href="<%= link.from.href %>"><%= link.from.title %></a><% } else { %><%= link.from.title %><% } %>
+              <%= link.phrase %>
+              <% if (link.to.href) { %><a href="<%= link.to.href %>"><%= link.to.title %></a><% } else { %><%= link.to.title %><% } %>.
+            </p>
+          <% }) %>
+        </div>
+      </details>
+    </div>
+  </details>
+<% } %>
+
+<%
+  /*
+   * A shortage is a decision, not a dead end. If Foundry has already ordered
+   * the missing stock the spine says so; what belongs here is the case where
+   * it cannot, and the decision it is waiting on.
+   */
+  var uncovered = short.filter(function (row) { return row.availableNow < row.missing; });
+%>
+<% if (uncovered.length) { %>
+  <div class="rm-decision" style="margin-top:30px">
+    <span class="rm-decision__arrow" aria-hidden="true">→</span>
+    <span class="rm-decision__txt">
+      <%= uncovered.length === 1 ? uncovered[0].displayName + ' is ' + uncovered[0].missing + ' short' : uncovered.length + ' products are short' %>.
+      <small>
+        <% if (uncovered[0].availableNow) { %>
+          <%= uncovered[0].availableNow %> of them are on a shelf somewhere else.
+        <% } %>
+        I have checked the other locations and what is on order. What is left needs a supplier decision.
+      </small>
+    </span>
+    <span class="rm-decision__go"><a class="rm-btn" href="<%= uncovered[0].actionHref %>"><%= uncovered[0].actionLabel %></a></span>
+  </div>
+<% } %>
+
+<div class="rm-spine-foot">
+  <a class="rm-btn rm-btn--ghost" href="/ask?about=<%= encodeURIComponent(order.order_number + ' for ' + (order.customer ? order.customer.name : '')) %>">Ask about this order</a>
+  <a class="rm-btn rm-btn--wash" href="/orders/<%= order.id %>/detail?open=<%= nextSection %>#<%= nextSection %>">Open the working detail</a>
+</div>
+
+<%
+  /*
+   * The working detail, on the same page, one disclosure down.
+   *
+   * Progressive detail rather than a second address: the story is what
+   * somebody reads, and the lines, prices, payment controls and picking form
+   * are what somebody works with. Putting them behind a link would have made
+   * understanding an order one page and acting on it another, which is the
+   * split this redesign exists to close — so they stay here, closed, and the
+   * rule that nothing is more than one story deep still holds.
+   *
+   * /orders/:id/detail renders the same thing on its own for anybody who wants
+   * only the working page.
+   */
+%>
+<details class="rm-work" id="working"<% if (locals.paymentCompleted) { %> open<% } %>>
+  <summary>The lines, money, shipping and documents</summary>
+  <div class="rm-work__body"><%- include('order') %></div>
+</details>
+
+<p class="rm-disclose">
+  <% if (order.customer && order.customer.id) { %><a href="/sales/customers/<%= order.customer.id %>">Everything for <%= order.customer.name %></a><% } %>
+  <% if ((locals.shipments || []).length) { %><a href="/fulfilment/<%= shipments[0].id %>">The shipment</a><% } %>
+  <% if (pay.remainingMinor) { %><a href="/money">What you're owed</a><% } %>
+  <a href="/orders">Other orders</a>
+</p>

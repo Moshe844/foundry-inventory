@@ -85,7 +85,14 @@ function outlivable(err) {
   return false;
 }
 
-const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+const pause = (ms, signal) => new Promise((resolve, reject) => {
+  if (signal && signal.aborted) return reject(signal.reason || new Error('Provider request aborted.'));
+  const timer = setTimeout(resolve, ms);
+  if (signal) signal.addEventListener('abort', () => {
+    clearTimeout(timer);
+    reject(signal.reason || new Error('Provider request aborted.'));
+  }, { once: true });
+});
 
 /**
  * Runs the call, and waits out a refusal the machine is likely to withdraw.
@@ -99,9 +106,10 @@ function backoffFor() {
   return patience.nobodyIsWaiting() ? BACKOFF_UNATTENDED : BACKOFF_MS;
 }
 
-async function outlive(attempt, delays = backoffFor()) {
+async function outlive(attempt, delays = backoffFor(), signal = null) {
   let last;
   for (let tries = 0; tries <= delays.length; tries += 1) {
+    if (signal && signal.aborted) throw signal.reason || new Error('Provider request aborted.');
     try {
       return await attempt();
     } catch (err) {
@@ -110,7 +118,7 @@ async function outlive(attempt, delays = backoffFor()) {
       console.error(
         `[foundry] provider connection refused locally; waiting ${delays[tries] / 1000}s and trying again`
       );
-      await pause(delays[tries]);
+      await pause(delays[tries], signal);
     }
   }
   throw translateError(last);
@@ -136,7 +144,7 @@ function create(options = {}) {
     model,
 
     /**
-     * @param {{system: string, prompt: string, schema: object, schemaName: string}} request
+     * @param {{system: string, prompt: string, schema: object, schemaName: string, signal?: AbortSignal}} request
      */
     async complete(request) {
       const startedAt = Date.now();
@@ -160,7 +168,10 @@ function create(options = {}) {
         messages: [{ role: 'user', content: request.prompt }],
       };
 
-      const response = await outlive(() => client.messages.create(body));
+      const response = await outlive(
+        () => client.messages.create(body, request.signal ? { signal: request.signal } : undefined),
+        backoffFor(), request.signal || null
+      );
 
       if (response.stop_reason === 'refusal') {
         throw new ProviderError('The model declined to answer that request.', {

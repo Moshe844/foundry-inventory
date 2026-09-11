@@ -7,6 +7,7 @@ const { createApp } = require('../../src/app');
 const authService = require('../../src/domain/auth-service');
 const inventory = require('../../src/domain/inventory-engine');
 const sales = require('../../src/sales/sales-order-service');
+const shipments = require('../../src/sales/shipment-service');
 const prices = require('../../src/pricing/price-service');
 const needsYouInbox = require('../../src/manager/needs-you-inbox');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, makeVariantItem, signIn, csrfFrom, plain } = require('../helpers');
@@ -25,6 +26,41 @@ function setup(provider = { complete: async () => ({ data: {} }) }) {
   const app = createApp({ db, env: 'test', sessionSecret: 'mission-10-http', aiProvider: provider });
   return { db, workspace, membership, item, app };
 }
+
+test('a pickup order stays pickup on the visible pick list', async () => {
+  const env = setup();
+  inventory.receive(env.db, env.workspace.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 5,
+  });
+  const customer = sales.createCustomer(env.db, env.workspace.ctx, {
+    name: 'Pickup Customer', shippingAddress: '123 Old Delivery Road',
+  });
+  const order = sales.confirm(env.db, env.workspace.ctx, sales.createOrder(env.db, env.workspace.ctx, {
+    customerId: customer.id, deliveryMethod: 'PICKUP',
+    lines: [{ skuId: env.item.skuId, quantity: 2 }],
+  }).id);
+  const box = shipments.startPicking(env.db, env.workspace.ctx, order.id);
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+
+  const page = await agent.get(`/fulfilment/${box.id}`).expect(200);
+  const text = plain(page.text);
+  assert.match(text, /Customer pickup.*No carrier, shipping label, or delivery address is needed/is);
+  assert.match(text, /on the shelf.*until you confirm the customer collected it/is);
+  assert.match(text, /Customer collected it.*2 leaves stock/is);
+  assert.doesNotMatch(text, /123 Old Delivery Road|Get carrier rates|Where it is going/i);
+
+  shipments.ship(env.db, env.workspace.ctx, box.id, { handover: 'COLLECTED' });
+  const story = plain((await agent.get(`/sales/orders/${order.id}`)).text);
+  assert.match(story, /Collected — \$[\d,.]+ still owed/i);
+  assert.match(story, /The customer collected everything on this order/i);
+  assert.doesNotMatch(story, /Shipped — \$[\d,.]+ still owed/i);
+  const list = plain((await agent.get('/orders')).text);
+  assert.match(list, /0 open.*1 collected/i);
+  assert.match(list, /2 units collected/i);
+  assert.doesNotMatch(list, /1 shipped|2 units shipped/i);
+  env.db.close();
+});
 
 test('Sales UI covers draft → confirm/commit → partial fulfillment → cancellation and Activity', async () => {
   const env = setup();
@@ -52,6 +88,14 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   assert.match(created.headers.location, /^\/sales\/orders\/so_/);
 
   let page = await agent.get(created.headers.location);
+  const createdOrderId = created.headers.location.split('/').pop();
+  assert.match(page.text, new RegExp(`href="/orders/${createdOrderId}/detail\\?open=fulfilment#fulfilment"`),
+    'Open the working detail goes to the dedicated operational page');
+  assert.match(plain(page.text), /Show order history/i,
+    'the transaction timeline is available without overwhelming the primary order state');
+  const workingDetail = await agent.get(`/orders/${createdOrderId}/detail`);
+  assert.equal(workingDetail.status, 200);
+  assert.match(plain(workingDetail.text), /Customer order.*SO-1001.*ABC School/i);
   assert.match(plain(page.text), /Do this next.*Confirm this order and reserve stock/i);
   const confirmed = await agent.post(`${created.headers.location}/confirm`).type('form')
     .send({ _csrf: csrfFrom(page.text) });
@@ -64,6 +108,9 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   assert.match(page.text, /<details class="card advanced-settings sales-secondary-actions"/);
   assert.match(text, /30 committed/);
   assert.match(text, /Only use this when the items physically leave.*reduce on-hand once/i);
+  assert.match(text, /Planned: Collected by the customer.*came from the delivery choice on the order/i);
+  assert.match(page.text, /value="COLLECTED" required checked/,
+    'a pickup order carries its delivery choice into fulfilment');
 
   const createdCustomer = sales.listCustomers(env.db, env.workspace.workspaceId)[0];
   let customerPage = await agent.get(`/sales/customers/${createdCustomer.id}`);
@@ -372,7 +419,9 @@ test('the manual Sales Order form refuses a blank price and explains the correct
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const form = await agent.get('/sales/new');
   assert.match(plain(form.text), /Every customer order needs a price/i);
-  assert.match(plain(form.text), /Do now:.*Set the selling price for Unpriced Scarf/i);
+  assert.match(plain(form.text), /Order price.*only if the product has no selling price/i,
+    'the correction is in the order flow instead of a competing setup banner');
+  assert.doesNotMatch(plain(form.text), /Do now:.*Set the selling price/i);
   assert.match(plain(form.text), /Unpriced Scarf.*Price not set/i);
   const rejected = await agent.post('/sales/orders').type('form').send({
     _csrf: csrfFrom(form.text), customerName: 'Test Customer', deliveryMethod: 'PICKUP', skuId: unpriced.skuId, quantity: 1,

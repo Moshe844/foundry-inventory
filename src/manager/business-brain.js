@@ -12,6 +12,7 @@ const ownerAccounting = require('../accounting/owner-dashboard');
 const accountingLedger = require('../accounting/ledger');
 const accountingReports = require('../accounting/reports');
 const inventoryEngine = require('../domain/inventory-engine');
+const needsYouInbox = require('./needs-you-inbox');
 
 const number = (value) => Number(value || 0);
 const plural = (value, one, many = `${one}s`) => `${value} ${value === 1 ? one : many}`;
@@ -226,7 +227,7 @@ function consistencyChecks(db, workspaceId, finance) {
   return checks;
 }
 
-function prioritizedAttention({ sales, purchasing, connections, finance, checks }) {
+function prioritizedAttention({ sales, purchasing, connections, finance, checks, ownerDecisions = [] }) {
   const entries = [];
   for (const order of sales.atRisk) entries.push({ priority: order.overdue ? 100 : 92, kind: 'customer-risk',
     title: `${order.order_number} may miss ${order.needed_by}`,
@@ -250,32 +251,53 @@ function prioritizedAttention({ sales, purchasing, connections, finance, checks 
   for (const check of checks.filter((entry) => !entry.passed && entry.needsOwner !== false)) entries.push({ priority: 96,
     id: check.key, kind: 'consistency', title: check.title, because: check.detail,
     href: check.href || '/activity?view=checks' });
-  return entries.sort((a, b) => b.priority - a.priority);
+  for (const decision of ownerDecisions) entries.push({
+    priority: number(decision.priority) || 50,
+    id: decision.id,
+    kind: decision.kind || 'owner-decision',
+    title: decision.title,
+    because: decision.happened || decision.why || decision.missing,
+    href: decision.href,
+    actionLabel: decision.actionLabel,
+  });
+
+  // Several engines can notice the same consequence. It remains one thing for
+  // the owner when the title and resolving destination are the same.
+  const unique = new Map();
+  for (const entry of entries) {
+    const key = `${entry.href || ''}::${String(entry.title || '').toLowerCase()}`;
+    const kept = unique.get(key);
+    if (!kept || entry.priority > kept.priority) unique.set(key, entry);
+  }
+  return [...unique.values()].sort((a, b) => b.priority - a.priority);
 }
 
 function briefing(state) {
   const { finance, acquisition, sales, purchasing, attention, consistency, currency } = state;
-  const lines = [];
+  const attentionLines = attention.slice(0, 3).map((entry) =>
+    `${entry.title} ${entry.because}`);
+  const businessLines = [];
   if (finance) {
-    lines.push(`Customers have paid ${money(finance.cashActivity.customerReceivedMinor, currency)} during this period and still owe ${money(finance.customers.balanceMinor, currency)}.`);
-    if (acquisition.receivedCostMinor > 0) lines.push(acquisition.valuationComplete
+    businessLines.push(`Customers have paid ${money(finance.cashActivity.customerReceivedMinor, currency)} during this period and still need to pay ${money(finance.customerMoneyOutstandingMinor, currency)} across confirmed orders and completed sales.`);
+    if (acquisition.receivedCostMinor > 0) businessLines.push(acquisition.valuationComplete
       ? `You received ${money(acquisition.receivedCostMinor, currency)} of inventory: ${money(acquisition.stillOwnedMinor, currency)} remains in stock and ${money(acquisition.becameProductCostMinor, currency)} became product cost when items sold.`
       : `You received inventory with ${money(acquisition.receivedCostMinor, currency)} of documented purchase cost. You now own ${plural(acquisition.currentUnits, 'unit')}, but cost evidence is missing for ${plural(acquisition.missingCostUnits, 'unit')}, so Foundry cannot yet state the full value still in stock or the product cost used.`
     );
-    if (acquisition.supplierBilledMinor > 0) lines.push(
+    if (acquisition.supplierBilledMinor > 0) businessLines.push(
       `Suppliers billed ${money(acquisition.supplierBilledMinor, currency)}; ${money(acquisition.supplierPaidMinor, currency)} is recorded paid and ${money(acquisition.supplierOwedMinor, currency)} remains owed.`
     );
-    if (acquisition.receivedWithoutBillMinor > 0) lines.push(
+    if (acquisition.receivedWithoutBillMinor > 0) businessLines.push(
       `${money(acquisition.receivedWithoutBillMinor, currency)} of received inventory still has no supplier bill, so Foundry does not call that amount owed yet.`
     );
   }
-  if (sales.open) lines.push(`${plural(sales.open, 'customer order')} remains open; ${plural(sales.backorderedUnits, 'unit')} is not yet protected by committed stock.`);
-  if (purchasing.incomingUnits) lines.push(`${plural(purchasing.incomingUnits, 'supplier unit')} is still expected across ${plural(purchasing.open, 'open purchase order')}.`);
+  if (sales.open) businessLines.push(`${plural(sales.open, 'customer order')} remains open; ${plural(sales.backorderedUnits, 'unit')} is not yet protected by committed stock.`);
+  if (purchasing.incomingUnits) businessLines.push(`${plural(purchasing.incomingUnits, 'supplier unit')} is still expected across ${plural(purchasing.open, 'open purchase order')}.`);
   const failed = consistency.filter((entry) => !entry.passed && entry.needsOwner !== false).length;
-  const headline = failed ? `${plural(failed, 'record inconsistency')} needs review.`
-    : attention.length ? `${plural(attention.length, 'business risk')} needs attention.`
+  const headline = failed ? `${failed} record ${failed === 1 ? 'inconsistency needs' : 'inconsistencies need'} review.`
+    : attention.length ? `${attention.length} ${attention.length === 1 ? 'thing needs' : 'things need'} your attention.`
       : 'Everything Foundry can prove is internally consistent.';
-  return { headline, lines: lines.slice(0, 5), needsYou: attention.slice(0, 3) };
+  return { headline, lines: [...attentionLines, ...businessLines].slice(0, 5),
+    businessLines, needsYou: attention.slice(0, 3) };
 }
 
 function purchaseOrderStory(db, workspaceId, purchaseOrderId) {
@@ -378,7 +400,12 @@ function build(db, workspaceId, options = {}) {
   const connections = connectionState(db, workspaceId);
   const acquisition = acquisitionState(db, workspaceId, finance);
   const consistency = consistencyChecks(db, workspaceId, finance);
-  const attention = prioritizedAttention({ sales, purchasing, connections, finance, checks: consistency });
+  // Needs You is the owner-facing decision source. The unified brain consumes
+  // the operational portion of it so Ask and Home cannot disagree about an
+  // approval merely because it originated in the autonomy engine.
+  const ownerDecisions = needsYouInbox.operationalEntries(db, workspaceId);
+  const attention = prioritizedAttention({ sales, purchasing, connections, finance,
+    checks: consistency, ownerDecisions });
   const state = { asOf: today, period: { from, to }, currency: configured.currency || 'USD',
     inventory, sales, purchasing, connections, finance, acquisition, consistency, attention };
   state.briefing = briefing(state);

@@ -111,6 +111,17 @@ const config = {
       get tenant() { return process.env.MICROSOFT365_TENANT || 'common'; },
       get configured() { return Boolean(this.clientId && this.clientSecret); },
     },
+    quickbooks: {
+      get clientId() { return process.env.QUICKBOOKS_CLIENT_ID || null; },
+      get clientSecret() { return process.env.QUICKBOOKS_CLIENT_SECRET || null; },
+      get environment() { return process.env.QUICKBOOKS_ENVIRONMENT === 'production' ? 'production' : 'sandbox'; },
+      get configured() { return Boolean(this.clientId && this.clientSecret); },
+    },
+    xero: {
+      get clientId() { return process.env.XERO_CLIENT_ID || null; },
+      get clientSecret() { return process.env.XERO_CLIENT_SECRET || null; },
+      get configured() { return Boolean(this.clientId && this.clientSecret); },
+    },
   },
 
   /**
@@ -148,6 +159,7 @@ const config = {
         ? path.resolve(process.env.FOUNDRY_BACKUP_DIR)
         : path.join(dataDir, 'backups');
     },
+    get storageClass() { return process.env.FOUNDRY_BACKUP_STORAGE || 'local'; },
     get retentionDays() {
       const value = Number(process.env.FOUNDRY_BACKUP_RETENTION_DAYS || 30);
       return Number.isFinite(value) && value >= 1 ? value : 30;
@@ -156,6 +168,64 @@ const config = {
       const value = Number(process.env.FOUNDRY_BACKUP_INTERVAL_MS || 24 * 60 * 60 * 1000);
       return Number.isFinite(value) && value >= 60_000 ? value : 24 * 60 * 60 * 1000;
     },
+  },
+
+  operations: {
+    get processRole() {
+      const role = process.env.FOUNDRY_PROCESS_ROLE || 'all';
+      return ['all', 'web', 'worker'].includes(role) ? role : 'all';
+    },
+    get workerEnabled() { return ['all', 'worker'].includes(this.processRole); },
+    get webEnabled() { return ['all', 'web'].includes(this.processRole); },
+    get pollIntervalMs() {
+      const value = Number(process.env.FOUNDRY_WORKER_POLL_MS || 1000);
+      return Number.isFinite(value) && value >= 100 ? value : 1000;
+    },
+    get leaseMs() {
+      const value = Number(process.env.FOUNDRY_JOB_LEASE_MS || 60_000);
+      return Number.isFinite(value) && value >= 5000 ? value : 60_000;
+    },
+    get maxQueueLagMs() {
+      const value = Number(process.env.FOUNDRY_MAX_QUEUE_LAG_MS || 5 * 60_000);
+      return Number.isFinite(value) && value >= 60_000 ? value : 5 * 60_000;
+    },
+    get alertWebhookUrl() { return process.env.FOUNDRY_ALERT_WEBHOOK_URL || null; },
+    get alertWebhookToken() { return process.env.FOUNDRY_ALERT_WEBHOOK_TOKEN || null; },
+    get alertAckToken() { return process.env.FOUNDRY_ALERT_ACK_TOKEN || null; },
+    get releaseRef() { return process.env.FOUNDRY_RELEASE_REF || process.env.GIT_COMMIT || 'development'; },
+    get backupFreshHours() {
+      const value = Number(process.env.FOUNDRY_BACKUP_FRESH_HOURS || 30);
+      return Number.isFinite(value) && value > 0 ? value : 30;
+    },
+    get readinessCacheMs() {
+      const value = Number(process.env.FOUNDRY_READINESS_CACHE_MS || 5000);
+      return Number.isFinite(value) && value >= 1000 ? value : 5000;
+    },
+    get retentionIntervalMs() {
+      const value = Number(process.env.FOUNDRY_RETENTION_INTERVAL_MS || 24 * 60 * 60 * 1000);
+      return Number.isFinite(value) && value >= 60_000 ? value : 24 * 60 * 60 * 1000;
+    },
+    retention: {
+      get deliveredMessagesDays() { return Number(process.env.FOUNDRY_RETENTION_DELIVERED_DAYS || 30); },
+      get inboxDays() { return Number(process.env.FOUNDRY_RETENTION_INBOX_DAYS || 90); },
+      get resolvedAlertsDays() { return Number(process.env.FOUNDRY_RETENTION_ALERT_DAYS || 365); },
+      get resetTokensDays() { return Number(process.env.FOUNDRY_RETENTION_RESET_DAYS || 7); },
+      get certificationDays() { return Number(process.env.FOUNDRY_RETENTION_CERTIFICATION_DAYS || 730); },
+    },
+  },
+
+  sessions: {
+    get anonymousMaxAgeMs() {
+      const value = Number(process.env.FOUNDRY_ANONYMOUS_SESSION_MS || 60 * 60_000);
+      return Number.isFinite(value) && value >= 5 * 60_000 ? value : 60 * 60_000;
+    },
+  },
+
+  email: {
+    get provider() { return process.env.FOUNDRY_EMAIL_PROVIDER || 'resend'; },
+    get apiKey() { return process.env.RESEND_API_KEY || null; },
+    get from() { return process.env.FOUNDRY_FROM_EMAIL || null; },
+    get configured() { return this.provider === 'resend' && Boolean(this.apiKey && this.from); },
   },
 
   /**

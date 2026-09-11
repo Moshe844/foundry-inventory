@@ -91,7 +91,16 @@ function createDraft(db, ctx, membership, input) {
     lines.forEach((line, index) => insert.run(newId('apline'), ctx.workspaceId, id, index + 1,
       line.description, line.quantity, line.unitCostMinor, line.lineTotalMinor, line.account.id,
       line.itemId || null, line.skuId || null, line.purchaseOrderLineId || null, now));
-    return { bill: requireBill(db, ctx.workspaceId, id), replayed: false };
+    const bill = requireBill(db, ctx.workspaceId, id);
+    const graph = require('../provenance/service');
+    graph.recordMany(db, ctx.workspaceId, [
+      ...(bill.purchase_order_id ? [{ type: 'BILLED_BY', from: { type: 'purchase_order', id: bill.purchase_order_id }, to: { type: 'supplier_bill', id } }] : []),
+      ...(bill.purchase_receipt_id ? [{ type: 'BILLED_BY', from: { type: 'purchase_receipt', id: bill.purchase_receipt_id }, to: { type: 'supplier_bill', id } }] : []),
+      ...(bill.evidence_message_id ? [{ type: 'EVIDENCED_BY', from: { type: 'supplier_bill', id }, to: { type: 'email_message', id: bill.evidence_message_id } }] : []),
+      ...(bill.evidence_document_id ? [{ type: 'EVIDENCED_BY', from: { type: 'supplier_bill', id }, to: { type: 'supplier_document', id: bill.evidence_document_id } }] : []),
+      ...bill.lines.map((line) => ({ type: 'HAS_PART', from: { type: 'supplier_bill', id }, to: { type: 'supplier_bill_line', id: line.id } })),
+    ], { basis: 'DIRECT_RECORD' });
+    return { bill, replayed: false };
   });
 }
 
@@ -116,7 +125,12 @@ function threeWayMatch(db, workspaceId, bill) {
     GROUP BY bl.purchase_order_line_id`).all(workspaceId, bill.purchase_order_id, bill.id)
     .map((row) => [row.purchase_order_line_id, Number(row.quantity)]));
   const differences = [];
-  for (const line of bill.lines) {
+  // An invoice may contain both merchandise and separately evidenced freight,
+  // duty, insurance or handling. Only merchandise is subject to the PO's
+  // quantity/price match; treating a freight line as a missing item would
+  // wrongly dispute a valid supplier invoice.
+  const merchandiseLines = bill.lines.filter((line) => line.purchase_order_line_id);
+  for (const line of merchandiseLines) {
     const po = poLines.get(line.purchase_order_line_id);
     if (!po) { differences.push({ lineId: line.id, kind: 'missing_po_line' }); continue; }
     const ordered = Number(po.quantity_units);
@@ -137,7 +151,7 @@ function threeWayMatch(db, workspaceId, bill) {
   if (differences.some((d) => ['missing_po_line', 'quantity_above_ordered', 'price_outside_tolerance'].includes(d.kind))) {
     return { status: 'EXCEPTION', differences, tolerancePercent: tolerance };
   }
-  const exact = bill.lines.every((line) => {
+  const exact = merchandiseLines.length > 0 && merchandiseLines.every((line) => {
     const po = poLines.get(line.purchase_order_line_id);
     return po && Math.round(Number(po.unit_cost) * 100) === Number(line.unit_cost_minor)
       && Number(previouslyBilled.get(po.id) || 0) + Number(line.quantity)
@@ -177,6 +191,21 @@ function open(db, ctx, membership, id) {
     let legacyApAvailableMinor = Math.max(0, legacyReceiptApMinor - priorBillApMinor);
     let legacyApReusedMinor = 0;
     for (const line of bill.lines) {
+      // Freight, duty, insurance and handling on a supplier invoice are real
+      // billable amounts but are not a quantity on the purchase order. Keep
+      // them as their own evidenced expense line. Mission 7 may later propose
+      // an approved reclassification into inventory value; this must not make
+      // up a product-line match or create a second payable.
+      if (!line.purchase_order_line_id) {
+        journalLines.push({ accountId: line.debit_account_id,
+          debitMinor: Number(line.line_total_minor), supplierId: bill.supplier_id,
+          itemId: line.item_id, skuId: line.sku_id,
+          memo: line.description });
+        journalLines.push({ accountKey: 'ACCOUNTS_PAYABLE', creditMinor: Number(line.line_total_minor),
+          supplierId: bill.supplier_id, itemId: line.item_id, skuId: line.sku_id,
+          memo: line.description });
+        continue;
+      }
       const po = db.prepare(`SELECT * FROM purchase_order_lines
         WHERE id = ? AND workspace_id = ? AND purchase_order_id = ?`)
         .get(line.purchase_order_line_id, ctx.workspaceId, bill.purchase_order_id);

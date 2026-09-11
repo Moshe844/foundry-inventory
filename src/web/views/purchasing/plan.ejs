@@ -73,9 +73,18 @@
   "what will be a problem before it can be fixed", which is a different and
   usually earlier question. Only the lines nothing is already covering.
 %>
-<% var exposed = (locals.ahead && ahead.shortages || []).filter(function (row) {
-     return !row.coveredByIncoming;
-   }); %>
+<%
+  var allShortages = (locals.ahead && ahead.shortages || []);
+  var waitingCovered = allShortages.filter(function (row) {
+    return row.breaksCommitment
+      && row.incomingCoversMissedCommitment
+      && row.missedCommitment
+      && !row.missedCommitment.dated;
+  });
+  var exposed = allShortages.filter(function (row) {
+    return !row.coveredByIncoming && waitingCovered.indexOf(row) === -1;
+  });
+%>
 <% if (exposed.length) { %>
 <section class="section">
   <div class="section-head">
@@ -96,6 +105,32 @@
         <% } %>
       </article>
     <% }) %>
+  </div></div>
+</section>
+<% } %>
+
+<% if (waitingCovered.length) { %>
+<section class="section">
+  <div class="section-head">
+    <h2>Customers waiting for stock already ordered</h2>
+    <a class="section-more" href="/planning">See the timing</a>
+  </div>
+  <div class="panel"><div class="stack">
+    <% waitingCovered.slice(0, 6).forEach(function (row) { %>
+      <article class="planning-item">
+        <strong><%= row.missedCommitment.orderNumber || 'A customer order' %> is waiting for
+          <%= helpers.qty(row.shortfallUnits) %> <%= helpers.plural(row.shortfallUnits, 'unit', 'units') %> of <%= row.displayName %>.</strong>
+        <% if (row.nextArrival) { %>
+          <p class="muted">
+            <a href="/purchasing/orders/<%= row.nextArrival.poId %>"><%= row.nextArrival.poNumber %></a>
+            brings <%= helpers.qty(row.nextArrival.units) %> <%= helpers.plural(row.nextArrival.units, 'unit', 'units') %> on
+            <%= row.nextArrival.date %>, which covers this order. Nothing more needs to be ordered.
+          </p>
+        <% } else { %>
+          <p class="muted"><%= helpers.qty(row.onOrder) %> <%= helpers.plural(row.onOrder, 'unit', 'units') %> are already on order and cover this customer. Nothing more needs to be ordered.</p>
+        <% } %>
+      </article>
+    <% }); %>
   </div></div>
 </section>
 <% } %>
@@ -122,10 +157,16 @@
             </span>
           </div>
           <% if (permissions.create) { %>
-            <form method="post" action="/purchasing/prepare/<%= group.supplierId %>" data-busy>
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <button class="btn btn--primary" type="submit">Prepare <%= group.supplierName %> order</button>
-            </form>
+            <% if ((group.activePlans || []).length === 1) { %>
+              <a class="btn btn--primary" href="/autopilot/work/<%= group.activePlans[0].id %>">Review Foundry's decision</a>
+            <% } else if ((group.activePlans || []).length > 1) { %>
+              <a class="btn btn--primary" href="/needs-you">Review these decisions</a>
+            <% } else { %>
+              <form method="post" action="/purchasing/prepare/<%= group.supplierId %>" data-busy>
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button class="btn btn--primary" type="submit">Prepare <%= group.supplierName %> order</button>
+              </form>
+            <% } %>
           <% } %>
         </div>
         <div class="table-wrap">

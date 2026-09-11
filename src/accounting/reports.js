@@ -122,7 +122,20 @@ function generalLedger(db, workspaceId, input = {}) {
 function cashFlow(db, workspaceId, input = {}) {
   const dates = range(input);
   const rows = db.prepare(`SELECT e.id, e.entry_number, e.posting_date, e.description,
-      e.source_type, cash.debit_minor - cash.credit_minor AS cash_change_minor,
+      e.source_type, e.source_record_type, e.source_record_id,
+      COALESCE(
+        (SELECT p.sales_order_id FROM accounting_payments p
+          WHERE p.workspace_id = e.workspace_id AND p.id = e.source_record_id),
+        (SELECT i.sales_order_id
+          FROM accounting_payment_allocations pa
+          JOIN accounting_customer_invoices i ON i.id = pa.customer_invoice_id
+          WHERE pa.workspace_id = e.workspace_id AND pa.payment_id = e.source_record_id
+            AND i.sales_order_id IS NOT NULL LIMIT 1)
+      ) AS sales_order_id,
+      (SELECT pa.supplier_bill_id FROM accounting_payment_allocations pa
+        WHERE pa.workspace_id = e.workspace_id AND pa.payment_id = e.source_record_id
+          AND pa.supplier_bill_id IS NOT NULL LIMIT 1) AS supplier_bill_id,
+      cash.debit_minor - cash.credit_minor AS cash_change_minor,
       CASE
         WHEN EXISTS (SELECT 1 FROM accounting_journal_lines ol
           JOIN accounting_accounts oa ON oa.id = ol.account_id
@@ -211,9 +224,9 @@ function controlReconciliation(db, workspaceId, input = {}) {
 function inventoryReconciliation(db, workspaceId, input = {}) {
   const asOf = dateOnly(input.asOf || new Date().toISOString().slice(0, 10), 'Inventory reconciliation date');
   const valuation = require('./costing').valuation(db, workspaceId);
-  const inventory = accountActivity(db, workspaceId, { from: '1900-01-01', to: asOf })
-    .find((row) => row.system_key === 'INVENTORY_ASSET');
-  const ledgerMinor = Number(inventory?.net_minor || 0);
+  const inventoryAccounts = accountActivity(db, workspaceId, { from: '1900-01-01', to: asOf })
+    .filter((row) => ['INVENTORY_ASSET', 'INVENTORY_IN_TRANSIT'].includes(row.system_key));
+  const ledgerMinor = inventoryAccounts.reduce((sum, row) => sum + Number(row.net_minor || 0), 0);
   return { asOf, valuationMinor: valuation.totalCostMinor, totalCostMinor: valuation.totalCostMinor,
     totalUnits: valuation.totalUnits,
     ledgerMinor,

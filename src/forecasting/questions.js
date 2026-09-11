@@ -36,6 +36,41 @@ function findSku(db, workspaceId, query) {
 }
 
 const EXECUTORS = {
+  /** What demand is Foundry expecting over the requested future period? */
+  demand_forecast(db, workspaceId, plan = {}) {
+    const horizonDays = Math.max(1, Math.min(Number(plan.windowDays || 30), 365));
+    const skuIds = db.prepare(`SELECT s.id FROM skus s
+      WHERE s.workspace_id = ? AND s.is_active = 1
+      ORDER BY s.created_at LIMIT 400`).all(workspaceId).map((row) => row.id);
+    const rows = [];
+    for (const skuId of skuIds) {
+      let view;
+      try { view = planning().forSku(db, workspaceId, skuId, { horizonDays }); } catch { view = null; }
+      if (!view) continue;
+      rows.push({
+        product: view.sku.displayName,
+        expectedUnits: view.forecast.dailyRate === null
+          ? view.forecast.committedUnits || 0
+          : Math.round(view.forecast.dailyRate * horizonDays),
+        days: horizonDays,
+        dailyRate: view.forecast.dailyRate === null ? '—' : view.forecast.dailyRate,
+        confidence: view.forecast.confidence,
+        evidence: view.forecast.confidenceReasons.join('; '),
+      });
+    }
+    rows.sort((a, b) => b.expectedUnits - a.expectedUnits);
+    const measurable = rows.filter((row) => row.dailyRate !== '—');
+    return {
+      rows: rows.slice(0, 25),
+      columns: ['product', 'expectedUnits', 'days', 'dailyRate', 'confidence', 'evidence'],
+      handoff: { href: '/planning', label: 'Open Planning and forecasts' },
+      answer: !rows.length
+        ? 'There are no active products to forecast yet.'
+        : !measurable.length
+          ? `Foundry checked ${rows.length} product${rows.length === 1 ? '' : 's'}, but none has enough recorded demand history for a sales-rate forecast. Known customer commitments are shown instead.`
+          : `Foundry can estimate demand for ${measurable.length} product${measurable.length === 1 ? '' : 's'} over the next ${horizonDays} days. ${measurable[0].product} is highest at about ${measurable[0].expectedUnits} units, with ${measurable[0].confidence} confidence.`,
+    };
+  },
   /**
    * What is out of stock right now, and what is about to be.
    *
@@ -112,14 +147,20 @@ const EXECUTORS = {
 
   /** What should I order this week? */
   what_to_order(db, workspaceId) {
-    const result = planning().sweep(db, workspaceId, { limit: 10 });
-    const rows = result.purchases.map((row) => ({
+    // Purchasing's actionable reorder calculation is the source of truth for
+    // this question. The forward-looking planner remains responsible for
+    // forecasts and risk, but must not quote a different buy quantity from the
+    // one the Purchasing page will actually prepare.
+    const result = require('../purchasing/replenishment').evaluateWorkspace(db, workspaceId);
+    const rows = result.recommendations.slice(0, 10).map((row) => ({
       product: row.displayName,
       quantity: row.quantityUnits,
-      supplier: row.supplierName,
-      orderBy: row.orderBy || 'now',
-      cost: row.costMinor === null ? '—' : money(row.costMinor, row.currency),
+      supplier: row.supplier ? row.supplier.supplierName : '',
+      orderBy: 'now',
+      cost: row.estimatedCost === null || row.estimatedCost === undefined
+        ? '—' : money(Math.round(row.estimatedCost * 100), row.supplier && row.supplier.currency),
     }));
+    const blocked = result.blocked.filter((row) => row.reason === 'no_supplier');
     return {
       rows,
       columns: ['product', 'quantity', 'supplier', 'orderBy', 'cost'],
@@ -127,9 +168,10 @@ const EXECUTORS = {
       // "Nothing" is a real answer here and gets a real explanation, because an
       // assistant that only ever speaks up to spend money is not advising you.
       answer: rows.length
-        ? `${rows.length} line${rows.length === 1 ? '' : 's'} need ordering. ${result.purchases[0].explanation}`
-        : 'Nothing needs ordering this week. Everything Foundry can measure is covered either by stock '
-          + 'on hand or by an order already placed.',
+        ? `${rows.length} line${rows.length === 1 ? '' : 's'} need ordering. ${result.recommendations[0].explanation}`
+        : blocked.length
+          ? `${blocked.length} line${blocked.length === 1 ? '' : 's'} need ordering, but no supplier is linked yet. ${blocked[0].headline}.`
+          : 'Nothing needs ordering right now. Everything Foundry can measure is covered either by stock on hand or by an order already placed.',
     };
   },
 

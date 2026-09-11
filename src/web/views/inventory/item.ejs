@@ -1,4 +1,20 @@
 <%
+  /*
+   * One product, read top to bottom.
+   *
+   * The page used to answer the same question three times. "What is going on
+   * with size 38?" meant reading the Variants table for its stock, the Pricing
+   * table for its price, and the Reorder settings table for its buying rule —
+   * three tables, three headers, the same row key in each, stacked one under
+   * the other at identical weight. A product with one variant got three tables
+   * of one row each.
+   *
+   * There is one row per variant now, carrying everything that is true of that
+   * variant, because that is the shape of the fact. What is genuinely narrow —
+   * the record's own details, where the stock sits, archiving — stays in the
+   * rail. What is a story rather than a figure — what Foundry expects next,
+   * what has happened — stays underneath in the order somebody reads it.
+   */
   var mode = item.tracking_mode;
   var modeInfo = helpers.TRACKING_MODES[mode];
   var canAct = locations.length > 0 && item.is_active;
@@ -16,249 +32,258 @@
       };
     })
   };
+
+  // The buying rule for a variant lives in a different list from its stock.
+  // Joined here, once, so the row can state both without the reader doing it.
+  var policyBySku = {};
+  (purchasingLines || []).forEach(function (line) { policyBySku[line.skuId] = line; });
+
+  var findings = typeof attention !== 'undefined' ? attention : [];
 %>
 
-<div class="breadcrumb">
-  <a href="/inventory">Inventory</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= item.name %></span>
-</div>
-
-<div class="page-head">
-  <div class="titles">
-    <%# The title carried "Quantity" and "Variants" as badges beside the product
-        name. How a product is tracked is Foundry's model of it, not part of what
-        it is called; it belongs on the line that describes the record. Archived
-        stays a badge, because that one changes what the page can do. %>
-    <h1>
-      <%= item.name %>
-      <% if (!item.is_active) { %><span class="badge badge--muted">Archived</span><% } %>
-    </h1>
-    <div class="page-sub">
-      <span class="mono"><%= item.base_code || skus[0].code %></span>
-      · <%= modeInfo.label %><% if (item.has_variants) { %> · <%= skus.length %> variants<% } %>
-      <% if (item.description) { %> · <%= item.description %><% } %>
+<div class="rm-head">
+  <a class="rm-head__back" href="/inventory"><span aria-hidden="true">←</span> Inventory</a>
+  <div class="rm-title">
+    <div>
+      <h1>
+        <%= item.name %>
+        <% if (!item.is_active) { %><span class="rm-pillbadge">Archived</span><% } %>
+      </h1>
+      <p>
+        <span class="mono"><%= item.base_code || skus[0].code %></span>
+        · <%= modeInfo.label %><% if (item.has_variants) { %> · <%= skus.length %> variants<% } %>
+        <% if (item.description) { %> · <%= item.description %><% } %>
+      </p>
     </div>
-  </div>
-  <div class="page-actions">
-    <a class="btn btn--sm" href="<%= skus.length === 1 ? '/purchasing/why/' + skus[0].id : '#reorder-settings' %>"><%- helpers.icon('purchasing', { size: 15 }) %> Reorder settings</a>
-    <button class="btn btn--ghost btn--sm" type="button" data-modal-open="modal-edit"><%- helpers.icon('settings', { size: 15 }) %> Edit details</button>
+    <div class="rm-title__do">
+      <a class="rm-btn rm-btn--ghost rm-btn--sm" href="<%= skus.length === 1 ? '/purchasing/why/' + skus[0].id : '#reorder-settings' %>"><%- helpers.icon('purchasing', { size: 15 }) %> Reorder settings</a>
+      <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-edit"><%- helpers.icon('settings', { size: 15 }) %> Edit details</button>
+    </div>
   </div>
 </div>
 
 <% if (!canAct) { %>
-  <div class="notice notice--warn" style="margin-bottom:14px;">
+  <div class="rm-note rm-note--warn">
     <%- helpers.icon('alert', { size: 16 }) %>
-    <span>
+    <div>
       <% if (locations.length === 0) { %>
         Add a location before you can move stock. <a href="/locations">Go to locations</a>.
       <% } else { %>
         This item is archived. Restore it to record movements.
       <% } %>
+    </div>
+  </div>
+<% } %>
+
+<%# What Foundry has noticed about this record, stated where the person is
+    already looking rather than only on a page they have to remember to open. %>
+<% findings.forEach(function (finding) { %>
+  <a class="rm-decision" href="<%= finding.actionHref || '/attention/' + finding.attentionId %>">
+    <span class="rm-decision__txt">
+      <strong><%= finding.categoryLabel %> · <%= finding.title %></strong>
+      <span><%= finding.conciseSummary %></span>
     </span>
-  </div>
-<% } %>
+    <span class="rm-decision__go"><%= finding.actionLabel || 'Why this?' %>
+      <span class="rm-decision__arrow"><%- helpers.icon('arrowRight', { size: 14 }) %></span></span>
+  </a>
+<% }) %>
 
-<%
-  // What Foundry has noticed about this record. Stated where the person is
-  // already looking, rather than only on a page they have to remember to open.
-  var findings = typeof attention !== 'undefined' ? attention : [];
-%>
-<% if (findings.length) { %>
-  <div class="item-attention">
-    <% findings.forEach(function (finding) { %>
-      <a class="item-attention-row item-attention-row--<%= finding.severityTone %>" href="<%= finding.actionHref || '/attention/' + finding.attentionId %>">
-        <span class="badge badge--<%= finding.severityTone %>"><%= finding.categoryLabel %></span>
-        <span class="item-attention-text">
-          <strong><%= finding.title %></strong>
-          <span><%= finding.conciseSummary %></span>
-        </span>
-        <span class="item-attention-go"><%= finding.actionLabel || 'Why this?' %> <%- helpers.icon('chevron', { size: 13 }) %></span>
-      </a>
-    <% }) %>
+<%# The four numbers that belong together, read as one line. The unit word stays
+    in the label: a product measured in kilograms reads "kg on hand", and
+    shortening it would drop the one word saying what the number counts. %>
+<div class="rm-pulse">
+  <div class="rm-stat">
+    <span class="rm-stat__n"><%= helpers.qty(total) %></span>
+    <span class="rm-stat__d"><%= helpers.plural(total, item.unit_label) %> on hand</span>
   </div>
-<% } %>
-
-<%# Four numbers that belong together, read as one line rather than as four
-    separate cards the size of a paragraph each. The stat strip is the same
-    component the rest of the product uses for exactly this. %>
-<div class="stat-strip section">
-  <%# The unit word stays in the label. A product measured in kilograms or cases
-      reads "kg on hand", and shortening that to "On hand" would have quietly
-      dropped the one word saying what the number counts. %>
-  <div>
-    <span class="stat-value"><%= helpers.qty(total) %></span>
-    <span class="stat-label"><%= helpers.plural(total, item.unit_label) %> on hand</span>
-  </div>
-  <div>
-    <span class="stat-value <%= committed ? '' : 'stat-value--quiet' %>"><%= helpers.qty(committed || 0) %></span>
+  <div class="rm-stat<%= committed ? ' rm-stat--brand' : '' %>">
+    <span class="rm-stat__n"><%= helpers.qty(committed || 0) %></span>
     <%# "committed to customer orders", not "committed" — on a page that also
         shows what is on order from suppliers, the short version is ambiguous
         about which kind of order did the committing. %>
-    <span class="stat-label">committed to customer orders</span>
+    <span class="rm-stat__d">committed to customer orders</span>
   </div>
-  <div>
-    <span class="stat-value <%= available ? '' : 'stat-value--warn' %>"><%= helpers.qty(available) %></span>
-    <span class="stat-label"><%= helpers.plural(available, item.unit_label) %> available</span>
+  <div class="rm-stat<%= available ? '' : ' rm-stat--flag' %>">
+    <span class="rm-stat__n"><%= helpers.qty(available) %></span>
+    <span class="rm-stat__d"><%= helpers.plural(available, item.unit_label) %> available</span>
   </div>
-  <div>
-    <span class="stat-value <%= onOrder ? '' : 'stat-value--quiet' %>"><%= helpers.qty(onOrder || 0) %></span>
-    <span class="stat-label">on order from suppliers</span>
+  <div class="rm-stat">
+    <span class="rm-stat__n"><%= helpers.qty(onOrder || 0) %></span>
+    <span class="rm-stat__d">on order from suppliers</span>
   </div>
 </div>
 
-<div class="item-hero">
-  <% if (canAct) { %>
-    <%# Receive, Issue, Transfer and Adjust are warehouse words. A shop owner
-        thinks "some came in", "I sold one", "the count is wrong". The verbs
-        stayed in the engine, where they are precise; the buttons say what the
-        person is actually doing.
+<% if (canAct) { %>
+  <%# Receive, Issue, Transfer and Adjust are warehouse words. A shop owner
+      thinks "some came in", "I sold one", "the count is wrong". The verbs stayed
+      in the engine, where they are precise; the buttons say what the person is
+      actually doing. None is styled as the main action: these are four things
+      you can do, not something owed. %>
+  <div class="rm-choices" style="margin-bottom:8px">
+    <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-receive"><%- helpers.icon('receive', { size: 15 }) %> Some came in</button>
+    <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-issue"><%- helpers.icon('issue', { size: 15 }) %> Sold or used</button>
+    <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-transfer" <%= locations.length < 2 ? 'disabled' : '' %>><%- helpers.icon('transfer', { size: 15 }) %> Move it</button>
+    <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 15 }) %> Fix the count</button>
+  </div>
+  <p class="rm-quiet" style="font-size:12.5px;margin:0 0 18px">
+    Or just <a href="/#tell-foundry">tell Foundry</a> what happened.
+    <%# A greyed-out button explains itself in a tooltip, which nobody hovers and
+        no phone has. Say it on the page. %>
+    <% if (locations.length < 2) { %>
+      Moving is off until there is a second location — <a href="/locations">add one</a>.
+    <% } %>
+  </p>
+<% } %>
 
-        None of them is styled as the main action either. Green on Receive read
-        as an unfinished job even after stock had been received twice — these
-        are four things you *can* do, not something owed. %>
-    <div class="action-bar">
-      <button class="btn btn--sm" type="button" data-modal-open="modal-receive"><%- helpers.icon('receive', { size: 15 }) %> Some came in</button>
-      <button class="btn btn--sm" type="button" data-modal-open="modal-issue"><%- helpers.icon('issue', { size: 15 }) %> Sold or used</button>
-      <button class="btn btn--sm" type="button" data-modal-open="modal-transfer" <%= locations.length < 2 ? 'disabled' : '' %>><%- helpers.icon('transfer', { size: 15 }) %> Move it</button>
-      <button class="btn btn--sm" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 15 }) %> Fix the count</button>
+  <section class="rm-panel" id="pricing">
+    <span id="reorder-settings"></span>
+    <div class="rm-panel__head">
+      <%- helpers.icon('layers', { size: 15, className: 'rm-quiet' }) %>
+      <h2><%= item.has_variants ? 'Variants' : 'This product' %></h2>
+      <span class="right">
+        <% if (item.has_variants) { %><%= skus.length %> tracked separately<% } %>
+        <% if (item.has_variants && canAct) { %>
+          <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-variant" style="margin-left:10px"><%- helpers.icon('plus', { size: 14 }) %> Add</button>
+        <% } %>
+      </span>
     </div>
-    <%# The paragraph here used to explain that you could describe what happened
-        instead of choosing a button — four lines of teaching, on a record page,
-        every time. Tell Foundry is in the header of every screen; one clause is
-        enough of a reminder. %>
-    <p class="item-hero__hint">
-      Or just <a href="/#tell-foundry">tell Foundry</a> what happened.
-      <%# A greyed-out button explains itself in a tooltip, which nobody hovers
-          and no phone has. Say it on the page. %>
-      <% if (locations.length < 2) { %>
-        Moving is off until there is a second location — <a href="/locations">add one</a>.
-      <% } %>
+    <div class="rm-scroll">
+      <table class="rm-vtable">
+        <thead>
+          <tr>
+            <th><%= item.has_variants ? 'Variant' : 'Product' %></th>
+            <th class="num">On hand</th>
+            <th class="num">Committed</th>
+            <th class="num">Available</th>
+            <th class="num">On order</th>
+            <th>Selling price</th>
+            <th>Reordering</th>
+            <% if (canAct) { %><th><span class="visually-hidden">Actions</span></th><% } %>
+          </tr>
+        </thead>
+        <tbody>
+          <% skus.forEach(function (sku) { %>
+            <%
+              var line = policyBySku[sku.id];
+              var policy = line && line.policy;
+              var held = sku.perLocation.filter(function (p) { return p.onHand !== 0; });
+            %>
+            <tr id="sku-<%= sku.id %>">
+              <td class="vt-id">
+                <strong><%= sku.variant_label || item.name %></strong>
+                <small class="mono"><%= sku.code %></small>
+                <small><a href="/warehouse/labels/sku/<%= sku.id %>">Print barcode label</a></small>
+                <% if (held.length) { %>
+                  <small class="vt-where">
+                    <% held.forEach(function (row, i) { %><%= i ? ' · ' : '' %><%= row.locationName %> <%= helpers.qty(row.onHand) %><% }) %>
+                  </small>
+                <% } %>
+              </td>
+              <td class="num"><strong><%= helpers.qty(sku.total) %></strong></td>
+              <td class="num<%= sku.committed ? '' : ' vt-nil' %>"><%= helpers.qty(sku.committed || 0) %></td>
+              <td class="num<%= sku.available ? '' : ' vt-nil' %>"><%= helpers.qty(sku.available) %></td>
+              <td class="num<%= sku.onOrder ? '' : ' vt-nil' %>"><%= helpers.qty(sku.onOrder || 0) %></td>
+              <td class="vt-price">
+                <% if (sku.sellingPrice.isSet) { %>
+                  <strong><%= sku.sellingPrice.formatted %></strong>
+                  <a href="/pricing/new?skuId=<%= sku.id %>">Change</a>
+                <% } else { %>
+                  <a class="vt-do" href="/pricing/new?skuId=<%= sku.id %>">Set price</a>
+                <% } %>
+                <% if (sku.purchaseCost) { %>
+                  <small>purchase cost <strong><%= sku.purchaseCost.formatted %></strong><%= sku.purchaseCost.sourceLabel ? ' · ' + sku.purchaseCost.sourceLabel : '' %></small>
+                  <% if (sku.sellingPrice.isSet && sku.sellingPrice.amount_minor < sku.purchaseCost.amount_minor) { %>
+                    <small class="is-warn"><strong>Warning:</strong> sells <%= helpers.money(sku.purchaseCost.amount_minor - sku.sellingPrice.amount_minor, sku.purchaseCost.currency) %> below purchase cost</small>
+                  <% } %>
+                <% } %>
+              </td>
+              <td class="vt-rule">
+                <% if (policy && policy.isSet) { %>
+                  <strong>Reorder at <%= policy.reorderPoint === null ? '—' : policy.reorderPoint %><%= policy.targetStock === null ? '' : ', up to ' + policy.targetStock %></strong>
+                <% } else { %>
+                  <span class="vt-nil">No reorder level set</span>
+                <% } %>
+                <small><%= line && line.suppliers.length ? line.suppliers[0].supplierName : 'No supplier linked' %></small>
+              </td>
+              <% if (canAct) { %>
+                <td class="vt-do-cell">
+                  <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-receive" data-preset-sku="<%= sku.id %>" title="Receive this variant"><%- helpers.icon('plus', { size: 14 }) %></button>
+                  <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/purchasing/why/<%= sku.id %>">Configure</a>
+                </td>
+              <% } %>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <p class="rm-panel__foot">
+      Selling price is charged to customers; supplier cost is kept separately for purchasing and
+      margin reporting. Foundry will not pick a reorder level for you until it has seen one
+      sell — or you set it yourself.
     </p>
-  <% } %>
-</div>
+  </section>
 
-<div class="grid grid--sidebar">
-  <div class="grid">
-    <% if (item.has_variants) { %>
-      <div class="card">
-        <div class="card-head">
-          <h2>Variants</h2>
-          <span class="spacer"></span>
-          <span class="muted" style="font-size:12.5px;"><%= skus.length %> tracked separately</span>
-          <button class="btn btn--ghost btn--sm" type="button" data-modal-open="modal-variant"><%- helpers.icon('plus', { size: 14 }) %> Add</button>
-        </div>
-        <div class="table-wrap">
-          <table class="table table--stack inventory-variant-table">
-            <thead>
-              <tr>
-                <th>Variant</th>
-                <th>Variant/SKU code</th>
-                <th>Where</th>
-                <th class="stock-metrics-heading">
-                  <span class="stock-metrics-grid">
-                    <span>On hand</span>
-                    <span>Committed</span>
-                    <span>Available</span>
-                    <span>On order</span>
-                    <span class="visually-hidden">Actions</span>
-                  </span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <% skus.forEach(function (sku) { %>
-                <tr id="sku-<%= sku.id %>">
-                  <td class="cell-main">
-                    <span class="cell-title"><%= sku.variant_label %></span>
-                  </td>
-                  <td class="mono" data-label="Code"><%= sku.code %></td>
-                  <%# Each location was a bordered pill, so a variant sitting in
-                      three places drew three boxes inside a table cell inside a
-                      card — and the column grew wide enough to push the numbers
-                      that matter off the edge. The same facts read fine as one
-                      quiet line, and the full breakdown is still its own section
-                      further down the page. %>
-                  <%# Where the stock actually is. Bordered pills made the column
-                      wide enough to push the numbers off the edge; running them
-                      together as text made them unreadable. A short two-column
-                      list is what this is: place on the left, quantity on the
-                      right, lined up so three locations can be compared. %>
-                  <td data-label="Where" class="cell-where">
-                    <% var held = sku.perLocation.filter(function (p) { return p.onHand !== 0; }); %>
-                    <% if (!held.length) { %>
-                      <span class="t-muted">—</span>
-                    <% } else { %>
-                      <dl class="where-list">
-                        <% held.forEach(function (row) { %>
-                          <dt><%= row.locationName %></dt>
-                          <dd><%= helpers.qty(row.onHand) %></dd>
-                        <% }) %>
-                      </dl>
-                    <% } %>
-                  </td>
-                  <td class="cell-end stock-metrics-cell">
-                    <span class="stock-metrics-grid">
-                      <span class="stock-metric"><span class="stock-metric-label">On hand</span><strong class="num"><%= helpers.qty(sku.total) %></strong></span>
-                      <span class="stock-metric"><span class="stock-metric-label">Committed</span><span class="num"><%= helpers.qty(sku.committed || 0) %></span></span>
-                      <span class="stock-metric"><span class="stock-metric-label">Available</span><span class="num"><%= helpers.qty(sku.available) %></span></span>
-                      <span class="stock-metric"><span class="stock-metric-label">On order</span><span class="num"><%= helpers.qty(sku.onOrder || 0) %></span></span>
-                    <% if (canAct) { %>
-                      <button class="btn btn--ghost btn--sm" type="button" data-modal-open="modal-receive" data-preset-sku="<%= sku.id %>" title="Receive this variant"><%- helpers.icon('plus', { size: 14 }) %></button>
-                    <% } %>
-                    </span>
-                  </td>
-                </tr>
-              <% }) %>
-            </tbody>
-          </table>
-        </div>
+<div class="rm-split">
+  <div class="rm-stack">
+
+    <% if (!skus.some(function (s) { return s.total; })) { %>
+      <div class="rm-empty">
+        <span class="rm-empty__ic"><%- helpers.icon('box', { size: 19 }) %></span>
+        <strong>Nothing on hand</strong>
+        <p>Receive stock into a location to start tracking this <%= item.has_variants ? 'product' : 'item' %>.</p>
+        <% if (canAct) { %><button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-receive">Receive stock</button><% } %>
       </div>
     <% } %>
 
     <% if ((commitments || []).length) { %>
-      <div class="card">
-        <div class="card-head"><h2>Committed to customer orders</h2></div>
-        <div class="list-rows">
+      <section class="rm-panel">
+        <div class="rm-panel__head">
+          <%- helpers.icon('sales', { size: 15, className: 'rm-quiet' }) %>
+          <h2>Committed to customer orders</h2>
+        </div>
+        <div class="rm-told" style="box-shadow:none;border:0;border-radius:0">
           <% commitments.forEach(function (entry) { %>
-            <a class="list-row" href="/sales/orders/<%= entry.sales_order_id %>">
-              <span><strong><%= entry.order_number %> · <%= entry.customer_name %></strong><small><%= entry.displayName %> · <%= entry.location_name %></small></span>
-              <strong><%= entry.quantity %></strong>
+            <a class="rm-told__row" href="/sales/orders/<%= entry.sales_order_id %>">
+              <span class="rm-told__t"><%= entry.order_number %> · <%= entry.customer_name %>
+                <small><%= entry.displayName %> · <%= entry.location_name %></small></span>
+              <span class="rm-told__m"><strong><%= entry.quantity %></strong></span>
             </a>
           <% }) %>
         </div>
-      </div>
+      </section>
     <% } %>
 
     <% if (mode === 'serial') { %>
-      <div class="card">
-        <div class="card-head">
+      <section class="rm-panel">
+        <div class="rm-panel__head">
+          <%- helpers.icon('serial', { size: 15, className: 'rm-quiet' }) %>
           <h2>Units</h2>
-          <span class="spacer"></span>
-          <span class="muted" style="font-size:12.5px;"><%= units.filter(function (u) { return u.status === 'in_stock'; }).length %> in stock</span>
+          <span class="right"><%= units.filter(function (u) { return u.status === 'in_stock'; }).length %> in stock</span>
         </div>
         <% if (units.length === 0) { %>
-          <div class="empty">
-            <div class="icon-wrap"><%- helpers.icon('serial', { size: 22 }) %></div>
-            <h3>No units yet</h3>
+          <div class="rm-empty" style="border:0;box-shadow:none">
+            <span class="rm-empty__ic"><%- helpers.icon('serial', { size: 19 }) %></span>
+            <strong>No units yet</strong>
             <p>Receive units by entering their serial numbers. Each one is then tracked on its own.</p>
           </div>
         <% } else { %>
-          <div class="table-wrap">
-            <table class="table table--stack">
+          <div class="rm-scroll">
+            <table class="rm-vtable">
               <thead>
-                <tr><th>Serial number</th><% if (item.has_variants) { %><th>Variant</th><% } %><th>Location</th><th>Condition</th><th class="right">Status</th></tr>
+                <tr><th>Serial number</th><% if (item.has_variants) { %><th>Variant</th><% } %><th>Location</th><th>Condition</th><th>Status</th></tr>
               </thead>
               <tbody>
                 <% units.forEach(function (unit) { %>
                   <tr id="unit-<%= unit.id %>">
-                    <td class="cell-main"><span class="cell-title mono"><%= unit.serial %></span></td>
-                    <% if (item.has_variants) { %><td data-label="Variant"><%= unit.variant_label || '—' %></td><% } %>
-                    <td data-label="Location"><%= unit.location_name || '—' %></td>
-                    <td data-label="Condition"><%= helpers.conditionLabel(unit.condition) %></td>
-                    <td class="right cell-end" data-label="Status">
+                    <td class="vt-id"><strong class="mono"><%= unit.serial %></strong><small><a href="/warehouse/labels/serial/<%= unit.id %>">Print label</a></small></td>
+                    <% if (item.has_variants) { %><td><%= unit.variant_label || '—' %></td><% } %>
+                    <td><%= unit.location_name || '—' %></td>
+                    <td><%= helpers.conditionLabel(unit.condition) %></td>
+                    <td>
                       <% if (unit.status === 'in_stock') { %>
-                        <span class="badge badge--ok">In stock</span>
+                        <span class="rm-pillbadge is-ok">In stock</span>
                       <% } else { %>
-                        <span class="badge badge--muted">Issued</span>
+                        <span class="rm-pillbadge">Issued</span>
                       <% } %>
                     </td>
                   </tr>
@@ -267,378 +292,293 @@
             </table>
           </div>
         <% } %>
-      </div>
+      </section>
     <% } %>
 
     <% if (mode === 'lot') { %>
-      <div class="card">
-        <div class="card-head">
+      <section class="rm-panel">
+        <div class="rm-panel__head">
+          <%- helpers.icon('lot', { size: 15, className: 'rm-quiet' }) %>
           <h2>Lots</h2>
-          <span class="spacer"></span>
-          <span class="muted" style="font-size:12.5px;"><%= lots.filter(function (l) { return l.total > 0; }).length %> with stock</span>
+          <span class="right"><%= lots.filter(function (l) { return l.total > 0; }).length %> with stock</span>
         </div>
         <% if (lots.length === 0) { %>
-          <div class="empty">
-            <div class="icon-wrap"><%- helpers.icon('lot', { size: 22 }) %></div>
-            <h3>No lots yet</h3>
+          <div class="rm-empty" style="border:0;box-shadow:none">
+            <span class="rm-empty__ic"><%- helpers.icon('lot', { size: 19 }) %></span>
+            <strong>No lots yet</strong>
             <p>Receive stock with a lot or batch number and it will appear here with its expiration date.</p>
           </div>
         <% } else { %>
-          <div class="table-wrap">
-            <table class="table table--stack">
+          <div class="rm-scroll">
+            <table class="rm-vtable">
               <thead>
-                <tr><th>Lot</th><% if (item.has_variants) { %><th>Variant</th><% } %><th>Expires</th><th>Where</th><th class="right">On hand</th></tr>
+                <tr><th>Lot</th><% if (item.has_variants) { %><th>Variant</th><% } %><th>Expires</th><th>Where</th><th class="num">On hand</th></tr>
               </thead>
               <tbody>
                 <% lots.forEach(function (lot) { %>
                   <% var state = helpers.expiryState(lot.expires_at); %>
                   <tr id="lot-<%= lot.id %>">
-                    <td class="cell-main"><span class="cell-title mono"><%= lot.code %></span>
-                      <% if (lot.received_at) { %><span class="cell-sub">Received <%= helpers.shortDate(lot.received_at) %></span><% } %>
+                    <td class="vt-id"><strong class="mono"><%= lot.code %></strong>
+                      <% if (lot.received_at) { %><small>Received <%= helpers.shortDate(lot.received_at) %></small><% } %>
+                      <small><a href="/warehouse/labels/lot/<%= lot.id %>">Print label</a></small>
                     </td>
-                    <% if (item.has_variants) { %><td data-label="Variant"><%= lot.variant_label || '—' %></td><% } %>
-                    <td data-label="Expires">
+                    <% if (item.has_variants) { %><td><%= lot.variant_label || '—' %></td><% } %>
+                    <td>
                       <% if (state) { %>
-                        <span class="badge badge--<%= state.tone === 'danger' ? 'danger' : (state.tone === 'warn' ? 'warn' : 'muted') %>"><%= helpers.shortDate(lot.expires_at) %></span>
-                      <% } else { %><span class="muted">—</span><% } %>
+                        <span class="rm-pillbadge <%= state.tone === 'ok' ? 'is-ok' : 'is-warn' %>"><%= helpers.shortDate(lot.expires_at) %></span>
+                      <% } else { %><span class="vt-nil">—</span><% } %>
                     </td>
-                    <td data-label="Where" class="cell-full">
-                      <% if (lot.perLocation.length === 0) { %><span class="muted">—</span><% } %>
-                      <% lot.perLocation.forEach(function (row) { %>
-                        <span class="pill"><%= row.location_name %> <strong class="num"><%= helpers.qty(row.quantity) %></strong></span>
-                      <% }) %>
+                    <td class="vt-where-cell">
+                      <% if (lot.perLocation.length === 0) { %><span class="vt-nil">—</span><% } %>
+                      <% lot.perLocation.forEach(function (row, i) { %><%= i ? ' · ' : '' %><%= row.location_name %> <%= helpers.qty(row.quantity) %><% }) %>
                     </td>
-                    <td class="right cell-end" data-label="On hand"><strong class="num"><%= helpers.qty(lot.total) %></strong></td>
+                    <td class="num"><strong><%= helpers.qty(lot.total) %></strong></td>
                   </tr>
                 <% }) %>
               </tbody>
             </table>
           </div>
         <% } %>
-      </div>
+      </section>
     <% } %>
-
-    <% if (!item.has_variants && mode === 'quantity') { %>
-      <div class="card">
-        <div class="card-head"><h2>Stock by location</h2></div>
-        <% if (locationTotals.length === 0) { %>
-          <div class="empty">
-            <div class="icon-wrap"><%- helpers.icon('box', { size: 22 }) %></div>
-            <h3>Nothing on hand</h3>
-            <p>Receive stock into a location to start tracking this item.</p>
-            <% if (canAct) { %><button class="btn btn--primary" type="button" data-modal-open="modal-receive">Receive stock</button><% } %>
-          </div>
-        <% } else { %>
-          <div class="table-wrap">
-            <table class="table table--stack">
-              <thead><tr><th>Location</th><th class="right">On hand</th></tr></thead>
-              <tbody>
-                <% locationTotals.forEach(function (row) { %>
-                  <tr>
-                    <td class="cell-main"><span class="cell-title"><%= row.name %></span></td>
-                    <td class="right cell-end" data-label="On hand"><strong class="num"><%= helpers.qty(row.total) %></strong></td>
-                  </tr>
-                <% }) %>
-              </tbody>
-            </table>
-          </div>
-        <% } %>
-      </div>
-    <% } %>
-
-    <%
-      /*
-       * Pricing and reorder settings are tables with a row per variant, and they
-       * were being rendered into a 296px rail beside the page. At that width the
-       * name, the supplier cost, the price and the action stopped being columns
-       * and became a paragraph — "Small 56 on hand · Supplier from
-       * clothing_store_inventory.pdf" wrapped over four lines — while the
-       * variants table, which could not shrink to fit what was left, ran
-       * underneath the rail and put its own numbers behind it.
-       *
-       * They are full-width sections in the record now. The rail keeps what is
-       * genuinely narrow: the details, where it is, and archiving.
-       */
-    %>
-    <div class="card" id="pricing">
-      <div class="card-head">
-        <h2>Pricing</h2>
-        <span class="spacer"></span>
-        <span class="t-xs t-muted">What you charge customers</span>
-      </div>
-      <div class="table-wrap">
-        <table class="table table--stack">
-          <thead>
-            <tr>
-              <th>Variant</th>
-              <th class="num">Last supplier cost</th>
-              <th class="num">Selling price</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <% skus.forEach(function (sku) { %>
-              <tr>
-                <td class="cell-main"><span class="cell-title"><%= sku.variant_label || item.name %></span></td>
-                <td class="num t-muted" data-label="Last supplier cost">
-                  <%= sku.purchaseCost ? sku.purchaseCost.formatted : '—' %>
-                </td>
-                <td class="num" data-label="Selling price">
-                  <% if (sku.sellingPrice.isSet) { %>
-                    <strong><%= sku.sellingPrice.formatted %></strong>
-                  <% } else { %>
-                    <span class="t-muted">Not set</span>
-                  <% } %>
-                </td>
-                <td class="cell-end">
-                  <a class="btn btn--sm" href="/pricing/new?skuId=<%= sku.id %>"><%= sku.sellingPrice.isSet ? 'Change' : 'Set price' %></a>
-                </td>
-              </tr>
-            <% }) %>
-          </tbody>
-        </table>
-      </div>
-      <div class="card-foot">Selling price is charged to customers. Supplier cost is kept separately for purchasing and margin reporting.</div>
-    </div>
 
     <%#
       Where this product is heading.
 
-      Placed immediately above the reorder settings on purpose: the settings are
-      the rule, this is what the rule is currently producing, and an owner
-      deciding whether to change one should be able to see the other without
-      scrolling. Every figure here is a prediction and says so; the confidence
-      is never buried behind a tooltip.
+      Immediately after the rule it is produced by: the row above states what
+      Foundry will do, this states what that is currently producing. Every
+      figure here is a prediction and says so; the confidence is never buried
+      behind a tooltip.
     %>
-    <% if (locals.outlook && outlook.length) { %>
-    <div class="card" id="planning">
-      <div class="card-head">
-        <h2>What happens next</h2>
-        <span class="spacer"></span>
-        <span class="t-xs t-muted">Foundry's read on where this is heading</span>
-      </div>
-      <div class="card-body stack">
-        <% outlook.forEach(function (line) { %>
-          <article class="planning-item">
-            <% if (outlook.length > 1) { %><strong><%= line.label %></strong><% } %>
+    <%
+      /*
+       * Five variants Foundry has never seen sell produced five identical
+       * paragraphs saying so. Nothing is learned by reading the fourth. When
+       * every line is still learning and none of them has a purchase, a
+       * recommendation, a transfer or an anomaly attached, it is one fact about
+       * the product, said once.
+       */
+      var outlookLines = locals.outlook || [];
+      var allStillLearning = outlookLines.length > 1 && outlookLines.every(function (line) {
+        // The purchase advice is not checked, because with no sales rate the
+        // only advice it can carry is "not on a guess" — which is what the one
+        // sentence below says. A recommendation, a move or an anomaly is
+        // specific to a variant, and any of those keeps the full reading.
+        return line.forecast.dailyRate === null
+          && !line.advice.recommendations.length && !line.transfers.length
+          && !line.anomalies.length && !line.forecast.committedUnits;
+      });
+    %>
+    <% if (outlookLines.length && allStillLearning) { %>
+      <section class="rm-panel" id="planning">
+        <div class="rm-panel__head">
+          <%- helpers.icon('trendUp', { size: 15, className: 'rm-quiet' }) %>
+          <h2>What happens next</h2>
+          <span class="right">Foundry's read on where this is heading</span>
+        </div>
+        <div class="rm-panel__body">
+          <p class="rm-quiet" style="font-size:13.5px;line-height:1.6;margin:0">
+            Nothing to order yet. Foundry has not seen any of the
+            <%= outlookLines.length %> <%= item.has_variants ? 'variants' : 'lines' %> sell, so it
+            cannot estimate a sales rate and will not recommend a purchase on a guess. It starts
+            advising as soon as this product moves.
+          </p>
+        </div>
+      </section>
+    <% } else if (outlookLines.length) { %>
+      <section class="rm-panel" id="planning">
+        <div class="rm-panel__head">
+          <%- helpers.icon('trendUp', { size: 15, className: 'rm-quiet' }) %>
+          <h2>What happens next</h2>
+          <span class="right">Foundry's read on where this is heading</span>
+        </div>
+        <div class="rm-panel__body">
+          <% outlook.forEach(function (line) { %>
+            <article class="rm-outlook">
+              <% if (outlook.length > 1) { %><strong class="rm-outlook__k"><%= line.label %></strong><% } %>
 
-            <p>
-              <% if (line.forecast.dailyRate === null) { %>
-                Foundry cannot estimate how fast this sells yet
-                <span class="badge">Still learning</span>.
-                <% if (line.forecast.committedUnits > 0) { %>
-                  Customers have ordered <%= line.forecast.committedUnits %> that have not shipped,
-                  which is what it is going on.
-                <% } %>
-              <% } else { %>
-                Selling about <strong><%= line.forecast.dailyRate %></strong> a day
-                <span class="badge"><%= line.forecast.confidenceLabel %></span>.
-                <%= line.projection.explanation %>
-              <% } %>
-            </p>
-
-            <% if (line.forecast.committedUnits > 0 && line.forecast.dailyRate !== null) { %>
-              <p class="t-muted">
-                Separately, <strong><%= line.forecast.committedUnits %></strong> are already promised to
-                customers. That is known demand, not a forecast.
-              </p>
-            <% } %>
-
-            <% if (line.leadTime && line.leadTime.material) { %>
-              <p class="t-muted"><%= line.leadTime.explanation %></p>
-            <% } %>
-
-            <% if (line.purchase) { %>
-              <p><strong><%= line.purchase.headline %></strong> — <%= line.purchase.explanation %></p>
-              <% if (line.purchase.tradeoff) { %>
-                <p class="t-muted"><%= line.purchase.tradeoff.text %></p>
-              <% } %>
-            <% } %>
-
-            <% line.advice.recommendations.forEach(function (change) { %>
-              <div class="planning-item planning-item--nested">
-                <strong><%= change.headline %></strong>
-                <p class="t-muted"><%= change.why %></p>
-                <%
-                  // Only a recommendation Foundry has actually written down can
-                  // be decided: the row is what carries the evidence and the
-                  // authority verdict, and a decision has to attach to it.
-                  var raised = line.decisions && line.decisions[change.kind];
-                %>
-                <% if (raised && canOperate) { %>
-                  <div class="button-row">
-                    <form method="post" action="/planning/recommendations/<%= raised.id %>/accept">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <input type="hidden" name="returnTo" value="/inventory/<%= item.id %>#planning">
-                      <button class="btn btn--primary" type="submit"><%= change.actionLabel %></button>
-                    </form>
-                    <form method="post" action="/planning/recommendations/<%= raised.id %>/decline">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <input type="hidden" name="returnTo" value="/inventory/<%= item.id %>#planning">
-                      <button class="btn btn--ghost" type="submit"><%= change.keepLabel %></button>
-                    </form>
-                  </div>
+              <p>
+                <% if (line.forecast.dailyRate === null) { %>
+                  Foundry cannot estimate how fast this sells yet
+                  <span class="rm-pillbadge">Still learning</span>.
+                  <% if (line.forecast.committedUnits > 0) { %>
+                    Customers have ordered <%= line.forecast.committedUnits %> that have not shipped,
+                    which is what it is going on.
+                  <% } %>
                 <% } else { %>
-                  <p class="t-xs t-muted">
-                    <%= change.actionLabel %> · <%= change.keepLabel %> — set either on the reorder
-                    settings below.
-                  </p>
+                  Selling about <strong><%= line.forecast.dailyRate %></strong> a day
+                  <span class="rm-pillbadge"><%= line.forecast.confidenceLabel %></span>.
+                  <%= line.projection.explanation %>
                 <% } %>
-              </div>
-            <% }) %>
+              </p>
 
-            <% line.transfers.forEach(function (move) { %>
-              <p class="t-muted"><strong>Move <%= move.units %> from <%= move.fromLocationName %>
-                to <%= move.toLocationName %>.</strong> <%= move.why %></p>
-            <% }) %>
+              <% if (line.forecast.committedUnits > 0 && line.forecast.dailyRate !== null) { %>
+                <p class="rm-quiet">
+                  Separately, <strong><%= line.forecast.committedUnits %></strong> are already promised to
+                  customers. That is known demand, not a forecast.
+                </p>
+              <% } %>
 
-            <% line.anomalies.forEach(function (finding) { %>
-              <p class="t-muted"><strong><%= finding.headline %></strong> <%= finding.detail %>
-                <% if (finding.recommendation) { %><%= finding.recommendation %><% } %></p>
-            <% }) %>
+              <% if (line.leadTime && line.leadTime.material) { %>
+                <p class="rm-quiet"><%= line.leadTime.explanation %></p>
+              <% } %>
 
-            <details>
-              <summary>See how I worked this out</summary>
-              <ul class="t-xs t-muted">
-                <% line.forecast.calculation.forEach(function (step) { %>
-                  <li><%= step.detail %></li>
-                <% }) %>
-                <% line.advice.calculation.forEach(function (step) { %>
-                  <li><%= step.detail %></li>
-                <% }) %>
-                <% if (line.forecast.backtest && line.forecast.backtest.ran) { %>
-                  <li><%= line.forecast.backtest.reason %></li>
+              <% if (line.purchase) { %>
+                <p><strong><%= line.purchase.headline %></strong> — <%= line.purchase.explanation %></p>
+                <% if (line.purchase.tradeoff) { %>
+                  <p class="rm-quiet"><%= line.purchase.tradeoff.text %></p>
                 <% } %>
-                <li>Confidence: <%= line.forecast.confidenceLabel %> —
-                  <%= line.forecast.confidenceReasons.join('; ') %>.</li>
-              </ul>
-            </details>
-          </article>
-        <% }) %>
-      </div>
-      <div class="card-foot">
-        These are predictions from your own trading history. Foundry never changes a reorder setting
-        you configured without being told to.
-      </div>
-    </div>
+              <% } %>
+
+              <% line.advice.recommendations.forEach(function (change) { %>
+                <div class="rm-rule">
+                  <strong><%= change.headline %></strong>
+                  <p class="rm-quiet"><%= change.why %></p>
+                  <%
+                    // Only a recommendation Foundry has actually written down can
+                    // be decided: the row is what carries the evidence and the
+                    // authority verdict, and a decision has to attach to it.
+                    var raised = line.decisions && line.decisions[change.kind];
+                  %>
+                  <% if (raised && canOperate) { %>
+                    <div class="rm-choices">
+                      <form method="post" action="/planning/recommendations/<%= raised.id %>/accept">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <input type="hidden" name="returnTo" value="/inventory/<%= item.id %>#planning">
+                        <button class="rm-btn rm-btn--sm" type="submit"><%= change.actionLabel %></button>
+                      </form>
+                      <form method="post" action="/planning/recommendations/<%= raised.id %>/decline">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                        <input type="hidden" name="returnTo" value="/inventory/<%= item.id %>#planning">
+                        <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit"><%= change.keepLabel %></button>
+                      </form>
+                    </div>
+                  <% } else { %>
+                    <p class="rm-quiet" style="font-size:12.5px">
+                      <%= change.actionLabel %> · <%= change.keepLabel %> — set either on the reorder
+                      settings above.
+                    </p>
+                  <% } %>
+                </div>
+              <% }) %>
+
+              <% line.transfers.forEach(function (move) { %>
+                <p class="rm-quiet"><strong>Move <%= move.units %> from <%= move.fromLocationName %>
+                  to <%= move.toLocationName %>.</strong> <%= move.why %></p>
+              <% }) %>
+
+              <% line.anomalies.forEach(function (finding) { %>
+                <p class="rm-quiet"><strong><%= finding.headline %></strong> <%= finding.detail %>
+                  <% if (finding.recommendation) { %><%= finding.recommendation %><% } %></p>
+              <% }) %>
+
+              <details class="rm-work" style="margin-top:12px">
+                <summary>See how I worked this out</summary>
+                <div class="rm-work__body">
+                  <ul class="rm-list">
+                    <% line.forecast.calculation.forEach(function (step) { %>
+                      <li><%= step.detail %></li>
+                    <% }) %>
+                    <% line.advice.calculation.forEach(function (step) { %>
+                      <li><%= step.detail %></li>
+                    <% }) %>
+                    <% if (line.forecast.backtest && line.forecast.backtest.ran) { %>
+                      <li><%= line.forecast.backtest.reason %></li>
+                    <% } %>
+                    <li>Confidence: <%= line.forecast.confidenceLabel %> —
+                      <%= line.forecast.confidenceReasons.join('; ') %>.</li>
+                  </ul>
+                </div>
+              </details>
+            </article>
+          <% }) %>
+        </div>
+        <p class="rm-panel__foot">
+          These are predictions from your own trading history. Foundry never changes a reorder setting
+          you configured without being told to.
+        </p>
+      </section>
     <% } %>
 
-    <div class="card" id="reorder-settings">
-      <div class="card-head">
-        <h2>Reorder settings</h2>
-        <span class="spacer"></span>
-        <span class="t-xs t-muted">When Foundry should buy more</span>
-      </div>
-      <div class="table-wrap">
-        <table class="table table--stack">
-          <thead>
-            <tr>
-              <th>Variant</th>
-              <th class="num">On hand</th>
-              <th>Supplier</th>
-              <th class="num">Reorder at</th>
-              <th class="num">Order up to</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <% purchasingLines.forEach(function (line) { %>
-              <tr>
-                <td class="cell-main"><span class="cell-title"><%= line.label %></span></td>
-                <td class="num" data-label="On hand"><%= helpers.qty(line.total) %></td>
-                <td data-label="Supplier" class="t-muted">
-                  <%= line.suppliers.length ? line.suppliers[0].supplierName : 'None linked' %>
-                </td>
-                <% if (line.policy.isSet) { %>
-                  <td class="num" data-label="Reorder at"><strong><%= line.policy.reorderPoint === null ? '—' : line.policy.reorderPoint %></strong></td>
-                  <td class="num" data-label="Order up to"><%= line.policy.targetStock === null ? '—' : line.policy.targetStock %></td>
-                <% } else { %>
-                  <td class="num" data-label="Reorder at" colspan="2"><span class="badge badge--muted">Not set</span></td>
-                <% } %>
-                <td class="cell-end">
-                  <a class="btn btn--sm" href="/purchasing/why/<%= line.skuId %>">Configure</a>
-                </td>
-              </tr>
-            <% }) %>
-          </tbody>
-        </table>
-      </div>
-      <div class="card-foot"><% if (purchasingLines.length > 1) { %>Each version is counted on its own. <% } %>Foundry will not pick a reorder level for you until it has seen one sell — or you set it yourself.</div>
-    </div>
-
-    <div class="card">
-      <div class="card-head">
+    <section class="rm-panel">
+      <div class="rm-panel__head">
+        <%- helpers.icon('activity', { size: 15, className: 'rm-quiet' }) %>
         <h2>Recent activity</h2>
-        <span class="spacer"></span>
-        <a class="btn btn--ghost btn--sm" href="/activity?item=<%= item.id %>">Full history <%- helpers.icon('chevron', { size: 14 }) %></a>
+        <span class="right"><a href="/activity?item=<%= item.id %>">Full history</a></span>
       </div>
       <% if (recent.length === 0) { %>
-        <div class="empty">
-          <div class="icon-wrap"><%- helpers.icon('activity', { size: 22 }) %></div>
-          <h3>Nothing has happened yet</h3>
+        <div class="rm-empty" style="border:0;box-shadow:none">
+          <span class="rm-empty__ic"><%- helpers.icon('activity', { size: 19 }) %></span>
+          <strong>Nothing has happened yet</strong>
           <p>Every receipt, issue, transfer and adjustment for this item will be listed here.</p>
         </div>
       <% } else { %>
-        <%- include('../partials/ledger', { groups: recent, helpers: helpers }) %>
+        <div class="rm-panel__body">
+          <%- include('../partials/ledger', { groups: recent, helpers: helpers }) %>
+        </div>
       <% } %>
-    </div>
+    </section>
   </div>
 
-  <div class="grid">
-    <div class="card">
-      <div class="card-head"><h2>Details</h2></div>
-      <div class="card-body">
-        <dl class="kv">
-          <dt>Item code</dt><dd class="mono"><%= item.base_code || '—' %></dd>
-          <dt>Tracking</dt><dd><%= modeInfo.staffLabel %><%= item.has_variants ? ', by variant' : '' %></dd>
-          <dt>Counted in</dt><dd><%= helpers.plural(2, item.unit_label) %></dd>
-          <% if (item.has_variants) { %>
-            <dt>Options</dt><dd><%= options.map(function (o) { return o.name; }).join(', ') %></dd>
-          <% } %>
-          <dt>Added</dt><dd><%= helpers.shortDate(item.created_at) %></dd>
-          <% if (item.allow_negative) { %>
-            <dt>Negative stock</dt><dd><span class="badge badge--warn">Allowed</span></dd>
-          <% } %>
-        </dl>
+  <div class="rm-stack">
+    <section class="rm-panel">
+      <div class="rm-panel__head">
+        <%- helpers.icon('tag', { size: 15, className: 'rm-quiet' }) %>
+        <h2>Details</h2>
       </div>
-    </div>
+      <div class="rm-bands" style="box-shadow:none;border:0;border-radius:0">
+        <div class="rm-band"><span class="rm-band__k">Item code</span><span class="rm-band__v mono"><%= item.base_code || '—' %></span></div>
+        <div class="rm-band"><span class="rm-band__k">Tracking</span><span class="rm-band__v"><%= modeInfo.staffLabel %><%= item.has_variants ? ', by variant' : '' %></span></div>
+        <div class="rm-band"><span class="rm-band__k">Counted in</span><span class="rm-band__v"><%= helpers.plural(2, item.unit_label) %></span></div>
+        <% if (item.has_variants) { %>
+          <div class="rm-band"><span class="rm-band__k">Options</span><span class="rm-band__v"><%= options.map(function (o) { return o.name; }).join(', ') %></span></div>
+        <% } %>
+        <div class="rm-band"><span class="rm-band__k">Added</span><span class="rm-band__v"><%= helpers.shortDate(item.created_at) %></span></div>
+        <% if (item.allow_negative) { %>
+          <div class="rm-band"><span class="rm-band__k">Negative stock</span><span class="rm-band__v"><span class="rm-pillbadge is-warn">Allowed</span></span></div>
+        <% } %>
+      </div>
+    </section>
 
     <% if (locationTotals.length > 0) { %>
-      <div class="card">
-        <div class="card-head"><h2>Where it is</h2></div>
-        <div class="card-body">
-          <% var maxTotal = locationTotals.reduce(function (m, l) { return Math.max(m, l.total); }, 0) || 1; %>
-          <div class="location-bars">
-            <% locationTotals.forEach(function (row) { %>
-              <div class="location-bar">
-                <span class="name"><%= row.name %></span>
-                <span class="value num"><%= helpers.qty(row.total) %></span>
-                <span class="track"><span class="fill" style="width: <%= Math.round((row.total / maxTotal) * 100) %>%"></span></span>
-              </div>
-            <% }) %>
-          </div>
+      <section class="rm-panel">
+        <div class="rm-panel__head">
+          <%- helpers.icon('locations', { size: 15, className: 'rm-quiet' }) %>
+          <h2>Where it is</h2>
         </div>
-      </div>
+        <div class="rm-panel__body">
+          <% var maxTotal = locationTotals.reduce(function (m, l) { return Math.max(m, l.total); }, 0) || 1; %>
+          <% locationTotals.forEach(function (row) { %>
+            <div class="rm-where">
+              <span class="rm-where__k"><%= row.name %></span>
+              <span class="rm-where__v"><%= helpers.qty(row.total) %></span>
+              <span class="rm-meter"><span style="width: <%= Math.round((row.total / maxTotal) * 100) %>%"></span></span>
+            </div>
+          <% }) %>
+        </div>
+      </section>
     <% } %>
 
     <% if (item.is_active) { %>
-      <form class="card" method="post" action="/inventory/<%= item.id %>/archive" data-confirm="Archive <%= item.name %>? It will be hidden from the inventory list.">
+      <form method="post" action="/inventory/<%= item.id %>/archive" data-confirm="Archive <%= item.name %>? It will be hidden from the inventory list.">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <div class="card-body" style="display:flex; align-items:center; gap:12px;">
-          <div style="flex:1;">
-            <strong style="font-size:13px;">Archive item</strong>
-            <div class="muted" style="font-size:12.5px;">Only possible when nothing is on hand.</div>
+        <div class="rm-note">
+          <%- helpers.icon('box', { size: 16 }) %>
+          <div style="flex:1">
+            <strong>Archive item</strong>
+            Only possible when nothing is on hand.
           </div>
-          <button class="btn btn--danger btn--sm" type="submit">Archive</button>
+          <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Archive</button>
         </div>
       </form>
     <% } else { %>
-      <form class="card" method="post" action="/inventory/<%= item.id %>/archive">
+      <form method="post" action="/inventory/<%= item.id %>/archive">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="restore" value="1">
-        <div class="card-body" style="display:flex; align-items:center; gap:12px;">
-          <div style="flex:1;"><strong style="font-size:13px;">Restore item</strong></div>
-          <button class="btn btn--sm" type="submit">Restore</button>
+        <div class="rm-note">
+          <%- helpers.icon('box', { size: 16 }) %>
+          <div style="flex:1"><strong>Restore item</strong></div>
+          <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Restore</button>
         </div>
       </form>
     <% } %>
@@ -938,12 +878,12 @@
         </div>
         <div class="notice">
           <%- helpers.icon('shield', { size: 16 }) %>
-          <span>Transfers move stock in one step. Nothing is created or lost along the way.</span>
+          <span>This requests a tracked transfer. Stock stays here until dispatch, remains in transit while travelling, and reaches the destination only when it is received.</span>
         </div>
       </div>
       <div class="modal-foot">
         <button class="btn" type="button" data-modal-close>Cancel</button>
-        <button class="btn btn--primary" type="submit">Transfer</button>
+        <button class="btn btn--primary" type="submit">Request transfer</button>
       </div>
     </form>
   </dialog>

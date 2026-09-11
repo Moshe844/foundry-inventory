@@ -1,86 +1,107 @@
-<div class="foundry-hero">
-  <span class="foundry-mark"><%- helpers.icon('foundry', { size: 26 }) %></span>
-  <h1>Give Foundry what you already have</h1>
+<%
+  /*
+   * Describe the business, or hand Foundry a document.
+   *
+   * This is the screen behind "Enter it in Foundry", and it is the one place
+   * where somebody talks to Foundry before it knows anything about them. So it
+   * is built as a command surface — one box, one button — rather than as a form
+   * with a file field and a textarea of equal weight.
+   *
+   * The examples underneath are not decoration: each is a sentence Foundry can
+   * actually act on, and clicking one fills the box.
+   */
+%>
+
+<a class="rm-head__back" href="/onboarding"><%- helpers.icon('chevron', { size: 13 }) %> Start over</a>
+<%- include('../partials/setup-steps', { step: 1 }) %>
+
+<div class="rm-head">
+  <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Inventory source · tell Foundry</p>
+  <h1>Give Foundry what you already have.</h1>
   <p>
-    Start with an invoice or inventory sheet in the format you already have. Foundry reads
-    the actual file, works out the inventory structure and opening transaction, then shows you exactly
-    what it will create before anything changes.
+    Hand it an invoice or a stock sheet in whatever format it is already in, or just describe the
+    business in a sentence. Foundry reads the real file, works out the inventory structure and the
+    opening transaction, and shows you exactly what it would create before anything changes.
   </p>
-  <% if (typeof otherWorkspaces !== 'undefined' && otherWorkspaces > 0) { %>
-    <p class="muted" style="font-size:13px;">
-      This is a separate inventory. Nothing here is shared with the
-      <%= otherWorkspaces %> you already have.
-    </p>
-  <% } %>
 </div>
 
+<% if (typeof otherWorkspaces !== 'undefined' && otherWorkspaces > 0) { %>
+  <div class="rm-note">
+    <%- helpers.icon('layers', { size: 16 }) %>
+    <span>This is a separate inventory. Nothing here is shared with the <%= otherWorkspaces %> you already have.</span>
+  </div>
+<% } %>
+
 <% if (!aiConfigured) { %>
-  <div class="notice notice--warn" style="max-width:760px;margin:0 auto 16px;">
+  <div class="rm-note rm-note--warn">
     <%- helpers.icon('alert', { size: 16 }) %>
     <span>
-      Foundry is not connected to a model provider yet. Add <code class="mono">ANTHROPIC_API_KEY</code>
-      to your <code class="mono">.env</code> file and restart, or set things up manually below.
+      <strong>Foundry has no model connection yet.</strong>
+      Add <code style="font-family:var(--f-num);font-size:.9em"><%= 'ANTHROPIC_API_KEY' %></code>
+      to your <code style="font-family:var(--f-num);font-size:.9em">.env</code> and restart, or set
+      this inventory up manually below.
     </span>
   </div>
 <% } %>
 
 <% if (error) { %>
-  <div class="flash flash--error" role="alert" style="max-width:760px;margin:0 auto 16px;">
-    <%- helpers.icon('alert', { size: 18 }) %><span><%= error %></span>
-  </div>
+  <div class="flash flash--error" role="alert"><span><%= error %></span></div>
 <% } %>
 
-<form class="foundry-form" method="post" action="/foundry/understand" enctype="multipart/form-data" data-busy>
+<form method="post" action="/foundry/understand" enctype="multipart/form-data" data-busy>
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-  <div class="card">
-    <div class="card-body">
-      <div class="foundry-source">
-        <span class="foundry-source__icon"><%- helpers.icon('import', { size: 22 }) %></span>
-        <span class="foundry-source__body">
-          <strong data-source-name>Add the file you already use</strong>
-          <span>PDF, Word (.docx), Excel, CSV, TSV, or text · up to 32 MB</span>
-          <span class="foundry-source__truth">The file is read as evidence. Foundry never guesses quantities that are not in it.</span>
-        </span>
-        <button class="btn" type="button" data-source-picker>Choose file</button>
-        <input id="source" name="source" type="file" accept=".pdf,.docx,.xlsx,.xls,.csv,.tsv,.txt,application/pdf" hidden>
-      </div>
 
-      <div class="foundry-divider"><span>or describe it in your own words</span></div>
-      <label class="visually-hidden" for="description">Describe your inventory</label>
-      <textarea class="textarea foundry-input" id="description" name="description" rows="4"
-                placeholder="We wholesale children's shoes. Every style comes in colors and sizes. We keep stock in Brooklyn and New Jersey and transfer between them."><%= description %></textarea>
-      <div class="foundry-actions">
-        <button class="btn btn--primary btn--lg" type="submit" <%= aiConfigured ? '' : 'disabled' %>>
-          <%- helpers.icon('foundry', { size: 17 }) %> Understand my inventory
+  <div class="rm-composer">
+    <label class="visually-hidden" for="description">Describe your inventory</label>
+    <textarea class="rm-composer__input" id="description" name="description" rows="3"
+      placeholder="We wholesale children's shoes. Every style comes in colours and sizes, and we keep stock in Brooklyn and New Jersey and transfer between them. We have 40 navy size 4 in Brooklyn."><%= description %></textarea>
+    <div class="rm-composer__foot">
+      <label class="rm-composer__attach" title="Attach an invoice or stock sheet">
+        <%- helpers.icon('import', { size: 14 }) %>
+        <span data-source-name>Attach a document instead</span>
+        <input id="source" name="source" type="file"
+               accept=".pdf,.docx,.xlsx,.xls,.csv,.tsv,.txt,application/pdf" data-source-picker-input>
+      </label>
+      <span class="right">
+        <button class="rm-btn" type="submit" <%= aiConfigured ? '' : 'disabled' %>>
+          <%- helpers.icon('spark', { size: 15 }) %> Understand my inventory
         </button>
-        <span class="foundry-hint">One preview. One approval. Then the products, supplier, order, and stock are live.</span>
-      </div>
+      </span>
     </div>
   </div>
+  <p class="rm-quiet" style="font-size:12.5px;margin:8px 0 0">
+    PDF, Word, Excel, CSV, TSV or text, up to 32 MB. Read as evidence — Foundry never guesses a
+    quantity that is not in it. It works out the safe structure first, then asks where your real
+    products and stock come from.
+  </p>
 </form>
 
-<div class="foundry-examples">
-  <h2>Things people tell Foundry</h2>
-  <div class="example-grid">
-    <button class="example" type="button" data-fill="We wholesale children's shoes in different styles, colors and sizes across two warehouses.">
-      “We wholesale children's shoes in different styles, colors and sizes across two warehouses.”
-    </button>
-    <button class="example" type="button" data-fill="We rent construction equipment and need to track every machine individually.">
-      “We rent construction equipment and need to track every machine individually.”
-    </button>
-    <button class="example" type="button" data-fill="We distribute food and need lot numbers and expiration dates.">
-      “We distribute food and need lot numbers and expiration dates.”
-    </button>
-    <button class="example" type="button" data-fill="We're a school tracking laptops assigned to students.">
-      “We're a school tracking laptops assigned to students.”
-    </button>
-  </div>
+<p class="rm-stamp" style="margin-top:22px"><%- helpers.icon('chat', { size: 14 }) %> Things people tell Foundry</p>
+<div class="rm-examples">
+  <button type="button" data-fill="We wholesale children's shoes in different styles, colors and sizes across two warehouses.">
+    “We wholesale children's shoes in different styles, colours and sizes across two warehouses.”
+  </button>
+  <button type="button" data-fill="We rent construction equipment and need to track every machine individually.">
+    “We rent construction equipment and need to track every machine individually.”
+  </button>
+  <button type="button" data-fill="We distribute food and need lot numbers and expiration dates.">
+    “We distribute food and need lot numbers and expiration dates.”
+  </button>
+  <button type="button" data-fill="We're a school tracking laptops assigned to students.">
+    “We're a school tracking laptops assigned to students.”
+  </button>
 </div>
 
-<div class="foundry-alt">
-  <form method="post" action="/foundry/manual">
+<div class="rm-spine-foot" style="margin-top:20px">
+  <form method="post" action="/foundry/manual" style="margin:0">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <button class="btn btn--ghost" type="submit">Set it up manually instead</button>
+    <button class="rm-btn rm-btn--ghost" type="submit">Set it up manually instead</button>
   </form>
-  <span class="muted">You can always ask Foundry later.</span>
+  <span class="rm-quiet" style="font-size:13px;align-self:center">You can always ask Foundry later.</span>
 </div>
+
+<p class="rm-disclose">
+  <a href="/onboarding">Choose a different source</a>
+  <a href="/onboarding/files">I have a spreadsheet</a>
+  <a href="/onboarding/system">I have another system</a>
+</p>

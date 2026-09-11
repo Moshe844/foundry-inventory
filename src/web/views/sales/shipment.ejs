@@ -15,8 +15,13 @@
   var s = shipment;
   var isOpen = s.status === 'PICKING' || s.status === 'PACKED';
   var badge = { PICKING: 'info', PACKED: 'info', SHIPPED: 'ok', DELIVERED: 'ok', CANCELLED: 'muted' }[s.status];
-  var words = { PICKING: 'Being picked', PACKED: 'Packed', SHIPPED: 'Shipped',
-    DELIVERED: 'Delivered', CANCELLED: 'Cancelled' }[s.status];
+  var words = s.status === 'SHIPPED' && s.handover === 'COLLECTED' ? 'Collected'
+    : s.status === 'SHIPPED' && s.handover === 'DELIVERED_BY_US' ? 'Delivered by us'
+    : { PICKING: 'Being picked', PACKED: 'Packed', SHIPPED: 'Shipped',
+      DELIVERED: 'Delivered', CANCELLED: 'Cancelled' }[s.status];
+  var plannedHandover = s.delivery_method === 'PICKUP' ? 'COLLECTED' : 'CARRIER';
+  var plannedHandoverLabel = plannedHandover === 'COLLECTED'
+    ? 'Collected by the customer' : 'Sent by carrier';
 %>
 <div class="breadcrumb">
   <a href="/fulfilment">Fulfilment</a>
@@ -36,7 +41,17 @@
   </div>
 </div>
 
-<% if (s.ship_to_address) { %>
+<% if (s.delivery_method === 'PICKUP') { %>
+  <section class="section">
+    <div class="panel">
+      <div class="panel-head"><div><h2>How the customer will receive it</h2></div></div>
+      <div class="card-body">
+        <p class="lede"><strong>Customer pickup.</strong></p>
+        <p class="hint">No carrier, shipping label, or delivery address is needed for this order.</p>
+      </div>
+    </div>
+  </section>
+<% } else if (s.ship_to_address) { %>
   <section class="section">
     <div class="panel">
       <div class="panel-head"><div><h2><%= isOpen ? 'Where it is going' : 'Where it went' %></h2></div></div>
@@ -88,7 +103,8 @@
 <% if (isOpen) { %>
   <p class="lede">
     Nothing in this box has left stock yet. Foundry still counts every one of these
-    <%= s.units %> as on the shelf, and will until you mark it shipped.
+    <%= s.units %> as on the shelf, and will until you
+    <%= s.delivery_method === 'PICKUP' ? 'confirm the customer collected it' : 'mark it shipped' %>.
   </p>
 <% } %>
 
@@ -160,7 +176,24 @@
   </div>
 </section>
 
-<% if (s.status === 'PICKING') { %>
+<% if (s.status === 'PICKING' && s.delivery_method === 'PICKUP') { %>
+  <section class="section">
+    <div class="panel">
+      <div class="panel-head"><div><h2>When the customer has it</h2></div></div>
+      <form method="post" action="/fulfilment/<%= s.id %>/ship" data-busy>
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="handover" value="COLLECTED">
+        <div class="card-body">
+          <p class="lede">Confirm only after the customer physically collects these <%= s.units %> units.</p>
+          <p class="hint">This removes them from stock, records the sale and product cost, and updates what the customer owes. There is no carrier step.</p>
+        </div>
+        <div class="card-foot">
+          <button class="btn btn--primary" type="submit">Customer collected it — <%= s.units %> leaves stock</button>
+        </div>
+      </form>
+    </div>
+  </section>
+<% } else if (s.status === 'PICKING') { %>
   <section class="section">
     <div class="panel">
       <div class="panel-head"><div><h2>Once it is in the box</h2></div></div>
@@ -392,20 +425,21 @@
       <form method="post" action="/fulfilment/<%= s.id %>/ship" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="card-body">
-          <%#
-            Asked first, because the answer decides whether the rest of this
-            form even applies — and because a box the customer collected is
-            not a box that was handed to a carrier, whatever the heading says.
-          %>
-          <fieldset class="ship-method">
-            <legend>How did these goods leave?</legend>
-            <% [['CARRIER','Sent by carrier'],['COLLECTED','Collected by the customer'],['DELIVERED_BY_US','Delivered by us']].forEach(function (choice) { %>
-              <label class="choice">
-                <input type="radio" name="handover" value="<%= choice[0] %>" required>
-                <span><%= choice[1] %></span>
-              </label>
-            <% }) %>
-          </fieldset>
+          <div class="notice notice--info">
+            <div><strong>Planned: <%= plannedHandoverLabel %></strong><br>This came from the delivery choice on <%= s.order_number %>.</div>
+          </div>
+          <details class="advanced-settings">
+            <summary>Change how the goods actually left</summary>
+            <fieldset class="ship-method">
+              <legend class="visually-hidden">How did these goods leave?</legend>
+              <% [['CARRIER','Sent by carrier'],['COLLECTED','Collected by the customer'],['DELIVERED_BY_US','Delivered by us']].forEach(function (choice) { %>
+                <label class="choice">
+                  <input type="radio" name="handover" value="<%= choice[0] %>" required <%= plannedHandover === choice[0] ? 'checked' : '' %>>
+                  <span><%= choice[1] %></span>
+                </label>
+              <% }) %>
+            </fieldset>
+          </details>
           <div class="field-row">
             <label class="field">
               <span class="field-label">Carrier <span class="t-muted">(optional)</span></span>
@@ -516,8 +550,8 @@
               <span class="field-label">Message</span>
               <textarea class="input textarea message-edit" name="body" rows="14"><%= notice.body %></textarea>
               <span class="field-hint">
-                Written from this shipment's own record — the items, the carrier, the tracking
-                number. Foundry states nothing here it cannot show you elsewhere.
+                Written from this order handover's own record — the items and how the customer
+                received them. Foundry states nothing here it cannot show you elsewhere.
               </span>
             </label>
             <% if (mailboxes && mailboxes.length) { %>
@@ -559,10 +593,10 @@
 <% if (s.status === 'SHIPPED' || s.status === 'DELIVERED') { %>
   <section class="section">
     <div class="panel">
-      <div class="panel-head"><div><h2>On its way</h2></div></div>
+      <div class="panel-head"><div><h2><%= s.handover === 'COLLECTED' ? 'Collected by the customer' : s.status === 'DELIVERED' ? 'Delivered' : 'On its way' %></h2></div></div>
       <div class="card-body">
         <dl class="detail-list">
-          <div><dt>Left</dt><dd><%= helpers.shortDate(s.shipped_at) %></dd></div>
+          <div><dt><%= s.handover === 'COLLECTED' ? 'Collected' : 'Left' %></dt><dd><%= helpers.shortDate(s.shipped_at) %></dd></div>
           <% if (s.carrierName) { %><div><dt>Carrier</dt><dd><%= s.carrierName %><% if (s.service) { %> · <%= s.service %><% } %></dd></div><% } %>
           <% if (s.tracking_number) { %>
             <div>
@@ -577,7 +611,7 @@
               </dd>
             </div>
           <% } %>
-          <% if (s.package_count) { %><div><dt>Packages</dt><dd><%= s.package_count %></dd></div><% } %>
+          <% if (s.package_count && s.handover !== 'COLLECTED') { %><div><dt>Packages</dt><dd><%= s.package_count %></dd></div><% } %>
           <% if (s.expected_delivery_date) { %><div><dt>Expected</dt><dd><%= helpers.shortDate(s.expected_delivery_date) %></dd></div><% } %>
           <% if (s.shipping_cost_minor) { %>
             <div><dt>Shipping cost</dt><dd><%= helpers.money(s.shipping_cost_minor, s.currency || 'USD') %></dd></div>
@@ -585,7 +619,7 @@
           <% if (s.delivered_at) { %><div><dt>Delivered</dt><dd><%= helpers.shortDate(s.delivered_at) %></dd></div><% } %>
         </dl>
       </div>
-      <% if (s.status === 'SHIPPED') { %>
+      <% if (s.status === 'SHIPPED' && s.handover !== 'COLLECTED') { %>
         <div class="card-foot">
           <form method="post" action="/fulfilment/<%= s.id %>/delivered" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">

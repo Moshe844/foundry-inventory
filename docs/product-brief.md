@@ -127,35 +127,82 @@ the underlying condition is satisfied.
 
 ## 4. What the owner sees
 
-Foundry is one thing pretending to be nothing: an employee who runs the
-operation. So the navigation is what an owner does, not what the software
-contains.
+Foundry is not an application. It is a colleague with a desk, and you do not
+navigate a colleague — you read what they left you, settle what they could not,
+and tell them things.
+
+So the product is **three surfaces and one object**.
 
 | | |
 | --- | --- |
-| **Home** | The briefing. A verdict — everything is under control, or N things need you — then what is about to happen: what is packed, what is ready to pick, when a customer wants their order, when a supplier's delivery is due. |
-| **Needs you** | The only queue. Anything Foundry cannot settle alone arrives here, including mail somebody is waiting on an answer to. |
-| **Inventory** | What you have, and how more of it arrives. Purchasing lives here. |
-| **Orders** | A customer order end to end: promised, committed, picked, shipped, tracked, paid, and what the customer was told. Fulfilment and customer mail live here. |
-| **Money** | The accountant's briefing first; the books underneath. |
-| **Activity** | Everything that happened, in order. |
+| **The Brief** (`/`) | What Foundry knows this morning, written as prose. Not sections — sentences. Every clause is a door. |
+| **The Desk** (`/needs-you`) | The stack of decisions only the owner can make. One at a time, at full size, with a counter, evidence as a disclosure inside the decision. Not a queue to triage — a stack to clear. |
+| **The Line** (`/ask`) | The running conversation: what happened, what you want, how you want this run. The primary way Foundry is taught. One box, posting to the intent router. |
 
-Then Connections and Settings, and Tell Foundry from anywhere.
+And the object, which is the whole design in one word: **the story**.
 
-This replaced a sidebar that named every department — Inventory, Sales,
-Fulfilment, Mail, Purchasing, Accounting, Activity — which is the shape of an
-ERP and the opposite of the point. Somebody who hired Keeper to run these
-things should not have to operate seven of them.
+A story has a subject, a spine of what has happened, a bright line marking now,
+a ghosted spine of what Foundry intends to do, and sometimes a decision. A
+customer order is a story. A purchase is a story. `src/web/story.js` builds
+both, and `views/partials/spine.ejs` renders both — one component, two
+subjects, which is also why this cost eight components rather than a hundred
+and eleven templates.
 
-**The test that matters:** if understanding one business event means bouncing
-between Sales, Fulfilment, Mail, Purchasing and Accounting, the design has
-failed. One customer order is one page and one story.
+Inventory, Money and Activity stopped being places. They are **lenses over the
+same stories**: Money is every story with a financial consequence, what you hold
+is every story about stock, Activity is all of them in time order.
 
-Nothing was removed. Every folded-in section keeps its own address, and the
-section it now belongs to links to it plainly — Orders offers picking and
-shipping, Inventory offers ordering and suppliers. Consolidating a navigation
-only works if what went into a section is obvious from inside it; otherwise it
-is not simpler, only emptier.
+### Why the previous arrangement was replaced
+
+The sidebar before this one had already been consolidated from seven
+departments to six, and it did not work, because only the doors were renamed.
+Six nav entries sat on top of 185 routes and 111 templates; forty routes under
+`/accounting` alone. One customer order still touched five addresses. The
+owner was still the router — Foundry knew what had happened and then asked
+which room to walk into to find out.
+
+### The three rules that hold it
+
+- **Nothing is more than one story deep.** Brief → story → evidence. Evidence
+  is a disclosure inside the story, never a fourth page.
+- **Every screen states the business's position, not the database's contents.**
+  A screen that opens with a table has failed before it renders. The one table
+  in the product is the four-line ledger on Money, because money genuinely is a
+  column of figures.
+- **Nothing is deleted — things are demoted.** Every screen taken off the main
+  path kept its address and is listed, in full and grouped by the question it
+  answers, at `/everything`. A navigation that hides things is worse than the
+  sidebar it replaced, and that page is what makes the consolidation honest.
+
+### Settings is a transcript
+
+Foundry is taught by talking to it, so `/what-you-told-me` is the standing
+rules in the words the owner said them, with what each has done since —
+"acted 11×" is the trust surface, because a rule that has never fired is a rule
+that is wrong or unnecessary, and nowhere else would show it. The forms are
+still at `/settings` and behind it.
+
+### The visual layer
+
+`src/web/public/room.css` loads last. It redefines the tokens the three older
+sheets read, so the ninety demoted screens inherit the palette rather than
+looking foreign, and it provides the components the rewritten surfaces are
+built from. Newsreader for prose, IBM Plex Sans for the interface, IBM Plex
+Mono for labels and figures; the accent is Foundry's own teal, deepened, and
+one warm copper that means exactly one thing: this needs a person.
+
+Nothing in it draws a bordered, rounded, shadowed card by default. Border, fill
+and shadow are spent on the one thing on a screen that needs lifting, because
+if everything is lifted nothing is.
+
+**The test that matters, unchanged:** if understanding one business event means
+bouncing between Sales, Fulfilment, Mail, Purchasing and Accounting, the design
+has failed. One customer order is one page and one story.
+
+**And the second one:** remove the logo — is this generic inventory SaaS? The
+dominant element on every rewritten screen is a sentence, set in a reading face
+at reading size, with the database behind a disclosure. Generic ERP cannot do
+that, because it does not know enough to write the sentence.
 
 ## 5. The vocabulary
 
@@ -225,8 +272,15 @@ Honest, at the time of writing.
 
 **Product**
 
-- No barcode scanning, mobile receiving, or label printing. Barcodes are now
-  *captured* on import so the data exists when scanning arrives.
+- Warehouse execution now supports hierarchical zones, aisles, shelves, bins,
+  docks and staging locations; deterministic SKU/location/lot/serial barcode
+  identities and aliases; durable mobile receiving, putaway, picking, counting
+  and transfer tasks; containers; putaway rules; and printable Code 128 labels.
+  Accepted stock-changing scans post through the canonical inventory engine.
+  Duplicate offline scans are idempotent, wrong identities are rejected before
+  movement, and interrupted tasks resume from stored progress. Existing stock
+  is intentionally left at its existing location during migration; Foundry
+  does not invent a bin for it.
 - Stripe is written, not proven. The payment-provider seam is exercised end to
   end through a stub — request, hosted link, webhook, receipt, hold released —
   but the Stripe adapter itself has never run against a live Stripe account,

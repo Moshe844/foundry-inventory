@@ -1,116 +1,156 @@
-<div class="page-head">
-  <div class="titles">
-    <a class="back-link" href="/onboarding/files"><%- helpers.icon('chevron', { size: 14 }) %> The files</a>
-    <h1>I understand your inventory</h1>
-    <div class="page-sub">
-      Read from <%= sources.length %> file<%= sources.length === 1 ? '' : 's' %>. Nothing has been created yet.
-    </div>
+<%
+  /*
+   * What Foundry read, before anything is created.
+   *
+   * This is the screen the whole safety promise rests on, so it is built around
+   * three things in this order: the figures it would create, the things it
+   * could not settle on its own, and the button that commits.
+   *
+   * What it replaced put "what Foundry found", the conflicts and the commit
+   * button in three identical cards, so a conflict that must be settled looked
+   * exactly like a count of locations. Anything blocking now carries the amber,
+   * and the commit button says plainly what is still in its way.
+   */
+  var normalised = conflicts.filter(function (c) { return c.severity === 'resolved_automatically'; });
+%>
+
+<a class="rm-head__back" href="/onboarding/files"><%- helpers.icon('chevron', { size: 13 }) %> Back to the files</a>
+<%- include('../partials/setup-steps', { step: 2 }) %>
+
+<div class="rm-head">
+  <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Read from <%= sources.length %> file<%= sources.length === 1 ? '' : 's' %> · nothing created yet</p>
+  <h1>Here is what I understand about your inventory.</h1>
+  <p>
+    Check the figures below. Nothing exists in Foundry until you press the button at the bottom, and
+    everything it creates will have a record explaining where it came from.
+  </p>
+</div>
+
+<div class="rm-facts">
+  <div class="rm-fact">
+    <span class="rm-fact__k"><%- helpers.icon('box', { size: 14 }) %> Products</span>
+    <span class="rm-fact__v"><%= plan.expectedTotals.products || 0 %></span>
+    <span class="rm-fact__d">would be created</span>
+  </div>
+  <div class="rm-fact">
+    <span class="rm-fact__k"><%- helpers.icon('layers', { size: 14 }) %> Units on hand</span>
+    <span class="rm-fact__v"><%= plan.expectedTotals.units || 0 %></span>
+    <span class="rm-fact__d">as opening stock</span>
+  </div>
+  <div class="rm-fact">
+    <span class="rm-fact__k"><%- helpers.icon('locations', { size: 14 }) %> Locations</span>
+    <span class="rm-fact__v"><%= plan.proposedLocations.length %></span>
+    <span class="rm-fact__d"><%= plan.proposedLocations.join(', ') || 'none named' %></span>
   </div>
 </div>
 
-<div class="card section">
-  <div class="card-head"><h2>What Foundry found</h2></div>
-  <div class="card-body">
-    <div class="act-ledger">
-      <div class="act-row"><span class="act-place">Products</span><span class="act-move"><span class="num"><%= plan.expectedTotals.products || 0 %></span></span></div>
-      <div class="act-row"><span class="act-place">Units on hand</span><span class="act-move"><span class="num"><%= plan.expectedTotals.units || 0 %></span></span></div>
-      <div class="act-row"><span class="act-place">Locations</span><span class="act-move"><span class="num"><%= plan.proposedLocations.length %></span></span></div>
+<% if (normalised.length) { %>
+  <section class="rm-panel" style="margin-bottom:16px">
+    <div class="rm-panel__head">
+      <%- helpers.icon('check', { size: 15, className: 'rm-quiet' }) %>
+      <h2>Sorted out without asking you</h2>
+      <span class="right"><%= normalised.length %></span>
     </div>
-
-    <h3 class="sub-head">Locations Foundry would create</h3>
-    <ul class="plain-list">
-      <% plan.proposedLocations.forEach(function (name) { %><li><%= name %></li><% }) %>
-    </ul>
-
-    <% var normalised = conflicts.filter(function (c) { return c.severity === 'resolved_automatically'; }); %>
-    <% if (normalised.length) { %>
-      <h3 class="sub-head">Sorted out without asking you</h3>
-      <ul class="plain-list">
-        <% normalised.forEach(function (conflict) { %>
-          <li><%= conflict.subject %> — <span class="muted"><%= conflict.recommendationReason %></span></li>
-        <% }) %>
-      </ul>
-    <% } %>
-  </div>
-</div>
-
-<% if (open.length) { %>
-  <div class="card section <%= blocking.length ? 'card--warn' : '' %>">
-    <div class="card-head">
-      <h2>I found <%= open.length %> thing<%= open.length === 1 ? '' : 's' %> worth checking</h2>
-      <span class="spacer"></span>
-      <% if (blocking.length) { %><span class="badge badge--danger"><%= blocking.length %> must be settled</span><% } %>
-    </div>
-    <div class="card-body">
-      <% open.forEach(function (conflict) { %>
-        <div class="card section">
-          <div class="card-head">
-            <h3><%= helpers.columnLabel(conflict.kind.replace(/_/g, ' ')) %></h3>
-            <span class="spacer"></span>
-            <% if (conflict.severity === 'blocking') { %><span class="badge badge--danger">Needs your decision</span><% } %>
-          </div>
-          <div class="card-body">
-            <p class="lede"><%= conflict.subject %></p>
-            <table class="table table--tight">
-              <tbody>
-                <% conflict.evidence.forEach(function (row) { %>
-                  <tr><td><%= row.source %></td><td><%= row.says %></td><td class="muted"><%= row.when || '' %></td></tr>
-                <% }) %>
-              </tbody>
-            </table>
-            <% if (conflict.recommendationReason) { %>
-              <p class="muted">Foundry recommends: <%= conflict.recommendationReason %></p>
-            <% } else { %>
-              <p class="is-warn">Foundry cannot safely choose from the numbers alone — this one is yours.</p>
-            <% } %>
-
-            <form method="post" action="/onboarding/conflicts/<%= conflict.id %>">
-              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-              <div class="btn-row">
-                <% conflict.options.forEach(function (option) { %>
-                  <button class="btn btn--sm <%= conflict.recommendedOption === option.id ? 'btn--primary' : '' %>"
-                          type="submit" name="decision" value="<%= option.id %>">
-                    <%= option.label %><%= conflict.recommendedOption === option.id ? ' (recommended)' : '' %>
-                  </button>
-                <% }) %>
-              </div>
-            </form>
-          </div>
-        </div>
+    <ul class="rm-checks">
+      <% normalised.forEach(function (conflict) { %>
+        <li>
+          <span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
+          <span><strong><%= conflict.subject %></strong><br><%= conflict.recommendationReason %></span>
+        </li>
       <% }) %>
-    </div>
-    <div class="card-foot">
-      <form method="post" action="/onboarding/review/<%= plan.id %>/accept-recommendations">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button class="btn" type="submit">Accept everything Foundry recommended</button>
-      </form>
-    </div>
-  </div>
+    </ul>
+  </section>
 <% } %>
 
-<div class="card section">
-  <div class="card-head"><h2>Foundry is ready to take over</h2></div>
-  <div class="card-body">
-    <p class="lede">
-      Foundry will create the locations, the products and their versions, then establish the opening stock
-      as real inventory movements — so every figure has a record explaining where it came from.
-    </p>
-    <p class="muted">
-      Afterwards it counts what it holds and compares it with your files. If the totals disagree it says so
-      rather than reporting success.
-    </p>
+<% if (open.length) { %>
+  <p class="rm-stamp">
+    <%- helpers.icon(blocking.length ? 'hand' : 'question', { size: 14 }) %>
+    <%= open.length %> thing<%= open.length === 1 ? '' : 's' %> worth checking
+    <% if (blocking.length) { %>
+      <span class="rm-pillbadge is-warn"><%= blocking.length %> must be settled before I can continue</span>
+    <% } %>
+  </p>
+
+  <% open.forEach(function (conflict) { %>
+    <article class="rm-conflict <%= conflict.severity === 'blocking' ? 'is-blocking' : '' %>">
+      <div class="rm-conflict__head">
+        <%- helpers.icon(conflict.severity === 'blocking' ? 'hand' : 'question', { size: 15, className: 'rm-quiet' }) %>
+        <h3><%= helpers.columnLabel(conflict.kind.replace(/_/g, ' ')) %></h3>
+        <span class="right">
+          <% if (conflict.severity === 'blocking') { %>
+            <span class="rm-pillbadge is-warn">Needs your decision</span>
+          <% } %>
+        </span>
+      </div>
+      <div class="rm-conflict__body">
+        <p class="rm-conflict__subject"><%= conflict.subject %></p>
+
+        <div class="rm-evidence">
+          <% conflict.evidence.forEach(function (row) { %>
+            <div>
+              <span class="src"><%= row.source %></span>
+              <span class="says"><%= row.says %></span>
+              <span class="when"><%= row.when || '' %></span>
+            </div>
+          <% }) %>
+        </div>
+
+        <% if (conflict.recommendationReason) { %>
+          <p class="rm-conflict__rec">I would: <%= conflict.recommendationReason %></p>
+        <% } else { %>
+          <p class="rm-conflict__rec is-yours">I cannot safely choose from the numbers alone — this one is yours.</p>
+        <% } %>
+
+        <form method="post" action="/onboarding/conflicts/<%= conflict.id %>">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="rm-choices">
+            <% conflict.options.forEach(function (option) { %>
+              <button class="rm-btn <%= conflict.recommendedOption === option.id ? '' : 'rm-btn--ghost' %> rm-btn--sm"
+                      type="submit" name="decision" value="<%= option.id %>">
+                <%= option.label %><%= conflict.recommendedOption === option.id ? ' · recommended' : '' %>
+              </button>
+            <% }) %>
+          </div>
+        </form>
+      </div>
+    </article>
+  <% }) %>
+
+  <form method="post" action="/onboarding/review/<%= plan.id %>/accept-recommendations" style="margin-bottom:18px">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Accept everything Foundry recommended</button>
+  </form>
+<% } %>
+
+<section class="rm-panel" style="margin-bottom:14px">
+  <div class="rm-panel__head">
+    <%- helpers.icon('shield', { size: 15, className: 'rm-quiet' }) %>
+    <h2>Foundry is ready to take over</h2>
   </div>
-  <div class="card-foot">
-    <div class="btn-row">
-      <form method="post" action="/onboarding/review/<%= plan.id %>/migrate" data-busy>
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button class="btn btn--primary" type="submit" <%= blocking.length || !canOperate ? 'disabled' : '' %>>
-          Complete migration
-        </button>
-      </form>
-      <% if (blocking.length) { %>
-        <span class="muted">Settle the <%= blocking.length %> above first.</span>
-      <% } %>
-    </div>
-  </div>
+  <ul class="rm-checks">
+    <li>
+      <span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
+      <span>It creates the locations, the products and their versions, then establishes the opening
+        stock as real inventory movements — so every figure has a record explaining where it came from.</span>
+    </li>
+    <li>
+      <span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
+      <span>Afterwards it counts what it holds and compares that with your files.
+        <strong>If the totals disagree it says so rather than reporting success.</strong></span>
+    </li>
+  </ul>
+</section>
+
+<div class="rm-spine-foot">
+  <form method="post" action="/onboarding/review/<%= plan.id %>/migrate" data-busy style="margin:0">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="rm-btn" type="submit" <%= blocking.length || !canOperate ? 'disabled' : '' %>>
+      <%- helpers.icon('check', { size: 15 }) %> Complete migration
+    </button>
+  </form>
+  <% if (blocking.length) { %>
+    <span class="rm-quiet" style="font-size:13px;align-self:center">
+      Settle the <%= blocking.length %> above first.
+    </span>
+  <% } %>
 </div>

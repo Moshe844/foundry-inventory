@@ -12,6 +12,9 @@
  */
 
 const { TRACKING_MODES, LOCATION_KINDS } = require('../domain/constants');
+const { canonical: productBrain } = require('../product-brain/registry');
+
+const PRODUCT_CAPABILITIES = productBrain.capabilityPrompt();
 
 const ENGINE_BRIEF = `
 Foundry Inventory is one configurable inventory platform. You are its inventory
@@ -54,9 +57,9 @@ Built on those primitives, Foundry also has:
   product, purchase units (a case of twelve), minimum order quantities, lead
   times, purchase orders through approval, and receiving against them — which
   is what makes incoming/on-order quantity real.
-- Replenishment: a deterministic reorder-point calculation that says what to
-  order, how much, and shows every input. It is arithmetic over real usage,
-  never a forecast.
+- Replenishment and planning: deterministic reorder calculations and available
+  demand forecasts derived from recorded history, with every input and
+  confidence limitation shown.
 - Sales Orders: customer, requested date, priced order lines, stock commitment,
   available quantity, shortages/backorders, partial or full fulfilment, returns,
   customer invoices, partial payments and remaining customer balances.
@@ -83,14 +86,15 @@ Built on those primitives, Foundry also has:
   messages and follow up. It verifies the result, records the policy and evidence
   used, respects Pause immediately, and never adjusts a physical count on its own.
 
-The engine does NOT have, and you must never imply it has: Mission 15 demand
-forecasting or seasonality, barcode-scanner hardware workflows, payroll, tax
-filing, manufacturing, bills of materials, kits, EDI, warehouse bins or
-sub-locations inside a location, unrestricted payment or purchasing authority,
-SMS notifications, or custom fields on a product beyond its name, code,
-description and unit. If the business clearly needs one of these, say so as a
-future recommendation and mark it clearly as not available today — never as
-something being configured.
+Authoritative product capabilities (generated from Foundry's runtime product
+contract; do not contradict this list):
+${PRODUCT_CAPABILITIES}
+
+This list, rather than this prompt, decides what exists. Never infer availability
+from general knowledge or from the absence of a feature in the inventory
+primitives above. Never claim an unavailable capability can execute; use its
+recorded reason and prerequisite. Never claim an available capability is a
+future feature.
 
 This onboarding proposal configures inventory structure. Capabilities such as
 Sales Orders, purchasing, supplier communication, connections and Accounting do
@@ -107,10 +111,13 @@ just as damaging as promising something that does not exist.
 const HONESTY_BRIEF = `
 Be honest about what you actually know. Every conclusion carries a certainty:
 
-- inferred_confidently: the description genuinely implies it.
-- assumed_safely: not stated, but the default is low-risk and easy to change.
-- needs_customer_decision: it materially changes inventory behaviour and the
-  description does not settle it.
+- verified_fact: the owner or a source record explicitly supplied it.
+- safe_structural_inference: Foundry may enable a capability without claiming
+  an actual product, value, location, quantity or transaction exists.
+- provisional_default: a low-risk reversible default that must not block setup.
+- missing_business_fact: a real name, value, quantity or record must come from
+  evidence or the owner before Foundry creates it.
+- authority_decision: owner approval is required before Foundry may act.
 - unsupported_today: the business needs it, but this engine cannot do it yet.
 
 Do not fabricate certainty. A vague description should produce a modest
@@ -152,10 +159,31 @@ rename things for the sake of it.
 Every field in the schema must be present. Where something genuinely does not
 apply to this business, use an empty string or an empty list rather than
 inventing content to fill it.
+
+In a real-business workspace, never turn a plural or category into example
+records. "Several stores" supports multiple-location capability but supplies no
+store names or count. "Sizes, colours and styles" supports variant axes but
+supplies no actual size, colour or style values. Do not make up examples to make
+the proposal look complete.
+
+The owner's own typed statement can itself be a real inventory record. If they
+give actual product names, variant values, quantities, or locations, put them in
+ownerProvidedInventory. Do not ask where those records live: the owner just
+provided them. Preserve every uncertain spelling, number-to-product mapping,
+per-variant versus total distinction, or missing stock location in ambiguities;
+never resolve one by guessing. Set quantityKnown false and quantity 0 when the
+quantity for a line is not unambiguous. Use sourceText for the exact supporting
+words. When the owner supplied no actual records, ownerProvidedInventory has
+hasRecords false and empty arrays, and the highest-value next question is where
+their real product and stock records live.
 `.trim();
 
-function understandingSystemPrompt() {
-  return `${ENGINE_BRIEF}\n\n${HONESTY_BRIEF}`;
+function understandingSystemPrompt(executionContext = {}) {
+  const workspaceMode = executionContext.workspaceMode === 'synthetic' ? 'synthetic' : 'production';
+  const boundary = workspaceMode === 'synthetic'
+    ? `This request is running in a persisted Test environment. Synthetic records may be generated after explicit confirmation. Words such as "realistic", "established company", "behave like a real company", and "not toy data" describe the requested quality of synthetic data and MUST NOT change the workspace to production or prohibit generation.`
+    : 'This request is running in a real business workspace. Operational records must be backed by business evidence and must never be fabricated.';
+  return `${ENGINE_BRIEF}\n\n${HONESTY_BRIEF}\n\nWORKSPACE EXECUTION MODE (authoritative): ${workspaceMode}\n${boundary}`;
 }
 
 /** Second pass: advise on an operation already read. */
@@ -181,6 +209,40 @@ function advicePrompt(description, core) {
     'Every option must carry an effect from the allowed set; use "none" when the',
     'answer is worth recording but changes no configuration lever.',
   ].join('\n');
+}
+
+const NEWLINE = '\n';
+
+/**
+ * The pass that reads records the owner typed into their own description.
+ *
+ * Kept separate from the structural pass because the schema for it is an array
+ * of objects, and asking for both at once produces a grammar the provider
+ * refuses to compile. Splitting it also makes the instruction sharper: this
+ * call is extraction, not interpretation.
+ */
+function recordsPrompt(description) {
+  return [
+    'A business owner described their operation:',
+    '',
+    `"""${description.trim()}"""`,
+    '',
+    'Pull out only the actual inventory records they typed here — a product, a',
+    'variant, a quantity, a location. Their words are evidence; a file is not',
+    'required for something to count.',
+    '',
+    'Rules, and they matter more than completeness:',
+    '',
+    '- Never invent a quantity. If they named a product without saying how many,',
+    '  set quantityKnown to false and leave quantity at 0.',
+    '- Never invent a location. Leave locationName empty when they did not name one.',
+    '- sourceText is the fragment of their own words the line came from, so a',
+    '  person can check it. Do not paraphrase it.',
+    '- Anything you could not map confidently goes in ambiguities, in plain',
+    '  language, rather than being guessed at.',
+    '- If they described the kind of business but listed no records at all, set',
+    '  hasRecords to false and return an empty list. That is a correct answer.',
+  ].join(NEWLINE);
 }
 
 function understandingPrompt(description) {
@@ -275,6 +337,7 @@ module.exports = {
   understandingSystemPrompt,
   understandingPrompt,
   advicePrompt,
+  recordsPrompt,
   explainSystemPrompt,
   explainPrompt,
   changeSystemPrompt,

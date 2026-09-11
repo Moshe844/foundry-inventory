@@ -215,12 +215,12 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
   await t.test('4. Foundry proposes the structure, and normalises what is obvious', async () => {
     await Promise.all([
       page.waitForURL(/\/onboarding\/review\//),
-      page.click('button:has-text("Understand my inventory")'),
+      page.click('button:has-text("Read these and show me what you found")'),
     ]);
     reviewUrl = page.url();
 
     const text = await page.locator('body').innerText();
-    assert.match(text, /I understand your inventory/);
+    assert.match(text, /Here is what I understand about your inventory/);
     assert.match(text, /Brooklyn Warehouse/);
     assert.match(text, /New Jersey Warehouse/);
     // "New Jersey Wrhs" is the same warehouse; nobody is asked about it.
@@ -263,7 +263,7 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
   });
 
   await t.test('6. the inventory is there, and Foundry does not invent a history', async () => {
-    await page.goto(`${BASE}/inventory`);
+    await page.goto(`${BASE}/inventory/table`);
     const inventory = await page.locator('body').innerText();
     assert.match(inventory, /Navy Oxford/);
     assert.match(inventory, /Coastal Chino/);
@@ -383,7 +383,7 @@ test('Onboarding end to end: the messy customer', { timeout: 600000 }, async (t)
   await t.test('2. Foundry surfaces the real conflicts and settles the rest itself', async () => {
     await Promise.all([
       page.waitForURL(/\/onboarding\/review\//),
-      page.click('button:has-text("Understand my inventory")'),
+      page.click('button:has-text("Read these and show me what you found")'),
     ]);
     const text = await page.locator('body').innerText();
 

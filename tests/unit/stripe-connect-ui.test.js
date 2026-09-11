@@ -14,6 +14,7 @@ test('Connections presents Stripe as one top-level sign-in flow, without nested 
     paymentConnect: { connected: false, available: true, embedded: true, testMode: true },
     paymentWebhookUrl: 'https://foundry.example.test/webhooks/payments/stripe/workspace',
     paymentReturnOrigin: 'https://foundry.example.test',
+    currentWorkspaceId: 'wsp_example',
     workspaceName: 'Example Inventory',
     providerCatalog: [],
     newConnectionToken: null,
@@ -48,6 +49,7 @@ test('Connections never replaces missing OAuth with onboarding or API-key entry'
     paymentConnect: { connected: false, available: false, embedded: true },
     paymentWebhookUrl: 'https://foundry.example.test/webhooks/payments/stripe/workspace',
     paymentReturnOrigin: 'https://foundry.example.test',
+    currentWorkspaceId: 'wsp_example',
     workspaceName: 'Example Inventory', providerCatalog: [], newConnectionToken: null,
     currentUser: { role: 'owner' }, csrfToken: 'test-csrf',
     helpers: { icon() { return ''; }, timeAgo() { return ''; } },
@@ -67,6 +69,7 @@ test('an unfinished hosted attempt is not presented as a connected Stripe accoun
       because: 'Stripe is not accepting charges.' },
     paymentConnect: { connected: true, available: true, embedded: false, unfinished: true },
     paymentWebhookUrl: '', paymentReturnOrigin: '', workspaceName: 'Example Inventory',
+    currentWorkspaceId: 'wsp_example',
     providerCatalog: [], newConnectionToken: null, currentUser: { role: 'owner' },
     csrfToken: 'test-csrf', helpers: { icon() { return ''; }, timeAgo() { return ''; } },
   });
@@ -93,6 +96,7 @@ test('Stripe tab paints a useful loading state before Foundry asks Stripe for th
 test('Stripe return page updates the Connections window and closes the popup', async () => {
   const html = await ejs.renderFile(path.join(views, 'payment-return.ejs'), {
     outcome: { connected: true, chargesEnabled: true,
+      workspaceId: 'wsp_example', inventoryName: 'Example Inventory',
       message: 'Example Stripe is connected and ready to take payments.' },
   });
 
@@ -101,4 +105,28 @@ test('Stripe return page updates the Connections window and closes the popup', a
   assert.match(html, /postMessage\(message, '\*'\)/);
   assert.match(html, /window\.setTimeout\(function \(\) \{ window\.close\(\); \}, 500\)/);
   assert.match(html, /Return to Foundry/);
+  assert.match(html, /Foundry inventory:<\/strong> Example Inventory/);
+  assert.match(html, /workspaceId: "wsp_example"/);
+});
+
+test('a denied Stripe attempt is not counted as a working connection', async () => {
+  const html = await ejs.renderFile(path.join(views, 'index.ejs'), {
+    connections: [{ id: 'conn_failed', provider_type: 'stripe', status: 'disconnected',
+      setup_status: 'AUTHORIZATION_FAILED', provider_account_id: 'acct_old',
+      provider_account_name: 'Old sandbox', credential_ref: null, capabilities: [],
+      last_error: 'The user denied your request', publicStatus: 'Disconnected' }],
+    paymentAccount: { connected: false, source: null,
+      because: 'No payment account is connected.' },
+    paymentConnect: { connected: false, available: true, testMode: true,
+      lastAttemptError: 'The user denied your request' },
+    paymentWebhookUrl: '', paymentReturnOrigin: '', currentWorkspaceId: 'wsp_example',
+    workspaceName: 'Example Inventory', providerCatalog: [], newConnectionToken: null,
+    currentUser: { role: 'owner' }, csrfToken: 'test-csrf',
+    helpers: { icon() { return ''; }, timeAgo() { return ''; } },
+  });
+
+  assert.match(html, /Stripe was not connected/);
+  assert.match(html, /last Stripe attempt for Example Inventory did not complete/i);
+  assert.doesNotMatch(html, /Old sandbox · no events yet/);
+  assert.doesNotMatch(html, />1 connected</);
 });

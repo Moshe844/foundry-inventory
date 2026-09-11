@@ -1,71 +1,117 @@
-<div class="page-head">
-  <div class="titles">
-    <span class="setup-eyebrow">New inventory</span>
-    <h1>Where should Foundry get your inventory from?</h1>
-    <div class="page-sub">Choose the place that contains the real product or quantity details. You can add another source later.</div>
-  </div>
+<%
+  /*
+   * The inventory-source chooser.
+   *
+   * The same five cards the first-run brief offers, because they are the same
+   * decision — somebody arriving here from "Not sure, help me choose" should
+   * not meet a different-looking screen asking the same question.
+   *
+   * What this page adds is the other way in: describe the business in a
+   * sentence and let Foundry pick the source for you.
+   */
+  var options = locals.sourceOptions || [];
+  var chosen = state && state.path;
+%>
+
+<%- include('../partials/setup-steps', { step: 0 }) %>
+
+<div class="rm-head">
+  <p class="rm-head__eyebrow"><%- helpers.icon('layers', { size: 14 }) %> Getting set up</p>
+  <h1>Where should Foundry get your inventory from?</h1>
+  <p>
+    Pick the one that is closest to the truth today. You are not locked in — Foundry can take a
+    second source later and reconcile the two.
+  </p>
 </div>
 
-<div class="grid grid--2 section">
-  <% sourceOptions.forEach(function (path) { %>
-    <% if (path.href) { %><a href="<%= path.href %>" class="card onboard-card" style="text-decoration:none"><span class="onboard-choice">
-      <span class="onboard-icon"><%- helpers.icon(path.icon, { size: 20 }) %></span>
-      <span class="onboard-text"><strong><%= path.label %></strong><span class="onboard-blurb"><%= path.blurb %></span><span class="muted"><%= path.detail %></span><% if (path.providers) { %><span class="form-actions" style="margin-top:8px;gap:6px"><% path.providers.forEach(function(provider) { %><span class="badge badge--muted"><%= provider %></span><% }) %></span><% } %></span>
-      <%- helpers.icon('chevron', { size: 16 }) %>
-    </span></a><% } else { %>
-    <form method="post" action="/onboarding/choose" class="card onboard-card">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <input type="hidden" name="path" value="<%= path.id %>">
-      <button class="onboard-choice" type="submit" <%= canOperate ? '' : 'disabled' %>>
-        <span class="onboard-icon"><%- helpers.icon(path.icon, { size: 20 }) %></span>
-        <span class="onboard-text">
-          <strong><%= path.label %></strong>
-          <span class="onboard-blurb"><%= path.blurb %></span>
-          <span class="muted"><%= path.detail %></span>
-          <% if (path.providers) { %><span class="form-actions" style="margin-top:8px;gap:6px"><% path.providers.forEach(function(provider) { %><span class="badge badge--muted"><%= provider %></span><% }) %></span><% } %>
-        </span>
-        <%- helpers.icon('chevron', { size: 16 }) %>
-      </button>
-    </form>
+<%
+  /*
+   * A description that names the kind of business but carries no real records
+   * is not a failure — it just is not a source. It gets its own answer, since
+   * there is no recommendation to attach it to.
+   */
+%>
+<% if (locals.sourcePrompt && !locals.recommendation) { %>
+  <div class="rm-note">
+    <%- helpers.icon('question', { size: 16 }) %>
+    <span><%= sourcePrompt %></span>
+  </div>
+<% } %>
+
+<% if (locals.recommendation) { %>
+  <div class="rm-next">
+    <p class="rm-stamp"><%- helpers.icon('spark', { size: 13 }) %> From what you described</p>
+    <p class="rm-next__t"><%= recommendation.label %></p>
+    <% if (locals.sourcePrompt) { %><p class="rm-next__d"><%= sourcePrompt %></p><% } %>
+    <% if (locals.recommendedOption && recommendedOption.href) { %>
+      <p class="rm-choices" style="margin-top:11px"><a class="rm-btn rm-btn--sm" href="<%= recommendedOption.href %>">Use that source</a></p>
+    <% } else { %>
+      <form method="post" action="/onboarding/choose" style="margin-top:11px">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="path" value="<%= recommendation.id %>">
+        <input type="hidden" name="chosenBy" value="foundry">
+        <button class="rm-btn rm-btn--sm" type="submit">Use that source</button>
+      </form>
+    <% } %>
+  </div>
+<% } %>
+
+<div class="rm-choices-grid">
+  <% options.forEach(function (source) { %>
+    <% if (source.href) { %>
+      <a class="rm-choice" href="<%= source.href %>">
+        <span class="rm-choice__ic"><%- helpers.icon(source.icon || 'box', { size: 19 }) %></span>
+        <span class="rm-choice__t"><%= source.label %></span>
+        <span class="rm-choice__b"><%= source.blurb %></span>
+        <span class="rm-choice__d"><%= source.detail %></span>
+        <% if (source.providers) { %>
+          <span class="rm-choice__tags"><% source.providers.forEach(function (name) { %><span><%= name %></span><% }) %></span>
+        <% } %>
+        <span class="rm-choice__go"><%= chosen === source.id ? 'Carry on with this' : 'Choose this' %> <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+      </a>
+    <% } else { %>
+      <form class="rm-choice__form" method="post" action="/onboarding/choose">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="path" value="<%= source.id %>">
+        <input type="hidden" name="chosenBy" value="customer">
+        <button class="rm-choice" type="submit">
+          <span class="rm-choice__ic"><%- helpers.icon(source.icon || 'box', { size: 19 }) %></span>
+          <span class="rm-choice__t"><%= source.label %></span>
+          <span class="rm-choice__b"><%= source.blurb %></span>
+          <span class="rm-choice__d"><%= source.detail %></span>
+          <% if (source.providers) { %>
+            <span class="rm-choice__tags"><% source.providers.forEach(function (name) { %><span><%= name %></span><% }) %></span>
+          <% } %>
+          <span class="rm-choice__go"><%= chosen === source.id ? 'Carry on with this' : 'Choose this' %> <%- helpers.icon('arrowRight', { size: 14 }) %></span>
+        </button>
+      </form>
     <% } %>
   <% }) %>
 </div>
 
-<div class="card section">
-  <div class="card-head"><h2>Not sure where the records are?</h2></div>
-  <form method="post" action="/onboarding/describe">
-    <div class="card-body">
-      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <label class="field">
-        <span class="field-label">Tell Foundry where the details live now</span>
-        <input class="input" type="text" name="description" value="<%= description %>"
-               placeholder="The product list is in supplier PDFs, quantities are in Excel, and sales happen in Square"
-               maxlength="500" autocomplete="off">
-      </label>
-
-      <% if (recommendation) { %>
-        <div class="notice section">
-          <% var recommendedOption = sourceOptions.find(function (p) { return p.id === recommendation.path; }); %>
-          <strong>Foundry suggests: <%= recommendedOption.label %></strong>
-          <div class="muted">Because <%= recommendation.reason %>.</div>
-        </div>
-        <% if (recommendedOption.href) { %>
-          <a class="btn btn--primary" href="<%= recommendedOption.href %>">Use that source</a>
-        <% } else { %><form method="post" action="/onboarding/choose">
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="path" value="<%= recommendation.path %>">
-          <input type="hidden" name="chosenBy" value="foundry">
-          <input type="hidden" name="reason" value="<%= recommendation.reason %>">
-          <input type="hidden" name="describedAs" value="<%= description %>">
-          <button class="btn btn--primary" type="submit">Go that way</button>
-        </form><% } %>
-        <p class="muted">Or choose a different source above. Foundry is only using what you wrote.</p>
-      <% } else if (sourcePrompt) { %>
-        <div class="notice notice--warn section"><strong>Foundry still needs the records</strong><div><%= sourcePrompt %></div></div>
-      <% } %>
-    </div>
-    <% if (!recommendation) { %>
-      <div class="card-foot"><button class="btn" type="submit">Help me choose a source</button></div>
-    <% } %>
+<section class="rm-panel" style="margin-bottom:16px">
+  <div class="rm-panel__head">
+    <%- helpers.icon('chat', { size: 15, className: 'rm-quiet' }) %>
+    <h2>Not sure? Describe the business and I will pick.</h2>
+  </div>
+  <form method="post" action="/onboarding/describe" style="padding:16px">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="rm-field">
+      <span class="visually-hidden">Describe where your inventory lives</span>
+      <textarea name="description" rows="3"
+        placeholder="We keep everything in one spreadsheet, but our supplier emails us a stock report every Monday."><%= locals.description || '' %></textarea>
+    </label>
+    <button class="rm-btn rm-btn--ghost" type="submit" <%= canOperate ? '' : 'disabled' %>>
+      <%- helpers.icon('spark', { size: 15 }) %> Work out which source to use
+    </button>
   </form>
+</section>
+
+<div class="rm-note">
+  <%- helpers.icon('shield', { size: 16 }) %>
+  <span>
+    <strong>Nothing is created until you approve it.</strong>
+    Whichever source you choose, Foundry reads it, shows you every product and quantity it would
+    create, and waits for you.
+  </span>
 </div>

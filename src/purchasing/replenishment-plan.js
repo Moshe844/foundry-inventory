@@ -48,6 +48,10 @@ const LOCAL_COVER_DAYS = 14;
 
 const round = (n, dp = 2) => Math.round(n * 10 ** dp) / 10 ** dp;
 const sum = (rows, pick) => rows.reduce((total, row) => total + pick(row), 0);
+const counted = (quantity, unit) => {
+  const singular = String(unit || 'unit').replace(/\(s\)$/i, '').trim() || 'unit';
+  return `${quantity} ${Number(quantity) === 1 ? singular : pluralUnit(singular)}`;
+};
 
 function step(key, detail, value) {
   return { step: key, detail, value: value === undefined ? null : value };
@@ -170,7 +174,7 @@ function planTransfers(needs, unitLabel) {
           `${target.locationName} needs ${target.need} and has ${target.available} available. ` +
           `${donor.locationName} has ${donor.available} available against a need of ${donor.need}` +
           `${donor.reserveFloor ? ` (including a reserve of ${donor.reserveFloor})` : ''}, ` +
-          `so ${donor.spare} ${unitLabel}(s) there are spare.`,
+          `so ${counted(donor.spare, unitLabel)} there are spare.`,
       });
       steps.push(
         step(
@@ -234,9 +238,10 @@ function buildPlan(db, workspaceId, sku, options = {}) {
   const steps = [];
   const onHandTotal = sku.measured.onHand;
   const committed = Number(sku.measured.committed || 0);
+  const backordered = Number(sku.measured.backordered || 0);
   const availableTotal = Number.isFinite(Number(sku.measured.available)) ? Number(sku.measured.available) : onHandTotal;
   const onOrder = incoming.onOrder;
-  const networkPosition = availableTotal + onOrder;
+  const networkPosition = availableTotal + onOrder - backordered;
 
   steps.push(
     step(
@@ -277,6 +282,7 @@ function buildPlan(db, workspaceId, sku, options = {}) {
       explanation: buy.explanation,
       onHandTotal,
       committed,
+      backordered,
       availableTotal,
       onOrder,
       networkPosition,
@@ -307,8 +313,8 @@ function buildPlan(db, workspaceId, sku, options = {}) {
   steps.push(
     step(
       'position',
-      committed > 0
-        ? `Available position is ${onHandTotal} on hand − ${committed} committed + ${onOrder} on order = ${networkPosition}.`
+      committed > 0 || backordered > 0
+        ? `Available position is ${onHandTotal} on hand − ${committed} committed − ${backordered} waiting for stock + ${onOrder} on order = ${networkPosition}.`
         : `Position across every location is ${onHandTotal} on hand + ${onOrder} on order = ${networkPosition}.`,
       networkPosition
     )
@@ -360,7 +366,7 @@ function buildPlan(db, workspaceId, sku, options = {}) {
     steps.push(
       step(
         'purchase',
-        `Nothing more to order: ${prepared.units} ${unitLabel}(s) are already prepared on ` +
+        `Nothing more to order: ${counted(prepared.units, unitLabel)} are already prepared on ` +
           `${prepared.orders.map((o) => o.poNumber).join(', ')}, waiting to be approved.`,
         0
       )
@@ -374,7 +380,7 @@ function buildPlan(db, workspaceId, sku, options = {}) {
         `Order up to ${target} − position ${networkPosition} = ${buy.shortfall} needed. ` +
           `${purchase.supplierName} supplies these ` +
           `${purchase.unitsPerPurchaseUnit === 1 ? 'singly' : `in ${pluralUnit(purchase.purchaseUnit)} of ${purchase.unitsPerPurchaseUnit}`}, ` +
-          `so ${purchase.quantityPurchaseUnits} ${purchase.purchaseUnit}(s) = ${purchase.quantityUnits} ${unitLabel}(s).`,
+          `so ${counted(purchase.quantityPurchaseUnits, purchase.purchaseUnit)} = ${counted(purchase.quantityUnits, unitLabel)}.`,
         purchase.quantityUnits
       )
     );
@@ -419,20 +425,20 @@ function buildPlan(db, workspaceId, sku, options = {}) {
   let headline;
   let explanation;
   if (decision === 'transfer_and_purchase') {
-    headline = `Move ${moved} ${unitLabel}(s) and order ${purchase.quantityUnits}`;
+    headline = `Move ${counted(moved, unitLabel)} and order ${purchase.quantityUnits}`;
     explanation =
       `${onHandTotal} on hand${onOrder ? ` and ${onOrder} on order` : ''} comes to ${networkPosition}, at or below ` +
       `the reorder point of ${reorderPoint} — so this is both in the wrong place and short overall. The transfer ` +
       'fixes where it is; the order fixes how much there is. Neither changes the other’s number.';
   } else if (decision === 'transfer') {
-    headline = `Move ${moved} ${unitLabel}(s) between locations`;
+    headline = `Move ${counted(moved, unitLabel)} between locations`;
     // Two quite different reasons end in a move and no order, and they must not
     // borrow each other's sentence. Genuinely having enough is not the same as
     // being short with the order already drafted — saying "there is enough
     // overall" about a position below the reorder point is simply false.
     explanation = prepared
       ? `${networkPosition} is at or below the reorder point of ${reorderPoint}, but ` +
-        `${prepared.units} ${unitLabel}(s) are already drafted on ` +
+        `${counted(prepared.units, unitLabel)} are already drafted on ` +
         `${prepared.orders.map((order) => order.poNumber).join(', ')}, so nothing more needs buying. ` +
         'What is left is that the stock is not where the demand is.'
       : `There is enough overall — ${networkPosition} against a reorder point of ${reorderPoint} — but it is not ` +
@@ -460,6 +466,7 @@ function buildPlan(db, workspaceId, sku, options = {}) {
     explanation,
     onHandTotal,
     committed,
+    backordered,
     availableTotal,
     onOrder,
     networkPosition,
@@ -507,7 +514,7 @@ function plannedActions(plan) {
     actions.push({
       when: 'now',
       kind: 'transfer',
-      text: `Move ${move.quantity} ${plan.unitLabel}(s) from ${move.fromLocationName} to ${move.toLocationName}`,
+      text: `Move ${counted(move.quantity, plan.unitLabel)} from ${move.fromLocationName} to ${move.toLocationName}`,
       detail: 'Recorded as a transfer in the ledger, and checked against both balances afterwards.',
       quantity: move.quantity,
       fromLocationId: move.fromLocationId,
@@ -521,7 +528,7 @@ function plannedActions(plan) {
       kind: 'prepare_order',
       text:
         `Prepare a draft order for ${plan.purchase.quantityPurchaseUnits} ` +
-        `${plan.purchase.purchaseUnit}(s) — ${plan.purchase.quantityUnits} ${plan.unitLabel}(s) — ` +
+        `${Number(plan.purchase.quantityPurchaseUnits) === 1 ? String(plan.purchase.purchaseUnit).replace(/\(s\)$/i, '') : pluralUnit(plan.purchase.purchaseUnit)} — ${counted(plan.purchase.quantityUnits, plan.unitLabel)} — ` +
         `from ${plan.purchase.supplierName}`,
       detail: 'Nothing is sent. Placing it with the supplier is a separate decision on the order.',
       units: plan.purchase.quantityUnits,
@@ -546,8 +553,8 @@ function plannedActions(plan) {
       when: nothingElse ? 'now' : 'after',
       kind: 'place_order',
       text: nothingElse
-        ? `Place ${numbers} with ${plan.prepared.orders.length === 1 ? 'the supplier' : 'the suppliers'} — ${plan.prepared.units} ${plan.unitLabel}(s)`
-        : `Place ${numbers} with the supplier — ${plan.prepared.units} ${plan.unitLabel}(s) — when you are ready`,
+        ? `Place ${numbers} with ${plan.prepared.orders.length === 1 ? 'the supplier' : 'the suppliers'} — ${counted(plan.prepared.units, plan.unitLabel)}`
+        : `Place ${numbers} with the supplier — ${counted(plan.prepared.units, plan.unitLabel)} — when you are ready`,
       detail: nothingElse
         ? 'It was drafted earlier and covers what this line is short. Approving records that you have placed it.'
         : 'It is already drafted and is counted in this plan, which is why no further order is proposed. ' +
@@ -571,6 +578,7 @@ function plannedActions(plan) {
  */
 function positionBreakdown(plan) {
   const drafted = plan.prepared ? plan.prepared.units : 0;
+  const customerDemand = Number(plan.committed || 0) + Number(plan.backordered || 0);
 
   // What approval does to each figure, which is not the same for the two kinds
   // of order. Preparing a draft decides to buy and tells nobody, so it moves
@@ -592,12 +600,15 @@ function positionBreakdown(plan) {
     onOrder: plan.onOrder + placing,
     drafted: drafted - placing + drafting,
   };
-  after.position = after.onHand + after.onOrder;
+  after.position = after.onHand + after.onOrder - customerDemand;
 
   return {
     onHand: plan.onHandTotal,
     onOrder: plan.onOrder,
     drafted,
+    committed: Number(plan.committed || 0),
+    backordered: Number(plan.backordered || 0),
+    customerDemand,
     position: plan.networkPosition,
     reorderPoint: plan.reorderPoint,
     target: plan.target,
@@ -605,7 +616,8 @@ function positionBreakdown(plan) {
     // Kept for callers reading the single figure.
     afterApproval: after.position,
     // Everything eventually placed and delivered, whichever step places it.
-    afterEveryOrderArrives: plan.onHandTotal + plan.onOrder + drafted + drafting,
+    afterEveryOrderArrives: plan.onHandTotal + plan.onOrder + drafted + drafting - customerDemand,
+    physicalAfterEveryOrderArrives: plan.onHandTotal + plan.onOrder + drafted + drafting,
   };
 }
 
@@ -620,20 +632,20 @@ function positionBreakdown(plan) {
 function recommendationFor(plan) {
   const moved = sum(plan.transfers, (move) => move.quantity);
   const buying = plan.purchase
-    ? `order ${plan.purchase.quantityPurchaseUnits} ${plan.purchase.purchaseUnit}(s) from ${plan.purchase.supplierName}`
+    ? `order ${counted(plan.purchase.quantityPurchaseUnits, plan.purchase.purchaseUnit)} from ${plan.purchase.supplierName}`
     : '';
 
   if (plan.blocked === 'no_supplier') {
     return 'Add a supplier for this line and Foundry can work out the quantity.';
   }
   if (plan.decision === 'transfer_and_purchase') {
-    return `Move ${moved} ${plan.unitLabel}(s) between locations and ${buying}. ` +
+    return `Move ${counted(moved, plan.unitLabel)} between locations and ${buying}. ` +
       'Review the whole plan before anything happens.';
   }
   if (plan.decision === 'transfer') {
     return plan.prepared
-      ? `Move ${moved} ${plan.unitLabel}(s) between locations. The order for this line is already prepared.`
-      : `Move ${moved} ${plan.unitLabel}(s) between locations. Nothing needs to be bought.`;
+      ? `Move ${counted(moved, plan.unitLabel)} between locations. The order for this line is already prepared.`
+      : `Move ${counted(moved, plan.unitLabel)} between locations. Nothing needs to be bought.`;
   }
   if (plan.decision === 'purchase' && plan.purchase) {
     return `${buying.charAt(0).toUpperCase()}${buying.slice(1)}.`;

@@ -1,0 +1,86 @@
+<div class="page-head"><div>
+  <p class="eyebrow">Mission 4</p>
+  <h1>Production operations</h1>
+  <p class="lede">A release passes only when every required check has recorded evidence. Missing external proof stays blocked.</p>
+</div></div>
+
+<section class="card section" id="certification">
+  <div class="card-head"><div><h2><%= readiness.ok ? 'Production gate passed' : 'Production gate is blocked' %></h2>
+    <p class="hint"><%= readiness.checks.filter(function (c) { return c.status === 'PASS'; }).length %> of <%= readiness.checks.length %> checks pass.</p></div></div>
+  <div class="card-body stack">
+    <% readiness.checks.forEach(function (check) { %>
+      <div class="planning-item">
+        <strong><%= check.key.replaceAll('_', ' ') %></strong>
+        <span class="badge <%= check.status === 'PASS' ? 'badge--ok' : check.status === 'BLOCKED' ? 'badge--warn' : '' %>"><%= check.status %></span>
+        <p class="hint"><%= check.message %></p>
+      </div>
+    <% }); %>
+  </div>
+  <div class="card-foot"><form method="post" action="/settings/operations/certify" data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="btn btn--primary" type="submit">Record certification run</button>
+  </form></div>
+</section>
+
+<section class="card section" id="alerts">
+  <div class="card-head"><div><h2>External alerts</h2><p class="hint">Delivery is not enough: a responder must acknowledge the injected fault.</p></div></div>
+  <div class="card-body stack">
+    <% if (!alerts.length) { %><p class="hint">No open operational alerts.</p><% } %>
+    <% alerts.forEach(function (alert) { %><div class="planning-item">
+      <strong><%= alert.title %></strong> <span class="badge"><%= alert.status %></span>
+      <p class="hint"><%= alert.detail %></p>
+      <p class="t-xs t-muted"><%= alert.kind %> · seen <%= alert.occurrence_count %> time<%= alert.occurrence_count === 1 ? '' : 's' %></p>
+      <form method="post" action="/settings/operations/alerts/<%= alert.id %>/resolve">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm" type="submit">Mark resolved</button>
+      </form>
+    </div><% }); %>
+  </div>
+  <div class="card-foot"><form method="post" action="/settings/operations/alerts/test" data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="btn" type="submit">Inject a test alert</button>
+  </form></div>
+</section>
+
+<section class="card section" id="dead-letters">
+  <div class="card-head"><div><h2>Dead-letter review</h2><p class="hint">Nothing is silently discarded after retries are exhausted.</p></div></div>
+  <div class="card-body stack">
+    <% if (!deadJobs.length && !deadMessages.length) { %><p class="hint">Nothing needs retry review.</p><% } %>
+    <% deadJobs.forEach(function (job) { %><div class="planning-item">
+      <strong>Job: <%= job.kind %></strong><p class="hint"><%= job.lastError && job.lastError.message %></p>
+      <form method="post" action="/settings/operations/jobs/<%= job.id %>/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm" type="submit">Retry safely</button></form>
+    </div><% }); %>
+    <% deadMessages.forEach(function (message) { %><div class="planning-item">
+      <strong>Message: <%= message.messageType %></strong><p class="hint"><%= message.lastError %></p>
+      <form method="post" action="/settings/operations/outbox/<%= message.id %>/retry"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm" type="submit">Retry delivery</button></form>
+    </div><% }); %>
+  </div>
+</section>
+
+<section class="card section" id="human-gates">
+  <div class="card-head"><div><h2>Human and support gates</h2>
+    <p class="hint">These cannot be truthfully certified by an automated test.</p></div></div>
+  <div class="card-body grid grid--2">
+    <form method="post" action="/settings/operations/support-evidence" class="stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <h3>Monitored support mailbox</h3>
+      <p class="hint">Send a real message to the configured support address, receive its alert, and reply from the monitored workflow.</p>
+      <label class="field"><span class="field-label">Tester</span><input class="input" name="tester" required></label>
+      <label class="field"><span class="field-label">Ticket, message ID, or evidence</span><input class="input" name="evidence" required></label>
+      <label><input type="checkbox" name="monitored" value="yes" required> The test message was noticed and answered.</label>
+      <button class="btn" type="submit">Record support test</button>
+    </form>
+    <form method="post" action="/settings/operations/zero-training" class="stack">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <h3>Independent zero-training walkthrough</h3>
+      <p class="hint">A person who did not build Foundry must complete Inventory, Purchasing, supplier email, Sales Orders, Needs You and Accounting without coaching.</p>
+      <label class="field"><span class="field-label">Independent tester</span><input class="input" name="tester" required></label>
+      <label class="field"><span class="field-label">Completed path and findings</span><textarea class="textarea" name="evidence" required></textarea></label>
+      <label><input type="checkbox" name="independent" value="yes" required> This tester was not coached through the flow.</label>
+      <button class="btn" type="submit">Record walkthrough</button>
+    </form>
+  </div>
+</section>
+
+<% if (runs.length) { %><section class="card section"><div class="card-head"><div><h2>Certification history</h2></div></div><div class="card-body stack">
+  <% runs.forEach(function (run) { %><p class="planning-item"><strong><%= run.application_ref %></strong> · <%= run.status %> · <%= run.started_at %></p><% }); %>
+</div></section><% } %>

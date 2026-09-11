@@ -16,7 +16,9 @@ function nonNegativeMinor(value, label) {
 }
 
 function refundSale(db, ctx, membership, input) {
-  permissions.assertCan(membership, permissions.MANAGE_ACCOUNTING, 'record sales refunds');
+  if (!permissions.can(membership, permissions.MANAGE_ACCOUNTING)) {
+    permissions.assertCan(membership, permissions.REFUND_CUSTOMER_RETURN, 'record sales refunds');
+  }
   const original = ledger.getEntry(db, ctx.workspaceId, input.originalJournalEntryId);
   if (!original || original.status !== 'POSTED' || !['sales_fulfillment', 'connector_sale'].includes(original.source_type)) {
     throw new NotFoundError('Choose a posted sales-fulfillment entry from this inventory.');

@@ -1,394 +1,465 @@
 <%
   /*
-   * Connections, at consumer weight.
+   * Connections.
    *
-   * The page was nine cards carrying seven primary buttons. Every provider on
-   * offer — Shopify, Square, Clover, WooCommerce, the API, the mailboxes — had
-   * its own card with a heading, a badge, a description, a "Provides: sales,
-   * refunds, inventory" line, a form and a hint, and every one of those forms
-   * ended in a primary button. Six things shouting "click me" is the same as
-   * none of them shouting.
+   * The page used to open with two full-width sections nobody had asked for —
+   * Stripe first, then shipping, both at full height whether or not either was
+   * connected — followed by the list of what *is* connected, followed by three
+   * more sections carrying seven always-open forms. Payment and postage came
+   * before the tills, the empty state came after the thing that filled it, and
+   * every option shouted at the same volume as every other.
    *
-   * Connecting something is a real action but it is not *the* action of the
-   * screen, and which one you want depends entirely on which till you own. So
-   * the options are a quiet list grouped by what they are for, and the weight
-   * goes where it belongs: onto what is already connected and whether it is
-   * working.
+   * Two facts run this screen, in this order:
+   *
+   *   1. What is Foundry plugged into, and is it working?
+   *   2. Plug something else in.
+   *
+   * So everything connected — tills, mailboxes, the Stripe account, the
+   * shipping account — is one list, because from the owner's side they are the
+   * same kind of fact. Everything not connected is one uniform grid of cards,
+   * each carrying its own state and its own control, so a card is a thing you
+   * can have rather than a form you must read past. Anything actually wrong is
+   * lifted above both, because a broken connection is not a listing.
    */
   var shippingProviderTypes = ['shipengine', 'easypost', 'shippo'];
+  // Payments and shipping have their own truth-aware cards below. Including
+  // their raw connector rows here made a denied Stripe attempt appear under
+  // "Working now" merely because Stripe had once supplied an account id.
+  var separatelyManagedProviderTypes = shippingProviderTypes.concat(['stripe']);
   var activeConnections = connections.filter(function (connection) {
-    return !shippingProviderTypes.includes(connection.provider_type) && (
+    return !separatelyManagedProviderTypes.includes(connection.provider_type) && (
       connection.credential_ref || connection.provider_account_id
       || !['AUTHORIZING', 'AUTHORIZATION_FAILED'].includes(connection.setup_status));
   });
   var setupAttempts = connections.filter(function (connection) {
-    return !shippingProviderTypes.includes(connection.provider_type)
+    return !separatelyManagedProviderTypes.includes(connection.provider_type)
       && !activeConnections.includes(connection);
   });
 
+  var pay = typeof paymentAccount === 'undefined' ? null : paymentAccount;
+  var grant = typeof paymentConnect === 'undefined' ? null : paymentConnect;
+  var shipping = typeof shippingAccount === 'undefined' ? null : shippingAccount;
+  var shippingSetup = typeof shippingPlatform === 'undefined' ? null : shippingPlatform;
+  var apiToken = typeof apiToken === 'undefined' ? null : apiToken;
+  var webhookSecret = typeof webhookSecret === 'undefined' ? null : webhookSecret;
+  var apiClients = typeof apiClients === 'undefined' ? [] : apiClients;
+  var outboundWebhooks = typeof outboundWebhooks === 'undefined' ? [] : outboundWebhooks;
+
+  // An account Stripe created but never finished is not a connection. It is
+  // said once, here, and every branch below reads it rather than deciding again.
+  var unfinishedStripe = !!(pay && pay.connected && pay.source === 'connect'
+    && !pay.chargesEnabled && grant && grant.unfinished);
+
+  /*
+   * What is live, in one list.
+   *
+   * A row states the thing, what it is doing for the business, and whether it
+   * is working. Nothing here is a form; anything you can act on is a link to
+   * the place that owns it.
+   */
+  var live = [];
+  activeConnections.forEach(function (connection) {
+    var stuck = connection.status === 'connected' && connection.setup_status === 'MAPPING'
+      && connection.itemsNeedingMapping;
+    live.push({
+      name: connection.display_name,
+      meta: (connection.provider_account_name || connection.provider_type.replaceAll('_', ' '))
+        + ' · ' + (connection.last_activity_at
+          ? 'last event ' + helpers.timeAgo(connection.last_activity_at)
+          : 'no events yet'),
+      href: '/settings/connections/' + connection.id,
+      status: connection.publicStatus,
+      tone: connection.publicStatus === 'Connected' ? 'is-ok'
+        : connection.publicStatus === 'Needs attention' ? 'is-warn' : '',
+      issue: stuck
+        ? connection.itemsNeedingMapping + ' '
+          + (connection.itemsNeedingMapping === 1 ? 'record needs' : 'records need')
+          + ' matching before this is finished'
+        : connection.status === 'error' ? 'Open it to see the exact problem' : null,
+    });
+  });
+  if (pay && pay.connected && !unfinishedStripe) {
+    live.push({
+      name: pay.source === 'connect' ? (pay.displayName || 'Stripe') : 'Stripe',
+      meta: pay.source === 'server'
+        ? 'Taking payment · using the key set on the server'
+        : 'Taking payment · money arrives in this account'
+          + (pay.liveMode ? '' : ' · test mode'),
+      href: '#payments',
+      status: pay.chargesEnabled ? 'Live' : 'Not taking charges',
+      tone: pay.chargesEnabled ? 'is-ok' : 'is-warn',
+      issue: null,
+    });
+  }
+  if (shipping && shipping.connected) {
+    live.push({
+      name: shipping.provider === 'easypost' ? 'EasyPost'
+        : shipping.provider === 'shippo' ? 'Shippo' : 'ShipEngine',
+      meta: 'Shipping labels · rates, labels and tracking on the order'
+        + (shipping.testMode ? ' · test labels only' : ''),
+      href: '/settings/shipping',
+      status: shipping.source === 'platform' && !shipping.billingReady ? 'Finish setup' : 'Ready',
+      tone: shipping.source === 'platform' && !shipping.billingReady ? 'is-warn' : 'is-ok',
+      issue: null,
+    });
+  }
+
+  /* Only the things somebody can do something about. */
+  var problems = [];
+  if (unfinishedStripe) {
+    problems.push({ title: 'Unfinished Stripe setup',
+      body: 'Stripe created an account and the form was never finished, so it cannot take payments.',
+      where: '#payments' });
+  } else if (pay && pay.connected && !pay.chargesEnabled && pay.source === 'connect') {
+    problems.push({ title: 'Stripe is not accepting charges on this account yet.',
+      body: pay.because, where: '#payments' });
+  } else if (grant && !grant.connected && grant.lastAttemptError) {
+    problems.push({ title: 'Stripe was not connected',
+      body: 'The last attempt for this inventory ended with: ' + grant.lastAttemptError,
+      where: '#payments' });
+  }
+  if (pay && pay.connected && pay.source === 'server') {
+    problems.push({ title: 'This inventory is using the Stripe key set on the server.',
+      body: pay.because, where: '#payments' });
+  }
+  live.filter(function (row) { return row.issue; }).forEach(function (row) {
+    problems.push({ title: row.name, body: row.issue, where: row.href });
+  });
+
   var providerGroups = [
+    { key: 'accounting', title: 'Accounting', description: 'Connect read-only first, prove the books agree, then choose whether Foundry may post.' },
     { key: 'selling', title: 'Selling', description: 'Stores and tills. Foundry brings completed sales in by itself.' },
     { key: 'business', title: 'Business systems', description: 'Your own POS, ERP or warehouse software.' },
     { key: 'supplier', title: 'Supplier communication', description: 'Mailboxes carrying supplier invoices and delivery notes.' },
   ];
 %>
 
-<header class="page-head">
-  <div>
-    <h1>Connections</h1>
-    <p class="page-sub">
-      Connect the systems where your business actually happens and Foundry keeps itself informed.
-      No scripts, manual JSON, or Check now.
-    </p>
-  </div>
+<header class="rm-head">
+  <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 15 }) %> Connections</p>
+  <h1>Where your business already happens</h1>
+  <p>
+    Connect the systems where your business actually happens and Foundry keeps itself informed.
+    No scripts, manual JSON, or Check now.
+  </p>
 </header>
 
-<%# --------------------------------------------------------- Taking payment %>
+<% problems.forEach(function (problem) { %>
+  <div class="rm-note rm-note--warn">
+    <%- helpers.icon('alert', { size: 16 }) %>
+    <div>
+      <strong><%= problem.title %></strong>
+      <%= problem.body %>
+      <% if (problem.where) { %> <a href="<%= problem.where %>">Open it</a><% } %>
+    </div>
+  </div>
+<% }) %>
+
+<%# ------------------------------------------------------------- what is live %>
+<div class="rm-sect">
+  <h2>Working now</h2>
+  <% if (live.length) { %><span class="rm-sect__c"><%= live.length %> connected</span><% } %>
+</div>
+
+<% if (!live.length) { %>
+  <div class="rm-empty">
+    <span class="rm-empty__ic"><%- helpers.icon('link', { size: 19 }) %></span>
+    <strong>Nothing is connected yet</strong>
+    <p>
+      Connect where you make sales and Foundry brings them in automatically, asking only when a
+      product or location cannot be matched. Pick one below.
+    </p>
+  </div>
+<% } else { %>
+  <div class="rm-told">
+    <% live.forEach(function (row) { %>
+      <a class="rm-told__row" href="<%= row.href %>">
+        <span class="rm-told__t">
+          <%= row.name %>
+          <small><%= row.meta %></small>
+        </span>
+        <span class="rm-told__m <%= row.tone %>"><%= row.status %></span>
+      </a>
+    <% }) %>
+  </div>
+<% } %>
+
+<% if (setupAttempts.length) { %>
+  <details class="rm-work">
+    <summary>
+      <%= setupAttempts.length %> unfinished setup attempt<%= setupAttempts.length === 1 ? '' : 's' %>
+      — nothing working was replaced or disconnected
+    </summary>
+    <div class="rm-work__body">
+      <% setupAttempts.forEach(function (connection) { %>
+        <p><strong><%= connection.display_name %></strong> — <%= connection.last_error || 'Authorization was not completed.' %></p>
+      <% }) %>
+    </div>
+  </details>
+<% } %>
+
+<%# ----------------------------------------------------- what you can connect %>
+<% providerGroups.forEach(function (group) {
+     var groupProviders = providerCatalog.filter(function (p) { return p.category === group.key; });
+     if (!groupProviders.length) return; %>
+  <div class="rm-sect" id="group-<%= group.key %>">
+    <h2><%= group.title %></h2>
+    <p><%= group.description %></p>
+  </div>
+  <div class="rm-choices-grid">
+    <% groupProviders.forEach(function (provider) {
+         var alreadyConnected = activeConnections.some(function (connection) {
+           return connection.provider_type === provider.type && connection.status === 'connected';
+         }); %>
+      <div class="rm-provider">
+        <div class="rm-provider__top">
+          <span class="rm-provider__mark <%= String(provider.mark).length > 2 ? 'is-word' : '' %>" aria-hidden="true"><%= provider.mark %></span>
+          <span class="rm-provider__n"><%= provider.name %></span>
+          <span class="rm-provider__s">
+            <% if (alreadyConnected) { %><span class="rm-pillbadge is-ok">Connected</span>
+            <% } else if (!provider.available) { %><span class="rm-pillbadge">Not available here</span><% } %>
+          </span>
+        </div>
+        <p><%= provider.description %></p>
+
+        <% if (currentUser.role !== 'owner') { %>
+          <p class="quiet">An owner can connect this</p>
+        <% } else if (!provider.available) { %>
+          <p class="quiet"><%= provider.unavailableReason %></p>
+        <% } else if (provider.type === 'reference_webhook') { %>
+          <form method="post" action="/settings/connections">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="providerType" value="reference_webhook">
+            <label class="visually-hidden" for="ref-name">Connection name</label>
+            <input class="input" id="ref-name" name="displayName" placeholder="Warehouse ERP" required>
+            <button class="rm-btn rm-btn--wash" type="submit">Create connection</button>
+          </form>
+        <% } else { %>
+          <form method="post" action="/settings/connections/connect">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="providerType" value="<%= provider.type %>">
+            <% if (provider.type === 'shopify') { %>
+              <label class="visually-hidden" for="shop-<%= provider.type %>">Shopify store</label>
+              <input class="input" id="shop-<%= provider.type %>" name="shop" placeholder="your-store.myshopify.com" required>
+            <% } %>
+            <% if (provider.type === 'woocommerce') { %>
+              <label class="visually-hidden" for="store-<%= provider.type %>">WooCommerce store URL</label>
+              <input class="input" id="store-<%= provider.type %>" type="url" name="storeUrl" placeholder="https://shop.example.com" required>
+            <% } %>
+            <button class="rm-btn <%= alreadyConnected ? 'rm-btn--ghost' : 'rm-btn--wash' %>" type="submit"><%= alreadyConnected ? 'Connect another' : 'Connect' %></button>
+          </form>
+        <% } %>
+
+        <%# What it brings in, and what happens when you press connect, are both
+            real but neither is needed before somebody has decided this is their
+            till. %>
+        <details class="rm-more">
+          <summary>What this brings in</summary>
+          <div>
+            <p><strong>Provides:</strong> <%= provider.provides.join(', ') %>.</p>
+            <% if (!provider.available) { %>
+              <p><%= provider.unavailableReason %></p>
+            <% } else if (provider.type === 'reference_webhook') { %>
+              <p>Foundry gives your technical team one endpoint, a scoped API token and the complete event contract.</p>
+            <% } else if (provider.type === 'shopify') { %>
+              <p>An installed store in this Shopify organization connects directly. Other stores open Shopify for approval. Foundry stores the resulting credential encrypted.</p>
+            <% } else if (provider.type === 'clover') { %>
+              <p>Clover opens so you can choose and authorize the merchant. Foundry then discovers that merchant’s catalog and store automatically.</p>
+            <% } else { %>
+              <p>You sign in with <%= provider.name %> and approve access. Foundry stores the resulting credential encrypted.</p>
+            <% } %>
+          </div>
+        </details>
+      </div>
+    <% }) %>
+  </div>
+<% }) %>
+
+<div class="rm-sect" id="developer-api">
+  <h2>Developer API and outbound webhooks</h2>
+  <p>Scoped commands use Foundry's canonical engine. Signed webhooks publish the same immutable business events.</p>
+</div>
+<div class="rm-grid2">
+  <section class="rm-provider">
+    <div class="rm-provider__top"><span class="rm-provider__mark is-word">API</span><span class="rm-provider__n">Scoped API clients</span></div>
+    <p>Read inventory/events or submit canonical inventory commands. No client can write balance tables directly.</p>
+    <% if (apiToken) { %><div class="rm-note rm-note--warn"><div><strong>Copy this token now</strong><input class="input mono" value="<%= apiToken.token %>" readonly onclick="this.select()"><small>Shown once. Scopes: <%= apiToken.scopes.join(', ') %></small></div></div><% } %>
+    <% apiClients.forEach(function(client) { %><div class="rm-told__row"><span class="rm-told__t"><%= client.name %><small><%= client.scopes.join(', ') %> · <%= client.token_prefix %>…</small></span><span class="rm-told__m <%= client.revoked_at ? '' : 'is-ok' %>"><%= client.revoked_at ? 'Revoked' : 'Active' %></span><% if (!client.revoked_at && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients/<%= client.id %>/revoke" data-confirm="Revoke this API token immediately?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
+    <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients" class="grid" style="margin-top:16px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Client name</span><input class="input" name="name" placeholder="Warehouse automation" required></label><div class="choice-grid"><label class="choice"><input type="checkbox" name="scopes" value="inventory:read"><span><strong>Read inventory</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="events:read"><span><strong>Read events</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="inventory:write"><span><strong>Submit inventory commands</strong></span></label></div><button class="rm-btn rm-btn--wash" type="submit">Create scoped token</button></form><% } %>
+    <details class="rm-more"><summary>Endpoints and contract</summary><div><p><code>GET /api/v1/public/inventory</code></p><p><code>GET /api/v1/public/events</code></p><p><code>POST /api/v1/public/commands/inventory/receive</code></p><p><code>POST /api/v1/public/commands/inventory/adjust</code></p><p>Every write requires a stable <code>Idempotency-Key</code>; retrying the same command returns its original result without posting twice.</p></div></details>
+  </section>
+  <section class="rm-provider">
+    <div class="rm-provider__top"><span class="rm-provider__mark is-word">WEB</span><span class="rm-provider__n">Signed outbound webhooks</span></div>
+    <p>Deliver committed domain events with HMAC signatures, durable retries, and one delivery per event.</p>
+    <% if (webhookSecret) { %><div class="rm-note rm-note--warn"><div><strong>Copy this signing secret now</strong><input class="input mono" value="<%= webhookSecret.secret %>" readonly onclick="this.select()"></div></div><% } %>
+    <% outboundWebhooks.forEach(function(hook) { %><div class="rm-told__row"><span class="rm-told__t"><%= hook.name %><small><%= hook.endpoint_url %> · <%= hook.eventTypes.join(', ') %></small></span><span class="rm-told__m <%= hook.status === 'ACTIVE' ? 'is-ok' : '' %>"><%= hook.status %></span><% if (hook.status === 'ACTIVE' && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/outbound-webhooks/<%= hook.id %>/revoke" data-confirm="Stop sending all future events to this webhook?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
+    <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/outbound-webhooks" class="grid" style="margin-top:16px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Webhook name</span><input class="input" name="name" placeholder="Data warehouse" required></label><label class="field"><span class="field-label">HTTPS endpoint</span><input class="input" type="url" name="endpointUrl" placeholder="https://example.com/foundry-events" required></label><label class="field"><span class="field-label">Events</span><select class="select" name="eventTypes" multiple required><option value="*">All business events</option><option value="inventory.received">Inventory received</option><option value="inventory.issued">Inventory issued</option><option value="purchase_order.completed">Purchase order completed</option><option value="sales_order.fulfilled">Sales order fulfilled</option></select><span class="field-help">Use Ctrl/Cmd to choose several.</span></label><button class="rm-btn rm-btn--wash" type="submit">Create signed webhook</button></form><% } %>
+  </section>
+</div>
+
+<%# ----------------------------------------------------------- taking payment %>
 <%
   /*
    * Whose Stripe account this inventory takes money into.
    *
-   * First, and stated plainly, because it is the one connection where getting
-   * it wrong does not mean a missing figure — it means the money arriving in
-   * somebody else's bank.
+   * A card like every other, but stated in full, because it is the one
+   * connection where getting it wrong does not mean a missing figure — it
+   * means the money arriving in somebody else's bank.
    */
-  var pay = typeof paymentAccount === 'undefined' ? null : paymentAccount;
-  var grant0 = typeof paymentConnect === 'undefined' ? null : paymentConnect;
 %>
 <% if (pay) { %>
-<section class="section" aria-labelledby="payments-heading">
-  <div class="section-head">
-    <h2 id="payments-heading">Taking payment</h2>
-    <p class="section-sub">Payment links are made on this account, and the money arrives in its bank.</p>
+  <div class="rm-sect" id="payments">
+    <h2>Taking payment</h2>
+    <p>Payment links are made on this account, and the money arrives in its bank.</p>
   </div>
-  <div class="panel">
-    <%# ----------------------------------- an account granted, not a key given %>
-    <% if (pay.connected && pay.source === 'connect') { %>
-      <% var rejectedHostedSetup = !pay.chargesEnabled && grant0 && grant0.unfinished; %>
-      <div class="card-body">
-        <p class="lede">
-          <%= rejectedHostedSetup ? 'Unfinished Stripe setup' : 'Connected to ' + (pay.displayName || 'Stripe') %><% if (!pay.liveMode) { %>
-            <span class="badge badge--warn">test mode</span><% } %><% if (rejectedHostedSetup) { %>
-            <span class="badge badge--warn">not connected</span><% } else if (!pay.chargesEnabled) { %>
-            <span class="badge badge--warn">not taking charges</span>
-          <% } else { %> <span class="badge badge--ok">live</span><% } %>
-        </p>
-        <p class="hint">
-          <% if (rejectedHostedSetup) { %>
-            An earlier attempt started Stripe's new-account onboarding. It did not finish and
+  <div class="rm-grid2">
+    <div class="rm-provider">
+      <div class="rm-provider__top">
+        <span class="rm-provider__mark" aria-hidden="true"><%- helpers.icon('wallet', { size: 17 }) %></span>
+        <span class="rm-provider__n">Stripe</span>
+        <span class="rm-provider__s">
+          <% if (unfinishedStripe) { %><span class="rm-pillbadge is-warn">not connected</span>
+          <% } else if (pay.connected && !pay.chargesEnabled) { %><span class="rm-pillbadge is-warn">not taking charges</span>
+          <% } else if (pay.connected) { %><span class="rm-pillbadge is-ok">live</span><% } %>
+          <% if (pay.connected && !pay.liveMode) { %><span class="rm-pillbadge is-warn">test mode</span><% } %>
+        </span>
+      </div>
+
+      <% if (pay.connected && pay.source === 'connect') { %>
+        <p><%= unfinishedStripe ? 'Unfinished Stripe setup' : 'Connected to ' + (pay.displayName || 'Stripe') %></p>
+        <p class="quiet">
+          <% if (unfinishedStripe) { %>
+            An earlier attempt started Stripe’s new-account onboarding. It did not finish and
             cannot take payments. Foundry will not treat it as the existing Stripe account you
             wanted to connect.
           <% } else { %>
-            This business granted Foundry permission on Stripe's own page. Foundry holds no key for
+            This business granted Foundry permission on Stripe’s own page. Foundry holds no key for
             this account and cannot be made to reveal one, and the business can withdraw the
             permission from its own Stripe dashboard at any time.
           <% } %>
         </p>
-        <p class="t-xs t-muted">Stripe account <code><%= pay.accountId %></code></p>
-        <% if (!pay.chargesEnabled && !rejectedHostedSetup) { %>
-          <div class="notice notice--warn"><div>
-            <strong>Stripe is not accepting charges on this account yet.</strong><br>
-            <%= pay.because %>
-          </div></div>
+        <p class="quiet">Stripe account <code><%= pay.accountId %></code></p>
+        <% if (!pay.chargesEnabled && !unfinishedStripe) { %>
+          <p class="quiet"><%= pay.because %></p>
         <% } %>
-      </div>
-      <div class="card-foot">
-        <%
-          /*
-           * Somewhere to go back to.
-           *
-           * An account created and not finished is the ordinary outcome of
-           * closing the tab halfway through Stripe's form. Without this the
-           * screen would state the problem and offer nothing but Disconnect,
-           * which throws away the account rather than completing it.
-           */
-        %>
-        <% if (rejectedHostedSetup && grant0.available) { %>
-          <a class="btn btn--primary" href="/settings/connections/payments/start"
-            target="_blank" data-stripe-connect>Connect existing Stripe account</a>
-        <% } %>
-        <form method="post" action="/settings/connections/payments/remove" data-busy>
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn btn--ghost" type="submit"><%= rejectedHostedSetup
-            ? 'Discard unfinished setup' : 'Disconnect' %></button>
-        </form>
-      </div>
+        <div class="rm-choices">
+          <% if (unfinishedStripe && grant.available) { %>
+            <a class="rm-btn" href="/settings/connections/payments/start"
+              target="_blank" data-stripe-connect>Connect existing Stripe account</a>
+          <% } %>
+          <form method="post" action="/settings/connections/payments/remove" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="rm-btn rm-btn--ghost" type="submit"><%= unfinishedStripe
+              ? 'Discard unfinished setup' : 'Disconnect' %></button>
+          </form>
+        </div>
 
-    <% } else if (pay.connected && pay.source === 'workspace') { %>
-      <div class="card-body">
-        <p class="lede">
-          Connected to Stripe<% if (!pay.liveMode) { %> <span class="badge badge--warn">test mode</span><% } %>
-        </p>
-        <p class="hint">
+      <% } else if (pay.connected && pay.source === 'workspace') { %>
+        <p>Connected to Stripe</p>
+        <p class="quiet">
           Key ending <%= pay.keyEndsWith %>.
           <%= pay.hasWebhookSecret
             ? 'Payments are heard about the moment they happen.'
             : 'No signing secret is set, so Foundry only learns about a payment when it asks.' %>
         </p>
-        <p class="t-xs t-muted">Webhook address for this inventory: <code><%= paymentWebhookUrl %></code></p>
-      </div>
-      <div class="card-foot">
-        <form method="post" action="/settings/connections/payments/remove" data-busy>
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn btn--ghost" type="submit">Disconnect</button>
-        </form>
-      </div>
-    <% } else { %>
-      <% if (pay.connected && pay.source === 'server') { %>
-        <div class="card-body">
-          <div class="notice notice--warn"><div>
-            <strong>This inventory is using the Stripe key set on the server.</strong><br>
-            <%= pay.because %>
-          </div></div>
+        <p class="quiet">Webhook address for this inventory: <code><%= paymentWebhookUrl %></code></p>
+        <div class="rm-choices">
+          <form method="post" action="/settings/connections/payments/remove" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="rm-btn rm-btn--ghost" type="submit">Disconnect</button>
+          </form>
         </div>
+
       <% } else { %>
-        <div class="card-body">
-          <p class="lede">No payment account is connected.</p>
-          <p class="hint"><%= pay.because %></p>
-        </div>
-      <% } %>
-      <% var grant = typeof paymentConnect === 'undefined' ? null : paymentConnect; %>
-      <% if (grant && grant.available && !grant.connected) { %>
-        <div>
-          <div class="card-body stack">
-            <h3>Connect Stripe</h3>
-            <% if (grant.testMode) { %>
-              <div class="notice notice--warn"><div>
-                <strong>This is Stripe sandbox—not your live Stripe account.</strong><br>
-                Foundry is currently using Stripe test credentials. Stripe may ask you to create
-                or finish a sandbox account even when the same email already owns a live Stripe
-                account. Live existing-account connection requires Foundry's live Stripe client
-                ID and live secret key.
-              </div></div>
-            <% } %>
-            <p class="hint">
-              Stripe opens in its own secure window. Sign in and choose the Stripe account this
-              business already uses. When
-              Stripe is finished, that tab closes and Foundry shows the account as connected. You
-              never copy an API key into Foundry.
+        <% if (pay.connected && pay.source === 'server') { %>
+          <p>This inventory is using the Stripe key set on the server.</p>
+          <p class="quiet"><%= pay.because %></p>
+        <% } else { %>
+          <%# `because` usually opens with this exact sentence. Saying it twice
+              made the card read as though two different things were wrong. %>
+          <p><%= pay.because || 'No payment account is connected.' %></p>
+        <% } %>
+        <% if (grant && !grant.connected && grant.lastAttemptError) { %>
+          <p class="quiet"><strong>The last Stripe attempt for <%= workspaceName %> did not complete:</strong>
+            <%= grant.lastAttemptError %></p>
+        <% } %>
+        <% if (grant && grant.available && !grant.connected) { %>
+          <% if (grant.testMode) { %>
+            <p class="quiet">
+              <strong>This is Stripe sandbox—not your live Stripe account.</strong>
+              Foundry is currently using Stripe test credentials. Stripe may ask you to create
+              or finish a sandbox account even when the same email already owns a live Stripe
+              account. Live existing-account connection requires Foundry’s live Stripe client
+              ID and live secret key.
             </p>
-          </div>
-          <div class="card-foot">
-            <a class="btn btn--primary" href="/settings/connections/payments/start"
+          <% } %>
+          <p class="quiet">
+            Stripe opens in its own secure window. Sign in and choose the Stripe account this
+            business already uses. When
+            Stripe is finished, that tab closes and Foundry shows the account as connected. You
+            never copy an API key into Foundry.
+          </p>
+          <div class="rm-choices">
+            <a class="rm-btn rm-btn--wash" href="/settings/connections/payments/start"
               target="_blank" data-stripe-connect>Connect Stripe</a>
           </div>
-        </div>
-      <% } else if (grant && !grant.connected) { %>
-        <div class="card-body">
-          <div class="notice notice--warn"><div>
-            <strong>Stripe account sign-in is not ready on this installation.</strong><br>
-            Foundry's administrator must finish the Stripe Connect OAuth setup. Foundry will not
+        <% } else if (grant && !grant.connected) { %>
+          <p class="quiet">
+            <strong>Stripe account sign-in is not ready on this installation.</strong>
+            Foundry’s administrator must finish the Stripe Connect OAuth setup. Foundry will not
             replace account sign-in with a new-account application or ask you to paste an API key.
-          </div></div>
-        </div>
-      <% } %>
-    <% } %>
-  </div>
-</section>
-<% } %>
-
-<%# -------------------------------------------------------------- Shipping %>
-<%
-  var shipping = typeof shippingAccount === 'undefined' ? null : shippingAccount;
-  var shippingSetup = typeof shippingPlatform === 'undefined' ? null : shippingPlatform;
-%>
-<% if (shipping) { %>
-<section class="section" aria-labelledby="shipping-heading">
-  <div class="section-head">
-    <h2 id="shipping-heading">Shipping labels</h2>
-    <p class="section-sub">Compare carrier rates, buy and print labels, and keep tracking on the Sales Order.</p>
-  </div>
-  <div class="panel">
-    <div class="card-body">
-      <% if (shipping.connected && shipping.source === 'platform') { %>
-        <p class="lede">
-          ShipEngine <span class="badge badge--<%= shipping.billingReady ? 'ok' : 'warn' %>">
-            <%= shipping.billingReady ? 'ready' : 'finish setup' %>
-          </span>
-        </p>
-        <p class="hint">
-          This workspace has its own seller account. Its payment method pays for its labels;
-          Foundry never charges Keeper's developer account for this business's postage.
-        </p>
-      <% } else if (shipping.connected) { %>
-        <p class="lede">Connected to <%= shipping.provider === 'shipengine' ? 'ShipEngine'
-          : shipping.provider === 'easypost' ? 'EasyPost' : 'Shippo' %></p>
-        <p class="hint"><%= shipping.testMode ? 'Test labels only right now.'
-          : 'Live rates and labels are available from this account.' %></p>
-      <% } else { %>
-        <p class="lede">Shipping is not set up yet.</p>
-        <p class="hint">
-          One-time setup connects a carrier, confirms where parcels leave from, and adds this
-          business's payment method. Foundry then handles rates, labels and tracking from Orders.
-        </p>
-        <% if (shippingSetup && !shippingSetup.available) { %>
-          <p class="t-xs t-muted">ShipEngine partner credentials still need to be configured by Keeper.</p>
+          </p>
         <% } %>
       <% } %>
     </div>
-    <div class="card-foot">
-      <a class="btn <%= shipping.connected && shipping.billingReady ? '' : 'btn--primary' %>"
-        href="/settings/shipping<%= shipping.connected && shipping.source === 'platform' && !shipping.billingReady
-          ? '?setup=shipengine' : '' %>">
-        <%= shipping.connected && shipping.billingReady ? 'Manage shipping'
-          : shipping.connected ? 'Finish shipping setup' : 'Set up shipping' %>
-      </a>
-    </div>
   </div>
-</section>
 <% } %>
 
-<%# ------------------------------------------------------ What is connected %>
-<section class="section">
-  <div class="section-head">
-    <h2>Connected</h2>
-    <% if (activeConnections.length) { %>
-      <span class="section-more"><%= activeConnections.length %> connected</span>
-    <% } %>
+<%# ---------------------------------------------------------- shipping labels %>
+<% if (shipping) { %>
+  <div class="rm-sect" id="shipping">
+    <h2>Shipping labels</h2>
+    <p>Compare carrier rates, buy and print labels, and keep tracking on the Sales Order.</p>
   </div>
-
-  <% if (!activeConnections.length) { %>
-    <div class="empty-state">
-      <span class="empty-state__icon"><%- helpers.icon('link', { size: 20 }) %></span>
-      <p class="empty-state__title">Nothing is connected yet</p>
-      <p class="empty-state__body">
-        Connect where you make sales and Foundry brings them in automatically, asking only when a
-        product or location cannot be matched. Pick one below.
-      </p>
-    </div>
-  <% } else { %>
-    <div class="panel">
-      <% activeConnections.forEach(function (connection) { %>
-        <%
-          // One status word, and then only what a person can act on: whether
-          // anything is stuck, and whether events are still arriving.
-          var tone = connection.publicStatus === 'Connected' ? 'ok'
-            : connection.publicStatus === 'Needs attention' ? 'warn' : 'muted';
-          var stuck = connection.status === 'connected' && connection.setup_status === 'MAPPING'
-            && connection.itemsNeedingMapping;
-        %>
-        <a class="conn" href="/settings/connections/<%= connection.id %>">
-          <span class="conn__body">
-            <span class="conn__name"><%= connection.display_name %></span>
-            <span class="conn__meta">
-              <%= connection.provider_account_name || connection.provider_type.replaceAll('_', ' ') %>
-              ·
-              <%= connection.last_activity_at
-                    ? 'last event ' + helpers.timeAgo(connection.last_activity_at)
-                    : 'no events yet' %>
-            </span>
-            <% if (stuck) { %>
-              <span class="conn__issue">
-                <%= connection.itemsNeedingMapping %>
-                <%= connection.itemsNeedingMapping === 1 ? 'record needs' : 'records need' %>
-                matching before this is finished
-              </span>
-            <% } else if (connection.status === 'error') { %>
-              <span class="conn__issue">Open it to see the exact problem</span>
-            <% } %>
-          </span>
-          <span class="badge badge--<%= tone %>"><%= connection.publicStatus %></span>
-        </a>
-      <% }) %>
-    </div>
-  <% } %>
-
-  <% if (setupAttempts.length) { %>
-    <details class="disclose">
-      <summary>
-        <span><%= setupAttempts.length %> unfinished setup attempt<%= setupAttempts.length === 1 ? '' : 's' %> — nothing working was replaced or disconnected</span>
-        <span class="disclose__cue">Show</span>
-      </summary>
-      <div class="disclose__body">
-        <% setupAttempts.forEach(function (connection) { %>
-          <p><strong><%= connection.display_name %></strong> — <%= connection.last_error || 'Authorization was not completed.' %></p>
-        <% }) %>
+  <div class="rm-grid2">
+    <div class="rm-provider">
+      <div class="rm-provider__top">
+        <span class="rm-provider__mark" aria-hidden="true"><%- helpers.icon('ship', { size: 17 }) %></span>
+        <span class="rm-provider__n"><%= shipping.provider === 'easypost' ? 'EasyPost'
+          : shipping.provider === 'shippo' ? 'Shippo' : 'ShipEngine' %></span>
+        <span class="rm-provider__s">
+          <% if (shipping.connected) { %>
+            <span class="rm-pillbadge <%= shipping.billingReady ? 'is-ok' : 'is-warn' %>"><%= shipping.billingReady ? 'ready' : 'finish setup' %></span>
+          <% } %>
+        </span>
       </div>
-    </details>
-  <% } %>
-</section>
-
-<%# ---------------------------------------------------- What you can connect %>
-<% providerGroups.forEach(function (group) {
-     var groupProviders = providerCatalog.filter(function (p) { return p.category === group.key; });
-     if (!groupProviders.length) return; %>
-  <section class="section" aria-labelledby="connection-group-<%= group.key %>">
-    <div class="section-head">
-      <h2 id="connection-group-<%= group.key %>"><%= group.title %></h2>
-      <span class="section-more"><%= group.description %></span>
+      <% if (shipping.connected && shipping.source === 'platform') { %>
+        <p class="quiet">
+          This workspace has its own seller account. Its payment method pays for its labels;
+          Foundry never charges its platform account for this business’s postage.
+        </p>
+      <% } else if (shipping.connected) { %>
+        <p class="quiet"><%= shipping.testMode ? 'Test labels only right now.'
+          : 'Live rates and labels are available from this account.' %></p>
+      <% } else { %>
+        <p class="quiet">
+          One-time setup connects a carrier, confirms where parcels leave from, and adds this
+          business’s payment method. Foundry then handles rates, labels and tracking from Orders.
+        </p>
+        <% if (shippingSetup && !shippingSetup.available) { %>
+          <p class="quiet">ShipEngine partner credentials still need to be configured for Foundry.</p>
+        <% } %>
+      <% } %>
+      <div class="rm-choices">
+        <a class="rm-btn <%= shipping.connected && shipping.billingReady ? 'rm-btn--ghost' : 'rm-btn--wash' %>"
+          href="/settings/shipping<%= shipping.connected && shipping.source === 'platform' && !shipping.billingReady
+            ? '?setup=shipengine' : '' %>">
+          <%= shipping.connected && shipping.billingReady ? 'Manage shipping'
+            : shipping.connected ? 'Finish shipping setup' : 'Set up shipping' %>
+        </a>
+      </div>
     </div>
-    <div class="panel">
-      <% groupProviders.forEach(function (provider) {
-           var alreadyConnected = activeConnections.some(function (connection) {
-             return connection.provider_type === provider.type && connection.status === 'connected';
-           }); %>
-        <div class="provider">
-          <div class="provider__id">
-            <span class="provider__mark" aria-hidden="true"><%= provider.mark %></span>
-            <div>
-              <h3><%= provider.name %></h3>
-              <p class="provider__what"><%= provider.description %></p>
-            </div>
-          </div>
-
-          <div class="provider__do">
-            <% if (alreadyConnected) { %>
-              <span class="badge badge--ok">Connected</span>
-            <% } %>
-            <% if (currentUser.role !== 'owner') { %>
-              <span class="t-xs t-muted">An owner can connect this</span>
-            <% } else if (!provider.available) { %>
-              <span class="badge badge--muted">Not available here</span>
-            <% } else if (provider.type === 'reference_webhook') { %>
-              <form method="post" action="/settings/connections" class="provider__form">
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <input type="hidden" name="providerType" value="reference_webhook">
-                <label class="visually-hidden" for="ref-name">Connection name</label>
-                <input class="input" id="ref-name" name="displayName" placeholder="Warehouse ERP" required>
-                <button class="btn" type="submit">Create connection</button>
-              </form>
-            <% } else { %>
-              <form method="post" action="/settings/connections/connect" class="provider__form">
-                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                <input type="hidden" name="providerType" value="<%= provider.type %>">
-                <% if (provider.type === 'shopify') { %>
-                  <label class="visually-hidden" for="shop-<%= provider.type %>">Shopify store</label>
-                  <input class="input" id="shop-<%= provider.type %>" name="shop" placeholder="your-store.myshopify.com" required>
-                <% } %>
-                <% if (provider.type === 'woocommerce') { %>
-                  <label class="visually-hidden" for="store-<%= provider.type %>">WooCommerce store URL</label>
-                  <input class="input" id="store-<%= provider.type %>" type="url" name="storeUrl" placeholder="https://shop.example.com" required>
-                <% } %>
-                <button class="btn" type="submit"><%= alreadyConnected ? 'Connect another' : 'Connect' %></button>
-              </form>
-            <% } %>
-          </div>
-
-          <%# What it brings in, what happens when you press connect, and why it
-              is unavailable are all real but none of them is needed before
-              somebody has decided this is their till. %>
-          <details class="provider__more">
-            <summary>What this brings in</summary>
-            <div>
-              <p><strong>Provides:</strong> <%= provider.provides.join(', ') %>.</p>
-              <% if (!provider.available) { %>
-                <p><%= provider.unavailableReason %></p>
-              <% } else if (provider.type === 'reference_webhook') { %>
-                <p>Foundry gives your technical team one endpoint, a scoped API token and the complete event contract.</p>
-              <% } else if (provider.type === 'shopify') { %>
-                <p>An installed store in this Shopify organization connects directly. Other stores open Shopify for approval. Foundry stores the resulting credential encrypted.</p>
-              <% } else if (provider.type === 'clover') { %>
-                <p>Clover opens so you can choose and authorize the merchant. Foundry then discovers that merchant’s catalog and store automatically.</p>
-              <% } else { %>
-                <p>You sign in with <%= provider.name %> and approve access. Foundry stores the resulting credential encrypted.</p>
-              <% } %>
-            </div>
-          </details>
-        </div>
-      <% }) %>
-    </div>
-  </section>
-<% }) %>
+  </div>
+<% } %>
 
 <script>
 (function () {
@@ -432,6 +503,7 @@
 
   var trustedStripeReturnOrigins = [window.location.origin];
   var configuredStripeReturnOrigin = <%- JSON.stringify(paymentReturnOrigin || '') %>;
+  var currentStripeWorkspaceId = <%- JSON.stringify(currentWorkspaceId || '') %>;
   if (configuredStripeReturnOrigin
       && trustedStripeReturnOrigins.indexOf(configuredStripeReturnOrigin) === -1) {
     trustedStripeReturnOrigins.push(configuredStripeReturnOrigin);
@@ -439,6 +511,11 @@
   window.addEventListener('message', function (event) {
     if (trustedStripeReturnOrigins.indexOf(event.origin) === -1) return;
     if (!event.data || event.data.type !== 'foundry:stripe-return') return;
+    if (event.data.workspaceId && currentStripeWorkspaceId
+        && event.data.workspaceId !== currentStripeWorkspaceId) {
+      window.location.replace('/inventories');
+      return;
+    }
     window.location.replace('/settings/connections#payments');
   });
 }());

@@ -34,7 +34,7 @@ function enableRunIt(env) {
   return modes.setMode(env.db, env.ctx, env.membership, modes.MODES.POLICY_AUTOMATED);
 }
 
-test('authority E2E 1: Run it plus an approved five-unit policy executes a qualifying five-unit transfer', () => {
+test('authority E2E 1: Run it plus an approved five-unit policy prepares a qualifying transfer without teleporting stock', () => {
   const env = scenario(5);
   const policy = approveTransferPolicy(env, { maximumQuantity: 5 });
   enableRunIt(env);
@@ -43,13 +43,15 @@ test('authority E2E 1: Run it plus an approved five-unit policy executes a quali
   const result = runner.run(env.db, env.ctx, env.membership, { trigger: 'authority-e2e-1', now: env.now });
 
   assert.equal(result.executed, 1);
-  assert.equal(balanceAt(env, env.source.id), before.source - 5);
-  assert.equal(balanceAt(env, env.destination.id), before.destination + 5);
+  assert.equal(balanceAt(env, env.source.id), before.source);
+  assert.equal(balanceAt(env, env.destination.id), before.destination);
   const [done] = workItems.list(env.db, env.workspace.workspaceId, { category: 'balance_transfer' });
   assert.equal(done.executionStatus, workItems.STATUS.COMPLETED);
   assert.equal(done.policyId, policy.id);
   assert.equal(done.policyEvaluation.policyVersion, 1);
   assert.equal(done.verificationStatus, 'VERIFIED');
+  assert.ok(done.outcome.transferId);
+  assert.equal(done.outcome.transferStatus, 'APPROVED');
 });
 
 test('authority E2E 2: a real eight-unit need is not shrunk to a five-unit policy and goes to Needs you', () => {
@@ -110,7 +112,7 @@ test('authority E2E 5: Pause prevents every automatic execution', () => {
   assert.equal(modes.get(env.db, env.workspace.workspaceId).paused, true);
 });
 
-test('authority E2E 6: Resume in Run it mode promotes and executes eligible waiting work', () => {
+test('authority E2E 6: Resume in Run it mode promotes and prepares eligible waiting work', () => {
   const env = scenario(5);
   approveTransferPolicy(env, { maximumQuantity: 5 });
   enableRunIt(env);
@@ -121,9 +123,10 @@ test('authority E2E 6: Resume in Run it mode promotes and executes eligible wait
   const result = runner.run(env.db, env.ctx, env.membership, { trigger: 'authority-e2e-6-resumed', now: env.now });
 
   assert.equal(result.executed, 1);
-  assert.equal(balanceAt(env, env.destination.id), 9);
+  assert.equal(balanceAt(env, env.destination.id), 4);
   const [done] = workItems.list(env.db, env.workspace.workspaceId, { category: 'balance_transfer' });
   assert.equal(done.executionStatus, workItems.STATUS.COMPLETED);
+  assert.equal(done.outcome.transferStatus, 'APPROVED');
 });
 
 test('authority E2E 7: an automatic action records the exact policy version and fresh dated evidence used', () => {

@@ -18,6 +18,10 @@ const { ValidationError } = require('../../domain/errors');
 const { inTransaction } = require('../../db');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 const { toArray, trimOrNull, nowIso } = require('../../lib/util');
+const syntheticMode = require('../../synthetic/data-mode');
+const syntheticRequest = require('../../synthetic/request-spec');
+const onboardingPriority = require('../../foundry/onboarding-priority');
+const realBusinessGrounding = require('../../foundry/real-business-grounding');
 
 const router = express.Router();
 router.use('/foundry', requireAuth);
@@ -62,6 +66,24 @@ router.get(
   })
 );
 
+
+/** A filename means nothing without knowing whether it is a page or a catalogue. */
+function fileSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} bytes`;
+}
+
+/** Enough of their own sentence to recognise it, cut at a word. */
+function firstWords(text, max = 90) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (clean.length <= max) return clean;
+  const cut = clean.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > 40 ? cut.slice(0, space) : cut).trim()}…`;
+}
+
 /**
  * Reading a business takes a minute or more of real model time, so the request
  * starts a background job and hands back a page that reports progress. Holding
@@ -86,26 +108,41 @@ router.post(
       });
     }
 
-    const jobId = jobRunner.createJob(req.ctx.workspaceId, 'understanding', description || '');
+    /*
+     * The progress screen names its own subject.
+     *
+     * Waiting a minute in front of "Foundry is reading your inventory" with no
+     * sign of *what* it is reading is indistinguishable from a stalled page.
+     * The filename, or the opening of what they typed, is theirs and proves
+     * the right thing arrived.
+     */
     const ctx = req.ctx;
     const db = req.db;
     const membership = req.user;
     const provider = req.app.locals.aiProvider || undefined;
+    const jobId = jobRunner.createJob(req.ctx.workspaceId, 'understanding', description || '', {
+      track: source ? 'document' : 'description',
+      subject: source ? source.filename : firstWords(description),
+      subjectDetail: source ? fileSize(source.size) : 'what you told Foundry',
+      db: req.db,
+    });
 
-    jobRunner.run(jobId, async (setStage) => {
+    jobRunner.run(jobId, async (setStage, signal) => {
       if (source) {
         const prepared = await documentIntake.prepare(db, ctx, membership, source, {
           provider,
           onStage: setStage,
+          signal,
         });
         return { understandingId: prepared.understandingId, setupDocumentId: prepared.document.id };
       }
       const { id } = await understandingService.describeBusiness(db, ctx, description, {
         provider,
         onStage: setStage,
+        signal,
       });
       return { understandingId: id };
-    });
+    }, { db });
 
     return res.redirect(303, `/foundry/thinking/${jobId}`);
   })
@@ -115,7 +152,7 @@ router.post(
 router.get(
   '/foundry/thinking/:jobId',
   asyncRoute(async (req, res) => {
-    const job = jobRunner.getJob(req.params.jobId, req.ctx.workspaceId);
+    const job = jobRunner.getJob(req.params.jobId, req.ctx.workspaceId, req.db);
 
     if (!job) {
       req.flash('error', 'That went out of date — Foundry can read your description again.');
@@ -148,7 +185,7 @@ router.get(
 router.get(
   '/api/foundry/jobs/:jobId',
   asyncRoute(async (req, res) => {
-    const job = jobRunner.getJob(req.params.jobId, req.ctx.workspaceId);
+    const job = jobRunner.getJob(req.params.jobId, req.ctx.workspaceId, req.db);
     if (!job) return res.status(404).json({ error: { code: 'not_found', message: 'No such job.' } });
 
     return res.json({
@@ -156,6 +193,9 @@ router.get(
       stage: job.stage,
       stageLabel: job.stageLabel,
       stageDetail: job.stageDetail,
+      // How long each finished step actually took, so the page can stamp them
+      // rather than only counting the total upward.
+      timeline: job.timeline,
       elapsedMs: job.elapsedMs,
       redirectTo:
         job.status === 'done' && job.result ? `/foundry/proposal/${job.result.understandingId}` : null,
@@ -191,15 +231,28 @@ router.get(
       return res.redirect(303, '/foundry');
     }
     const setupDocument = documentIntake.getByUnderstanding(req.db, req.ctx.workspaceId, stored.id);
+    const generationContext = syntheticMode.context(req.db, req.ctx.workspaceId, stored.source_description);
+    const displayUnderstanding = JSON.parse(JSON.stringify(stored.understanding));
+    if (generationContext.mode === 'production' && stored.provider !== 'document-evidence') {
+      realBusinessGrounding.ground(displayUnderstanding, stored.source_description);
+    }
+    const nextOnboardingStep = onboardingPriority.nextStep(req.db, req.ctx.workspaceId, {
+      workspaceMode: generationContext.mode,
+      hasDocument: Boolean(setupDocument),
+      understanding: displayUnderstanding,
+    });
     if (setupDocument?.status === 'APPLIED') {
       req.flash('warning', `Duplicate ignored: ${setupDocument.sourceName} was already imported${setupDocument.appliedAt ? ` on ${new Date(setupDocument.appliedAt).toLocaleString()}` : ''}. Foundry added nothing again.`);
       return res.redirect(303, '/inventory');
     }
     return res.page('foundry/proposal', {
+      room: true,
       title: "Here's how I'd organize your inventory",
       nav: 'foundry',
       understandingId: stored.id,
-      understanding: stored.understanding,
+      understanding: displayUnderstanding,
+      syntheticSetup: generationContext.allowed ? syntheticRequest.parse(stored.source_description) : null,
+      onboardingPriority: nextOnboardingStep,
       setupDocument,
       /*
        * What this document proves, worked out before the page describes what
@@ -273,6 +326,7 @@ router.post(
 
     try {
       const alreadyConfigured = planApplier.isConfigured(req.db, req.ctx.workspaceId);
+      const ownerInventoryLines = parseOwnerInventoryLines(req.body);
       const planId = inTransaction(req.db, () => {
         if (existingDocument) {
           documentIntake.setSupplierCodeLabel(req.db, req.ctx, req.params.id, req.body.supplierCodeLabel);
@@ -281,10 +335,13 @@ router.post(
           understandingId: req.params.id,
           answers,
           acceptedRecommendationIds: toArray(req.body.acceptRecommendation),
+          ownerInventoryLines,
         });
         // A later supplier invoice adds evidenced records to the operation; it
         // must not replace the inventory model the owner already configured.
-        if (!alreadyConfigured) planApplier.applyPlan(req.db, req.ctx, built.planId);
+        if (!alreadyConfigured || ownerInventoryLines.length) {
+          planApplier.applyPlan(req.db, req.ctx, built.planId, { updateConfiguration: !alreadyConfigured });
+        }
         /*
          * Which button the owner pressed. The document says what it is; this
          * says what they want done about it, and the two are different
@@ -304,6 +361,29 @@ router.post(
     }
   })
 );
+
+function parseOwnerInventoryLines(body) {
+  if (body.owner_records_present !== '1') return [];
+  const count = Number.parseInt(body.owner_record_count, 10);
+  if (!Number.isInteger(count) || count < 1 || count > 100) {
+    throw new ValidationError('Review the inventory records and try again.');
+  }
+  const lines = [];
+  for (let index = 0; index < count; index += 1) {
+    const productName = trimOrNull(body[`owner_product_${index}`]);
+    const variantLabel = trimOrNull(body[`owner_variant_${index}`]) || '';
+    const locationName = trimOrNull(body[`owner_location_${index}`]);
+    const quantityText = String(body[`owner_quantity_${index}`] || '').trim();
+    const quantity = Number(quantityText);
+    if (!productName) throw new ValidationError(`Enter the product name on row ${index + 1}.`);
+    if (!locationName) throw new ValidationError(`Enter where the stock is located on row ${index + 1}.`);
+    if (!/^\d+$/.test(quantityText) || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100000000) {
+      throw new ValidationError(`Enter a whole-number quantity above zero on row ${index + 1}.`);
+    }
+    lines.push({ productName, variantLabel, quantity, locationName });
+  }
+  return lines;
+}
 
 router.get(
   '/foundry/ready/:planId',

@@ -154,8 +154,14 @@ test('unanswered mail is counted by Needs you, not by a mail badge of its own', 
   const env = setup();
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
-  const sidebar = (await agent.get('/mail')).text.split('<nav class="nav"')[1].split('</nav>')[0];
-  assert.ok(!sidebar.includes('href="/mail"'),
+  /*
+   * There is no sidebar any more — the chrome carries the three things
+   * somebody does in a day — but the rule this was written for is unchanged
+   * and is now stronger: mail is not a state you live in, so it appears
+   * nowhere in the chrome, and what needs a person reaches them on the desk.
+   */
+  const chrome = (await agent.get('/mail')).text.split('<header class="rm-rail"')[1].split('</header>')[0];
+  assert.ok(!chrome.includes('href="/mail"'),
     'Mail is not a department; it reaches the owner through Needs you');
 
   arrive(env, { subject: 'One', body: 'Can you confirm?' });
@@ -173,8 +179,8 @@ test('unanswered mail is counted by Needs you, not by a mail badge of its own', 
   const needsYou = require('../../src/manager/needs-you-inbox').inbox(env.db, env.workspace.workspaceId);
   const mailEntries = needsYou.filter((entry) => entry.id.startsWith('unanswered-mail:'));
   assert.equal(mailEntries.length, 2, 'both unanswered messages are decisions waiting on the owner');
-  const nav = home.text.split('<nav class="nav"')[1].split('</nav>')[0];
-  const badge = nav.slice(nav.indexOf('href="/needs-you"'));
+  const chromeOnHome = home.text.split('<header class="rm-rail"')[1].split('</header>')[0];
+  const badge = chromeOnHome.slice(chromeOnHome.indexOf('href="/needs-you"'));
   assert.match(badge.slice(0, 600), new RegExp(`aria-label="${needsYou.length} waiting"`),
     'the Needs you badge is the one number, and it counts the mail too');
 });

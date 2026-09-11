@@ -4,13 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Stripe connection · Foundry</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <%# A hand-off screen is still Foundry, so it loads what Foundry loads. %>
   <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/product-clarity.css">
   <link rel="stylesheet" href="/foundry.css">
+  <link rel="stylesheet" href="/room.css">
+  <link rel="stylesheet" href="/design.css">
   <style>
-    body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: var(--surface-subtle, #f7f8fa); }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: var(--bg); }
     .stripe-return { width: min(420px, calc(100vw - 32px)); text-align: center; }
-    .stripe-return .panel { padding: 28px; }
-    .stripe-return h1 { margin: 0 0 10px; font-size: 22px; }
+    .stripe-return .panel { padding: 28px; margin: 0; }
+    .stripe-return h1 { margin: 0 0 10px; font-size: var(--t-2xl); }
     .stripe-return p { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
   </style>
 </head>
@@ -19,6 +26,9 @@
     <div class="panel">
       <h1><%= outcome.chargesEnabled ? 'Stripe is connected' : outcome.connected ? 'Stripe needs one more step' : 'Stripe was not connected' %></h1>
       <p><%= outcome.message %></p>
+      <% if (outcome.inventoryName) { %>
+        <p><strong>Foundry inventory:</strong> <%= outcome.inventoryName %></p>
+      <% } %>
       <a class="btn btn--primary" href="/settings/connections#payments">Return to Foundry</a>
     </div>
   </main>
@@ -27,7 +37,8 @@
       var message = {
         type: 'foundry:stripe-return',
         connected: <%- JSON.stringify(Boolean(outcome.connected)) %>,
-        chargesEnabled: <%- JSON.stringify(Boolean(outcome.chargesEnabled)) %>
+        chargesEnabled: <%- JSON.stringify(Boolean(outcome.chargesEnabled)) %>,
+        workspaceId: <%- JSON.stringify(outcome.workspaceId || null) %>
       };
       if (!window.opener || window.opener.closed) return;
       // The owner may have opened Foundry on localhost while Stripe had to

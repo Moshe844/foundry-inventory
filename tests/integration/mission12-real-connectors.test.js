@@ -183,7 +183,7 @@ test('one Gmail push wakes every workspace connected to that mailbox without cro
   }
 });
 
-test('an unmapped provider location in an empty inventory offers one-step creation instead of an empty dropdown', async () => {
+test('a new Square location is imported and mapped without asking the owner', async () => {
   const store = makeDatabase(); const workspace = seedWorkspace(store.db, { workspaceName: 'Empty Square QA' });
   store.db.prepare('DELETE FROM locations WHERE workspace_id = ?').run(workspace.workspaceId);
   const app = createApp({ db: store.db, env: 'test', sessionSecret: 'empty-square-test' });
@@ -196,15 +196,10 @@ test('an unmapped provider location in an empty inventory offers one-step creati
   const agent = request.agent(app); await signIn(agent, workspace.account.email, workspace.account.password);
   const detail = await agent.get(`/settings/connections/${connection.id}`); const text = plain(detail.text);
   assert.equal(detail.status, 200);
-  assert.match(text, /One-time setup/);
-  assert.match(text, /Create this location in Foundry/);
   assert.doesNotMatch(text, /Choose the matching Foundry record/);
-  const created = await agent.post(`/settings/connections/${connection.id}/create-location-map`).type('form').send({
-    _csrf: csrfFrom(detail.text), externalId: 'square-location-1', name: 'Square Store', kind: 'store',
-  });
-  assert.equal(created.status, 303);
   const location = env.db.prepare('SELECT * FROM locations WHERE workspace_id = ? AND name = ?')
-    .get(workspace.workspaceId, 'Square Store');
+    .get(workspace.workspaceId, 'Default Test Account');
+  assert.ok(location, 'the real Square location is created during discovery');
   assert.equal(location.kind, 'store');
   assert.equal(connections.mapping(env.db, workspace.workspaceId, connection.id, 'location', 'square-location-1').foundry_record_id,
     location.id);
@@ -212,7 +207,43 @@ test('an unmapped provider location in an empty inventory offers one-step creati
   env.db.close();
 });
 
-test('a new Square catalog item can create, price, stock and map all of its variants in one step', async () => {
+test('first Square authorization imports an empty Foundry inventory instead of asking for pointless matches', async () => {
+  const store = makeDatabase(); const workspace = seedWorkspace(store.db, { workspaceName: 'New Square Business' });
+  store.db.prepare('DELETE FROM locations WHERE workspace_id = ?').run(workspace.workspaceId);
+  const env = { ...store, workspace }; const connection = addProvider(env, 'square');
+  credentials.put(env.db, workspace.workspaceId, connection.id, 'provider', { accessToken: 'encrypted' });
+  const result = await providerService.sync(env.db, workspace.workspaceId, connection.id, workspace.ownerId, {
+    bootstrapEmpty: true,
+    adapter: { discover: async () => ({
+      locations: [{ entityType: 'location', externalId: 'sq-loc', displayName: 'Square Main Store' }],
+      products: [{ entityType: 'sku', externalId: 'sq-shirt', parentExternalId: 'sq-item-shirt', code: 'SQ-TEE-S',
+        displayName: 'Square Tee / Small', providerData: { itemName: 'Square Tee', variationName: 'Small',
+          barcode: '012345678901', priceMoney: { amount: 1800, currency: 'USD' },
+          inventoryCounts: [{ externalLocationId: 'sq-loc', state: 'IN_STOCK', quantity: '14' }] } }],
+    }) },
+  });
+  assert.equal(result.needsMapping, 0);
+  assert.equal(result.imported.items, 1);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(workspace.workspaceId).n, 1);
+  assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM locations WHERE workspace_id = ?').get(workspace.workspaceId).n, 1);
+  assert.equal(connections.get(env.db, workspace.workspaceId, connection.id).setup_status, 'CONNECTED');
+});
+
+test('Square auto-matches a unique exact product and variant name when its SKU code is absent', async () => {
+  const env = setup(); const connection = addProvider(env, 'square');
+  credentials.put(env.db, env.workspace.workspaceId, connection.id, 'provider', { accessToken: 'encrypted' });
+  const item = env.db.prepare('SELECT i.name, s.variant_label FROM items i JOIN skus s ON s.item_id = i.id WHERE s.id = ?')
+    .get(env.item.skuId);
+  const result = await providerService.sync(env.db, env.workspace.workspaceId, connection.id, env.workspace.ownerId, {
+    adapter: { discover: async () => ({ products: [{ entityType: 'sku', externalId: 'sq-no-code', code: null,
+      displayName: item.name, providerData: { itemName: item.name, variationName: item.variant_label } }], locations: [] }) },
+  });
+  assert.equal(result.needsMapping, 0);
+  assert.equal(connections.mapping(env.db, env.workspace.workspaceId, connection.id, 'sku', 'sq-no-code').foundry_record_id,
+    env.item.skuId);
+});
+
+test('Square automatically imports, prices, stocks and maps new variants in an existing workspace', async () => {
   const store = makeDatabase(); const workspace = seedWorkspace(store.db, { workspaceName: 'Square Catalog QA' });
   const app = createApp({ db: store.db, env: 'test', sessionSecret: 'square-catalog-test' });
   const env = { ...store, workspace, app }; const connection = addProvider(env, 'square');
@@ -232,14 +263,6 @@ test('a new Square catalog item can create, price, stock and map all of its vari
           inventoryCounts: [{ externalLocationId: 'square-location-1', state: 'IN_STOCK', quantity: '5' }] } },
     ] }),
   } });
-  const agent = request.agent(app); await signIn(agent, workspace.account.email, workspace.account.password);
-  const detail = await agent.get(`/settings/connections/${connection.id}`); const text = plain(detail.text);
-  assert.match(text, /Create it in Foundry from Square/);
-  assert.doesNotMatch(text, /Add the product in Foundry/);
-  const created = await agent.post(`/settings/connections/${connection.id}/create-product-map`).type('form').send({
-    _csrf: csrfFrom(detail.text), externalId: 'variation-small',
-  });
-  assert.equal(created.status, 303);
   const item = env.db.prepare('SELECT * FROM items WHERE workspace_id = ? AND name = ?').get(workspace.workspaceId, 'Square Shirt');
   const skus = env.db.prepare('SELECT * FROM skus WHERE workspace_id = ? AND item_id = ? ORDER BY code').all(workspace.workspaceId, item.id);
   assert.equal(skus.length, 2);
@@ -250,11 +273,15 @@ test('a new Square catalog item can create, price, stock and map all of its vari
   assert.equal(priceService.currentForSku(env.db, workspace.workspaceId, skus.find((sku) => sku.code === 'SQ-SHIRT-S').id).amount_minor, 1200);
   assert.equal(repo.getBalance(env.db, workspace.workspaceId, skus.find((sku) => sku.code === 'SQ-SHIRT-S').id, workspace.main.id), 10);
   assert.equal(repo.getBalance(env.db, workspace.workspaceId, skus.find((sku) => sku.code === 'SQ-SHIRT-L').id, workspace.main.id), 5);
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_issues WHERE workspace_id = ?
+    AND connector_id = ? AND status = 'OPEN' AND issue_type IN ('UNKNOWN_SKU','UNKNOWN_LOCATION')`)
+    .get(workspace.workspaceId, connection.id).n, 0,
+  'ordinary new Square records do not become owner matching work');
   env.db.close();
 });
 
 test('every commerce connector can bulk-add selected products while preserving variant groups', async (t) => {
-  for (const providerType of ['square', 'shopify', 'clover', 'woocommerce']) {
+  for (const providerType of ['shopify', 'clover', 'woocommerce']) {
     await t.test(providerType, async () => {
       const store = makeDatabase(); const workspace = seedWorkspace(store.db, { workspaceName: `${providerType} Bulk QA` });
       const app = createApp({ db: store.db, env: 'test', sessionSecret: `${providerType}-bulk-test` });
@@ -977,7 +1004,7 @@ test('provider discovery auto-maps exact codes and creates one Needs You request
   env.db.close();
 });
 
-test('Shopify and Square catalog webhooks surface new products and locations without stopping either connection', async (t) => {
+test('commerce catalog webhooks follow each provider catalog contract without stopping the connection', async (t) => {
   await t.test('Shopify', async () => {
     const env = setup(); const connection = addProvider(env, 'shopify'); const adapter = providers.get('shopify');
     credentials.put(env.db, env.workspace.workspaceId, connection.id, 'provider', {
@@ -1024,9 +1051,11 @@ test('Shopify and Square catalog webhooks surface new products and locations wit
         .set('X-Square-HmacSha256-Signature', signature).set('Content-Type', 'application/json').send(raw);
       assert.equal(response.status, 200); assert.equal(response.body.accepted, 1);
       assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_external_records WHERE connector_id = ?
-        AND mapping_status = 'UNMAPPED'`).get(connection.id).n, 2);
+        AND mapping_status = 'UNMAPPED'`).get(connection.id).n, 0);
       assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_issues WHERE connector_id = ?
-        AND status = 'OPEN' AND issue_type IN ('UNKNOWN_SKU','UNKNOWN_LOCATION')`).get(connection.id).n, 2);
+        AND status = 'OPEN' AND issue_type IN ('UNKNOWN_SKU','UNKNOWN_LOCATION')`).get(connection.id).n, 0);
+      assert.ok(env.db.prepare(`SELECT 1 FROM items WHERE workspace_id = ? AND name = 'New Square product'`)
+        .get(env.workspace.workspaceId), 'the Square webhook imports the new catalog record automatically');
       assert.equal(connections.get(env.db, env.workspace.workspaceId, connection.id).status, 'connected');
     } finally { adapter.discover = originalDiscover; env.db.close(); }
   });
@@ -1084,7 +1113,7 @@ test('empty inventory can bootstrap Shopify catalogue, prices, mappings and open
 test('adding Clover and WooCommerce leaves the normalized engine provider-neutral', () => {
   const catalog = providers.catalog().map((row) => row.type);
   assert.deepEqual(catalog, ['shopify', 'square', 'clover', 'woocommerce', 'reference_webhook',
-    'erp_future', 'gmail', 'microsoft365']);
+    'erp_future', 'gmail', 'microsoft365', 'quickbooks', 'xero']);
   const source = require('node:fs').readFileSync(require.resolve('../../src/connections/event-ingestion'), 'utf8');
   assert.doesNotMatch(source, /shopify|square|clover|woocommerce/i);
 });

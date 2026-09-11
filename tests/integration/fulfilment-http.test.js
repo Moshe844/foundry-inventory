@@ -86,7 +86,12 @@ test('the fulfilment queue, a pick list, packing and shipping all work from the 
 
   // The carrier was read off the number nobody was asked to name.
   const gone = await agent.get(shipmentUrl);
-  assert.match(plain(gone.text), /UPS/);
+  const goneText = plain(gone.text);
+  assert.match(goneText, /recorded as handed to the carrier/i);
+  assert.match(goneText, /sale is now in Accounting/i);
+  assert.doesNotMatch(goneText, /Nothing was asked for|developer account/i,
+    'shipment success must not be polluted by an unrelated payment setup warning');
+  assert.match(goneText, /UPS/);
   assert.match(gone.text, /https:\/\/www\.ups\.com\/track\?tracknum=1Z999AA10123456784/);
 
   const delivered = await agent.post(`${shipmentUrl}/delivered`)
@@ -230,4 +235,6 @@ test('one customer order is one page: the whole story without leaving it', async
   assert.match(story, /1Z999AA10123456784/, 'how it is travelling');
   assert.match(story, /Written, not sent|Sent /, 'whether the customer was told');
   assert.match(story, /Order activity/, 'and everything that happened to it');
+  assert.match(story, /recorded path from the customer order to stock, Accounting, and payment/i);
+  assert.match(story, /SHP-1001 moved 12 units from Main Warehouse out of on-hand stock/i);
 });

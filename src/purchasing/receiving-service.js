@@ -353,6 +353,19 @@ function receive(db, ctx, membership, poId, input = {}) {
         source: 'purchasing',
         sourceRecordType: 'purchase_order_receipt',
         sourceRecordId: received.receipt.id,
+        relations: [
+          { type: 'RECEIVED_AS', from: { type: 'purchase_order', id: current.id },
+            to: { type: 'purchase_receipt', id: received.receipt.id } },
+          ...received.receipt.lines.flatMap((line) => [
+            { type: 'HAS_PART', from: { type: 'purchase_receipt', id: received.receipt.id },
+              to: { type: 'purchase_receipt_line', id: line.id } },
+            { type: 'RECEIVED_AS', from: { type: 'purchase_order_line', id: line.lineId },
+              to: { type: 'purchase_receipt_line', id: line.id } },
+            ...line.movementIds.map((movementId) => ({ type: 'CAUSED_MOVEMENT',
+              from: { type: 'purchase_receipt_line', id: line.id },
+              to: { type: 'inventory_movement', id: movementId } })),
+          ]),
+        ],
       });
   }
   return received;

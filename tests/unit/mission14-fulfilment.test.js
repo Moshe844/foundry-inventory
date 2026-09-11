@@ -318,6 +318,9 @@ test('the Sales Order owns its destination instead of following the customer pro
 
 test('customer pickup has no carrier destination', () => {
   const env = setup();
+  inventory.receive(env.db, env.ctx, {
+    skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 5,
+  });
   const order = sales.createOrder(env.db, env.ctx, {
     customerName: 'Walk-in customer', deliveryMethod: 'PICKUP',
     customerShippingAddress: 'An address that must not be used',
@@ -326,4 +329,9 @@ test('customer pickup has no carrier destination', () => {
   assert.equal(order.delivery_method, 'PICKUP');
   assert.equal(order.ship_to_address, null);
   assert.equal(order.ship_to_source, 'PICKUP');
+  const confirmed = sales.confirm(env.db, env.ctx, order.id);
+  const box = shipments.startPicking(env.db, env.ctx, confirmed.id);
+  assert.equal(box.delivery_method, 'PICKUP');
+  assert.equal(box.ship_to_address, null,
+    'the customer profile address must not leak back into a pickup box');
 });

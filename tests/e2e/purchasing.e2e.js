@@ -292,10 +292,17 @@ test(
       await shot(page, 'draft-order');
 
       const text = await page.locator('body').innerText();
-      assert.match(text, /prepared by Foundry/);
-      assert.match(text, /Nothing has been sent to ABC Footwear/);
-      assert.match(text, /OX-NV-08/);
+      assert.match(text, /Foundry prepared this/);
+      assert.match(text, /supplier has not been told anything/i);
       assert.equal(onOrder(databasePath, state), 0, 'a draft is not incoming stock');
+
+      // The owner-facing story comes first. Editing and approval live in the
+      // working detail, reached by the explicit action on that story.
+      await Promise.all([
+        page.waitForURL(`${BASE}${orderPath}/detail`),
+        page.getByRole('link', { name: 'See or edit details' }).click(),
+      ]);
+      assert.match(await page.locator('body').innerText(), /OX-NV-08/);
     });
 
     await t.test('4. approving makes it incoming, and the plan goes quiet', async () => {

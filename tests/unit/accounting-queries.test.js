@@ -4,10 +4,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const ledger = require('../../src/accounting/ledger');
+const payables = require('../../src/accounting/payables');
+const payments = require('../../src/accounting/payments');
 const planner = require('../../src/attention/query-planner');
 const queries = require('../../src/attention/query-service');
 const authService = require('../../src/domain/auth-service');
 const engine = require('../../src/domain/inventory-engine');
+const suppliers = require('../../src/purchasing/supplier-service');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('../helpers');
 
 test.after(cleanupAll);
@@ -19,6 +22,7 @@ test('financial wording routes deterministically without hard-coded products or 
     ['How much cash do we have?', 'cash_position'],
     ['Who owes us money?', 'receivables_aging'],
     ['What bills do we need to pay?', 'payables_aging'],
+    ['Show me what we still owe Apparel Supply Co and the payments that prove it.', 'payables_aging'],
     ['What is our inventory valuation?', 'inventory_valuation'],
     ['How much sales tax is payable?', 'sales_tax_summary'],
     ['How is the business doing financially?', 'financial_summary'],
@@ -63,6 +67,41 @@ test('financial questions work immediately because accounting is automatic', () 
   const result = queries.execute(db, workspace.workspaceId, { intent: 'cash_position' });
   assert.match(result.answer, /Ledger cash is \$0\.00/i);
   assert.equal(result.handoff, null);
+});
+
+test('a named supplier balance preserves paid-bill evidence and opens its exact proof', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  ledger.configure(db, workspace.ctx, membership, {
+    startDate: '2026-01-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+  });
+  const supplier = suppliers.createSupplier(db, workspace.ctx, membership,
+    { name: 'Apparel Supply Co' });
+  const draft = payables.createDraft(db, workspace.ctx, membership, {
+    supplierId: supplier.id,
+    supplierInvoiceNumber: 'PROOF-180',
+    issueDate: new Date().toISOString().slice(0, 10),
+    sourceKey: 'named-supplier-proof-bill',
+    lines: [{ description: 'Received apparel', quantity: 36, unitCostMinor: 500 }],
+  });
+  const bill = payables.open(db, workspace.ctx, membership, draft.bill.id);
+  payments.record(db, workspace.ctx, membership, {
+    direction: 'SUPPLIER_PAYMENT', supplierId: supplier.id,
+    paymentDate: new Date().toISOString().slice(0, 10), amountMinor: 18_000,
+    sourceKey: 'named-supplier-proof-payment',
+    allocations: [{ billId: bill.id, amountMinor: 18_000 }],
+  });
+
+  const question = 'Show me what we still owe Apparel Supply Co and the payments that prove it.';
+  const answer = queries.execute(db, workspace.workspaceId,
+    { intent: 'payables_aging' }, { question });
+
+  assert.match(answer.answer, /Apparel Supply Co billed you \$180\.00/);
+  assert.match(answer.answer, /recorded \$180\.00 in supplier payments.*\$0\.00 remains owed/i);
+  assert.equal(answer.handoff.href, `/accounting#supplier-payment-${bill.id}`);
+  assert.equal(answer.handoff.label, 'Show Apparel Supply Co payment proof');
+  db.close();
 });
 
 /**
@@ -395,6 +434,10 @@ test('an answer leads with the measure the question named', () => {
   assert.match(ask('how many sales has been shipped yet?'), /^Fulfilled units: 8\./,
     'shipped means fulfilled, and the number comes first');
   assert.match(ask('how many units were dispatched?'), /^Fulfilled units: 8\./);
+
+  // A fulfilled order is a completed order. This count must be explicit; the
+  // wording layer must never borrow the zero from "open orders" and relabel it.
+  assert.match(ask('How many completed sales orders do i already have?'), /^Completed orders: 1\./);
 
   // A different measure in the same table.
   assert.match(ask('how many units are committed?'), /^Committed units: /);

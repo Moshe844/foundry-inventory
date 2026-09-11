@@ -81,3 +81,23 @@ test('the figures a phrasing may use are exactly those already answered', () => 
   assert.ok(!permitted.has('42'), 'a sum of two given figures is not itself given');
   assert.ok(!permitted.has('12'), 'and neither is a number from nowhere');
 });
+
+test('a grounded number cannot be attached to the wrong sales-order state', async () => {
+  const result = {
+    answer: 'Completed orders: 1. 1 completed sales order; 0 open.',
+    rows: [
+      { measure: 'Completed orders', value: 1 },
+      { measure: 'Open orders', value: 0 },
+    ],
+    columns: ['measure', 'value'],
+    primaryMeasure: { label: 'Completed orders', value: 1 },
+  };
+
+  assert.equal(await phrasing.phrase('How many completed sales orders do I have?', result,
+    { provider: saying('You have 0 completed sales orders, though 1 order exists.') }), null,
+  'a number being present somewhere in the evidence does not ground the wrong claim');
+
+  assert.equal(await phrasing.phrase('How many completed sales orders do I have?', result,
+    { provider: saying('You have 1 completed sales order and 0 still open.') }),
+  'You have 1 completed sales order and 0 still open.');
+});

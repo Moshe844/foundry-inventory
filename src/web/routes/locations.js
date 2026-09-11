@@ -10,7 +10,7 @@ router.use('/locations', requireAuth);
 router.get(
   '/locations',
   asyncRoute(async (req, res) => {
-    const locations = locationService.listLocationsWithStock(req.db, req.ctx.workspaceId);
+    const locations = locationService.listHierarchy(req.db, req.ctx.workspaceId, { includeInactive: true });
     res.page('locations/list', {
       title: 'Locations',
       nav: 'locations',
@@ -29,6 +29,9 @@ router.post(
       kind: req.body.kind,
       note: req.body.note,
       address: req.body.address,
+      parentLocationId: req.body.parentLocationId,
+      barcode: req.body.barcode,
+      pickSequence: req.body.pickSequence,
     });
     req.flash('success', `${location.name} is ready to hold stock.`);
     res.redirect(303, '/locations');
@@ -44,6 +47,9 @@ router.post(
       kind: req.body.kind,
       note: req.body.note,
       address: req.body.address,
+      parentLocationId: req.body.parentLocationId,
+      barcode: req.body.barcode,
+      pickSequence: req.body.pickSequence,
     });
     req.flash('success', 'Location updated.');
     res.redirect(303, '/locations');

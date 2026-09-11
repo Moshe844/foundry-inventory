@@ -6,7 +6,7 @@ const session = require('express-session');
  * Sessions live in the same SQLite database as everything else, so a restart
  * keeps people signed in and there is no second piece of infrastructure.
  */
-function createSessionStore(db) {
+function createSessionStore(db, options = {}) {
   const Store = session.Store;
 
   class SqliteStore extends Store {
@@ -26,7 +26,9 @@ function createSessionStore(db) {
 
     expiryFor(sess) {
       const maxAge = sess && sess.cookie && sess.cookie.maxAge ? sess.cookie.maxAge : 14 * 24 * 60 * 60 * 1000;
-      return Date.now() + maxAge;
+      const effective = sess && sess.accountId
+        ? maxAge : Math.min(maxAge, Number(options.anonymousMaxAgeMs || 60 * 60_000));
+      return Date.now() + effective;
     }
 
     get(sid, callback) {

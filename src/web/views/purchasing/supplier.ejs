@@ -27,6 +27,44 @@
   var supplierSenderReady = senderRules.length > 0 && !!supplier.watchedConnectorId;
 %>
 
+<%
+  /*
+   * Removing a supplier, where somebody would look for it: beside the name, not
+   * at the foot of a long setup page. The button says what will actually happen
+   * — a supplier nothing refers to is deleted outright; one with orders or bills
+   * behind it is archived, because deleting the row would leave a purchase order
+   * attributed to nobody.
+   */
+  var use = typeof usage === 'undefined' ? { deletable: false, used: [], total: 0 } : usage;
+  var archived = supplier.status === 'inactive';
+  var trail = use.used.map(function (u) { return u.count + ' ' + u.label; }).join(', ');
+%>
+<div class="page-head">
+  <div class="titles">
+    <div class="breadcrumb"><a href="/suppliers">Suppliers</a> <%- helpers.icon('chevron', { size: 13 }) %> <span><%= supplier.name %></span></div>
+  </div>
+  <div class="page-actions">
+    <% if (archived) { %>
+      <span class="badge badge--muted">Archived</span>
+      <form method="post" action="/suppliers/<%= supplier.id %>/archive" style="margin:0">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="restore" value="1">
+        <button class="btn btn--sm" type="submit">Restore supplier</button>
+      </form>
+    <% } else { %>
+      <form method="post" action="/suppliers/<%= supplier.id %>/archive" style="margin:0"
+            data-confirm="<%= use.deletable
+              ? 'Delete ' + supplier.name + '? Nothing refers to them, so the record goes for good.'
+              : 'Archive ' + supplier.name + '? ' + trail + ' still refer to them, so the record is kept and hidden instead of deleted. You can restore it.' %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="btn btn--danger btn--sm" type="submit">
+          <%= use.deletable ? 'Delete supplier' : 'Archive supplier' %>
+        </button>
+      </form>
+    <% } %>
+  </div>
+</div>
+
 <section class="setup-journey" id="supplier-setup">
   <div class="setup-journey__head">
     <div class="setup-journey__head-copy">

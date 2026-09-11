@@ -1,0 +1,13 @@
+<div class="rm-operation-page">
+<p class="rm-stamp"><a href="/warehouse/operations#counts">Counts</a> · pass <%= session.pass_number %></p>
+<h1 class="rm-figure"><%= session.campaign_name %></h1>
+<p class="rm-sub"><%= session.status.replace('_',' ') %> · <%= session.count_kind %><% if (session.blind_count && session.status==='OPEN') { %> · system quantities hidden until submission<% } %></p>
+<section class="rm-panel"><div class="rm-panel__head"><div><p class="rm-kicker">Physical evidence</p><h2>Count every listed product</h2></div></div>
+  <div class="rm-list"><% session.lines.forEach(function(line){ %><div class="rm-row"><span><strong><%= line.item_name %><%= line.variant_label ? ' / '+line.variant_label : '' %></strong><small><%= line.sku_code %> · <%= line.location_name %></small></span><span>
+    <% if(session.status==='OPEN'){ %><form method="post" action="/warehouse/counts/<%= session.id %>/lines/<%= line.id %>" class="rm-inline-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="visually-hidden" for="count-<%= line.id %>">Counted quantity for <%= line.item_name %> at <%= line.location_name %></label><input id="count-<%= line.id %>" type="number" min="0" name="quantity" required value="<%= line.counted_quantity===null?'':line.counted_quantity %>" placeholder="Count"><button class="rm-button">Record</button></form><% } else { %><%= line.expected_quantity %> recorded → <%= line.counted_quantity %> counted · variance <%= line.variance %><% } %>
+  </span></div><% }) %></div>
+  <% if(session.status==='OPEN'){ %><form method="post" action="/warehouse/counts/<%= session.id %>/submit"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button rm-button--primary">Submit this count</button></form><% } %>
+  <% if(session.status==='RECOUNT_REQUIRED'){ %><p class="rm-note">The first blind pass disagreed. The next counter will see only the affected products, not the previous answer.</p><form method="post" action="/warehouse/counts/<%= session.id %>/recount"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button rm-button--primary">Start blind recount</button></form><% } %>
+  <% if(session.status==='AWAITING_APPROVAL'){ %><p class="rm-note">Approving will post the exact variances through the canonical inventory engine. If stock changed since counting began, Foundry will stop.</p><form method="post" action="/warehouse/counts/<%= session.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button rm-button--primary">Approve and post variance</button></form><% } %>
+</section>
+</div>

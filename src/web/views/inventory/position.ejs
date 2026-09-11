@@ -1,0 +1,87 @@
+<%
+  /*
+   * What you hold, as a position rather than a list.
+   *
+   * The page this replaced opened with a paginated table of every product,
+   * twenty-five at a time, sorted by name — which answers "what is in the
+   * database" and not "is my stock all right". Sixty-one products that are
+   * fine do not need sixty-one rows.
+   *
+   * Groups are ordered by how much thought each one needs, and every one
+   * carries what Foundry has already done about it. The table is one link at
+   * the bottom, where somebody who actually wants a table will look for it.
+   */
+  var totals = position.totals || {};
+  var value = locals.stockValue;
+  var knownCostUnits = value ? Number(value.totalUnits || 0) : 0;
+  var missingCostUnits = Math.max(0, Number(totals.onHand || 0) - knownCostUnits);
+%>
+
+<p class="rm-stamp">
+  <%= totals.locations || 0 %> location<%= totals.locations === 1 ? '' : 's' %>
+  · <%= totals.skus || 0 %> product<%= totals.skus === 1 ? '' : 's' %> counted continuously
+</p>
+
+<% if (position.tooLarge) { %>
+
+  <h1 class="rm-figure">This inventory is too big to summarise on sight.</h1>
+  <p class="rm-sub">
+    Reading every position to group them would make this the page you stop opening.
+    <%= totals.skus %> products is past that line, so here is the table instead, which is what
+    you would want at this size anyway.
+  </p>
+  <p class="rm-choices"><a class="rm-btn" href="/inventory/table">Open the stock table</a></p>
+
+<% } else { %>
+
+  <h1 class="rm-figure">
+    <%= (totals.onHand || 0).toLocaleString('en-US') %> units on hand<% if (value && value.totalCostMinor) { %>,
+    $<%= Math.round(value.totalCostMinor / 100).toLocaleString('en-US') %> known cost<% } %>.
+  </h1>
+  <p class="rm-sub">
+    <% if (!position.groups.length) { %>
+      There is nothing here yet. Once Foundry knows what you hold, this is where it tells you
+      whether it is all right.
+    <% } else { %>
+      <%= totals.committed ? totals.committed.toLocaleString('en-US') + ' units are promised to customers' : 'Nothing is promised to a customer' %><%
+      %><%= totals.incoming ? ', and ' + totals.incoming.toLocaleString('en-US') + ' more are on their way' : '' %>.
+    <% } %>
+  </p>
+  <% if (missingCostUnits > 0) { %>
+    <p class="rm-sub">
+      Purchase cost is still missing for <strong><%= missingCostUnits.toLocaleString('en-US') %> units</strong>,
+      so <%= value && value.totalCostMinor ? '$' + Math.round(value.totalCostMinor / 100).toLocaleString('en-US') : 'the amount above' %>
+      is not the full inventory value.
+      <a href="/accounting#inventory">Show the units and recorded cost</a>.
+    </p>
+  <% } else if (value && value.totalCostMinor) { %>
+    <p class="rm-sub"><a href="/accounting#inventory">Show the units and recorded cost</a>.</p>
+  <% } %>
+
+  <div class="rm-groups">
+    <% position.groups.forEach(function (group) { %>
+      <%
+        /* The bar is this group's share of the products counted, on one scale
+           across every row, so the shape of the inventory reads at a glance. */
+        var share = totals.skus ? Math.max(3, Math.round((group.count / totals.skus) * 100)) : 0;
+      %>
+      <a class="rm-group" href="<%= group.href %>">
+        <span class="rm-group__mk <%= group.tone === 'hot' ? 'is-hot' : group.tone === 'ok' ? 'is-ok' : '' %>" aria-hidden="true"><%- helpers.icon(group.icon || 'box', { size: 15 }) %></span>
+        <span class="rm-group__body">
+          <span class="rm-group__n"><%= group.name %></span>
+          <span class="rm-group__d"><%= group.detail %></span>
+        </span>
+        <span class="rm-meter <%= group.tone === 'hot' ? 'is-flag' : group.tone === 'ok' ? 'is-good' : 'is-quiet' %>"><span style="width:<%= share %>%"></span></span>
+      </a>
+    <% }) %>
+  </div>
+
+<% } %>
+
+<p class="rm-disclose">
+  <a href="/ask?about=<%= encodeURIComponent('my stock') %>">Ask about your stock</a>
+  <a href="/inventory/table">Full stock table — every code, version and location</a>
+  <a href="/purchasing/orders">What is on order</a>
+  <a href="/locations">Your locations</a>
+  <a href="/inventory/new">Add a product</a>
+</p>
