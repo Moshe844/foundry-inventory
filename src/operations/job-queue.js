@@ -124,7 +124,7 @@ function heartbeat(db, id, owner, options = {}) {
 function complete(db, id, owner, result = {}, options = {}) {
   return inTransaction(db, () => {
     const now = Number(options.now || Date.now());
-    const changed = db.prepare(`UPDATE runtime_jobs SET status = 'COMPLETED', result = ?,
+    const changed = db.prepare(`UPDATE runtime_jobs SET status = 'COMPLETED', result = ?, last_error = NULL,
       lease_owner = NULL, lease_expires_at = NULL, completed_at = ?, updated_at = ?
       WHERE id = ? AND status = 'RUNNING' AND lease_owner = ?`)
       .run(JSON.stringify(result || {}), new Date(now).toISOString(), new Date(now).toISOString(), id, owner);
@@ -184,7 +184,7 @@ async function processOne(db, handlers, options = {}) {
   }
   try {
     const result = await handler(job, {
-      heartbeat: () => heartbeat(db, job.id, owner, options),
+      heartbeat: (heartbeatOptions = {}) => heartbeat(db, job.id, owner, { ...options, ...heartbeatOptions }),
     });
     if (!complete(db, job.id, owner, result, options)) {
       throw Object.assign(new Error('The worker lost its lease before completion.'), { code: 'lease_lost' });
@@ -207,4 +207,3 @@ module.exports = {
   ACTIVE, terminal, enqueue, get, claim, heartbeat, complete, fail, retryDead,
   recoverExpired, processOne, listDead, backoffMs,
 };
-

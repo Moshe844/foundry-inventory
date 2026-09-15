@@ -43,6 +43,7 @@ const supplierService = require('../purchasing/supplier-service');
 const position = require('../purchasing/position');
 const demandHistory = require('./demand-history');
 const recommendations = require('./recommendations');
+const adaptiveBrain = require('./adaptive-brain');
 
 const round = (value, places = 2) => {
   const factor = 10 ** places;
@@ -114,9 +115,13 @@ function forSku(db, workspaceId, skuId, options = {}) {
     db, workspaceId, sku, forecast, leadTime, projection, advice, policy,
     suppliers, supplierItem, goals, transfers, now,
   });
+  const adaptivePlan = adaptiveBrain.forSku(db, workspaceId, {
+    sku, goals, policy, forecast, leadTime, projection, advice, suppliers,
+    supplierItem, transfers, purchase, horizonDays,
+  }, { now, workspaceContext: options.workspaceContext });
 
   return {
-    sku, goals, policy, forecast, leadTime, projection, advice, purchase,
+    sku, goals, policy, forecast, leadTime, projection, advice, purchase, adaptivePlan,
     transfers: transfers.transfers,
     locations: transfers.places,
     supplierItem,
@@ -362,13 +367,50 @@ function sweep(db, workspaceId, options = {}) {
   const now = options.now || Date.now();
   const goals = goalsService.forWorkspace(db, workspaceId);
   const limit = Number(options.limit || 25);
+  const asOf = new Date(now).toISOString().slice(0, 10);
+  // Freeze workspace-wide evidence for this pass. Apart from making the sweep
+  // scale, this guarantees every SKU in a pass is compared against the same
+  // cash and inventory position instead of subtly different snapshots.
+  const workspaceContext = {
+    inventoryPosition: goalsService.inventoryPosition(db, workspaceId, goals),
+    cash: adaptiveBrain.cashPosition(db, workspaceId, {
+      asOf,
+      horizonDays: Math.max(60, Number(goals.reviewDays || 7) + 30),
+      reserveMinor: goals.cashReserveMinor || 0,
+    }),
+  };
 
-  const skuIds = options.skuIds || db.prepare(`SELECT s.id FROM skus s
-    WHERE s.workspace_id = ? AND s.is_active = 1
+  const scanLimit = Math.max(1, Math.min(5000, Number(options.scanLimit || 400)));
+  const scheduledCoverageScan = !options.skuIds;
+  let skuIds = options.skuIds;
+  if (!skuIds) {
+    const cursor = db.prepare(`SELECT last_key, completed_cycles FROM manager_scan_cursors
+      WHERE workspace_id = ? AND scan_name = 'planning'`).get(workspaceId);
+    const after = cursor?.last_key || '';
+    const base = `FROM skus s WHERE s.workspace_id = ? AND s.is_active = 1
       AND (EXISTS (SELECT 1 FROM balances b WHERE b.sku_id = s.id AND b.on_hand > 0)
         OR EXISTS (SELECT 1 FROM sales_order_lines sol JOIN sales_orders so ON so.id = sol.sales_order_id
-             WHERE sol.sku_id = s.id AND so.status NOT IN ('CANCELLED', 'COMPLETED', 'DRAFT')))
-    LIMIT ?`).all(workspaceId, Number(options.scanLimit || 400)).map((row) => row.id);
+             WHERE sol.sku_id = s.id AND so.status NOT IN ('CANCELLED', 'COMPLETED', 'DRAFT')))`;
+    let selected = db.prepare(`SELECT s.id ${base} AND s.id > ? ORDER BY s.id LIMIT ?`)
+      .all(workspaceId, after, scanLimit);
+    let completedCycles = Number(cursor?.completed_cycles || 0);
+    if (selected.length < scanLimit) {
+      const remaining = scanLimit - selected.length;
+      const seen = new Set(selected.map((row) => row.id));
+      const wrapped = db.prepare(`SELECT s.id ${base} ORDER BY s.id LIMIT ?`).all(workspaceId, remaining)
+        .filter((row) => !seen.has(row.id));
+      selected = [...selected, ...wrapped];
+      completedCycles += 1;
+    }
+    skuIds = selected.map((row) => row.id);
+    const next = skuIds.length ? skuIds[skuIds.length - 1] : null;
+    db.prepare(`INSERT INTO manager_scan_cursors
+      (workspace_id, scan_name, last_key, completed_cycles, updated_at)
+      VALUES (?, 'planning', ?, ?, ?)
+      ON CONFLICT(workspace_id, scan_name) DO UPDATE SET last_key = excluded.last_key,
+        completed_cycles = excluded.completed_cycles, updated_at = excluded.updated_at`)
+      .run(workspaceId, next, completedCycles, nowIso());
+  }
 
   const shortages = [];
   const purchases = [];
@@ -376,10 +418,34 @@ function sweep(db, workspaceId, options = {}) {
   const transfers = [];
   const findings = [];
 
-  for (const skuId of skuIds) {
+  // A rotating coverage pass still observes every stocked SKU and advances its
+  // durable cursor. Detailed demand/cash/supplier modelling is reserved for
+  // SKUs with evidence that can change a decision. Receipt-only stock with no
+  // supplier, rule, customer demand or outbound/correction history has no
+  // evidenced action to compare; forecasting it would manufacture busywork and
+  // turns a large catalogue into an endless queue of identical cold starts.
+  let detailSkuIds = skuIds;
+  if (scheduledCoverageScan && skuIds.length) {
+    const placeholders = skuIds.map(() => '?').join(',');
+    detailSkuIds = db.prepare(`SELECT s.id FROM skus s
+      WHERE s.workspace_id=? AND s.id IN (${placeholders}) AND (
+        EXISTS (SELECT 1 FROM reorder_policies rp WHERE rp.workspace_id=s.workspace_id AND rp.sku_id=s.id)
+        OR EXISTS (SELECT 1 FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.sku_id=s.id AND si.is_active=1)
+        OR EXISTS (SELECT 1 FROM sales_order_lines sol JOIN sales_orders so ON so.id=sol.sales_order_id
+          WHERE sol.workspace_id=s.workspace_id AND sol.sku_id=s.id
+            AND so.status NOT IN ('DRAFT','FULFILLED','CANCELLED'))
+        OR EXISTS (SELECT 1 FROM purchase_order_lines pol JOIN purchase_orders po ON po.id=pol.purchase_order_id
+          WHERE pol.workspace_id=s.workspace_id AND pol.sku_id=s.id
+            AND po.status NOT IN ('DRAFT','RECEIVED','CANCELLED'))
+        OR EXISTS (SELECT 1 FROM movements m WHERE m.workspace_id=s.workspace_id AND m.sku_id=s.id
+          AND m.operation IN ('issue','adjust'))
+      )`).all(workspaceId, ...skuIds).map((row) => row.id);
+  }
+
+  for (const skuId of detailSkuIds) {
     let view;
     try {
-      view = forSku(db, workspaceId, skuId, { now, goals });
+      view = forSku(db, workspaceId, skuId, { now, goals, workspaceContext });
     } catch {
       // One unreadable product must never stop the sweep. A planning pass that
       // dies halfway silently stops protecting everything after it.
@@ -402,9 +468,13 @@ function sweep(db, workspaceId, options = {}) {
         confidence: view.forecast.confidence,
         explanation: view.projection.explanation,
         purchase: view.purchase,
+        adaptivePlan: view.adaptivePlan,
       });
     }
-    if (view.purchase && view.purchase.order) purchases.push(view.purchase);
+    if (view.purchase && view.purchase.order
+        && ['BUY','BUY_ALTERNATE','EXPEDITE','TRANSFER_AND_BUY'].includes(view.adaptivePlan?.chosen?.type)) {
+      purchases.push({ ...view.purchase, adaptivePlan:view.adaptivePlan });
+    }
     for (const recommendation of view.advice.recommendations) {
       policyChanges.push({ skuId, displayName: view.sku.displayName, confidence: view.forecast.confidence, ...recommendation });
     }
@@ -431,6 +501,7 @@ function sweep(db, workspaceId, options = {}) {
     decisions: findings.filter((row) => row.severity === anomalyEngine.SEVERITY.DECISION).slice(0, limit),
     informational: findings.filter((row) => row.severity !== anomalyEngine.SEVERITY.DECISION).slice(0, limit),
     scanned: skuIds.length,
+    evaluated: detailSkuIds.length,
   };
 }
 
@@ -448,8 +519,10 @@ function sweep(db, workspaceId, options = {}) {
  */
 function sweepAndRecord(db, workspaceId, options = {}) {
   const now = options.now || Date.now();
+  const scored = adaptiveBrain.scoreDue(db, workspaceId, { now });
   const result = sweep(db, workspaceId, options);
   const recorded = [];
+  const decisionPlans = [];
 
   const keep = (row) => { if (row) recorded.push(row); };
 
@@ -457,19 +530,23 @@ function sweepAndRecord(db, workspaceId, options = {}) {
     // Something already on its way is not a decision anybody has to take.
     if (shortage.coveredByIncoming) continue;
     const purchase = shortage.purchase;
-    if (!purchase || !purchase.order) continue;
+    const plan = shortage.adaptivePlan;
+    if (plan) decisionPlans.push(adaptiveBrain.record(db, workspaceId, shortage.skuId, plan));
+    if (!purchase || !purchase.order || !plan
+        || !['BUY','BUY_ALTERNATE','EXPEDITE'].includes(plan.chosen.type)) continue;
+    const chosen = plan.chosen;
     keep(recommendations.record(db, workspaceId, {
       kind: 'order_now',
       subjectType: 'sku',
       skuId: shortage.skuId,
-      supplierId: purchase.supplierId || null,
-      quantity: purchase.quantityUnits,
-      valueMinor: purchase.costMinor,
+      supplierId: chosen.supplierId || purchase.supplierId || null,
+      quantity: chosen.quantityUnits,
+      valueMinor: chosen.totalCostMinor,
       currentValue: purchase.onHand,
-      recommendedValue: purchase.quantityUnits,
+      recommendedValue: chosen.quantityUnits,
       confidence: shortage.confidence,
-      headline: purchase.headline,
-      why: purchase.explanation,
+      headline: plan.explanation,
+      why: `${plan.explanation} This is a shadow recommendation; execution still requires its own authority.`,
       evidence: {
         stockoutDate: shortage.stockoutDate,
         daysUntilStockout: shortage.daysUntilStockout,
@@ -479,8 +556,12 @@ function sweepAndRecord(db, workspaceId, options = {}) {
         committed: purchase.committed,
         leadTimeDays: purchase.leadTimeDays,
         orderBy: purchase.orderBy,
-        supplierName: purchase.supplierName,
+        supplierName: chosen.supplierName,
         tradeoff: purchase.tradeoff || null,
+        adaptiveDecisionPlanId: decisionPlans[decisionPlans.length - 1].id,
+        cash: plan.constraints.cash,
+        alternatives: plan.alternatives.map((candidate) => ({ type:candidate.type,
+          feasible:candidate.feasible, score:candidate.score, reasons:candidate.reasons })),
       },
     }, { now }));
   }
@@ -531,7 +612,7 @@ function sweepAndRecord(db, workspaceId, options = {}) {
     }, { now }));
   }
 
-  return { ...result, recorded };
+  return { ...result, recorded, decisionPlans, scoredDecisionPlans:scored };
 }
 
 /** The overstock review, which is a workspace question rather than a per-product one. */

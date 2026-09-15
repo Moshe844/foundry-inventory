@@ -164,7 +164,9 @@ function upsert(db, workspaceId, input) {
     category: input.category,
     automatic: input.approvalRequirement === 'NONE',
   });
-  return { item: get(db, workspaceId, id), created: true };
+  const item = get(db, workspaceId, id);
+  require('../autonomous/service').mirrorWorkItem(db, item);
+  return { item, created: true };
 }
 
 function get(db, workspaceId, workItemId) {
@@ -208,7 +210,9 @@ function resize(db, workspaceId, workItemId, input) {
     to: (input.recommendedAction || {}).quantity,
     reason: input.reason || 'the rules changed',
   });
-  return get(db, workspaceId, workItemId);
+  const changed = get(db, workspaceId, workItemId);
+  require('../autonomous/service').mirrorWorkItem(db, changed);
+  return changed;
 }
 
 /**
@@ -237,7 +241,9 @@ function recordAuthoritySnapshot(db, workspaceId, workItemId, input) {
     evidenceCount: (input.sourceEvidence || []).length,
     triggerEventId: input.triggerEventId || null,
   });
-  return get(db, workspaceId, workItemId);
+  const changed = get(db, workspaceId, workItemId);
+  require('../autonomous/service').mirrorWorkItem(db, changed);
+  return changed;
 }
 
 function find(db, workspaceId, workItemId) {
@@ -343,7 +349,9 @@ function transition(db, workspaceId, workItemId, status, extra = {}) {
   );
 
   recordEvent(db, workspaceId, workItemId, status.toLowerCase(), extra.detail || {}, extra.approvedByUserId);
-  return get(db, workspaceId, workItemId);
+  const changed = get(db, workspaceId, workItemId);
+  require('../autonomous/service').mirrorWorkItem(db, changed);
+  return changed;
 }
 
 function recordEvent(db, workspaceId, workItemId, event, detail, actorUserId) {

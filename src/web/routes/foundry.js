@@ -22,6 +22,7 @@ const syntheticMode = require('../../synthetic/data-mode');
 const syntheticRequest = require('../../synthetic/request-spec');
 const onboardingPriority = require('../../foundry/onboarding-priority');
 const realBusinessGrounding = require('../../foundry/real-business-grounding');
+const requirementCoverage = require('../../foundry/requirement-coverage');
 
 const router = express.Router();
 router.use('/foundry', requireAuth);
@@ -36,6 +37,11 @@ router.get(
     const configuration = planApplier.getConfiguration(req.db, req.ctx.workspaceId);
     if (configuration && configuration.configuredAt) {
       const stats = inventoryQuery.overview(req.db, req.ctx.workspaceId);
+      // Once the operating model exists, "describe" means describing products
+      // to add. It must never reopen business setup or drop into a manual form.
+      if (req.path === '/foundry/describe') {
+        return res.redirect(303, '/inventory/describe');
+      }
       return res.page('foundry/home', {
         title: 'Foundry',
         nav: 'foundry',
@@ -82,6 +88,12 @@ function firstWords(text, max = 90) {
   const cut = clean.slice(0, max);
   const space = cut.lastIndexOf(' ');
   return `${(space > 40 ? cut.slice(0, space) : cut).trim()}…`;
+}
+
+function completedJobTarget(job) {
+  if (!job || !job.result) return null;
+  return job.result.redirectTo
+    || (job.result.understandingId ? `/foundry/proposal/${job.result.understandingId}` : null);
 }
 
 /**
@@ -159,9 +171,41 @@ router.get(
       return res.redirect(303, '/foundry');
     }
     if (job.status === 'done' && job.result) {
-      return res.redirect(303, `/foundry/proposal/${job.result.understandingId}`);
+      const target = completedJobTarget(job);
+      if (target) return res.redirect(303, target);
+      if (job.kind === 'catalogue_review' && job.result.question) {
+        req.session.pendingActionQuestion = {
+          question: job.result.question,
+          instruction: job.result.instruction,
+          choices: job.result.choices || null,
+          continuation: job.result.continuation || null,
+        };
+        return res.redirect(303, '/actions');
+      }
+      if (job.kind === 'catalogue_review' && job.result.catalogueReview) {
+        return res.redirect(303, `/inventory/catalogue-review/${job.id}`);
+      }
+      if (job.kind === 'catalogue_review') {
+        return res.status(422).page('inventory/describe', {
+          title: 'Tell Foundry what you sell',
+          nav: 'inventory',
+          description: job.description || '',
+          error: job.result.errorMessage
+            || 'Foundry could not make a safe product preview from that description. Nothing was added.',
+          catalogueReview: null,
+        });
+      }
     }
     if (job.status === 'failed') {
+      if (job.kind === 'catalogue_review') {
+        return res.status(503).page('inventory/describe', {
+          title: 'Tell Foundry what you sell',
+          nav: 'inventory',
+          description: job.description || '',
+          error: job.error.message,
+          catalogueReview: null,
+        });
+      }
       return res.status(400).page('foundry/setup', {
         title: 'Set up your inventory',
         nav: 'foundry',
@@ -197,8 +241,12 @@ router.get(
       // rather than only counting the total upward.
       timeline: job.timeline,
       elapsedMs: job.elapsedMs,
-      redirectTo:
-        job.status === 'done' && job.result ? `/foundry/proposal/${job.result.understandingId}` : null,
+      // A completed catalogue review can finish on this same URL with a
+      // correction screen rather than a separate proposal. Give the browser a
+      // real destination so it does not keep polling a job that is already done.
+      redirectTo: job.status === 'done'
+        ? (completedJobTarget(job) || `/foundry/thinking/${job.id}`)
+        : null,
       error: job.error ? job.error.message : null,
     });
   })
@@ -235,6 +283,11 @@ router.get(
     const displayUnderstanding = JSON.parse(JSON.stringify(stored.understanding));
     if (generationContext.mode === 'production' && stored.provider !== 'document-evidence') {
       realBusinessGrounding.ground(displayUnderstanding, stored.source_description);
+    } else if (stored.provider !== 'document-evidence') {
+      displayUnderstanding.statedRequirements = requirementCoverage.reconcile(
+        stored.source_description,
+        displayUnderstanding.statedRequirements
+      );
     }
     const nextOnboardingStep = onboardingPriority.nextStep(req.db, req.ctx.workspaceId, {
       workspaceMode: generationContext.mode,
@@ -251,6 +304,7 @@ router.get(
       nav: 'foundry',
       understandingId: stored.id,
       understanding: displayUnderstanding,
+      requirementSummary: requirementCoverage.summarize(displayUnderstanding.statedRequirements),
       syntheticSetup: generationContext.allowed ? syntheticRequest.parse(stored.source_description) : null,
       onboardingPriority: nextOnboardingStep,
       setupDocument,
@@ -291,6 +345,48 @@ router.get(
       recommendations: understandingService.listRecommendations(req.db, req.ctx.workspaceId, stored.id),
       existingLocations: repo.listLocations(req.db, req.ctx.workspaceId),
     });
+  })
+);
+
+/**
+ * Continue a reviewed description with the real record source the owner chose.
+ * This route exists specifically so the proposal never falls back to the
+ * generic first-step chooser and loops through the same description again.
+ */
+router.post(
+  '/foundry/proposal/:id/source',
+  asyncRoute(async (req, res) => {
+    const stored = understandingService.getUnderstanding(req.db, req.ctx.workspaceId, req.params.id);
+    if (!stored) {
+      req.flash('error', 'That proposal is no longer available.');
+      return res.redirect(303, '/foundry');
+    }
+
+    const choice = trimOrNull(req.body.recordSource);
+    const destinations = {
+      spreadsheet: '/onboarding/migrations/new',
+      software: '/onboarding/system',
+      mailbox: '/onboarding/mailbox',
+    };
+    const destination = destinations[choice];
+    if (!destination) {
+      req.flash('error', 'Choose how you want to add the real inventory records.');
+      return res.redirect(303, `/foundry/proposal/${stored.id}`);
+    }
+
+    if (choice === 'mailbox') {
+      // A mailbox supplies evidence but is not itself a source-of-truth mode.
+      onboardingPaths.setStatus(req.db, req.ctx.workspaceId, 'collecting', {
+        describedAs: stored.source_description,
+      });
+    } else {
+      onboardingPaths.choose(req.db, req.ctx.workspaceId, choice, {
+        chosenBy: 'customer',
+        reason: 'Chosen after reviewing Foundry’s understanding of this inventory.',
+        describedAs: stored.source_description,
+      });
+    }
+    return res.redirect(303, destination);
   })
 );
 

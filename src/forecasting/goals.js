@@ -24,6 +24,7 @@ const DEFAULTS = {
   serviceLevel: 'balanced',
   maxDaysOfSupply: null,
   inventoryCapMinor: null,
+  cashReserveMinor: null,
   coverDays: 30,
   reviewDays: 7,
   sourceKeepDays: 21,
@@ -52,6 +53,9 @@ function forWorkspace(db, workspaceId) {
 
   const cap = Number(stored[KEYS.INVENTORY_CAP.key]);
   if (Number.isFinite(cap) && cap > 0) goals.inventoryCapMinor = cap;
+
+  const reserve = Number(stored[KEYS.CASH_RESERVE.key]);
+  if (Number.isFinite(reserve) && reserve >= 0) goals.cashReserveMinor = reserve;
 
   const cover = Number(stored[KEYS.TARGET_DAYS_OF_STOCK.key]);
   if (Number.isFinite(cover) && cover > 0) goals.coverDays = cover;
@@ -98,6 +102,7 @@ const GOAL_KEYS = new Set([
   preferences.KEYS.SERVICE_LEVEL.key,
   preferences.KEYS.MAX_DAYS_OF_SUPPLY.key,
   preferences.KEYS.INVENTORY_CAP.key,
+  preferences.KEYS.CASH_RESERVE.key,
   preferences.KEYS.PRIORITISE_CORE_PRODUCTS.key,
   preferences.KEYS.CONSERVATIVE_SEASONAL.key,
   preferences.KEYS.TARGET_DAYS_OF_STOCK.key,

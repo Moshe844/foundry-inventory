@@ -22,6 +22,7 @@
 const modes = require('./modes');
 const paths = require('../onboarding/paths');
 const policyService = require('./policy-service');
+const attributes = require('../catalog/attributes');
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -302,6 +303,11 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
     checks.push(check('Product is in scope', false, 'this product is not on the policy'));
     return refuse(`${policy.name} does not cover this product.`);
   }
+  if (policy.scope.productSelector
+      && !attributes.matchesProduct(db, workspaceId, plan, policy.scope.productSelector)) {
+    checks.push(check('Product group is in scope', false, 'its attributes do not match this policy group'));
+    return refuse(`${policy.name} does not cover this product group.`);
+  }
   if (policy.exclusions.includes(plan.skuId) || policy.exclusions.includes(plan.itemId)) {
     checks.push(check('Product is not excluded', false, 'explicitly excluded'));
     return refuse(`${policy.name} excludes this product.`);
@@ -313,11 +319,21 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
     checks.push(check('Locations are in scope', false, 'one of these locations is not on the policy'));
     return refuse(`${policy.name} does not cover both of those locations.`);
   }
+  if (policy.scope.locationSelector && !locations.every((id) =>
+    attributes.matches(db, workspaceId, 'location', id, policy.scope.locationSelector))) {
+    checks.push(check('Location group is in scope', false, 'a location does not match this policy group'));
+    return refuse(`${policy.name} does not cover both location groups.`);
+  }
   checks.push(check('Locations are in scope', true, null));
 
   if (policy.supplierScope.length && (!plan.supplierId || !policy.supplierScope.includes(plan.supplierId))) {
     checks.push(check('Supplier is in scope', false, 'this supplier is not on the policy'));
     return refuse(`${policy.name} does not cover this supplier.`);
+  }
+  if (policy.scope.supplierSelector && (!plan.supplierId
+      || !attributes.matches(db, workspaceId, 'supplier', plan.supplierId, policy.scope.supplierSelector))) {
+    checks.push(check('Supplier group is in scope', false, 'the supplier does not match this policy group'));
+    return refuse(`${policy.name} does not cover this supplier group.`);
   }
   if (plan.supplierId) checks.push(check('Supplier is in scope', true, null));
 

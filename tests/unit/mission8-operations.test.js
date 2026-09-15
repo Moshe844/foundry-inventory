@@ -12,6 +12,7 @@ const sales = require('../../src/sales/sales-order-service');
 const shipments = require('../../src/sales/shipment-service');
 const counts = require('../../src/operations/counts');
 const returns = require('../../src/operations/returns');
+const kits = require('../../src/domain/kit-service');
 const waves = require('../../src/operations/fulfillment-waves');
 const suppliers = require('../../src/purchasing/supplier-service');
 const purchaseOrders = require('../../src/purchasing/po-service');
@@ -66,13 +67,15 @@ test('count plans persist, launch once, advance their due date, and preserve lot
   inventory.receive(env.db,env.ctx,{skuId:item.skuId,locationId:env.workspace.main.id,quantity:5,lotCode:'LOT-A'});
   inventory.receive(env.db,env.ctx,{skuId:item.skuId,locationId:env.workspace.main.id,quantity:3,lotCode:'LOT-B'});
   const plan=counts.createPlan(env.db,env.ctx,env.membership,{name:'Weekly lot count',countKind:'CYCLE',locationId:env.workspace.main.id,
-    frequencyDays:7,nextDueDate:'2026-09-10',skuIds:[item.skuId],blindCount:true});
+    frequencyDays:7,nextDueDate:TODAY,skuIds:[item.skuId],blindCount:true});
   const session=counts.launchPlan(env.db,env.ctx,env.membership,plan.id);
   const replay=counts.launchPlan(env.db,env.ctx,env.membership,plan.id);
   assert.equal(replay.id,session.id,'starting the same active plan cannot duplicate work');
   assert.deepEqual(session.lines.map((line)=>Number(line.expected_quantity)).sort((a,b)=>a-b),[3,5]);
   assert.equal(session.lines.every((line)=>Boolean(line.lot_id)),true,'each counted quantity remains attached to an exact lot');
-  assert.equal(counts.requirePlan(env.db,env.workspace.workspaceId,plan.id).next_due_date,'2026-09-17');
+  const nextDue = new Date(`${TODAY}T00:00:00.000Z`);
+  nextDue.setUTCDate(nextDue.getUTCDate() + 7);
+  assert.equal(counts.requirePlan(env.db,env.workspace.workspaceId,plan.id).next_due_date,nextDue.toISOString().slice(0,10));
 });
 
 test('customer RMA holds stock in quarantine until evidence-based inspection',()=>{
@@ -94,6 +97,42 @@ test('customer RMA holds stock in quarantine until evidence-based inspection',()
   assert.equal(repo.getBalance(env.db,env.workspace.workspaceId,item.skuId,quarantine.id),0);
   assert.equal(repo.getBalance(env.db,env.workspace.workspaceId,item.skuId,env.workspace.main.id),9);
   assert.equal(env.db.prepare("SELECT COUNT(*) AS n FROM movements WHERE reference=? AND reason_code='damaged'").get(rma.return_number).n,1);
+});
+
+test('returning a kit receives and disposes its component stock, never fictional kit stock',()=>{
+  const env=setup('Kit returns company');
+  const cleaner=makeQuantityItem(env.db,env.ctx,{name:'Kit cleaner',baseCode:'KIT-CLEAN'});
+  const cloth=makeQuantityItem(env.db,env.ctx,{name:'Kit cloth',baseCode:'KIT-CLOTH'});
+  const kit=makeQuantityItem(env.db,env.ctx,{name:'Maintenance kit',baseCode:'KIT-RETURN'});
+  kits.define(env.db,env.ctx,{kitSkuId:kit.skuId,components:[
+    {skuId:cleaner.skuId,quantity:2},{skuId:cloth.skuId,quantity:3},
+  ]});
+  prices.setPrice(env.db,env.ctx,{skuId:kit.skuId,amount:'40.00',currency:'USD'});
+  inventory.receive(env.db,env.ctx,{skuId:cleaner.skuId,locationId:env.workspace.main.id,quantity:10});
+  inventory.receive(env.db,env.ctx,{skuId:cloth.skuId,locationId:env.workspace.main.id,quantity:10});
+  let order=sales.createOrder(env.db,env.ctx,{customerName:'Kit return customer',
+    fulfillmentLocationId:env.workspace.main.id,lines:[{skuId:kit.skuId,quantity:1}]});
+  order=sales.confirm(env.db,env.ctx,order.id);
+  order=sales.fulfill(env.db,env.ctx,order.id,{}, {idempotencyKey:`kit-return-sale:${order.id}`});
+  const quarantine=locations.createLocation(env.db,env.ctx,{name:'Kit quarantine',kind:'zone'});
+  let rma=returns.requestCustomerReturn(env.db,env.ctx,env.membership,{salesOrderId:order.id,
+    quarantineLocationId:quarantine.id,resolution:'NO_REFUND',reason:'Customer return',
+    lines:[{salesOrderLineId:order.lines[0].id,quantity:1}]});
+  assert.deepEqual(rma.lines[0].kitComponents.map((row)=>[row.sku_code,Number(row.quantity_authorized)]),
+    [['KIT-CLEAN',2],['KIT-CLOTH',3]]);
+  rma=returns.authorizeCustomerReturn(env.db,env.ctx,env.membership,rma.id);
+  rma=returns.receiveCustomerReturn(env.db,env.ctx,env.membership,rma.id,{lines:[{lineId:rma.lines[0].id,quantity:1}]});
+  assert.equal(repo.getBalance(env.db,env.workspace.workspaceId,cleaner.skuId,quarantine.id),2);
+  assert.equal(repo.getBalance(env.db,env.workspace.workspaceId,cloth.skuId,quarantine.id),3);
+  assert.equal(repo.getBalance(env.db,env.workspace.workspaceId,kit.skuId,quarantine.id),0);
+  rma=returns.inspectCustomerReturn(env.db,env.ctx,env.membership,rma.id,{lines:[{
+    lineId:rma.lines[0].id,restock:1,scrap:0,repair:0,
+    restockLocationId:env.workspace.main.id,conditionNote:'Complete kit returned sealed',
+  }]});
+  assert.equal(rma.status,'COMPLETED');
+  assert.equal(repo.getBalance(env.db,env.workspace.workspaceId,cleaner.skuId,env.workspace.main.id),10);
+  assert.equal(repo.getBalance(env.db,env.workspace.workspaceId,cloth.skuId,env.workspace.main.id),10);
+  assert.equal(repo.getBalance(env.db,env.workspace.workspaceId,kit.skuId,env.workspace.main.id),0);
 });
 
 test('supplier RTV removes stock once and leaves an explicit credit mismatch',()=>{

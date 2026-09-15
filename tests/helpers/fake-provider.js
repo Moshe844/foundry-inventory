@@ -24,7 +24,9 @@
  * no longer matched, so the fixture answers the schema it is given instead.
  */
 function fakeUnderstandingProvider(understanding, options = {}) {
-  const { recommendations, unresolvedDecisions, ownerProvidedInventory, ...core } = understanding;
+  const {
+    statedRequirements, recommendations, unresolvedDecisions, ownerProvidedInventory, ...core
+  } = understanding;
   const records = {
     ownerProvidedInventory: ownerProvidedInventory
       || { hasRecords: false, lines: [], ambiguities: [] },
@@ -32,7 +34,7 @@ function fakeUnderstandingProvider(understanding, options = {}) {
   return fakeProvider((request) => {
     if (request.schemaName === 'inventory_understanding_records') return records;
     if (request.schemaName === 'inventory_understanding_advice') {
-      return { recommendations, unresolvedDecisions };
+      return { statedRequirements, recommendations, unresolvedDecisions };
     }
     return core;
   }, options);
@@ -93,6 +95,15 @@ function buildUnderstanding(overrides = {}) {
     likelyRoles: ['Warehouse staff'],
     terminology: { item: '', location: '', serialUnit: '', lot: '', variant: '' },
     importantOperationalPatterns: ['Single location keeps things simple.'],
+    statedRequirements: [
+      {
+        sourceText: 'sell widgets',
+        understanding: 'Track widgets as inventory products.',
+        semanticRole: 'operational_requirement',
+        status: 'supported_today',
+        nextStep: '',
+      },
+    ],
     recommendedConfiguration: {
       trackingMode: 'quantity',
       usesVariants: false,

@@ -268,5 +268,56 @@ function recover(db, ctx, membership) {
   return recovered;
 }
 
+function executeAutonomously(db, ctx, membership, id) {
+  const repairCase = get(db, ctx.workspaceId, id);
+  const autonomous = require('../autonomous/service');
+  const operation = autonomous.create(db, ctx, {
+    operationType:'repair.execute', idempotencyKey:`repair-case:${id}`,
+    sourceKind:'repair_case', sourceId:id,
+    title:`Repair ${repairCase.symptom}`,
+    summary:repairCase.failedInvariant,
+    link:`/repairs/${id}`,
+    evidence:repairCase.evidence,
+    decision:{ repairCaseId:id, adapterId:repairCase.adapterId,
+      requiresApproval:repairCase.requiresApproval },
+    affectedEntities:repairCase.affectedRecords,
+    authorityDimensions:{ confidence:repairCase.confidence,
+      risk:repairCase.materiality === 'material' ? 'critical' : 'high' },
+    expectedOutcome:{ repairStatus:'RESOLVED', invariant:repairCase.failedInvariant },
+  });
+  return autonomous.runSync(db, ctx, membership, operation.id);
+}
+
+require('../autonomous/service').registerAdapter('repair.execute', {
+  owner:'repairs.service',
+  authorize:({ db, ctx, membership, operation, execution }) => {
+    const repairCase = get(db, ctx.workspaceId, operation.decision.repairCaseId);
+    const permitted = (repairCase.requiredPermissions || []).every((permission) =>
+      permissions.can(membership, permission));
+    const requiresOwner = repairCase.requiresApproval && !repairCase.approvedAt;
+    const checks = [
+      { name:'executionState', passed:execution.allowed,
+        reason:execution.because || 'Repair automation is active.' },
+      { name:'domainPermission', passed:permitted,
+        reason:'The responsible actor must retain every permission required by the repair adapter.' },
+      { name:'materialJudgment', passed:!requiresOwner,
+        reason:requiresOwner ? 'This repair contains material judgment and requires owner approval.'
+          : 'This repair is deterministic or already has the required approval.' },
+    ];
+    return { allowed:checks.every((check) => check.passed), checks };
+  },
+  execute:({ db, ctx, membership, operation }) => execute(db, ctx, membership,
+    operation.decision.repairCaseId),
+  verify:({ db, ctx, operation }) => {
+    const repairCase = get(db, ctx.workspaceId, operation.decision.repairCaseId);
+    const passed = repairCase.status === 'RESOLVED'
+      && repairCase.verification?.passed === true;
+    return { passed, reason:passed
+      ? 'The repair adapter reread every affected domain and its invariant now passes.'
+      : (repairCase.errorMessage || 'The repair case is not independently verified.'),
+    repairCaseId:repairCase.id, repairStatus:repairCase.status };
+  },
+});
+
 module.exports = { ACTIVE, hydrate, keyFor, open, openAndAssess, get, list, events,
-  diagnose, simulate, approve, execute, verify, recover };
+  diagnose, simulate, approve, execute, executeAutonomously, verify, recover };

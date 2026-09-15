@@ -40,6 +40,7 @@ async function call(ctx, path, options = {}) {
       authorization: `Basic ${Buffer.from(`${apiKey(ctx)}:`).toString('base64')}`,
       'content-type': 'application/json',
       accept: 'application/json',
+      ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
@@ -182,6 +183,7 @@ async function buy(ctx, input = {}) {
   for (let index = 0; index < ids.length; index += 1) {
     bought.push(await call(ctx, `/shipments/${encodeURIComponent(ids[index])}/buy`, {
       method: 'POST', body: { rate: { id: rateIds[index] || rateIds[0] } },
+      headers: input.idempotencyKey ? { 'x-idempotency-key': `${input.idempotencyKey}:${index}` } : {},
     }));
   }
   const lead = bought[0];
@@ -189,6 +191,7 @@ async function buy(ctx, input = {}) {
   return {
     providerShipmentId: lead.id,
     providerShipmentIds: bought.map((row) => row.id),
+    providerLabelIds: bought.map((row) => row.id),
     carrier: String(lead.selected_rate?.carrier || '').toLowerCase(),
     service: lead.selected_rate?.service || null,
     trackingNumber: lead.tracking_code || null,
@@ -200,6 +203,28 @@ async function buy(ctx, input = {}) {
     currency: lead.selected_rate?.currency || 'USD',
     deliveryDate: lead.selected_rate?.delivery_date
       ? String(lead.selected_rate.delivery_date).slice(0, 10) : null,
+  };
+}
+
+/** Ask EasyPost to refund unused postage. Its submitted state is deliberately
+ * not called refunded: the carrier may still reject it after this response. */
+async function voidLabel(ctx, input = {}) {
+  const ids = (input.providerReferences || input.providerShipmentIds || []).filter(Boolean);
+  if (!ids.length) throw new ValidationError('Foundry has no EasyPost shipment reference to refund.');
+  const answers = [];
+  for (let index = 0; index < ids.length; index += 1) {
+    answers.push(await call(ctx, `/shipments/${encodeURIComponent(ids[index])}/refund`, {
+      method: 'POST',
+      headers: input.idempotencyKey ? { 'x-idempotency-key': `${input.idempotencyKey}:${index}` } : {},
+    }));
+  }
+  const states = answers.map((row) => String(row.refund_status || '').toLowerCase());
+  const failed = states.some((state) => ['rejected','failed'].includes(state));
+  const complete = states.length > 0 && states.every((state) => ['refunded','success'].includes(state));
+  return {
+    status: failed ? 'FAILED' : complete ? 'SUCCEEDED' : 'PENDING',
+    references: ids,
+    detail: states.filter(Boolean).join(', ') || 'Refund submitted to EasyPost.',
   };
 }
 
@@ -311,5 +336,5 @@ function readEvent(event = {}) {
   };
 }
 
-module.exports = { isConfigured, quote, buy, track, verifyEvent, readEvent,
+module.exports = { isConfigured, quote, buy, voidLabel, track, verifyEvent, readEvent,
   address, parcel, statusOf, readRate, call };

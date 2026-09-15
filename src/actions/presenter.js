@@ -19,6 +19,7 @@ const ACTION_LABEL = {
   transfer: 'transfer',
   adjust: 'correct the count for',
   create_item: 'add',
+  configure_kit: 'configure',
   archive_item: 'archive',
   add_location: 'add a location',
   rename_terminology: 'change some wording',
@@ -30,6 +31,7 @@ const ACTION_PAST_LABEL = {
   transfer: 'transferred',
   adjust: 'corrected the count for',
   create_item: 'added',
+  configure_kit: 'configured',
   archive_item: 'archived',
   add_location: 'added the location',
   rename_terminology: 'changed the wording for',
@@ -41,6 +43,7 @@ const ACTION_TITLE = {
   transfer: 'Foundry is ready to transfer',
   adjust: 'Foundry is ready to correct a count',
   create_item: 'Foundry is ready to add a product',
+  configure_kit: 'Foundry is ready to configure a kit',
   archive_item: 'Foundry is ready to archive a product',
   add_location: 'Foundry is ready to add a location',
   rename_terminology: 'Foundry is ready to change some wording',
@@ -110,13 +113,15 @@ function subjectOf(db, workspaceId, proposal) {
     }
     if (proposal.actionType === 'create_item') {
       const axes = proposal.settings.axes || [];
+      const exactVariants = proposal.settings.exactVariants || [];
       const axisDetail = axes.length && axes.every((axis) => axis.values.length === 1)
         ? axes.map((axis) => `${axis.name}: ${axis.values[0]}`).join(' · ')
         : null;
       return {
         name: proposal.settings.name,
-        detail: [axisDetail, proposal.settings.code].filter(Boolean).join(' · ') || null,
+        detail: [axisDetail, proposal.settings.code || (exactVariants.length === 1 ? exactVariants[0].code : null)].filter(Boolean).join(' · ') || null,
         axes,
+        exactVariants,
         variantCount: (proposal.expectedAfterState && proposal.expectedAfterState.variants) || 1,
         trackingMode: proposal.settings.trackingMode,
       };
@@ -183,6 +188,8 @@ function oneLine(db, workspaceId, proposal) {
         ? `Add ${proposal.settings.name} with ${count} variants`
         : `Add the product ${proposal.settings.name}`;
     }
+    case 'configure_kit':
+      return `Configure ${name} as a kit with ${proposal.settings.components.length} component SKU${proposal.settings.components.length === 1 ? '' : 's'}`;
     case 'archive_item':
       return `Archive ${name} from the active catalogue`;
     case 'add_location':
@@ -203,6 +210,23 @@ function present(db, workspaceId, proposal, options = {}) {
   const before = options.current || proposal.expectedBeforeState || {};
   const after = proposal.expectedAfterState || {};
   const rows = [];
+
+  if (proposal.actionType === 'configure_kit') {
+    const beforeBySku = new Map((before.components || []).map((component) => [component.skuId, component]));
+    const afterBySku = new Map((after.components || []).map((component) => [component.skuId, component]));
+    const all = new Set([...beforeBySku.keys(), ...afterBySku.keys()]);
+    for (const skuId of all) {
+      const oldComponent = beforeBySku.get(skuId);
+      const newComponent = afterBySku.get(skuId);
+      const component = newComponent || oldComponent;
+      rows.push({
+        label: `${component.name} · ${component.code}`,
+        before: oldComponent ? oldComponent.quantity : 0,
+        after: newComponent ? newComponent.quantity : 0,
+        direction: 'configuration',
+      });
+    }
+  }
 
   if (proposal.sourceLocationId) {
     rows.push({
@@ -228,6 +252,18 @@ function present(db, workspaceId, proposal, options = {}) {
       direction: 'in',
     });
   }
+  if (proposal.actionType === 'create_item' && Array.isArray(proposal.settings.catalogueRecords)) {
+    for (const record of proposal.settings.catalogueRecords) {
+      for (const location of record.locations || []) {
+        rows.push({
+          label: `${record.code} · ${location.name}`,
+          before: 0,
+          after: location.quantity,
+          direction: 'in',
+        });
+      }
+    }
+  }
 
   // When the action is about one batch, every number above is that batch's, not
   // the product's. Saying "Total on hand 90 → 5" of a product with 115 on the
@@ -236,14 +272,16 @@ function present(db, workspaceId, proposal, options = {}) {
   const lotScoped = Boolean(proposal.lotId);
   const lotName = lotScoped && subject.detail ? subject.detail : null;
 
-  const total = proposal.actionType === 'archive_item' || removals.kindOf(proposal)
+  const total = ['archive_item', 'configure_kit'].includes(proposal.actionType) || removals.kindOf(proposal)
     ? { before: before.total ?? 0, after: before.total ?? 0 }
     : {
     before: before.total ?? 0,
     after:
       proposal.actionType === 'transfer'
         ? before.total ?? 0
-        : proposal.actionType === 'receive' || (proposal.actionType === 'create_item' && proposal.settings.initialStock)
+        : proposal.actionType === 'create_item' && proposal.settings.catalogueRecords
+          ? proposal.expectedAfterState.total || 0
+          : proposal.actionType === 'receive' || (proposal.actionType === 'create_item' && proposal.settings.initialStock)
           ? (before.total ?? 0) + (proposal.quantity || 0)
           : proposal.actionType === 'issue'
             ? (before.total ?? 0) - (proposal.quantity || 0)
@@ -271,7 +309,14 @@ function present(db, workspaceId, proposal, options = {}) {
    * and read as though something had been counted.
    */
   const removalKind = removals.kindOf(proposal);
-  const statusRow = proposal.actionType === 'archive_item'
+  const statusRow = proposal.actionType === 'configure_kit'
+    ? {
+      label: 'Kit definition',
+      note: 'component quantities required for one kit',
+      before: before.componentCount ? `${before.componentCount} component SKUs` : 'Not configured',
+      after: `${after.componentCount || 0} component SKUs`,
+    }
+    : proposal.actionType === 'archive_item'
     ? { label: 'Catalogue status', note: 'stock remains unchanged', before: 'Active', after: 'Archived' }
     : removalKind
       ? {
@@ -314,7 +359,8 @@ function present(db, workspaceId, proposal, options = {}) {
     total,
     totalChanges: total.before !== total.after,
     reasonLabel: proposal.reasonCode ? REASON_LABEL[proposal.reasonCode] || proposal.reasonCode : null,
-    isMutation: policy.MUTATION_ACTIONS.includes(proposal.actionType) || Boolean(proposal.settings.initialStock),
+    isMutation: policy.MUTATION_ACTIONS.includes(proposal.actionType)
+      || Boolean(proposal.settings.initialStock) || Boolean(proposal.settings.catalogueRecords),
     needsWarningConfirm: proposal.approvalRequirement === policy.APPROVAL.CONFIRM_WITH_WARNING,
     oneLine: oneLine(db, workspaceId, proposal),
     // Quantity may only be revised on the operations where it is meaningful.
@@ -329,6 +375,21 @@ function outcome(db, workspaceId, proposal, execution) {
   const before = execution.before || {};
   const after = execution.after || {};
   const lines = [];
+
+  if (proposal.actionType === 'configure_kit') {
+    const beforeBySku = new Map((before.components || []).map((component) => [component.skuId, component]));
+    const afterBySku = new Map((after.components || []).map((component) => [component.skuId, component]));
+    for (const skuId of new Set([...beforeBySku.keys(), ...afterBySku.keys()])) {
+      const oldComponent = beforeBySku.get(skuId);
+      const newComponent = afterBySku.get(skuId);
+      const component = newComponent || oldComponent;
+      lines.push({
+        label: `${component.name} · ${component.code}`,
+        from: oldComponent ? oldComponent.quantity : 0,
+        to: newComponent ? newComponent.quantity : 0,
+      });
+    }
+  }
 
   if (before.sourceLocationName !== undefined || proposal.sourceLocationId) {
     lines.push({
@@ -362,7 +423,13 @@ function outcome(db, workspaceId, proposal, execution) {
   // The same bottom line as the preview: a record that changed state reports
   // that state, because "Total on hand 0 → 0" is not what happened to it.
   const removalKind = removals.kindOf(proposal);
-  const statusRow = removalKind
+  const statusRow = proposal.actionType === 'configure_kit'
+    ? {
+      label: 'Kit definition',
+      from: before.componentCount ? `${before.componentCount} component SKUs` : 'Not configured',
+      to: `${after.componentCount || 0} component SKUs`,
+    }
+    : removalKind
     ? {
       label: `${removalKind.label.charAt(0).toUpperCase()}${removalKind.label.slice(1)} record`,
       from: 'Active',

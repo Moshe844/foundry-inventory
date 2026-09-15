@@ -35,10 +35,12 @@ const { nowIso } = require('../lib/util');
 /** The three questions, answered separately so the reason can be reported. */
 function whatFoundryMay(db, workspaceId, terms, amountMinor) {
   const state = require('../autopilot/modes').get(db, workspaceId);
-  if (state.paused || state.suspended || state.mode === 'OBSERVE') {
+  const accountingSuspended = state.suspended && (!state.suspendedScope
+    || ['accounting','finance','payments'].includes(state.suspendedScope));
+  if (state.paused || accountingSuspended || state.mode === 'OBSERVE') {
     return { prepare: false, send: false,
       because: state.paused ? 'Foundry is paused.'
-        : state.suspended ? 'Foundry has stopped itself and is waiting to be looked at.'
+        : accountingSuspended ? 'Foundry has stopped payment work and is waiting to be looked at.'
           : 'Foundry is set to watch only, so it prepares nothing on its own.' };
   }
 
@@ -132,30 +134,86 @@ async function attempt(db, ctx, orderId) {
     return { asked: false, sent: false, because: 'No payment provider is connected.' };
   }
 
-  const asked = await collection.request(db, ctx, orderId, { purpose });
-  const comms = require('./customer-communications');
-  const draft = comms.preparePaymentLink(db, ctx, asked.id);
-
   if (!may.send) {
+    const asked = await collection.request(db, ctx, orderId, { purpose });
+    const comms = require('./customer-communications');
+    const draft = comms.preparePaymentLink(db, ctx, asked.id);
     return { asked: true, sent: false, request: asked, message: draft, because: may.because };
   }
 
-  /*
-   * The send is caught separately from everything above it, because by this
-   * point the money HAS been asked for: there is a live invoice at the
-   * provider with the customer's name on it. Letting a mailbox failure report
-   * "nothing was asked for" would tell the owner the opposite of the truth and
-   * invite them to ask a second time.
-   */
-  try {
-    await comms.sendThroughMailbox(db, workspaceId, draft.id, null);
-  } catch (error) {
-    return { asked: true, sent: false, request: asked,
-      message: comms.get(db, workspaceId, draft.id),
-      because: `The link was made but could not be sent: ${error.message || error}` };
+  const autonomous = require('../autonomous/service');
+  const operation = autonomous.create(db, ctx, {
+    operationType:'finance.collect', idempotencyKey:`collect:${orderId}:${purpose}`,
+    sourceKind:'sales_order', sourceId:orderId,
+    title:`Ask ${customer.name} to pay`,
+    summary:`The recorded terms say ${purpose.toLowerCase()} payment is due now.`,
+    link:`/orders/${orderId}/detail?open=money#money`,
+    evidence:[{ label:'Amount due', value:(amountMinor / 100).toFixed(2) },
+      { label:'Payment stage', value:purpose }, { label:'Customer', value:customer.name }],
+    decision:{ orderId, purpose, customerId:customer.id },
+    affectedEntities:{ salesOrderId:orderId, customerId:customer.id },
+    authorityDimensions:{ valueMinor:amountMinor, customerId:customer.id,
+      confidence:'high', risk:'high' },
+    expectedOutcome:{ paymentRequestCreated:true, customerMessageStatus:'SENT' },
+  });
+  const governed = await autonomous.run(db, ctx, null, operation.id);
+  if (governed.operation.status !== 'COMPLETED') {
+    const actual = governed.operation.actualOutcome || {};
+    return { asked:Boolean(actual.request), sent:false, request:actual.request || null,
+      message:actual.message || null,
+      because:governed.operation.errorMessage || (governed.authority?.checks || [])
+        .filter((check) => !check.passed).map((check) => check.reason).join(' '),
+      operation:governed.operation };
   }
-  return { asked: true, sent: true, request: asked,
-    message: comms.get(db, workspaceId, draft.id), because: null, at: nowIso() };
+  return { ...governed.operation.actualOutcome, operation:governed.operation };
 }
+
+async function collectAndSend(db, ctx, orderId, purpose) {
+  const collection = require('../payments/collection');
+  const comms = require('./customer-communications');
+  const asked = await collection.request(db, ctx, orderId, { purpose });
+  const draft = comms.preparePaymentLink(db, ctx, asked.id);
+  try {
+    await comms.sendThroughMailbox(db, ctx.workspaceId, draft.id, null);
+  } catch (error) {
+    return { asked:true, sent:false, request:asked,
+      message:comms.get(db, ctx.workspaceId, draft.id),
+      because:`The link was made but could not be sent: ${error.message || error}` };
+  }
+  return { asked:true, sent:true, request:asked,
+    message:comms.get(db, ctx.workspaceId, draft.id), because:null, at:nowIso() };
+}
+
+require('../autonomous/service').registerAdapter('finance.collect', {
+  owner:'sales.payment-automation',
+  authorize:({ db, ctx, operation, execution }) => {
+    const order = db.prepare('SELECT * FROM sales_orders WHERE id = ? AND workspace_id = ?')
+      .get(operation.decision.orderId, ctx.workspaceId);
+    const terms = order && require('./payment-terms').forCustomer(db, ctx.workspaceId,
+      order.customer_id);
+    const current = whatFoundryMay(db, ctx.workspaceId, terms,
+      Number(operation.authorityDimensions.valueMinor || 0));
+    const checks = [
+      { name:'executionState', passed:execution.allowed,
+        reason:execution.because || 'Collection automation is active.' },
+      { name:'customerTerms', passed:current.send,
+        reason:current.because || 'The customer terms and collection limit allow this request.' },
+    ];
+    return { allowed:checks.every((check) => check.passed), checks };
+  },
+  execute:({ db, ctx, operation }) => collectAndSend(db, ctx,
+    operation.decision.orderId, operation.decision.purpose),
+  verify:({ db, ctx, operation, actualOutcome }) => {
+    const request = actualOutcome?.request?.id
+      ? require('../payments/collection').get(db, ctx.workspaceId, actualOutcome.request.id) : null;
+    const message = actualOutcome?.message?.id
+      ? require('./customer-communications').get(db, ctx.workspaceId, actualOutcome.message.id) : null;
+    const passed = Boolean(request && message?.status === 'SENT');
+    return { passed, reason:passed
+      ? 'The payment request exists once and the connected mailbox confirms the customer message was sent.'
+      : (actualOutcome?.because || 'The payment request and sent message did not both verify.'),
+    paymentRequestId:request?.id || null, communicationId:message?.id || null };
+  },
+});
 
 module.exports = { onMoneyDue, whatFoundryMay };

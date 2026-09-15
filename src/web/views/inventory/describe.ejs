@@ -1,0 +1,105 @@
+<a class="rm-head__back" href="/inventory"><%- helpers.icon('chevron', { size: 13 }) %> Back to inventory</a>
+
+<div class="rm-head">
+  <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Add products with Foundry</p>
+  <h1>Tell Foundry what you sell.</h1>
+  <p>Describe one product or your whole catalogue in ordinary words. Include any names, codes, options, quantities and locations you already know.</p>
+</div>
+
+<% if (error) { %>
+  <div class="flash flash--error" role="alert"><span><%= error %></span></div>
+<% } %>
+
+<% const review = typeof catalogueReview !== 'undefined' ? catalogueReview : null; %>
+<% if (review) { %>
+  <section class="rm-panel" aria-labelledby="catalogue-review-title" style="margin-bottom:16px">
+    <div class="rm-panel__body">
+      <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Foundry's understanding</p>
+      <h2 id="catalogue-review-title" style="margin:4px 0 6px">
+        Foundry analyzed all <%= review.recordCount %> supplied SKU record<%= review.recordCount === 1 ? '' : 's' %>
+      </h2>
+      <% if (review.understanding) { %>
+        <p style="margin:0"><%= review.understanding.overview %></p>
+        <p class="rm-quiet" style="margin:8px 0 0">
+          Model analysis completed<% if (review.understanding.usage && review.understanding.usage.model) { %> with <%= review.understanding.usage.model %><% } %><% if (review.understanding.usage && review.understanding.usage.latencyMs) { %> in <%= Math.max(1, Math.round(review.understanding.usage.latencyMs / 1000)) %> seconds<% } %>.
+          The exact values below remain grounded in what you supplied.
+        </p>
+        <details class="rm-work" style="margin-top:14px">
+          <summary>See how Foundry grouped the products and variants</summary>
+          <div class="rm-work__body">
+            <% review.understanding.productGroups.forEach(function(group) { %>
+              <div class="act-row">
+                <span class="act-place">
+                  <strong><%= group.records.map(function(record) { return record.name; }).filter(function(name, index, names) { return names.indexOf(name) === index; }).join(', ') %></strong>
+                  <small><%= group.reason %></small>
+                </span>
+                <span><%= group.records.map(function(record) { return record.code || ('Record ' + record.ordinal); }).join(', ') %></span>
+              </div>
+            <% }) %>
+          </div>
+        </details>
+      <% } else { %>
+        <p style="margin:0">Foundry preserved every supplied field, but did not receive a complete model analysis. Nothing was created.</p>
+      <% } %>
+    </div>
+  </section>
+
+  <section class="rm-panel" aria-labelledby="catalogue-issues-title" style="margin-bottom:16px">
+    <div class="rm-panel__body">
+      <h2 id="catalogue-issues-title" style="margin-top:0">Before Foundry can build the exact preview</h2>
+      <p class="rm-quiet">Foundry will not invent these missing facts. Resolve the items below, then it will return the complete product preview for your approval.</p>
+      <div style="display:grid;gap:12px;margin-top:14px">
+        <% (review.issues || []).forEach(function(issue) { %>
+          <article class="rm-note rm-note--warn">
+            <div>
+              <strong><%= issue.title %></strong>
+              <p style="margin:6px 0"><%= issue.detail %></p>
+              <p style="margin:0"><strong>What to change:</strong> <%= issue.fix %></p>
+            </div>
+          </article>
+        <% }) %>
+      </div>
+      <div class="btn-row" style="margin-top:16px">
+        <button class="btn btn--primary" type="button" data-open-details="correct-catalogue-records">Add the missing details and continue</button>
+        <a class="btn" href="/inventory">Not now</a>
+      </div>
+    </div>
+  </section>
+<% } %>
+
+<% function productForm(buttonLabel, busyLabel, autofocus) { %>
+  <form method="post" action="/inventory/describe" data-busy data-long-action>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="rm-composer">
+      <label class="visually-hidden" for="description">Products to add</label>
+      <textarea class="rm-composer__input" id="description" name="description" rows="8" maxlength="12000" required <%= autofocus ? 'autofocus' : '' %>
+        placeholder="Children's Oxford shoes, code OXF-100, in navy and black, sizes 6 through 12. Copper Elbow, code CE-100."><%= description %></textarea>
+      <div class="rm-composer__foot">
+        <span class="rm-quiet">Up to 12,000 characters. Foundry uses only the details you provide.</span>
+        <span class="right">
+          <button class="rm-btn" type="submit" data-busy-label="<%= busyLabel %>"><%= buttonLabel %></button>
+        </span>
+      </div>
+    </div>
+  </form>
+<% } %>
+
+<% if (review) { %>
+  <details class="rm-work" id="correct-catalogue-records" style="margin-bottom:16px">
+    <summary>Edit the products you supplied</summary>
+    <div class="rm-work__body"><% productForm('Check corrected records', 'Checking records…', false); %></div>
+  </details>
+<% } else { %>
+  <% productForm('Review products', 'Reviewing products…', true); %>
+<% } %>
+
+<div class="rm-note" style="margin-top:16px">
+  <%- helpers.icon('eye', { size: 16 }) %>
+  <span><strong>You review the exact products first.</strong> Foundry adds them only after you approve the preview. Quantities are never invented.</span>
+</div>
+
+<p class="rm-disclose">
+  <a href="/inventory/new">Add one product manually</a>
+  <a href="/onboarding/migrations/new">Import a file instead</a>
+  <a href="/onboarding/system">Connect a business system</a>
+</p>

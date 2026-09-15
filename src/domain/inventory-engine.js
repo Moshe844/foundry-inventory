@@ -940,14 +940,16 @@ function verifyIntegrity(db, workspaceId) {
 
   const ledgerMismatches = db
     .prepare(
-      `SELECT b.sku_id, b.location_id, b.on_hand,
-              COALESCE((SELECT SUM(m.quantity_delta) FROM movements m
-                        WHERE m.sku_id = b.sku_id AND m.location_id = b.location_id), 0) AS ledger
-         FROM balances b
-        WHERE b.workspace_id = ?`
+      `WITH movement_totals AS (
+         SELECT sku_id,location_id,SUM(quantity_delta) AS ledger
+         FROM movements WHERE workspace_id=? GROUP BY sku_id,location_id
+       )
+       SELECT b.sku_id,b.location_id,b.on_hand,COALESCE(mt.ledger,0) AS ledger
+       FROM balances b LEFT JOIN movement_totals mt
+         ON mt.sku_id=b.sku_id AND mt.location_id=b.location_id
+       WHERE b.workspace_id=? AND b.on_hand<>COALESCE(mt.ledger,0)`
     )
-    .all(workspaceId)
-    .filter((row) => row.on_hand !== row.ledger);
+    .all(workspaceId,workspaceId);
   for (const row of ledgerMismatches) {
     problems.push({
       kind: 'balance_ledger_mismatch',
@@ -957,17 +959,19 @@ function verifyIntegrity(db, workspaceId) {
 
   const lotMismatches = db
     .prepare(
-      `SELECT b.sku_id, b.location_id, b.on_hand,
-              COALESCE((SELECT SUM(lb.quantity) FROM lot_balances lb
-                        JOIN lots l ON l.id = lb.lot_id
-                       WHERE l.sku_id = b.sku_id AND lb.location_id = b.location_id), 0) AS lot_total
-         FROM balances b
-         JOIN skus s ON s.id = b.sku_id
-         JOIN items i ON i.id = s.item_id
-        WHERE b.workspace_id = ? AND i.tracking_mode = 'lot'`
+      `WITH lot_totals AS (
+         SELECT l.sku_id,lb.location_id,SUM(lb.quantity) AS lot_total
+         FROM lot_balances lb JOIN lots l ON l.id=lb.lot_id
+         WHERE lb.workspace_id=? GROUP BY l.sku_id,lb.location_id
+       )
+       SELECT b.sku_id,b.location_id,b.on_hand,COALESCE(lt.lot_total,0) AS lot_total
+       FROM balances b
+       JOIN skus s ON s.id=b.sku_id JOIN items i ON i.id=s.item_id
+       LEFT JOIN lot_totals lt ON lt.sku_id=b.sku_id AND lt.location_id=b.location_id
+       WHERE b.workspace_id=? AND i.tracking_mode='lot'
+         AND b.on_hand<>COALESCE(lt.lot_total,0)`
     )
-    .all(workspaceId)
-    .filter((row) => row.on_hand !== row.lot_total);
+    .all(workspaceId,workspaceId);
   for (const row of lotMismatches) {
     problems.push({
       kind: 'lot_balance_mismatch',
@@ -977,16 +981,19 @@ function verifyIntegrity(db, workspaceId) {
 
   const serialMismatches = db
     .prepare(
-      `SELECT b.sku_id, b.location_id, b.on_hand,
-              (SELECT COUNT(*) FROM serial_units su
-                WHERE su.sku_id = b.sku_id AND su.location_id = b.location_id AND su.status = 'in_stock') AS units
-         FROM balances b
-         JOIN skus s ON s.id = b.sku_id
-         JOIN items i ON i.id = s.item_id
-        WHERE b.workspace_id = ? AND i.tracking_mode = 'serial'`
+      `WITH serial_totals AS (
+         SELECT sku_id,location_id,COUNT(*) AS units
+         FROM serial_units WHERE workspace_id=? AND status='in_stock'
+         GROUP BY sku_id,location_id
+       )
+       SELECT b.sku_id,b.location_id,b.on_hand,COALESCE(st.units,0) AS units
+       FROM balances b
+       JOIN skus s ON s.id=b.sku_id JOIN items i ON i.id=s.item_id
+       LEFT JOIN serial_totals st ON st.sku_id=b.sku_id AND st.location_id=b.location_id
+       WHERE b.workspace_id=? AND i.tracking_mode='serial'
+         AND b.on_hand<>COALESCE(st.units,0)`
     )
-    .all(workspaceId)
-    .filter((row) => row.on_hand !== row.units);
+    .all(workspaceId,workspaceId);
   for (const row of serialMismatches) {
     problems.push({
       kind: 'serial_balance_mismatch',

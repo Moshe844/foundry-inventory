@@ -25,6 +25,30 @@
   </div>
 </div>
 
+<section class="card section" id="handling">
+  <div class="card-head"><div>
+    <h2>How Foundry handles each parcel</h2>
+    <p class="hint">Rate shopping is always read-only. Only Automatic can purchase, and only inside a saved rule and explicit authority.</p>
+  </div></div>
+  <form method="post" action="/settings/shipping/operation-mode" data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="card-body choice-grid">
+      <% [
+        ['MANUAL','Manual','Show all carrier rates; I choose and buy.'],
+        ['RECOMMEND','Recommend','Foundry explains the best qualifying rate; I approve the purchase.'],
+        ['AUTOMATIC','Automatic','Foundry may buy only when a saved rule and shipping-label authority both cover it.']
+      ].forEach(function (choice) { %>
+        <label class="choice">
+          <input type="radio" name="mode" value="<%= choice[0] %>"
+            <%= operationPolicy.mode === choice[0] ? 'checked' : '' %>>
+          <span class="choice-body"><strong><%= choice[1] %></strong><span class="t-xs t-muted"><%= choice[2] %></span></span>
+        </label>
+      <% }) %>
+    </div>
+    <div class="card-foot"><button class="btn btn--primary" type="submit">Save handling</button></div>
+  </form>
+</section>
+
 <%
   /*
    * Whose account this inventory ships on.
@@ -37,15 +61,24 @@
 %>
 <section class="card section" id="account">
   <div class="card-head"><div>
-    <h2>Carrier account</h2>
-    <p class="hint">Rates and labels come from this account, and its labels are billed to it.</p>
+    <h2>Your shipping</h2>
+    <p class="hint">Your carrier rates, your payment method, and one Foundry workflow.</p>
   </div></div>
+
+  <div class="card-body stack">
+    <div class="choice-grid" aria-label="Supported carriers">
+      <% ['UPS', 'FedEx', 'USPS', 'DHL'].forEach(function (carrier) { %>
+        <div class="choice"><span class="choice-body"><strong><%= carrier %></strong><span class="t-xs t-muted">Rates, labels and tracking</span></span></div>
+      <% }) %>
+    </div>
+    <p class="hint">Foundry compares eligible services against the customer promise. It never changes the carrier charge or delivery evidence.</p>
+  </div>
 
   <%# ------------------------------------- a workspace ShipEngine seller %>
   <% if (account.connected && account.source === 'platform') { %>
     <div class="card-body stack">
       <p class="lede">
-        ShipEngine for <%= se.name || workspaceName %>
+        Shipping for <%= se.name || workspaceName %>
         <% if (se.billingReady) { %><span class="badge badge--ok">ready to buy labels</span>
         <% } else { %><span class="badge badge--warn">setup unfinished</span><% } %>
       </p>
@@ -60,7 +93,9 @@
           <%= se.because %>
         </div></div>
       <% } %>
-      <p class="t-xs t-muted">ShipEngine seller <code><%= se.sellerId %></code></p>
+      <details class="disclose"><summary><span>Advanced connection details</span><span class="disclose__cue">Show</span></summary>
+        <div class="disclose__body t-xs t-muted">Shipping platform: ShipEngine · seller <code><%= se.sellerId %></code></div>
+      </details>
     </div>
     <div class="card-foot">
       <% if (!se.billingReady) { %>
@@ -82,7 +117,7 @@
   <% } else if (account.connected && account.source === 'referral') { %>
     <div class="card-body">
       <p class="lede">
-        EasyPost account for <%= referral.name %><% if (!referral.billingReady) { %>
+        Shipping account for <%= referral.name %><% if (!referral.billingReady) { %>
           <span class="badge badge--warn">no payment method</span>
         <% } else { %> <span class="badge badge--ok">live</span><% } %>
       </p>
@@ -90,17 +125,17 @@
         Foundry opened this account and it belongs to this business — its rates, its labels, its
         bill. Foundry is not charged for anything shipped on it.
       </p>
-      <p class="t-xs t-muted">
-        EasyPost reference <code><%= referral.referralCustomerId %></code> ·
-        billing notices go to <%= referral.email %>
-      </p>
+      <details class="disclose"><summary><span>Advanced connection details</span><span class="disclose__cue">Show</span></summary>
+        <div class="disclose__body t-xs t-muted">Shipping platform: EasyPost · reference
+          <code><%= referral.referralCustomerId %></code> · billing notices go to <%= referral.email %> ·
+          webhook <code><%= webhookUrl %></code></div>
+      </details>
       <% if (!referral.billingReady) { %>
         <div class="notice notice--warn"><div>
           <strong>This account cannot buy a label yet.</strong><br>
           <%= referral.because %>
         </div></div>
       <% } %>
-      <p class="t-xs t-muted">Webhook address for this inventory: <code><%= webhookUrl %></code></p>
     </div>
 
     <% if (!referral.billingReady) { %>
@@ -137,25 +172,27 @@
         <button class="btn btn--ghost" type="submit">Disconnect</button>
       </form>
       <p class="t-xs t-muted">
-        Disconnecting makes Foundry forget the keys. The EasyPost account, and everything shipped
-        on it, stays.
+        Disconnecting makes Foundry forget the connection. The shipping account and everything
+        shipped on it stay with this business.
       </p>
     </div>
 
   <% } else if (account.connected && account.source === 'workspace') { %>
     <div class="card-body">
       <p class="lede">
-        Connected to <%= account.provider === 'shipengine' ? 'ShipEngine'
-          : account.provider === 'easypost' ? 'EasyPost' : 'Shippo' %><% if (account.testMode) { %>
+        Carrier connection ready<% if (account.testMode) { %>
           <span class="badge badge--warn">test mode</span><% } %>
       </p>
-      <p class="hint">
-        Key ending <%= account.keyEndsWith %>.
-        <%= account.hasWebhookSecret
-          ? 'Tracking updates arrive by webhook.'
-          : 'No webhook secret is set, so tracking updates rely on the slower scheduled check.' %>
-      </p>
-      <p class="t-xs t-muted">Webhook address for this inventory: <code><%= webhookUrl %></code></p>
+      <p class="hint"><%= account.hasWebhookSecret
+        ? 'Carrier scans update this inventory automatically.'
+        : 'Foundry checks the carrier on a schedule because instant scan updates are not connected.' %></p>
+      <details class="disclose"><summary><span>Advanced connection details</span><span class="disclose__cue">Show</span></summary>
+        <div class="disclose__body t-xs t-muted">Platform:
+          <%= account.provider === 'shipengine' ? 'ShipEngine'
+            : account.provider === 'shipstation' ? 'ShipStation'
+              : account.provider === 'easypost' ? 'EasyPost' : 'Shippo' %>
+          · key ending <%= account.keyEndsWith %> · webhook <code><%= webhookUrl %></code></div>
+      </details>
     </div>
     <div class="card-foot">
       <form method="post" action="/settings/shipping/account/remove" data-busy>
@@ -197,7 +234,7 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="countryCode" value="US">
         <div class="card-body stack">
-          <h3>Set up shipping</h3>
+          <h3>Set up shipping for me</h3>
           <p class="hint">
             Foundry will open one secure setup window. Your business address is filled in. You
             activate a carrier and add the payment method that pays for this business's labels.
@@ -206,28 +243,21 @@
           <div class="notice notice--ok"><div>
             <strong>This business pays its own postage.</strong><br>
             Foundry never charges its platform account. The payment method entered during
-            setup belongs only to this workspace's ShipEngine seller.
+            setup belongs only to this business's shipping account.
           </div></div>
         </div>
         <div class="card-foot">
-          <button class="btn btn--primary" type="submit">Set up shipping</button>
+          <button class="btn btn--primary" type="submit">Set up shipping for me</button>
         </div>
       </form>
     <% } else if (!se.available && !se.opened && !account.connected) { %>
-      <div class="card-body">
-        <div class="notice"><div>
-          <strong>Use a free account owned by this business.</strong><br>
-          Create an account with <a href="https://www.easypost.com/signup" target="_blank" rel="noopener">EasyPost</a>,
-          <a href="https://www.shipengine.com/signup/" target="_blank" rel="noopener">ShipEngine</a>, or
-          <a href="https://apps.goshippo.com/join" target="_blank" rel="noopener">Shippo</a>.
-          Add the business's payment method there, then paste its API key below. Foundry verifies the
-          key before saving it; postage is charged to that business's provider account, not Foundry.
+      <div class="card-body stack">
+        <div class="notice notice--warn"><div>
+          <strong>Guided carrier setup is not enabled on this installation yet.</strong><br>
+          Foundry needs its shipping-partner credential before it can open the secure UPS, FedEx,
+          USPS and DHL connection window. No carrier or payment information has been guessed.
         </div></div>
-        <details class="disclose"><summary><span>Enterprise embedded setup</span><span class="disclose__cue">Show</span></summary>
-          <div class="disclose__body hint">A fully embedded seller-account flow requires partner credentials
-          issued by the shipping provider. It is optional; the customer-owned free-account path below supports
-          rates, labels and tracking without an Enterprise Foundry platform account.</div>
-        </details>
+        <a class="btn" href="#existing-carrier-connection">Connect an existing shipping account</a>
       </div>
     <% } %>
 
@@ -265,28 +295,30 @@
     <% } %>
 
     <%
-      // Folded away only when there is something better to fold it behind.
-      // Where Foundry cannot open an account, this is the only way in.
-    var offerOpen = Boolean((se.available || referral.available) && !referral.opened && !se.opened);
+      // Provider keys are an advanced escape hatch, never the ordinary owner flow.
+      // The carrier-first choices above remain primary even when guided setup is unavailable.
+    var offerOpen = true;
     %>
     <% if (offerOpen) { %>
-      <details class="disclose">
+      <details class="disclose" id="existing-carrier-connection">
         <summary>
-          <span>I already have a carrier account</span>
+          <span>Connect my existing carrier accounts</span>
           <span class="disclose__cue">Show</span>
         </summary>
         <div class="disclose__body">
     <% } %>
-    <form method="post" action="/settings/shipping/account" data-busy>
+    <form method="post" action="/settings/shipping/account" data-busy id="advanced-shipping-connection">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="card-body stack">
-        <% if (!offerOpen) { %><h3>Connect this business's shipping account</h3><% } %>
+        <% if (!offerOpen) { %><h3 id="existing-carrier-connection">Connect this business's shipping account</h3><% } %>
+        <p class="hint">Use the secure key from the shipping account that already holds this business's negotiated carrier accounts.</p>
         <label class="field">
           <span class="field-label">Provider</span>
           <select class="select" name="provider">
             <% providers.forEach(function (name) { %>
-              <option value="<%= name %>"><%= name === 'shipengine' ? 'ShipEngine'
-                : name === 'easypost' ? 'EasyPost' : 'Shippo' %></option>
+              <option value="<%= name %>"><%= name === 'shipengine' ? 'ShipEngine API'
+                : name === 'shipstation' ? 'ShipStation'
+                  : name === 'easypost' ? 'EasyPost' : 'Shippo' %></option>
             <% }) %>
           </select>
         </label>
@@ -294,23 +326,23 @@
           <span class="field-label">API key</span>
           <input class="input" type="password" name="apiKey" autocomplete="off" required>
           <span class="field-hint">
-            Start with the provider's test key. It exercises the flow and issues test labels
-            without charging anybody or moving anything; test prices may differ from live rates.
-            Stored encrypted, and never shown back to you.
+            Where the account offers a sandbox, start with its test key. ShipStation platform
+            accounts do not provide a sandbox, so use a dedicated test store and void its test
+            labels immediately. The key is stored encrypted and never shown back to you.
           </span>
         </label>
         <label class="field">
           <span class="field-label">Webhook secret <span class="t-muted">(optional)</span></span>
           <input class="input" type="password" name="webhookSecret" autocomplete="off">
           <span class="field-hint">
-            The string you set on the provider's webhook. Without it Foundry still tracks parcels,
-            just on the slower scheduled check rather than the instant a carrier scans one.
+            Only needed when the provider uses a shared secret. ShipStation API signs its webhooks
+            automatically. Without instant updates Foundry still uses the slower scheduled check.
           </span>
         </label>
       </div>
       <div class="card-foot">
         <button class="btn <%= offerOpen ? '' : 'btn--primary' %>"
-          type="submit">Connect this inventory's account</button>
+          type="submit">Connect my shipping account</button>
       </div>
     </form>
     <% if (offerOpen) { %>
@@ -319,6 +351,14 @@
     <% } %>
   <% } %>
 </section>
+
+<script>
+  (function () {
+    if (window.location.hash !== '#existing-carrier-connection') return;
+    var advanced = document.getElementById('existing-carrier-connection');
+    if (advanced && advanced.tagName === 'DETAILS') advanced.open = true;
+  }());
+</script>
 
 <% if (account.connected && account.source === 'platform') { %>
   <dialog class="modal" id="modal-shipengine" aria-labelledby="shipengine-setup-title">

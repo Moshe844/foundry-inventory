@@ -18,6 +18,70 @@
   <span class="badge"><%= sweep.scanned %> products looked at</span>
 </div>
 
+<section class="card learning-card" id="learning">
+  <div class="card-head">
+    <div>
+      <p class="eyebrow">Measured outcomes</p>
+      <h2>What Foundry learned</h2>
+      <p class="hint">Foundry measures its decisions. It proposes policy changes; it cannot rewrite its own rules.</p>
+    </div>
+    <span class="badge"><%= learning.metrics.observations || 0 %> measured outcomes</span>
+  </div>
+  <% if (!learningProposals.length) { %>
+    <div class="card-body">
+      <p class="planning-item"><%= learning.metrics.observations
+        ? 'No recurring bias currently justifies changing a policy.'
+        : 'No decision has reached a measurable outcome yet. Foundry will keep watching without guessing.' %></p>
+    </div>
+  <% } %>
+  <% learningProposals.forEach(function(change) { %>
+    <article class="learning-change" id="learning-<%= change.id %>">
+      <div class="learning-change__copy">
+        <div class="button-row">
+          <span class="badge <%= change.status === 'ROLLBACK_RECOMMENDED' ? 'badge--warn' : '' %>"><%= change.status.replaceAll('_',' ').toLowerCase() %></span>
+          <span class="t-xs t-muted"><%= change.ruleId %> · version <%= change.ruleVersion %></span>
+        </div>
+        <h3><%= change.headline %></h3>
+        <p><%= change.rationale %></p>
+        <details>
+          <summary>Why Foundry recommends this</summary>
+          <div class="learning-evidence">
+            <% if (change.evidence.samples) { %><p><strong><%= change.evidence.samples %></strong> measured outcomes support this.</p><% } %>
+            <% if (change.evidence.meanDays) { %><p>Observed average: <strong><%= change.evidence.meanDays %> days</strong>.</p><% } %>
+            <% if (change.evidence.meanBiasUnits) { %><p>Average forecast bias: <strong><%= change.evidence.meanBiasUnits %> units</strong>.</p><% } %>
+            <p><%= change.expectedImpact.description || 'Foundry will measure the result after rollout.' %></p>
+            <p class="t-xs t-muted">The evidence, rule version, approval and previous value are retained for audit and rollback.</p>
+          </div>
+        </details>
+      </div>
+      <% if (canAdmin && change.status === 'PROPOSED') { %>
+        <div class="learning-change__actions">
+          <form method="post" action="/planning/learning/<%= change.id %>/approve">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="integrityHash" value="<%= change.integrityHash %>">
+            <button class="btn btn--primary" type="submit">Approve change</button>
+          </form>
+          <form method="post" action="/planning/learning/<%= change.id %>/decline">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn btn--ghost" type="submit">Keep current policy</button>
+          </form>
+        </div>
+      <% } else if (canAdmin && change.status === 'ROLLBACK_RECOMMENDED') { %>
+        <form method="post" action="/planning/learning/<%= change.id %>/rollback">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn btn--danger" type="submit">Restore previous policy</button>
+        </form>
+      <% } %>
+    </article>
+  <% }) %>
+  <div class="card-foot learning-metrics">
+    <span>Forecast: <strong><%= learning.metrics.forecast.summary %></strong></span>
+    <span>Handled without you: <strong><%= learning.metrics.automationRate === null ? 'not measured yet' : learning.metrics.automationRate + '%' %></strong><%= learning.metrics.automationRate === null ? '' : ' · target 90–95%' %></span>
+    <span>Owner intervention: <strong><%= learning.metrics.interventionRate === null ? 'not measured yet' : learning.metrics.interventionRate + '%' %></strong></span>
+    <span>Slow inventory visible now: <strong><%= money(learning.metrics.currentSlowInventoryValueMinor || 0) %></strong></span>
+  </div>
+</section>
+
 <%# ------------------------------------------------------------- running out %>
 <section class="card" id="shortages">
   <div class="card-head">
@@ -41,9 +105,50 @@
         <span class="badge"><%= row.confidence === 'high' ? 'High confidence'
           : row.confidence === 'moderate' ? 'Moderate confidence' : 'Still learning' %></span>
         <p><%= row.explanation %></p>
-        <% if (row.purchase && row.purchase.order) { %>
+        <% if (row.purchase && row.purchase.order && !row.adaptivePlan) { %>
           <p><strong><%= row.purchase.headline %></strong></p>
           <% if (row.purchase.tradeoff) { %><p class="t-muted"><%= row.purchase.tradeoff.text %></p><% } %>
+        <% } %>
+        <% if (row.adaptivePlan) { %>
+          <div class="planning-decision">
+            <span class="badge"><%= row.adaptivePlan.shadow ? 'Watching first' : 'Decision' %></span>
+            <strong><%= row.adaptivePlan.explanation %></strong>
+            <% if (row.adaptivePlan.constraints.cash.known) { %>
+              <p class="t-muted">
+                <%= new Intl.NumberFormat('en-US', { style: 'currency',
+                  currency: row.adaptivePlan.constraints.currency || 'USD' })
+                  .format(row.adaptivePlan.constraints.cash.availableForNewCommitmentsMinor / 100) %>
+                is available after known supplier obligations and your cash reserve.
+              </p>
+            <% } %>
+            <details>
+              <summary>Why this plan · compare <%= row.adaptivePlan.alternatives.length %> options</summary>
+              <div class="planning-option-grid">
+                <% row.adaptivePlan.alternatives.forEach(function (option) { %>
+                  <article class="planning-option <%= option.id === row.adaptivePlan.chosen.id ? 'planning-option--chosen' : '' %>">
+                    <strong><%= option.label %></strong>
+                    <span class="badge badge--<%= option.feasible ? 'ok' : 'muted' %>">
+                      <%= option.feasible ? (option.id === row.adaptivePlan.chosen.id ? 'Selected' : 'Possible') : 'Cannot safely use' %>
+                    </span>
+                    <% if (option.quantityUnits) { %><p><%= option.quantityUnits %> units</p><% } %>
+                    <% if (['BUY','BUY_ALTERNATE','EXPEDITE','TRANSFER_AND_BUY','TRANSFER'].includes(option.type)
+                        && option.totalCostMinor !== null && option.totalCostMinor !== undefined) { %>
+                      <p class="t-muted"><%= new Intl.NumberFormat('en-US', { style: 'currency',
+                        currency: row.adaptivePlan.constraints.currency || 'USD' })
+                        .format(option.totalCostMinor / 100) %> evidenced cost</p>
+                    <% } %>
+                    <% if (option.reasons && option.reasons.length) { %>
+                      <p class="t-xs t-muted"><%= option.reasons.join(' ') %></p>
+                    <% } %>
+                  </article>
+                <% }) %>
+              </div>
+              <% if (row.adaptivePlan.uncertainty.length) { %>
+                <p class="t-xs t-muted"><strong>What remains uncertain:</strong>
+                  <%= row.adaptivePlan.uncertainty.join(' ') %></p>
+              <% } %>
+            </details>
+          </div>
         <% } %>
         <a href="/inventory/<%= row.skuId %>">Open the product</a>
       </article>
@@ -224,6 +329,12 @@
         <input class="input" type="text" name="inventoryCap"
           value="<%= goals.inventoryCapMinor ? (goals.inventoryCapMinor / 100).toFixed(2) : '' %>"
           placeholder="leave empty for no limit">
+      </label>
+      <label class="field">
+        <span class="field-label">Keep this much cash available after known obligations</span>
+        <input class="input" type="text" name="cashReserve"
+          value="<%= goals.cashReserveMinor === null ? '' : (goals.cashReserveMinor / 100).toFixed(2) %>"
+          placeholder="leave empty for no reserve">
       </label>
       <label class="field field--check">
         <input type="checkbox" name="prioritiseCoreProducts" <%= goals.prioritiseCoreProducts ? 'checked' : '' %>>

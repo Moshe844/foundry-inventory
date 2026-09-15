@@ -12,6 +12,7 @@
 const express = require('express');
 const workspaceService = require('../../domain/workspace-service');
 const workspaceDeletion = require('../../domain/workspace-deletion');
+const jobQueue = require('../../operations/job-queue');
 const entitlements = require('../../entitlements/service');
 const { requireAccount, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
@@ -29,7 +30,9 @@ function safeNext(value) {
 router.get(
   '/inventories',
   asyncRoute(async (req, res) => {
-    const workspaces = workspaceService.listForAccount(req.db, req.account.id);
+    // Inventory cards are navigation, not a business audit. Their cached badge
+    // count is updated when that inventory's Needs You inbox is opened.
+    const workspaces = workspaceService.listForAccount(req.db, req.account.id, { includeAttention:false });
     res.page('workspaces/list', {
       title: 'Your inventories',
       nav: 'inventories',
@@ -176,9 +179,8 @@ router.post(
       return res.redirect(303, '/inventories');
     }
 
-    let summary;
     try {
-      summary = workspaceDeletion.deleteWorkspace(req.db, req.account.id, resolved.workspace.id, {
+      workspaceDeletion.authorizeDeletion(req.db, req.account.id, resolved.workspace.id, {
         confirmName: req.body.confirmName,
       });
     } catch (err) {
@@ -195,16 +197,36 @@ router.post(
       });
     }
 
+    jobQueue.enqueue(req.db, {
+      // The job itself is deliberately account-scoped rather than scoped to
+      // the workspace it removes, otherwise ON DELETE CASCADE would erase the
+      // coordinator's completion record during its own work.
+      workspaceId: null,
+      kind: 'workspace.delete',
+      idempotencyKey: `workspace.delete:${resolved.workspace.id}`,
+      payload: {
+        accountId: req.account.id,
+        workspaceId: resolved.workspace.id,
+        confirmName: resolved.workspace.name,
+      },
+      maxAttempts: 5,
+    });
+    // From the owner's point of view the inventory is gone now. The durable
+    // purge that follows is storage housekeeping, not an intermediate product
+    // state the owner has to wait on or manage.
+    req.db.prepare(`UPDATE workspaces SET deletion_requested_at = COALESCE(deletion_requested_at, ?)
+      WHERE id = ?`).run(new Date().toISOString(), resolved.workspace.id);
+
     if (req.session.workspaceId === resolved.workspace.id) {
-      const next = workspaceService.defaultWorkspaceFor(req.db, req.account.id);
-      if (next) req.session.workspaceId = next;
+      const next = workspaceService.listForAccount(req.db, req.account.id, { includeAttention: false })
+        .find((workspace) => workspace.workspaceId !== resolved.workspace.id);
+      if (next) req.session.workspaceId = next.workspaceId;
       else delete req.session.workspaceId;
     }
 
     req.flash(
       'info',
-      `${summary.name} was deleted, with ${summary.items} product(s), ${summary.movements} movement(s) ` +
-        `and everything else it held.`
+      `${resolved.workspace.name} was deleted from your account.`
     );
     return req.session.save(() => res.redirect(303, '/inventories'));
   })

@@ -73,7 +73,7 @@ test('a new inventory starts by asking how it is managed today', () => {
 
 test('choosing a path routes to the right place and is remembered', () => {
   const env = setup();
-  assert.equal(paths.choose(env.db, env.workspace.workspaceId, 'spreadsheet').step, '/onboarding/files');
+  assert.equal(paths.choose(env.db, env.workspace.workspaceId, 'spreadsheet').step, '/onboarding/migrations/new');
   assert.equal(paths.get(env.db, env.workspace.workspaceId).status, 'collecting');
 
   // Starting fresh goes straight to the Mission 2 experience, unchanged.
@@ -101,6 +101,7 @@ test('a description picks a path, most specific wins', () => {
     ["it's all in excel", 'spreadsheet'],
     ['we use NetSuite today', 'software'],
     ['spreadsheets all over the place, several files', 'messy'],
+    ['We keep everything in one spreadsheet, but our supplier emails us a stock report every Monday.', 'messy'],
     ['nothing yet, just started the business', 'fresh'],
   ];
   for (const [description, expected] of cases) {

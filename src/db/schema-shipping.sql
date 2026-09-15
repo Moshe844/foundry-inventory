@@ -57,6 +57,97 @@ CREATE TABLE IF NOT EXISTS shipment_rates (
 CREATE INDEX IF NOT EXISTS idx_shipment_rates_shipment
   ON shipment_rates(workspace_id, shipment_id, amount_minor);
 
+-- Every carrier charge-changing action, including requests whose final result
+-- is not known yet.  Keeping the request before calling the provider is what
+-- prevents a browser retry or worker crash from purchasing (or refunding) a
+-- label twice.
+CREATE TABLE IF NOT EXISTS shipping_label_transactions (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  shipment_id           TEXT NOT NULL REFERENCES sales_shipments(id) ON DELETE CASCADE,
+  provider              TEXT NOT NULL,
+  operation             TEXT NOT NULL
+                          CHECK (operation IN ('PURCHASE','VOID','REFUND','ADJUSTMENT')),
+  status                TEXT NOT NULL
+                          CHECK (status IN ('PENDING','SUCCEEDED','FAILED','REVIEW')),
+  idempotency_key       TEXT NOT NULL,
+  provider_reference    TEXT,
+  amount_minor          INTEGER,
+  currency              TEXT NOT NULL DEFAULT 'USD',
+  detail                TEXT,
+  error_message         TEXT,
+  requested_by_user_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  requested_at          TEXT NOT NULL,
+  completed_at          TEXT,
+  updated_at            TEXT NOT NULL,
+  UNIQUE (workspace_id, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_shipping_label_transactions_shipment
+  ON shipping_label_transactions(workspace_id, shipment_id, requested_at DESC);
+
+CREATE TABLE IF NOT EXISTS customer_return_rates (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  customer_return_id    TEXT NOT NULL REFERENCES customer_returns(id) ON DELETE CASCADE,
+  provider              TEXT NOT NULL,
+  provider_rate_id      TEXT NOT NULL,
+  provider_shipments    TEXT NOT NULL DEFAULT '[]',
+  carrier               TEXT NOT NULL,
+  service               TEXT NOT NULL,
+  amount_minor          INTEGER NOT NULL,
+  currency              TEXT NOT NULL DEFAULT 'USD',
+  delivery_days         INTEGER,
+  delivery_date         TEXT,
+  guaranteed            INTEGER NOT NULL DEFAULT 0,
+  quoted_at             TEXT NOT NULL,
+  UNIQUE (workspace_id, customer_return_id, provider_rate_id)
+);
+CREATE INDEX IF NOT EXISTS idx_customer_return_rates_return
+  ON customer_return_rates(workspace_id, customer_return_id, amount_minor);
+
+-- A return label is a carrier fact attached to an authorised RMA.  It is not
+-- a sales shipment: creating one never receives stock and never issues a
+-- refund.  Those remain owned by the returns and accounting domains.
+CREATE TABLE IF NOT EXISTS customer_return_labels (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  customer_return_id    TEXT NOT NULL REFERENCES customer_returns(id) ON DELETE CASCADE,
+  outbound_shipment_id  TEXT REFERENCES sales_shipments(id) ON DELETE SET NULL,
+  provider              TEXT NOT NULL,
+  provider_reference    TEXT,
+  status                TEXT NOT NULL DEFAULT 'PENDING'
+                          CHECK (status IN ('PENDING','REVIEW','PURCHASED','IN_TRANSIT','DELIVERED','VOID_PENDING','VOIDED','FAILED')),
+  carrier               TEXT,
+  service               TEXT,
+  tracking_number       TEXT,
+  tracking_url          TEXT,
+  label_url             TEXT,
+  label_format          TEXT,
+  amount_minor          INTEGER,
+  currency              TEXT NOT NULL DEFAULT 'USD',
+  idempotency_key       TEXT NOT NULL,
+  created_by_user_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at            TEXT NOT NULL,
+  updated_at            TEXT NOT NULL,
+  UNIQUE (workspace_id, customer_return_id),
+  UNIQUE (workspace_id, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_customer_return_labels_tracking
+  ON customer_return_labels(workspace_id, tracking_number);
+
+CREATE TABLE IF NOT EXISTS customer_return_label_events (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  return_label_id       TEXT NOT NULL REFERENCES customer_return_labels(id) ON DELETE CASCADE,
+  external_event_id     TEXT,
+  status                TEXT NOT NULL,
+  detail                TEXT,
+  location              TEXT,
+  occurred_at           TEXT NOT NULL,
+  created_at            TEXT NOT NULL,
+  UNIQUE (workspace_id, return_label_id, external_event_id)
+);
+
 -- Where the parcel is, in the carrier's own words.
 --
 -- Every scan, kept in full. A delivery is not one fact but a sequence, and the
@@ -125,6 +216,18 @@ CREATE TABLE IF NOT EXISTS shipping_rules (
 );
 CREATE INDEX IF NOT EXISTS idx_shipping_rules_workspace
   ON shipping_rules(workspace_id, is_active);
+
+-- How much of the label-selection loop Foundry owns for this inventory.
+-- Automatic still needs the universal operator to be running, the explicit
+-- shipping-label capability, and a saved rule that covers the exact rate.
+CREATE TABLE IF NOT EXISTS shipping_operation_policy (
+  workspace_id          TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  mode                  TEXT NOT NULL DEFAULT 'RECOMMEND'
+                          CHECK (mode IN ('MANUAL','RECOMMEND','AUTOMATIC')),
+  updated_by_user_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at            TEXT NOT NULL,
+  updated_at            TEXT NOT NULL
+);
 
 -- A shipping account Foundry opened on a merchant's behalf.
 --

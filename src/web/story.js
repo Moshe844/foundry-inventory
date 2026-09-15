@@ -157,6 +157,8 @@ function salesOrder(db, workspaceId, order, extras = {}) {
   const currency = (extras.money && extras.money.currency) || order.currency || 'USD';
   const past = [];
   const future = [];
+  const shippingTimeline = extras.shippingTimeline
+    || require('../shipping/timeline').forOrder(db, workspaceId, order.id);
 
   for (const event of order.events || []) {
     const detail = event.detail || {};
@@ -219,7 +221,7 @@ function salesOrder(db, workspaceId, order, extras = {}) {
 
   for (const shipment of extras.shipments || []) {
     if (shipment.packedAt || shipment.packed_at) {
-      past.push(mark(shipment.packedAt || shipment.packed_at, 'I packed it.', { now }));
+      past.push(mark(shipment.packedAt || shipment.packed_at, 'I picked and packed it.', { now }));
     }
     if (shipment.shippedAt || shipment.shipped_at) {
       const carrier = shipment.carrier ? ` with ${shipment.carrier}` : '';
@@ -234,9 +236,51 @@ function salesOrder(db, workspaceId, order, extras = {}) {
           : []),
       }));
     }
-    if (shipment.deliveredAt || shipment.delivered_at) {
-      past.push(mark(shipment.deliveredAt || shipment.delivered_at, 'You told me it arrived.', { now }));
+    if ((shipment.deliveredAt || shipment.delivered_at)
+        && !shippingTimeline.some((event) => event.kind === 'TRACKING'
+          && event.shipmentId === shipment.id && event.status === 'DELIVERED')) {
+      past.push(mark(shipment.deliveredAt || shipment.delivered_at, 'Delivery was recorded.', { now }));
     }
+  }
+
+  for (const event of shippingTimeline) {
+    const carrierService = [event.carrier, event.service].filter(Boolean).join(' ');
+    if (event.kind === 'LABEL_PURCHASE') {
+      const amount = Number.isFinite(Number(event.amountMinor))
+        ? ` for ${money(Number(event.amountMinor), event.currency || currency)}` : '';
+      past.push(mark(event.occurredAt,
+        `I selected ${carrierService || 'the carrier service'} and bought the label${amount}.`,
+        { now, sub: event.trackingNumber ? [{ text: `Tracking ${event.trackingNumber}` }] : [] }));
+      continue;
+    }
+    if (event.kind === 'LABEL_VOID') {
+      past.push(mark(event.occurredAt, event.status === 'REVIEW'
+        ? 'The carrier label void needs verification.'
+        : `The unused carrier label was voided${Number(event.amountMinor) > 0 ? ` and ${money(Number(event.amountMinor), event.currency || currency)} was refunded` : ''}.`,
+      { now, state: event.status === 'REVIEW' ? 'blocked' : 'past' }));
+      continue;
+    }
+    if (event.kind === 'LABEL_ADJUSTMENT') {
+      past.push(mark(event.occurredAt,
+        `The carrier recorded a ${money(Math.abs(Number(event.amountMinor || 0)), event.currency || currency)} postage ${Number(event.amountMinor) < 0 ? 'credit' : 'adjustment'}.`,
+      { now, sub: event.detail ? [{ text: event.detail }] : [] }));
+      continue;
+    }
+    if (event.kind !== 'TRACKING') continue;
+    const status = String(event.status || '').toUpperCase();
+    const wording = {
+      PRE_TRANSIT: 'The carrier has the label but not the parcel yet.',
+      IN_TRANSIT: `${event.carrier || 'The carrier'} accepted the parcel and it is in transit.`,
+      OUT_FOR_DELIVERY: 'The parcel is out for delivery.',
+      DELIVERED: 'The carrier verified delivery.',
+      FAILURE: 'The carrier reported a delivery exception.',
+      RETURNED: 'The carrier reported the parcel returned.',
+    }[status] || `The carrier reported ${status.toLowerCase().replaceAll('_', ' ')}.`;
+    const detail = [];
+    if (event.detail) detail.push({ text: event.detail });
+    if (event.location) detail.push({ text: event.location });
+    past.push(mark(event.occurredAt, wording,
+      { now, state: ['FAILURE', 'RETURNED'].includes(status) ? 'blocked' : 'past', sub: detail }));
   }
 
   /* --------------------------------------------------------------- ahead */

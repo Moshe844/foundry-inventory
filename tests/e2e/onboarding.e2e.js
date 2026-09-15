@@ -181,7 +181,7 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
     const text = await page.locator('body').innerText();
 
     assert.match(text, /Where should Foundry get your inventory from/);
-    for (const label of ['Enter it in Foundry', 'Upload files or documents', 'Use email attachments', 'Connect another system', 'Use several sources']) {
+    for (const label of ['Enter it in Foundry', 'Move from files', 'Use email attachments', 'Connect another system', 'Use several sources']) {
       assert.ok(text.includes(label), `the chooser is missing "${label}"`);
     }
     assert.match(text, /Not sure/);
@@ -190,16 +190,20 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
 
   await t.test('2. choosing spreadsheets asks for the file, not for a description', async () => {
     await Promise.all([
-      page.waitForURL(`${BASE}/onboarding/files`),
-      page.click('button:has-text("Upload files or documents")'),
+      page.waitForURL(`${BASE}/onboarding/migrations/new`),
+      page.click('button:has-text("Move from files")'),
     ]);
     const text = await page.locator('body').innerText();
-    assert.match(text, /Give Foundry your spreadsheet/);
-    assert.match(text, /you do not need to configure anything first/);
+    assert.match(text, /Bring the records you already trust/);
+    assert.match(text, /asks only about meanings it cannot prove/);
     await shot(page, 'files');
   });
 
   await t.test('3. Foundry reads the workbook and says what it found', async () => {
+    // The original evidence-first importer remains a safe compatible URL for
+    // bookmarks and in-flight onboarding sessions while new switches use the
+    // canonical cutover workspace above.
+    await page.goto(`${BASE}/onboarding/files`);
     await page.setInputFiles('input[name="files"]', file);
     await Promise.all([page.waitForURL(`${BASE}/onboarding/files`), page.click('button:has-text("Add")')]);
 
@@ -365,9 +369,13 @@ test('Onboarding end to end: the messy customer', { timeout: 600000 }, async (t)
   await t.test('1. four overlapping files go in together', async () => {
     await register(page, account);
     await Promise.all([
-      page.waitForURL(/\/onboarding\/files/),
+      page.waitForURL(/\/onboarding\/migrations\/new/),
       page.click('button:has-text("Use several sources")'),
     ]);
+    assert.match(await page.locator('body').innerText(), /Bring the records you already trust/);
+    // Existing multi-source sessions keep the older reconciliation workflow
+    // at its stable URL while new cutovers enter the canonical workspace.
+    await page.goto(`${BASE}/onboarding/files?mode=messy`);
     assert.match(await page.locator('body').innerText(), /Give Foundry everything you have/);
 
     await page.setInputFiles('input[name="files"]', [main, count, old, extra]);

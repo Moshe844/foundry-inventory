@@ -698,6 +698,20 @@
     window.setTimeout(poll, 800);
   }
 
+  /** A visible continuation may open a deliberately collapsed evidence block. */
+  function initOpenDetailsButtons() {
+    document.querySelectorAll('[data-open-details]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const details = document.getElementById(button.getAttribute('data-open-details'));
+        if (!details) return;
+        details.open = true;
+        details.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const input = details.querySelector('textarea, input, select');
+        if (input) window.setTimeout(() => input.focus(), 250);
+      });
+    });
+  }
+
   /*
    * What the option boxes will actually become.
    *
@@ -766,6 +780,13 @@
         ? event.submitter
         : form.querySelector('button[type=submit]');
       if (button && !button.disabled) {
+        if (form.hasAttribute('data-long-action')) {
+          button.disabled = true;
+          button.classList.add('is-working-label');
+          button.setAttribute('aria-busy','true');
+          button.textContent = button.getAttribute('data-busy-label') || 'Working…';
+          return;
+        }
         button.classList.add('is-busy');
         button.setAttribute('aria-busy', 'true');
       }
@@ -785,6 +806,129 @@
       const slot = source.closest('.rm-composer__attach');
       if (slot) slot.classList.toggle('has-file', Boolean(chosen));
     });
+  }
+
+  /**
+   * A migration may contain dozens of exports and hundreds of megabytes. Keep
+   * the evidence visible, name every selected file, and show real transport
+   * progress instead of replacing the button with an indefinite spinner.
+   */
+  function initMigrationUpload() {
+    const form = document.querySelector('[data-migration-upload]');
+    if (!form) return;
+    const input = form.querySelector('[data-migration-files]');
+    const selected = form.querySelector('[data-migration-selection]');
+    const progress = form.querySelector('[data-migration-progress]');
+    const bar = form.querySelector('[data-migration-progress-bar]');
+    const title = form.querySelector('[data-migration-progress-title]');
+    const detail = form.querySelector('[data-migration-progress-detail]');
+    const errorBox = form.querySelector('[data-migration-error]');
+    const submit = form.querySelector('[data-migration-submit]');
+    if (!input || !selected || !progress || !bar || !errorBox || !submit) return;
+
+    const bytes = (value) => {
+      if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+      if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+      if (value >= 1024) return `${Math.round(value / 1024)} KB`;
+      return `${value} bytes`;
+    };
+
+    const paint = () => {
+      const files = [...(input.files || [])];
+      selected.hidden = files.length === 0;
+      if (!files.length) { selected.replaceChildren(); return; }
+      const total = files.reduce((sum,file) => sum + file.size,0);
+      const head = document.createElement('div'); head.className = 'rm-upload-selection__head';
+      const strong = document.createElement('strong'); strong.textContent = `${files.length} file${files.length === 1 ? '' : 's'} ready`;
+      const amount = document.createElement('span'); amount.textContent = bytes(total);
+      head.append(strong,amount);
+      const list = document.createElement('ul'); list.className = 'rm-upload-files';
+      files.forEach((file) => {
+        const row = document.createElement('li'); row.className = 'rm-upload-file';
+        const name = document.createElement('strong'); name.textContent = file.name;
+        const size = document.createElement('span'); size.textContent = bytes(file.size);
+        row.append(name,size); list.append(row);
+      });
+      selected.replaceChildren(head,list);
+      submit.textContent = `Read ${files.length} file${files.length === 1 ? '' : 's'} safely`;
+      errorBox.hidden = true;
+    };
+    input.addEventListener('change',paint);
+
+    form.addEventListener('submit',(event) => {
+      if (event.defaultPrevented) return;
+      const hasFiles = input.files && input.files.length;
+      const pasted = form.querySelector('[name="pasted"]');
+      if (!hasFiles && !(pasted && pasted.value.trim())) return;
+      event.preventDefault();
+      const payload = new FormData(form);
+      submit.disabled = true;
+      submit.classList.add('is-working-label');
+      submit.setAttribute('aria-busy','true');
+      submit.textContent = 'Reading — please wait';
+      input.disabled = true;
+      errorBox.hidden = true;
+      progress.hidden = false;
+      bar.value = 0;
+      title.textContent = 'Uploading securely…';
+      detail.textContent = '0%';
+      progress.scrollIntoView({ behavior:'smooth',block:'nearest' });
+
+      const request = new XMLHttpRequest();
+      request.open('POST',form.action);
+      request.setRequestHeader('Accept','application/json');
+      request.upload.addEventListener('progress',(upload) => {
+        if (!upload.lengthComputable) return;
+        const percent = Math.min(100,Math.round((upload.loaded / upload.total) * 100));
+        bar.value = percent;
+        detail.textContent = `${percent}% · ${bytes(upload.loaded)} of ${bytes(upload.total)}`;
+        if (percent === 100) {
+          title.textContent = 'Reading and reconciling your records…';
+          detail.textContent = `Upload complete. Foundry is identifying the worksheets in ${input.files.length} file${input.files.length === 1 ? '' : 's'}.`;
+          submit.textContent = 'Reading worksheets…';
+        }
+      });
+      request.addEventListener('load',() => {
+        let result = null;
+        try { result = JSON.parse(request.responseText); } catch (_) {}
+        if (request.status >= 200 && request.status < 300 && result && result.location) {
+          window.location.assign(result.location);
+          return;
+        }
+        progress.hidden = true;
+        submit.disabled = false;
+        input.disabled = false;
+        submit.classList.remove('is-busy','is-working-label');
+        submit.removeAttribute('aria-busy');
+        errorBox.textContent = result && result.message
+          ? result.message
+          : 'Foundry could not read that upload. The selected filenames remain above so you can correct the exact file.';
+        errorBox.hidden = false;
+      });
+      request.addEventListener('error',() => {
+        progress.hidden = true;
+        submit.disabled = false;
+        input.disabled = false;
+        submit.classList.remove('is-busy','is-working-label');
+        submit.removeAttribute('aria-busy');
+        errorBox.textContent = 'The upload was interrupted. Your source files were not activated; choose Retry when the connection is stable.';
+        errorBox.hidden = false;
+      });
+      request.send(payload);
+    });
+    paint();
+  }
+
+  /** Deterministic migration work should continue without turning the owner
+   * into a workflow engine. The page states what is starting before posting,
+   * then the durable worker owns the rest. */
+  function initMigrationAutoStart() {
+    const form = document.querySelector('[data-migration-auto-start]');
+    if (!form) return;
+    window.setTimeout(() => {
+      if (typeof form.requestSubmit === 'function') form.requestSubmit();
+      else form.submit();
+    },250);
   }
 
   /**
@@ -815,10 +959,88 @@
       form.addEventListener('submit', () => {
         const pending = form.parentElement.querySelector('[data-ask-pending]');
         if (pending) pending.hidden = false;
+
+        /*
+         * The conversation continues on screen while the answer is computed.
+         *
+         * What happened before: the Send button lost its label — is-busy makes
+         * the text transparent, so it became a blank blue pill — and the only
+         * sign anything was happening was a 12px line under the box. For the
+         * seconds a model call takes, the page looked broken.
+         *
+         * Now the sentence somebody typed appears as their turn, and Foundry's
+         * turn appears beneath it with a live indicator, in the same place the
+         * answer will land. The button keeps its words. Nothing here is a
+         * request; the form still posts and the page still arrives — this is
+         * only what the person sees in the meantime.
+         */
+        const input = form.querySelector('[data-ask-input]');
+        const typed = input && input.value.trim();
+        if (typed && !form.querySelector('.rm-turn--pending')) {
+          const you = document.createElement('div');
+          you.className = 'rm-turn rm-turn--you rm-turn--pending';
+          you.innerHTML = '<p class="rm-turn__who">You</p><p class="rm-turn__said"></p>';
+          you.querySelector('.rm-turn__said').textContent = typed;
+
+          const foundry = document.createElement('div');
+          foundry.className = 'rm-turn rm-turn--foundry rm-turn--pending rm-turn--thinking';
+          foundry.setAttribute('role', 'status');
+          foundry.setAttribute('aria-live', 'polite');
+          foundry.innerHTML = '<p class="rm-turn__who">Foundry</p>'
+            + '<p class="rm-turn__said rm-chat-thinking"><span class="rm-thinking__dots" aria-hidden="true"><i></i><i></i><i></i></span>'
+            + '<span data-thinking-text>Reading your records…</span></p>';
+
+          form.parentElement.insertBefore(you, form);
+          form.parentElement.insertBefore(foundry, form);
+          if (pending) pending.hidden = true;
+
+          // The phrasing moves so a long wait reads as progress, not a hang.
+          const text = foundry.querySelector('[data-thinking-text]');
+          const stages = ['Reading your records…', 'Working out what you mean…', 'Checking the figures…'];
+          let stage = 0;
+          window.setInterval(() => {
+            stage = Math.min(stage + 1, stages.length - 1);
+            if (text) text.textContent = stages[stage];
+          }, 2500);
+          window.setTimeout(() => {
+            if (!text || text.dataset.escaped) return;
+            text.dataset.escaped = '1';
+            text.textContent = 'Still going. ';
+            const out = document.createElement('a');
+            out.href = '/';
+            out.textContent = 'Leave it — nothing has changed yet';
+            text.append(out);
+          }, 12000);
+        }
+
+        if (input) {
+          /*
+           * Native form serialization happens after this event. Preserve the
+           * submitted value in a hidden field, then clear the visible composer
+           * immediately so it behaves like a chat instead of looking unsent.
+           */
+          if (input.name) {
+            const submitted = document.createElement('input');
+            submitted.type = 'hidden';
+            submitted.name = input.name;
+            submitted.value = input.value;
+            submitted.setAttribute('data-ask-submitted-message', '');
+            form.appendChild(submitted);
+            input.removeAttribute('name');
+          }
+          input.value = '';
+          input.placeholder = 'Message sent';
+          input.readOnly = true;
+          input.setAttribute('aria-busy', 'true');
+        }
         const button = form.querySelector('[data-ask-submit]');
         if (button) {
-          button.classList.add('is-busy');
+          // Words, not a blank pill.
+          button.disabled = true;
+          button.classList.remove('is-busy');
+          button.classList.add('is-working-label');
           button.setAttribute('aria-busy', 'true');
+          button.textContent = 'Sending…';
         }
         /*
          * A wait with no end and no exit.
@@ -1293,6 +1515,126 @@
     });
   }
 
+  /**
+   * Turn catalogue corrections into a short conversation instead of exposing
+   * a wall of validation output. The server remains the source of truth; this
+   * only reveals one evidence-backed question at a time and never submits a
+   * partial answer.
+   */
+  function initClarificationWizard() {
+    document.querySelectorAll('[data-clarification-wizard]').forEach((form) => {
+      const steps = [...form.querySelectorAll('[data-clarification-step]')];
+      const counter = form.querySelector('[data-clarification-count]');
+      if (!steps.length) return;
+      let active = 0;
+
+      const syncFollowups = () => {
+        form.querySelectorAll('[data-show-for]').forEach((panel) => {
+          const name = panel.getAttribute('data-show-for');
+          const wanted = panel.getAttribute('data-show-value');
+          const selected = form.querySelector(`input[name="${CSS.escape(name)}"]:checked`);
+          const shown = Boolean(selected && selected.value === wanted);
+          panel.hidden = !shown;
+          panel.querySelectorAll('[data-required-when-shown]').forEach((field) => {
+            field.required = shown;
+          });
+        });
+      };
+
+      const show = (index) => {
+        active = Math.max(0, Math.min(index, steps.length - 1));
+        steps.forEach((step, stepIndex) => { step.hidden = stepIndex !== active; });
+        if (counter) counter.textContent = `Question ${active + 1} of ${steps.length}`;
+        syncFollowups();
+        const heading = steps[active].querySelector('h2');
+        if (heading && index !== 0) heading.focus({ preventScroll: true });
+        steps[active].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+
+      const finishCurrentAnswer = () => {
+        syncFollowups();
+        const invalid = steps[active].querySelector(':invalid');
+        if (!invalid) return true;
+        invalid.reportValidity();
+        return false;
+      };
+
+      form.addEventListener('change', syncFollowups);
+      form.querySelectorAll('[data-clarification-next]').forEach((button) => {
+        button.addEventListener('click', () => {
+          if (finishCurrentAnswer()) show(active + 1);
+        });
+      });
+      form.querySelectorAll('[data-clarification-back]').forEach((button) => {
+        button.addEventListener('click', () => show(active - 1));
+      });
+      form.addEventListener('submit', (event) => {
+        if (finishCurrentAnswer()) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
+
+      syncFollowups();
+      show(0);
+    });
+  }
+
+  /** Keep a long verified cutover visible without repeatedly reloading the page. */
+  function initMigrationProgress() {
+    const panel = document.querySelector('[data-migration-progress]');
+    if (!panel) return;
+    const count = document.querySelector('[data-migration-progress-count]');
+    const copy = panel.querySelector('[data-migration-progress-copy]');
+    const phase = panel.querySelector('[data-migration-progress-phase]');
+    const fraction = panel.querySelector('[data-migration-progress-fraction]');
+    const bar = panel.querySelector('[data-migration-job-bar]');
+    const endpoint = panel.getAttribute('data-migration-progress');
+    const format = new Intl.NumberFormat();
+    let checking = false;
+
+    async function check() {
+      if (checking || document.hidden) return;
+      checking = true;
+      try {
+        const response = await window.fetch(endpoint,{ headers:{ Accept:'application/json' },credentials:'same-origin' });
+        if (!response.ok) return;
+        const progress = await response.json();
+        if (progress.preparationStatus === 'RUNNING') {
+          if (copy) copy.textContent = progress.preparationDetail || 'Foundry is preparing the saved source evidence.';
+          if (phase) phase.textContent = String(progress.preparationStage || 'preparing').replaceAll('_',' ').toLowerCase();
+          if (fraction) fraction.textContent = progress.preparationTotal
+            ? `${format.format(progress.preparationCompleted || 0)} of ${format.format(progress.preparationTotal)} datasets`
+            : 'Starting…';
+          if (bar) {
+            bar.max = Math.max(1,progress.preparationTotal || 1);
+            bar.value = progress.preparationCompleted || 0;
+          }
+          return;
+        }
+        if (progress.status !== 'APPLYING') {
+          window.location.reload();
+          return;
+        }
+        if (count) count.textContent = format.format(progress.appliedCount || 0);
+        const entity = String(progress.currentEntityType || 'verified records').replaceAll('_',' ');
+        if (copy) copy.textContent = 'Applying ' + entity + ' through its normal business service. ' + format.format(progress.appliedCount || 0) + ' of ' +
+          format.format(progress.stagedCount || 0) +
+          ' prepared records are safely applied. Foundry will reconcile the live totals before it calls the switch complete.';
+        if (phase) phase.textContent = `Applying ${entity}`;
+        if (fraction) fraction.textContent = `${format.format(progress.appliedCount || 0)} of ${format.format(progress.stagedCount || 0)}`;
+        if (bar) { bar.max = Math.max(1,progress.stagedCount || 1); bar.value = progress.appliedCount || 0; }
+      } catch (error) {
+        // A transient read failure does not stop the durable cutover. The next
+        // tick asks again without turning a harmless network blip into an alert.
+      } finally {
+        checking = false;
+      }
+    }
+
+    window.setInterval(check,3000);
+    window.setTimeout(check,600);
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     initNavigationLanding();
     initSearch();
@@ -1303,8 +1645,11 @@
     initAutoFilters();
     initFoundry();
     initThinking();
+    initOpenDetailsButtons();
     initBusyButtons();
     initSetupSource();
+    initMigrationUpload();
+    initMigrationAutoStart();
     initOperatorAttachment();
     initAskPending();
     initSwitcher();
@@ -1317,6 +1662,8 @@
     initPaymentWindow();
     initPrintButtons();
     initComposerSend();
+    initClarificationWizard();
+    initMigrationProgress();
     initVariantPreview();
   });
 })();

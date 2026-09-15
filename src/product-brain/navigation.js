@@ -356,7 +356,7 @@ function verifyArrival(req) {
   const returnPath = (() => {
     try {
       const value = new URL(String(pending.returnTo || '/'), `http://${req.get('host')}`);
-      return value.host === req.get('host') ? `${value.pathname}${value.search}` : '/ask';
+      return value.host === req.get('host') ? `${value.pathname}${value.search}${value.hash}` : '/ask';
     } catch { return '/ask'; }
   })();
   return { message: `Foundry opened the requested place: ${pending.label.replace(/^Open /, '')}.`,

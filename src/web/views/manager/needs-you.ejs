@@ -31,6 +31,8 @@
 
   var nextAt = at + 1 < total ? at + 1 : null;
   var prevAt = at > 0 ? at - 1 : null;
+  var pipStart = Math.max(0, Math.min(at - 5, Math.max(0, total - 12)));
+  var pipEnd = Math.min(total, pipStart + 12);
 %>
 
 <% if (!total) { %>
@@ -54,7 +56,7 @@
     <div class="rm-desk__count">
       <span>Decision <%= at + 1 %> of <%= total %></span>
       <span class="rm-pips" aria-hidden="true">
-        <% items.forEach(function (unused, i) { %><span class="rm-pip <%= i < at ? 'is-done' : i === at ? 'is-now' : '' %>"></span><% }) %>
+        <% for (var i = pipStart; i < pipEnd; i += 1) { %><span class="rm-pip <%= i < at ? 'is-done' : i === at ? 'is-now' : '' %>"></span><% } %>
       </span>
       <%# The importance badge keeps the class the rest of the product colours by,
           so orange means the same thing here as everywhere else. %>
@@ -131,19 +133,22 @@
        * about the same product. Names only, no detail, each going straight to
        * its own position — visible without becoming a second queue to triage.
        */
-      var rest = items.filter(function (unused, i) { return i !== at; });
+      var rest = items.map(function (item, i) { return { item: item, index: i }; })
+        .filter(function (row) { return row.index !== at; })
+        .slice(0, 8);
     %>
     <% if (rest.length) { %>
-      <p class="rm-stamp" style="margin-top:30px;margin-bottom:8px"><%= rest.length %> other <%= rest.length === 1 ? 'thing' : 'things' %> waiting</p>
+      <p class="rm-stamp" style="margin-top:30px;margin-bottom:8px"><%= total - 1 %> other <%= total === 2 ? 'thing' : 'things' %> waiting</p>
       <div class="rm-feed" style="margin-top:0">
-        <% items.forEach(function (other, i) { %><% if (i !== at) { %>
+        <% rest.forEach(function (row) { var other = row.item; var i = row.index; %>
           <a class="rm-feed__row" href="/needs-you?at=<%= i %>">
             <span class="rm-feed__ic"><%= i + 1 %></span>
             <span class="rm-feed__t"><%= other.title %><% if (other.happened) { %><small><%= other.happened %></small><% } %></span>
             <span class="rm-feed__m">Open</span>
           </a>
-        <% } %><% }) %>
+        <% }) %>
       </div>
+      <% if (total - 1 > rest.length) { %><p class="rm-disclose"><a href="/needs-you/all">See all <%= total %> decisions</a></p><% } %>
     <% } %>
 
     <p class="rm-disclose">

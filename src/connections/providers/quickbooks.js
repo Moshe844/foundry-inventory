@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const config = require('../../config');
 const { ValidationError } = require('../../domain/errors');
 const { jsonRequest } = require('./common');
@@ -12,6 +13,7 @@ const basic = () => Buffer.from(`${config.connections.quickbooks.clientId}:${con
 function metadata() {
   return { type: 'quickbooks', name: 'QuickBooks Online', mark: 'QB', category: 'accounting', authMode: 'oauth',
     integrationClass: 'accounting', available: config.connections.quickbooks.configured,
+    environment: config.connections.quickbooks.environment,
     description: 'Verify the company, compare the books in shadow mode, then post only after parity and explicit authority.',
     provides: ['company identity', 'chart of accounts', 'trial-balance comparison', 'governed journal posting'],
     unavailableReason: config.connections.quickbooks.configured ? null : 'QuickBooks app credentials have not been configured on this installation.',
@@ -83,18 +85,37 @@ async function readAccountingSnapshot({ credentials, asOf }) {
   const debitIndex = columns.findIndex((column) => /debit/i.test(column.ColTitle || ''));
   const creditIndex = columns.findIndex((column) => /credit/i.test(column.ColTitle || ''));
   const rows = [];
+  const reportedAccountIds = new Set();
   const walk = (groups = []) => groups.forEach((row) => {
-    if (row.type === 'Data' && Array.isArray(row.ColData)) {
+    // The live QuickBooks report API commonly omits the documented `type`
+    // property and returns account rows as plain { ColData: [...] } objects.
+    // The stable account id distinguishes those rows from headings/totals.
+    if (Array.isArray(row.ColData) && row.ColData[0]?.id) {
       const identity = row.ColData[0] || {};
       const account = chart.get(String(identity.id));
+      if (identity.id) reportedAccountIds.add(String(identity.id));
       rows.push({ externalId: identity.id || null, code: account?.AcctNum || null,
         name: account?.Name || identity.value || 'Unnamed account', version: account?.SyncToken || String(response.body.Header?.Time || asOf),
+        accountType: account?.AccountType || null, accountSubType: account?.AccountSubType || null,
+        classification: account?.Classification || null,
         balanceMinor: Math.round((Number(row.ColData[debitIndex]?.value || 0)
           - Number(row.ColData[creditIndex]?.value || 0)) * 100) });
     }
     if (Array.isArray(row.Rows?.Row)) walk(row.Rows.Row);
   });
   walk(response.body.Rows?.Row || []);
+  // QuickBooks omits zero-balance accounts from an empty or sparse Trial
+  // Balance report. Keep the chart identities in the snapshot with a proven
+  // zero balance so Foundry can distinguish "the sandbox is empty" from
+  // "QuickBooks returned no accounts" and can map an account before posting.
+  for (const account of chart.values()) {
+    if (!account?.Id || reportedAccountIds.has(String(account.Id)) || account.Active === false) continue;
+    rows.push({ externalId: String(account.Id), code: account.AcctNum || null,
+      name: account.Name || 'Unnamed account', version: account.SyncToken || String(response.body.Header?.Time || asOf),
+      accountType: account.AccountType || null, accountSubType: account.AccountSubType || null,
+      classification: account.Classification || null,
+      balanceMinor: 0 });
+  }
   return { asOf, currency: response.body.Header?.Currency || 'USD',
     version: String(response.body.Header?.Time || asOf), accounts: rows };
 }
@@ -105,7 +126,11 @@ async function postJournalEntry({ credentials, entry, idempotencyKey }) {
       Description: line.memo || entry.description, DetailType: 'JournalEntryLineDetail',
       JournalEntryLineDetail: { PostingType: line.debit_minor ? 'Debit' : 'Credit',
         AccountRef: { value: line.external_account_id } } })) };
-  const response = await api(credentials, `/v3/company/${encodeURIComponent(credentials.realmId)}/journalentry?requestid=${encodeURIComponent(idempotencyKey)}&minorversion=75`,
+  // Intuit limits requestid to 50 characters. Foundry's canonical idempotency
+  // key includes workspace and journal IDs and is intentionally longer, so use
+  // a stable digest rather than truncating (which could create collisions).
+  const requestId = `foundry-${crypto.createHash('sha256').update(String(idempotencyKey)).digest('hex').slice(0, 32)}`;
+  const response = await api(credentials, `/v3/company/${encodeURIComponent(credentials.realmId)}/journalentry?requestid=${encodeURIComponent(requestId)}&minorversion=75`,
     { method: 'POST', body: JSON.stringify(body) });
   const created = response.body.JournalEntry;
   return { externalId: created?.Id, version: created?.SyncToken };

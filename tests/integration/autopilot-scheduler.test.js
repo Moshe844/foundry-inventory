@@ -143,7 +143,7 @@ test('a paused inventory is looked at but never touched', () => {
   assert.equal(workItems.list(env.db, env.workspace.workspaceId).length, 0, 'and it plans nothing either');
 });
 
-test('an inventory that stopped itself is not restarted by the clock', () => {
+test('a scoped safety stop blocks that domain without freezing the clock', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
@@ -155,8 +155,8 @@ test('an inventory that stopped itself is not restarted by the clock', () => {
   const before = balanceOf(env, env.workspace.main.id);
   const [result] = scheduler.tick(env.db, { trigger: 'scheduled' }).results;
 
-  assert.equal(result.readOnly, true);
-  assert.equal(result.because, 'stopped itself');
+  assert.equal(result.executed, 0, 'the stopped transfer scope is not restarted');
+  assert.equal(modes.get(env.db, env.workspace.workspaceId).suspendedScope, 'transfer');
   assert.equal(balanceOf(env, env.workspace.main.id), before);
 });
 

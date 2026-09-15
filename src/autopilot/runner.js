@@ -1097,12 +1097,72 @@ function executeWorkItemInternal(db, ctx, membership, workItemId, options = {}) 
   return { executed: true, verified: true, item: completed, before, after, checks, transfer };
 }
 
+function universalWorkItemAuthority({ db, ctx, membership, operation, execution: executionState }) {
+  const item = workItems.get(db, ctx.workspaceId, operation.sourceId);
+  const definition = require('../autonomous/catalog').requireType(operation.operationType);
+  const checks = [];
+  const check = (name, passed, reason) => checks.push({ name, passed:Boolean(passed), reason });
+  check('executionState', executionState.allowed,
+    executionState.because || 'Foundry is active for this domain.');
+  if (item.approvedAt) {
+    check('ownerApproval', permissions.can(membership, definition.permission),
+      `The approving person must still have ${definition.permission}.`);
+  } else {
+    const preparationIsReversible = item.category === 'purchase_preparation';
+    check('plannedAuthority', item.isAutomatic && (preparationIsReversible
+      || item.policyEvaluation?.decision === 'authorized'),
+    preparationIsReversible
+      ? 'Preparing a draft is reversible; placing it is independently re-authorized inside the purchasing adapter.'
+      : (item.policyEvaluation?.reason || 'The current domain policy has not authorized this work.'));
+  }
+  return { allowed:checks.every((entry) => entry.passed), checks,
+    source:{ kind:'work_item_policy', workItemId:item.id, policy:item.policyEvaluation || null } };
+}
+
+function verifyUniversalWorkItem({ db, ctx, operation, actualOutcome }) {
+  const item = workItems.get(db, ctx.workspaceId, operation.sourceId);
+  const safeNoOp = ['COMPLETED','CANCELLED','SUPERSEDED'].includes(item.executionStatus)
+    && !actualOutcome?.error;
+  const passed = item.verificationStatus === 'VERIFIED'
+    || item.verificationStatus === 'NOT_APPLICABLE'
+    || safeNoOp;
+  return { passed,
+    reason:passed
+      ? (actualOutcome?.because || 'The domain work item reached one durable, terminal outcome.')
+      : (item.errorMessage || 'The domain work item did not reach a verified outcome.'),
+    workItemId:item.id, workItemStatus:item.executionStatus,
+    domainVerification:item.verificationStatus };
+}
+
+const universalOperations = require('../autonomous/service');
+for (const type of new Set(Object.values(universalOperations.WORK_ITEM_TYPES))) {
+  universalOperations.registerAdapter(type, {
+    owner:'autopilot.runner',
+    authorize:universalWorkItemAuthority,
+    execute:({ db, ctx, membership, operation, runtime }) =>
+      executeWorkItemInternal(db, ctx, membership, operation.sourceId, runtime),
+    verify:verifyUniversalWorkItem,
+  });
+}
+
 function executeWorkItem(db, ctx, membership, workItemId, options = {}) {
   const workspaceId = ctx.workspaceId;
   const alreadyManaging = managerGuards.activeWorkspaces.has(workspaceId);
   if (!alreadyManaging) managerGuards.activeWorkspaces.add(workspaceId);
   try {
-    return executeWorkItemInternal(db, ctx, membership, workItemId, options);
+    const item = workItems.get(db, workspaceId, workItemId);
+    // Terminal domain work has no effect left to govern. Preserve its exact
+    // replay/supersession answer instead of turning it into a new authority
+    // request merely because its canonical operation is also terminal.
+    if (item.isTerminal) return executeWorkItemInternal(db, ctx, membership, workItemId, options);
+    const operation = universalOperations.mirrorWorkItem(db, item);
+    if (!operation) return executeWorkItemInternal(db, ctx, membership, workItemId, options);
+    const governed = universalOperations.runSync(db, ctx, membership, operation.id, options);
+    if (governed.result) return governed.result;
+    const denied = (governed.authority?.checks || []).filter((check) => !check.passed)
+      .map((check) => check.reason).join(' ');
+    return { executed:false, item:workItems.get(db, workspaceId, workItemId),
+      because:denied || governed.operation.errorMessage || 'This work needs a person.' };
   } finally {
     if (!alreadyManaging) managerGuards.activeWorkspaces.delete(workspaceId);
   }

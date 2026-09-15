@@ -14,9 +14,8 @@
   <meta name="twitter:title" content="Foundry — Your inventory operation, managed.">
   <meta name="twitter:description" content="Foundry handles routine inventory work and brings you the exceptions that need your judgement.">
   <meta name="twitter:image" content="<%= origin %>/og.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <%# Keep the application shell self-contained. A remote font stylesheet used
+      to block every navigation when Google Fonts was slow or unavailable. %>
   <%# The first four sheets carry what is specific to a single screen. The
       design system loads last and owns everything shared — the tokens they all
       read, and the components every screen is assembled out of — so both

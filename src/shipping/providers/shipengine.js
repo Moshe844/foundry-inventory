@@ -33,6 +33,7 @@ async function call(ctx, path, options = {}) {
       'api-key': apiKey(ctx),
       'content-type': 'application/json',
       accept: 'application/json',
+      ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
@@ -133,6 +134,7 @@ async function buy(ctx, input = {}) {
   for (const id of ids.filter(Boolean)) {
     labels.push(await call(ctx, `/labels/rates/${encodeURIComponent(id)}`, {
       method: 'POST', body: { label_format: 'pdf', label_layout: '4x6' },
+      headers: input.idempotencyKey ? { 'x-shipengine-idempotency-key': `${input.idempotencyKey}:${labels.length}` } : {},
     }));
   }
   if (!labels.length) throw new ValidationError('Choose a current carrier rate before buying a label.');
@@ -140,6 +142,7 @@ async function buy(ctx, input = {}) {
   return {
     providerShipmentId: lead.shipment_id || lead.label_id,
     providerShipmentIds: labels.map((row) => row.shipment_id || row.label_id).filter(Boolean),
+    providerLabelIds: labels.map((row) => row.label_id).filter(Boolean),
     carrier: String(lead.carrier_code || '').toLowerCase(),
     service: lead.service_code || null,
     trackingNumber: lead.tracking_number || null,
@@ -151,6 +154,21 @@ async function buy(ctx, input = {}) {
     currency: String(lead.shipment_cost?.currency || 'USD').toUpperCase(),
     deliveryDate: lead.estimated_delivery_date
       ? String(lead.estimated_delivery_date).slice(0, 10) : null,
+  };
+}
+
+async function voidLabel(ctx, input = {}) {
+  const ids = (input.providerReferences || input.providerLabelIds || []).filter(Boolean);
+  if (!ids.length) throw new ValidationError('Foundry has no ShipEngine label reference to void.');
+  const answers = [];
+  for (const id of ids) {
+    answers.push(await call(ctx, `/labels/${encodeURIComponent(id)}/void`, { method: 'PUT' }));
+  }
+  const failed = answers.some((row) => row.approved === false);
+  return {
+    status: failed ? 'FAILED' : 'SUCCEEDED',
+    references: ids,
+    detail: answers.map((row) => row.message).filter(Boolean).join(' ') || 'ShipEngine voided the label.',
   };
 }
 
@@ -268,6 +286,6 @@ function readEvent(event = {}) {
 }
 
 module.exports = {
-  isConfigured, quote, buy, track, verifyEvent, readEvent,
+  isConfigured, quote, buy, voidLabel, track, verifyEvent, readEvent,
   address, parcel, statusOf, readRate, call, carrierIds,
 };

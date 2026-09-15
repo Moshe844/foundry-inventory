@@ -20,6 +20,7 @@ const { ValidationError, NotFoundError } = require('../domain/errors');
 const permissions = require('../actions/permissions');
 const parser = require('../imports/parser');
 const fields = require('../imports/fields');
+const config = require('../config');
 
 /** Purposes a file can be recognised as serving. */
 const PURPOSES = {
@@ -30,6 +31,7 @@ const PURPOSES = {
   LOTS: 'lots',
   SUPPLIERS: 'suppliers',
   PURCHASING: 'purchasing',
+  SALES_ORDERS: 'sales_orders',
   UNKNOWN: 'unknown',
 };
 
@@ -41,6 +43,7 @@ const PURPOSE_LABEL = {
   lots: 'batches or lots',
   suppliers: 'a supplier list',
   purchasing: 'purchasing information',
+  sales_orders: 'sales orders',
   unknown: 'something Foundry could not identify',
 };
 
@@ -64,6 +67,9 @@ function inferPurpose(name, mappings, columns) {
   }
   if (/purchase order|\bpo\b|on order/.test(`${filename} ${headers}`)) {
     return { purpose: PURPOSES.PURCHASING, confidence: 'low' };
+  }
+  if (/sales order|\bso\b/.test(`${filename} ${headers}`) && /customer|client|buyer/.test(`${filename} ${headers}`)) {
+    return { purpose: PURPOSES.SALES_ORDERS, confidence: 'medium' };
   }
 
   if (has('quantity')) {
@@ -236,7 +242,7 @@ function hydrate(row) {
   };
 }
 
-const MAX_BYTES = 32 * 1024 * 1024;
+const MAX_BYTES = config.uploads.maxBytes;
 
 /**
  * Stores a file and what Foundry made of it.
@@ -269,7 +275,18 @@ function addSource(db, ctx, membership, input) {
     .get(ctx.workspaceId, contentHash);
   if (existing) return { source: hydrate(existing), alreadyPresent: true };
 
-  const built = profile({ buffer, text, filename: name });
+  let built;
+  try {
+    built = profile({ buffer, text, filename: name });
+  } catch (error) {
+    // A failed multi-file migration must identify the exact evidence that did
+    // not parse.  "That spreadsheet" forced an owner to guess which one of
+    // twenty exports Foundry meant, and a redirect then hid the filenames.
+    if (error && error.code === 'spreadsheet_unreadable') {
+      error.message = `${name}: ${error.message}`;
+    }
+    throw error;
+  }
   const primary = built.sheets[built.primarySheetIndex] || built.sheets[0] || null;
 
   const id = newId('msrc');

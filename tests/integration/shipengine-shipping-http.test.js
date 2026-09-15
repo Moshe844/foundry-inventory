@@ -59,9 +59,10 @@ test('shipping settings require a business-owned provider account instead of usi
     const words = plain(page.text);
     assert.equal(page.status, 200);
     assert.match(words, /No carrier account is connected/);
-    assert.match(words, /Use a free account owned by this business/);
-    assert.match(words, /postage is charged to that business's provider account, not Foundry/);
-    assert.match(words, /embedded seller-account flow requires partner credentials/);
+    assert.match(words, /UPS Rates, labels and tracking/);
+    assert.match(words, /Guided carrier setup is not enabled on this installation yet/);
+    assert.match(words, /Connect my existing carrier accounts/);
+    assert.match(page.text, /<details[^>]+id="existing-carrier-connection"/);
     assert.doesNotMatch(words, /Set up shipping Keeper will not be charged/);
     store.db.close();
   });
@@ -95,9 +96,10 @@ test('workspace seller opens embedded onboarding, mints a scoped token, and beco
     const page = await agent.get('/settings/shipping?setup=shipengine');
     const words = plain(page.text);
     assert.equal(page.status, 200);
-    assert.match(words, /ShipEngine for Merchant funded postage/);
+    assert.match(words, /Shipping for Merchant funded postage/);
     assert.match(words, /setup unfinished/);
     assert.match(words, /Foundry never charges Foundry's platform account/);
+    assert.match(page.text, /Advanced connection details/);
     assert.match(page.text, /shipengine-elements-sdk\.mjs/);
     assert.match(page.text, /12 Main Street/);
     assert.match(page.text, /enabledShipEngineCarriers: \['stamps_com', 'dhl_express_worldwide'\]/);

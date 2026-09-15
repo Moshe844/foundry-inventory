@@ -26,6 +26,7 @@ const { TRACKING_MODE_IDS, LOCATION_KIND_IDS } = require('../domain/constants');
 const { newId, nowIso, requireText } = require('../lib/util');
 const dataMode = require('../synthetic/data-mode');
 const realBusinessGrounding = require('./real-business-grounding');
+const requirementCoverage = require('./requirement-coverage');
 
 const MIN_DESCRIPTION = 12;
 const MAX_DESCRIPTION = 4000;
@@ -215,6 +216,11 @@ function normalise(raw, description, executionContext = {}) {
 
   if (executionContext.workspaceMode === 'production') {
     realBusinessGrounding.ground(understanding, description);
+  } else {
+    understanding.statedRequirements = requirementCoverage.reconcile(
+      description,
+      understanding.statedRequirements
+    );
   }
 
   return understanding;

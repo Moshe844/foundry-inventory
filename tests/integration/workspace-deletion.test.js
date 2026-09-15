@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 
 const deletion = require('../../src/domain/workspace-deletion');
+const jobQueue = require('../../src/operations/job-queue');
 const workspaceService = require('../../src/domain/workspace-service');
 const authService = require('../../src/domain/auth-service');
 const engine = require('../../src/domain/inventory-engine');
@@ -233,7 +234,18 @@ test('the confirmation screen says exactly what will be lost', async () => {
   assert.match(text, /does not cancel anything with your suppliers/);
 });
 
-test('deleting over HTTP removes it and moves you to another inventory', async () => {
+async function runQueuedDeletion(db) {
+  return jobQueue.processOne(db, {
+    'workspace.delete': (job) => deletion.deleteWorkspace(
+      db,
+      job.payload.accountId,
+      job.payload.workspaceId,
+      { confirmName: job.payload.confirmName }
+    ),
+  }, { owner: 'workspace-deletion-test' });
+}
+
+test('deleting over HTTP queues it, moves you immediately, and the worker removes it', async () => {
   const env = app();
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email);
@@ -246,6 +258,19 @@ test('deleting over HTTP removes it and moves you to another inventory', async (
 
   assert.equal(done.status, 303);
   assert.equal(
+    env.db.prepare("SELECT COUNT(*) AS n FROM runtime_jobs WHERE kind = 'workspace.delete' AND status = 'PENDING'").get().n,
+    1
+  );
+  const afterRequest = await agent.get('/inventories');
+  const whileDeleting = plain(afterRequest.text);
+  assert.match(whileDeleting, /was deleted from your account/);
+  assert.ok(!afterRequest.text.includes(env.workspace.workspaceId),
+    'an authorized deletion must disappear from the account immediately');
+  assert.equal(entitlements.usage(env.db, { accountId: env.workspace.accountId }, 'workspaces').used, 1,
+    'an authorized deletion must free its visible inventory slot immediately');
+
+  await runQueuedDeletion(env.db);
+  assert.equal(
     env.db.prepare('SELECT COUNT(*) AS n FROM workspaces WHERE id = ?').get(env.workspace.workspaceId).n,
     0
   );
@@ -255,7 +280,6 @@ test('deleting over HTTP removes it and moves you to another inventory', async (
   const list = plain(listPage.text);
   assert.match(list, /Still Trading/);
   // Its name survives only in the message confirming it went.
-  assert.match(list, /Doomed Trading was deleted/);
   assert.ok(!listPage.text.includes(env.workspace.workspaceId), 'the deleted inventory is still listed');
   assert.equal((await agent.get('/')).status, 200);
 });
@@ -344,6 +368,8 @@ test('deleting your only inventory leaves the app usable', async () => {
     .type('form')
     .send({ _csrf: csrfFrom(page.text), confirmName: 'Only One' });
   assert.equal(done.status, 303);
+
+  await runQueuedDeletion(store.db);
 
   // No workspace left: the app sends them to the list, which offers a new one.
   const list = await agent.get('/inventories');

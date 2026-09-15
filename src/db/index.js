@@ -27,13 +27,24 @@ const TRANSFERS_SCHEMA_PATH = path.join(__dirname, 'schema-transfers.sql');
 const UOM_COSTING_SCHEMA_PATH = path.join(__dirname, 'schema-uom-costing.sql');
 const OPERATIONS_SCHEMA_PATH = path.join(__dirname, 'schema-operations.sql');
 const ACCOUNTING_INTEGRATIONS_SCHEMA_PATH = path.join(__dirname, 'schema-accounting-integrations.sql');
+const AUTONOMOUS_OPERATIONS_SCHEMA_PATH = path.join(__dirname, 'schema-autonomous-operations.sql');
+const ADAPTIVE_PLANNING_SCHEMA_PATH = path.join(__dirname, 'schema-adaptive-planning.sql');
+const SUPPLIER_MANAGER_SCHEMA_PATH = path.join(__dirname, 'schema-supplier-manager.sql');
+const LEARNING_SCHEMA_PATH = path.join(__dirname, 'schema-learning.sql');
+const MIGRATION_SCALE_SCHEMA_PATH = path.join(__dirname, 'schema-migration-scale.sql');
+const KITS_SCHEMA_PATH = path.join(__dirname, 'schema-kits.sql');
+const CATALOGUE_FACTS_SCHEMA_PATH = path.join(__dirname, 'schema-catalogue-facts.sql');
 const SCHEMA_PATHS = [SCHEMA_PATH, FOUNDRY_SCHEMA_PATH, ATTENTION_SCHEMA_PATH,
   ACTIONS_SCHEMA_PATH, IMPORTS_SCHEMA_PATH, PURCHASING_SCHEMA_PATH,
   ONBOARDING_SCHEMA_PATH, AUTOPILOT_SCHEMA_PATH, MANAGER_SCHEMA_PATH,
   SALES_SCHEMA_PATH, CONNECTIONS_SCHEMA_PATH, ACCOUNTING_SCHEMA_PATH,
   FORECASTING_SCHEMA_PATH, SHIPPING_SCHEMA_PATH, PROVENANCE_SCHEMA_PATH,
   REPAIRS_SCHEMA_PATH, RUNTIME_SCHEMA_PATH, WAREHOUSE_SCHEMA_PATH, TRANSFERS_SCHEMA_PATH,
-  UOM_COSTING_SCHEMA_PATH, OPERATIONS_SCHEMA_PATH, ACCOUNTING_INTEGRATIONS_SCHEMA_PATH];
+  UOM_COSTING_SCHEMA_PATH, OPERATIONS_SCHEMA_PATH, ACCOUNTING_INTEGRATIONS_SCHEMA_PATH,
+  AUTONOMOUS_OPERATIONS_SCHEMA_PATH, ADAPTIVE_PLANNING_SCHEMA_PATH, SUPPLIER_MANAGER_SCHEMA_PATH,
+  LEARNING_SCHEMA_PATH, MIGRATION_SCALE_SCHEMA_PATH];
+SCHEMA_PATHS.push(KITS_SCHEMA_PATH);
+SCHEMA_PATHS.push(CATALOGUE_FACTS_SCHEMA_PATH);
 
 /**
  * Opens (and initialises) a SQLite database.
@@ -47,10 +58,33 @@ function openDatabase(databasePath, options = {}) {
     fs.mkdirSync(path.dirname(databasePath), { recursive: true });
   }
   const db = new Database(databasePath, { verbose: options.verbose });
+  // Runtime readiness reads this contract instead of inferring safety from a
+  // filename. SQLite remains excellent for local work and single-node pilots,
+  // but it is not a shared multi-writer production topology.
+  Object.defineProperty(db,'foundryTopology',{
+    value:Object.freeze({ engine:'sqlite',shared:false,multiWriter:false }),
+    enumerable:false,configurable:false,writable:false,
+  });
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 10000');
+  /*
+   * The write-ahead log gets a ceiling.
+   *
+   * SQLite's default here is -1: the WAL file is never truncated. Checkpoints
+   * still run every thousand pages and the file is reused from the start once
+   * one completes, but its size on disk is whatever the largest burst ever
+   * needed. One 80,000-variant import under an open reader took a 3.4 GB
+   * database's log to 4.2 GB, and there it stayed — holding 760 KB of live
+   * frames — with nothing in the product able to shrink it.
+   *
+   * With a limit, the file is cut back to this size at the next checkpoint
+   * that resets the log. Sixty-four megabytes is sixteen thousand pages: far
+   * above the autocheckpoint threshold, so ordinary work never touches it, and
+   * a bounded cost for the one time a burst has to outlive it.
+   */
+  db.pragma('journal_size_limit = 67108864');
   migrate(db);
   // Historical links are added only when an existing foreign key or immutable
   // event payload proves them. This is idempotent and never manufactures a
@@ -67,6 +101,11 @@ function openDatabase(databasePath, options = {}) {
  * migration chain, because every entry is additive and independently safe.
  */
 const ADDED_COLUMNS = [
+  {
+    table: 'workspaces',
+    column: 'deletion_requested_at',
+    definition: 'TEXT',
+  },
   {
     table: 'workspaces',
     column: 'source_of_truth_mode',
@@ -253,6 +292,22 @@ const ADDED_COLUMNS = [
   // be judged against it after the fact and not only while choosing.
   { table: 'sales_shipments', column: 'promised_date', definition: 'TEXT' },
   { table: 'sales_shipments', column: 'bought_by_rule_id', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'promised_service', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'promised_window_start', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'promised_window_end', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'customer_shipping_minor', definition: 'INTEGER' },
+  { table: 'sales_shipments', column: 'promise_source', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'label_status', definition: "TEXT NOT NULL DEFAULT 'NONE'" },
+  { table: 'sales_shipments', column: 'label_voided_at', definition: 'TEXT' },
+  { table: 'sales_shipments', column: 'postage_refund_minor', definition: 'INTEGER' },
+  { table: 'sales_shipments', column: 'postage_adjustment_minor', definition: 'INTEGER' },
+
+  // Carrier-stage customer messages are separately configurable.  Existing
+  // workspaces remain in prepare-only mode and therefore gain no new sending
+  // authority after an upgrade.
+  { table: 'customer_communication_policy', column: 'out_for_delivery_notice', definition: "TEXT NOT NULL DEFAULT 'prepare'" },
+  { table: 'customer_communication_policy', column: 'delivered_notice', definition: "TEXT NOT NULL DEFAULT 'prepare'" },
+  { table: 'customer_communication_policy', column: 'exception_notice', definition: "TEXT NOT NULL DEFAULT 'prepare'" },
 
   // A parcel's weight comes from what is in it. Nullable, and a shipment says
   // when it had to guess rather than quietly pricing on a number nobody knows.
@@ -261,6 +316,24 @@ const ADDED_COLUMNS = [
   // Where a parcel leaves from. A carrier cannot quote a rate without it, and
   // Foundry cannot invent it — so it is asked for once, per location.
   { table: 'locations', column: 'address', definition: 'TEXT' },
+
+  // Live cutovers use durable source cursors. Existing migrations remain
+  // immutable STATIC snapshots; no historical package is silently reclassified.
+  { table: 'migration_packages', column: 'cutover_mode', definition: "TEXT NOT NULL DEFAULT 'STATIC'" },
+  { table: 'migration_packages', column: 'source_snapshot_at', definition: 'TEXT' },
+  { table: 'migration_packages', column: 'source_checkpoint', definition: 'TEXT' },
+  { table: 'migration_packages', column: 'delta_started_at', definition: 'TEXT' },
+  { table: 'migration_packages', column: 'final_checkpoint', definition: 'TEXT' },
+  { table: 'migration_packages', column: 'source_frozen_at', definition: 'TEXT' },
+  // Preparation is a real, visible job. These fields let every browser page,
+  // the Needs You inbox, and restart recovery agree on whether Foundry is
+  // working or genuinely waiting for a person.
+  { table: 'migration_packages', column: 'preparation_status', definition: "TEXT NOT NULL DEFAULT 'IDLE'" },
+  { table: 'migration_packages', column: 'preparation_stage', definition: 'TEXT' },
+  { table: 'migration_packages', column: 'preparation_completed', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'migration_packages', column: 'preparation_total', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'migration_packages', column: 'preparation_detail', definition: 'TEXT' },
+  { table: 'migration_packages', column: 'preparation_error', definition: 'TEXT' },
 ];
 
 function addMissingColumns(db) {
@@ -867,17 +940,34 @@ function migrate(db) {
   // Accounting providers and public webhooks build on both the canonical
   // accounting ledger and the shared connection/runtime delivery machinery.
   db.exec(fs.readFileSync(ACCOUNTING_INTEGRATIONS_SCHEMA_PATH, 'utf8'));
+  // The universal operator sits above every domain and stores only orchestration,
+  // authority and verification evidence. Domain services remain mutation owners.
+  db.exec(fs.readFileSync(AUTONOMOUS_OPERATIONS_SCHEMA_PATH, 'utf8'));
+  // Adaptive planning is an advisory evidence layer over inventory, suppliers
+  // and accounting. It stores comparisons and outcomes, but owns no mutation.
+  db.exec(fs.readFileSync(ADAPTIVE_PLANNING_SCHEMA_PATH, 'utf8'));
+  // Supplier communications become immutable facts and bounded response plans.
+  // This layer owns no stock, PO, email or accounting mutation.
+  db.exec(fs.readFileSync(SUPPLIER_MANAGER_SCHEMA_PATH, 'utf8'));
+  // Learning observes the versioned decisions above it and can only promote a
+  // change through registered domain adapters. It never owns production facts.
+  db.exec(fs.readFileSync(LEARNING_SCHEMA_PATH, 'utf8'));
+  // Provider-neutral staged cutovers, external identity maps, catalog groups
+  // and rotating manager scans. No connector writes operational tables.
+  db.exec(fs.readFileSync(MIGRATION_SCALE_SCHEMA_PATH, 'utf8'));
+  db.exec(fs.readFileSync(KITS_SCHEMA_PATH, 'utf8'));
+  db.exec(fs.readFileSync(CATALOGUE_FACTS_SCHEMA_PATH, 'utf8'));
   migrateMailboxDocumentPurpose(db);
   migrateLandedCostPermission(db);
   dropLegacyUserLogin(db);
   db.prepare(
-    `INSERT INTO schema_meta (key, value) VALUES ('version', '20')
+    `INSERT INTO schema_meta (key, value) VALUES ('version', '26')
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   ).run();
   const schemaFingerprint = crypto.createHash('sha256');
   for (const schemaPath of SCHEMA_PATHS) schemaFingerprint.update(fs.readFileSync(schemaPath));
   db.prepare(`INSERT OR IGNORE INTO database_releases
-    (release_ref, schema_version, schema_fingerprint, applied_at) VALUES (?, 20, ?, ?)`)
+    (release_ref, schema_version, schema_fingerprint, applied_at) VALUES (?, 26, ?, ?)`)
     .run(process.env.FOUNDRY_RELEASE_REF || process.env.GIT_COMMIT || 'development',
       schemaFingerprint.digest('hex'), new Date().toISOString());
 }

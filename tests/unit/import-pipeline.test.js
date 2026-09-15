@@ -606,6 +606,16 @@ test('an uploaded file arrives as a buffer and its fields as fields', () => {
   assert.deepEqual([...files[0].buffer], [0x50, 0x4b, 0x03, 0x04, 0x00, 0xff]);
 });
 
+test('multipart rejects excess files instead of silently dropping part of a migration', () => {
+  const boundary = '----foundry-many-files';
+  const parts = [];
+  for (let index = 0; index <= multipart.MAX_FILES; index += 1) {
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="source-${index}.csv"\r\nContent-Type: text/csv\r\n\r\nSKU\nSKU-${index}\r\n`));
+  }
+  parts.push(Buffer.from(`--${boundary}--\r\n`));
+  assert.throws(() => multipart.parseBody(Buffer.concat(parts),boundary),new RegExp(`no more than ${multipart.MAX_FILES} files`));
+});
+
 test('a one-location inventory does not reject every row for having no location', () => {
   // Found pasting a spreadsheet into a new account: three good rows with
   // quantities were all marked INVALID with "no location for this stock, and no

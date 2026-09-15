@@ -35,7 +35,12 @@ function createWorkspace(db, accountId, name, options = {}) {
  * Every inventory this account can open, with enough detail to choose between
  * them without opening each one.
  */
-function listForAccount(db, accountId) {
+function listForAccount(db, accountId, { includeAttention = true } = {}) {
+  const deleting = new Set(db.prepare(`SELECT payload FROM runtime_jobs
+    WHERE kind = 'workspace.delete' AND status IN ('PENDING', 'RUNNING', 'RETRY')`).all()
+    .map((job) => {
+      try { return JSON.parse(job.payload).workspaceId; } catch { return null; }
+    }).filter(Boolean));
   return authService.listWorkspacesForAccount(db, accountId).map((row) => {
     const counts = db
       .prepare(
@@ -49,13 +54,15 @@ function listForAccount(db, accountId) {
     // Kept separate and defensive: this list is built on every request to draw
     // the switcher, and the interpretation layer must never be able to take the
     // whole application down. A missing badge is a cosmetic loss.
-    let attentionCount = 0;
-    try {
-      // The same count the nav badge and the Needs you page use, so switching
-      // inventories cannot show a number the destination page disagrees with.
-      attentionCount = require('../attention/needs-you-count').countNeedsYou(db, row.id);
-    } catch {
-      attentionCount = 0;
+    let attentionCount = null;
+    if (includeAttention) {
+      try {
+        // The same count the nav badge and the Needs you page use, so switching
+        // inventories cannot show a number the destination page disagrees with.
+        attentionCount = require('../attention/needs-you-count').countNeedsYou(db, row.id);
+      } catch {
+        attentionCount = 0;
+      }
     }
 
     const configuration = db
@@ -74,6 +81,7 @@ function listForAccount(db, accountId) {
       attentionCount,
       configured: Boolean(configuration && configuration.configured_at),
       configuredByFoundry: Boolean(configuration && configuration.configuration_version > 0),
+      deleting: deleting.has(row.id),
     };
   });
 }
@@ -102,7 +110,8 @@ function resolveForAccount(db, accountId, workspaceId) {
 function defaultWorkspaceFor(db, accountId) {
   const account = db.prepare('SELECT last_workspace_id FROM accounts WHERE id = ?').get(accountId);
   if (account && account.last_workspace_id) {
-    if (authService.getMembership(db, account.last_workspace_id, accountId)) {
+    if (authService.getMembership(db, account.last_workspace_id, accountId)
+        && authService.getWorkspace(db, account.last_workspace_id)) {
       return account.last_workspace_id;
     }
   }

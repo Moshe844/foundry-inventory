@@ -29,6 +29,7 @@ const salesOrders = require('../sales/sales-order-service');
 const attention = require('../attention/attention-engine');
 const managerReadiness = require('../manager/readiness');
 const { localDateKey } = require('../lib/calendar');
+const operationOverview = require('../autonomous/overview');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -216,10 +217,10 @@ function describeCompleted(item, ownedByPlan = new Set(), currentOrder = null) {
  * same kind of claim as moving twelve pairs of tights, so they are counted
  * separately rather than added together into an impressive-looking total.
  */
-function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}) {
+function whatFoundryDid(db, workspaceId, { since = null, now = Date.now(), readiness = null } = {}) {
   const from = since || new Date(now - DAY_MS).toISOString();
   const completed = workItems.completedSince(db, workspaceId, from);
-  const evaluations = recentEvaluations(db, workspaceId, { since: from, limit: 20 });
+  const evaluations = recentEvaluations(db, workspaceId, { since: from, limit: 20, readiness });
 
   const sweeps = db
     .prepare('SELECT COUNT(*) AS n, MAX(created_at) AS last FROM attention_runs WHERE workspace_id = ? AND created_at >= ?')
@@ -299,8 +300,9 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now() } = {}
         verified: true,
       };
     });
-  actions.push(...paymentActions, ...salesActions, ...supplierActions);
-  const handledCount = completed.length + paymentActions.length + salesActions.length + supplierActions.length;
+  const autonomousActions = operationOverview.completed(db, workspaceId, from);
+  actions.push(...autonomousActions, ...paymentActions, ...salesActions, ...supplierActions);
+  const handledCount = completed.length + autonomousActions.length + paymentActions.length + salesActions.length + supplierActions.length;
   const transfers = completed.filter((item) => item.category === 'balance_transfer');
   const purchases = completed.filter((item) => item.category === 'purchase_preparation');
 
@@ -715,7 +717,7 @@ function whatFoundryPrepared(db, workspaceId, { limit = 8 } = {}) {
  * produce no inventory mutation. They are kept separate from handled actions so
  * the page never inflates "checked" into "moved" or "ordered".
  */
-function recentEvaluations(db, workspaceId, { since = null, limit = 20 } = {}) {
+function recentEvaluations(db, workspaceId, { since = null, limit = 20, readiness = null } = {}) {
   const clauses = ['workspace_id = ?', 'finished_at IS NOT NULL'];
   const params = [workspaceId];
   if (since) {
@@ -725,7 +727,7 @@ function recentEvaluations(db, workspaceId, { since = null, limit = 20 } = {}) {
   const positions = db
     .prepare('SELECT COUNT(*) AS n FROM skus WHERE workspace_id = ? AND is_active = 1')
     .get(workspaceId).n;
-  const readiness = managerReadiness.assess(db, workspaceId);
+  const currentReadiness = readiness || managerReadiness.assess(db, workspaceId);
   const triggerLabels = {
     scheduled: 'Scheduled inventory check',
     startup: 'Restart recovery check',
@@ -752,7 +754,7 @@ function recentEvaluations(db, workspaceId, { since = null, limit = 20 } = {}) {
         ? `${plural(planned, 'work item')} was prepared in that check; ${plural(awaiting, 'item')} required a decision at the time.`
         : missingHistory
           ? `${plural(positions, 'stock position')} checked. ${plural(missingHistory, 'position')} lacked enough outbound history for safe demand action.`
-          : !readiness.canAssessDemand && positions
+          : !currentReadiness.canAssessDemand && positions
             ? `${plural(positions, 'stock position')} checked. No action was supported; demand history is not usable yet.`
             : `${plural(positions, 'stock position')} checked. No transfer, purchase, delivery follow-up, or policy conflict was supported.`;
       return {
@@ -786,16 +788,21 @@ function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
       AND po.source = 'foundry_recommendation'`).all(workspaceId)) {
     workCoveredSkus.add(row.sku_id);
   }
-  return attention
-    .listAttention(db, workspaceId)
-    .filter((item) => ['critical', 'important'].includes(item.severity))
+  const relevantCategories = [
+    'replenishment_needed', 'stock_protection_boundary', 'low_stock', 'stockout_risk',
+    'unusual_adjustment', 'data_integrity', 'supplier_price_change',
+  ];
+  const candidateLimit = Math.max(20, Number(limit || 8) * 3);
+  const candidates = db.prepare(`SELECT * FROM attention_items
+    WHERE workspace_id=? AND status IN ('OPEN','ACKNOWLEDGED')
+      AND severity IN ('critical','important')
+      AND category IN (${relevantCategories.map(() => '?').join(',')})
+    ORDER BY priority_score DESC,first_detected_at
+    LIMIT ?`).all(workspaceId, ...relevantCategories, candidateLimit).map(attention.hydrate);
+  return candidates
     // A worked replenishment plan belongs here above all: a configured level
     // being crossed is the definition of something needing a person, and it
     // reached nobody while this list did not name it.
-    .filter((item) => [
-      'replenishment_needed', 'stock_protection_boundary', 'low_stock', 'stockout_risk', 'unusual_adjustment',
-      'data_integrity', 'supplier_price_change',
-    ].includes(item.category))
     .filter((item) => {
       if (!['low_stock', 'stockout_risk', 'replenishment_needed'].includes(item.category)) return true;
       if (workCoveredSkus.has(item.skuId)) return false;
@@ -945,10 +952,15 @@ function notifications(db, workspaceId, { limit = 20, unreadOnly = false } = {})
 }
 
 /** Everything Operator Home needs, in one read. */
-function operatorHome(db, workspaceId, { now = Date.now() } = {}) {
+function operatorHome(db, workspaceId, { now = Date.now(), preparedInbox = null } = {}) {
   const state = modes.get(db, workspaceId);
   const policies = policyService.list(db, workspaceId, { activeOnly: true });
-  const did = whatFoundryDid(db, workspaceId, { now });
+  // Home needs readiness totals and wording, not an 80,000-element diagnostic
+  // payload. The full per-SKU evidence remains available in the planning and
+  // manager services; building it on every landing-page request made a large
+  // but otherwise healthy inventory wait behind two ledger-wide groupings.
+  const readiness = managerReadiness.assess(db, workspaceId, { now, summaryOnly: true });
+  const did = whatFoundryDid(db, workspaceId, { now, readiness });
 
   // "Last checked" means the last time Foundry looked at this inventory, by any
   // route. Reading only the autopilot's own stamp said "never" on a workspace
@@ -972,36 +984,13 @@ function operatorHome(db, workspaceId, { now = Date.now() } = {}) {
         .get(workspaceId)
     : null;
 
-  const investigations = require('../manager/investigations');
-  const managerBrief = require('../manager/brief').build(db, workspaceId, { now });
-  const inbox = require('../manager/needs-you-inbox').inbox(db, workspaceId);
-  const readiness = managerReadiness.assess(db, workspaceId, { now });
+  // Home is a briefing, not the full decision ledger. Keep the honest total,
+  // but resolve and render only the highest-priority decisions here.
+  const inbox = preparedInbox
+    || require('../manager/needs-you-inbox').inbox(db, workspaceId, null, { limit: 6 });
   if (!policies.length) readiness.notes.push('Foundry has no standing authority; it will prepare consequential work for approval.');
-  const operatingNeeds = managerReadiness.decisions(db, workspaceId, { now, readiness });
-  const investigationNeeds = investigations.list(db, workspaceId, {
-    statuses: ['NEEDS_HUMAN', 'INCONCLUSIVE'], limit: 25,
-  }).map((entry) => ({
-    id: entry.investigationId,
-    title: entry.affectedEntities.displayName
-      ? `Count discrepancy: ${entry.affectedEntities.displayName}`
-      : 'Inventory discrepancy',
-    because: entry.recommendedNextStep,
-    link: `/investigations/${entry.investigationId}`,
-    action: 'Review evidence',
-  }));
-  const physicalNeeds = db.prepare(
-    `SELECT id, event_type, stated_as FROM physical_events WHERE workspace_id = ?
-      AND status = 'NEEDS_HUMAN' ORDER BY created_at DESC LIMIT 25`
-  ).all(workspaceId).map((entry) => ({ id: entry.id,
-    title: entry.event_type.replaceAll('_', ' '), because: entry.stated_as,
-    link: '/needs-you', action: 'Add details' }));
   const prepared = whatFoundryPrepared(db, workspaceId);
-  const handling = workItems.list(db, workspaceId, {
-    status: [workItems.STATUS.DETECTED, workItems.STATUS.PLANNED, workItems.STATUS.AUTHORIZED,
-      workItems.STATUS.EXECUTING, workItems.STATUS.VERIFYING], limit: 25,
-  }).map((item) => ({ id: item.id, title: item.categoryLabel,
-    because: item.policyEvaluation.reason || 'Foundry is working through this now.',
-    link: `/autopilot/work/${item.id}`, action: 'See work', status: item.executionStatus }));
+  const handling = operationOverview.inProgress(db, workspaceId, { limit: 25 });
 
   return {
     status: {
@@ -1020,6 +1009,7 @@ function operatorHome(db, workspaceId, { now = Date.now() } = {}) {
               : 'Foundry is running this inventory',
     },
     did,
+    needsYouTotal: Number.isInteger(inbox.totalCount) ? inbox.totalCount : inbox.length,
     needsYou: inbox.map((entry) => ({
       id: entry.id,
       title: entry.title,
@@ -1030,7 +1020,6 @@ function operatorHome(db, workspaceId, { now = Date.now() } = {}) {
     })),
     handling,
     prepared,
-    managerBrief,
     readiness,
     next: whatsNext(db, workspaceId, { now }),
     notifications: notifications(db, workspaceId, { limit: 6 }),

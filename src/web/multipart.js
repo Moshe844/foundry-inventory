@@ -13,9 +13,12 @@
  * matters: CSRF checking is the same code path for an upload as for a button.
  */
 
-const DEFAULT_LIMIT = 32 * 1024 * 1024;
-const MAX_PARTS = 40;
-const MAX_FILES = 4;
+const DEFAULT_LIMIT = 512 * 1024 * 1024;
+const MAX_PARTS = 1100;
+// A system switch commonly needs separate exports for products, stock,
+// suppliers, customers, open orders and rules. The total byte ceiling remains
+// the safety boundary; silently dropping the fifth file would corrupt scope.
+const MAX_FILES = 500;
 
 const CRLF = Buffer.from('\r\n');
 const DOUBLE_CRLF = Buffer.from('\r\n\r\n');
@@ -58,7 +61,7 @@ function splitParts(body, boundary) {
   return parts;
 }
 
-function parseBody(body, boundary) {
+function parseBody(body, boundary, { maxFiles = MAX_FILES } = {}) {
   const fields = {};
   const files = [];
 
@@ -74,7 +77,12 @@ function parseBody(body, boundary) {
     if (!name) continue;
 
     if (filename !== null && filename !== undefined) {
-      if (files.length >= MAX_FILES || filename === '') continue;
+      if (filename === '') continue;
+      if (files.length >= maxFiles) {
+        const error = new Error(`Choose no more than ${maxFiles} files in one upload.`);
+        error.status = 413;
+        throw error;
+      }
       const contentType = /content-type:\s*([^\r\n]+)/i.exec(headerText);
       files.push({ field: name, filename, mimeType: contentType ? contentType[1].trim().toLowerCase() : null,
         size: content.length, buffer: content });
@@ -94,7 +102,7 @@ function parseBody(body, boundary) {
 /**
  * Middleware. Does nothing at all unless the request is multipart.
  */
-function multipart({ limit = DEFAULT_LIMIT } = {}) {
+function multipart({ limit = DEFAULT_LIMIT, maxFiles = MAX_FILES } = {}) {
   return function multipartMiddleware(req, res, next) {
     const type = req.get('content-type') || '';
     if (!type.toLowerCase().startsWith('multipart/form-data')) return next();
@@ -102,13 +110,17 @@ function multipart({ limit = DEFAULT_LIMIT } = {}) {
     const boundary = boundaryOf(type);
     if (!boundary) {
       res.status(400);
-      return next(new Error('That upload could not be read.'));
+      const error = new Error('That upload could not be read.');
+      error.status = 400;
+      return next(error);
     }
 
     const declared = Number(req.get('content-length') || 0);
     if (declared && declared > limit) {
       res.status(413);
-      return next(new Error('That file is larger than Foundry can read.'));
+      const error = new Error('That upload is larger than this deployment can safely receive in one request.');
+      error.status = 413;
+      return next(error);
     }
 
     const chunks = [];
@@ -121,8 +133,14 @@ function multipart({ limit = DEFAULT_LIMIT } = {}) {
       if (received > limit) {
         stopped = true;
         res.status(413);
-        req.destroy();
-        next(new Error('That file is larger than Foundry can read.'));
+        // Keep the connection alive long enough to deliver the useful 413.
+        // Destroying the socket turned the owner's screen into a generic
+        // network failure and also bypassed the filename-preserving UI.
+        req.removeAllListeners('data');
+        req.resume();
+        const error = new Error('That upload is larger than this deployment can safely receive in one request.');
+        error.status = 413;
+        next(error);
         return;
       }
       chunks.push(chunk);
@@ -136,7 +154,7 @@ function multipart({ limit = DEFAULT_LIMIT } = {}) {
       if (stopped) return;
       stopped = true;
       try {
-        const { fields, files } = parseBody(Buffer.concat(chunks), boundary);
+        const { fields, files } = parseBody(Buffer.concat(chunks), boundary, { maxFiles });
         req.body = { ...(req.body || {}), ...fields };
         req.files = files;
         req.file = files[0] || null;

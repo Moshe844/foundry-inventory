@@ -138,6 +138,11 @@ function activeWorkspaces(db) {
     .prepare(
       `SELECT w.id FROM workspaces w
         WHERE EXISTS (SELECT 1 FROM skus s WHERE s.workspace_id = w.id AND s.is_active = 1)
+          AND NOT EXISTS (
+            SELECT 1 FROM migration_packages mp
+             WHERE mp.workspace_id = w.id
+               AND mp.status NOT IN ('CUTOVER_ACTIVE', 'CANCELLED')
+          )
         ORDER BY w.id`
     )
     .all()
@@ -181,6 +186,7 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
   }
   try {
     require('../forecasting/outcomes').scoreDue(db, workspaceId, { now });
+    require('../forecasting/adaptive-brain').scoreDue(db, workspaceId, { now });
   } catch {
     // Marking old predictions is housekeeping. It never blocks a turn.
   }
@@ -192,9 +198,11 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
     return result;
   };
 
-  // Watching, paused or stopped: the calendar still moves, so findings are still
-  // re-evaluated. No work is planned and nothing is carried out.
-  if (state.paused || state.suspended || state.mode === modes.MODES.OBSERVE) {
+  // Watching, paused or globally stopped: the calendar still moves, so findings
+  // are re-evaluated. A domain-scoped stop continues through the manager because
+  // each typed operation checks that exact scope at authorization time.
+  const globallySuspended = state.suspended && !state.suspendedScope;
+  if (state.paused || globallySuspended || state.mode === modes.MODES.OBSERVE) {
     const refreshed = reevaluate.refresh(db, workspaceId, trigger);
     modes.recordEvaluation(db, workspaceId, { nextAt });
     return complete({
@@ -203,7 +211,7 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
       predicted: planned ? planned.recorded.length : 0,
       because: state.paused
         ? 'paused'
-        : state.suspended
+        : globallySuspended
           ? 'stopped itself'
           : 'watching only',
       opened: refreshed.opened,

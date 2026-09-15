@@ -89,12 +89,13 @@ function processClaimed(db, event, { now = Date.now() } = {}) {
 
   // Pause stops consequential automation, not awareness. Observe mode follows
   // the same rule: current Needs You may change, inventory never does.
-  if (state.paused || state.suspended || state.mode === modes.MODES.OBSERVE) {
+  const globallySuspended = state.suspended && !state.suspendedScope;
+  if (state.paused || globallySuspended || state.mode === modes.MODES.OBSERVE) {
     return {
       eventId: event.id,
       accounting,
       readOnly: true,
-      because: state.paused ? 'paused' : state.suspended ? 'suspended' : 'ask-first observation',
+      because: state.paused ? 'paused' : globallySuspended ? 'suspended' : 'ask-first observation',
       opened: refreshed.opened,
       resolved: refreshed.resolved,
     };

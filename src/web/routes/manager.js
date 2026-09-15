@@ -33,9 +33,13 @@ const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 const actionHandoff = require('../action-handoff');
 const { trimOrNull } = require('../../lib/util');
 const productNavigation = require('../../product-brain/navigation');
+const jobRunner = require('../../foundry/job-runner');
+const structuredCatalogue = require('../../actions/structured-catalogue');
+const catalogueIntelligence = require('../../actions/catalogue-intelligence');
 
 const router = express.Router();
-router.use(['/foundry/tell', '/foundry/navigate', '/needs-you', '/investigations', '/document-removals', '/import-removals', '/catalog-code-changes'], requireAuth);
+const MAX_PRODUCT_DESCRIPTION = 12_000;
+router.use(['/foundry/tell', '/foundry/navigate', '/inventory/describe', '/inventory/catalogue-review', '/needs-you', '/investigations', '/document-removals', '/import-removals', '/catalog-code-changes'], requireAuth);
 
 /** One validated gateway for every destination Foundry offers in conversation. */
 router.get('/foundry/navigate', (req, res) => {
@@ -56,6 +60,185 @@ function actionRedirect(result) {
   if (result.kind === 'plan') return `/actions/plan/${result.plan.planId}`;
   return null;
 }
+
+function catalogueSubject(description, max = 90) {
+  const oneLine = String(description || '').replace(/\s+/g, ' ').trim();
+  if (oneLine.length <= max) return oneLine;
+  const cut = oneLine.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > 40 ? cut.slice(0, space) : cut).trim()}…`;
+}
+
+function startCatalogueReview(req, description) {
+  const instruction = `Create: ${description}`;
+  const db = req.db;
+  const ctx = req.ctx;
+  const membership = req.user;
+  const provider = req.app.locals.aiProvider || undefined;
+  const jobId = jobRunner.createJob(ctx.workspaceId, 'catalogue_review', description, {
+    track: 'catalogue',
+    subject: catalogueSubject(description),
+    subjectDetail: 'the products you asked Foundry to add',
+    db,
+  });
+
+  jobRunner.run(jobId, async (setStage, signal) => {
+    setStage('catalogue_reading');
+    const structured = structuredCatalogue.parse(instruction);
+    const catalogueUnderstanding = structured && structured.structuredRecords
+      ? await catalogueIntelligence.analyze(description, structured.structuredRecords, { provider, signal })
+      : null;
+    const result = await actionService.interpret(db, ctx, membership, instruction, {
+      provider,
+      maxInstruction: MAX_PRODUCT_DESCRIPTION + 'Create: '.length,
+      signal,
+      catalogueUnderstanding,
+    });
+    setStage('catalogue_preparing');
+    const target = actionRedirect(result);
+    if (target) return { redirectTo: target };
+    if (result.kind === 'catalogue_question') {
+      return {
+        catalogueReview: {
+          recordCount: result.structuredRecordCount,
+          records: result.structuredRecords,
+          issues: result.structuredIssues,
+          understanding: catalogueUnderstanding,
+        },
+      };
+    }
+    if (result.kind === 'question' && result.question) {
+      return {
+        question: result.question,
+        instruction,
+        choices: result.choices || null,
+        continuation: result.continuation || null,
+      };
+    }
+    return {
+      errorMessage: result.message || result.unsupported
+        || 'Foundry could not make a safe product preview from that description. Nothing was added.',
+    };
+  }, {
+    db,
+    deadlineMs: Number(req.app.locals.catalogueReviewDeadlineMs) || 30_000,
+    timeoutMessage: 'Foundry could not finish reviewing those products within 30 seconds. Nothing was created, and your description is still here.',
+  });
+
+  return jobId;
+}
+
+/**
+ * Describing products is an inventory action, not another pass through
+ * business setup. Keep it on its own URL so an already-configured workspace
+ * can turn ordinary words into the same reviewable catalogue proposals as
+ * Ask Foundry without ever falling back into onboarding.
+ */
+router.get('/inventory/describe', (req, res) => {
+  const priorJobId = String(req.query.review || '');
+  const priorJob = priorJobId ? jobRunner.getJob(priorJobId, req.ctx.workspaceId, req.db) : null;
+  res.page('inventory/describe', {
+    title: 'Tell Foundry what you sell',
+    nav: 'inventory',
+    description: priorJob && priorJob.kind === 'catalogue_review' ? (priorJob.description || '') : '',
+    error: null,
+    catalogueReview: null,
+  });
+});
+
+router.post('/inventory/describe', asyncRoute(async (req, res) => {
+  const description = trimOrNull(req.body.description) || '';
+  if (description.length < 3) {
+    return res.status(400).page('inventory/describe', {
+      title: 'Tell Foundry what you sell',
+      nav: 'inventory',
+      description,
+      error: 'Describe at least one product you want Foundry to add.',
+      catalogueReview: null,
+    });
+  }
+  if (description.length > MAX_PRODUCT_DESCRIPTION) {
+    return res.status(400).page('inventory/describe', {
+      title: 'Tell Foundry what you sell',
+      nav: 'inventory',
+      description,
+      error: `Keep this description to ${MAX_PRODUCT_DESCRIPTION.toLocaleString()} characters or import a file for a larger catalogue.`,
+      catalogueReview: null,
+    });
+  }
+
+  const jobId = startCatalogueReview(req, description);
+  return res.redirect(303, `/foundry/thinking/${jobId}`);
+}));
+
+function catalogueReviewJob(req) {
+  const job = jobRunner.getJob(req.params.jobId, req.ctx.workspaceId, req.db);
+  if (!job || job.kind !== 'catalogue_review' || job.status !== 'done'
+      || !job.result || !job.result.catalogueReview) return null;
+  return job;
+}
+
+function renderMissingDetails(req, res, job, options = {}) {
+  const originalReview = job.result.catalogueReview;
+  const reconciledRecords = structuredCatalogue.reconcileComponentSkus(originalReview.records || []);
+  const review = {
+    ...originalReview,
+    records: reconciledRecords,
+    issues: structuredCatalogue.issueList(reconciledRecords),
+  };
+  const existing = req.db.prepare(`SELECT s.code, i.name
+    FROM skus s JOIN items i ON i.id = s.item_id
+    WHERE s.workspace_id = ? AND s.is_active = 1
+    ORDER BY i.name, s.code`).all(req.ctx.workspaceId);
+  const submitted = review.records
+    .filter((record) => record.code)
+    .map((record) => ({ code: record.code, name: record.name }));
+  const seen = new Set();
+  const knownSkus = [...submitted, ...existing].filter((sku) => {
+    const code = String(sku.code || '').toLowerCase();
+    if (!code || seen.has(code)) return false;
+    seen.add(code);
+    return true;
+  });
+  return res.status(options.status || 200).page('inventory/catalogue-missing', {
+    title: 'Complete the missing product details',
+    nav: 'inventory',
+    jobId: job.id,
+    description: job.description || '',
+    review,
+    errors: options.errors || [],
+    answers: options.answers || {},
+    knownSkus,
+  });
+}
+
+router.get('/inventory/catalogue-review/:jobId', (req, res) => {
+  const job = catalogueReviewJob(req);
+  if (!job) {
+    req.flash('warn', 'That catalogue review is no longer available. Start the review again.');
+    return res.redirect(303, '/inventory/describe');
+  }
+  return renderMissingDetails(req, res, job);
+});
+
+router.post('/inventory/catalogue-review/:jobId', asyncRoute(async (req, res) => {
+  const job = catalogueReviewJob(req);
+  if (!job) {
+    req.flash('warn', 'That catalogue review is no longer available. Start the review again.');
+    return res.redirect(303, '/inventory/describe');
+  }
+  const storedReview = job.result.catalogueReview;
+  const records = structuredCatalogue.reconcileComponentSkus(storedReview.records || []);
+  const review = { ...storedReview, records, issues: structuredCatalogue.issueList(records) };
+  const existingCodes = req.db.prepare(`SELECT code FROM skus
+    WHERE workspace_id = ? AND is_active = 1`).all(req.ctx.workspaceId).map((row) => row.code);
+  const resolved = structuredCatalogue.resolveIssues(review.records, review.issues, req.body, { existingCodes });
+  if (!resolved.ok) {
+    return renderMissingDetails(req, res, job, { status: 422, errors: resolved.errors, answers: req.body });
+  }
+  const nextJobId = startCatalogueReview(req, resolved.description);
+  return res.redirect(303, `/foundry/thinking/${nextJobId}`);
+}));
 
 /**
  * A capability question is not yet a policy change.
@@ -1167,6 +1350,7 @@ router.post('/needs-you/dismiss', asyncRoute(async (req, res) => {
     return res.redirect(303, '/needs-you');
   }
   needsYouDismissals.dismiss(req.db, req.ctx, entryId);
+  require('../../attention/needs-you-count').invalidateNeedsYou(req.db,req.ctx.workspaceId);
   req.flash('success', 'Dismissed completely. Foundry will not surface it again; the underlying record was not changed.');
   return res.redirect(303, '/needs-you');
 }));
@@ -1175,25 +1359,13 @@ router.get(['/needs-you', '/needs-you/all'], asyncRoute(async (req, res) => {
   // An opening-balance investigation is answered by recording the stock, and
   // the person who just recorded it should not be asked for it again.
   investigations.settleOpeningBalances(req.db, req.ctx.workspaceId);
-  const operating = managerReadiness.decisions(req.db, req.ctx.workspaceId);
-  const openInvestigations = investigations.list(req.db, req.ctx.workspaceId, {
-    statuses: ['NEEDS_HUMAN', 'INCONCLUSIVE'], limit: 100,
+  const unifiedInbox = needsYouInbox.inbox(req.db, req.ctx.workspaceId, req.user, {
+    productBrain: req.app.locals.productBrain,
   });
-  const waiting = workItems.awaitingApproval(req.db, req.ctx.workspaceId);
-  const physical = req.db.prepare(
-    `SELECT id, event_type, stated_as, details, created_at FROM physical_events
-      WHERE workspace_id = ? AND status = 'NEEDS_HUMAN' AND investigation_id IS NULL
-      ORDER BY created_at DESC`
-  ).all(req.ctx.workspaceId).map((row) => {
-    // Why it is waiting matters more than what it is called. Echoing somebody's
-    // own sentence back at them under the words "reported event" tells them
-    // nothing about what Foundry needs before it can act on it.
-    let reason = null;
-    try { reason = JSON.parse(row.details || '{}').interpretationReason || null; } catch { reason = null; }
-    return { ...row, reason };
-  });
+  res.locals.attentionCount = Number.isInteger(unifiedInbox.totalCount)
+    ? unifiedInbox.totalCount : unifiedInbox.length;
   res.page(req.path === '/needs-you/all' ? 'manager/needs-you-all' : 'manager/needs-you', {
-    title: 'Needs you', nav: 'attention', room: true, operating,
+    title: 'Needs you', nav: 'attention', room: true,
     // Which decision in the stack is on screen. A position rather than a
     // filter: the desk is cleared in order, and skipping moves the position
     // rather than hiding the entry.
@@ -1201,29 +1373,15 @@ router.get(['/needs-you', '/needs-you/all'], asyncRoute(async (req, res) => {
     // One list, built by one contract. The per-mechanism collections below are
     // still passed for anything else reading this page, but the page itself
     // renders the inbox.
-    inbox: needsYouInbox.inbox(req.db, req.ctx.workspaceId, req.user, {
-      productBrain: req.app.locals.productBrain,
-    }),
+    inbox: unifiedInbox,
     // Which slice of the inbox is on screen. Filtering happens in the view over
     // the list it already has, so the filter is a link rather than something
     // that only works once JavaScript has loaded.
     show: ['urgent', 'important'].includes(String(req.query.show || '')) ? String(req.query.show) : 'all',
-    investigations: openInvestigations, waiting, physical,
-    // The same findings the home page counts under "what needs me". They were
-    // missing here, so home said one decision was waiting and the page it sent
-    // you to said nothing was.
-    findings: autopilotPresenter.whatNeedsYou(req.db, req.ctx.workspaceId),
-    // A correction that has been confirmed but not yet approved is still
-    // somebody's job. Without it here, confirming a count emptied Needs you
-    // while the ledger was known to be wrong.
-    corrections: proposals
-      .listOpen(req.db, req.ctx.workspaceId, { limit: 20 })
-      .filter((proposal) => proposal.status === 'AWAITING_APPROVAL')
-      .map((proposal) => ({
-        proposalId: proposal.proposalId,
-        summary: actionPresenter.oneLine(req.db, req.ctx.workspaceId, proposal),
-        actionType: proposal.actionType,
-      })),
+    // The unified inbox already contains investigations, work approvals,
+    // physical events, findings and corrections. Rebuilding those legacy
+    // collections here did all of the same large-workspace queries a second
+    // time even though neither Needs You view reads them.
   });
 }));
 

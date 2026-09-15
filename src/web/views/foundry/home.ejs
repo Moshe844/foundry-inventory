@@ -6,10 +6,25 @@
 
 <div class="page-head">
   <div class="titles">
-    <h1><%- helpers.icon('foundry', { size: 20 }) %> Inventory setup</h1>
+    <h1><%- helpers.icon('foundry', { size: 20 }) %> How Foundry is set up</h1>
     <div class="page-sub">The operating model Foundry uses to manage this inventory.</div>
   </div>
 </div>
+
+<% if (!stats.itemCount) { %>
+  <div class="card" style="margin-bottom:16px;border-color:var(--brand-line)">
+    <div class="card-body">
+      <h2 style="margin:0 0 6px">Setup is finished. Your products are the next step.</h2>
+      <p class="muted" style="margin:0">Foundry knows the tracking rules and locations, but no product or stock records have been added. Add one product now, or bring in the records you already use.</p>
+      <div class="btn-row" style="margin-top:14px">
+        <a class="btn btn--primary" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell Foundry what you sell</a>
+        <a class="btn" href="/inventory/new">Add one manually</a>
+        <a class="btn" href="/onboarding/migrations/new">Import a file</a>
+        <a class="btn" href="/onboarding/system">Connect a business system</a>
+      </div>
+    </div>
+  </div>
+<% } %>
 
 <div class="grid grid--sidebar">
   <div class="grid">

@@ -24,7 +24,10 @@ const { ADJUSTMENT_REASON_IDS, ISSUE_REASON_IDS } = require('../domain/constants
 const { requireText } = require('../lib/util');
 const { ValidationError } = require('../domain/errors');
 
-const MAX_INSTRUCTION = 500;
+// A real operating instruction often contains a complete product definition,
+// BOM, handling rules and exceptions. Five hundred characters forced people
+// to strip out exactly the evidence Foundry needs to avoid guessing.
+const MAX_INSTRUCTION = 10000;
 
 const ACTION_TYPES = [
   'receive',
@@ -34,6 +37,7 @@ const ACTION_TYPES = [
   'add_location',
   'rename_terminology',
   'create_item',
+  'configure_kit',
   'archive_item',
   /*
    * Retiring something that is not stock: a supplier, a customer, a location.
@@ -109,7 +113,7 @@ const LINE_SCHEMA = {
     'actionType', 'item', 'variant', 'recordKind', 'recordName', 'lotCode', 'serials',
     'sourceLocation', 'destinationLocation', 'quantity', 'adjustmentTarget', 'reasonCode',
     'terminologyKey', 'terminologyValue',
-    'productName', 'productCode', 'variantAxes', 'unitLabel',
+    'productName', 'productCode', 'variantAxes', 'unitLabel', 'kitComponents',
     'supplier', 'purchaseUnit',
     'amount', 'reference',
     'recipient', 'messageBody',
@@ -160,6 +164,22 @@ const LINE_SCHEMA = {
     // "Colour: Navy, Black | Size: 6 through 12". Ranges are left as written —
     // Foundry expands them, so no size is ever quietly dropped.
     variantAxes: { type: 'string' },
+    // configure_kit only. The kit itself is named by item/variant; each exact
+    // component identity and required quantity stays separate and auditable.
+    kitComponents: {
+      type: 'array',
+      maxItems: 100,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['item', 'variant', 'quantity'],
+        properties: {
+          item: { type: 'string' },
+          variant: { type: 'string' },
+          quantity: { type: 'integer' },
+        },
+      },
+    },
     // purchase / receive_shipment only: the supplier they named, verbatim.
     supplier: { type: 'string' },
     // pay_supplier only: how much left the account, in the currency they typed.
@@ -193,7 +213,7 @@ const OPTIONAL_ON_READ = ['amount', 'reference', 'recipient', 'messageBody',
   // Same bargain for the removal fields: demanded on the wire so the reader
   // fills them in, forgiven on the way back so every reply written before
   // they existed is still a perfectly good answer about something else.
-  'recordKind', 'recordName'];
+  'recordKind', 'recordName', 'kitComponents'];
 const ACCEPTED_LINE_SCHEMA = {
   ...LINE_SCHEMA,
   required: LINE_SCHEMA.required.filter((key) => !OPTIONAL_ON_READ.includes(key)),
@@ -241,6 +261,14 @@ Operations you may choose:
   arrived, has opening stock, or gives a starting quantity, preserve that
   number in quantity and any stated receiving place in destinationLocation.
   Never reduce a combined add-and-receive request to catalogue creation alone.
+- configure_kit: define or replace a kit/BOM for an existing customer-facing
+  SKU. Put the kit SKU or product in item and any variant in variant. Put every
+  explicitly named component SKU/product, variant and required whole-number
+  quantity in kitComponents. A kit is not an issue and its components are not
+  separate customer order lines: Foundry keeps the kit as the saleable SKU and
+  uses this definition to reserve, pick, fulfil and return the physical
+  components. Never invent a component or quantity. Never downgrade a required
+  kit/BOM capability to a manual workaround or label it unsupported.
 - archive_item: remove, archive or deactivate an existing catalogue product or
   variant. Use this for requests such as "remove SKU-10 from my inventory" or
   "delete the item I added by mistake". This changes whether the catalogue
@@ -387,7 +415,7 @@ const number = (value) => {
 };
 
 function normaliseLine(raw) {
-  return {
+  const line = {
     actionType: ACTION_TYPES.includes(raw.actionType) ? raw.actionType : 'unsupported',
     item: String(raw.item || '').trim(),
     variant: String(raw.variant || '').trim(),
@@ -421,8 +449,21 @@ function normaliseLine(raw) {
     messageBody: String(raw.messageBody || '').trim(),
     variantAxes: String(raw.variantAxes || '').trim(),
     unitLabel: String(raw.unitLabel || '').trim(),
+    kitComponents: Array.isArray(raw.kitComponents)
+      ? raw.kitComponents.slice(0, 100).map((component) => ({
+          item: String(component && component.item || '').trim(),
+          variant: String(component && component.variant || '').trim(),
+          quantity: number(component && component.quantity),
+        }))
+      : [],
     assumptions: [],
   };
+  // Deterministic structured-catalogue evidence never crosses the model wire.
+  // Preserve its complete record for reconciliation, preview and execution.
+  if (raw.catalogueRecord && typeof raw.catalogueRecord === 'object') {
+    line.catalogueRecord = JSON.parse(JSON.stringify(raw.catalogueRecord));
+  }
+  return line;
 }
 
 /**
@@ -540,6 +581,13 @@ function removeNamed(text, name) {
  */
 function deterministicCatalogueList(instruction) {
   const source = String(instruction || '');
+  const structured = require('./structured-catalogue').parse(source);
+  if (structured) {
+    return {
+      ...structured,
+      lines: structured.lines.map((line) => normaliseLine(line)),
+    };
+  }
   const coded = /^\s*(?:create|add)\s*:\s*(.+)\s*$/i.exec(source);
   const declared = /^\s*(?:create|add)\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+products?\s*:\s*(.+)\s*$/i.exec(source);
   if (!coded && !declared) return null;
@@ -604,6 +652,23 @@ function deterministicInstruction(instruction, context = {}) {
   if (outboundMessage) return outboundMessage;
   const catalogue = deterministicCatalogueList(clean);
   if (catalogue) return catalogue;
+  const kitDefinition = /^(?:make|configure|define|set\s+up)\s+(.+?)\s+(?:as\s+)?(?:a\s+)?(?:kit|bundle|bom|bill\s+of\s+materials)\s+(?:containing|contains|with|made\s+(?:up\s+)?of)\s+(.+?)\s*$/i.exec(clean);
+  if (kitDefinition) {
+    const componentClauses = kitDefinition[2].split(/\s*[,;]\s*|\s+and\s+/i)
+      .map((value) => value.trim()).filter(Boolean);
+    const components = componentClauses.map((clause) => {
+      const match = /^(\d+)\s*(?:x|×|of)?\s+(.+?)\s*$/i.exec(clause);
+      return match ? { item: match[2].trim(), variant: '', quantity: Number(match[1]) } : null;
+    });
+    if (components.length && components.every(Boolean)) return {
+      lines: [normaliseLine({
+        actionType: 'configure_kit', item: kitDefinition[1].trim(), variant: '',
+        kitComponents: components, sourceText: clean,
+        quantity: -1, adjustmentTarget: -1,
+      })],
+      clarifyingQuestion: '', unsupportedReason: '',
+    };
+  }
   const correction = /^(?:set|correct|adjust)\s+(.+?)\s+to\s+(\d+)\s+(?:after|from|based on)\s+(?:a\s+)?physical count\s*$/i.exec(clean);
   if (correction) {
     const identity = correction[1].trim();
@@ -667,7 +732,14 @@ function deterministicInstruction(instruction, context = {}) {
 
 /** Turns an instruction into a validated intent. Never returns free-form SQL. */
 async function readInstruction(instruction, options = {}) {
-  const clean = requireText(instruction, 'Instruction', { max: MAX_INSTRUCTION });
+  // The ordinary command surface accepts a complete business instruction,
+  // including a substantial BOM. Dedicated structured surfaces may allow
+  // more, but every route still has a finite server-side limit.
+  const requestedMax = Number(options.maxInstruction);
+  const maxInstruction = Number.isInteger(requestedMax) && requestedMax >= MAX_INSTRUCTION
+    ? Math.min(requestedMax, 20_000)
+    : MAX_INSTRUCTION;
+  const clean = requireText(instruction, 'Instruction', { max: maxInstruction });
   const deterministic = deterministicInstruction(clean, options.context || {});
   if (deterministic) return deterministic;
   if (!options.provider && !config.ai.configured) {
@@ -680,6 +752,7 @@ async function readInstruction(instruction, options = {}) {
     prompt: intentPrompt(clean, options.context || {}),
     schema: INTENT_SCHEMA,
     schemaName: 'inventory_action_intent',
+    signal: options.signal,
   };
   const response = await provider.complete(request);
 

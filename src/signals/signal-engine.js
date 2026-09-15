@@ -63,54 +63,73 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
 
   if (skus.length === 0) return [];
 
-  const committedRows = salesOrders.committedByPosition(db, workspaceId, { skuIds: skus.map((sku) => sku.id) });
+  // SQLite has a bounded parameter count. Large workspace sweeps use indexed
+  // workspace aggregates and filter the resulting maps, rather than forming a
+  // 250,000-placeholder IN clause or issuing queries per SKU.
+  const selectedIds = skus.length <= 500 ? skus.map((sku) => sku.id) : null;
+  const selectedClause = selectedIds ? ` AND sku_id IN (${selectedIds.map(() => '?').join(',')})` : '';
+  const committedRows = salesOrders.committedByPosition(db, workspaceId, { skuIds: selectedIds });
   const committedByPosition = new Map(committedRows.map((row) => [
     `${row.sku_id}:${row.location_id}`, Number(row.committed),
   ]));
   const backorderedBySku = new Map(salesOrders.backorderedBySku(db, workspaceId, {
-    skuIds: skus.map((sku) => sku.id),
+    skuIds: selectedIds,
   }).map((row) => [row.sku_id, Number(row.backordered)]));
 
   const windowStart = daysAgoIso(windowDays, now);
   const priorStart = daysAgoIso(windowDays * 2, now);
 
+  const balanceRows = db.prepare(`SELECT b.sku_id, b.location_id, b.on_hand,
+      COALESCE((SELECT SUM(h.remaining_quantity) FROM inventory_availability_holds h
+        WHERE h.workspace_id=b.workspace_id AND h.sku_id=b.sku_id AND h.location_id=b.location_id
+          AND h.status='OPEN'),0) AS unavailable,
+      l.name AS location_name, l.kind AS location_kind, l.is_active AS location_active
+    FROM balances b JOIN locations l ON l.id = b.location_id
+    WHERE b.workspace_id = ?${selectedClause}`).all(workspaceId, ...(selectedIds || []));
+  const balancesBySku = new Map();
+  for (const row of balanceRows) balancesBySku.set(row.sku_id, [...(balancesBySku.get(row.sku_id) || []), row]);
+
+  const flowRows = db.prepare(`SELECT sku_id,
+      COALESCE(SUM(CASE WHEN operation = 'issue' AND occurred_at >= ? THEN -quantity_delta END), 0) AS issued,
+      COALESCE(SUM(CASE WHEN operation = 'issue' AND occurred_at >= ? AND occurred_at < ? THEN -quantity_delta END), 0) AS issuedPrior,
+      COALESCE(SUM(CASE WHEN operation = 'receive' AND occurred_at >= ? THEN quantity_delta END), 0) AS received,
+      COUNT(CASE WHEN operation = 'issue' AND occurred_at >= ? THEN 1 END) AS issueEvents,
+      COUNT(CASE WHEN occurred_at >= ? THEN 1 END) AS movementsInWindow,
+      MAX(occurred_at) AS lastMovementAt,
+      MAX(CASE WHEN operation = 'issue' THEN occurred_at END) AS lastOutboundAt,
+      MAX(CASE WHEN operation = 'receive' THEN occurred_at END) AS lastReceivedAt,
+      MIN(occurred_at) AS firstMovementAt, COUNT(*) AS movementsAllTime
+    FROM movements WHERE workspace_id = ?${selectedClause} GROUP BY sku_id`)
+    .all(windowStart, priorStart, windowStart, windowStart, windowStart, windowStart,
+      workspaceId, ...(selectedIds || []));
+  const flowBySku = new Map(flowRows.map((row) => [row.sku_id, row]));
+
+  const locationFlowRows = db.prepare(`SELECT sku_id, location_id,
+      COALESCE(SUM(CASE WHEN quantity_delta < 0 AND occurred_at >= ? THEN -quantity_delta END), 0) AS outbound,
+      COALESCE(SUM(CASE WHEN operation = 'issue' AND occurred_at >= ? THEN -quantity_delta END), 0) AS issued,
+      COALESCE(SUM(CASE WHEN quantity_delta > 0 AND occurred_at >= ? THEN quantity_delta END), 0) AS inbound,
+      COUNT(CASE WHEN occurred_at >= ? THEN 1 END) AS movements,
+      MAX(occurred_at) AS lastMovementAt
+    FROM movements WHERE workspace_id = ?${selectedClause} GROUP BY sku_id, location_id`)
+    .all(windowStart, windowStart, windowStart, windowStart, workspaceId, ...(selectedIds || []));
+  const locationFlow = new Map(locationFlowRows.map((row) => [`${row.sku_id}:${row.location_id}`, row]));
+
   return skus.map((sku) => {
-    const balances = db
-      .prepare(
-        `SELECT b.location_id, b.on_hand, l.name AS location_name, l.kind AS location_kind,
-                l.is_active AS location_active
-           FROM balances b
-           JOIN locations l ON l.id = b.location_id
-          WHERE b.workspace_id = ? AND b.sku_id = ?`
-      )
-      .all(workspaceId, sku.id);
+    const balances = balancesBySku.get(sku.id) || [];
 
     const onHand = balances.reduce((sum, row) => sum + row.on_hand, 0);
     const committed = balances.reduce((sum, row) =>
       sum + (committedByPosition.get(`${sku.id}:${row.location_id}`) || 0), 0);
     const backordered = backorderedBySku.get(sku.id) || 0;
-    const available = onHand - committed;
+    const unavailable = balances.reduce((sum,row) => sum + Number(row.unavailable || 0),0);
+    const available = onHand - unavailable - committed;
 
     // Consumption is what actually leaves the workspace. A transfer moves
     // stock between our own locations, so it is depletion *at a location* but
     // never demand — conflating them would inflate every usage estimate.
-    const flow = db
-      .prepare(
-        `SELECT
-           COALESCE(SUM(CASE WHEN operation = 'issue' AND occurred_at >= @windowStart THEN -quantity_delta END), 0) AS issued,
-           COALESCE(SUM(CASE WHEN operation = 'issue' AND occurred_at >= @priorStart AND occurred_at < @windowStart THEN -quantity_delta END), 0) AS issuedPrior,
-           COALESCE(SUM(CASE WHEN operation = 'receive' AND occurred_at >= @windowStart THEN quantity_delta END), 0) AS received,
-           COUNT(CASE WHEN operation = 'issue' AND occurred_at >= @windowStart THEN 1 END) AS issueEvents,
-           COUNT(CASE WHEN occurred_at >= @windowStart THEN 1 END) AS movementsInWindow,
-           MAX(occurred_at) AS lastMovementAt,
-           MAX(CASE WHEN operation = 'issue' THEN occurred_at END) AS lastOutboundAt,
-           MAX(CASE WHEN operation = 'receive' THEN occurred_at END) AS lastReceivedAt,
-           MIN(occurred_at) AS firstMovementAt,
-           COUNT(*) AS movementsAllTime
-         FROM movements
-        WHERE workspace_id = @workspaceId AND sku_id = @skuId`
-      )
-      .get({ workspaceId, skuId: sku.id, windowStart, priorStart });
+    const flow = flowBySku.get(sku.id) || { issued: 0, issuedPrior: 0, received: 0,
+      issueEvents: 0, movementsInWindow: 0, lastMovementAt: null, lastOutboundAt: null,
+      lastReceivedAt: null, firstMovementAt: null, movementsAllTime: 0 };
 
     const observedDays = flow.firstMovementAt
       ? Math.min(windowDays, Math.max(0, daysBetween(flow.firstMovementAt, now)))
@@ -130,18 +149,9 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
 
     const perLocation = balances
       .map((row) => {
-        const locFlow = db
-          .prepare(
-            `SELECT
-               COALESCE(SUM(CASE WHEN quantity_delta < 0 AND occurred_at >= @windowStart THEN -quantity_delta END), 0) AS outbound,
-               COALESCE(SUM(CASE WHEN operation = 'issue' AND occurred_at >= @windowStart THEN -quantity_delta END), 0) AS issued,
-               COALESCE(SUM(CASE WHEN quantity_delta > 0 AND occurred_at >= @windowStart THEN quantity_delta END), 0) AS inbound,
-               COUNT(CASE WHEN occurred_at >= @windowStart THEN 1 END) AS movements,
-               MAX(occurred_at) AS lastMovementAt
-             FROM movements
-            WHERE workspace_id = @workspaceId AND sku_id = @skuId AND location_id = @locationId`
-          )
-          .get({ workspaceId, skuId: sku.id, locationId: row.location_id, windowStart });
+        const locFlow = locationFlow.get(`${sku.id}:${row.location_id}`) || {
+          outbound: 0, issued: 0, inbound: 0, movements: 0, lastMovementAt: null,
+        };
 
         return {
           locationId: row.location_id,
@@ -149,8 +159,9 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
           locationKind: row.location_kind,
           locationArchived: !row.location_active,
           onHand: row.on_hand,
+          unavailable:Number(row.unavailable || 0),
           committed: committedByPosition.get(`${sku.id}:${row.location_id}`) || 0,
-          available: row.on_hand - (committedByPosition.get(`${sku.id}:${row.location_id}`) || 0),
+          available: row.on_hand - Number(row.unavailable || 0) - (committedByPosition.get(`${sku.id}:${row.location_id}`) || 0),
           outboundInWindow: locFlow.outbound,
           issuedInWindow: locFlow.issued,
           inboundInWindow: locFlow.inbound,
@@ -175,6 +186,7 @@ function skuSignals(db, workspaceId, { skuIds = null, now = Date.now(), windowDa
 
       measured: {
         onHand,
+        unavailable,
         committed,
         backordered,
         available,

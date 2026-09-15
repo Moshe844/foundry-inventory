@@ -335,7 +335,11 @@ async function send(db, ctx, messageId) {
   if (message.reply_sent_at) return getDraft(db, ctx.workspaceId, messageId);
   if (!message.draft_body) throw new ValidationError('There is no reply written yet.');
   const state = require('../autopilot/modes').get(db, ctx.workspaceId);
-  if (state.paused || state.suspended) throw new ValidationError('Foundry is paused. Nothing was sent.');
+  const communicationSuspended = state.suspended && (!state.suspendedScope
+    || ['sales', 'customer', 'communications'].includes(state.suspendedScope));
+  if (state.paused || communicationSuspended) {
+    throw new ValidationError('Foundry is paused. Nothing was sent.');
+  }
 
   const result = await require('./provider-service').sendMailboxMessage(db, ctx.workspaceId, message.connector_id, {
     recipient: message.sender,

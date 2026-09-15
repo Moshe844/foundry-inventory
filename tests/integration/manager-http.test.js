@@ -21,6 +21,7 @@ const attention = require('../../src/attention/attention-engine');
 const planService = require('../../src/imports/plan-service');
 const importRemovals = require('../../src/manager/import-removals');
 const priceService = require('../../src/pricing/price-service');
+const structuredCatalogue = require('../../src/actions/structured-catalogue');
 
 test.after(cleanupAll);
 
@@ -30,7 +31,7 @@ async function setup(response) {
   const app = createApp({ db: store.db, env: 'test', sessionSecret: 'manager-http', aiProvider: fakeProvider(response) });
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
-  return { ...store, workspace, agent };
+  return { ...store, workspace, app, agent };
 }
 
 function operatingChange(overrides = {}) {
@@ -49,6 +50,306 @@ function operatingChange(overrides = {}) {
 function operatingResult(changes, summary = 'Operating rule') {
   return { understood: true, summary, changes, clarifyingQuestion: '', unsupportedReason: '' };
 }
+
+function catalogueUnderstanding(groups, findings = []) {
+  return {
+    overview: `Foundry understood ${groups.length} product groups from every supplied SKU record.`,
+    productGroups: groups.map((recordOrdinals) => ({
+      recordOrdinals,
+      relationship: recordOrdinals.length > 1 ? 'one_product_multiple_variants' : 'one_product_one_sku',
+      reason: recordOrdinals.length > 1
+        ? 'The records share one product identity and supply distinct SKUs.'
+        : 'The record supplies one distinct product and SKU.',
+    })),
+    operationalFindings: findings,
+  };
+}
+
+async function waitForThinkingPage(agent, location, attempts = 100) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await agent.get(location);
+    if (response.status !== 200 || !/class="rm-intake-thinking"[^>]*data-job=/.test(response.text)) return response;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Foundry did not finish ${location} during the test.`);
+}
+
+test('Tell Foundry what you sell is a dedicated catalogue-creation flow', async () => {
+  const env = await setup({});
+  const page = await env.agent.get('/inventory/describe');
+  assert.equal(page.status, 200);
+  const text = plain(page.text);
+  assert.match(text, /Tell Foundry what you sell/);
+  assert.match(text, /Describe one product or your whole catalogue/);
+  assert.match(text, /review the exact products first/i);
+  assert.match(text, /Up to 12,000 characters/);
+  assert.doesNotMatch(text, /Set up your inventory|Choose a source/);
+
+  const catalogue = Array.from({ length: 12 }, (_, index) => {
+    const number = String(index + 1).padStart(2, '0');
+    return `Industrial copper fitting type ${number} CF-${number}-100`;
+  });
+  const description = catalogue.join(', ');
+  assert.ok(description.length > 500, 'the dedicated catalogue surface must exercise more than the command-box limit');
+  const prepared = await env.agent.post('/inventory/describe').type('form').send({
+    _csrf: csrfFrom(page.text),
+    description,
+  });
+  assert.equal(prepared.status, 303);
+  assert.match(prepared.headers.location, /^\/foundry\/thinking\/job_/);
+
+  const finished = await waitForThinkingPage(env.agent, prepared.headers.location);
+  assert.equal(finished.status, 303);
+  assert.match(finished.headers.location, /^\/actions\/plan\//);
+
+  const reviewPage = await env.agent.get(finished.headers.location);
+  const review = plain(reviewPage.text);
+  assert.match(review, /Foundry is ready to make 12 changes/);
+  assert.match(review, /Industrial copper fitting type 01/);
+  assert.match(review, /Industrial copper fitting type 12/);
+  assert.match(review, /Approve all 12/);
+  assert.match(reviewPage.text, /<details class="rm-work"[^>]*>\s*<summary>What you told Foundry<\/summary>/);
+  assert.doesNotMatch(reviewPage.text, /<details class="rm-work"[^>]*open[^>]*>\s*<summary>What you told Foundry<\/summary>/);
+  assert.equal(env.db.prepare(
+    "SELECT COUNT(*) AS n FROM items WHERE workspace_id = ? AND base_code LIKE 'CF-%'"
+  ).get(env.workspace.workspaceId).n, 0);
+
+  const approved = await env.agent.post(`${finished.headers.location}/approve`).type('form').send({
+    _csrf: csrfFrom(reviewPage.text),
+  });
+  assert.equal(approved.status, 303);
+  assert.match(approved.headers.location, /^\/actions\/plan\/[^/]+\/run$/);
+  const ran = await env.agent.get(approved.headers.location);
+  assert.equal(ran.status, 303);
+  assert.equal(env.db.prepare(
+    "SELECT COUNT(*) AS n FROM items WHERE workspace_id = ? AND base_code LIKE 'CF-%'"
+  ).get(env.workspace.workspaceId).n, 12);
+  env.db.close();
+});
+
+test('numbered structured catalogues are model-understood while every supplied field stays exact', async () => {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Structured Catalogue Co' });
+  const provider = fakeProvider(catalogueUnderstanding([[1, 2]]));
+  const app = createApp({
+    db: store.db, env: 'test', sessionSecret: 'structured-catalogue',
+    aiProvider: provider,
+  });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  const page = await agent.get('/inventory/describe');
+  const description = `1. Workshop Widget
+SKU: WID-SM
+Category: Hardware
+Size: Small
+Unit: Each
+Vendor: Exact Supply
+Vendor Part #: ES-SM
+Unit Cost: $2.00
+Selling Price: $4.50
+Main Warehouse: 3
+Retail Counter: 1
+Reorder Point: 2
+
+2. Workshop Widget
+SKU: WID-LG
+Category: Hardware
+Size: Large
+Unit: Each
+Vendor: Exact Supply
+Vendor Part #: ES-LG
+Unit Cost: $3.00
+Selling Price: $6.50
+Main Warehouse: 2
+Retail Counter: 1
+Reorder Point: 2`;
+  const started = await agent.post('/inventory/describe').type('form').send({
+    _csrf: csrfFrom(page.text), description,
+  });
+  const finished = await waitForThinkingPage(agent, started.headers.location);
+  assert.equal(provider.calls.length, 1);
+  assert.equal(provider.calls[0].schemaName, 'catalogue_understanding');
+  assert.equal(finished.status, 303);
+  assert.match(finished.headers.location, /^\/actions\/act_/);
+
+  const reviewPage = await agent.get(finished.headers.location);
+  const review = plain(reviewPage.text);
+  assert.match(review, /Workshop Widget/);
+  assert.match(review, /WID-SM/);
+  assert.match(review, /Every supplied field for WID-LG/);
+  assert.match(review, /Retail Counter/);
+  const approved = await agent.post(`${finished.headers.location}/approve`).type('form').send({
+    _csrf: csrfFrom(reviewPage.text),
+  });
+  const ran = await agent.get(approved.headers.location);
+  assert.equal(ran.status, 303);
+
+  const item = store.db.prepare(`SELECT id FROM items WHERE workspace_id = ? AND name = ?`)
+    .get(workspace.workspaceId, 'Workshop Widget');
+  assert.ok(item);
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM skus WHERE item_id = ?').get(item.id).n, 2);
+  assert.equal(store.db.prepare(`SELECT COALESCE(SUM(b.on_hand),0) AS n FROM balances b
+    JOIN skus s ON s.id=b.sku_id WHERE s.item_id=?`).get(item.id).n, 7);
+  assert.equal(store.db.prepare(`SELECT COUNT(*) AS n FROM catalogue_sku_facts f
+    JOIN skus s ON s.id=f.sku_id WHERE s.item_id=?`).get(item.id).n, 2);
+  assert.equal(store.db.prepare(`SELECT COUNT(*) AS n FROM sku_prices p
+    JOIN skus s ON s.id=p.sku_id WHERE s.item_id=?`).get(item.id).n, 2);
+  store.db.close();
+});
+
+test('structured serial and kit records are model-understood, then ask only for missing evidence', async () => {
+  const store = makeDatabase();
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Structured Blockers Co' });
+  const provider = fakeProvider(catalogueUnderstanding([[1], [2]], [
+    { recordOrdinal: 1, finding: 'This SKU requires individual serial identities.' },
+    { recordOrdinal: 2, finding: 'This is a saleable kit with component inventory implications.' },
+  ]));
+  const app = createApp({ db: store.db, env: 'test', sessionSecret: 'structured-blockers',
+    aiProvider: provider });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  const page = await agent.get('/inventory/describe');
+  const description = `1. Tracked Tool
+SKU: TOOL-001
+Serial Number Tracking: Yes
+Main Warehouse: 2
+
+2. Starter Kit
+SKU: KIT-001
+Components per kit: 1 tool, 2 cloths
+Main Warehouse: 1`;
+  const started = await agent.post('/inventory/describe').type('form').send({
+    _csrf: csrfFrom(page.text), description,
+  });
+  const finished = await waitForThinkingPage(agent, started.headers.location);
+  assert.equal(provider.calls.length, 1);
+  assert.equal(provider.calls[0].schemaName, 'catalogue_understanding');
+  assert.equal(finished.status, 303);
+  assert.match(finished.headers.location, new RegExp(`^/inventory/catalogue-review/${started.headers.location.split('/').pop()}$`));
+  const jobId = started.headers.location.split('/').pop();
+  const completedPoll = await agent.get(`/api/foundry/jobs/${jobId}`);
+  assert.equal(completedPoll.status, 200);
+  assert.equal(completedPoll.body.redirectTo, started.headers.location,
+    'the live progress page must leave the spinner and open the completed correction screen');
+  const missingPage = await agent.get(finished.headers.location);
+  assert.equal(missingPage.status, 200);
+  const answer = plain(missingPage.text);
+  assert.match(answer, /2 SKU records were read/i);
+  assert.match(answer, /Foundry finished reading your catalogue/i);
+  assert.match(answer, /Answer 3 questions, then review everything/i);
+  assert.match(answer, /Do you give every Tracked Tool its own serial number/i);
+  assert.match(answer, /No—just count how many I have/i);
+  assert.match(answer, /Yes—every physical unit has a unique serial/i);
+  assert.match(answer, /Which exact products are inside Starter Kit/i);
+  assert.match(answer, /Are the Starter Kit quantities already packed kits/i);
+  assert.match(answer, /Build my complete preview/i);
+  assert.match(missingPage.text, /data-clarification-wizard/);
+  assert.match(missingPage.text, /data-clarification-next/);
+  assert.match(missingPage.text, /data-step-number="2" hidden/);
+  assert.match(missingPage.text, new RegExp(`/inventory/describe\\?review=${jobId}`));
+  assert.match(missingPage.text, /1\. Tracked Tool/);
+  assert.match(missingPage.text, /<details class="rm-work clarification-original"[^>]*>\s*<summary>See the original catalogue you supplied<\/summary>/);
+  assert.doesNotMatch(missingPage.text, /<details class="rm-work clarification-original"[^>]*open[^>]*>/);
+  assert.doesNotMatch(missingPage.text, /flash flash--error/);
+
+  const editPage = await agent.get(`/inventory/describe?review=${jobId}`);
+  assert.match(editPage.text, /1\. Tracked Tool/);
+  assert.match(editPage.text, /2\. Starter Kit/);
+
+  const invalid = await agent.post(finished.headers.location).type('form').send({
+    _csrf: csrfFrom(missingPage.text),
+  });
+  assert.equal(invalid.status, 422);
+  assert.match(plain(invalid.text), /Choose how Tracked Tool should be tracked/i);
+  assert.match(plain(invalid.text), /Enter the exact SKU for tool in Starter Kit/i);
+
+  const continued = await agent.post(finished.headers.location).type('form').send({
+    _csrf: csrfFrom(invalid.text),
+    serial_mode_1: 'quantity',
+    component_qty_2_0: '1', component_sku_2_0: 'TOOL-001',
+    component_qty_2_1: '2', component_sku_2_1: 'TOOL-001',
+    kit_stock_2: 'components',
+  });
+  assert.equal(continued.status, 303);
+  assert.match(continued.headers.location, /^\/foundry\/thinking\/job_/);
+  const previewRedirect = await waitForThinkingPage(agent, continued.headers.location);
+  assert.equal(previewRedirect.status, 303);
+  assert.match(previewRedirect.headers.location, /^\/actions\/plan\//);
+  const preview = plain((await agent.get(previewRedirect.headers.location)).text);
+  assert.match(preview, /Foundry is ready to make 2 changes/i);
+  assert.match(preview, /Approve all 2/i);
+  assert.equal(provider.calls.length, 2, 'the corrected catalogue is understood again before preview');
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id=?')
+    .get(workspace.workspaceId).n, 0);
+  store.db.close();
+});
+
+test('catalogue questions are derived from semantic roles for unrelated names, fields, and locations', () => {
+  const parsed = structuredCatalogue.parse(`1. Orbital Analyzer
+SKU: OA-77
+Serial Number Tracking: Yes
+Research Annex Location: 2
+
+2. Rechargeable Battery Pack
+SKU: BAT-PACK-10
+
+3. Celebration Bundle
+SKU: CB-9
+Components per kit: 3 paper lanterns, 1 battery pack
+Harbor Branch: 4`);
+
+  assert.ok(parsed);
+  assert.deepEqual(parsed.structuredIssues.map((issue) => issue.type), [
+    'serials', 'kit_components', 'kit_stock',
+  ]);
+  assert.deepEqual(parsed.structuredIssues.map((issue) => issue.recordName), [
+    'Orbital Analyzer', 'Celebration Bundle', 'Celebration Bundle',
+  ]);
+  assert.equal(parsed.structuredRecords[0].locations[0].name, 'Research Annex Location');
+  assert.equal(parsed.structuredRecords[2].locations[0].name, 'Harbor Branch');
+  assert.deepEqual(parsed.structuredRecords[2].components.map((component) => component.identity), [
+    'paper lanterns', 'battery pack',
+  ]);
+  assert.equal(parsed.structuredRecords[2].components[1].exactSku, 'BAT-PACK-10',
+    'a unique component-to-product match is taken from catalogue evidence without asking again');
+
+  const resolved = structuredCatalogue.resolveIssues(parsed.structuredRecords, parsed.structuredIssues, {
+    serial_mode_1: 'quantity',
+    component_qty_3_0: '3', component_sku_3_0: 'LANTERN-PAPER',
+    component_qty_3_1: '1', component_sku_3_1: 'BAT-PACK-10',
+    kit_stock_3: 'components',
+  });
+  assert.equal(resolved.ok, true);
+  assert.match(resolved.description, /Serial Number Tracking: No/);
+  assert.match(resolved.description, /3 × SKU: LANTERN-PAPER/);
+  assert.doesNotMatch(resolved.description, /Harbor Branch: 4/);
+  assert.match(resolved.description, /4\. paper lanterns\s+SKU: LANTERN-PAPER/i,
+    'an unmatched component becomes a minimal preview record from the exact owner-supplied name and SKU');
+});
+
+test('a stalled catalogue review has bounded progress and preserves everything the owner typed', async () => {
+  const env = await setup((providerRequest) => new Promise((resolve, reject) => {
+    providerRequest.signal.addEventListener('abort', () => reject(providerRequest.signal.reason), { once: true });
+  }));
+  env.app.locals.catalogueReviewDeadlineMs = 20;
+  const page = await env.agent.get('/inventory/describe');
+  const description = 'A deliberately unusual assortment whose exact products need model review.';
+  const started = await env.agent.post('/inventory/describe').type('form').send({
+    _csrf: csrfFrom(page.text),
+    description,
+  });
+
+  assert.equal(started.status, 303);
+  assert.match(started.headers.location, /^\/foundry\/thinking\/job_/);
+  const response = await waitForThinkingPage(env.agent, started.headers.location);
+  assert.equal(response.status, 503);
+  const text = plain(response.text);
+  assert.match(text, /could not finish reviewing those products within 30 seconds/i);
+  assert.match(response.text, new RegExp(description));
+  assert.match(response.text, /data-long-action/);
+  assert.match(response.text, /data-busy-label="Reviewing products…"/);
+  env.db.close();
+});
 
 test('Needs you is one consolidated, authenticated exception queue', async () => {
   const env = await setup({});
@@ -336,7 +637,7 @@ test('Home confirms a selected attachment and a file-only Tell Foundry request r
   const home = await env.agent.get('/');
   assert.match(home.text, /data-operator-attachment/);
   assert.match(home.text, /data-operator-attachment-status/);
-  assert.match(plain(home.text), /Attach a file/);
+  assert.match(plain(home.text), /Attach/);
 
   const csv = [
     'Item Name,SKU,Warehouse,Qty On Hand',

@@ -36,16 +36,19 @@ const permissions = require('../actions/permissions');
  */
 const CAPABILITIES = {
   inventory_transfers: {
+    domain: 'transfers',
     label: 'Move stock between locations',
     blurb: 'Foundry transfers stock to where it is needed, inside the limits of an approved policy.',
     consequence: 'Stock moves.',
   },
   replenishment: {
+    domain: 'purchasing',
     label: 'Reorder and place purchase orders',
     blurb: 'Foundry raises purchase orders to restore stock it has been told to keep.',
     consequence: 'Money is committed to suppliers.',
   },
   replenishment_settings: {
+    domain: 'planning',
     label: 'Keep replenishment levels up to date',
     blurb: 'Foundry adjusts reorder points and stock targets to match measured demand and delivery '
       + 'times, inside limits you set.',
@@ -55,21 +58,25 @@ const CAPABILITIES = {
     consequence: 'Reorder levels change, which changes what gets ordered later.',
   },
   supplier_emails: {
+    domain: 'purchasing',
     label: 'Email suppliers',
     blurb: 'Foundry sends prepared purchase orders and follow-ups to suppliers itself.',
     consequence: 'Suppliers receive mail from you.',
   },
   customer_replies: {
+    domain: 'sales',
     label: 'Answer customers',
     blurb: 'Foundry replies to customer mail it can answer from your own records.',
     consequence: 'Customers receive mail from you.',
   },
   payment_requests: {
+    domain: 'accounting',
     label: 'Ask customers to pay',
     blurb: 'When a deposit or balance falls due, Foundry makes the payment link and emails it.',
     consequence: 'Customers are asked for money.',
   },
   shipping_labels: {
+    domain: 'shipping',
     label: 'Buy shipping labels',
     blurb: 'When a parcel is ready and a shipping rule covers it, Foundry buys the label from the '
       + 'carrier and the parcel goes.',
@@ -79,6 +86,7 @@ const CAPABILITIES = {
     consequence: 'Money is spent with a carrier, and goods leave.',
   },
   shipping_notices: {
+    domain: 'sales',
     label: 'Tell customers their order has shipped',
     blurb: 'Foundry sends the shipping notice it writes when a box goes.',
     consequence: 'Customers receive mail from you.',
@@ -130,7 +138,10 @@ function may(db, workspaceId, capability) {
   const state = require('./modes').get(db, workspaceId);
 
   if (state.paused) return { allowed: false, because: 'Foundry is paused.' };
-  if (state.suspended) {
+  const suspendedHere = state.suspended && (!state.suspendedScope
+    || state.suspendedScope === CAPABILITIES[name].domain
+    || (name === 'inventory_transfers' && state.suspendedScope === 'transfer'));
+  if (suspendedHere) {
     return { allowed: false, because: 'Foundry has stopped itself and is waiting to be looked at.' };
   }
   if (state.mode === 'OBSERVE') {

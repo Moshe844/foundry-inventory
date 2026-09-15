@@ -161,10 +161,42 @@ const COLUMN_LABELS = {
   movements: 'Movements',
   severity: 'Priority',
   summary: 'Detail',
+  // A pre-formatted figure is the row's value, not a column called "Display".
+  display: '',
+  // A summary row is a label and its figure. Printing "Value 4986628" beside
+  // "Units on hand" names the column instead of answering the question.
+  measure: '',
+  value: '',
 };
 
+/*
+ * A sentence with its figures written the way a person would write them.
+ *
+ * Eighty-seven answers in the query service build their sentence with raw
+ * numbers, and the model's phrasing of them echoes the same digits — so the
+ * page said "99359 packs" and "4986628 units", which nobody can read at a
+ * glance. Fixing every builder is the wrong place: this is the boundary where
+ * the text meets the reader, and one pass here covers all of them, including
+ * the ones written next month.
+ *
+ * What it must not touch: identifiers and dates. A bare run of four or more
+ * digits is a quantity only when nothing that makes it a code sits against it
+ * — no letter, dot, comma, hyphen, slash or hash on either side — so SKU000001,
+ * 2026-09-14, PO-4471 and #10234 pass through untouched. A four-digit number in
+ * the range a year lives in is left alone too, which costs a comma on a
+ * quantity of exactly 1,900–2,099 units and saves "Sep 14, 2,026".
+ */
+const thousands = new Intl.NumberFormat('en-US');
+function figures(text) {
+  if (text === null || text === undefined) return '';
+  return String(text).replace(/(?<![\w.,#/-])(\d{4,})(?![\w.,/-])/g, (run) => {
+    if (run.length === 4 && Number(run) >= 1900 && Number(run) <= 2099) return run;
+    return thousands.format(Number(run));
+  });
+}
+
 function columnLabel(key) {
-  if (COLUMN_LABELS[key]) return COLUMN_LABELS[key];
+  if (Object.prototype.hasOwnProperty.call(COLUMN_LABELS, key)) return COLUMN_LABELS[key];
   return String(key)
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/^./, (c) => c.toUpperCase());
@@ -178,6 +210,7 @@ module.exports = {
   money,
   plural,
   columnLabel,
+  figures,
   shortDate,
   dateInputValue,
   dateTime,

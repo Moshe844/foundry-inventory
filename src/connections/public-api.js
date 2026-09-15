@@ -6,7 +6,12 @@ const { newId, nowIso, requireText } = require('../lib/util');
 const { inTransaction } = require('../db');
 
 const PREFIX = 'fnd_api_';
-const ALLOWED_SCOPES = Object.freeze(['inventory:read', 'inventory:write', 'events:read']);
+const ALLOWED_SCOPES = Object.freeze([
+  'inventory:read', 'inventory:write', 'events:read',
+  // A source connector can stage and validate evidence. Approval, mutation and
+  // cutover remain owner actions in Foundry.
+  'migration:read', 'migration:write',
+]);
 const hash = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
 const parse = (value, fallback = []) => { try { return JSON.parse(value) ?? fallback; } catch { return fallback; } };
 

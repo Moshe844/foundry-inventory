@@ -61,7 +61,8 @@ function requireShipment(db, workspaceId, shipmentId) {
 }
 
 function shipmentLines(db, workspaceId, shipmentId) {
-  return db.prepare(`SELECT ssl.*, i.name AS item_name, i.unit_label, i.tracking_mode, s.code AS sku_code,
+  const regular = db.prepare(`SELECT ssl.*, NULL AS kit_component_id,
+      i.name AS item_name, i.unit_label, i.tracking_mode, s.code AS sku_code,
       s.variant_label, l.name AS location_name
     FROM sales_shipment_lines ssl
     JOIN skus s ON s.id = ssl.sku_id
@@ -69,6 +70,21 @@ function shipmentLines(db, workspaceId, shipmentId) {
     JOIN locations l ON l.id = ssl.location_id
     WHERE ssl.shipment_id = ? AND ssl.workspace_id = ?
     ORDER BY l.name, i.name, s.variant_label`).all(shipmentId, workspaceId);
+  const components = db.prepare(`SELECT ssl.*, parent_s.code AS kit_sku_code, parent_i.name AS kit_name,
+      i.name AS item_name, i.unit_label, i.tracking_mode, s.code AS sku_code,
+      s.variant_label, l.name AS location_name
+    FROM sales_shipment_kit_lines ssl
+    JOIN sales_order_lines parent_line ON parent_line.id = ssl.sales_order_line_id
+    JOIN skus parent_s ON parent_s.id = parent_line.sku_id
+    JOIN items parent_i ON parent_i.id = parent_s.item_id
+    JOIN skus s ON s.id = ssl.sku_id
+    JOIN items i ON i.id = s.item_id
+    JOIN locations l ON l.id = ssl.location_id
+    WHERE ssl.shipment_id = ? AND ssl.workspace_id = ?
+    ORDER BY l.name, parent_i.name, i.name, s.variant_label`).all(shipmentId, workspaceId);
+  return [...regular, ...components].sort((a, b) => String(a.location_name).localeCompare(String(b.location_name))
+    || String(a.kit_name || a.item_name).localeCompare(String(b.kit_name || b.item_name))
+    || String(a.item_name).localeCompare(String(b.item_name)));
 }
 
 /**
@@ -140,6 +156,13 @@ function claimedByOpenShipments(db, workspaceId, orderId) {
     GROUP BY ssl.sales_order_line_id, ssl.location_id`).all(orderId, workspaceId);
   const claimed = new Map();
   for (const row of rows) claimed.set(`${row.sales_order_line_id}:${row.location_id}`, Number(row.claimed));
+  const kitRows = db.prepare(`SELECT ssl.kit_component_id, ssl.location_id, SUM(ssl.quantity) AS claimed
+    FROM sales_shipment_kit_lines ssl
+    JOIN sales_shipments sh ON sh.id = ssl.shipment_id
+    WHERE sh.sales_order_id = ? AND sh.workspace_id = ?
+      AND sh.status IN ('PICKING','PACKED')
+    GROUP BY ssl.kit_component_id, ssl.location_id`).all(orderId, workspaceId);
+  for (const row of kitRows) claimed.set(`kit:${row.kit_component_id}:${row.location_id}`, Number(row.claimed));
   return claimed;
 }
 
@@ -158,8 +181,24 @@ function pickable(db, workspaceId, orderId) {
     JOIN locations l ON l.id = soa.location_id
     WHERE sol.sales_order_id = ? AND soa.workspace_id = ?
     ORDER BY l.name, i.name, s.variant_label`).all(orderId, workspaceId);
-  return rows.map((row) => {
-    const taken = claimed.get(`${row.sales_order_line_id}:${row.location_id}`) || 0;
+  const componentRows = db.prepare(`SELECT ka.id AS allocation_id,
+      kc.sales_order_line_id, kc.id AS kit_component_id, ka.location_id, ka.quantity,
+      kc.component_sku_id AS sku_id, i.name AS item_name, i.unit_label, i.tracking_mode,
+      s.code AS sku_code, s.variant_label, l.name AS location_name,
+      kit_i.name AS kit_name, kit_s.code AS kit_sku_code
+    FROM sales_order_kit_allocations ka
+    JOIN sales_order_kit_components kc ON kc.id = ka.kit_component_id
+    JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
+    JOIN skus kit_s ON kit_s.id = sol.sku_id JOIN items kit_i ON kit_i.id = kit_s.item_id
+    JOIN skus s ON s.id = kc.component_sku_id JOIN items i ON i.id = s.item_id
+    JOIN locations l ON l.id = ka.location_id
+    WHERE sol.sales_order_id = ? AND ka.workspace_id = ?
+    ORDER BY l.name, kit_i.name, i.name, s.variant_label`).all(orderId, workspaceId);
+  return [...rows, ...componentRows].map((row) => {
+    const key = row.kit_component_id
+      ? `kit:${row.kit_component_id}:${row.location_id}`
+      : `${row.sales_order_line_id}:${row.location_id}`;
+    const taken = claimed.get(key) || 0;
     return {
       ...row,
       quantity: Number(row.quantity),
@@ -224,11 +263,15 @@ function startPicking(db, ctx, orderId, input = {}) {
       throw new ValidationError('Nothing is allocated to this order that is not already in a box.');
     }
     const asked = Array.isArray(input.lines) && input.lines.length
-      ? new Map(input.lines.map((line) => [`${line.lineId}:${line.locationId}`, positive(line.quantity)]))
+      ? new Map(input.lines.map((line) => [line.kitComponentId
+        ? `kit:${line.kitComponentId}:${line.locationId}`
+        : `${line.lineId}:${line.locationId}`, positive(line.quantity)]))
       : null;
     const chosen = [];
     for (const row of offered) {
-      const key = `${row.sales_order_line_id}:${row.location_id}`;
+      const key = row.kit_component_id
+        ? `kit:${row.kit_component_id}:${row.location_id}`
+        : `${row.sales_order_line_id}:${row.location_id}`;
       const quantity = asked ? Number(asked.get(key) || 0) : row.available;
       if (!quantity) continue;
       if (quantity > row.available) {
@@ -267,9 +310,18 @@ function startPicking(db, ctx, orderId, input = {}) {
     const insert = db.prepare(`INSERT INTO sales_shipment_lines
       (id, workspace_id, shipment_id, sales_order_line_id, sku_id, location_id, quantity, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insertKit = db.prepare(`INSERT INTO sales_shipment_kit_lines
+      (id, workspace_id, shipment_id, kit_component_id, sales_order_line_id,
+       sku_id, location_id, quantity, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const row of chosen) {
-      insert.run(newId('shl'), ctx.workspaceId, id, row.sales_order_line_id, row.sku_id,
-        row.location_id, row.quantity, now, now);
+      if (row.kit_component_id) {
+        insertKit.run(newId('shkl'), ctx.workspaceId, id, row.kit_component_id,
+          row.sales_order_line_id, row.sku_id, row.location_id, row.quantity, now, now);
+      } else {
+        insert.run(newId('shl'), ctx.workspaceId, id, row.sales_order_line_id, row.sku_id,
+          row.location_id, row.quantity, now, now);
+      }
     }
     return decorate(db, ctx.workspaceId, requireShipment(db, ctx.workspaceId, id));
   });
@@ -278,32 +330,48 @@ function startPicking(db, ctx, orderId, input = {}) {
 /**
  * Change what is in the box while it is still open.
  */
-function setLineQuantity(db, ctx, shipmentId, lineId, locationId, quantity) {
+function setLineQuantity(db, ctx, shipmentId, lineId, locationId, quantity, kitComponentId = null) {
   return inTransaction(db, () => {
     const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
     if (!OPEN_SHIPMENT.includes(shipment.status)) {
       throw new ValidationError('This shipment has already gone. Its contents cannot be changed.');
     }
-    const existing = db.prepare(`SELECT * FROM sales_shipment_lines
-      WHERE shipment_id = ? AND sales_order_line_id = ? AND location_id = ? AND workspace_id = ?`)
-      .get(shipmentId, lineId, locationId, ctx.workspaceId);
+    const existing = kitComponentId
+      ? db.prepare(`SELECT * FROM sales_shipment_kit_lines
+        WHERE shipment_id = ? AND kit_component_id = ? AND location_id = ? AND workspace_id = ?`)
+        .get(shipmentId, kitComponentId, locationId, ctx.workspaceId)
+      : db.prepare(`SELECT * FROM sales_shipment_lines
+        WHERE shipment_id = ? AND sales_order_line_id = ? AND location_id = ? AND workspace_id = ?`)
+        .get(shipmentId, lineId, locationId, ctx.workspaceId);
     const wanted = Number(quantity);
     if (!Number.isInteger(wanted) || wanted < 0) throw new ValidationError('Quantity must be a whole number.');
     if (wanted === 0) {
-      if (existing) db.prepare('DELETE FROM sales_shipment_lines WHERE id = ?').run(existing.id);
+      if (existing) db.prepare(`DELETE FROM ${kitComponentId ? 'sales_shipment_kit_lines' : 'sales_shipment_lines'} WHERE id = ?`).run(existing.id);
       return decorate(db, ctx.workspaceId, requireShipment(db, ctx.workspaceId, shipmentId));
     }
     // What this line may hold is its own quantity plus whatever is still free.
     const free = pickable(db, ctx.workspaceId, shipment.sales_order_id)
-      .find((row) => row.sales_order_line_id === lineId && row.location_id === locationId);
+      .find((row) => row.sales_order_line_id === lineId && row.location_id === locationId
+        && String(row.kit_component_id || '') === String(kitComponentId || ''));
     const ceiling = (existing ? Number(existing.quantity) : 0) + (free ? free.available : 0);
     if (wanted > ceiling) {
       throw new ValidationError(`Only ${ceiling} of that is allocated and free to pick.`);
     }
     const now = nowIso();
     if (existing) {
-      db.prepare('UPDATE sales_shipment_lines SET quantity = ?, updated_at = ? WHERE id = ?')
+      db.prepare(`UPDATE ${kitComponentId ? 'sales_shipment_kit_lines' : 'sales_shipment_lines'} SET quantity = ?, updated_at = ? WHERE id = ?`)
         .run(wanted, now, existing.id);
+    } else if (kitComponentId) {
+      const component = db.prepare(`SELECT c.component_sku_id FROM sales_order_kit_components c
+        WHERE c.id = ? AND c.sales_order_line_id = ? AND c.workspace_id = ?`)
+        .get(kitComponentId, lineId, ctx.workspaceId);
+      if (!component) throw new NotFoundError('That kit component is not on this sales order.');
+      db.prepare(`INSERT INTO sales_shipment_kit_lines
+        (id, workspace_id, shipment_id, kit_component_id, sales_order_line_id,
+         sku_id, location_id, quantity, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(newId('shkl'), ctx.workspaceId, shipmentId, kitComponentId, lineId,
+          component.component_sku_id, locationId, wanted, now, now);
     } else {
       const line = db.prepare('SELECT sku_id FROM sales_order_lines WHERE id = ? AND workspace_id = ?')
         .get(lineId, ctx.workspaceId);
@@ -419,7 +487,8 @@ function ship(db, ctx, shipmentId, input = {}) {
 
   const fulfillmentLines=[];
   for(const line of lines){
-    const base={lineId:line.sales_order_line_id,locationId:line.location_id};
+    const base={lineId:line.sales_order_line_id,locationId:line.location_id,
+      kitComponentId:line.kit_component_id||null};
     if(line.tracking_mode==='quantity'){fulfillmentLines.push({...base,quantity:Number(line.quantity)});continue;}
     const scans=db.prepare(`SELECT s.quantity,s.lot_id,s.serial_unit_id FROM fulfillment_wave_scans s
       JOIN fulfillment_wave_lines l ON l.id=s.line_id AND l.workspace_id=s.workspace_id
@@ -499,6 +568,42 @@ function ship(db, ctx, shipmentId, input = {}) {
   try {
     result.customerNotice = require('./customer-communications').onShipped(db, ctx, shipmentId);
   } catch { /* the box went; that is not in question here */ }
+
+  /*
+   * The amount the customer agreed to pay for delivery is deliberately not
+   * netted against carrier postage. One is revenue/receivable; the other is a
+   * selling expense/cash payment. Keeping both facts lets margin and carrier
+   * adjustments reconcile without pretending the provider charged the same
+   * amount the customer paid.
+   */
+  const customerShipping = Number(result.customer_shipping_minor || 0);
+  if (customerShipping > 0) {
+    try {
+      const ledger = require('../accounting/ledger');
+      if (ledger.settings(db, ctx.workspaceId).enabled) {
+        ledger.post(db, ctx, {
+          postingDate: String(result.shipped_at || nowIso()).slice(0, 10),
+          description: `Customer delivery charge for ${result.shipment_number}`,
+          sourceType: 'customer_shipping_charge',
+          sourceRecordType: 'sales_shipment',
+          sourceRecordId: shipmentId,
+          sourceKey: `customer-shipping-charge:${shipmentId}`,
+          createdByType: ctx.actorId ? 'USER' : 'SYSTEM',
+          approvedByUserId: ctx.actorId || null,
+          metadata: { salesOrderId: result.sales_order_id,
+            customerShippingMinor: customerShipping },
+          lines: [
+            { accountKey: 'ACCOUNTS_RECEIVABLE', debitMinor: customerShipping,
+              customerId: order.customer_id, memo: result.shipment_number },
+            { accountKey: 'SALES_REVENUE', creditMinor: customerShipping,
+              customerId: order.customer_id, memo: 'Customer delivery charge' },
+          ],
+        });
+      }
+    } catch (error) {
+      console.error('[shipping] customer delivery charge was not posted', error.message);
+    }
+  }
   return result;
 }
 
@@ -543,6 +648,9 @@ function cancelShipment(db, ctx, shipmentId, reason = null) {
     const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
     if (CLOSED_SHIPMENT.includes(shipment.status)) {
       throw new ValidationError('This shipment has already gone. Record a return instead of cancelling it.');
+    }
+    if (shipment.label_url && shipment.label_status !== 'VOIDED') {
+      throw new ValidationError('This parcel has paid postage. Void the carrier label first so the charge is not abandoned.');
     }
     const now = nowIso();
     db.prepare('UPDATE sales_shipments SET status = \'CANCELLED\', notes = COALESCE(?, notes), updated_at = ? WHERE id = ?')

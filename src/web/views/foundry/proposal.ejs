@@ -35,6 +35,22 @@
   var factGroups = u.factClassification || null;
   var ownerInput = u.ownerProvidedInventory || { hasRecords: false, lines: [], ambiguities: [] };
   var ownerLines = ownerInput.lines && ownerInput.lines.length ? ownerInput.lines : [{ productName: '', variantLabel: '', quantity: 0, quantityKnown: false, locationName: '' }];
+  var requirementStatus = {
+    supported_today: 'Supported',
+    needs_detail: 'Needs information',
+    unsupported_today: 'Not supported today'
+  };
+  var requirementRole = {
+    business_context: 'Business context',
+    evidence_instruction: 'Evidence instruction',
+    behavioral_guardrail: 'Foundry guardrail'
+  };
+  var requirementDisplayStatus = function (requirement) {
+    return requirementRole[requirement.semanticRole]
+      || requirementStatus[requirement.status]
+      || requirement.status;
+  };
+  var reqSummary = locals.requirementSummary || { total: 0, supported: [], needsDetail: [], needsOwnerInput: [], unsupported: [], context: [] };
 %>
 
 <%- include('../partials/setup-steps', { step: 2 }) %>
@@ -43,7 +59,10 @@
   <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Nothing has been created yet</p>
   <h1><%= addingToExisting ? "Here's what Foundry read from your file" : "Here's how I'd organize your inventory" %></h1>
   <% if (u.businessDescription) { %>
-    <p>“<%= u.businessDescription %>”</p>
+    <details class="rm-work" style="margin-top:12px;text-align:left">
+      <summary>What you told Foundry</summary>
+      <div class="rm-work__body"><p style="margin:0">“<%= u.businessDescription %>”</p></div>
+    </details>
   <% } %>
 </div>
 
@@ -269,6 +288,26 @@
     </details>
   <% } %>
 
+  <%# Every explicit requirement remains visible even when the configurable
+      model has a smaller vocabulary. Reconciliation restores anything the
+      model omitted using only the owner's exact words. %>
+  <% if (!setupDocument && u.statedRequirements && u.statedRequirements.length) { %>
+    <details class="rm-work" style="margin-bottom:16px">
+      <summary>Review the exact requirement mapping (<%= reqSummary.total %>)</summary>
+      <div class="rm-work__body">
+        <p style="font-size:12.5px;color:var(--muted);margin:0 0 9px">Every citation comes from your words. Anything not yet grounded in your records is retained for the next step instead of being guessed.</p>
+        <ul class="plain-list" style="margin:0">
+          <% u.statedRequirements.forEach(function (requirement) { %>
+            <li>
+              <strong><%= requirement.understanding %></strong>
+              <span>“<%= requirement.sourceText %>” · <%= requirementDisplayStatus(requirement) %><%= requirement.nextStep ? ' · ' + requirement.nextStep : '' %></span>
+            </li>
+          <% }) %>
+        </ul>
+      </div>
+    </details>
+  <% } %>
+
   <%# ------------------------------------------------- evidence-first flow %>
   <% if (evidenceFirst) { %>
     <section class="rm-panel" style="margin-bottom:16px">
@@ -278,16 +317,77 @@
       </div>
       <div style="padding:16px">
         <p class="rm-figure" style="font-size:19px;margin-bottom:6px"><%= u.businessType || 'Your inventory operation' %></p>
-        <p style="font-size:14.5px;color:var(--ink-2);margin:0;max-width:74ch"><%= u.recommendedConfiguration.summary || mode.blurb %></p>
-        <% if (factGroups && factGroups.safeStructuralInferences.length) { %>
-          <ul class="plain-list" style="margin-top:10px">
-            <% factGroups.safeStructuralInferences.slice(0, 3).forEach(function (line) { %><li><%= line %></li><% }) %>
-          </ul>
-        <% } %>
+        <p style="font-size:14px;color:var(--ink-2);margin:0"><strong>All <%= reqSummary.total %> explicit statement<%= reqSummary.total === 1 ? '' : 's' %> are preserved and sorted by purpose below.</strong> Nothing here is re-extracted or shortened from a separate summary.</p>
       </div>
     </section>
 
-    <div class="rm-decision">
+    <div style="display:grid;gap:10px;margin-bottom:16px">
+      <% if (reqSummary.supported.length) { %>
+        <details class="rm-work" style="margin:0">
+          <summary><%- helpers.icon('check', { size: 14 }) %> Ready to support · <%= reqSummary.supported.length %></summary>
+          <div class="rm-work__body"><ul class="plain-list" style="margin:0">
+            <% reqSummary.supported.forEach(function (requirement) { %>
+              <li><%= requirement.understanding %><% if (requirement.nextStep) { %><span><%= requirement.nextStep %></span><% } %></li>
+            <% }) %>
+          </ul></div>
+        </details>
+      <% } %>
+      <% if (reqSummary.needsDetail.length) { %>
+        <details class="rm-work" style="margin:0">
+          <summary><%- helpers.icon('question', { size: 14 }) %> Needs information from your records · <%= reqSummary.needsDetail.length %></summary>
+          <div class="rm-work__body">
+            <p style="font-size:13.5px;line-height:1.55;color:var(--ink-2);margin:0 0 12px"><strong>You do not confirm these in this list.</strong> Choose how to provide your records below. Foundry will resolve what it can from those records, then show you only the remaining decisions it needs you to answer.</p>
+            <ul class="plain-list" style="margin:0">
+            <% reqSummary.needsDetail.forEach(function (requirement) { %>
+              <li>
+                <strong style="display:block;color:var(--ink);font-weight:650"><%= requirement.understanding %></strong>
+                <span style="display:block;margin-top:2px;color:var(--muted)">Needed to resolve this: <%= requirement.nextStep ? requirement.nextStep.replace(/\bconfirm\s+(?=(?:whether|which|what|how|the)\b)/gi, '') : 'Foundry will compare this requirement with the records you provide.' %></span>
+              </li>
+            <% }) %>
+            </ul>
+            <p style="margin:14px 0 0"><a class="rm-btn rm-btn--ghost rm-btn--sm" href="#record-source-choices">Choose how to provide records ↓</a></p>
+          </div>
+        </details>
+      <% } %>
+      <% if (reqSummary.needsOwnerInput.length) { %>
+        <details class="rm-work" style="margin:0">
+          <summary><%- helpers.icon('question', { size: 14 }) %> Needs a decision from you · <%= reqSummary.needsOwnerInput.length %></summary>
+          <div class="rm-work__body">
+            <p style="font-size:13.5px;line-height:1.55;color:var(--ink-2);margin:0 0 12px">These cannot be settled from records alone. Foundry keeps them separate and will ask before applying the affected setup.</p>
+            <ul class="plain-list" style="margin:0">
+              <% reqSummary.needsOwnerInput.forEach(function (requirement) { %>
+                <li><strong style="display:block;color:var(--ink);font-weight:650"><%= requirement.understanding %></strong><% if (requirement.nextStep) { %><span style="display:block;margin-top:2px;color:var(--muted)"><%= requirement.nextStep %></span><% } %></li>
+              <% }) %>
+            </ul>
+          </div>
+        </details>
+      <% } %>
+      <% if (reqSummary.context.length) { %>
+        <details class="rm-work" style="margin:0">
+          <summary><%- helpers.icon('eye', { size: 14 }) %> Context and instructions · <%= reqSummary.context.length %></summary>
+          <div class="rm-work__body">
+            <p style="font-size:13.5px;line-height:1.55;color:var(--ink-2);margin:0 0 12px"><strong>Nothing here needs confirmation.</strong> Foundry preserves these statements as business context, evidence instructions, or operating guardrails.</p>
+            <ul class="plain-list" style="margin:0">
+              <% reqSummary.context.forEach(function (requirement) { %>
+                <li><strong style="display:block;color:var(--ink);font-weight:650"><%= requirement.understanding %></strong><span style="display:block;margin-top:2px;color:var(--muted)"><%= requirementRole[requirement.semanticRole] || 'Context' %></span></li>
+              <% }) %>
+            </ul>
+          </div>
+        </details>
+      <% } %>
+      <% if (reqSummary.unsupported.length) { %>
+        <details class="rm-work" style="margin:0">
+          <summary><%- helpers.icon('alert', { size: 14 }) %> Not supported today · <%= reqSummary.unsupported.length %></summary>
+          <div class="rm-work__body"><ul class="plain-list" style="margin:0">
+            <% reqSummary.unsupported.forEach(function (requirement) { %>
+              <li><%= requirement.understanding %><% if (requirement.nextStep) { %><span><%= requirement.nextStep %></span><% } %></li>
+            <% }) %>
+          </ul></div>
+        </details>
+      <% } %>
+    </div>
+
+    <div class="rm-decision" id="record-source-choices">
       <span class="rm-decision__txt">
         <span class="rm-stamp"><%- helpers.icon('hand', { size: 13 }) %> What Foundry needs next</span>
         <%= onboardingPriority.question %>
@@ -297,9 +397,29 @@
           Foundry reads what you already have and shows you the exact records before changing anything.
         </small>
       </span>
-      <span class="rm-decision__go">
-        <a class="rm-btn" href="/onboarding">Choose where my records are <%- helpers.icon('arrowRight', { size: 15 }) %></a>
-      </span>
+    </div>
+    <div class="rm-answers" aria-label="Choose how to add inventory records">
+      <% if (currentUser.role === 'owner') { %>
+        <button class="rm-answer is-primary" type="submit">
+          <strong>Enter records in Foundry</strong>
+          <span>Keep this reviewed structure and continue to product entry. Nothing is invented.</span>
+        </button>
+      <% } %>
+      <button class="rm-answer" type="submit" name="recordSource" value="spreadsheet"
+        formaction="/foundry/proposal/<%= understandingId %>/source">
+        <strong>Upload inventory files</strong>
+        <span>Continue with Excel, CSV, TSV, or exported records and reconcile them before cutover.</span>
+      </button>
+      <button class="rm-answer" type="submit" name="recordSource" value="software"
+        formaction="/foundry/proposal/<%= understandingId %>/source">
+        <strong>Connect a business system</strong>
+        <span>Continue with Shopify, Square, Clover, WooCommerce, or a custom system.</span>
+      </button>
+      <button class="rm-answer" type="submit" name="recordSource" value="mailbox"
+        formaction="/foundry/proposal/<%= understandingId %>/source">
+        <strong>Use email attachments</strong>
+        <span>Continue by connecting Gmail or Microsoft 365 and selecting trusted inventory files.</span>
+      </button>
     </div>
   <% } %>
 

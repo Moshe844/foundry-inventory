@@ -37,14 +37,18 @@
 
 <div class="rm-thinking-steps"><%- include('../partials/setup-steps', { step: 1 }) %></div>
 
-<div class="rm-thinking" data-job="<%= job.id %>">
+<div class="rm-intake-thinking" data-job="<%= job.id %>">
   <span class="rm-thinking__mark"><%- helpers.icon('spark', { size: 26 }) %></span>
 
   <h1>Foundry is reading your inventory</h1>
-  <p>
-    This takes a minute or so — it is thinking properly about your operation rather than matching
-    keywords. You can leave this page open.
-  </p>
+  <% if (job.kind === 'catalogue_review') { %>
+    <p>Numbered product records are read directly and normally finish in seconds. A free-form description is stopped after 30 seconds rather than being left hanging.</p>
+  <% } else { %>
+    <p>
+      This takes a minute or so — it is thinking properly about your operation rather than matching
+      keywords. You can leave this page open.
+    </p>
+  <% } %>
 
   <% if (job.subject) { %>
     <div class="rm-subject">
@@ -85,6 +89,6 @@
 
   <div class="rm-thinking__foot">
     <span data-elapsed><%= Math.round(job.elapsedMs / 1000) %>s elapsed</span>
-    <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/foundry">Cancel and start over</a>
+    <a class="rm-btn rm-btn--ghost rm-btn--sm" href="<%= job.kind === 'catalogue_review' ? '/inventory/describe' : '/foundry' %>">Cancel and start over</a>
   </div>
 </div>

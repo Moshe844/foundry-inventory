@@ -55,10 +55,11 @@
         <% if (filters.archivedOnly) { %>
           <h3>No archived products</h3><p>None of this inventory’s products are currently archived.</p><% if (returnTo) { %><a class="btn btn--primary" href="<%= returnTo %>">Back to <%= returnLabel %> message history</a><% } %>
         <% } else { %>
-          <h3>No items yet</h3>
-          <p>Tell Foundry what you sell so it can create the products, variants and stock locations with you.</p>
-          <a class="btn btn--primary" href="/onboarding">Tell Foundry what you sell</a>
-          <p class="hint">Or <a href="/inventory/new">add one item by hand</a>.</p>
+          <h3>Your setup is ready. Now add your products.</h3>
+          <p>Foundry knows how this inventory should work, but no product or stock records have been added yet.</p>
+          <a class="btn btn--primary" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell Foundry what you sell</a>
+          <a class="btn" href="/inventory/new">Add one manually</a>
+          <p class="hint">Already have records? <a href="/onboarding/migrations/new">Import a file</a>, <a href="/onboarding/system">connect a business system</a>, or <a href="/onboarding/mailbox">use email attachments</a>.</p>
         <% } %>
       <% } %>
     </div>

@@ -16,11 +16,35 @@
  * Requires are lazy so this can be used from both the request middleware and
  * the workspace list without either pulling a cycle through the other.
  */
-function countNeedsYou(db, workspaceId, membership = null, options = {}) {
-  // The inbox is the customer-facing source of truth. Counting its entries
-  // keeps the sidebar, workspace switcher and Needs you page identical as new
-  // decision types (such as uncovered customer orders) are added.
-  return require('../manager/needs-you-inbox').inbox(db, workspaceId, membership, options).length;
+const cacheByDatabase = new WeakMap();
+
+function cacheFor(db) {
+  let cache = cacheByDatabase.get(db);
+  if (!cache) { cache = new Map(); cacheByDatabase.set(db,cache); }
+  return cache;
 }
 
-module.exports = { countNeedsYou };
+/** Remember the authoritative count whenever the real inbox is built. */
+function rememberNeedsYou(db,workspaceId,count) {
+  cacheFor(db).set(workspaceId,{ count:Number(count || 0),at:Date.now() });
+  return Number(count || 0);
+}
+
+function invalidateNeedsYou(db,workspaceId) {
+  cacheFor(db).delete(workspaceId);
+}
+
+function countNeedsYou(db, workspaceId, membership = null, options = {}) {
+  // Header chrome must never execute every inventory, accounting, purchasing,
+  // connection and migration check. The full Needs You page refreshes this
+  // value from its authoritative inbox; ordinary pages only read the latest
+  // known count in O(1).
+  if (options.fresh === true) {
+    const result = require('../manager/needs-you-inbox').inbox(db, workspaceId, membership, options);
+    return rememberNeedsYou(db,workspaceId,
+      Number.isInteger(result.totalCount) ? result.totalCount : result.length);
+  }
+  return cacheFor(db).get(workspaceId)?.count || 0;
+}
+
+module.exports = { countNeedsYou,rememberNeedsYou,invalidateNeedsYou };

@@ -40,7 +40,12 @@ function getCustomerReturn(db,workspaceId,id){
   row.lines=db.prepare(`SELECT l.*,sol.quantity_fulfilled,s.code AS sku_code,i.name AS item_name,s.variant_label,i.tracking_mode
     FROM customer_return_lines l JOIN sales_order_lines sol ON sol.id=l.sales_order_line_id
     JOIN skus s ON s.id=l.sku_id JOIN items i ON i.id=s.item_id WHERE l.customer_return_id=? ORDER BY l.created_at`).all(id)
-    .map((line)=>({...line,receiveMovementIds:parseIds(line.receive_movement_ids),dispositionMovementIds:parseIds(line.disposition_movement_ids)}));
+    .map((line)=>({...line,receiveMovementIds:parseIds(line.receive_movement_ids),dispositionMovementIds:parseIds(line.disposition_movement_ids),
+      kitComponents:db.prepare(`SELECT c.*,s.code AS sku_code,s.variant_label,i.name AS item_name,i.tracking_mode
+        FROM customer_return_kit_components c JOIN skus s ON s.id=c.component_sku_id
+        JOIN items i ON i.id=s.item_id WHERE c.customer_return_line_id=? ORDER BY i.name,s.code`).all(line.id)
+        .map((component)=>({...component,receiveMovementIds:parseIds(component.receive_movement_ids),
+          dispositionMovementIds:parseIds(component.disposition_movement_ids)}))}));
   return row;
 }
 
@@ -69,6 +74,15 @@ function requestCustomerReturn(db,ctx,membership,input){
         JOIN customer_returns r ON r.id=l.customer_return_id WHERE r.workspace_id=? AND l.sales_order_line_id=? AND r.status<>'CANCELLED'`).get(ctx.workspaceId,line.id).n);
       if(prior+quantity>Number(line.quantity_fulfilled))throw new ValidationError(`${line.displayName}: the return quantity exceeds what actually left.`);
       const lineId=newId('rmal');add.run(lineId,ctx.workspaceId,id,line.id,line.sku_id,quantity,at,at);
+      const kitComponents=db.prepare(`SELECT * FROM sales_order_kit_components
+        WHERE workspace_id=? AND sales_order_line_id=? ORDER BY id`).all(ctx.workspaceId,line.id);
+      const addKit=db.prepare(`INSERT INTO customer_return_kit_components
+        (id,workspace_id,customer_return_line_id,component_sku_id,quantity_per_kit,
+         quantity_authorized,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`);
+      for(const component of kitComponents){
+        addKit.run(newId('rmak'),ctx.workspaceId,lineId,component.component_sku_id,
+          component.quantity_per_kit,quantity*Number(component.quantity_per_kit),at,at);
+      }
       provenance.record(db,ctx.workspaceId,{type:'HAS_PART',from:{type:'customer_return',id},to:{type:'customer_return_line',id:lineId}});
     }
     return getCustomerReturn(db,ctx.workspaceId,id);
@@ -96,6 +110,23 @@ function receiveCustomerReturn(db,ctx,membership,id,input){
       const line=row.lines.find((candidate)=>candidate.id===raw.lineId);if(!line)throw new ValidationError('That product is not authorized on this return.');
       const quantity=requirePositiveInt(raw.quantity,'Received quantity');
       if(Number(line.quantity_received)+quantity>Number(line.quantity_authorized))throw new ValidationError(`${line.item_name}: received quantity exceeds the authorization.`);
+      if(line.kitComponents.length){
+        for(const component of line.kitComponents){
+          if(component.tracking_mode!=='quantity')throw new ValidationError(`${component.item_name} is identity-tracked. Scan its exact returned lots or serial units before receiving this kit.`);
+          const componentQuantity=quantity*Number(component.quantity_per_kit);
+          const movement=engine.receive(db,ctx,{skuId:component.component_sku_id,locationId:row.quarantine_location_id,
+            quantity:componentQuantity,reasonCode:'customer_return',reference:row.return_number,
+            notes:`Returned as part of ${line.item_name}.`});
+          const ids=[...component.receiveMovementIds,...movement.movementIds];
+          db.prepare(`UPDATE customer_return_kit_components SET quantity_received=quantity_received+?,
+            receive_movement_ids=?,updated_at=? WHERE id=?`).run(componentQuantity,JSON.stringify(ids),nowIso(),component.id);
+          movement.movementIds.forEach((movementId)=>provenance.record(db,ctx.workspaceId,{type:'CAUSED_MOVEMENT',
+            from:{type:'customer_return_line',id:line.id},to:{type:'inventory_movement',id:movementId}}));
+        }
+        db.prepare(`UPDATE customer_return_lines SET quantity_received=quantity_received+?,updated_at=? WHERE id=?`)
+          .run(quantity,nowIso(),line.id);
+        continue;
+      }
       const proven=fulfilledIdentityMovements(db,ctx.workspaceId,line.sales_order_line_id);
       let exact={};
       if(line.tracking_mode==='lot'){
@@ -141,6 +172,28 @@ function inspectCustomerReturn(db,ctx,membership,id,input){
       const decision=decisions.find((candidate)=>candidate.lineId===line.id);if(!decision)throw new ValidationError(`${line.item_name}: choose restock, scrap, or repair.`);
       const restock=Number(decision.restock||0),scrap=Number(decision.scrap||0),repair=Number(decision.repair||0);
       if([restock,scrap,repair].some((n)=>!Number.isInteger(n)||n<0)||restock+scrap+repair!==Number(line.quantity_received))throw new ValidationError(`${line.item_name}: dispositions must total the ${line.quantity_received} units received.`);
+      if(line.kitComponents.length){
+        for(const component of line.kitComponents){
+          const movementIds=[];
+          const runComponent=(kitsCount,destination,kind)=>{
+            const quantity=kitsCount*Number(component.quantity_per_kit);if(!quantity)return;
+            const result=kind==='scrap'?engine.issue(db,ctx,{skuId:component.component_sku_id,
+              locationId:row.quarantine_location_id,quantity,reasonCode:'damaged',reference:row.return_number})
+              :engine.transfer(db,ctx,{skuId:component.component_sku_id,fromLocationId:row.quarantine_location_id,
+                toLocationId:requireText(destination,kind==='repair'?'Repair location':'Restock location'),
+                quantity,reference:row.return_number});
+            movementIds.push(...result.movementIds);
+          };
+          runComponent(restock,decision.restockLocationId,'restock');runComponent(scrap,null,'scrap');runComponent(repair,decision.repairLocationId,'repair');
+          db.prepare(`UPDATE customer_return_kit_components SET quantity_restocked=?,quantity_scrapped=?,
+            quantity_repair=?,disposition_movement_ids=?,updated_at=? WHERE id=?`).run(
+            restock*Number(component.quantity_per_kit),scrap*Number(component.quantity_per_kit),
+            repair*Number(component.quantity_per_kit),JSON.stringify(movementIds),nowIso(),component.id);
+        }
+        db.prepare(`UPDATE customer_return_lines SET quantity_restocked=?,quantity_scrapped=?,quantity_repair=?,
+          condition_note=?,updated_at=? WHERE id=?`).run(restock,scrap,repair,trimOrNull(decision.conditionNote),nowIso(),line.id);
+        continue;
+      }
       const movementIds=[];let serialOffset=0;
       const sourceIdentities=line.receiveMovementIds.map((movementId)=>movementIdentity(db,movementId));
       const base={skuId:line.sku_id,fromLocationId:row.quarantine_location_id,reference:row.return_number};
@@ -173,7 +226,8 @@ function refundCustomerReturn(db,ctx,membership,id,input){
     const original=db.prepare(`SELECT id FROM accounting_journal_entries WHERE workspace_id=? AND source_type='sales_fulfillment'
       AND json_extract(metadata,'$.salesOrderId')=? AND status='POSTED' ORDER BY posting_date LIMIT 1`).get(ctx.workspaceId,row.sales_order_id);
     if(!original)throw new ValidationError('Foundry cannot refund this return until the original fulfilled sale has a posted accounting entry.');
-    const movementIds=row.lines.flatMap((line)=>line.receiveMovementIds);
+    const movementIds=row.lines.flatMap((line)=>line.kitComponents.length
+      ? line.kitComponents.flatMap((component)=>component.receiveMovementIds) : line.receiveMovementIds);
     const result=refunds.refundSale(db,ctx,membership,{originalJournalEntryId:original.id,revenueMinor:Number(input.revenueMinor),taxMinor:Number(input.taxMinor||0),cogsMinor:Number(input.cogsMinor||0),physicalReturn:true,movementIds,destination:input.destination||'CASH',reference:row.return_number,sourceKey:`customer-return:${row.id}`});
     const at=nowIso();db.prepare("UPDATE customer_returns SET status='COMPLETED',refund_id=?,completed_at=? WHERE id=?").run(result.refund.id,at,id);
     provenance.record(db,ctx.workspaceId,{type:'RESOLVED_BY',from:{type:'customer_return',id},to:{type:'sale_refund',id:result.refund.id}});

@@ -56,6 +56,14 @@ const STAGES = {
     label: 'Working out what to recommend',
     detail: 'Deciding what is worth telling you, and which questions actually matter.',
   },
+  catalogue_reading: {
+    label: 'Reading every product',
+    detail: 'Copying the names, codes, options, quantities, locations and kit components you supplied.',
+  },
+  catalogue_preparing: {
+    label: 'Building the exact preview',
+    detail: 'Grouping only matching product records and checking every proposed change before showing it to you.',
+  },
   done: { label: 'Ready', detail: 'Foundry has a proposal for you.' },
   failed: { label: 'Something went wrong', detail: 'Foundry could not finish reading that.' },
 };
@@ -68,6 +76,7 @@ const STAGES = {
 const TRACKS = {
   document: ['extracting', 'reading', 'preparing'],
   description: ['reading', 'records', 'advising'],
+  catalogue: ['catalogue_reading', 'catalogue_preparing'],
 };
 
 /**
@@ -165,6 +174,7 @@ function getJob(jobId, workspaceId, db) {
   const order = TRACKS[current.track] || TRACKS.description;
   return {
     id: current.id,
+    kind: current.kind,
     status: current.status,
     description: current.description || '',
     track: current.track,
@@ -193,7 +203,8 @@ function run(jobId, work, options = {}) {
   setImmediate(() => {
     const controller = new AbortController();
     const timeoutError = Object.assign(
-      new Error('Foundry could not finish within three minutes. Nothing was changed. Please try again.'),
+      new Error(options.timeoutMessage
+        || 'Foundry could not finish within three minutes. Nothing was changed. Please try again.'),
       { code: 'job_deadline_exceeded', status: 503, retryable: true }
     );
     const timer = setTimeout(() => controller.abort(timeoutError), deadlineMs);

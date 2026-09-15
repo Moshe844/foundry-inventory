@@ -52,6 +52,8 @@ You choose one intent and fill in its parameters. You do not answer the question
 Intents:
 - inventory_summary: how many active products, tracked variants, units and
   locations the inventory contains, or a general inventory overview.
+- kit_definition: what components and quantities make up a named kit/BOM, or
+  which kits are configured. Put the kit name or SKU in entityQuery.
 - stock_level: how much of something there is, in total.
 - stock_by_location: where something is held, broken down by place.
 - movement_history: what happened to something recently.
@@ -86,6 +88,15 @@ Intents:
 - selling_price: the current customer selling price of a product or variant.
 - sales_summary: how many customer sales orders are open, committed,
   backordered/waiting for stock or fulfilled.
+- shipment_status: where a customer parcel or order is now, whether it arrived,
+  its tracking number, or its carrier-confirmed delivery evidence. Put the
+  order number, shipment number, customer or tracking number in entityQuery.
+- shipping_exceptions: which customer shipments are delayed, lost, returned,
+  damaged, or otherwise have a carrier exception.
+- shipping_costs: what customers paid for shipping versus outbound postage,
+  voids/refunds, carrier adjustments and return postage.
+- carrier_performance: which carrier is late most often or has the strongest
+  on-time history, using only promised dates and confirmed deliveries.
 - books_health: whether anything is wrong with the books — missing supplier
   bills, overdue money in or out, payments that look duplicated, sales with no
   payment recorded, stock with no proven cost. "Is anything wrong?", "check my
@@ -228,6 +239,27 @@ async function plan(question, options = {}) {
     return queryService.normalisePlan({ intent: 'stock_coverage' });
   }
 
+  // Shipping questions are resolved before the general financial/order
+  // patterns so “what did customers pay for shipping?” cannot become a broad
+  // customer-payment answer and “where is order 10582?” cannot become search.
+  if (/\b(?:which|what)\s+carrier\b.*\b(?:late|reliable|on[ -]?time|best|worst)|\bcarrier\b.*\b(?:late most|performance|reliability)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'carrier_performance',
+      windowDays: /\byear\b/i.test(clean) ? 365 : /\bweek\b/i.test(clean) ? 7 : 90 });
+  }
+  if (/\b(?:shipping|postage|delivery)\b.*\b(?:cost|costs|costing|spent|spend|paid|charge|charged|margin|refund|void|adjustment)\b|\b(?:paid|charge|charged|spent|spend)\b.*\b(?:shipping|postage|delivery)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'shipping_costs',
+      windowDays: /\byear\b/i.test(clean) ? 365 : /\bweek\b/i.test(clean) ? 7 : 30 });
+  }
+  if (/\b(?:what(?:'s| is)|which|any)\b.*\b(?:shipment|package|parcel|delivery|order)\b.*\b(?:delay|late|lost|damage|exception|problem|stuck|returned)|\bwhat(?:'s| is) delayed\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'shipping_exceptions',
+      windowDays: /\btoday\b/i.test(clean) ? 1 : /\bweek\b/i.test(clean) ? 7 : 30 });
+  }
+  if (/\bwhere\b.*\b(?:order|shipment|package|parcel|delivery)\b|\b(?:did|has|have|is)\b.*\b(?:package|parcel|order|shipment)\b.*\b(?:arrive|arrived|delivered|ship|shipped)|\b(?:track|tracking|status)\b.*\b(?:order|shipment|package|parcel)\b/i.test(clean)) {
+    const entityQuery = clean.replace(/\b(?:where|is|are|did|has|have|the|my|our|order|shipment|package|parcel|delivery|arrive|arrived|delivered|ship|shipped|track|tracking|status|for|of|please)\b/gi, ' ')
+      .replace(/[?.!]+$/g, '').replace(/\s+/g, ' ').trim();
+    return queryService.normalisePlan({ intent: 'shipment_status', entityQuery });
+  }
+
   if (/\bout\s+of\s+stock\b|\bnothing\s+in\s+stock\b|\b(?:everything|all).*\bshow(?:s|ing)?\s+(?:as\s+)?empty\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'out_of_stock' });
   }
@@ -340,6 +372,13 @@ async function plan(question, options = {}) {
   }
   if (/\b(?:financial\s+(?:summary|health|pulse)|how\s+(?:is|are)\s+(?:the\s+)?business\s+doing)\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'financial_summary', windowDays: 30 });
+  }
+  if (/\b(?:kit|kits|bom|bill\s+of\s+materials|components?)\b/i.test(clean)
+      && /\b(?:what|which|show|list|contain|contains|inside|make\s+up|configured)\b/i.test(clean)) {
+    const entityQuery = clean
+      .replace(/\b(?:what(?:'s|\s+is)?|which|show|list|me|the|components?|parts?|are|is|in|inside|does|do|contain|contains|make|up|of|a|an|kit|kits|bom|bill|materials|configured)\b/gi, ' ')
+      .replace(/[?.!]+$/g, '').replace(/\s+/g, ' ').trim();
+    return queryService.normalisePlan({ intent: 'kit_definition', entityQuery });
   }
   if (/\b(?:how many|number of|count of|total)\s+(?:active\s+)?(?:items?|products?|skus?|variants?)\b.*\b(?:inventory|catalog(?:ue)?)\b/i.test(clean)
       || /\b(?:inventory|catalog(?:ue)?)\s+(?:summary|overview)\b/i.test(clean)

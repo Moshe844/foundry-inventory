@@ -41,7 +41,9 @@ async function jsonRequest(url, options = {}) {
   let body = null;
   try { body = text ? JSON.parse(text) : {}; } catch { body = { raw: text.slice(0, 500) }; }
   if (!response.ok) {
-    const error = new Error(body?.message || body?.error_description || body?.errors?.[0]?.detail || `Provider returned HTTP ${response.status}.`);
+    const providerDetail = body?.Fault?.Error?.[0]?.Detail || body?.Fault?.Error?.[0]?.Message
+      || body?.message || body?.error_description || body?.errors?.[0]?.detail;
+    const error = new Error(providerDetail || `Provider returned HTTP ${response.status}.`);
     error.status = response.status; error.providerBody = body;
     throw error;
   }

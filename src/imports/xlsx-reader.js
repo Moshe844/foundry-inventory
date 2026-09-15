@@ -23,9 +23,13 @@ const { ValidationError } = require('../domain/errors');
 
 const LIMITS = {
   maxEntries: 512,
-  maxEntryBytes: 64 * 1024 * 1024,
-  maxTotalBytes: 256 * 1024 * 1024,
-  maxRows: 200000,
+  // A 250k-row workbook routinely expands past 64 MiB even when the uploaded
+  // .xlsx is small.  These are abuse-safety ceilings, not product limits, and
+  // can be sized by the deployment.  Rows are aligned with the canonical
+  // million-row import gate so a workbook is never silently cut at 200k.
+  maxEntryBytes: Number(process.env.FOUNDRY_XLSX_MAX_ENTRY_BYTES || 768 * 1024 * 1024),
+  maxTotalBytes: Number(process.env.FOUNDRY_XLSX_MAX_EXPANDED_BYTES || 1536 * 1024 * 1024),
+  maxRows: Number(process.env.FOUNDRY_IMPORT_MAX_ROWS || 1000000),
   maxColumns: 512,
 };
 
@@ -74,8 +78,7 @@ function readZip(buffer) {
 
   if (entryCount > LIMITS.maxEntries) throw new SpreadsheetError('That spreadsheet has too many parts.');
 
-  const files = new Map();
-  let total = 0;
+  const entries = new Map();
 
   for (let i = 0; i < entryCount; i += 1) {
     if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
@@ -88,25 +91,45 @@ function readZip(buffer) {
     const localOffset = buffer.readUInt32LE(offset + 42);
     const name = buffer.toString('utf8', offset + 46, offset + 46 + nameLength);
 
-    if (uncompressedSize > LIMITS.maxEntryBytes) throw new SpreadsheetError('That spreadsheet is too large to read.');
-    total += uncompressedSize;
-    if (total > LIMITS.maxTotalBytes) throw new SpreadsheetError('That spreadsheet is too large to read.');
-
     if (buffer.readUInt32LE(localOffset) === 0x04034b50) {
       const localNameLength = buffer.readUInt16LE(localOffset + 26);
       const localExtraLength = buffer.readUInt16LE(localOffset + 28);
       const start = localOffset + 30 + localNameLength + localExtraLength;
-      const raw = buffer.subarray(start, start + compressedSize);
-      try {
-        files.set(name, method === 0 ? Buffer.from(raw) : zlib.inflateRawSync(raw, { maxOutputLength: LIMITS.maxEntryBytes }));
-      } catch {
-        throw new SpreadsheetError('Part of that spreadsheet could not be read.');
-      }
+      entries.set(name, { method,compressedSize,uncompressedSize,start });
     }
 
     offset += 46 + nameLength + extraLength + commentLength;
   }
-  return files;
+  // Inflate only workbook parts Foundry actually reads. Large exports often
+  // contain previews, images or cached objects unrelated to inventory; the old
+  // eager map expanded all of them before reading a single cell.
+  const cache = new Map();
+  let expanded = 0;
+  return {
+    get(name) {
+      if (cache.has(name)) return cache.get(name);
+      const entry = entries.get(name);
+      if (!entry) return undefined;
+      if (entry.uncompressedSize > LIMITS.maxEntryBytes) {
+        throw new SpreadsheetError('One worksheet is larger than this deployment can safely process.');
+      }
+      if (expanded + entry.uncompressedSize > LIMITS.maxTotalBytes) {
+        throw new SpreadsheetError('The workbook expands beyond this deployment\'s safe processing capacity.');
+      }
+      const raw = buffer.subarray(entry.start, entry.start + entry.compressedSize);
+      let value;
+      try {
+        value = entry.method === 0
+          ? Buffer.from(raw)
+          : zlib.inflateRawSync(raw, { maxOutputLength: LIMITS.maxEntryBytes });
+      } catch {
+        throw new SpreadsheetError('Part of that spreadsheet could not be read.');
+      }
+      expanded += value.length;
+      cache.set(name,value);
+      return value;
+    },
+  };
 }
 
 // --- the XML inside ----------------------------------------------------------
@@ -199,7 +222,9 @@ function readSheet(xml, sharedStrings, dateStyles) {
   let rowMatch;
 
   while ((rowMatch = rowRe.exec(text)) !== null) {
-    if (rows.length >= LIMITS.maxRows) break;
+    if (rows.length >= LIMITS.maxRows) {
+      throw new SpreadsheetError(`A worksheet has more than ${LIMITS.maxRows.toLocaleString('en-US')} rows. Increase this deployment's import capacity or use a paginated source connection.`);
+    }
     const body = rowMatch[1] || '';
     const cells = [];
     const cellRe = /<(?:[\w.-]+:)?c\b([^>]*)(?:\/>|>([\s\S]*?)<\/(?:[\w.-]+:)?c>)/g;

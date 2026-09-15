@@ -11,6 +11,8 @@ const backupService = require('./operations/backup');
 const runtimeWorker = require('./operations/worker');
 const monitoring = require('./operations/monitoring');
 const retention = require('./operations/retention');
+const cutoverRunner = require('./onboarding/cutover-runner');
+const preparationRunner = require('./onboarding/preparation-runner');
 
 config.ensureDataDir();
 
@@ -26,39 +28,84 @@ if (trust.applied) {
 const db = openDatabase(config.databasePath);
 const app = createApp({ db });
 
-// Some conditions become true because the calendar moved, not because stock
-// did — a lot approaching expiry, stock going idle. Movements are handled by
-// the hooks in the route layer; this is the other half.
-const stopSweeper = config.operations.workerEnabled ? reevaluate.startScheduler(db) : () => {};
+// Durable customer-requested work starts before broad scheduled analysis. A
+// startup sweep across a very large inventory used to block the worker before
+// it even read a queued inventory deletion, leaving the UI on “Deleting…” for
+// minutes. The runtime claims its queue immediately; catch-up analysis waits
+// until that queue is clear.
+const runtime = config.operations.workerEnabled ? runtimeWorker.start(db, {
+  handlers: {
+    'workspace.delete': require('./operations/workspace-delete-job').handler(db),
+  },
+}) : { stop() {} };
 
-// And the loop itself: what should happen now, decided on a clock rather than
-// when somebody remembers to ask. It calls exactly what the Check now button
-// calls, so this adds timing and no new authority.
+// Some conditions become true because the calendar moved, not because stock
+// did — a lot approaching expiry, stock going idle. The periodic timers remain
+// active, but their startup passes are coordinated below instead of blocking
+// the durable queue during process boot.
+const stopSweeper = config.operations.workerEnabled
+  ? reevaluate.startScheduler(db, { immediate: false }) : () => {};
 const stopAutopilot = config.operations.workerEnabled && config.autopilot.enabled
-  ? autopilotScheduler.start(db, { intervalMs: config.autopilot.intervalMs })
+  ? autopilotScheduler.start(db, { intervalMs: config.autopilot.intervalMs, immediate: false })
   : () => {};
 const stopMailboxes = config.operations.workerEnabled && config.autopilot.enabled ? mailboxScheduler.start(db) : () => {};
 const stopBackups = config.operations.workerEnabled && config.backups.enabled ? backupService.startScheduler(db, {
   directory: config.backups.directory,
   retentionDays: config.backups.retentionDays,
   intervalMs: config.backups.intervalMs,
-  runOnStart: true,
+  runOnStart: false,
 }) : () => {};
-const runtime = config.operations.workerEnabled ? runtimeWorker.start(db) : { stop() {} };
+
+let startupCatchupTimer = null;
+// A full attention + autonomy sweep may legitimately scan hundreds of
+// thousands of SKUs. Starting that sweep automatically two seconds after
+// every local restart made all interactive pages compete with it for CPU and
+// SQLite pages for many minutes. Scheduled sweeps and event-driven work still
+// run normally; deployments that explicitly want boot catch-up can opt in.
+if (config.operations.workerEnabled && process.env.FOUNDRY_STARTUP_CATCHUP === 'true') {
+  const runStartupCatchup = () => {
+    const queued = db.prepare(`SELECT 1 FROM runtime_jobs
+      WHERE status IN ('PENDING','RETRY','RUNNING') LIMIT 1`).get();
+    if (queued) {
+      startupCatchupTimer = setTimeout(runStartupCatchup, 2000);
+      startupCatchupTimer.unref();
+      return;
+    }
+    try { reevaluate.sweepAll(db, 'startup'); }
+    catch (error) { console.error('[attention] startup sweep failed: %s', error.message); }
+    if (config.autopilot.enabled) {
+      try { autopilotScheduler.tick(db, { trigger: 'startup', intervalMs: config.autopilot.intervalMs }); }
+      catch (error) { console.error('[autopilot] startup tick failed: %s', error.message); }
+    }
+  };
+  startupCatchupTimer = setTimeout(runStartupCatchup, 2000);
+  startupCatchupTimer.unref();
+}
 const stopRetention = config.operations.workerEnabled ? retention.start(db) : () => {};
 
 const server = config.operations.webEnabled ? app.listen(config.port, () => {
   console.log(`Foundry Inventory listening on http://localhost:${config.port}  (${config.env})`);
   console.log(`Database: ${config.databasePath}`);
   console.log(
-    config.autopilot.enabled
+    config.operations.workerEnabled && config.autopilot.enabled
       ? `Autopilot: checking every ${Math.round(config.autopilot.intervalMs / 60000)} minutes`
-      : 'Autopilot: not scheduled — it acts only when asked'
+      : config.operations.workerEnabled
+        ? 'Autopilot: not scheduled — it acts only when asked'
+        : 'Background work: running in the separate worker process'
   );
+  // Accept browser traffic before resuming a large, already-authorized
+  // migration. The worker uses its own database connection; starting it first
+  // can let SQLite initialization delay the HTTP listener after a restart.
+  if (config.operations.workerEnabled) {
+    preparationRunner.resumeInterrupted(db,config.databasePath);
+    cutoverRunner.resumeInterrupted(db, config.databasePath);
+  }
 }) : null;
 if (!config.operations.webEnabled) {
   console.log(`Foundry worker running without an HTTP listener  (${config.env})`);
   console.log(`Database: ${config.databasePath}`);
+  cutoverRunner.resumeInterrupted(db,config.databasePath);
+  preparationRunner.resumeInterrupted(db,config.databasePath);
 }
 // Schedulers deliberately unref their timers so an ordinary web process can
 // close cleanly. A worker-only process has no listening socket, so it needs one
@@ -75,6 +122,7 @@ function shutdown(signal) {
   stopMailboxes();
   stopBackups();
   runtime.stop();
+  if (startupCatchupTimer) clearTimeout(startupCatchupTimer);
   stopRetention();
   if (workerKeepAlive) clearInterval(workerKeepAlive);
   const closeDatabase = () => {

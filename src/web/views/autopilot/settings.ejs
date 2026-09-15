@@ -250,6 +250,37 @@
   Exact policies, hard limits and preferences. The choice above works without any of this.
 </p>
 
+<details class="card section" id="universal-operation-authority">
+  <summary class="card-head"><span><strong>Operation-by-operation authority</strong><span class="muted"> — Every operation starts off</span></span></summary>
+  <div class="card-body">
+    <p class="lede">Grant one job at a time. Spending, collections, credits, refunds, write-offs and messages are deliberately separate.</p>
+    <form method="post" action="/autopilot/operation-authority" class="form-grid operation-authority-grid">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="field field--full"><span class="field-label">Operation</span>
+        <select class="input" name="operationType" required>
+          <% operationCatalog.forEach(function (operation) { %>
+            <option value="<%= operation.type %>"><%= operation.title %> · <%= operation.grant ? 'on' : 'off' %></option>
+          <% }) %>
+        </select>
+      </label>
+      <label class="field"><span class="field-label">Maximum units per action</span><input class="input" name="maximumQuantity" type="number" min="0" step="1" placeholder="No quantity limit"></label>
+      <label class="field"><span class="field-label">Maximum value per action</span><input class="input" name="maximumValue" type="number" min="0" step="0.01" placeholder="No value limit"></label>
+      <label class="field"><span class="field-label">Maximum actions per day</span><input class="input" name="maximumDailyCount" type="number" min="1" step="1" value="10" required></label>
+      <label class="field"><span class="field-label">Minimum evidence confidence</span><select class="input" name="minimumConfidence"><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+      <label class="field"><span class="field-label">Maximum risk</span><select class="input" name="maximumRisk"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></label>
+      <fieldset class="field operation-authority-roles"><legend class="field-label">Roles allowed to trigger it</legend>
+        <label class="check"><input type="checkbox" name="allowedRoles" value="owner" checked> Owner</label>
+        <label class="check"><input type="checkbox" name="allowedRoles" value="accountant"> Accountant</label>
+        <label class="check"><input type="checkbox" name="allowedRoles" value="staff"> Staff</label>
+      </fieldset>
+      <div class="form-actions operation-authority-actions">
+        <button class="btn btn--primary" name="enabled" value="1" <%= canAdmin ? '' : 'disabled' %>>Grant these limits</button>
+        <button class="btn btn--ghost" name="enabled" value="0" <%= canOperate ? '' : 'disabled' %>>Turn this operation off</button>
+      </div>
+    </form>
+  </div>
+</details>
+
 <form method="post" action="/autopilot/policies/read" class="card section" data-busy>
   <div class="card-head"><h2>Tell Foundry what it may handle</h2></div>
   <div class="card-body">

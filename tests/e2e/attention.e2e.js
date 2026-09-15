@@ -218,16 +218,11 @@ test(
       const proposal = await page.locator('body').innerText();
       assert.match(proposal, /Where are your real product and stock records today\?/i);
       assert.doesNotMatch(proposal, /Configure my inventory/i);
-      await page.click('a:has-text("Choose where my records are")');
-      await page.waitForURL(`${BASE}/onboarding`);
       await Promise.all([
-        page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Enter it in Foundry")'),
+        page.waitForURL(/\/foundry\/ready\//),
+        page.click('button:has-text("Enter records in Foundry")'),
       ]);
-      await Promise.all([
-        page.waitForURL(`${BASE}/locations`),
-        page.click('button:has-text("Set it up manually instead")'),
-      ]);
+      await page.goto(`${BASE}/locations`);
       for (const [name, kind] of [['Central Warehouse', 'warehouse'], ['Trade Counter', 'store']]) {
         await page.locator('button[data-modal-open="modal-location"]').first().click();
         await page.fill('#location-name', name);
@@ -444,7 +439,7 @@ test(
           .get(state.workspaceId, state.valveSku.id).n
       );
       assert.match(body, new RegExp(String(total)), 'the answer is the engine\'s number');
-      assert.match(body, /How I read that/);
+      assert.match(body, /How Foundry read this/);
       assert.match(body, /on hand/i);
     });
 

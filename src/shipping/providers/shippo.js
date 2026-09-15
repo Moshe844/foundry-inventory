@@ -39,6 +39,7 @@ async function call(ctx, path, options = {}) {
       authorization: `ShippoToken ${apiKey(ctx)}`,
       'content-type': 'application/json',
       accept: 'application/json',
+      ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
@@ -140,7 +141,7 @@ async function buy(ctx, input = {}) {
   const rateId = (input.rateIds && input.rateIds[0]) || input.rateId;
   const transaction = await call(ctx, '/transactions/', { method: 'POST', body: {
     rate: rateId, label_file_type: 'PDF', async: false,
-  } });
+  }, headers: input.idempotencyKey ? { 'Idempotency-Key': input.idempotencyKey } : {} });
   if (transaction.status && String(transaction.status).toUpperCase() !== 'SUCCESS') {
     const messages = (transaction.messages || []).map((row) => row.text).filter(Boolean);
     throw new ValidationError(messages.join(' ') || 'Shippo could not buy that label.');
@@ -149,6 +150,7 @@ async function buy(ctx, input = {}) {
   return {
     providerShipmentId: transaction.object_id,
     providerShipmentIds: [transaction.object_id],
+    providerLabelIds: [transaction.object_id],
     carrier: String(rate?.provider || input.carrier || '').toLowerCase(),
     service: rate?.servicelevel?.name || null,
     trackingNumber: transaction.tracking_number || null,
@@ -160,6 +162,21 @@ async function buy(ctx, input = {}) {
     currency: rate?.currency || 'USD',
     deliveryDate: null,
   };
+}
+
+async function voidLabel(ctx, input = {}) {
+  const ids = (input.providerReferences || input.providerLabelIds || []).filter(Boolean);
+  if (!ids.length) throw new ValidationError('Foundry has no Shippo transaction reference to refund.');
+  const answers = [];
+  for (const id of ids) {
+    answers.push(await call(ctx, '/refunds/', { method: 'POST', body: { transaction: id },
+      headers: input.idempotencyKey ? { 'Idempotency-Key': `${input.idempotencyKey}:${id}` } : {} }));
+  }
+  const states = answers.map((row) => String(row.status || '').toUpperCase());
+  const failed = states.some((state) => ['ERROR','FAILED','REJECTED'].includes(state));
+  const complete = states.length > 0 && states.every((state) => ['SUCCESS','REFUNDED'].includes(state));
+  return { status: failed ? 'FAILED' : complete ? 'SUCCEEDED' : 'PENDING', references: ids,
+    detail: states.filter(Boolean).join(', ') || 'Refund submitted to Shippo.' };
 }
 
 /* -------------------------------------------------------------- tracking */
@@ -244,5 +261,5 @@ function readEvent(event = {}) {
   };
 }
 
-module.exports = { isConfigured, quote, buy, track, verifyEvent, readEvent,
+module.exports = { isConfigured, quote, buy, voidLabel, track, verifyEvent, readEvent,
   address, parcel, statusOf, readRate, call };

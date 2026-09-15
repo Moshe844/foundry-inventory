@@ -38,12 +38,16 @@ function classify(subject, body, attachments = []) {
   if (/invoice|\bbill\b/.test(text)) return 'invoice';
   if (/quotation|\bquote\b|estimate/.test(text)) return 'quotation';
   if (/price\s*(change|update|increase)|new\s+price/.test(text)) return 'price_update';
+  if (/cannot\s+(supply|ship)|capacity|only\s+\d+.*(?:available|ship)/.test(text)) return 'capacity_notice';
+  if (/substitut|alternative\s+(item|product)/.test(text)) return 'substitution_offer';
+  if (/disput|do not agree|incorrect charge/.test(text)) return 'dispute';
   return 'supplier_message';
 }
 
 const DOCUMENT_TYPES = new Set([
   'supplier_message', 'order_acknowledgement', 'invoice', 'packing_slip', 'shipment_notice',
   'delivery_confirmation', 'backorder_notice', 'quotation', 'price_update', 'credit',
+  'capacity_notice', 'substitution_offer', 'dispute',
 ]);
 
 function validatedDocumentType(value) {
@@ -281,7 +285,8 @@ function process(db, messageId, proposedFacts = {}) {
           WHERE id = ? AND workspace_id = ?`)
           .run(unitPrice, message.received_at, now, line.supplier_item_id, message.workspace_id);
       }
-      if (['order_acknowledgement', 'shipment_notice', 'packing_slip', 'backorder_notice'].includes(documentType)) {
+      if (['order_acknowledgement', 'shipment_notice', 'packing_slip', 'backorder_notice',
+        'capacity_notice', 'substitution_offer'].includes(documentType)) {
         const confirmed = number(proposed.confirmedQuantity ?? quantity);
         const shipping = number(proposed.shippedQuantity
           ?? (['shipment_notice', 'packing_slip'].includes(documentType) ? quantity : null));
@@ -352,6 +357,10 @@ function process(db, messageId, proposedFacts = {}) {
         error.message, 'Open Accounting → Bills and resolve the exact match or amount before posting.');
     }
   }
+  // Mission 12 records immutable supplier facts and prepares a bounded response
+  // only after exact supplier/PO/SKU matching above. It cannot receive stock,
+  // send mail, place an alternate PO, or post money.
+  require('./supplier-manager').capture(db, message, savedDocument, matched, discrepancies);
   return savedDocument;
 }
 

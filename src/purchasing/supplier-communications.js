@@ -105,7 +105,10 @@ async function sendThroughMailbox(db, workspaceId, id, actorId = null) {
   if (!message.connectorId) throw new Error('Choose the supplier mailbox before sending.');
   const modes = require('../autopilot/modes');
   const state = modes.get(db, workspaceId);
-  if (state.paused || state.suspended) throw new Error('Foundry is paused. No supplier communication was sent.');
+  if (state.paused || (state.suspended && (!state.suspendedScope
+      || ['purchasing','supplier'].includes(state.suspendedScope)))) {
+    throw new Error('Foundry is paused. No supplier communication was sent.');
+  }
   const now = nowIso();
   db.prepare(`UPDATE supplier_communications SET status = 'SENDING', transport = ?,
     approved_by_user_id = COALESCE(approved_by_user_id, ?), approved_at = COALESCE(approved_at, ?), updated_at = ?
@@ -171,10 +174,63 @@ async function dispatchAutomaticForOrder(db, workspaceId, purchaseOrderId) {
     return forOrder(db, workspaceId, purchaseOrderId);
   }
   for (const message of forOrder(db, workspaceId, purchaseOrderId).filter((row) => ['PREPARED', 'QUEUED', 'FAILED'].includes(row.status))) {
-    await sendThroughMailbox(db, workspaceId, message.id, null);
+    const autonomous = require('../autonomous/service');
+    const operation = autonomous.create(db, { workspaceId, actorId:null }, {
+      operationType:'supplier.communicate',
+      idempotencyKey:`supplier-communication:${message.id}`,
+      sourceKind:'supplier_communication', sourceId:message.id,
+      title:`Send ${order.poNumber} to ${supplier.name}`,
+      summary:'The approved supplier message is ready to send from the connected mailbox.',
+      link:`/purchasing/orders/${purchaseOrderId}`,
+      evidence:[{ label:'Recipient', value:message.recipient },
+        { label:'Purchase order', value:order.poNumber },
+        { label:'Order value', value:`${supplier.currency} ${Number(order.subtotal).toFixed(2)}` }],
+      decision:{ communicationId:message.id, purchaseOrderId, supplierId:supplier.id },
+      affectedEntities:{ communicationId:message.id, purchaseOrderId, supplierId:supplier.id },
+      authorityDimensions:{ supplierId:supplier.id, valueMinor:amountMinor,
+        confidence:'high', risk:'high' },
+      expectedOutcome:{ communicationStatus:'SENT' },
+    });
+    await autonomous.run(db, { workspaceId, actorId:null }, null, operation.id);
   }
   return forOrder(db, workspaceId, purchaseOrderId);
 }
+
+require('../autonomous/service').registerAdapter('supplier.communicate', {
+  owner:'purchasing.supplier-communications',
+  authorize:({ db, ctx, operation, execution }) => {
+    const supplier = supplierService.getSupplier(db, ctx.workspaceId,
+      operation.decision.supplierId);
+    const capability = require('../autopilot/capabilities').may(db, ctx.workspaceId,
+      'supplier_emails');
+    const valueMinor = Number(operation.authorityDimensions.valueMinor || 0);
+    const checks = [
+      { name:'executionState', passed:execution.allowed,
+        reason:execution.because || 'Supplier communication automation is active.' },
+      { name:'supplierPermission', passed:Boolean(supplier.autoSendEnabled),
+        reason:`${supplier.name} must explicitly allow automatic sending.` },
+      { name:'mailbox', passed:Boolean(supplier.watchedConnectorId),
+        reason:`${supplier.name} needs a connected sending mailbox.` },
+      { name:'communicationGrant', passed:capability.allowed,
+        reason:capability.because || 'Supplier email is explicitly enabled.' },
+      { name:'supplierLimit', passed:supplier.autoSendLimitMinor !== null
+          && valueMinor <= Number(supplier.autoSendLimitMinor),
+        reason:'The order value must be inside this supplier’s automatic-send limit.' },
+    ];
+    return { allowed:checks.every((check) => check.passed), checks };
+  },
+  execute:({ db, ctx, operation }) => sendThroughMailbox(db, ctx.workspaceId,
+    operation.decision.communicationId, null),
+  verify:({ db, ctx, operation }) => {
+    const message = get(db, ctx.workspaceId, operation.decision.communicationId);
+    const passed = message?.status === 'SENT';
+    return { passed, reason:passed
+      ? 'The connected mailbox returned a sent message and Foundry reread it as sent.'
+      : (message?.errorMessage || 'The supplier message is not confirmed as sent.'),
+    communicationId:message?.id || operation.decision.communicationId,
+    externalMessageId:message?.externalMessageId || null };
+  },
+});
 
 function prepareDueFollowups(db, workspaceId, options = {}) {
   const now = new Date(options.now || Date.now());

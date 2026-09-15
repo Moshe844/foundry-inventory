@@ -29,6 +29,46 @@ test('onboarding describes every implemented business capability consistently', 
   assert.doesNotMatch(unavailable, /integrations/i);
 });
 
+test('the advice pass requires an exhaustive owner-requirement ledger', () => {
+  const prompt = prompts.advicePrompt(
+    'Products can have size, color, material, and customization options.',
+    {}
+  );
+  assert.match(prompt, /exhaustive statedRequirements ledger/i);
+  assert.match(prompt, /Do not collapse a list in a way that hides one of its members/i);
+});
+
+test('grounding keeps cited requirements and discards invented ones', () => {
+  const description = 'Products can have size, color, material, and customization options.';
+  const normalised = understandingService.normalise(buildUnderstanding({
+    statedRequirements: [
+      {
+        sourceText: 'customization options',
+        understanding: 'Products may need configurable customization choices.',
+        semanticRole: 'resolvable_requirement',
+        status: 'needs_detail',
+        nextStep: 'Provide the actual customization fields.',
+      },
+      {
+        sourceText: 'engraved serial plates',
+        understanding: 'Products need engraving.',
+        semanticRole: 'operational_requirement',
+        status: 'supported_today',
+        nextStep: '',
+      },
+    ],
+  }), description, { workspaceMode: 'production' });
+
+  const citations = normalised.statedRequirements.map((entry) => entry.sourceText);
+  assert.ok(citations.includes('customization options'));
+  assert.ok(citations.includes('Products can have size, color, material, and customization options'));
+  assert.ok(!citations.includes('engraved serial plates'));
+  assert.equal(
+    normalised.statedRequirements.find((entry) => entry.sourceText.startsWith('Products can have size')).status,
+    'needs_detail'
+  );
+});
+
 function setup() {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db);
@@ -61,6 +101,34 @@ test('a well-formed model response is accepted and stored', async () => {
   assert.match(sent.system, /forecasting/);
   assert.doesNotMatch(sent.system.toLowerCase(), /\bshoe|sweater|laptop\b/);
   assert.equal(sent.schema, CORE_SCHEMA);
+});
+
+test('the saved interpretation restores arbitrary requirements omitted by the model', async () => {
+  const { db, workspace } = setup();
+  const provider = fakeUnderstandingProvider(buildUnderstanding({ statedRequirements: [] }));
+  const description = [
+    'Each shipment needs a cold-chain seal, partner approval, and a recyclable-packaging note.',
+    'Exceptions must retain the customer photograph.',
+  ].join(' ');
+
+  const { id, understanding } = await understandingService.describeBusiness(
+    db,
+    workspace.ctx,
+    description,
+    { provider }
+  );
+
+  const expected = [
+    'Each shipment needs a cold-chain seal, partner approval, and a recyclable-packaging note',
+    'Exceptions must retain the customer photograph',
+  ];
+  const citations = understanding.statedRequirements.map((entry) => entry.sourceText);
+  for (const requirement of expected) assert.ok(citations.includes(requirement), requirement);
+
+  const stored = JSON.parse(
+    db.prepare('SELECT payload FROM foundry_understandings WHERE id = ?').get(id).payload
+  );
+  assert.deepEqual(stored.statedRequirements, understanding.statedRequirements);
 });
 
 test('malformed model output is rejected, not stored', async () => {

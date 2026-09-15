@@ -11,7 +11,7 @@
  */
 
 function fakeCarrier(options = {}) {
-  const state = { bought: [], quoted: 0, trackers: new Map() };
+  const state = { bought: [], voided: [], quoted: 0, trackers: new Map() };
 
   const rates = options.rates || [
     { rateId: 'rate_ups', carrier: 'ups', service: 'Ground', amountMinor: 1842,
@@ -30,10 +30,13 @@ function fakeCarrier(options = {}) {
       return { providerShipmentIds: ['shp_fake'], rates };
     },
     async buy(ctx, input) {
+      if (options.buyError) throw options.buyError;
       const rate = rates.find((row) => (input.rateIds || []).includes(row.rateId)) || rates[0];
       state.bought.push(rate.rateId);
       return {
         providerShipmentId: 'shp_fake',
+        providerShipmentIds: ['shp_fake'],
+        providerLabelIds: ['lbl_fake'],
         carrier: rate.carrier,
         service: rate.service,
         trackingNumber: options.trackingNumber || '1Z999AA10123456784',
@@ -44,6 +47,12 @@ function fakeCarrier(options = {}) {
         currency: rate.currency,
         deliveryDate: rate.deliveryDate,
       };
+    },
+    async voidLabel(ctx, input) {
+      state.voided.push(...(input.providerReferences || []));
+      if (options.voidError) throw options.voidError;
+      return { status: options.voidStatus || 'SUCCEEDED',
+        references: input.providerReferences || [], detail: options.voidDetail || 'Unused label refunded.' };
     },
     async track(ctx, input) {
       return state.trackers.get(input.trackingNumber) || null;

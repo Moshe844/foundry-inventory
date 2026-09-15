@@ -32,7 +32,12 @@ class FeatureUnavailableError extends DomainError {
 /** How much of each limit is currently used. One query per limit, no caching. */
 const USAGE = {
   workspaces: (db, { accountId }) =>
-    db.prepare('SELECT COUNT(*) AS n FROM workspaces WHERE owner_account_id = ?').get(accountId).n,
+    // An owner-confirmed deletion leaves navigation immediately and must free
+    // the visible allowance immediately too. The durable worker may still be
+    // removing history in batches, but presenting that hidden inventory as a
+    // slot in use made deletion look stuck and blocked creating its replacement.
+    db.prepare(`SELECT COUNT(*) AS n FROM workspaces
+      WHERE owner_account_id = ? AND deletion_requested_at IS NULL`).get(accountId).n,
 
   members: (db, { workspaceId }) =>
     db.prepare('SELECT COUNT(*) AS n FROM users WHERE workspace_id = ?').get(workspaceId).n,
@@ -76,6 +81,14 @@ function usage(db, scope, key) {
 
 /** Throws if adding one more of `key` would pass the plan's limit. */
 function assertWithin(db, scope, key, { adding = 1 } = {}) {
+  // An owner-approved, verified migration is preserving existing business
+  // truth, not creating optional new usage. It must not corrupt a cutover by
+  // stopping halfway at a commercial plan boundary. Normal post-cutover edits
+  // still use the account's plan exactly as before.
+  if (scope.verifiedMigration === true && ['locations', 'skus'].includes(key)) {
+    return { key,planId:'verified-migration',limit:null,used:USAGE[key](db,scope),unlimited:true,
+      remaining:null,exceeded:false };
+  }
   // Synthetic workspaces are isolated rehearsal environments. Their generated
   // catalogue must be able to exercise production-scale behavior without
   // consuming or weakening the owner's live-business plan limits.

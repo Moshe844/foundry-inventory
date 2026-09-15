@@ -21,7 +21,12 @@
   var itemData = {
     trackingMode: mode,
     skus: skus.map(function (s) {
-      return { id: s.id, code: s.code, label: s.variant_label, perLocation: s.perLocation };
+      return { id: s.id, code: s.code, label: s.variant_label,
+        // Missing rows mean zero. Shipping 125 zero-valued locations for every
+        // visible variant made the page far larger without adding information.
+        perLocation: s.perLocation.filter(function (p) {
+          return Number(p.onHand || 0) !== 0 || Number(p.committed || 0) !== 0;
+        }) };
     }),
     lots: (lots || []).map(function (l) {
       return {
@@ -51,7 +56,7 @@
       </h1>
       <p>
         <span class="mono"><%= item.base_code || skus[0].code %></span>
-        · <%= modeInfo.label %><% if (item.has_variants) { %> · <%= skus.length %> variants<% } %>
+        · <%= modeInfo.label %><% if (item.has_variants) { %> · <%= variantTotal %> variants<% } %>
         <% if (item.description) { %> · <%= item.description %><% } %>
       </p>
     </div>
@@ -87,6 +92,15 @@
       <span class="rm-decision__arrow"><%- helpers.icon('arrowRight', { size: 14 }) %></span></span>
   </a>
 <% }) %>
+<% if (findingTotal > findings.length) { %>
+  <a class="rm-decision" href="/needs-you">
+    <span class="rm-decision__txt">
+      <strong><%= helpers.qty(findingTotal - findings.length) %> more decisions are grouped in Needs you</strong>
+      <span>This page shows only the highest-priority issues so the product stays fast and readable.</span>
+    </span>
+    <span class="rm-decision__go">See all <span class="rm-decision__arrow"><%- helpers.icon('arrowRight', { size: 14 }) %></span></span>
+  </a>
+<% } %>
 
 <%# The four numbers that belong together, read as one line. The unit word stays
     in the label: a product measured in kilograms reads "kg on hand", and
@@ -112,6 +126,30 @@
     <span class="rm-stat__d">on order from suppliers</span>
   </div>
 </div>
+
+<section class="rm-panel" id="kit-definition" style="margin-bottom:18px">
+  <div class="rm-panel__head">
+    <%- helpers.icon('layers', { size: 15, className: 'rm-quiet' }) %>
+    <h2>Kit / bill of materials</h2>
+    <span class="right">The customer buys this SKU; Foundry moves its components.</span>
+  </div>
+  <div class="rm-panel__body">
+    <% skus.forEach(function(sku){ var definition=kitDefinitions[sku.id]; if(definition && definition.isKit){ %>
+      <div class="rm-note" style="margin-bottom:12px"><div><strong><%= sku.code %> contains</strong><br>
+        <% definition.components.forEach(function(component,index){ %><%= index ? ' · ' : '' %><%= component.quantity %> × <%= component.item_name %><%= component.variant_label ? ' / ' + component.variant_label : '' %> (<span class="mono"><%= component.code %></span>)<% }) %>
+      </div></div>
+    <% } }); %>
+    <details class="rm-disclosure">
+      <summary><%= Object.values(kitDefinitions).some(function(definition){return definition.isKit}) ? 'Change kit components' : 'Make this product a kit' %></summary>
+      <form method="post" action="/inventory/<%= item.id %>/kit" class="rm-form-grid" style="margin-top:12px">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label>Kit SKU<select name="kitSkuId" required><% skus.forEach(function(sku){ %><option value="<%= sku.id %>"><%= sku.code %><%= sku.variant_label ? ' · ' + sku.variant_label : '' %></option><% }) %></select></label>
+        <label class="rm-span-2">Components <span class="field-help">One exact component SKU per line: <strong>SKU, quantity</strong></span><textarea name="components" rows="5" required placeholder="CLEANER-1, 2&#10;CLOTH-RED, 5"></textarea></label>
+        <div class="rm-span-2"><button class="rm-button rm-button--primary">Save kit definition</button></div>
+      </form>
+    </details>
+  </div>
+</section>
 
 <% if (canAct) { %>
   <%# Receive, Issue, Transfer and Adjust are warehouse words. A shop owner
@@ -141,7 +179,7 @@
       <%- helpers.icon('layers', { size: 15, className: 'rm-quiet' }) %>
       <h2><%= item.has_variants ? 'Variants' : 'This product' %></h2>
       <span class="right">
-        <% if (item.has_variants) { %><%= skus.length %> tracked separately<% } %>
+        <% if (item.has_variants) { %><%= variantTotal %> tracked separately<% } %>
         <% if (item.has_variants && canAct) { %>
           <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-variant" style="margin-left:10px"><%- helpers.icon('plus', { size: 14 }) %> Add</button>
         <% } %>
@@ -216,6 +254,16 @@
         </tbody>
       </table>
     </div>
+    <% if (variantPageCount > 1) { %>
+      <div class="rm-panel__foot" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <span>Showing <strong><%= ((variantPage - 1) * variantPageSize) + 1 %>–<%= Math.min(variantPage * variantPageSize, variantTotal) %></strong> of <strong><%= variantTotal %></strong> variants</span>
+        <span class="rm-choices" style="margin:0">
+          <% if (variantPage > 1) { %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/inventory/<%= item.id %>?page=<%= variantPage - 1 %>#pricing">Previous <%= variantPageSize %></a><% } %>
+          <span class="rm-quiet">Page <%= variantPage %> of <%= variantPageCount %></span>
+          <% if (variantPage < variantPageCount) { %><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/inventory/<%= item.id %>?page=<%= variantPage + 1 %>#pricing">Next <%= variantPageSize %></a><% } %>
+        </span>
+      </div>
+    <% } %>
     <p class="rm-panel__foot">
       Selling price is charged to customers; supplier cost is kept separately for purchasing and
       margin reporting. Foundry will not pick a reorder level for you until it has seen one
@@ -359,7 +407,7 @@
        * the product, said once.
        */
       var outlookLines = locals.outlook || [];
-      var allStillLearning = outlookLines.length > 1 && outlookLines.every(function (line) {
+      var allStillLearning = outlookLines.length > 0 && outlookLines.every(function (line) {
         // The purchase advice is not checked, because with no sales rate the
         // only advice it can carry is "not on a guess" — which is what the one
         // sentence below says. A recommendation, a move or an anomaly is
@@ -379,8 +427,8 @@
         <div class="rm-panel__body">
           <p class="rm-quiet" style="font-size:13.5px;line-height:1.6;margin:0">
             Nothing to order yet. Foundry has not seen any of the
-            <%= outlookLines.length %> <%= item.has_variants ? 'variants' : 'lines' %> sell, so it
-            cannot estimate a sales rate and will not recommend a purchase on a guess. It starts
+            <%= item.has_variants ? variantTotal : outlookLines.length %> <%= item.has_variants ? 'variants' : 'lines' %> sell, so it
+            cannot estimate how fast this sells yet and will not recommend a purchase on a guess. It starts
             advising as soon as this product moves.
           </p>
         </div>

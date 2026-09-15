@@ -108,7 +108,14 @@ function refresh(db, workspaceId, trigger = 'manual') {
  * anything moving, so they need a clock as well as a hook.
  */
 function sweepAll(db, trigger = 'scheduled') {
-  const workspaces = db.prepare('SELECT id FROM workspaces').all();
+  const workspaces = db.prepare(`
+    SELECT w.id FROM workspaces w
+     WHERE NOT EXISTS (
+       SELECT 1 FROM migration_packages mp
+        WHERE mp.workspace_id = w.id
+          AND mp.status NOT IN ('CUTOVER_ACTIVE', 'CANCELLED')
+     )
+  `).all();
   const results = [];
   for (const workspace of workspaces) {
     try {

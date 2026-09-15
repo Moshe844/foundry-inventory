@@ -21,7 +21,7 @@
    * can have rather than a form you must read past. Anything actually wrong is
    * lifted above both, because a broken connection is not a listing.
    */
-  var shippingProviderTypes = ['shipengine', 'easypost', 'shippo'];
+  var shippingProviderTypes = ['shipengine', 'shipstation', 'easypost', 'shippo'];
   // Payments and shipping have their own truth-aware cards below. Including
   // their raw connector rows here made a denied Stripe attempt appear under
   // "Working now" merely because Stripe had once supplied an account id.
@@ -40,6 +40,7 @@
   var grant = typeof paymentConnect === 'undefined' ? null : paymentConnect;
   var shipping = typeof shippingAccount === 'undefined' ? null : shippingAccount;
   var shippingSetup = typeof shippingPlatform === 'undefined' ? null : shippingPlatform;
+  var publicOrigin = typeof connectionPublicOrigin === 'undefined' ? '' : connectionPublicOrigin;
   var apiToken = typeof apiToken === 'undefined' ? null : apiToken;
   var webhookSecret = typeof webhookSecret === 'undefined' ? null : webhookSecret;
   var apiClients = typeof apiClients === 'undefined' ? [] : apiClients;
@@ -93,9 +94,8 @@
   }
   if (shipping && shipping.connected) {
     live.push({
-      name: shipping.provider === 'easypost' ? 'EasyPost'
-        : shipping.provider === 'shippo' ? 'Shippo' : 'ShipEngine',
-      meta: 'Shipping labels · rates, labels and tracking on the order'
+      name: 'Shipping',
+      meta: 'UPS, FedEx, USPS and DHL · rates, labels and tracking on the order'
         + (shipping.testMode ? ' · test labels only' : ''),
       href: '/settings/shipping',
       status: shipping.source === 'platform' && !shipping.billingReady ? 'Finish setup' : 'Ready',
@@ -201,7 +201,9 @@
 <% providerGroups.forEach(function (group) {
      var groupProviders = providerCatalog.filter(function (p) { return p.category === group.key; });
      if (!groupProviders.length) return; %>
-  <div class="rm-sect" id="group-<%= group.key %>">
+  <%# Supplier screens link here directly. Keep the other historic group IDs
+      while giving supplier communication a real, stable destination. %>
+  <div class="rm-sect" id="<%= group.key === 'supplier' ? 'supplier-communication' : 'group-' + group.key %>">
     <h2><%= group.title %></h2>
     <p><%= group.description %></p>
   </div>
@@ -225,16 +227,18 @@
           <p class="quiet">An owner can connect this</p>
         <% } else if (!provider.available) { %>
           <p class="quiet"><%= provider.unavailableReason %></p>
-        <% } else if (provider.type === 'reference_webhook') { %>
+        <% } else if (provider.type === 'reference_webhook' || provider.integrationMode === 'custom_contract') { %>
           <form method="post" action="/settings/connections">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <input type="hidden" name="providerType" value="reference_webhook">
-            <label class="visually-hidden" for="ref-name">Connection name</label>
-            <input class="input" id="ref-name" name="displayName" placeholder="Warehouse ERP" required>
-            <button class="rm-btn rm-btn--wash" type="submit">Create connection</button>
+            <label class="visually-hidden" for="ref-name-<%= provider.type %>">Connection name</label>
+            <input class="input" id="ref-name-<%= provider.type %>" name="displayName" placeholder="<%= provider.integrationMode === 'custom_contract' ? 'Name this ERP or business system' : 'Warehouse ERP' %>" required>
+            <button class="rm-btn rm-btn--wash" type="submit"><%= provider.integrationMode === 'custom_contract' ? 'Start verified ERP connection' : 'Create connection' %></button>
           </form>
         <% } else { %>
-          <form method="post" action="/settings/connections/connect">
+          <form method="post" action="/settings/connections/connect"
+            data-oauth-connect="<%= provider.authMode === 'oauth' ? provider.type : '' %>"
+            data-provider-name="<%= provider.name %>">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <input type="hidden" name="providerType" value="<%= provider.type %>">
             <% if (provider.type === 'shopify') { %>
@@ -249,6 +253,31 @@
           </form>
         <% } %>
 
+        <% if (currentUser.role === 'owner' && (provider.type === 'quickbooks' || provider.type === 'xero')) { %>
+          <details class="rm-more rm-provider-setup">
+            <summary><%= provider.available ? 'Developer app settings' : 'How to enable this connection' %></summary>
+            <div>
+              <p>Create a standard OAuth web app in <%= provider.name %>.</p>
+              <% if (provider.type === 'quickbooks' && provider.environment) { %>
+                <p><strong>Credential set in use</strong></p>
+                <code><%= provider.environment === 'production' ? 'Production' : 'Sandbox' %></code>
+              <% } %>
+              <% if (provider.type === 'xero') { %>
+                <p><strong>Company or application URL</strong></p>
+                <code><%= publicOrigin || 'https://your-public-foundry-domain.example' %></code>
+              <% } %>
+              <p><strong>OAuth redirect URI — copy this exactly</strong></p>
+              <code><%= provider.type === 'xero' ? xeroRedirectOrigin : (publicOrigin || 'https://your-public-foundry-domain.example') %>/settings/connections/<%= provider.type %>/callback</code>
+              <% if (!provider.available) { %>
+                <p>Set <code><%= provider.type === 'quickbooks' ? 'QUICKBOOKS_CLIENT_ID' : 'XERO_CLIENT_ID' %></code> and <code><%= provider.type === 'quickbooks' ? 'QUICKBOOKS_CLIENT_SECRET' : 'XERO_CLIENT_SECRET' %></code> on the Foundry server, then restart Foundry. The Connect button will appear here.</p>
+              <% } else { %>
+                <p>The developer app must contain this exact callback, including the protocol, hostname and path.</p>
+              <% } %>
+              <% if (!publicOrigin) { %><p>Set <code>FOUNDRY_PUBLIC_URL</code> to the public HTTPS address first.</p><% } %>
+            </div>
+          </details>
+        <% } %>
+
         <%# What it brings in, and what happens when you press connect, are both
             real but neither is needed before somebody has decided this is their
             till. %>
@@ -258,8 +287,8 @@
             <p><strong>Provides:</strong> <%= provider.provides.join(', ') %>.</p>
             <% if (!provider.available) { %>
               <p><%= provider.unavailableReason %></p>
-            <% } else if (provider.type === 'reference_webhook') { %>
-              <p>Foundry gives your technical team one endpoint, a scoped API token and the complete event contract.</p>
+            <% } else if (provider.type === 'reference_webhook' || provider.integrationMode === 'custom_contract') { %>
+              <p>Foundry gives your technical team one endpoint, a scoped API token and the complete event contract. It proves each event is valid, correctly ordered and applied once before it can affect operations.</p>
             <% } else if (provider.type === 'shopify') { %>
               <p>An installed store in this Shopify organization connects directly. Other stores open Shopify for approval. Foundry stores the resulting credential encrypted.</p>
             <% } else if (provider.type === 'clover') { %>
@@ -274,17 +303,18 @@
   </div>
 <% }) %>
 
-<div class="rm-sect" id="developer-api">
-  <h2>Developer API and outbound webhooks</h2>
-  <p>Scoped commands use Foundry's canonical engine. Signed webhooks publish the same immutable business events.</p>
-</div>
-<div class="rm-grid2">
+<details class="rm-work" id="developer-api" <%= apiToken || webhookSecret ? 'open' : '' %>>
+  <summary>Advanced: connect custom software with APIs and webhooks</summary>
+  <div class="rm-work__body">
+    <p class="quiet"><strong>Most business owners do not need this.</strong> Use it only when your ERP, warehouse system, developer, or reporting tool needs to exchange data directly with Foundry.</p>
+    <div class="rm-grid2" style="margin-top:16px">
   <section class="rm-provider">
     <div class="rm-provider__top"><span class="rm-provider__mark is-word">API</span><span class="rm-provider__n">Scoped API clients</span></div>
     <p>Read inventory/events or submit canonical inventory commands. No client can write balance tables directly.</p>
     <% if (apiToken) { %><div class="rm-note rm-note--warn"><div><strong>Copy this token now</strong><input class="input mono" value="<%= apiToken.token %>" readonly onclick="this.select()"><small>Shown once. Scopes: <%= apiToken.scopes.join(', ') %></small></div></div><% } %>
     <% apiClients.forEach(function(client) { %><div class="rm-told__row"><span class="rm-told__t"><%= client.name %><small><%= client.scopes.join(', ') %> · <%= client.token_prefix %>…</small></span><span class="rm-told__m <%= client.revoked_at ? '' : 'is-ok' %>"><%= client.revoked_at ? 'Revoked' : 'Active' %></span><% if (!client.revoked_at && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients/<%= client.id %>/revoke" data-confirm="Revoke this API token immediately?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
-    <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients" class="grid" style="margin-top:16px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Client name</span><input class="input" name="name" placeholder="Warehouse automation" required></label><div class="choice-grid"><label class="choice"><input type="checkbox" name="scopes" value="inventory:read"><span><strong>Read inventory</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="events:read"><span><strong>Read events</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="inventory:write"><span><strong>Submit inventory commands</strong></span></label></div><button class="rm-btn rm-btn--wash" type="submit">Create scoped token</button></form><% } %>
+    <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients" class="grid" style="margin-top:16px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Client name</span><input class="input" name="name" placeholder="Warehouse automation" required></label><div class="choice-grid"><label class="choice"><input type="checkbox" name="scopes" value="inventory:read"><span><strong>Read inventory</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="events:read"><span><strong>Read events</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="inventory:write"><span><strong>Submit inventory commands</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="migration:read"><span><strong>Read migration checks</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="migration:write"><span><strong>Stage migration evidence</strong><small>Cannot approve or activate cutover</small></span></label></div><button class="rm-btn rm-btn--wash" type="submit">Create scoped token</button></form><% } %>
+    <details class="rm-more"><summary>How to prove this API works</summary><div><p>Start with a token that has only <strong>Read inventory</strong>. Give it to the test client for this one inventory and request <code>GET /api/v1/public/inventory</code>. The response must identify Foundry as the source of truth and must contain only this inventory’s records.</p><p>Then create a separate write-enabled test token. Send one receive command with an <code>Idempotency-Key</code>, resend the exact same command, and confirm stock changes once. Revoke the token and confirm the next request is refused.</p></div></details>
     <details class="rm-more"><summary>Endpoints and contract</summary><div><p><code>GET /api/v1/public/inventory</code></p><p><code>GET /api/v1/public/events</code></p><p><code>POST /api/v1/public/commands/inventory/receive</code></p><p><code>POST /api/v1/public/commands/inventory/adjust</code></p><p>Every write requires a stable <code>Idempotency-Key</code>; retrying the same command returns its original result without posting twice.</p></div></details>
   </section>
   <section class="rm-provider">
@@ -293,8 +323,11 @@
     <% if (webhookSecret) { %><div class="rm-note rm-note--warn"><div><strong>Copy this signing secret now</strong><input class="input mono" value="<%= webhookSecret.secret %>" readonly onclick="this.select()"></div></div><% } %>
     <% outboundWebhooks.forEach(function(hook) { %><div class="rm-told__row"><span class="rm-told__t"><%= hook.name %><small><%= hook.endpoint_url %> · <%= hook.eventTypes.join(', ') %></small></span><span class="rm-told__m <%= hook.status === 'ACTIVE' ? 'is-ok' : '' %>"><%= hook.status %></span><% if (hook.status === 'ACTIVE' && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/outbound-webhooks/<%= hook.id %>/revoke" data-confirm="Stop sending all future events to this webhook?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
     <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/outbound-webhooks" class="grid" style="margin-top:16px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Webhook name</span><input class="input" name="name" placeholder="Data warehouse" required></label><label class="field"><span class="field-label">HTTPS endpoint</span><input class="input" type="url" name="endpointUrl" placeholder="https://example.com/foundry-events" required></label><label class="field"><span class="field-label">Events</span><select class="select" name="eventTypes" multiple required><option value="*">All business events</option><option value="inventory.received">Inventory received</option><option value="inventory.issued">Inventory issued</option><option value="purchase_order.completed">Purchase order completed</option><option value="sales_order.fulfilled">Sales order fulfilled</option></select><span class="field-help">Use Ctrl/Cmd to choose several.</span></label><button class="rm-btn rm-btn--wash" type="submit">Create signed webhook</button></form><% } %>
+    <details class="rm-more"><summary>How to prove this webhook works</summary><div><p>Use an HTTPS test receiver you control. Create the webhook for <strong>Inventory received</strong>, receive one unit in Foundry, and confirm the receiver gets one signed event with its Foundry event ID.</p><p>Return an error once to prove Foundry records the failure and retries durably. Then accept the retry and confirm the same event is not delivered as a second business effect. Revoke the webhook and confirm later events are not sent.</p></div></details>
   </section>
-</div>
+    </div>
+  </div>
+</details>
 
 <%# ----------------------------------------------------------- taking payment %>
 <%
@@ -414,18 +447,17 @@
   </div>
 <% } %>
 
-<%# ---------------------------------------------------------- shipping labels %>
+<%# --------------------------------------------------------------- shipping %>
 <% if (shipping) { %>
   <div class="rm-sect" id="shipping">
-    <h2>Shipping labels</h2>
-    <p>Compare carrier rates, buy and print labels, and keep tracking on the Sales Order.</p>
+    <h2>Shipping</h2>
+    <p>Compare UPS, FedEx, USPS and DHL, buy and print labels, and keep delivery on the order.</p>
   </div>
   <div class="rm-grid2">
     <div class="rm-provider">
       <div class="rm-provider__top">
         <span class="rm-provider__mark" aria-hidden="true"><%- helpers.icon('ship', { size: 17 }) %></span>
-        <span class="rm-provider__n"><%= shipping.provider === 'easypost' ? 'EasyPost'
-          : shipping.provider === 'shippo' ? 'Shippo' : 'ShipEngine' %></span>
+        <span class="rm-provider__n">UPS · FedEx · USPS · DHL</span>
         <span class="rm-provider__s">
           <% if (shipping.connected) { %>
             <span class="rm-pillbadge <%= shipping.billingReady ? 'is-ok' : 'is-warn' %>"><%= shipping.billingReady ? 'ready' : 'finish setup' %></span>
@@ -434,28 +466,33 @@
       </div>
       <% if (shipping.connected && shipping.source === 'platform') { %>
         <p class="quiet">
-          This workspace has its own seller account. Its payment method pays for its labels;
-          Foundry never charges its platform account for this business’s postage.
+          This business has its own shipping account and payment method. Foundry compares its
+          carrier rates without mixing its postage or labels with another business.
         </p>
       <% } else if (shipping.connected) { %>
         <p class="quiet"><%= shipping.testMode ? 'Test labels only right now.'
           : 'Live rates and labels are available from this account.' %></p>
       <% } else { %>
         <p class="quiet">
-          One-time setup connects a carrier, confirms where parcels leave from, and adds this
-          business’s payment method. Foundry then handles rates, labels and tracking from Orders.
+          One short setup connects your carriers, confirms where parcels leave from, and keeps
+          postage on this business’s payment method. Foundry handles the rest from Orders.
         </p>
         <% if (shippingSetup && !shippingSetup.available) { %>
-          <p class="quiet">ShipEngine partner credentials still need to be configured for Foundry.</p>
+          <p class="quiet">Guided carrier setup is not enabled on this installation yet.</p>
         <% } %>
       <% } %>
       <div class="rm-choices">
         <a class="rm-btn <%= shipping.connected && shipping.billingReady ? 'rm-btn--ghost' : 'rm-btn--wash' %>"
           href="/settings/shipping<%= shipping.connected && shipping.source === 'platform' && !shipping.billingReady
-            ? '?setup=shipengine' : '' %>">
+            ? '?setup=shipengine#account' : '#account' %>">
           <%= shipping.connected && shipping.billingReady ? 'Manage shipping'
-            : shipping.connected ? 'Finish shipping setup' : 'Set up shipping' %>
+            : shipping.connected ? 'Finish shipping setup' : 'Set up shipping for me' %>
         </a>
+        <% if (!shipping.connected) { %>
+          <a class="rm-btn rm-btn--ghost" href="/settings/shipping#existing-carrier-connection">
+            Connect my carrier accounts
+          </a>
+        <% } %>
       </div>
     </div>
   </div>
@@ -463,6 +500,63 @@
 
 <script>
 (function () {
+  /*
+   * Every provider authorization opens from the owner's click in its own
+   * window. Foundry stays put, shows what it is waiting for, and refreshes the
+   * exact connection when the one-time OAuth return reports completion.
+   */
+  document.querySelectorAll('form[data-oauth-connect]:not([data-oauth-connect=""])')
+    .forEach(function (form) {
+      form.addEventListener('submit', function (event) {
+        var providerType = form.dataset.oauthConnect;
+        var providerName = form.dataset.providerName || 'connection';
+        var popupName = 'foundry-' + providerType + '-connect';
+        var popup = window.open('', popupName,
+          'popup=yes,width=680,height=780,resizable=yes,scrollbars=yes');
+        if (!popup) return;
+        event.preventDefault();
+
+        try {
+          popup.document.title = 'Opening ' + providerName + ' · Foundry';
+          popup.document.body.style.cssText = 'margin:0;min-height:100vh;display:grid;place-items:center;'
+            + 'background:#f4f5fb;color:#191b2a;font:16px system-ui,sans-serif';
+          popup.document.body.innerHTML = '<div style="text-align:center;padding:32px">'
+            + '<div style="font-size:28px;margin-bottom:12px">↗</div>'
+            + '<strong>Opening ' + providerName.replace(/[&<>"']/g, '') + '</strong>'
+            + '<p style="color:#666b80">Foundry will stay open here while you approve the connection.</p></div>';
+        } catch (_) { /* The provider navigation can begin immediately. */ }
+
+        var popupField = form.querySelector('input[name="popup"]');
+        if (!popupField) {
+          popupField = document.createElement('input');
+          popupField.type = 'hidden';
+          popupField.name = 'popup';
+          form.appendChild(popupField);
+        }
+        popupField.value = '1';
+        form.target = popupName;
+        var button = form.querySelector('button[type="submit"]');
+        if (button) {
+          button.disabled = true;
+          button.dataset.originalText = button.textContent;
+          button.textContent = 'Waiting for ' + providerName + '…';
+        }
+        HTMLFormElement.prototype.submit.call(form);
+        popup.focus();
+
+        var checks = 0;
+        var closePoll = window.setInterval(function () {
+          checks += 1;
+          if (popup.closed) {
+            window.clearInterval(closePoll);
+            window.location.replace('/settings/connections');
+          } else if (checks >= 1800) {
+            window.clearInterval(closePoll);
+          }
+        }, 1000);
+      });
+    });
+
   /*
    * A plain target=_blank is treated as `noopener` by modern browsers. That
    * made the Stripe return page unable to notify/close itself, leaving the
@@ -517,6 +611,25 @@
       return;
     }
     window.location.replace('/settings/connections#payments');
+  });
+
+  var trustedConnectionReturnOrigins = [window.location.origin];
+  var configuredConnectionOrigin = <%- JSON.stringify(publicOrigin || '') %>;
+  if (configuredConnectionOrigin
+      && trustedConnectionReturnOrigins.indexOf(configuredConnectionOrigin) === -1) {
+    trustedConnectionReturnOrigins.push(configuredConnectionOrigin);
+  }
+  window.addEventListener('message', function (event) {
+    if (trustedConnectionReturnOrigins.indexOf(event.origin) === -1) return;
+    if (!event.data || event.data.type !== 'foundry:connection-return') return;
+    if (event.data.workspaceId && currentStripeWorkspaceId
+        && event.data.workspaceId !== currentStripeWorkspaceId) {
+      window.location.replace('/inventories');
+      return;
+    }
+    var path = String(event.data.returnPath || '/settings/connections');
+    if (!path.startsWith('/settings/connections')) path = '/settings/connections';
+    window.location.replace(path);
   });
 }());
 </script>

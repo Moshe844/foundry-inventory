@@ -102,7 +102,7 @@ test('Test E: a part payment moves money and no stock', () => {
   const before = onHand(env);
   payments.record(env.db, env.ctx, env.membership, {
     direction: 'SUPPLIER_PAYMENT', supplierId: env.supplier.id,
-    paymentDate: '2026-09-10', amountMinor: 10000, method: 'bank_transfer',
+    paymentDate: TODAY, amountMinor: 10000, method: 'bank_transfer',
     sourceKey: 'paid-100', allocations: [{ billId, amountMinor: 10000 }],
   });
 
@@ -123,14 +123,14 @@ test('Test F: the final payment settles it, and still moves no stock', () => {
     lines: [{ lineId: line.id, quantityUnits: 24, locationId: line.destination_location_id || env.workspace.main.id }],
   });
   payments.record(env.db, env.ctx, env.membership, {
-    direction: 'SUPPLIER_PAYMENT', supplierId: env.supplier.id, paymentDate: '2026-09-10',
+    direction: 'SUPPLIER_PAYMENT', supplierId: env.supplier.id, paymentDate: TODAY,
     amountMinor: 10000, method: 'bank_transfer', sourceKey: 'paid-100',
     allocations: [{ billId, amountMinor: 10000 }],
   });
 
   const before = onHand(env);
   payments.record(env.db, env.ctx, env.membership, {
-    direction: 'SUPPLIER_PAYMENT', supplierId: env.supplier.id, paymentDate: '2026-09-25',
+    direction: 'SUPPLIER_PAYMENT', supplierId: env.supplier.id, paymentDate: TODAY,
     amountMinor: 14000, method: 'bank_transfer', sourceKey: 'paid-140',
     allocations: [{ billId, amountMinor: 14000 }],
   });
@@ -167,7 +167,7 @@ test('the same payment recorded twice is one payment', () => {
   const env = setup();
   const { billId } = orderedAndInvoiced(env);
   const pay = () => payments.record(env.db, env.ctx, env.membership, {
-    direction: 'SUPPLIER_PAYMENT', supplierId: env.supplier.id, paymentDate: '2026-09-10',
+    direction: 'SUPPLIER_PAYMENT', supplierId: env.supplier.id, paymentDate: TODAY,
     amountMinor: 10000, method: 'bank_transfer', sourceKey: 'paid-100',
     allocations: [{ billId, amountMinor: 10000 }],
   });

@@ -25,7 +25,9 @@ every missing prerequisite.
 - This SQLite deployment is a single-writer topology. Do not run multiple
   application/worker replicas against one local file or network-mounted SQLite
   database. A multi-node deployment requires migration to a shared server
-  database and re-certification of leases and concurrency.
+  database and re-certification of leases and concurrency. The production
+  `/readyz` gate enforces this as `database_topology`; documentation or local
+  evidence cannot accidentally certify the SQLite topology.
 - `FOUNDRY_PROCESS_ROLE=web` starts HTTP only, `worker` starts schedulers and
   durable workers without binding a port, and `all` (the default) runs both in
   the one supported SQLite process.

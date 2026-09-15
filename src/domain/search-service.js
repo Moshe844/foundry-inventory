@@ -1,6 +1,7 @@
 'use strict';
 
 const { escapeLike } = require('../lib/util');
+const searchIndex = require('./search-index');
 
 /**
  * One search box over the whole operation.
@@ -134,7 +135,92 @@ function search(db, workspaceId, rawTerm, { limit = 8 } = {}) {
     if (score > 0) found.push({ ...row, score, typeLabel: TYPE_LABEL[row.type] || row.type });
   };
 
+  /*
+   * Operational searches are very often exact identifiers. Resolve those on
+   * indexed columns first, so finding one SKU among 250,000 does not scan the
+   * catalogue merely to prove that its code is exact. Fuzzy discovery remains
+   * below for human names and partial wording.
+   */
+  const exactSku = db.prepare(`SELECT s.id, s.item_id, s.code, s.variant_label,
+      i.name AS item_name, i.tracking_mode,
+      COALESCE((SELECT SUM(on_hand) FROM balances b WHERE b.sku_id = s.id), 0) AS on_hand
+    FROM skus s JOIN items i ON i.id = s.item_id
+    WHERE s.workspace_id = ? AND s.code = ? COLLATE NOCASE LIMIT 1`).get(workspaceId, term);
+  if (exactSku) consider({ type: exactSku.variant_label ? 'variant' : 'sku', id: exactSku.id,
+    title: exactSku.variant_label ? `${exactSku.item_name} / ${exactSku.variant_label}` : exactSku.item_name,
+    subtitle: `${exactSku.variant_label ? 'Variant' : 'Product'} · ${exactSku.code}`,
+    meta: `${exactSku.on_hand} on hand`, href: `/inventory/${exactSku.item_id}#sku-${exactSku.id}`,
+    trackingMode: exactSku.tracking_mode }, { identifiers: [exactSku.code], title: exactSku.item_name });
+  const exactPo = db.prepare(`SELECT po.id, po.po_number, po.status, sp.name AS supplier_name
+    FROM purchase_orders po LEFT JOIN suppliers sp ON sp.id = po.supplier_id
+    WHERE po.workspace_id = ? AND po.po_number = ? COLLATE NOCASE LIMIT 1`).get(workspaceId, term);
+  if (exactPo) consider({ type: 'purchase_order', id: exactPo.id, title: exactPo.po_number,
+    subtitle: `Purchase order · ${exactPo.supplier_name || 'no supplier'}`,
+    meta: String(exactPo.status || '').toLowerCase().replace(/_/g, ' '),
+    href: `/purchasing/orders/${exactPo.id}` }, { identifiers: [exactPo.po_number], title: exactPo.po_number });
+  const exactSo = db.prepare(`SELECT so.id, so.order_number, so.status, c.name AS customer_name
+    FROM sales_orders so JOIN customers c ON c.id = so.customer_id
+    WHERE so.workspace_id = ? AND so.order_number = ? COLLATE NOCASE LIMIT 1`).get(workspaceId, term);
+  if (exactSo) consider({ type: 'sales_order', id: exactSo.id, title: exactSo.order_number,
+    subtitle: `Sales order · ${exactSo.customer_name}`, meta: String(exactSo.status || '').toLowerCase().replace(/_/g, ' '),
+    href: `/sales/orders/${exactSo.id}` }, { identifiers: [exactSo.order_number], title: exactSo.order_number });
+  if (found.some((row) => row.score === SCORE.identifier)) {
+    const results = found.sort((a, b) => b.score - a.score).slice(0, limit);
+    return { term, results, total: found.length };
+  }
+
+  /*
+   * FTS narrows high-cardinality catalogue discovery before any joins or
+   * balance totals are read. Supplier aliases and arbitrary attributes resolve
+   * back to their canonical SKU/item; they never become separate destinations.
+   */
+  const indexed = searchIndex.candidates(db,workspaceId,term,{ limit:150 });
+  const itemIds = new Set(indexed.filter((row) => row.entityType === 'item').map((row) => row.entityId));
+  const skuIds = new Set(indexed.filter((row) => row.entityType === 'sku').map((row) => row.entityId));
+  const supplierItemIds = indexed.filter((row) => row.entityType === 'supplier_item').map((row) => row.entityId);
+  if (supplierItemIds.length) {
+    const marks = supplierItemIds.map(() => '?').join(',');
+    for (const row of db.prepare(`SELECT sku_id FROM supplier_items WHERE workspace_id=? AND id IN (${marks})`)
+      .all(workspaceId,...supplierItemIds)) skuIds.add(row.sku_id);
+  }
+  const attributeIds = indexed.filter((row) => row.entityType === 'attribute').map((row) => row.entityId);
+  if (attributeIds.length) {
+    const marks = attributeIds.map(() => '?').join(',');
+    for (const row of db.prepare(`SELECT subject_type,subject_id FROM catalog_attributes
+      WHERE workspace_id=? AND id IN (${marks})`).all(workspaceId,...attributeIds)) {
+      if (row.subject_type === 'item') itemIds.add(row.subject_id);
+      if (row.subject_type === 'sku') skuIds.add(row.subject_id);
+    }
+  }
+  const catalogIndexed = itemIds.size > 0 || skuIds.size > 0;
+  if (itemIds.size) {
+    const ids = [...itemIds]; const marks = ids.map(() => '?').join(',');
+    for (const row of db.prepare(`SELECT i.id,i.name,i.base_code,i.tracking_mode,
+      COALESCE((SELECT SUM(b.on_hand) FROM balances b JOIN skus s ON s.id=b.sku_id WHERE s.item_id=i.id),0) AS on_hand
+      FROM items i WHERE i.workspace_id=? AND i.id IN (${marks})`).all(workspaceId,...ids)) {
+      consider({ type:'item',id:row.id,title:row.name,subtitle:row.base_code ? `Product · ${row.base_code}` : 'Product',
+        meta:`${row.on_hand} on hand`,href:`/inventory/${row.id}`,trackingMode:row.tracking_mode },
+      { identifiers:[row.base_code],title:row.name,distinguishing:row.name,haystack:`${row.name} ${term}` });
+    }
+  }
+  if (skuIds.size) {
+    const ids = [...skuIds]; const marks = ids.map(() => '?').join(',');
+    for (const row of db.prepare(`SELECT s.id,s.code,s.variant_label,s.item_id,i.name AS item_name,i.tracking_mode,
+      COALESCE((SELECT SUM(b.on_hand) FROM balances b WHERE b.sku_id=s.id),0) AS on_hand
+      FROM skus s JOIN items i ON i.id=s.item_id WHERE s.workspace_id=? AND s.id IN (${marks})`)
+      .all(workspaceId,...ids)) {
+      const label = row.variant_label || '';
+      consider({ type:label ? 'variant' : 'sku',id:row.id,
+        title:label ? `${row.item_name} / ${label}` : row.item_name,
+        subtitle:`${label ? 'Variant' : 'Product'} · ${row.code}`,meta:`${row.on_hand} on hand`,
+        href:`/inventory/${row.item_id}#sku-${row.id}`,trackingMode:row.tracking_mode },
+      { identifiers:[row.code],title:row.item_name,distinguishing:label || row.item_name,
+        haystack:`${row.item_name} ${label} ${row.code} ${term}` });
+    }
+  }
+
   // --- products -------------------------------------------------------------
+  if (!catalogIndexed) {
   const itemText = "(i.name || ' ' || COALESCE(i.base_code, ''))";
   const itemLike = likeClause(itemText, term, words);
   for (const row of db
@@ -194,6 +280,7 @@ function search(db, workspaceId, rawTerm, { limit = 8 } = {}) {
         haystack: `${row.item_name} ${row.code || ''}`,
       }
     );
+  }
   }
 
   // --- locations ------------------------------------------------------------

@@ -1,0 +1,53 @@
+<% var spec = fields[profile.entityType]; %>
+<% var unresolved = profile.mappings.filter(function(mapping) { return mapping.disposition === 'UNRESOLVED'; }); %>
+<div class="rm-head">
+  <a class="rm-back" href="/onboarding/migrations/<%= profile.packageId %>/sources">← Workbook analysis</a>
+  <p class="rm-head__eyebrow"><%= profile.sourceDataset %></p>
+  <h1><%= unresolved.length %> business fact<%= unresolved.length === 1 ? '' : 's' %> need a rule.</h1>
+  <p>Foundry knows what the headings say. It stopped because applying them without related records or an accounting rule could change your stock or money incorrectly.</p>
+</div>
+
+<section class="rm-panel" style="margin-bottom:18px">
+  <div class="rm-panel__head"><%- helpers.icon('alert', { size:15 }) %><h2>Why Foundry stopped</h2></div>
+  <div class="rm-feed">
+    <% unresolved.forEach(function(mapping) { %>
+      <div class="rm-feed__row">
+        <span class="rm-feed__ic is-warn"><%- helpers.icon('alert',{ size:14 }) %></span>
+        <span class="rm-feed__t"><strong><%= mapping.sourceField %></strong><small><%= mapping.evidence.reason %></small></span>
+      </div>
+    <% }) %>
+  </div>
+</section>
+
+<form method="post" action="/onboarding/migration-mappings/<%= profile.id %>" class="migration-safe-choice" style="margin-bottom:18px">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <% unresolved.forEach(function(mapping) { var key = Buffer.from(mapping.sourceField).toString('hex'); %>
+    <input type="hidden" name="field_<%= key %>" value="__ignore__">
+  <% }) %>
+  <p class="migration-safe-choice__k">One safe choice</p>
+  <p class="migration-safe-choice__t">Keep these fields with the exact source workbook, but do not let them change live stock, orders or accounting.</p>
+  <p class="migration-safe-choice__m">You can bring the related order, receipt, damage or accounting evidence in later and re-run the migration.</p>
+  <button class="rm-btn" style="margin-top:14px">Keep as evidence and continue</button>
+</form>
+
+<details class="rm-panel">
+  <summary style="padding:16px 18px;cursor:pointer"><strong>Advanced: assign individual meanings</strong></summary>
+  <form method="post" action="/onboarding/migration-mappings/<%= profile.id %>">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div style="padding:8px 18px 18px">
+      <% unresolved.forEach(function(mapping) { var key = Buffer.from(mapping.sourceField).toString('hex'); %>
+        <label style="display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr);gap:16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)">
+          <span><strong><%= mapping.sourceField %></strong><br><small><%= mapping.evidence.reason %></small></span>
+          <select name="field_<%= key %>" required>
+            <option value="">Choose a meaning</option>
+            <% spec.fields.forEach(function(field) { var required = spec.required.includes(field) || (spec.requiredAny || []).some(function(group) { return group.includes(field); }); %><option value="<%= field %>"><%= fieldLabels[field] || field %><%= required ? ' (identity)' : '' %></option><% }) %>
+            <option value="__ignore__">Keep as source evidence only</option>
+          </select>
+        </label>
+      <% }) %>
+      <div style="display:flex;justify-content:flex-end;padding-top:18px"><button class="rm-btn">Apply these meanings</button></div>
+    </div>
+  </form>
+</details>
+
+<div class="rm-note"><%- helpers.icon('shield', { size:16 }) %><span>No source field is deleted. Evidence-only fields remain attached to the immutable workbook and can be mapped later; they simply cannot alter operational truth during this cutover.</span></div>

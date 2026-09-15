@@ -36,6 +36,9 @@ test('ShipEngine translates carrier rates and labels without leaking provider sh
       shipment_cost: { amount: 8.42, currency: 'usd' }, label_format: 'pdf',
       label_download: { pdf: 'https://labels.example/label.pdf' },
     });
+    if (url.endsWith('/v1/labels/se-label/void')) {
+      return response({ approved: true, message: 'Label voided and refund requested.' });
+    }
     throw new Error(`Unexpected URL ${url}`);
   };
   try {
@@ -58,6 +61,11 @@ test('ShipEngine translates carrier rates and labels without leaking provider sh
     assert.equal(bought.labelUrl, 'https://labels.example/label.pdf');
     assert.equal(bought.trackingNumber, '9400000000000000000000');
     assert.equal(bought.amountMinor, 842);
+    assert.deepEqual(bought.providerLabelIds, ['se-label']);
+    const voided = await shipengine.voidLabel(ctx, { providerReferences: bought.providerLabelIds });
+    assert.equal(voided.status, 'SUCCEEDED');
+    assert.deepEqual(voided.references, ['se-label']);
+    assert.match(voided.detail, /refund requested/i);
     assert.ok(calls.every((call) => call.options.headers['api-key'] === 'TEST_seller-only'),
       'every carrier call uses the workspace seller key');
   } finally { global.fetch = held; }

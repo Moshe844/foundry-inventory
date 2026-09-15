@@ -166,9 +166,15 @@ function fromInvestigations(db, workspaceId) {
 }
 
 function fromRepairCases(db, workspaceId) {
-  return require('../repairs/service').list(db, workspaceId, {
-    statuses: ['NEEDS_AUTHORITY', 'FAILED', 'INCONCLUSIVE'], limit: 100,
-  }).map((repairCase) => ({
+  // The repair service hydrates every evidence, timeline and before/after JSON
+  // document. Needs You only renders the case headline and the simulation's
+  // short summary. Reading multi-megabyte evidence for up to 100 cases turned
+  // a badge-sized question into seconds of JSON parsing on large migrations.
+  return db.prepare(`SELECT id,symptom,failed_invariant,status,materiality,updated_at,
+      json_extract(simulation,'$.summary') AS simulation_summary
+    FROM repair_cases
+    WHERE workspace_id=? AND status IN ('NEEDS_AUTHORITY','FAILED','INCONCLUSIVE')
+    ORDER BY updated_at DESC,rowid DESC LIMIT 100`).all(workspaceId).map((repairCase) => ({
     id: `repair:${repairCase.id}`,
     kind: 'repair',
     title: repairCase.symptom,
@@ -178,7 +184,7 @@ function fromRepairCases(db, workspaceId) {
       : repairCase.status === 'INCONCLUSIVE'
         ? 'The records do not prove a safe correction yet, so Foundry stopped instead of forcing the numbers to agree.'
         : 'Foundry diagnosed the cause and simulated the correction, but the materiality or permissions require your approval.',
-    recommendation: repairCase.simulation.summary
+    recommendation: repairCase.simulation_summary
       || 'Open the repair case to review the evidence and simulated consequences.',
     missing: repairCase.status === 'NEEDS_AUTHORITY' ? 'Your approval for the simulated repair.'
       : repairCase.status === 'INCONCLUSIVE' ? 'The exact source record that proves the correction.'
@@ -189,9 +195,41 @@ function fromRepairCases(db, workspaceId) {
         ? 'Provide the missing evidence'
         : 'Resolve the failed repair',
     href: `/repairs/${repairCase.id}`,
-    at: repairCase.updatedAt,
+    at: repairCase.updated_at,
     priority: repairCase.materiality === 'high' ? 96 : repairCase.materiality === 'medium' ? 90 : 82,
   }));
+}
+
+/** One unresolved universal operation becomes one decision, regardless of how
+ * many internal checks explained why it stopped. */
+function fromAutonomousOperations(db, workspaceId) {
+  const catalog = require('../autonomous/catalog');
+  return db.prepare(`SELECT i.id AS intervention_id, i.kind, i.reason, i.created_at,
+      o.id, o.operation_type, o.title, o.summary, o.link, o.error_message
+    FROM autonomous_operation_interventions i
+    JOIN autonomous_operations o ON o.id = i.operation_id
+    WHERE i.workspace_id = ? AND i.resolved_at IS NULL
+      AND (o.source_kind IS NULL OR o.source_kind NOT IN
+        ('work_item','repair_case','domain_event','provider_event'))
+      AND NOT EXISTS (SELECT 1 FROM autonomous_operation_interventions newer
+        WHERE newer.operation_id = i.operation_id AND newer.resolved_at IS NULL
+          AND (newer.created_at > i.created_at OR (newer.created_at = i.created_at AND newer.id > i.id)))
+    ORDER BY i.created_at DESC`).all(workspaceId).map((row) => {
+      const definition = catalog.requireType(row.operation_type);
+      const verification = row.kind === 'VERIFICATION_FAILED';
+      return {
+        id:`operation:${row.id}`, kind:'operation', title:row.title,
+        happened:row.summary || `${definition.title} did not reach a verified outcome.`,
+        why:row.reason || row.error_message || 'Foundry stopped before taking an unapproved or unverified action.',
+        recommendation:verification
+          ? 'Review the evidence and resolve the failed verification before this area resumes.'
+          : 'Approve this only if the proposed outcome and limits are correct.',
+        missing:verification ? 'A verified outcome or a safe recovery decision.' : 'The required authority or business judgement.',
+        actionLabel:verification ? 'Review stopped work' : 'Review this operation',
+        href:row.link || `/autopilot/history#operation-${row.id}`, at:row.created_at,
+        priority:verification ? 96 : 88, requiredPermission:definition.permission,
+      };
+    });
 }
 
 /** Transfer requests are one custody decision, not a generic stock warning. */
@@ -1244,6 +1282,8 @@ function fromConnections(db, workspaceId) {
     try { candidates = JSON.parse(row.candidate_matches || '[]'); } catch { candidates = []; }
     const procurement = ['SUPPLIER_FOLLOW_UP_APPROVAL', 'SUPPLIER_SEND_APPROVAL'].includes(row.issue_type);
     const documentReview = row.issue_type === 'SUPPLIER_DOCUMENT_REVIEW';
+    const responseCandidate = candidates.find((entry) => entry.kind === 'supplier_response_plan');
+    const supplierResponse = row.issue_type === 'SUPPLIER_RESPONSE_DECISION' || Boolean(responseCandidate);
     const documentCandidate = documentReview
       ? candidates.find((entry) => entry.kind === 'supplier_document_review') : null;
     const documentDiscrepancies = documentCandidate?.discrepancies || [];
@@ -1262,10 +1302,10 @@ function fromConnections(db, workspaceId) {
       .get(workspaceId, row.connector_id, unknownEntity, unknownExternalId);
     return {
       id: `connection:${row.id}`,
-      kind: procurement || documentReview ? 'decision' : 'connection',
+      kind: procurement || documentReview || supplierResponse ? 'decision' : 'connection',
       issueType: row.issue_type,
-      title: documentReview ? 'A supplier document needs your review' : row.title,
-      happened: documentReview
+      title: documentReview && !supplierResponse ? 'A supplier document needs your review' : row.title,
+      happened: documentReview && !supplierResponse
         ? missingOrder?.message || (unknownCodes.length
           ? `Foundry does not yet know which product ${unknownCodes.join(', ')} refers to.`
           : documentDiscrepancies.map((entry) => entry.message).filter(Boolean).join(' ')
@@ -1273,16 +1313,20 @@ function fromConnections(db, workspaceId) {
         : row.detail,
       why: row.issue_type === 'CONNECTION_STALE'
         ? 'Foundry may be missing activity, so its view of demand and stock may be incomplete.'
+        : supplierResponse
+          ? 'Foundry measured the supplier change against current stock, customer commitments, cash and alternate supply. It did not silently choose a material tradeoff.'
         : documentReview
           ? 'Foundry saved the original email but did not change the purchase order or physical inventory.'
         : procurement
           ? 'Foundry prepared the supplier communication but your authority settings require your approval before it is sent.'
           : 'Foundry stopped before changing business records because the external evidence was not safe to apply.',
-      recommendation: documentReview ? 'Review the document and either resolve the match or mark it as not relevant.' : row.resolution_hint,
+      recommendation: documentReview && !supplierResponse ? 'Review the document and either resolve the match or mark it as not relevant.' : row.resolution_hint,
       missing: procurement ? 'Your approval to send the prepared supplier message.'
+        : supplierResponse ? 'Your decision on the material supplier tradeoff. Communication and purchasing are approved separately.'
         : documentReview ? 'Your decision about this supplier document.' : row.resolution_hint,
       actionLabel: row.issue_type === 'SUPPLIER_FOLLOW_UP_APPROVAL' ? 'Approve follow-up'
         : row.issue_type === 'SUPPLIER_SEND_APPROVAL' ? 'Approve & send order'
+          : supplierResponse ? 'Review supplier response'
           : documentReview ? 'Review supplier document' : `Fix ${row.display_name}`,
       href: procurement && purchaseOrderId ? `/purchasing/orders/${purchaseOrderId}`
         : `/settings/connections/${row.connector_id}${documentReview
@@ -1407,13 +1451,31 @@ function fromAccounting(db, workspaceId) {
 }
 
 function fromBusinessConsistency(db, workspaceId) {
-  const state = require('./business-brain').build(db, workspaceId);
-  return state.attention
-    .filter((entry) => ['consistency', 'missing-bill'].includes(entry.kind))
-    .filter((entry) => entry.kind !== 'consistency' || !db.prepare(`SELECT 1 FROM repair_cases
-      WHERE workspace_id = ? AND failed_invariant = ? AND status <> 'RESOLVED' LIMIT 1`)
-      .get(workspaceId, entry.title))
-    .map((entry, index) => ({
+  // Needs You only consumes failed invariants and received orders missing a
+  // bill. Building the entire business brain here also calculated forecasts,
+  // sales risk, full inventory valuation rows and the operational inbox that
+  // was already built immediately above. On a large inventory that turned one
+  // inbox read into a second whole-business report.
+  const accountingLedger = require('../accounting/ledger');
+  const ownerAccounting = require('../accounting/owner-dashboard');
+  const accountingEnabled = accountingLedger.settings(db, workspaceId).enabled;
+  // Cross-domain invariant failures are materialized as repair cases by the
+  // manager and were already read by fromRepairCases above. Recomputing the
+  // business brain during a page request duplicated that work and made an
+  // inbox grow slower with the ledger. The only accounting exception not
+  // represented by a repair case is a received order awaiting its bill.
+  const stateAttention = [];
+  if (accountingEnabled) {
+    for (const missing of ownerAccounting.receivedWithoutBills(db, workspaceId)) {
+      stateAttention.push({ priority: 72, kind: 'missing-bill', id: missing.id,
+        title: `${missing.po_number} was received but has no supplier bill`,
+        because: `${missing.receivedUnits} unit${missing.receivedUnits === 1 ? '' : 's'} costing `
+          + `${missing.currency || 'USD'} ${(missing.receivedCostMinor / 100).toFixed(2)} arrived. `
+          + 'Foundry cannot know what is owed until the bill is recorded.',
+        href: `/accounting/payables/new?purchaseOrderId=${missing.id}` });
+    }
+  }
+  return stateAttention.map((entry, index) => ({
       id: `business:${entry.kind}:${entry.id || index}`,
       kind: entry.kind === 'consistency' ? 'investigation' : 'decision',
       title: entry.title,
@@ -1432,6 +1494,128 @@ function fromBusinessConsistency(db, workspaceId) {
     }));
 }
 
+/** A whole migration is one owner decision, however many worksheets it contains. */
+function fromMigrations(db,workspaceId) {
+  const packages = db.prepare(`SELECT * FROM migration_packages
+    WHERE workspace_id=? AND status IN ('STAGING','NEEDS_ATTENTION','READY','FAILED')
+    ORDER BY updated_at DESC,id DESC LIMIT 10`).all(workspaceId);
+  const entries = [];
+  for (const pkg of packages) {
+    // Work in progress is not a decision. Showing it in Needs You creates the
+    // exact false badge where the inbox count says one but no action exists.
+    if (pkg.preparation_status === 'RUNNING') continue;
+    const datasets = db.prepare(`SELECT sheet_name,entity_type,status,source_row_count
+      FROM migration_source_datasets WHERE package_id=? AND entity_type<>'reference_only'
+      ORDER BY sheet_index`).all(pkg.id);
+    const remaining = datasets.filter((entry) => entry.status !== 'STAGED');
+    const prepared = datasets.filter((entry) => entry.status === 'STAGED');
+    let manifest = {};
+    try { manifest = JSON.parse(pkg.manifest_json || '{}'); } catch { manifest = {}; }
+    const filenames = (manifest.sourceFiles || []).map((file) => file.name).filter(Boolean);
+    const sourceName = filenames.length === 1 ? filenames[0] : pkg.source_label;
+    let sourceReview = null;
+    try { sourceReview = require('../onboarding/owner-migration').sourceReviewCached(db,workspaceId,pkg.id); } catch { sourceReview = null; }
+    if (!remaining.length && sourceReview && sourceReview.requiresDecision && !sourceReview.resolved
+        && !sourceReview.autoResolvable) {
+      entries.push({
+        id:`migration:${pkg.id}:source-truth`,kind:'migration',
+        title:`${sourceName} needs one reconciliation decision`,
+        happened:`The workbook says ${Number(sourceReview.sourceIncoming).toLocaleString()} units are incoming, while its detailed open PO lines prove ${Number(sourceReview.openPurchaseOrderIncoming).toLocaleString()}. Nothing is live.`,
+        why:'Foundry will not choose between contradictory source summaries and detailed records by itself.',
+        recommendation:'Use the detailed operational records and retain the conflicting summaries as evidence, without posting them to stock or accounting.',
+        missing:'Your choice of which proven source controls operations.',
+        actionLabel:'Review one decision',href:`/onboarding/migrations/${pkg.id}/sources`,
+        at:pkg.updated_at,priority:97,requiredPermission:permissions.ADMIN,
+      });
+      continue;
+    }
+    if (!remaining.length && pkg.status === 'READY') {
+      entries.push({
+        id:`migration:${pkg.id}:approval`,kind:'migration',
+        title:`${sourceName} is verified and ready to become live`,
+        happened:`All ${datasets.length} operational datasets passed verification. ${Number(pkg.staged_count || 0).toLocaleString()} prepared Foundry records are still separate from live inventory.`,
+        why:'Only the inventory owner can approve the final cutover.',
+        recommendation:'Review the reconciled totals once, then approve the switch when you are ready.',
+        missing:'Your approval to make this prepared inventory live.',
+        actionLabel:'Review and switch',href:`/onboarding/migrations/${pkg.id}`,
+        at:pkg.updated_at,priority:94,requiredPermission:permissions.ADMIN,
+      });
+      continue;
+    }
+    if (!remaining.length && pkg.status === 'NEEDS_ATTENTION') {
+      entries.push({
+        id:`migration:${pkg.id}:verification`,kind:'migration',
+        title:`${sourceName} did not pass verification`,
+        happened:`Foundry found ${Number(pkg.problem_count || 0).toLocaleString()} prepared records whose source links or values could not be proven. Nothing was applied.`,
+        why:'Foundry will not guess a product, location, supplier, quantity or accounting meaning.',
+        recommendation:'Review the summarized failure and correct the source mapping, then rerun verification.',
+        missing:'A provable source link or value for the blocked records.',
+        actionLabel:'Review verification',href:`/onboarding/migrations/${pkg.id}`,
+        at:pkg.updated_at,priority:96,requiredPermission:permissions.ADMIN,
+      });
+      continue;
+    }
+    if (!remaining.length && pkg.status === 'FAILED') {
+      const live = Number(pkg.applied_count || 0);
+      const failures = db.prepare(`SELECT entity_type,source_key,issue_detail,payload_json FROM migration_records
+        WHERE package_id=? AND status='FAILED' ORDER BY ordinal,id LIMIT 20`).all(pkg.id);
+      const retryable = failures.length > 0 && failures.every((failure) =>
+        /^Location type must be one of:/.test(failure.issue_detail || '')
+        || /^Migration reference location:.* has not been applied yet\.$/.test(failure.issue_detail || ''));
+      if (!retryable) {
+        const first = failures[0];
+        let exactFailure = first && first.issue_detail;
+        if (first && first.entity_type === 'inventory_position' && /^Enter at least one serial number\.$/.test(first.issue_detail || '')) {
+          const position = JSON.parse(first.payload_json || '{}');
+          const sourceSku = db.prepare(`SELECT payload_json FROM migration_records
+            WHERE package_id=? AND entity_type='sku' AND source_key=? LIMIT 1`).get(pkg.id,position.skuKey);
+          const sku = sourceSku ? JSON.parse(sourceSku.payload_json) : {};
+          const sourceProduct = sku.productKey ? db.prepare(`SELECT payload_json FROM migration_records
+            WHERE package_id=? AND entity_type='product' AND source_key=? LIMIT 1`).get(pkg.id,sku.productKey) : null;
+          const product = sourceProduct ? JSON.parse(sourceProduct.payload_json) : {};
+          exactFailure = `${first.source_key}: ${[product.name,sku.code || position.skuKey].filter(Boolean).join(' · ')} is serial-tracked, but the source claims ${Number(position.quantity || 0).toLocaleString()} units at ${position.locationKey} with no serial numbers.`;
+        }
+        entries.push({
+          id:`migration:${pkg.id}:blocked`,kind:'migration',
+          title:`${sourceName} needs source evidence before the switch can continue`,
+          happened:`${live.toLocaleString()} verified records were applied and saved. Foundry stopped before applying ${failures.length === 1 ? 'one record' : `${failures.length} records`} it could not prove.`,
+          why:exactFailure || 'A deterministic domain check rejected a prepared source record.',
+          recommendation:'Review the exact stopped record. Provide the missing evidence or correct the source and upload a new snapshot; retrying alone cannot create it.',
+          missing:exactFailure ? `${exactFailure} Add the exact serial identities, or correct the product tracking mode in the source.` : 'Provable source evidence for the stopped record.',
+          actionLabel:'Review stopped record',href:`/onboarding/migrations/${pkg.id}`,
+          at:pkg.updated_at,priority:98,requiredPermission:permissions.ADMIN,
+        });
+        continue;
+      }
+      entries.push({
+        id:`migration:${pkg.id}:resume`,kind:'migration',
+        title:`${sourceName} is safely paused and ready to resume`,
+        happened:`Foundry stopped the switch after ${live.toLocaleString()} applied record${live === 1 ? '' : 's'}. Completed batches remain saved and retries do not duplicate them.`,
+        why:'A deterministic domain check rejected a prepared record, so Foundry stopped instead of forcing it into live inventory.',
+        recommendation:'Review the stopped record summary, then resume the verified switch when you are ready.',
+        missing:'Your decision to resume the saved switch.',
+        actionLabel:'Review paused switch',href:`/onboarding/migrations/${pkg.id}`,
+        at:pkg.updated_at,priority:96,requiredPermission:permissions.ADMIN,
+      });
+      continue;
+    }
+    if (!remaining.length) continue;
+    const labels = remaining.slice(0,3).map((entry) => entry.entity_type === 'purchase_order'
+      ? 'purchase orders' : String(entry.sheet_name || entry.entity_type).replaceAll('_',' '));
+    entries.push({
+      id:`migration:${pkg.id}`,kind:'migration',
+      title:`${sourceName} needs ${remaining.length === 1 ? 'one source decision' : `${remaining.length} source decisions`}`,
+      happened:`${prepared.length} of ${datasets.length} operational datasets are safely prepared from ${prepared.reduce((sum,entry) => sum + Number(entry.source_row_count || 0),0).toLocaleString()} source rows. Nothing is live yet.`,
+      why:pkg.preparation_error || 'Foundry stopped before an uncertain source state could become stock, an order, or accounting.',
+      recommendation:'Open the migration and settle only the remaining source issue. Foundry will then verify the totals before the switch.',
+      missing:pkg.preparation_error || `A safe treatment for ${labels.join(', ')}${remaining.length > labels.length ? ` and ${remaining.length - labels.length} more` : ''}.`,
+      actionLabel:'Continue migration',href:`/onboarding/migrations/${pkg.id}/sources`,
+      at:pkg.updated_at,priority:92,requiredPermission:permissions.ADMIN,
+    });
+  }
+  return entries;
+}
+
 /**
  * Owner decisions produced by the operational engines.
  *
@@ -1446,10 +1630,13 @@ function operationalEntries(db, workspaceId) {
     try { return fn(db, workspaceId) || []; } catch { return []; }
   };
   return [
+    ...safely(fromMigrations),
     ...safely(fromPhysicalEvents),
     ...safely(fromWorkItems),
     ...safely(fromInvestigations),
     ...safely(fromRepairCases),
+    ...safely(fromAutonomousOperations),
+    ...safely(fromLearning),
     ...safely(fromTransfers),
     ...safely(fromCorrections),
     ...safely(fromImports),
@@ -1472,6 +1659,26 @@ function operationalEntries(db, workspaceId) {
     ...safely(fromCountsReturnsAndWaves),
     ...safely(fromFindings),
   ];
+}
+
+/** Governed learning changes are one decision, never a stream of metrics. */
+function fromLearning(db, workspaceId) {
+  return require('../learning/service').listProposals(db, workspaceId,
+    { statuses:['PROPOSED','ROLLBACK_RECOMMENDED'] }).map((row) => {
+    const rollback = row.status === 'ROLLBACK_RECOMMENDED';
+    return { id:`learning:${row.id}`, kind:'decision', title:rollback
+      ? `A learned policy change is performing worse` : row.headline,
+    happened:rollback ? 'Foundry measured an adverse result after the policy changed.' : row.rationale,
+    why:rollback
+      ? 'The previous value was retained and can be restored through the same domain-owned policy service.'
+      : 'This is a proposed operating-policy change. Foundry cannot treat a pattern as permission.',
+    recommendation:rollback ? 'Restore the previous value and keep measuring.'
+      : 'Review the measured outcomes and approve only if this tradeoff matches how you want the business run.',
+    missing:rollback ? 'Your approval to roll back the change.' : 'Your approval, or an explicit narrow learning grant.',
+    actionLabel:rollback ? 'Review rollback' : 'Review learned change',
+    href:`/planning#learning-${row.id}`, at:row.createdAt,
+    priority:rollback || row.materiality === 'HIGH' ? 94 : 84, requiredPermission:permissions.ADMIN };
+  });
 }
 
 /** Mission 8 exceptions, compressed to one exact decision per workflow. */
@@ -1507,6 +1714,51 @@ function fromCountsReturnsAndWaves(db, workspaceId) {
   return entries;
 }
 
+/** Hundreds of rows caused by one setup gap are one owner decision. Keep the
+ * underlying orders/findings intact in their domain queues, but do not make an
+ * owner page through the same answer hundreds of times in Needs You. */
+function compressLargeQueues(entries) {
+  const consumed = new Set();
+  const groups = [];
+  const collect = (key,predicate,minimum,make) => {
+    const matches = entries.filter((entry) => !consumed.has(entry) && predicate(entry));
+    if (matches.length < minimum) return;
+    matches.forEach((entry) => consumed.add(entry));
+    groups.push(make(matches,key));
+  };
+  collect('supplier-mailbox',(entry) => entry.kind === 'setup' && entry.actionLabel === 'Choose mailbox',6,(rows,key) => ({
+    id:`group:${key}`,kind:'setup',
+    title:`Set up one sending mailbox for ${rows.length.toLocaleString()} prepared supplier orders`,
+    happened:`The orders are saved, but Foundry has no approved mailbox to use. This is one setup gap repeated across ${rows.length.toLocaleString()} orders—not ${rows.length.toLocaleString()} separate choices.`,
+    why:'Foundry cannot send business email from an account you have not explicitly selected.',
+    recommendation:'Connect or choose the supplier mailbox once. Foundry will then evaluate each prepared message under the same communication authority.',
+    missing:'Which connected mailbox Foundry may use for supplier communication.',
+    actionLabel:'Set up supplier communication',href:'/settings/connections',at:null,
+    priority:Math.max(...rows.map((entry) => entry.priority || 0)),requiredPermission:permissions.ADMIN,
+  }));
+  collect('receiving-review',(entry) => entry.kind === 'receiving' && entry.actionLabel === 'Book it in',11,(rows,key) => ({
+    id:`group:${key}`,kind:'receiving',
+    title:`Review ${rows.length.toLocaleString()} deliveries as one receiving queue`,
+    happened:`Their expected dates have passed. Foundry grouped them instead of asking the same physical-arrival question ${rows.length.toLocaleString()} times.`,
+    why:'Foundry cannot claim a box arrived without a person, scan, carrier event or receiving document.',
+    recommendation:'Open the receiving queue and record only the deliveries that physically arrived; the individual purchase orders remain intact.',
+    missing:'Which deliveries actually arrived and what was in them.',
+    actionLabel:'Open receiving queue',href:'/purchasing/orders',at:null,
+    priority:Math.max(...rows.map((entry) => entry.priority || 0)),
+  }));
+  collect('replenishment-review',(entry) => entry.kind === 'finding' && entry.actionLabel === 'Decide what to order',4,(rows,key) => ({
+    id:`group:${key}`,kind:'finding',
+    title:`Review ${rows.length.toLocaleString()} replenishment suggestions as one plan`,
+    happened:`Foundry found ${rows.length.toLocaleString()} products whose stock crossed their reorder rules and kept the exact SKU calculations in the planning view.`,
+    why:'These related suggestions need one inventory-plan review, not a separate top-level interruption for every SKU.',
+    recommendation:'Review the combined plan against incoming stock, suppliers and cash before placing any orders.',
+    missing:'Your decision on the combined replenishment plan.',
+    actionLabel:'Review replenishment plan',href:'/planning',at:null,
+    priority:Math.max(...rows.map((entry) => entry.priority || 0)),
+  }));
+  return [...entries.filter((entry) => !consumed.has(entry)),...groups];
+}
+
 /** Everything waiting, newest and most urgent first, as one list. */
 function inbox(db, workspaceId, membership = null, options = {}) {
   // Clean up the legacy false-positive before reading the inbox. This is
@@ -1523,13 +1775,13 @@ function inbox(db, workspaceId, membership = null, options = {}) {
     // The defensive filter in fromInvestigations still prevents stale UI if a
     // read-only or partially migrated database cannot record the cleanup.
   }
-  const rawEntries = [
+  const rawEntries = compressLargeQueues([
     ...operationalEntries(db, workspaceId),
     ...fromBusinessConsistency(db, workspaceId),
     // Learning demand is not a decision. Home teaches the user to record real
     // sales in context; Needs You remains reserved for something Foundry is
     // genuinely blocked on, such as a mismatch, approval or unknown mapping.
-  ];
+  ]);
   const dismissedEntryIds = dismissals.dismissedIds(db, workspaceId, rawEntries.map((entry) => entry.id));
   const entries = rawEntries
     .filter((entry) => !dismissedEntryIds.has(entry.id))
@@ -1571,7 +1823,17 @@ function inbox(db, workspaceId, membership = null, options = {}) {
 
   const ordered = [...seen.values()]
     .sort((a, b) => (b.priority - a.priority) || String(b.at || '').localeCompare(String(a.at || '')));
-  return require('../product-brain/destinations').attach(ordered, membership, {
+  // This is the only authoritative count. Header chrome reads the cached
+  // number instead of rebuilding every domain projection on every request.
+  require('../attention/needs-you-count').rememberNeedsYou(db,workspaceId,ordered.length);
+  // Most screens need either the number or a short preview, not hundreds of
+  // fully resolved destinations. Resolving every destination on every request
+  // made the whole application wait behind large inboxes.
+  const requestedLimit = Number(options.limit);
+  const visible = Number.isInteger(requestedLimit) && requestedLimit >= 0
+    ? ordered.slice(0, requestedLimit)
+    : ordered;
+  const result = require('../product-brain/destinations').attach(visible, membership, {
     brain: options.productBrain,
     strict: options.strictDestinations !== false,
   }).map((entry) => ({
@@ -1585,6 +1847,11 @@ function inbox(db, workspaceId, membership = null, options = {}) {
       confirm: 'Dismiss this from Foundry everywhere? This does not delete or change the underlying business record.',
     },
   }));
+  // Arrays keep the existing public contract. The non-enumerable total lets a
+  // bounded caller display the truthful queue count without serialising a
+  // second payload or accidentally rendering every decision.
+  Object.defineProperty(result, 'totalCount', { value: ordered.length, enumerable: false });
+  return result;
 }
 
 module.exports = {
@@ -1599,6 +1866,8 @@ module.exports = {
   fromPhysicalEvents,
   fromInvestigations,
   fromRepairCases,
+  fromAutonomousOperations,
+  fromLearning,
   fromTransfers,
   fromCorrections,
   fromImports,
@@ -1612,6 +1881,7 @@ module.exports = {
   fromConnections,
   fromAccounting,
   fromBusinessConsistency,
+  fromMigrations,
   fromWorkItems,
   fromFindings,
   fromReadiness,

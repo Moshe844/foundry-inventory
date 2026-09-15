@@ -386,8 +386,29 @@ Delivery address copied from their email.${shipTo.incomplete ? ` ${shipTo.becaus
     deliveryQuestion = orderReply.askDeliveryDetails(db, ctx.workspaceId, messageId, message, order.orderNumber, lines);
     if (deliveryQuestion) {
       try {
-        await require('../connections/reply-drafting').send(db, ctx, messageId);
-        deliveryQuestionSent = true;
+        const autonomous = require('../autonomous/service');
+        // Loading the customer communication module registers the sole
+        // customer.communicate adapter used by shipping notices and grounded
+        // mailbox replies alike.
+        require('./customer-communications');
+        const operation = autonomous.create(db, ctx, {
+          operationType:'customer.communicate',
+          idempotencyKey:`delivery-question:${messageId}`,
+          sourceKind:'mailbox_message', sourceId:messageId,
+          title:`Ask for delivery details for ${order.orderNumber}`,
+          summary:'The customer asked to ship an order but did not provide a complete destination.',
+          link:`/mail/${messageId}`,
+          evidence:[{ label:'Customer request', value:message.subject || message.sender },
+            { label:'Missing fact', value:shipTo.because || 'Complete shipping address' }],
+          decision:{ kind:'mailbox_reply', messageId, grounded:true,
+            salesOrderId:order.id },
+          affectedEntities:{ salesOrderId:order.id, mailboxMessageId:messageId,
+            customerId:customer.id },
+          authorityDimensions:{ customerId:customer.id, confidence:'high', risk:'medium' },
+          expectedOutcome:{ mailboxReplyStatus:'SENT' },
+        });
+        const governed = await autonomous.run(db, ctx, null, operation.id);
+        deliveryQuestionSent = governed.operation.status === 'COMPLETED';
       } catch {
         // The deterministic reply stays prepared on the source email. A mail
         // outage must not lose the order or pretend the question was sent.

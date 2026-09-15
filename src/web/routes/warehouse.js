@@ -8,6 +8,7 @@ const repo = require('../../domain/repository');
 const permissions = require('../../actions/permissions');
 const counts = require('../../operations/counts');
 const returns = require('../../operations/returns');
+const shipping = require('../../shipping');
 const waves = require('../../operations/fulfillment-waves');
 const sales = require('../../sales/sales-order-service');
 const supplierService = require('../../purchasing/supplier-service');
@@ -116,8 +117,32 @@ router.post('/warehouse/counts/:id/recount',asyncRoute(async(req,res)=>{const ne
 router.post('/warehouse/counts/:id/approve',asyncRoute(async(req,res)=>{counts.approve(req.db,req.ctx,req.user,req.params.id);req.flash('success','Variance approved, posted through the inventory engine, and verified.');res.redirect(303,`/warehouse/counts/${req.params.id}`);}));
 
 router.post('/warehouse/returns/customer',asyncRoute(async(req,res)=>{const order=sales.getOrder(req.db,req.ctx.workspaceId,req.body.salesOrderId);const line=order.lines.find((entry)=>entry.id===req.body.salesOrderLineId);if(!line)throw new ValidationError('Choose a returned product from the selected customer order.');const created=returns.requestCustomerReturn(req.db,req.ctx,req.user,{salesOrderId:order.id,quarantineLocationId:req.body.quarantineLocationId,resolution:req.body.resolution,reason:req.body.reason,lines:[{salesOrderLineId:line.id,quantity:req.body.quantity}]});res.redirect(303,`/warehouse/returns/customer/${created.id}`);}));
-router.get('/warehouse/returns/customer/:id',asyncRoute(async(req,res)=>res.page('warehouse/customer-return',{title:'Customer return',nav:'warehouse',room:true,record:returns.getCustomerReturn(req.db,req.ctx.workspaceId,req.params.id),locations:locationService.listHierarchy(req.db,req.ctx.workspaceId),skus:catalogue(req.db,req.ctx.workspaceId)})));
+router.get('/warehouse/returns/customer/:id',asyncRoute(async(req,res)=>res.page('warehouse/customer-return',{
+  title:'Customer return',nav:'warehouse',room:true,
+  record:returns.getCustomerReturn(req.db,req.ctx.workspaceId,req.params.id),
+  returnLabel:shipping.returns.get(req.db,req.ctx.workspaceId,req.params.id),
+  returnRates:shipping.returns.ratesFor(req.db,req.ctx.workspaceId,req.params.id),
+  locations:locationService.listHierarchy(req.db,req.ctx.workspaceId),skus:catalogue(req.db,req.ctx.workspaceId)
+})));
 router.post('/warehouse/returns/customer/:id/authorize',asyncRoute(async(req,res)=>{returns.authorizeCustomerReturn(req.db,req.ctx,req.user,req.params.id);res.redirect(303,`/warehouse/returns/customer/${req.params.id}`);}));
+router.post('/warehouse/returns/customer/:id/shipping-rates',asyncRoute(async(req,res)=>{
+  permissions.assertCan(req.user,permissions.AUTHORIZE_CUSTOMER_RETURN,'buy customer return postage');
+  try{const result=await shipping.returns.quote(req.db,req.ctx,req.params.id);req.flash('success',`${result.rates.length} return rates compared. Nothing was purchased.`);}
+  catch(error){if(!error.status||error.status>=500)throw error;req.flash('warn',error.message);}
+  res.redirect(303,`/warehouse/returns/customer/${req.params.id}#return-shipping`);
+}));
+router.post('/warehouse/returns/customer/:id/return-label',asyncRoute(async(req,res)=>{
+  permissions.assertCan(req.user,permissions.AUTHORIZE_CUSTOMER_RETURN,'buy customer return postage');
+  try{const result=await shipping.returns.buy(req.db,req.ctx,req.params.id,{rateId:req.body.rateId});req.flash('success',result.replayed?'That return label already exists.':`Return label bought. Tracking ${result.label.tracking_number}. No stock or refund was changed.`);}
+  catch(error){if(!error.status||error.status>=500)throw error;req.flash('warn',error.message);}
+  res.redirect(303,`/warehouse/returns/customer/${req.params.id}#return-shipping`);
+}));
+router.post('/warehouse/returns/customer/:id/return-label/refresh',asyncRoute(async(req,res)=>{
+  permissions.assertCan(req.user,permissions.INSPECT_CUSTOMER_RETURN,'check customer return tracking');
+  try{const result=await shipping.returns.refresh(req.db,req.ctx,req.params.id);req.flash('success',result.needsPhysicalReceipt?'The carrier reports arrival. Foundry still needs the physical receipt recorded before stock changes.':'Return tracking refreshed.');}
+  catch(error){if(!error.status||error.status>=500)throw error;req.flash('warn',error.message);}
+  res.redirect(303,`/warehouse/returns/customer/${req.params.id}#return-shipping`);
+}));
 router.post('/warehouse/returns/customer/:id/receive',asyncRoute(async(req,res)=>{const record=returns.getCustomerReturn(req.db,req.ctx.workspaceId,req.params.id);returns.receiveCustomerReturn(req.db,req.ctx,req.user,req.params.id,{lines:[{lineId:req.body.lineId||record.lines[0].id,quantity:req.body.quantity,lotCode:req.body.lotCode,serials:String(req.body.serials||'').split(/[\r\n,]+/).map((x)=>x.trim()).filter(Boolean)}]});res.redirect(303,`/warehouse/returns/customer/${req.params.id}`);}));
 router.post('/warehouse/returns/customer/:id/inspect',asyncRoute(async(req,res)=>{const record=returns.getCustomerReturn(req.db,req.ctx.workspaceId,req.params.id);returns.inspectCustomerReturn(req.db,req.ctx,req.user,req.params.id,{lines:[{lineId:req.body.lineId||record.lines[0].id,restock:req.body.restock||0,scrap:req.body.scrap||0,repair:req.body.repair||0,restockLocationId:req.body.restockLocationId,repairLocationId:req.body.repairLocationId,conditionNote:req.body.conditionNote}]});res.redirect(303,`/warehouse/returns/customer/${req.params.id}`);}));
 router.post('/warehouse/returns/customer/:id/refund',asyncRoute(async(req,res)=>{returns.refundCustomerReturn(req.db,req.ctx,req.user,req.params.id,{revenueMinor:prices.toMinor(req.body.revenue,'Refund amount'),taxMinor:prices.toMinor(req.body.tax||'0','Refund tax'),cogsMinor:prices.toMinor(req.body.cogs||'0','Returned cost'),destination:req.body.destination});res.redirect(303,`/warehouse/returns/customer/${req.params.id}`);}));

@@ -653,6 +653,8 @@ router.get(
       expectedInFuture: Boolean(order.expectedDate && order.expectedDate > localDateKey()),
       communications,
       supplierDocuments: require('../../purchasing/supplier-evidence').forOrder(req.db, req.ctx.workspaceId, order.id),
+      supplierResponsePlans: require('../../purchasing/supplier-manager').forOrder(
+        req.db, req.ctx.workspaceId, order.id),
       supplierBills,
       billSummary,
       landedCostDocuments,

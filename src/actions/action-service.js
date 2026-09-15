@@ -27,6 +27,7 @@ const replenishmentPlan = require('../purchasing/replenishment-plan');
 const signalEngine = require('../signals/signal-engine');
 const { newId, nowIso } = require('../lib/util');
 const { ValidationError, NotFoundError } = require('../domain/errors');
+const catalogueReconciliation = require('./catalogue-reconciliation');
 
 /** Everything the model needs to read an instruction in this workspace's terms. */
 function instructionContext(db, workspaceId) {
@@ -183,12 +184,23 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   const intent = options.parsedIntent || await intentService.readInstruction(text, {
     provider: options.provider,
     context: options.context || instructionContext(db, ctx.workspaceId),
+    maxInstruction: options.maxInstruction,
+    signal: options.signal,
   });
 
   if (intent.unsupportedReason && intent.lines.length === 0) {
     return { kind: 'unsupported', message: intent.unsupportedReason };
   }
   if (intent.clarifyingQuestion && intent.lines.length === 0) {
+    if (Array.isArray(intent.structuredRecords) && intent.structuredRecords.length) {
+      return {
+        kind: 'catalogue_question',
+        question: intent.clarifyingQuestion,
+        structuredRecordCount: intent.structuredRecords.length,
+        structuredRecords: intent.structuredRecords,
+        structuredIssues: intent.structuredIssues || [],
+      };
+    }
     // A model can notice that an identity is incomplete without knowing which
     // catalogue dimension is actually unresolved. Ground generic identity
     // questions against real SKUs before showing them to the person.
@@ -239,7 +251,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     return { kind: 'question', question: intent.clarifyingQuestion };
   }
 
-  const usable = intent.lines.filter((line) => !['clarify', 'unsupported'].includes(line.actionType));
+  let usable = intent.lines.filter((line) => !['clarify', 'unsupported'].includes(line.actionType));
   let blocked = intent.lines.find((line) => ['clarify', 'unsupported'].includes(line.actionType));
   if (usable.length === 1 && blocked && !/\b(?:and|then)\b|[;,\n]/i.test(text)) {
     const artifactFields = [
@@ -311,7 +323,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
      */
     const second = await require('./second-read').whichOperation(
       text, intentService.ACTION_TYPES.filter((name) => !['clarify', 'unsupported'].includes(name)),
-      { provider: options.provider }
+      { provider: options.provider, signal: options.signal }
     );
     if (second && second.operation === 'delete_inventory') {
       const workspace = db.prepare('SELECT name FROM workspaces WHERE id = ?').get(ctx.workspaceId);
@@ -328,6 +340,43 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
       kind: 'question',
       question: modelQuestion || 'Could you say a little more about what you want Foundry to do?',
     };
+  }
+
+  // The reader preserves one line per supplied catalogue record. Reconcile
+  // those records into products only after the whole instruction is available,
+  // where exact SKU labels and repeated product identity can be proven.
+  usable = catalogueReconciliation.reconcile(usable, text);
+
+  // A structured catalogue proposal can include several ordinary operations
+  // (new locations, supplier links and reorder rules) in one atomic approval.
+  // Check every required authority before showing it; approval must never be
+  // an invitation to an action the same person cannot actually run.
+  const structuredRecords = usable.flatMap((line) => (line.exactVariants || [])
+    .map((variant) => variant.catalogueRecord).filter(Boolean));
+  if (structuredRecords.length) {
+    const suppliedCodes = new Set(structuredRecords.map((record) => String(record.code || '').toLowerCase()));
+    const missingComponentCodes = [...new Set(structuredRecords.flatMap((record) => record.components || [])
+      .map((component) => component.exactSku).filter((code) => code
+        && !suppliedCodes.has(String(code).toLowerCase())
+        && !db.prepare(`SELECT 1 FROM skus
+          WHERE workspace_id = ? AND code = ? COLLATE NOCASE AND is_active = 1`).get(ctx.workspaceId, code)))];
+    if (missingComponentCodes.length) {
+      return {
+        kind: 'catalogue_question',
+        question: `Foundry read every structured product record, but these kit component SKUs are not in this inventory or this submission: ${missingComponentCodes.join(', ')}. Add those product records or correct the component SKUs. Nothing was created and none of the supplied fields were discarded.`,
+      };
+    }
+  }
+  if (structuredRecords.some((record) => (record.locations || []).some((location) => !db.prepare(
+    'SELECT 1 FROM locations WHERE workspace_id = ? AND name = ? COLLATE NOCASE AND is_active = 1'
+  ).get(ctx.workspaceId, location.name)))) {
+    permissions.assertCan(membership, permissions.ADMIN, 'add the supplied inventory locations');
+  }
+  if (structuredRecords.some((record) => record.supplier)) {
+    permissions.assertCan(membership, permissions.MANAGE_SUPPLIERS, 'add the supplied supplier records');
+  }
+  if (structuredRecords.some((record) => record.reorderPoint !== null)) {
+    permissions.assertCan(membership, permissions.MANAGE_REPLENISHMENT, 'set the supplied reorder points');
   }
 
   // Permission is checked before anything is written, so a person without it
@@ -480,6 +529,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
         // clone instead of turning an exact SKU code back into ambiguity.
         instruction: line._sourceInstruction || slices[index],
         groundIdentity: true,
+        catalogueUnderstanding: options.catalogueUnderstanding || null,
       });
       if (!result.ok) {
         if (result.needsReason) {
@@ -605,7 +655,11 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
       return { kind: 'proposal', proposal: stored };
     }
 
-    const plan = createPlan(db, ctx, built, { instruction: text, notes: options.reasonNote || null });
+    const plan = createPlan(db, ctx, built, {
+      instruction: text,
+      notes: options.reasonNote || null,
+      summary: options.catalogueUnderstanding ? options.catalogueUnderstanding.overview : '',
+    });
     return { kind: 'plan', plan };
   });
 }
@@ -841,6 +895,7 @@ function getPlan(db, workspaceId, planId, preloaded = null) {
     requestedByUserId: row.requested_by_user_id,
     approvedByUserId: row.approved_by_user_id,
     originalInstruction: row.original_instruction,
+    summary: row.summary,
     atomicityPolicy: row.atomicity_policy,
     status: row.status,
     createdAt: row.created_at,

@@ -13,7 +13,7 @@
     { key: 'needsYou', label: 'Waiting for you' },
     { key: 'blocked', label: 'Stopped or failed' }
   ];
-  var anything = evaluations.length || sections.some(function (section) { return groups[section.key].length; });
+  var anything = operations.length || evaluations.length || sections.some(function (section) { return groups[section.key].length; });
 %>
 
 <% if (!anything) { %>
@@ -49,6 +49,48 @@
     </div>
   <% } %>
 <% }) %>
+
+<% if (operations.length) { %>
+  <%
+    var outcomeLines = function (value) {
+      return Object.entries(value || {}).map(function (entry) {
+        return {
+          label: entry[0].replace(/([A-Z])/g, ' $1').replaceAll('_', ' ').replace(/^./, function (letter) { return letter.toUpperCase(); }),
+          value: Array.isArray(entry[1]) ? entry[1].join(', ') : (entry[1] && typeof entry[1] === 'object' ? 'Recorded in the evidence' : String(entry[1]))
+        };
+      });
+    };
+  %>
+  <section class="section" id="operations">
+    <details class="disclose" open>
+      <summary>
+        <span>Universal operations — <%= operations.length %> planned, running or verified</span>
+        <span class="disclose__cue">Show</span>
+      </summary>
+      <div class="disclose__body">
+        <ul class="plain-list">
+          <% operations.forEach(function (operation) { %>
+            <li id="operation-<%= operation.id %>">
+              <strong><%= operation.title %></strong>
+              <span class="badge <%= operation.status === 'COMPLETED' ? 'badge--success' : operation.status === 'NEEDS_HUMAN' ? 'badge--warning' : 'badge--muted' %>"><%= operation.status.toLowerCase().replaceAll('_', ' ') %></span>
+              <% if (operation.summary) { %><div class="t-muted"><%= operation.summary %></div><% } %>
+              <% if (outcomeLines(operation.expectedOutcome).length || outcomeLines(operation.actualOutcome).length) { %>
+                <details class="disclose disclose--nested">
+                  <summary><span>Expected and verified outcome</span><span class="disclose__cue">Show</span></summary>
+                  <div class="disclose__body">
+                    <% outcomeLines(operation.expectedOutcome).forEach(function (line) { %><div><strong>Expected · <%= line.label %>:</strong> <%= line.value %></div><% }) %>
+                    <% outcomeLines(operation.actualOutcome).forEach(function (line) { %><div><strong>Result · <%= line.label %>:</strong> <%= line.value %></div><% }) %>
+                  </div>
+                </details>
+              <% } %>
+              <div class="t-muted t-xs"><%= helpers.timeAgo(operation.completedAt || operation.updatedAt) %></div>
+            </li>
+          <% }) %>
+        </ul>
+      </div>
+    </details>
+  </section>
+<% } %>
 
 <%
   /*

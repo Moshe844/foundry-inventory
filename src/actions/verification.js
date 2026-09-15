@@ -15,6 +15,7 @@
 const engine = require('../domain/inventory-engine');
 const resolver = require('./resolver');
 const removals = require('./removals');
+const kits = require('../domain/kit-service');
 
 const check = (label, expected, observed) => ({
   label,
@@ -137,7 +138,28 @@ function verify(db, workspaceId, proposal, { before, after, result }) {
           check('Stock at receiving location', proposal.quantity, after.destinationOnHand ?? 0)
         );
       }
+      if (proposal.settings.catalogueRecords) {
+        checks.push(check('All stated opening stock received', expected.total ?? 0, after.total ?? 0));
+        const factCount = db.prepare(`SELECT COUNT(*) AS n FROM catalogue_sku_facts
+          WHERE workspace_id = ? AND sku_id IN
+            (SELECT id FROM skus WHERE item_id = ? AND workspace_id = ?)`)
+          .get(workspaceId, item.id, workspaceId).n;
+        checks.push(check('Supplied SKU records preserved', proposal.settings.catalogueRecords.length, factCount));
+      }
     }
+  }
+
+  if (proposal.actionType === 'configure_kit') {
+    const actual = kits.definition(db, workspaceId, proposal.skuId).components
+      .map((component) => ({ skuId: component.component_sku_id, quantity: Number(component.quantity) }))
+      .sort((left, right) => left.skuId.localeCompare(right.skuId));
+    const wanted = (proposal.settings.components || [])
+      .map((component) => ({ skuId: component.skuId, quantity: Number(component.quantity) }))
+      .sort((left, right) => left.skuId.localeCompare(right.skuId));
+    checks.push(
+      check('Kit component count', wanted.length, actual.length),
+      check('Kit component quantities', JSON.stringify(wanted), JSON.stringify(actual))
+    );
   }
 
   if (proposal.actionType === removals.ACTION_TYPE) {

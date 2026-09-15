@@ -74,6 +74,17 @@ test('permission-valid where questions resolve exactly and inaccessible pages ar
   assert.match(staffResult.answer, /cannot expose|does not include/i);
 });
 
+test('switching systems resolves to the owner migration workspace and stays hidden from staff', () => {
+  const { db } = makeDatabase(); const workspace = seedWorkspace(db);
+  const owner = auth.getMembership(db,workspace.workspaceId,workspace.accountId);
+  const result = navigation.resolve(db,workspace.workspaceId,owner,'Take me where I can move to Foundry from my old system');
+  assert.equal(result.href,'/onboarding/migrations/new');
+  assert.equal(result.canNavigate,true);
+  const staff = navigation.resolve(db,workspace.workspaceId,{ role:'staff' },'Where do I migrate from another system?');
+  assert.equal(staff.canNavigate,false);
+  assert.equal(staff.href,undefined);
+});
+
 test('record-specific receiving resolves to the exact purchase order action', () => {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db);

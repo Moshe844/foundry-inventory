@@ -26,10 +26,11 @@ const { newId, nowIso, requireText, trimOrNull } = require('../lib/util');
 const credentials = require('../connections/credentials');
 const permissions = require('../actions/permissions');
 
-const PROVIDERS = ['shipengine', 'easypost', 'shippo'];
+const PROVIDERS = ['shipengine', 'shipstation', 'easypost', 'shippo'];
 
 const KEY_FIELD = {
   shipengine: 'shipengineApiKey',
+  shipstation: 'shipstationApiKey',
   easypost: 'easypostApiKey',
   shippo: 'shippoApiKey',
 };
@@ -37,6 +38,7 @@ const KEY_FIELD = {
 function isTestKey(provider, key) {
   if (provider === 'easypost') return /^EZTK/i.test(String(key || ''));
   if (provider === 'shipengine') return /^TEST_/i.test(String(key || ''));
+  if (provider === 'shipstation') return /^TEST_/i.test(String(key || ''));
   return /^shippo_test_/i.test(String(key || ''));
 }
 
@@ -51,7 +53,7 @@ function requireProvider(name) {
 /** The connector row for this workspace's shipping account, if it has one. */
 function connectorFor(db, workspaceId) {
   return db.prepare(`SELECT * FROM workspace_connectors
-    WHERE workspace_id = ? AND provider_type IN ('shipengine', 'easypost', 'shippo')
+    WHERE workspace_id = ? AND provider_type IN ('shipengine', 'shipstation', 'easypost', 'shippo')
       AND status = 'connected' AND paused_at IS NULL
     ORDER BY updated_at DESC LIMIT 1`).get(workspaceId) || null;
 }
@@ -181,7 +183,8 @@ function connect(db, ctx, membership, input = {}) {
         ?, 'CONNECTED', ?, ?, ?)`)
       .run(id, ctx.workspaceId, `shipping-${provider}`,
         provider === 'shipengine' ? 'ShipEngine'
-          : provider === 'easypost' ? 'EasyPost' : 'Shippo', provider,
+          : provider === 'shipstation' ? 'ShipStation'
+            : provider === 'easypost' ? 'EasyPost' : 'Shippo', provider,
         `credentials:${id}:provider`, ctx.actorId || null, now, now);
     connector = db.prepare('SELECT * FROM workspace_connectors WHERE id = ?').get(id);
   } else {
@@ -200,6 +203,8 @@ async function verifyInput(input = {}) {
   const apiKey = requireText(input.apiKey, 'API key', { max: 400 });
   if (provider === 'shipengine') {
     await require('./providers/shipengine').call({ shipengineApiKey: apiKey }, '/carriers');
+  } else if (provider === 'shipstation') {
+    await require('./providers/shipstation').call({ shipstationApiKey: apiKey }, '/carriers');
   } else if (provider === 'easypost') {
     await require('./providers/easypost').call({ easypostApiKey: apiKey }, '/users');
   } else {

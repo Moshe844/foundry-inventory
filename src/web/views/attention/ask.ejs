@@ -18,6 +18,20 @@
   var pending = locals.pendingRules || [];
   var about = locals.about || '';
   var askReturnHref = question ? '/ask?q=' + encodeURIComponent(question) : '/ask';
+  /*
+   * A cell, as a person would read it. Numbers get their thousands separators;
+   * a column with a heading is written "Heading value"; a column whose heading
+   * is deliberately empty — a summary's figure — is just the figure.
+   */
+  function cellText(column, value) {
+    if (value === null || value === undefined) return null;
+    if (column === 'occurredAt') value = helpers.dateTime(value);
+    if (column === 'operation') value = helpers.operationLabel(value);
+    if (column === 'expiresAt') value = helpers.shortDate(value);
+    if (typeof value === 'number' && Number.isFinite(value)) value = helpers.qty(value);
+    var heading = helpers.columnLabel(column);
+    return heading ? heading + ' ' + value : String(value);
+  }
   function evidenceHref(href, label) {
     if (!href) return null;
     if (!String(href).startsWith('/') || String(href).startsWith('/foundry/navigate?')) return href;
@@ -27,15 +41,19 @@
   }
 %>
 
-<div class="rm-line">
+<div class="rm-line rm-chat">
 
   <% if (!question && !result && !error) { %>
-    <p class="rm-stamp">The line</p>
-    <h1 class="rm-verdict">Tell me anything.</h1>
-    <p class="rm-prose">
-      What happened, what you want, how you want this run. I work out which it is.
-      Nothing I understand as a change is carried out until you have seen exactly what it does.
-    </p>
+    <header class="rm-chat__intro">
+      <span class="rm-chat__mark" aria-hidden="true"><%- helpers.icon('spark', { size: 18 }) %></span>
+      <div>
+        <p class="rm-stamp">Ask Foundry</p>
+        <h1 class="rm-verdict">What can I help you run?</h1>
+        <p class="rm-prose">
+          Ask about the business or tell me what should happen. I will find the records and show any change before it is made.
+        </p>
+      </div>
+    </header>
   <% } %>
 
   <% if (about) { %>
@@ -43,87 +61,66 @@
   <% } %>
 
   <% if (error) { %>
-    <div class="rm-turn">
+    <div class="rm-turn rm-turn--foundry">
       <p class="rm-turn__who">Foundry</p>
       <p class="rm-turn__said"><%= error %></p>
     </div>
   <% } %>
 
   <% if (result) { %>
-    <div class="rm-turn">
-      <p class="rm-turn__who">You asked</p>
+    <div class="rm-turn rm-turn--you">
+      <p class="rm-turn__who">You</p>
       <p class="rm-turn__said"><%= result.question %></p>
     </div>
 
-    <div class="rm-turn">
+    <div class="rm-turn rm-turn--foundry">
       <p class="rm-turn__who">Foundry</p>
       <%
         /*
-         * The sentence first, the record underneath. `spoken` is a phrasing of
-         * the same figures — every number in it was checked against the
-         * computed answer before it got here, and dropped if it did not match.
-         * The computed answer is still shown, because it is the statement of
-         * record and is true whether or not a model was there to read it out.
+         * One sentence. `spoken` is the model's phrasing of the computed
+         * figures — every number in it was checked against the computed answer
+         * before it got here, and dropped if it did not match — so where it
+         * exists it is the answer. The computed sentence is the statement of
+         * record and is true whether or not a model was there to read it out,
+         * so it is kept, under "How I read that", rather than printed directly
+         * underneath: the two say the same thing, and a page that says the
+         * same thing twice reads as a page that is not sure.
          */
+        var said = (result.spoken && !result.progressiveDisclosure) ? result.spoken : result.answer;
+        var record = said === result.answer ? null : result.answer;
       %>
-      <% if (result.spoken && !result.progressiveDisclosure) { %>
-        <p class="rm-turn__said"><%= result.spoken %></p>
-        <p class="rm-turn__said rm-quiet" style="font-size:17px;white-space:pre-line"><%= result.answer %></p>
-      <% } else { %>
-        <p class="rm-turn__said" style="white-space:pre-line"><%= result.answer %></p>
+      <p class="rm-turn__said" style="white-space:pre-line"><%= helpers.figures(said) %></p>
+
+      <% if (result.handoff) { %>
+        <p class="rm-chat-actions"><a class="rm-btn" href="<%= result.handoff.href %>"><%= result.handoff.label %> <span aria-hidden="true">→</span></a></p>
       <% } %>
 
-      <% if (result.rows && result.rows.length && result.progressiveDisclosure) { %>
-        <details class="rm-disclose" style="margin-top:18px">
-          <summary>See how I worked this out</summary>
-          <div class="rm-told" style="margin-top:12px">
+      <% if (result.rows && result.rows.length) { %>
+        <% var answerIsSummary = result.columns && result.columns[0] === 'measure' && result.columns[1] === 'value'; %>
+        <details class="rm-chat-evidence">
+          <summary>
+            <span><%- helpers.icon('layers', { size: 15 }) %> <%= answerIsSummary ? 'Answer details' : 'Supporting records' %></span>
+            <small>
+              <%= helpers.qty(Math.min(result.rows.length, 12)) %> sample <%= helpers.plural(Math.min(result.rows.length, 12), 'record') %>
+            </small>
+          </summary>
+          <div class="rm-chat-evidence__rows">
             <% result.rows.slice(0, 12).forEach(function (row) { %>
               <%
                 var first = result.columns[0];
                 var label = row[first] === null || row[first] === undefined ? '—' : row[first];
                 var rest = result.columns.slice(1).map(function (column) {
-                  var value = row[column];
-                  if (value === null || value === undefined) return null;
-                  return helpers.columnLabel(column) + ' ' + value;
+                  return cellText(column, row[column]);
                 }).filter(Boolean).join(' · ');
                 var linkHref = evidenceHref(row.href, label);
               %>
-              <div class="rm-told__row">
-                <span class="rm-told__t"><% if (linkHref) { %><a class="rm-u" href="<%= linkHref %>"><%= label %></a><% } else { %><%= label %><% } %></span>
-                <span class="rm-told__m"><%= rest %></span>
+              <div class="rm-chat-evidence__row">
+                <span><% if (linkHref) { %><a href="<%= linkHref %>"><%= label %></a><% } else { %><%= label %><% } %></span>
+                <small><%= rest %></small>
               </div>
             <% }) %>
           </div>
         </details>
-      <% } else if (result.rows && result.rows.length) { %>
-        <div class="rm-told" style="margin-top:18px">
-          <% result.rows.slice(0, 12).forEach(function (row) { %>
-            <%
-              var first = result.columns[0];
-              var label = row[first] === null || row[first] === undefined ? '—' : row[first];
-              var rest = result.columns.slice(1).map(function (column) {
-                var value = row[column];
-                if (column === 'occurredAt') value = helpers.dateTime(value);
-                if (column === 'operation') value = helpers.operationLabel(value);
-                if (column === 'expiresAt') value = helpers.shortDate(value);
-                if (value === null || value === undefined) return null;
-                return helpers.columnLabel(column) + ' ' + value;
-              }).filter(Boolean).join(' · ');
-              var linkHref = evidenceHref(row.href, label);
-            %>
-            <div class="rm-told__row">
-              <span class="rm-told__t"><% if (linkHref) { %><a class="rm-u" href="<%= linkHref %>"><%= label %></a><% } else { %><%= label %><% } %></span>
-              <span class="rm-told__m"><%= rest %></span>
-            </div>
-          <% }) %>
-        </div>
-        <% if (result.rows.length > 12) { %>
-          <p class="rm-stamp" style="margin-top:10px"><%= result.rows.length - 12 %> more not shown</p>
-        <% } %>
-      <% } %>
-
-      <% if (result.handoff) { %>
-        <p class="rm-choices" style="margin-top:18px"><a class="rm-btn" href="<%= result.handoff.href %>"><%= result.handoff.label %></a></p>
       <% } %>
 
       <% if (result.isAction) { %>
@@ -147,16 +144,27 @@
       <% } %>
 
       <% if (result.supported || result.isAction) { %>
-        <p class="rm-disclose">
-          <a href="#" onclick="var d=document.getElementById('read-as');d.hidden=!d.hidden;return false;">How I read that</a>
-        </p>
-        <p class="rm-stamp" id="read-as" hidden>
-          Read as “<%= result.plan.intent.replace(/_/g, ' ') %>”<%
-          %><% if (result.plan.entityQuery) { %> for “<%= result.plan.entityQuery %>”<% } %><%
-          %><% if (result.plan.locationQuery) { %> at “<%= result.plan.locationQuery %>”<% } %>
-          · <%= result.rowCount %> <%= helpers.plural(result.rowCount, 'row') %> from your records
-          · nothing changed — asking is not doing, and changes are approved on the actions page
-        </p>
+        <%#
+          The working, folded. This was a link dressed as a heading that toggled
+          a hidden paragraph by hand, so it sat on the page as a title with
+          nothing under it. A native disclosure says what it is, opens without
+          a script, and is where the statement of record now lives.
+        %>
+        <details class="rm-disclose rm-working rm-chat-reading">
+          <summary>How Foundry read this</summary>
+          <div class="rm-working__body">
+            <% if (record) { %>
+              <p class="rm-working__record"><%= helpers.figures(record) %></p>
+            <% } %>
+            <p class="rm-stamp">
+              Read as “<%= result.plan.intent.replace(/_/g, ' ') %>”<%
+              %><% if (result.plan.entityQuery) { %> for “<%= result.plan.entityQuery %>”<% } %><%
+              %><% if (result.plan.locationQuery) { %> at “<%= result.plan.locationQuery %>”<% } %>
+              · <%= helpers.qty(result.rowCount) %> <%= helpers.plural(result.rowCount, 'row') %> from your records
+              · nothing changed — asking is not doing, and changes are approved on the actions page
+            </p>
+          </div>
+        </details>
       <% } %>
     </div>
   <% } %>
@@ -169,7 +177,7 @@
      */
   %>
   <% pending.forEach(function (rule) { %>
-    <div class="rm-turn">
+    <div class="rm-turn rm-turn--foundry">
       <p class="rm-turn__who">Foundry</p>
       <p class="rm-turn__said">I read that as a standing rule. Is this right?</p>
       <div class="rm-rule">

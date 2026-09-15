@@ -89,6 +89,7 @@ const UNDERSTANDING_SCHEMA = {
     'likelyRoles',
     'terminology',
     'importantOperationalPatterns',
+    'statedRequirements',
     'recommendedConfiguration',
     'recommendations',
     'assumptions',
@@ -222,6 +223,40 @@ const UNDERSTANDING_SCHEMA = {
 
     importantOperationalPatterns: stringList,
 
+    /**
+     * An exhaustive ledger of what the owner explicitly asked Foundry to
+     * handle. This is deliberately separate from configuration fields such as
+     * variantDimensions: the engine may support only three configured option
+     * axes, but the understanding must never make a fourth requirement vanish.
+     */
+    statedRequirements: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['sourceText', 'understanding', 'semanticRole', 'status', 'nextStep'],
+        properties: {
+          sourceText: { type: 'string', minLength: 1, maxLength: 500 },
+          understanding: { type: 'string', minLength: 1, maxLength: 300 },
+          semanticRole: {
+            type: 'string',
+            enum: [
+              'resolvable_requirement',
+              'operational_requirement',
+              'business_context',
+              'evidence_instruction',
+              'behavioral_guardrail',
+            ],
+          },
+          status: {
+            type: 'string',
+            enum: ['supported_today', 'needs_detail', 'unsupported_today'],
+          },
+          nextStep: { type: 'string', maxLength: 300 },
+        },
+      },
+    },
+
     /** What Foundry intends to configure, in engine vocabulary. */
     recommendedConfiguration: {
       type: 'object',
@@ -323,7 +358,7 @@ function subsetSchema(keys) {
   return { type: 'object', additionalProperties: false, required: [...keys], properties };
 }
 
-const ADVICE_KEYS = ['recommendations', 'unresolvedDecisions'];
+const ADVICE_KEYS = ['statedRequirements', 'recommendations', 'unresolvedDecisions'];
 
 /*
  * Records the owner typed straight into their description come out in a pass

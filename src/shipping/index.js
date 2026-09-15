@@ -17,6 +17,7 @@
 const provider = require('./provider');
 
 provider.register('shipengine', require('./providers/shipengine'));
+provider.register('shipstation', require('./providers/shipstation'));
 provider.register('easypost', require('./providers/easypost'));
 provider.register('shippo', require('./providers/shippo'));
 
@@ -29,7 +30,10 @@ module.exports = {
   address: require('./address'),
   service: require('./service'),
   rules: require('./rules'),
+  operationPolicy: require('./operation-policy'),
   ruleIntent: require('./rule-intent'),
   tracking: require('./tracking'),
+  timeline: require('./timeline'),
   delayNotice: require('./delay-notice'),
+  returns: require('./returns'),
 };

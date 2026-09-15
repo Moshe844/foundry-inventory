@@ -32,14 +32,14 @@
    */
 %>
 <% if (locals.sourcePrompt && !locals.recommendation) { %>
-  <div class="rm-note">
+  <div class="rm-note" id="source-recommendation">
     <%- helpers.icon('question', { size: 16 }) %>
     <span><%= sourcePrompt %></span>
   </div>
 <% } %>
 
 <% if (locals.recommendation) { %>
-  <div class="rm-next">
+  <div class="rm-next" id="source-recommendation">
     <p class="rm-stamp"><%- helpers.icon('spark', { size: 13 }) %> From what you described</p>
     <p class="rm-next__t"><%= recommendation.label %></p>
     <% if (locals.sourcePrompt) { %><p class="rm-next__d"><%= sourcePrompt %></p><% } %>
@@ -92,17 +92,17 @@
 <section class="rm-panel" style="margin-bottom:16px">
   <div class="rm-panel__head">
     <%- helpers.icon('chat', { size: 15, className: 'rm-quiet' }) %>
-    <h2>Not sure? Describe the business and I will pick.</h2>
+    <h2>Not sure which source fits?</h2>
   </div>
-  <form method="post" action="/onboarding/describe" style="padding:16px">
+  <form method="post" action="/onboarding/describe#source-recommendation" style="padding:16px">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label class="rm-field">
-      <span class="visually-hidden">Describe where your inventory lives</span>
+      <span>Describe where your inventory records are now. This recommends a starting source; it does not create or analyze inventory.</span>
       <textarea name="description" rows="3"
-        placeholder="We keep everything in one spreadsheet, but our supplier emails us a stock report every Monday."><%= locals.description || '' %></textarea>
+        placeholder="We keep everything in one spreadsheet, but our supplier emails us a stock report every Monday." required><%= locals.description || '' %></textarea>
     </label>
     <button class="rm-btn rm-btn--ghost" type="submit" <%= canOperate ? '' : 'disabled' %>>
-      <%- helpers.icon('spark', { size: 15 }) %> Work out which source to use
+      <%- helpers.icon('spark', { size: 15 }) %> Recommend my starting source
     </button>
   </form>
 </section>

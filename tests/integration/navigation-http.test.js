@@ -7,6 +7,7 @@ const request = require('supertest');
 const { makeApp, cleanupAll, seedWorkspace, signIn } = require('../helpers');
 const { configure } = require('../helpers/scenarios');
 const workItems = require('../../src/autopilot/work-items');
+const supplierService = require('../../src/purchasing/supplier-service');
 
 test.after(cleanupAll);
 
@@ -37,6 +38,8 @@ test('the line is one address, and the box it promises is on it', async () => {
   const line = (await agent.get('/ask')).text;
   assert.match(line, /<textarea[^>]*id="ask-question"/, 'and the box is actually there');
   assert.match(line, /action="\/foundry\/tell"/, 'posting to the router that reads a sentence');
+  assert.match(line, /class="rm-line rm-chat"/, 'the line is rendered as a conversation');
+  assert.match(line, /class="rm-chat__intro"/, 'the conversation has a deliberate chat header');
 
   const guide = (await agent.get('/guide')).text;
   assert.match(guide, /How do I use Foundry\?/);
@@ -86,7 +89,7 @@ test('the rail marks the state you are in, and only that one', async () => {
   assert.deepEqual(await activeOn('/'), ['Brief']);
 
   assert.deepEqual(await activeOn('/needs-you'), ['Needs you']);
-  assert.deepEqual(await activeOn('/ask'), ['Ask']);
+  assert.deepEqual(await activeOn('/ask'), ['Ask Foundry']);
 
   /*
    * Everything that used to be a department marks nothing, and that is the
@@ -113,7 +116,7 @@ test('the chrome offers three states, not a directory of departments', async () 
     .map((anchor) => anchor.replace(/<[^>]*>/g, '').replace(/\d+/g, '').trim())
     .filter(Boolean);
 
-  assert.deepEqual(labels, ['Brief', 'Needs you', 'Ask']);
+  assert.deepEqual(labels, ['Brief', 'Needs you', 'Ask Foundry']);
 
   /*
    * Consolidating is not removing. Every department that came off the rail is
@@ -245,6 +248,54 @@ test('saving on a page opened from Settings keeps the way back', async () => {
   const afterSaving = (await agent.get('/locations').set('Referer', `${base}/locations`)).text;
   assert.match(afterSaving, /class="page-back" href="\/settings"/);
   server.close();
+});
+
+test('every Foundry destination returns to its exact same-origin origin without route hard-coding', async () => {
+  const { db, app } = makeApp();
+  const workspace = seedWorkspace(db);
+  const server = app.listen(0);
+  server.unref();
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const agent = request.agent(server);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+  configure(db, workspace.workspaceId);
+
+  // Neither side is required to be a designated hub. The originating search
+  // is preserved so Back restores the exact working context.
+  const destination = (await agent.get('/locations')
+    .set('Referer', `${base}/inventory/table?q=acrylic`)).text;
+  assert.match(destination, /class="page-back" href="\/inventory\/table\?q=acrylic"/);
+  assert.match(destination, /Back to Inventory/,
+    'registered origins use their canonical area label without a route-specific exception');
+
+  // A same-page reload or post/redirect must not discard the trail.
+  const reloaded = (await agent.get('/locations').set('Referer', `${base}/locations`)).text;
+  assert.match(reloaded, /href="\/inventory\/table\?q=acrylic"/);
+
+  // Top-level product surfaces follow the same rule; they are not special
+  // dead ends when opened from a working record.
+  const ask = (await agent.get('/ask').set('Referer', `${base}/locations`)).text;
+  assert.match(ask, /class="page-back" href="\/locations"/);
+  assert.match(ask, /Back to Locations/,
+    'a rendered page contributes its own title to the universal trail');
+
+  // A foreign referer can never become an application return link.
+  const direct = (await agent.get('/locations').set('Referer', 'https://example.invalid/phish')).text;
+  assert.ok(!/href="https:\/\/example\.invalid/.test(direct));
+  server.close();
+});
+
+test('supplier communication links land on the mailbox choices', async () => {
+  const { db, app } = makeApp();
+  const workspace = seedWorkspace(db);
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const supplierRecord = supplierService.createSupplier(db, workspace.ctx, { role: 'owner' }, { name: 'Anchor Supplier' });
+  const supplier = (await agent.get(`/suppliers/${supplierRecord.id}`)).text;
+  const connections = (await agent.get('/settings/connections')).text;
+  assert.match(supplier, /\/settings\/connections#supplier-communication/);
+  assert.match(connections, /id="supplier-communication"/);
 });
 
 test('a decision opened from Needs you returns to the decision inbox', async () => {

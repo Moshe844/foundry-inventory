@@ -111,13 +111,29 @@ function planItem(db, workspaceId, spec) {
   const name = String(spec.name || '').trim();
   if (!name) return { ok: false, question: 'What should the product be called?' };
 
-  const axes = Array.isArray(spec.axes) && spec.axes.length
+  const exactVariants = Array.isArray(spec.exactVariants) && spec.exactVariants.length
+    ? spec.exactVariants.map((variant) => ({
+      code: String(variant.code || '').trim(),
+      label: String(variant.label || '').trim() || null,
+      sourceKey: String(variant.sourceKey || variant.code || '').trim() || null,
+      catalogueRecord: variant.catalogueRecord && typeof variant.catalogueRecord === 'object'
+        ? JSON.parse(JSON.stringify(variant.catalogueRecord)) : null,
+      options: Object.fromEntries(Object.entries(variant.options || {})
+        .map(([key, value]) => [String(key).trim(), String(value).trim()])
+        .filter(([key, value]) => key && value)),
+    }))
+    : null;
+  const axes = exactVariants
+    ? exactVariantAxes(exactVariants)
+    : Array.isArray(spec.axes) && spec.axes.length
     ? spec.axes.map((axis) => ({ name: String(axis.name).trim(), values: expandValues(axis.values) }))
         .filter((axis) => axis.name && axis.values.length)
     : parseAxes(spec.variantAxes);
 
-  const hasVariants = axes.length > 0;
-  const count = hasVariants ? variantCount(axes) : 1;
+  const hasVariants = exactVariants
+    ? exactVariants.length > 1 || axes.length > 0 || exactVariants.some((variant) => variant.label)
+    : axes.length > 0;
+  const count = exactVariants ? exactVariants.length : hasVariants ? variantCount(axes) : 1;
   if (count > MAX_VARIANTS) {
     return {
       ok: false,
@@ -144,7 +160,9 @@ function planItem(db, workspaceId, spec) {
   }
   if (hasVariants) {
     assumptions.push(
-      `${axes.map((a) => `${a.name} (${a.values.length})`).join(' × ')} — ${count} variants.`
+      exactVariants
+        ? `${count} exact SKU${count === 1 ? '' : 's'} from the supplied records; no additional combinations will be generated.`
+        : `${axes.map((a) => `${a.name} (${a.values.length})`).join(' × ')} — ${count} variants.`
     );
   }
 
@@ -158,11 +176,47 @@ function planItem(db, workspaceId, spec) {
       trackingMode,
       hasVariants,
       axes,
+      exactVariants,
       variantCount: count,
       assumptions,
-      conflicts: findConflicts(db, workspaceId, { name, code }),
+      conflicts: exactVariants
+        ? findExactConflicts(db, workspaceId, { name, variants: exactVariants })
+        : findConflicts(db, workspaceId, { name, code }),
     },
   };
+}
+
+function exactVariantAxes(variants) {
+  const byName = new Map();
+  for (const variant of variants) {
+    for (const [name, value] of Object.entries(variant.options || {})) {
+      const key = name.toLowerCase();
+      if (!byName.has(key)) byName.set(key, { name, values: [], seen: new Set() });
+      const axis = byName.get(key);
+      const valueKey = value.toLowerCase();
+      if (!axis.seen.has(valueKey)) {
+        axis.seen.add(valueKey);
+        axis.values.push(value);
+      }
+    }
+  }
+  return [...byName.values()].map(({ name, values }) => ({ name, values }));
+}
+
+function findExactConflicts(db, workspaceId, { name, variants }) {
+  const conflicts = findConflicts(db, workspaceId, { name, code: null });
+  for (const variant of variants) {
+    if (!variant.code) continue;
+    const existing = db.prepare(`SELECT s.code, i.name AS item_name FROM skus s
+      JOIN items i ON i.id = s.item_id
+      WHERE s.workspace_id = ? AND s.code = ? COLLATE NOCASE AND s.is_active = 1`).get(workspaceId, variant.code);
+    if (existing) conflicts.push({
+      kind: 'duplicate_sku_code',
+      decisive: true,
+      message: `${existing.item_name} already uses the SKU ${existing.code}.`,
+    });
+  }
+  return conflicts;
 }
 
 /**
@@ -266,10 +320,12 @@ module.exports = {
   MAX_VARIANTS,
   expandValues,
   parseAxes,
+  exactVariantAxes,
   variantCount,
   workspaceDefaults,
   planItem,
   findConflicts,
+  findExactConflicts,
   looksLikeSameProduct,
   toCreateInput,
 };

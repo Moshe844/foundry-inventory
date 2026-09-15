@@ -110,7 +110,7 @@ async function runDue(db, options = {}) {
    */
   const anyoneCanShip = Boolean(shipping.provider.configured()) || Boolean(
     db.prepare(`SELECT 1 FROM workspace_connectors
-      WHERE provider_type IN ('easypost', 'shippo') AND status = 'connected'
+      WHERE provider_type IN ('shipengine', 'shipstation', 'easypost', 'shippo') AND status = 'connected'
         AND paused_at IS NULL LIMIT 1`).get());
   if (anyoneCanShip) {
     const shipped = db.prepare(`SELECT DISTINCT workspace_id FROM sales_shipments
@@ -129,6 +129,27 @@ async function runDue(db, options = {}) {
        */
       try { shipping.delayNotice.prepareAll(db, { workspaceId, actorId: null }); }
       catch (error) { console.error('[shipping] delay notices were not prepared', error.message); }
+      const lifecycle = db.prepare(`SELECT * FROM customer_communications
+        WHERE workspace_id = ? AND status = 'PREPARED'
+          AND message_kind IN ('shipping_out_for_delivery','shipping_delivered','shipping_exception')
+        ORDER BY created_at LIMIT 25`).all(workspaceId);
+      for (const row of lifecycle) {
+        try {
+          await require('../sales/customer-communications').autoSend(
+            db, { workspaceId, actorId: null },
+            require('../sales/customer-communications').get(db, workspaceId, row.id));
+        } catch (error) { console.error('[shipping] lifecycle notice was not sent', error.message); }
+      }
+    }
+
+    const returnLabels = db.prepare(`SELECT customer_return_id, workspace_id
+      FROM customer_return_labels WHERE status IN ('PURCHASED','IN_TRANSIT')
+      AND tracking_number IS NOT NULL ORDER BY updated_at LIMIT 100`).all();
+    for (const label of returnLabels) {
+      try {
+        await shipping.returns.refresh(db, { workspaceId: label.workspace_id, actorId: null },
+          label.customer_return_id);
+      } catch (error) { console.error('[shipping] return tracking sweep failed', error.message); }
     }
 
     /*

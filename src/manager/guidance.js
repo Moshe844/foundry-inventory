@@ -9,8 +9,6 @@
 const needsYouInbox = require('./needs-you-inbox');
 const { canonical: productBrain } = require('../product-brain/registry');
 
-const openingWords = /\b(opening|starting|initial|beginning|migrat)/i;
-
 function json(value, fallback = {}) {
   try { return JSON.parse(value) ?? fallback; } catch { return fallback; }
 }
@@ -29,16 +27,26 @@ function facts(db, workspaceId) {
   const locations = db.prepare(
     'SELECT id, name FROM locations WHERE workspace_id = ? AND is_active = 1 ORDER BY name'
   ).all(workspaceId);
-  const movements = db.prepare(
-    `SELECT operation, notes, reason_code FROM movements WHERE workspace_id = ? ORDER BY seq`
-  ).all(workspaceId);
+  // Home needs aggregate movement facts, not the complete ledger payload.
+  // Loading every movement into JavaScript made opening Foundry scale with its
+  // entire history.
+  // These values choose setup copy; they are existence facts, not report
+  // totals. COUNT/SUM scanned every historical movement whenever Home or a
+  // section header rendered. EXISTS remains constant-time as the ledger grows.
+  const movementFacts = db.prepare(`SELECT
+      EXISTS(SELECT 1 FROM movements WHERE workspace_id = ? LIMIT 1) AS movement_count,
+      EXISTS(SELECT 1 FROM movements WHERE workspace_id = ? AND operation = 'issue' LIMIT 1) AS issue_count,
+      EXISTS(SELECT 1 FROM movements WHERE workspace_id = ? AND operation = 'transfer' LIMIT 1) AS transfer_count
+  `).get(workspaceId, workspaceId, workspaceId);
   const onHand = db.prepare(
     'SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ?'
   ).get(workspaceId).n;
-  const issueCount = movements.filter((row) => row.operation === 'issue').length;
-  const transferCount = movements.filter((row) => row.operation === 'transfer').length;
-  const normalReceipts = movements.filter((row) => row.operation === 'receive'
-    && !openingWords.test(`${row.notes || ''} ${row.reason_code || ''}`)).length;
+  const issueCount = Number(movementFacts.issue_count || 0);
+  const transferCount = Number(movementFacts.transfer_count || 0);
+  // A receipt alone proves opening stock, but not routine operating history.
+  // Issue and transfer evidence are enough for the only decision this flag
+  // makes and do not require scanning free-text notes on every receipt.
+  const normalReceipts = 0;
   const supplierCount = db.prepare(
     "SELECT COUNT(*) AS n FROM suppliers WHERE workspace_id = ? AND status = 'active'"
   ).get(workspaceId).n;
@@ -132,7 +140,7 @@ function facts(db, workspaceId) {
     first,
     locations,
     onHand,
-    movementCount: movements.length,
+    movementCount: Number(movementFacts.movement_count || 0),
     issueCount,
     normalActivityCount: issueCount + transferCount + normalReceipts,
     supplierCount,
@@ -347,8 +355,8 @@ function activeAuthorityCopy(state) {
   return 'You reviewed the automatic-work mode; Foundry will follow that choice.';
 }
 
-function nextBestAction(db, workspaceId, state, membership = null, productBrain = null) {
-  const inbox = needsYouInbox.inbox(db, workspaceId, membership, { productBrain });
+function nextBestAction(db, workspaceId, state, membership = null, productBrain = null, preparedInbox = null) {
+  const inbox = preparedInbox || needsYouInbox.inbox(db, workspaceId, membership, { productBrain, limit: 1 });
   // A source the owner already chose outranks a generic manual-setup prompt.
   // This is especially important for unattended mailbox checks: Foundry can
   // finish reading a file while the browser is closed, and Home must expose
@@ -487,16 +495,18 @@ function nextBestAction(db, workspaceId, state, membership = null, productBrain 
 function build(db, workspaceId, membership = null, options = {}) {
   const state = facts(db, workspaceId);
   const checklist = buildChecklist(state);
-  const inbox = needsYouInbox.inbox(db, workspaceId, membership, { productBrain: options.productBrain });
+  const inbox = options.preparedInbox || needsYouInbox.inbox(db, workspaceId, membership, {
+    productBrain: options.productBrain, limit: 1,
+  });
   return {
     state,
     checklistActive: checklist.active,
     operationalReady: checklist.operationalReady,
     steps: checklist.steps,
-    next: nextBestAction(db, workspaceId, state, membership, options.productBrain),
+    next: nextBestAction(db, workspaceId, state, membership, options.productBrain, inbox),
     examples: examples(state),
     firstNeedsYou: inbox[0] || null,
-    needsYouCount: inbox.length,
+    needsYouCount: Number.isInteger(inbox.totalCount) ? inbox.totalCount : inbox.length,
   };
 }
 
@@ -514,6 +524,24 @@ function canonicalHref(id, fallback) {
   return (productBrain.destination(id) || {}).href || fallback;
 }
 
+/**
+ * Presentation-only context for section headers.
+ *
+ * The detailed inbox is intentionally absent. Header guidance must never turn
+ * a normal page navigation into a complete cross-domain audit; Brief and
+ * Needs You own that authoritative work and refresh the cached badge there.
+ */
+function buildForScreen(db, workspaceId) {
+  const state = facts(db, workspaceId);
+  return {
+    state,
+    next: null,
+    examples: examples(state),
+    firstNeedsYou: null,
+    needsYouCount: require('../attention/needs-you-count').countNeedsYou(db, workspaceId),
+  };
+}
+
 function screenContext(guidance, nav) {
   if (!guidance || !screenDescriptions[nav]) return null;
   const state = guidance.state;
@@ -529,10 +557,8 @@ function screenContext(guidance, nav) {
     // "Connected systems run automatically" is a status, not a task. If
     // something genuinely needs the owner, show that exact next action;
     // otherwise do not manufacture a contradictory "Do now" instruction.
-    next = guidance.next.kind === 'clear'
-      ? null
-      : guidance.next;
-    if (!state.connectionCount && guidance.next.kind === 'setup') {
+    next = guidance.next && guidance.next.kind !== 'clear' ? guidance.next : null;
+    if (!state.connectionCount) {
       next = { title: 'Connect the system where your records live', action: 'Choose a connection', href: '#connection-group-selling' };
     }
   } else if (nav === 'attention') {
@@ -592,4 +618,4 @@ function guideTopics(db, workspaceId) {
   ];
 }
 
-module.exports = { facts, build, guideTopics, examples, displayName, screenContext, screenContextFor };
+module.exports = { facts, build, buildForScreen, guideTopics, examples, displayName, screenContext, screenContextFor };

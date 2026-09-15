@@ -113,6 +113,16 @@ function apply(db, ctx, shipment, read = {}) {
     } catch { /* the scan is recorded either way; a closed shipment is not undone by this */ }
   }
 
+  // Preparing a factual customer update is separate from sending it. The
+  // communication service deduplicates each carrier stage and the workspace's
+  // exact policy decides whether a later dispatcher may send it.
+  if (['OUT_FOR_DELIVERY', 'DELIVERED', 'FAILURE', 'RETURNED'].includes(recorded.status)) {
+    try {
+      require('../sales/customer-communications')
+        .prepareStatusNotice(db, ctx, shipment.id, recorded.status);
+    } catch { /* the carrier fact remains recorded even if a draft cannot be made */ }
+  }
+
   return recorded;
 }
 
@@ -176,14 +186,25 @@ async function sweep(db, ctx, options = {}) {
   let updated = 0;
   for (const shipment of rows) {
     try {
-      const read = await provider.track(withKey, {
-        trackingNumber: shipment.tracking_number,
-        carrier: shipment.carrier,
-        providerShipmentId: shipment.provider_shipment_id,
+      const autonomous = require('../autonomous/service');
+      const operation = autonomous.create(db, ctx, {
+        operationType:'shipping.track',
+        idempotencyKey:`shipping-track:${shipment.id}:${shipment.tracked_at || 'never'}`,
+        sourceKind:'sales_shipment', sourceId:shipment.id,
+        title:`Check ${shipment.shipment_number} with the carrier`,
+        summary:'The shipment has gone quiet, so Foundry is using the polling fallback.',
+        link:`/orders/${shipment.sales_order_id}/detail?open=shipping#shipping`,
+        evidence:[{ label:'Tracking number', value:shipment.tracking_number },
+          { label:'Last carrier check', value:shipment.tracked_at || 'Never' }],
+        decision:{ shipmentId:shipment.id, providerName },
+        affectedEntities:{ shipmentId:shipment.id, salesOrderId:shipment.sales_order_id },
+        authorityDimensions:{ confidence:'high', risk:'low' },
+        expectedOutcome:{ carrierChecked:true, statusNotMovedBackward:true },
       });
-      if (!read) continue;
-      const result = apply(db, ctx, shipment, { ...read, provider: providerName });
-      if (result.added > 0) updated += 1;
+      const governed = await autonomous.run(db, ctx, null, operation.id,
+        { provider, providerContext:withKey });
+      if (governed.operation.status === 'COMPLETED'
+          && Number(governed.operation.actualOutcome?.added || 0) > 0) updated += 1;
     } catch {
       // A carrier that will not answer is not a reason to stop asking about
       // the next parcel, and the shipment keeps whatever it last knew.
@@ -191,6 +212,48 @@ async function sweep(db, ctx, options = {}) {
   }
   return { checked: rows.length, updated };
 }
+
+require('../autonomous/service').registerAdapter('shipping.track', {
+  owner:'shipping.tracking',
+  authorize:({ db, ctx, execution, operation }) => {
+    const account = require('./accounts').forWorkspace(db, ctx.workspaceId);
+    const paused = !execution.allowed;
+    const checks = [
+      { name:'monitoringActive', passed:!paused,
+        reason:execution.because || 'Read-only carrier monitoring is active.' },
+      { name:'shippingConnection', passed:Boolean(account),
+        reason:'A connected shipping account is required to poll a carrier.' },
+      { name:'knownShipment', passed:Boolean(db.prepare(`SELECT 1 FROM sales_shipments
+        WHERE workspace_id = ? AND id = ? AND tracking_number IS NOT NULL`)
+        .get(ctx.workspaceId, operation.decision.shipmentId)),
+      reason:'Tracking may only run for a known shipment with a recorded tracking number.' },
+    ];
+    return { allowed:checks.every((check) => check.passed), checks,
+      source:{ kind:'connected_shipping_account', provider:account?.provider || null } };
+  },
+  execute:async({ db, ctx, operation, runtime }) => {
+    const shipment = db.prepare('SELECT * FROM sales_shipments WHERE workspace_id = ? AND id = ?')
+      .get(ctx.workspaceId, operation.decision.shipmentId);
+    const read = await runtime.provider.track(runtime.providerContext || ctx, {
+      trackingNumber:shipment.tracking_number, carrier:shipment.carrier,
+      providerShipmentId:shipment.provider_shipment_id,
+    });
+    if (!read) return { checked:true, added:0, status:shipment.tracking_status || 'UNKNOWN' };
+    return { checked:true, ...apply(db, ctx, shipment,
+      { ...read, provider:operation.decision.providerName }) };
+  },
+  verify:({ db, ctx, operation, actualOutcome }) => {
+    const shipment = db.prepare('SELECT * FROM sales_shipments WHERE workspace_id = ? AND id = ?')
+      .get(ctx.workspaceId, operation.decision.shipmentId);
+    const passed = Boolean(actualOutcome?.checked && shipment)
+      && rank(shipment.tracking_status) >= rank(actualOutcome.status);
+    return { passed, reason:passed
+      ? 'The carrier check completed and the shipment status did not move backward.'
+      : 'The carrier result could not be reconciled to the shipment.',
+    shipmentId:shipment?.id || operation.decision.shipmentId,
+    trackingStatus:shipment?.tracking_status || null };
+  },
+});
 
 /**
  * "Track 1Z999…" — a number somebody has, for a parcel Foundry did not buy.

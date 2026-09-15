@@ -27,7 +27,9 @@
       <article class="wsp-card <%= workspace.workspaceId === currentWorkspaceId ? 'is-current' : '' %>">
         <div class="wsp-card-head">
           <h2><%= workspace.name %></h2>
-          <% if (workspace.workspaceId === currentWorkspaceId) { %>
+          <% if (workspace.deleting) { %>
+            <span class="badge badge--warn">Deleting…</span>
+          <% } else if (workspace.workspaceId === currentWorkspaceId) { %>
             <span class="badge badge--ok">Open now</span>
           <% } %>
         </div>
@@ -55,7 +57,9 @@
         </div>
 
         <div class="wsp-card-foot">
-          <% if (workspace.workspaceId === currentWorkspaceId) { %>
+          <% if (workspace.deleting) { %>
+            <span class="muted" style="font-size:13px;">Foundry is removing this inventory. Other inventories remain available.</span>
+          <% } else if (workspace.workspaceId === currentWorkspaceId) { %>
             <a class="btn btn--primary btn--sm" href="/">Go to it</a>
           <% } else { %>
             <form method="post" action="/inventories/switch">
@@ -65,7 +69,7 @@
               <button class="btn btn--primary btn--sm" type="submit">Open</button>
             </form>
           <% } %>
-          <% if (workspaces.length > 1) { %>
+          <% if (!workspace.deleting && workspaces.length > 1) { %>
             <form method="post" action="/inventories/<%= workspace.workspaceId %>/leave"
                   data-confirm="Leave <%= workspace.name %>? Its records stay exactly as they are; you just lose access.">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -75,7 +79,7 @@
           <%# Deleting is a link, not a button: it opens a page that shows what
               would be destroyed and asks for the name. There is no one-click
               path to it anywhere. %>
-          <% if (workspace.role === 'owner') { %>
+          <% if (!workspace.deleting && workspace.role === 'owner') { %>
             <a class="btn btn--ghost btn--sm" href="/inventories/<%= workspace.workspaceId %>/delete">Delete</a>
           <% } %>
         </div>

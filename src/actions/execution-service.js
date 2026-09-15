@@ -21,6 +21,10 @@ const engine = require('../domain/inventory-engine');
 const transferService = require('../transfers/transfer-service');
 const locationService = require('../domain/location-service');
 const itemService = require('../domain/item-service');
+const kits = require('../domain/kit-service');
+const supplierService = require('../purchasing/supplier-service');
+const purchasingPolicy = require('../purchasing/policy-service');
+const priceService = require('../pricing/price-service');
 const catalog = require('../imports/catalog-service');
 const repo = require('../domain/repository');
 const proposals = require('./proposal-service');
@@ -31,6 +35,102 @@ const verification = require('./verification');
 const reevaluate = require('../attention/reevaluate');
 const { ValidationError, NotFoundError, DomainError } = require('../domain/errors');
 const { newId, nowIso } = require('../lib/util');
+
+function locationKind(name) {
+  if (/\b(?:store|shop|counter|showroom)\b/i.test(name)) return 'store';
+  if (/\bstockroom\b/i.test(name)) return 'stockroom';
+  return 'warehouse';
+}
+
+function ensureCatalogueLocation(db, engineCtx, name) {
+  const existing = db.prepare(`SELECT * FROM locations
+    WHERE workspace_id = ? AND name = ? COLLATE NOCASE AND is_active = 1`).get(engineCtx.workspaceId, name);
+  return existing || locationService.createLocation(db, engineCtx, { name, kind: locationKind(name) });
+}
+
+function ensureCatalogueSupplier(db, ctx, membership, name) {
+  const existing = db.prepare(`SELECT id FROM suppliers
+    WHERE workspace_id = ? AND name = ? COLLATE NOCASE`).get(ctx.workspaceId, name);
+  return existing
+    ? supplierService.getSupplier(db, ctx.workspaceId, existing.id)
+    : supplierService.createSupplier(db, ctx, membership, { name });
+}
+
+function saveCatalogueFacts(db, ctx, itemId, skuId, record) {
+  const now = nowIso();
+  const sourceText = [`${record.ordinal}. ${record.name}`,
+    ...(record.fields || []).map((field) => `${field.label}: ${field.value}`)].join('\n');
+  db.prepare(`INSERT INTO catalogue_item_facts
+    (workspace_id,item_id,category,facts,source_text,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(workspace_id,item_id) DO UPDATE SET
+      category=excluded.category,facts=excluded.facts,source_text=excluded.source_text,updated_at=excluded.updated_at`)
+    .run(ctx.workspaceId, itemId, record.category || null,
+      JSON.stringify({ category: record.category || null }), sourceText, now, now);
+  db.prepare(`INSERT INTO catalogue_sku_facts
+    (workspace_id,sku_id,source_key,facts,source_text,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT(workspace_id,sku_id) DO UPDATE SET
+      source_key=excluded.source_key,facts=excluded.facts,source_text=excluded.source_text,updated_at=excluded.updated_at`)
+    .run(ctx.workspaceId, skuId, record.code || null, JSON.stringify(record), sourceText, now, now);
+}
+
+function applyCatalogueRecord(db, ctx, membership, engineCtx, reference, itemId, skuId, record) {
+  const movementIds = [];
+  const groupIds = [];
+  saveCatalogueFacts(db, ctx, itemId, skuId, record);
+  if (record.sellingPriceMinor !== null) {
+    priceService.setPrice(db, ctx, { skuId, amountMinor: record.sellingPriceMinor, currency: 'USD',
+      source: 'owner', sourceDetail: { catalogueRecord: record.ordinal } });
+  }
+  if (record.unitCostMinor !== null) {
+    priceService.setPurchaseCost(db, ctx, { skuId, amountMinor: record.unitCostMinor, currency: 'USD',
+      source: 'owner', sourceDetail: { catalogueRecord: record.ordinal } });
+  }
+  let supplier = null;
+  if (record.supplier) {
+    supplier = ensureCatalogueSupplier(db, ctx, membership, record.supplier);
+    supplierService.linkItem(db, ctx, membership, {
+      supplierId: supplier.id, skuId, supplierSku: record.supplierPart || null,
+      purchaseUnit: record.unitLabel || 'unit', unitsPerPurchaseUnit: 1,
+      lastUnitCost: record.unitCostMinor === null ? null : record.unitCostMinor / 100,
+      isPreferred: true,
+    });
+  }
+  if (record.reorderPoint !== null) {
+    purchasingPolicy.setPolicy(db, ctx, membership, skuId, {
+      reorderPoint: record.reorderPoint,
+      preferredSupplierId: supplier ? supplier.id : undefined,
+      source: 'manual',
+    });
+  }
+
+  for (const stated of record.locations || []) {
+    if (!stated.quantity) continue;
+    const location = ensureCatalogueLocation(db, engineCtx, stated.name);
+    const input = { skuId, locationId: location.id, reference,
+      notes: `Opening stock copied from structured catalogue record ${record.ordinal}.` };
+    if (record.trackingMode === 'serial') {
+      if ((record.locations || []).length === 1 && record.serials.length === stated.quantity) {
+        input.serials = record.serials;
+      } else {
+        const found = Object.entries(record.serialsByLocation || {})
+          .find(([name]) => String(name).localeCompare(stated.name, undefined, { sensitivity: 'accent' }) === 0);
+        input.serials = found ? found[1] : [];
+      }
+    } else {
+      input.quantity = stated.quantity;
+    }
+    if (record.trackingMode === 'lot') {
+      input.lotCode = record.lotCode;
+      input.expiresAt = record.expirationDate || undefined;
+    }
+    const received = engine.receive(db, engineCtx, input);
+    movementIds.push(...(received.movementIds || []));
+    if (received.groupId) groupIds.push(received.groupId);
+  }
+  return { movementIds, groupIds };
+}
 
 class StaleProposalError extends DomainError {
   constructor(message, details) {
@@ -279,7 +379,47 @@ function perform(db, ctx, membership, proposal) {
   }
 
   if (proposal.actionType === 'create_item') {
-    const created = itemService.createItem(db, engineCtx, catalog.toCreateInput(proposal.settings));
+    const created = proposal.settings.exactVariants
+      ? itemService.createExactItem(db, engineCtx, {
+        name: proposal.settings.name,
+        baseCode: proposal.settings.code,
+        description: proposal.settings.description,
+        unitLabel: proposal.settings.unitLabel,
+        trackingMode: proposal.settings.trackingMode,
+        variants: proposal.settings.exactVariants,
+      })
+      : itemService.createItem(db, engineCtx, catalog.toCreateInput(proposal.settings));
+    const catalogueRecords = (proposal.settings && proposal.settings.catalogueRecords) || [];
+    if (catalogueRecords.length) {
+      const bySource = new Map((created.skus || [])
+        .map((sku) => [String(sku.sourceKey || sku.code).toLowerCase(), sku]));
+      const movementIds = [];
+      const groupIds = [];
+      for (const record of catalogueRecords) {
+        const createdSku = bySource.get(String(record.code || '').toLowerCase());
+        if (!createdSku) {
+          throw new ValidationError(`The created SKU ${record.code} could not be matched to its supplied record.`);
+        }
+        const applied = applyCatalogueRecord(
+          db, ctx, membership, engineCtx, reference, created.itemId, createdSku.skuId, record
+        );
+        movementIds.push(...applied.movementIds);
+        groupIds.push(...applied.groupIds);
+      }
+      const kitRecord = catalogueRecords.find((record) => Array.isArray(record.components) && record.components.length);
+      if (kitRecord) {
+        const kitSku = bySource.get(String(kitRecord.code || '').toLowerCase());
+        const components = kitRecord.components.map((component) => {
+          const row = db.prepare(`SELECT id FROM skus
+            WHERE workspace_id = ? AND code = ? COLLATE NOCASE AND is_active = 1`)
+            .get(ctx.workspaceId, component.exactSku);
+          if (!row) throw new ValidationError(`Kit component SKU ${component.exactSku} is not in this inventory.`);
+          return { skuId: row.id, quantity: component.quantity };
+        });
+        kits.define(db, engineCtx, { kitSkuId: kitSku.skuId, components });
+      }
+      return { movementIds, groupIds, itemId: created.itemId, skuIds: created.skuIds };
+    }
     const initial = proposal.settings && proposal.settings.initialStock;
     if (!initial) {
       return { movementIds: [], groupIds: [], itemId: created.itemId, skuIds: created.skuIds };
@@ -301,6 +441,19 @@ function perform(db, ctx, membership, proposal) {
       groupIds: received.groupId ? [received.groupId] : [],
       itemId: created.itemId,
       skuIds: created.skuIds,
+    };
+  }
+
+  if (proposal.actionType === 'configure_kit') {
+    const configured = kits.define(db, engineCtx, {
+      kitSkuId: proposal.skuId,
+      components: proposal.settings.components,
+    });
+    return {
+      movementIds: [],
+      groupIds: [],
+      skuIds: [proposal.skuId, ...configured.components.map((component) => component.component_sku_id)],
+      kitSkuId: proposal.skuId,
     };
   }
 

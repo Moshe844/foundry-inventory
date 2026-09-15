@@ -7,6 +7,7 @@ const inventory = require('../domain/inventory-engine');
 const managerEvents = require('../manager/events');
 const reactions = require('../manager/reactions');
 const prices = require('../pricing/price-service');
+const kits = require('../domain/kit-service');
 
 const OPEN = ['CONFIRMED', 'BACKORDERED', 'PARTIALLY_FULFILLED'];
 const json = (value, fallback = {}) => { try { return JSON.parse(value) ?? fallback; } catch { return fallback; } };
@@ -162,12 +163,10 @@ function setCustomerActive(db, ctx, customerId, active) {
 }
 
 function nextOrderNumber(db, workspaceId) {
-  const rows = db.prepare('SELECT order_number FROM sales_orders WHERE workspace_id = ?').all(workspaceId);
-  let highest = 1000;
-  for (const row of rows) {
-    const match = String(row.order_number || '').match(/^SO-(\d+)$/i);
-    if (match) highest = Math.max(highest, Number(match[1]));
-  }
+  const row = db.prepare(`SELECT COALESCE(MAX(CAST(SUBSTR(order_number, 4) AS INTEGER)), 1000) AS highest
+    FROM sales_orders WHERE workspace_id = ? AND order_number LIKE 'SO-%'
+      AND SUBSTR(order_number, 4) <> '' AND SUBSTR(order_number, 4) NOT GLOB '*[^0-9]*'`).get(workspaceId);
+  const highest = Math.max(1000, Number(row.highest || 1000));
   return `SO-${highest + 1}`;
 }
 
@@ -335,12 +334,14 @@ function createOrder(db, ctx, input) {
         Number.isSafeInteger(Number(input.allocationPriority)) ? Number(input.allocationPriority) : 100,
         ctx.actorId, now, now);
     for (const line of pricedLines) {
+      const lineId = newId('sol');
       db.prepare(`INSERT INTO sales_order_lines
         (id, workspace_id, sales_order_id, sku_id, quantity_ordered, quantity_fulfilled,
          unit_price_minor, price_source_id, notes, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, ?)`)
-        .run(newId('sol'), ctx.workspaceId, id, line.skuId, line.quantity,
+        .run(lineId, ctx.workspaceId, id, line.skuId, line.quantity,
           line.price.isSet ? line.price.amount_minor : null, line.price.isSet ? line.price.id : null, now, now);
+      kits.snapshotOrderLine(db, ctx.workspaceId, lineId, line.skuId, line.quantity);
     }
     recordEvent(db, ctx, id, 'CREATED', {
       orderNumber, customerId: customer.id, deliveryMethod: destination.method,
@@ -358,13 +359,58 @@ function createOrder(db, ctx, input) {
 
 function committedByPosition(db, workspaceId, { skuIds = null } = {}) {
   const ids = skuIds && skuIds.length ? [...new Set(skuIds)] : null;
-  const clause = ids ? ` AND sol.sku_id IN (${ids.map(() => '?').join(',')})` : '';
-  return db.prepare(`SELECT sol.sku_id, soa.location_id, SUM(soa.quantity) AS committed
+  const placeholders = ids ? ids.map(() => '?').join(',') : '';
+  const regular = db.prepare(`SELECT sol.sku_id, soa.location_id, SUM(soa.quantity) AS committed
     FROM sales_order_allocations soa
     JOIN sales_order_lines sol ON sol.id = soa.sales_order_line_id
     JOIN sales_orders so ON so.id = sol.sales_order_id
-    WHERE soa.workspace_id = ? AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')${clause}
+    WHERE soa.workspace_id = ? AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+      ${ids ? `AND sol.sku_id IN (${placeholders})` : ''}
     GROUP BY sol.sku_id, soa.location_id`).all(workspaceId, ...(ids || []));
+  const component = db.prepare(`SELECT kc.component_sku_id AS sku_id, ka.location_id,
+      SUM(ka.quantity) AS committed
+    FROM sales_order_kit_allocations ka
+    JOIN sales_order_kit_components kc ON kc.id = ka.kit_component_id
+    JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
+    JOIN sales_orders so ON so.id = sol.sales_order_id
+    WHERE ka.workspace_id = ? AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+      ${ids ? `AND kc.component_sku_id IN (${placeholders})` : ''}
+    GROUP BY kc.component_sku_id, ka.location_id`).all(workspaceId, ...(ids || []));
+  const totals = new Map();
+  for (const row of [...regular, ...component]) {
+    const key = `${row.sku_id}:${row.location_id}`;
+    const prior = totals.get(key) || { sku_id: row.sku_id, location_id: row.location_id, committed: 0 };
+    prior.committed += Number(row.committed);
+    totals.set(key, prior);
+  }
+  return [...totals.values()];
+}
+
+/** Aggregate customer commitments for a product page without expanding every
+ * variant into an SQL parameter. A single product may legitimately own tens
+ * of thousands of SKUs. */
+function committedByItem(db,workspaceId,itemIds) {
+  const ids = [...new Set(itemIds || [])];
+  if (!ids.length) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  return db.prepare(`SELECT item_id, SUM(committed) AS committed FROM (
+      SELECT sku.item_id, soa.quantity AS committed
+      FROM sales_order_allocations soa
+      JOIN sales_order_lines sol ON sol.id=soa.sales_order_line_id
+      JOIN sales_orders so ON so.id=sol.sales_order_id
+      JOIN skus sku ON sku.id=sol.sku_id
+      WHERE soa.workspace_id=? AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+        AND sku.item_id IN (${placeholders})
+      UNION ALL
+      SELECT sku.item_id, ka.quantity AS committed
+      FROM sales_order_kit_allocations ka
+      JOIN sales_order_kit_components kc ON kc.id=ka.kit_component_id
+      JOIN sales_order_lines sol ON sol.id=kc.sales_order_line_id
+      JOIN sales_orders so ON so.id=sol.sales_order_id
+      JOIN skus sku ON sku.id=kc.component_sku_id
+      WHERE ka.workspace_id=? AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+        AND sku.item_id IN (${placeholders})
+    ) GROUP BY item_id`).all(workspaceId,...ids,workspaceId,...ids);
 }
 
 function availabilityForSku(db, workspaceId, skuId) {
@@ -372,11 +418,13 @@ function availabilityForSku(db, workspaceId, skuId) {
   const committed = new Map(committedByPosition(db, workspaceId, { skuIds: [skuId] })
     .map((row) => [row.location_id, Number(row.committed)]));
   const positions = db.prepare(`SELECT l.id AS location_id, l.name AS location_name, l.kind,
-      COALESCE(b.on_hand, 0) AS on_hand
+      COALESCE(b.on_hand, 0) AS on_hand,
+      COALESCE((SELECT SUM(h.remaining_quantity) FROM inventory_availability_holds h
+        WHERE h.workspace_id=l.workspace_id AND h.sku_id=? AND h.location_id=l.id AND h.status='OPEN'),0) AS unavailable
     FROM locations l LEFT JOIN balances b ON b.location_id = l.id AND b.sku_id = ?
-    WHERE l.workspace_id = ? AND l.is_active = 1 ORDER BY l.name COLLATE NOCASE`).all(skuId, workspaceId)
+    WHERE l.workspace_id = ? AND l.is_active = 1 ORDER BY l.name COLLATE NOCASE`).all(skuId, skuId, workspaceId)
     .map((row) => ({ ...row, committed: committed.get(row.location_id) || 0,
-      available: Number(row.on_hand) - (committed.get(row.location_id) || 0) }));
+      available: Number(row.on_hand) - Number(row.unavailable || 0) - (committed.get(row.location_id) || 0) }));
   return {
     skuId,
     onHand: positions.reduce((n, row) => n + Number(row.on_hand), 0),
@@ -417,12 +465,75 @@ function allocateLine(db, workspaceId, line, preferredLocationId = null) {
   return { allocated: remaining - needed, backordered: needed, allocations };
 }
 
+function allocateKitComponent(db, workspaceId, component, preferredLocationId = null) {
+  const already = Number(db.prepare(`SELECT COALESCE(SUM(quantity), 0) AS n
+    FROM sales_order_kit_allocations WHERE kit_component_id = ?`).get(component.id).n);
+  let needed = Number(component.quantity_required) - Number(component.quantity_fulfilled) - already;
+  if (needed <= 0) return { allocated: 0, backordered: 0, allocations: [] };
+  const positions = availabilityForSku(db, workspaceId, component.component_sku_id).positions
+    .filter((row) => row.available > 0)
+    .sort((a, b) => {
+      if (preferredLocationId && a.location_id === preferredLocationId) return -1;
+      if (preferredLocationId && b.location_id === preferredLocationId) return 1;
+      return b.available - a.available || String(a.location_name).localeCompare(String(b.location_name));
+    });
+  const wanted = needed;
+  const allocations = [];
+  const now = nowIso();
+  for (const position of positions) {
+    if (needed <= 0) break;
+    const quantity = Math.min(needed, position.available);
+    if (quantity <= 0) continue;
+    db.prepare(`INSERT INTO sales_order_kit_allocations
+      (id, workspace_id, kit_component_id, location_id, quantity, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(kit_component_id, location_id) DO UPDATE SET
+        quantity = quantity + excluded.quantity, updated_at = excluded.updated_at`)
+      .run(newId('soka'), workspaceId, component.id, position.location_id, quantity, now, now);
+    allocations.push({ locationId: position.location_id, locationName: position.location_name, quantity });
+    needed -= quantity;
+  }
+  return { allocated: wanted - needed, backordered: needed, allocations };
+}
+
+function allocateOrderLine(db, workspaceId, line, preferredLocationId = null) {
+  const components = kits.orderComponents(db, workspaceId, line.id);
+  if (!components.length) return { lineId: line.id, skuId: line.sku_id,
+    ...allocateLine(db, workspaceId, line, preferredLocationId) };
+  const componentResults = components.map((component) => ({ componentId: component.id,
+    skuId: component.component_sku_id,
+    ...allocateKitComponent(db, workspaceId, component, preferredLocationId) }));
+  return { lineId: line.id, skuId: line.sku_id, kit: true, components: componentResults,
+    allocated: componentResults.reduce((sum, row) => sum + row.allocated, 0),
+    backordered: componentResults.reduce((sum, row) => sum + row.backordered, 0) };
+}
+
+function kitProgress(db, line) {
+  const components = db.prepare(`SELECT c.*,
+      COALESCE((SELECT SUM(a.quantity) FROM sales_order_kit_allocations a
+        WHERE a.kit_component_id = c.id), 0) AS allocated
+    FROM sales_order_kit_components c WHERE c.sales_order_line_id = ?`).all(line.id);
+  if (!components.length) return null;
+  const completeKits = Math.min(...components.map((row) => Math.floor(Number(row.quantity_fulfilled) / Number(row.quantity_per_kit))));
+  const coveredKits = Math.min(...components.map((row) => Math.floor(
+    (Number(row.quantity_fulfilled) + Number(row.allocated)) / Number(row.quantity_per_kit))));
+  return { fulfilled: Math.min(Number(line.quantity_ordered), completeKits),
+    allocated: Math.max(0, Math.min(Number(line.quantity_ordered), coveredKits) - completeKits),
+    components };
+}
+
 function totalsForOrder(db, orderId) {
-  return db.prepare(`SELECT COALESCE(SUM(sol.quantity_ordered), 0) AS ordered,
-      COALESCE(SUM(sol.quantity_fulfilled), 0) AS fulfilled,
-      COALESCE(SUM((SELECT SUM(soa.quantity) FROM sales_order_allocations soa
-                    WHERE soa.sales_order_line_id = sol.id)), 0) AS allocated
-    FROM sales_order_lines sol WHERE sol.sales_order_id = ?`).get(orderId);
+  const lines = db.prepare(`SELECT sol.*,
+      COALESCE((SELECT SUM(soa.quantity) FROM sales_order_allocations soa
+        WHERE soa.sales_order_line_id = sol.id), 0) AS allocated
+    FROM sales_order_lines sol WHERE sol.sales_order_id = ?`).all(orderId);
+  return lines.reduce((total, line) => {
+    const kit = kitProgress(db, line);
+    total.ordered += Number(line.quantity_ordered);
+    total.fulfilled += kit ? kit.fulfilled : Number(line.quantity_fulfilled);
+    total.allocated += kit ? kit.allocated : Number(line.allocated);
+    return total;
+  }, { ordered: 0, fulfilled: 0, allocated: 0 });
 }
 
 function currentStatus(db, orderId, cancelled = false) {
@@ -457,8 +568,7 @@ function confirm(db, ctx, orderId, options = {}) {
     }
     const allocations = [];
     for (const line of orderLineRows(db, ctx.workspaceId, orderId)) {
-      allocations.push({ lineId: line.id, skuId: line.sku_id,
-        ...allocateLine(db, ctx.workspaceId, line, order.fulfillment_location_id) });
+      allocations.push(allocateOrderLine(db, ctx.workspaceId, line, order.fulfillment_location_id));
     }
     const status = currentStatus(db, orderId);
     const now = nowIso();
@@ -511,8 +621,7 @@ function allocateAvailable(db, ctx, orderId, options = {}) {
 
     const allocations = [];
     for (const line of orderLineRows(db, ctx.workspaceId, orderId)) {
-      allocations.push({ lineId: line.id, skuId: line.sku_id,
-        ...allocateLine(db, ctx.workspaceId, line, order.fulfillment_location_id) });
+      allocations.push(allocateOrderLine(db, ctx.workspaceId, line, order.fulfillment_location_id));
     }
     const committed = allocations.reduce((total, entry) => total + Number(entry.allocated || 0), 0);
     if (!committed) {
@@ -547,6 +656,9 @@ function addLine(db, ctx, orderId, input, options = {}) {
     if (existing) {
       db.prepare('UPDATE sales_order_lines SET quantity_ordered = quantity_ordered + ?, updated_at = ? WHERE id = ?')
         .run(quantity, now, existing.id);
+      db.prepare(`UPDATE sales_order_kit_components
+        SET quantity_required = quantity_required + (quantity_per_kit * ?), updated_at = ?
+        WHERE sales_order_line_id = ?`).run(quantity, now, existing.id);
       line = db.prepare('SELECT * FROM sales_order_lines WHERE id = ?').get(existing.id);
     } else {
       const id = newId('sol');
@@ -573,8 +685,10 @@ function addLine(db, ctx, orderId, input, options = {}) {
         .run(id, ctx.workspaceId, orderId, sku.id, quantity,
           price.isSet ? price.amount_minor : null, price.isSet ? price.id : null, now, now);
       line = db.prepare('SELECT * FROM sales_order_lines WHERE id = ?').get(id);
+      kits.snapshotOrderLine(db, ctx.workspaceId, id, sku.id, quantity);
     }
-    const allocation = order.status === 'DRAFT' ? null : allocateLine(db, ctx.workspaceId, line, order.fulfillment_location_id);
+    const allocation = order.status === 'DRAFT' ? null
+      : allocateOrderLine(db, ctx.workspaceId, line, order.fulfillment_location_id);
     const status = order.status === 'DRAFT' ? 'DRAFT' : currentStatus(db, orderId);
     db.prepare('UPDATE sales_orders SET status = ?, updated_at = ?, version = version + 1 WHERE id = ?')
       .run(status, now, orderId);
@@ -619,19 +733,45 @@ function setLineQuantity(db, ctx, orderId, lineId, quantity, options = {}) {
       return { order: changed, event: null };
     }
 
-    let toRelease = current - target;
-    const allocations = db.prepare(`SELECT * FROM sales_order_allocations WHERE workspace_id = ?
-      AND sales_order_line_id = ? ORDER BY created_at DESC, id DESC`).all(ctx.workspaceId, lineId);
     let released = 0;
-    for (const allocation of allocations) {
-      if (!toRelease) break;
-      const amount = Math.min(toRelease, Number(allocation.quantity));
-      const left = Number(allocation.quantity) - amount;
-      if (left) db.prepare('UPDATE sales_order_allocations SET quantity = ?, updated_at = ? WHERE id = ?')
-        .run(left, nowIso(), allocation.id);
-      else db.prepare('DELETE FROM sales_order_allocations WHERE id = ?').run(allocation.id);
-      toRelease -= amount;
-      released += amount;
+    const components = kits.orderComponents(db, ctx.workspaceId, lineId);
+    if (components.length) {
+      for (const component of components) {
+        const required = target * Number(component.quantity_per_kit);
+        if (required < Number(component.quantity_fulfilled)) {
+          throw new ValidationError('An order update cannot remove kit components that Foundry has already fulfilled.');
+        }
+        let toRelease = Number(component.quantity_required) - required;
+        const allocations = db.prepare(`SELECT * FROM sales_order_kit_allocations
+          WHERE workspace_id = ? AND kit_component_id = ? ORDER BY created_at DESC, id DESC`)
+          .all(ctx.workspaceId, component.id);
+        for (const allocation of allocations) {
+          if (!toRelease) break;
+          const amount = Math.min(toRelease, Number(allocation.quantity));
+          const left = Number(allocation.quantity) - amount;
+          if (left) db.prepare('UPDATE sales_order_kit_allocations SET quantity = ?, updated_at = ? WHERE id = ?')
+            .run(left, nowIso(), allocation.id);
+          else db.prepare('DELETE FROM sales_order_kit_allocations WHERE id = ?').run(allocation.id);
+          toRelease -= amount;
+          released += amount;
+        }
+        db.prepare('UPDATE sales_order_kit_components SET quantity_required = ?, updated_at = ? WHERE id = ?')
+          .run(required, nowIso(), component.id);
+      }
+    } else {
+      let toRelease = current - target;
+      const allocations = db.prepare(`SELECT * FROM sales_order_allocations WHERE workspace_id = ?
+        AND sales_order_line_id = ? ORDER BY created_at DESC, id DESC`).all(ctx.workspaceId, lineId);
+      for (const allocation of allocations) {
+        if (!toRelease) break;
+        const amount = Math.min(toRelease, Number(allocation.quantity));
+        const left = Number(allocation.quantity) - amount;
+        if (left) db.prepare('UPDATE sales_order_allocations SET quantity = ?, updated_at = ? WHERE id = ?')
+          .run(left, nowIso(), allocation.id);
+        else db.prepare('DELETE FROM sales_order_allocations WHERE id = ?').run(allocation.id);
+        toRelease -= amount;
+        released += amount;
+      }
     }
 
     const now = nowIso();
@@ -671,7 +811,9 @@ function fulfill(db, ctx, orderId, input = {}, options = {}) {
     if (prior) return { order: getOrder(db, ctx.workspaceId, orderId), event: null, replayed: true };
     const requested = new Map();
     for(const line of (Array.isArray(input.lines)?input.lines:[])){
-      const key=`${line.lineId}:${line.locationId}`;
+      const key=line.kitComponentId
+        ? `kit:${line.kitComponentId}:${line.locationId}`
+        : `${line.lineId}:${line.locationId}`;
       const list=requested.get(key)||[];list.push({...line,quantity:positive(line.quantity)});requested.set(key,list);
     }
     const allocations = db.prepare(`SELECT soa.*, sol.sku_id, sol.quantity_fulfilled, sol.quantity_ordered,
@@ -682,7 +824,11 @@ function fulfill(db, ctx, orderId, input = {}, options = {}) {
       JOIN locations l ON l.id = soa.location_id
       WHERE sol.sales_order_id = ? AND soa.workspace_id = ? ORDER BY soa.created_at, soa.id`)
       .all(orderId, ctx.workspaceId);
-    if (!allocations.length) throw new ValidationError('No stock is currently allocated to this order.');
+    const hasKitAllocations = Boolean(db.prepare(`SELECT 1 FROM sales_order_kit_allocations ka
+      JOIN sales_order_kit_components kc ON kc.id = ka.kit_component_id
+      JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
+      WHERE sol.sales_order_id = ? AND ka.workspace_id = ? LIMIT 1`).get(orderId, ctx.workspaceId));
+    if (!allocations.length && !hasKitAllocations) throw new ValidationError('No stock is currently allocated to this order.');
     const fulfilled = [];
     for (const allocation of allocations) {
       const key = `${allocation.sales_order_line_id}:${allocation.location_id}`;
@@ -719,6 +865,66 @@ function fulfill(db, ctx, orderId, input = {}, options = {}) {
         // can trace COGS to the exact physical issue without guessing by time.
         movementIds });
     }
+    const kitAllocations = db.prepare(`SELECT ka.*, kc.sales_order_line_id, kc.component_sku_id AS sku_id,
+        kc.quantity_per_kit, kc.quantity_fulfilled, i.tracking_mode, l.name AS location_name
+      FROM sales_order_kit_allocations ka
+      JOIN sales_order_kit_components kc ON kc.id = ka.kit_component_id
+      JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
+      JOIN skus s ON s.id = kc.component_sku_id
+      JOIN items i ON i.id = s.item_id
+      JOIN locations l ON l.id = ka.location_id
+      WHERE sol.sales_order_id = ? AND ka.workspace_id = ? ORDER BY ka.created_at, ka.id`)
+      .all(orderId, ctx.workspaceId);
+    for (const allocation of kitAllocations) {
+      const key = `kit:${allocation.kit_component_id}:${allocation.location_id}`;
+      const requestedLines = requested.get(key) || [];
+      const quantity = requested.size ? requestedLines.reduce((sum, line) => sum + Number(line.quantity), 0)
+        : Number(allocation.quantity);
+      if (!quantity) continue;
+      if (quantity > Number(allocation.quantity)) throw new ValidationError('You cannot fulfill more kit components than are allocated at that location.');
+      if (allocation.tracking_mode !== 'quantity' && !requestedLines.length) {
+        throw new ValidationError('Choose the exact serial numbers or lots for every tracked kit component before fulfilling it.');
+      }
+      const movementIds = [];
+      if (allocation.tracking_mode === 'quantity') {
+        const result = inventory.issue(db, ctx, { skuId: allocation.sku_id, locationId: allocation.location_id,
+          quantity, reasonCode: 'sold', reference: order.order_number,
+          notes: `Fulfilled kit components for ${order.order_number}` });
+        movementIds.push(...result.movementIds);
+      } else if (allocation.tracking_mode === 'serial') {
+        const ids = requestedLines.flatMap((line) => Array.isArray(line.serialUnitIds) ? line.serialUnitIds : []);
+        if (ids.length !== quantity) throw new ValidationError('Name every serial unit used in this kit fulfillment.');
+        const result = inventory.issue(db, ctx, { skuId: allocation.sku_id, locationId: allocation.location_id,
+          serialUnitIds: ids, reasonCode: 'sold', reference: order.order_number,
+          notes: `Fulfilled kit components for ${order.order_number}` });
+        movementIds.push(...result.movementIds);
+      } else {
+        for (const line of requestedLines) {
+          if (!line.lotId) throw new ValidationError('Name the exact lot used in this kit fulfillment.');
+          const result = inventory.issue(db, ctx, { skuId: allocation.sku_id, locationId: allocation.location_id,
+            lotId: line.lotId, quantity: Number(line.quantity), reasonCode: 'sold', reference: order.order_number,
+            notes: `Fulfilled kit components for ${order.order_number}` });
+          movementIds.push(...result.movementIds);
+        }
+      }
+      const left = Number(allocation.quantity) - quantity;
+      if (left > 0) db.prepare('UPDATE sales_order_kit_allocations SET quantity = ?, updated_at = ? WHERE id = ?')
+        .run(left, nowIso(), allocation.id);
+      else db.prepare('DELETE FROM sales_order_kit_allocations WHERE id = ?').run(allocation.id);
+      db.prepare(`UPDATE sales_order_kit_components
+        SET quantity_fulfilled = quantity_fulfilled + ?, updated_at = ? WHERE id = ?`)
+        .run(quantity, nowIso(), allocation.kit_component_id);
+      fulfilled.push({ lineId: allocation.sales_order_line_id, kitComponentId: allocation.kit_component_id,
+        skuId: allocation.sku_id, locationId: allocation.location_id,
+        locationName: allocation.location_name, quantity, movementIds });
+    }
+    const kitLines = orderLineRows(db, ctx.workspaceId, orderId)
+      .filter((line) => kits.orderComponents(db, ctx.workspaceId, line.id).length);
+    for (const line of kitLines) {
+      const progress = kitProgress(db, line);
+      db.prepare('UPDATE sales_order_lines SET quantity_fulfilled = ?, updated_at = ? WHERE id = ?')
+        .run(progress.fulfilled, nowIso(), line.id);
+    }
     if (!fulfilled.length) throw new ValidationError('Choose at least one allocated quantity to fulfill.');
     const status = currentStatus(db, orderId);
     const now = nowIso();
@@ -743,13 +949,18 @@ function cancel(db, ctx, orderId, reason = null, options = {}) {
     const released = db.prepare(`SELECT COALESCE(SUM(soa.quantity), 0) AS n
       FROM sales_order_allocations soa JOIN sales_order_lines sol ON sol.id = soa.sales_order_line_id
       WHERE sol.sales_order_id = ?`).get(orderId).n;
+    const releasedKit = db.prepare(`SELECT COALESCE(SUM(a.quantity), 0) AS n
+      FROM sales_order_kit_allocations a
+      JOIN sales_order_kit_components c ON c.id = a.kit_component_id
+      JOIN sales_order_lines sol ON sol.id = c.sales_order_line_id
+      WHERE sol.sales_order_id = ?`).get(orderId).n;
     db.prepare(`DELETE FROM sales_order_allocations WHERE sales_order_line_id IN
       (SELECT id FROM sales_order_lines WHERE sales_order_id = ?)`).run(orderId);
     const now = nowIso();
     db.prepare(`UPDATE sales_orders SET status = 'CANCELLED', cancelled_by_user_id = ?, cancelled_at = ?,
       cancel_reason = ?, updated_at = ?, version = version + 1 WHERE id = ? AND workspace_id = ?`)
       .run(ctx.actorId, now, trimOrNull(reason), now, orderId, ctx.workspaceId);
-    const event = recordEvent(db, ctx, orderId, 'CANCELLED', { released, reason: trimOrNull(reason) },
+    const event = recordEvent(db, ctx, orderId, 'CANCELLED', { released: Number(released) + Number(releasedKit), reason: trimOrNull(reason) },
       options.idempotencyKey || `sales-order-cancelled:${orderId}`);
     return { order: getOrder(db, ctx.workspaceId, orderId), event };
   });
@@ -766,6 +977,9 @@ function cancelLine(db, ctx, orderId, lineId, reason = null, options = {}) {
     if (!line) throw new NotFoundError('That product is not on this sales order.');
     const released = db.prepare('SELECT COALESCE(SUM(quantity), 0) AS n FROM sales_order_allocations WHERE sales_order_line_id = ?')
       .get(lineId).n;
+    const releasedKit = db.prepare(`SELECT COALESCE(SUM(a.quantity), 0) AS n
+      FROM sales_order_kit_allocations a JOIN sales_order_kit_components c ON c.id = a.kit_component_id
+      WHERE c.sales_order_line_id = ?`).get(lineId).n;
     db.prepare('DELETE FROM sales_order_allocations WHERE sales_order_line_id = ?').run(lineId);
     if (Number(line.quantity_fulfilled) > 0) {
       db.prepare('UPDATE sales_order_lines SET quantity_ordered = quantity_fulfilled, updated_at = ? WHERE id = ?')
@@ -777,7 +991,8 @@ function cancelLine(db, ctx, orderId, lineId, reason = null, options = {}) {
     const status = order.status === 'DRAFT' ? 'DRAFT' : currentStatus(db, orderId);
     db.prepare('UPDATE sales_orders SET status = ?, updated_at = ?, version = version + 1 WHERE id = ?')
       .run(status, nowIso(), orderId);
-    const event = recordEvent(db, ctx, orderId, 'CHANGED', { lineId, cancelledRemainder: true, released, reason },
+    const event = recordEvent(db, ctx, orderId, 'CHANGED', { lineId, cancelledRemainder: true,
+      released: Number(released) + Number(releasedKit), reason },
       options.idempotencyKey);
     return { order: getOrder(db, ctx.workspaceId, orderId), event };
   });
@@ -803,12 +1018,29 @@ function getOrder(db, workspaceId, orderId) {
       COALESCE((SELECT SUM(soa.quantity) FROM sales_order_allocations soa WHERE soa.sales_order_line_id = sol.id), 0) AS allocated
     FROM sales_order_lines sol JOIN skus s ON s.id = sol.sku_id JOIN items i ON i.id = s.item_id
     WHERE sol.sales_order_id = ? AND sol.workspace_id = ? ORDER BY sol.created_at, sol.id`).all(orderId, workspaceId)
-    .map((line) => ({ ...line, backordered: ['CANCELLED', 'FULFILLED'].includes(row.status)
-      ? 0 : Math.max(0, Number(line.quantity_ordered) - Number(line.quantity_fulfilled) - Number(line.allocated)),
-      lineTotalMinor: line.unit_price_minor === null ? null : Number(line.unit_price_minor) * Number(line.quantity_ordered),
-      displayName: line.variant_label ? `${line.item_name} / ${line.variant_label}` : line.item_name,
-      allocations: db.prepare(`SELECT soa.*, l.name AS location_name FROM sales_order_allocations soa
-        JOIN locations l ON l.id = soa.location_id WHERE soa.sales_order_line_id = ? ORDER BY l.name`).all(line.id) }));
+    .map((line) => {
+      const kit = kitProgress(db, line);
+      const kitComponents = kit ? kits.orderComponents(db, workspaceId, line.id).map((component) => ({
+        ...component,
+        allocations: db.prepare(`SELECT a.*, l.name AS location_name
+          FROM sales_order_kit_allocations a JOIN locations l ON l.id = a.location_id
+          WHERE a.kit_component_id = ? ORDER BY l.name`).all(component.id)
+          .map((allocation) => ({ ...allocation, kit_component_id: component.id,
+            component_name: component.variant_label
+              ? `${component.item_name} / ${component.variant_label}` : component.item_name })),
+      })) : [];
+      const allocated = kit ? kit.allocated : Number(line.allocated);
+      const fulfilled = kit ? kit.fulfilled : Number(line.quantity_fulfilled);
+      return { ...line, quantity_fulfilled: fulfilled, allocated,
+        isKit: Boolean(kit), kitComponents,
+        backordered: ['CANCELLED', 'FULFILLED'].includes(row.status)
+          ? 0 : Math.max(0, Number(line.quantity_ordered) - fulfilled - allocated),
+        lineTotalMinor: line.unit_price_minor === null ? null : Number(line.unit_price_minor) * Number(line.quantity_ordered),
+        displayName: line.variant_label ? `${line.item_name} / ${line.variant_label}` : line.item_name,
+        allocations: kit ? kitComponents.flatMap((component) => component.allocations)
+          : db.prepare(`SELECT soa.*, l.name AS location_name FROM sales_order_allocations soa
+            JOIN locations l ON l.id = soa.location_id WHERE soa.sales_order_line_id = ? ORDER BY l.name`).all(line.id) };
+    });
   const totals = lines.reduce((t, line) => ({ ordered: t.ordered + Number(line.quantity_ordered),
     fulfilled: t.fulfilled + Number(line.quantity_fulfilled), allocated: t.allocated + Number(line.allocated),
     backordered: t.backordered + Number(line.backordered) }), { ordered: 0, fulfilled: 0, allocated: 0, backordered: 0 });
@@ -1000,6 +1232,18 @@ function reconcileForSkus(db, ctx, skuIds, options = {}) {
         db.prepare('DELETE FROM sales_order_allocations WHERE id = ?').run(allocation.id);
         changedOrders.set(allocation.sales_order_id, { released: true, allocated: false });
       }
+      const existingKitAllocations = db.prepare(`SELECT ka.id, sol.sales_order_id
+        FROM sales_order_kit_allocations ka
+        JOIN sales_order_kit_components kc ON kc.id = ka.kit_component_id
+        JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE ka.workspace_id = ? AND kc.component_sku_id = ?
+          AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')`)
+        .all(ctx.workspaceId, skuId);
+      for (const allocation of existingKitAllocations) {
+        db.prepare('DELETE FROM sales_order_kit_allocations WHERE id = ?').run(allocation.id);
+        changedOrders.set(allocation.sales_order_id, { released: true, allocated: false });
+      }
       const positions = db.prepare(`SELECT l.id AS location_id, COALESCE(b.on_hand, 0) AS on_hand,
           COALESCE((SELECT SUM(soa.quantity) FROM sales_order_allocations soa
             JOIN sales_order_lines sol ON sol.id = soa.sales_order_line_id
@@ -1039,8 +1283,30 @@ function reconcileForSkus(db, ctx, skuIds, options = {}) {
         WHERE sol.workspace_id = ? AND sol.sku_id = ?
           AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
         ORDER BY so.allocation_priority, so.confirmed_at, so.created_at, sol.created_at, sol.id`).all(ctx.workspaceId, skuId);
-      for (const line of waitingLines) {
-        const allocation = allocateLine(db, ctx.workspaceId, line, line.fulfillment_location_id);
+      const waitingComponents = db.prepare(`SELECT kc.*, sol.sales_order_id,
+          so.fulfillment_location_id, so.confirmed_at, so.allocation_priority,
+          so.created_at AS order_created_at, sol.created_at AS line_created_at
+        FROM sales_order_kit_components kc
+        JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE kc.workspace_id = ? AND kc.component_sku_id = ?
+          AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')`)
+        .all(ctx.workspaceId, skuId);
+      const queue = [
+        ...waitingLines.map((line) => ({ kind: 'line', row: line, created_at: line.created_at })),
+        ...waitingComponents.map((component) => ({ kind: 'component', row: component,
+          created_at: component.line_created_at })),
+      ].sort((left, right) =>
+        Number(left.row.allocation_priority) - Number(right.row.allocation_priority)
+        || String(left.row.confirmed_at || '').localeCompare(String(right.row.confirmed_at || ''))
+        || String(left.row.order_created_at || '').localeCompare(String(right.row.order_created_at || ''))
+        || String(left.created_at || '').localeCompare(String(right.created_at || ''))
+        || String(left.row.id).localeCompare(String(right.row.id)));
+      for (const entry of queue) {
+        const line = entry.row;
+        const allocation = entry.kind === 'component'
+          ? allocateKitComponent(db, ctx.workspaceId, line, line.fulfillment_location_id)
+          : allocateLine(db, ctx.workspaceId, line, line.fulfillment_location_id);
         if (allocation.allocated > 0) {
           const prior = changedOrders.get(line.sales_order_id) || { released: false, allocated: false };
           prior.allocated = true;
@@ -1095,23 +1361,39 @@ function setAllocationPriority(db, ctx, orderId, priority) {
   const order = getOrder(db, ctx.workspaceId, orderId);
   db.prepare(`UPDATE sales_orders SET allocation_priority = ?, updated_at = ?, version = version + 1
     WHERE id = ? AND workspace_id = ?`).run(value, nowIso(), order.id, ctx.workspaceId);
-  reconcileForSkus(db, ctx, order.lines.map((line) => line.sku_id));
+  reconcileForSkus(db, ctx, order.lines.flatMap((line) => line.isKit
+    ? line.kitComponents.map((component) => component.component_sku_id)
+    : [line.sku_id]));
   return getOrder(db, ctx.workspaceId, order.id);
 }
 
 /** Confirmed customer demand which could not yet be reserved from on-hand stock. */
 function backorderedBySku(db, workspaceId, { skuIds = null } = {}) {
   const ids = skuIds && skuIds.length ? [...new Set(skuIds)] : null;
-  const clause = ids ? ` AND sol.sku_id IN (${ids.map(() => '?').join(',')})` : '';
-  return db.prepare(`SELECT sol.sku_id,
-      SUM(MAX(0, sol.quantity_ordered - sol.quantity_fulfilled -
-        COALESCE((SELECT SUM(soa.quantity) FROM sales_order_allocations soa
-          WHERE soa.sales_order_line_id = sol.id), 0))) AS backordered
-    FROM sales_order_lines sol
-    JOIN sales_orders so ON so.id = sol.sales_order_id
-    WHERE sol.workspace_id = ?
-      AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')${clause}
-    GROUP BY sol.sku_id`).all(workspaceId, ...(ids || []));
+  const placeholders = ids ? ids.map(() => '?').join(',') : '';
+  return db.prepare(`SELECT sku_id, SUM(backordered) AS backordered FROM (
+      SELECT sol.sku_id,
+        MAX(0, sol.quantity_ordered - sol.quantity_fulfilled -
+          COALESCE((SELECT SUM(soa.quantity) FROM sales_order_allocations soa
+            WHERE soa.sales_order_line_id = sol.id), 0)) AS backordered
+      FROM sales_order_lines sol
+      JOIN sales_orders so ON so.id = sol.sales_order_id
+      WHERE sol.workspace_id = ?
+        AND NOT EXISTS (SELECT 1 FROM sales_order_kit_components kc WHERE kc.sales_order_line_id = sol.id)
+        AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+        ${ids ? `AND sol.sku_id IN (${placeholders})` : ''}
+      UNION ALL
+      SELECT kc.component_sku_id AS sku_id,
+        MAX(0, kc.quantity_required - kc.quantity_fulfilled -
+          COALESCE((SELECT SUM(ka.quantity) FROM sales_order_kit_allocations ka
+            WHERE ka.kit_component_id = kc.id), 0)) AS backordered
+      FROM sales_order_kit_components kc
+      JOIN sales_order_lines sol ON sol.id = kc.sales_order_line_id
+      JOIN sales_orders so ON so.id = sol.sales_order_id
+      WHERE kc.workspace_id = ?
+        AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')
+        ${ids ? `AND kc.component_sku_id IN (${placeholders})` : ''}
+    ) GROUP BY sku_id`).all(workspaceId, ...(ids || []), workspaceId, ...(ids || []));
 }
 
 module.exports = {
@@ -1119,7 +1401,7 @@ module.exports = {
   setCustomerActive, removeCustomer, customerUsage,
   createOrder, confirm, allocateAvailable, addLine, setLineQuantity, fulfill, cancel, cancelLine,
   resolveEmailCustomer, resolveDelivery,
-  getOrder, listOrders, listCompletedSales, waitingForStock, committedByPosition, backorderedBySku, availabilityForSku,
+  getOrder, listOrders, listCompletedSales, waitingForStock, committedByPosition, committedByItem, backorderedBySku, availabilityForSku,
   commitmentsForSku, reconcileForSkus,
   setAllocationPriority,
 };

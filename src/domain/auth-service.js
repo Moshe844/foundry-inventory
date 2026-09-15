@@ -163,7 +163,7 @@ function listWorkspacesForAccount(db, accountId) {
     .prepare(
       `SELECT w.id, w.name, w.created_at, w.owner_account_id, w.data_mode, u.id AS membership_id, u.role
          FROM users u JOIN workspaces w ON w.id = u.workspace_id
-        WHERE u.account_id = ?
+        WHERE u.account_id = ? AND w.deletion_requested_at IS NULL
         ORDER BY w.created_at, w.name`
     )
     .all(accountId);
@@ -240,7 +240,7 @@ function renameWorkspace(db, ctx, actor, name) {
 }
 
 function getWorkspace(db, workspaceId) {
-  return db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId) || null;
+  return db.prepare('SELECT * FROM workspaces WHERE id = ? AND deletion_requested_at IS NULL').get(workspaceId) || null;
 }
 
 module.exports = {

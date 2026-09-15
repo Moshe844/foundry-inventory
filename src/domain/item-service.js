@@ -15,6 +15,7 @@ const {
 
 const MAX_OPTIONS = 3;
 const MAX_VARIANTS = 200;
+const MAX_EXACT_PAGE = 5000;
 
 function codeSlug(value) {
   return String(value)
@@ -351,6 +352,139 @@ function createExactItem(db, ctx, input) {
   });
 }
 
+/** Create only the product half of a large exact catalogue import. */
+function createItemShell(db, ctx, input) {
+  return inTransaction(db, () => {
+    const now = nowIso();
+    const name = requireText(input.name, 'Item name');
+    const trackingMode = requireOneOf(input.trackingMode || 'quantity', TRACKING_MODE_IDS, 'Tracking type');
+    const baseCode = trimOrNull(input.baseCode);
+    if (baseCode && db.prepare('SELECT 1 FROM items WHERE workspace_id = ? AND base_code = ? COLLATE NOCASE')
+      .get(ctx.workspaceId, baseCode)) {
+      throw new ValidationError(`Another item already uses the code ${baseCode}.`, { field: 'baseCode' });
+    }
+    const itemId = newId('item');
+    db.prepare(`INSERT INTO items
+      (id, workspace_id, name, base_code, description, unit_label, tracking_mode,
+       has_variants, allow_negative, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 1, ?, ?)`)
+      .run(itemId, ctx.workspaceId, name, baseCode, trimOrNull(input.description),
+        trimOrNull(input.unitLabel) || 'unit', trackingMode, now, now);
+    return { itemId };
+  });
+}
+
+/**
+ * A migration may prove aggregate on-hand quantities while the source only
+ * supplies a configuration flag saying that an item is serial tracked.  It
+ * may not manufacture serial identities.  This domain-owned correction lets
+ * the governed migration decision keep the proven quantities and begin the
+ * item as quantity tracked instead.  It is intentionally unavailable to
+ * ordinary callers and refuses to discard any real serial identity.
+ */
+function correctTrackingModeForMigration(db, ctx, itemId, input = {}) {
+  if (!ctx || ctx.verifiedMigration !== true) {
+    throw new InvariantError('Only a verified migration decision can correct imported tracking mode.',
+      'migration_tracking_resolution_required');
+  }
+  const item = repo.requireItem(db, ctx.workspaceId, itemId);
+  const from = requireOneOf(input.from || item.tracking_mode, TRACKING_MODE_IDS, 'Current tracking type');
+  const to = requireOneOf(input.to, TRACKING_MODE_IDS, 'New tracking type');
+  if (item.tracking_mode === to) return item;
+  if (item.tracking_mode !== from || from !== 'serial' || to !== 'quantity') {
+    throw new InvariantError('This migration correction only resolves serial configuration without serial identities.',
+      'migration_tracking_resolution_invalid');
+  }
+  const serialCount = db.prepare(`SELECT COUNT(*) AS n FROM serial_units su
+    JOIN skus s ON s.id=su.sku_id WHERE su.workspace_id=? AND s.item_id=?`)
+    .get(ctx.workspaceId,itemId).n;
+  if (serialCount) {
+    throw new InvariantError('This item already has exact serial identities. Foundry will not discard them.',
+      'migration_serial_identity_exists');
+  }
+  db.prepare('UPDATE items SET tracking_mode=?,updated_at=? WHERE id=? AND workspace_id=?')
+    .run(to,nowIso(),itemId,ctx.workspaceId);
+  return repo.requireItem(db,ctx.workspaceId,itemId);
+}
+
+/**
+ * Add source-exact SKUs in bounded pages. This never forms a Cartesian product,
+ * silently renames an external code, or limits how many axes the source owns.
+ */
+function addExactVariants(db, ctx, itemId, variants) {
+  if (!Array.isArray(variants) || !variants.length) throw new ValidationError('Add at least one exact product variant.');
+  if (variants.length > MAX_EXACT_PAGE) throw new ValidationError(`Add exact variants in pages of ${MAX_EXACT_PAGE} or fewer.`);
+  return inTransaction(db, () => {
+    const item = repo.requireItem(db, ctx.workspaceId, itemId);
+    entitlements.assertWithin(db, ctx, 'skus', { adding: variants.length });
+    const now = nowIso();
+    const optionByName = new Map(db.prepare(`SELECT id, name FROM item_options
+      WHERE workspace_id = ? AND item_id = ? ORDER BY position`).all(ctx.workspaceId, itemId)
+      .map((row) => [row.name.toLowerCase(), row]));
+    let nextOptionPosition = optionByName.size;
+    for (const variant of variants) {
+      for (const rawName of Object.keys(variant.options || {})) {
+        const name = requireText(rawName, 'Option name', { max: 80 });
+        if (optionByName.has(name.toLowerCase())) continue;
+        const option = { id: newId('opt'), name };
+        db.prepare(`INSERT INTO item_options (id, workspace_id, item_id, name, position)
+          VALUES (?, ?, ?, ?, ?)`).run(option.id, ctx.workspaceId, itemId, name, nextOptionPosition++);
+        optionByName.set(name.toLowerCase(), option);
+      }
+    }
+    const priorCount = db.prepare('SELECT COUNT(*) AS n FROM skus WHERE workspace_id = ? AND item_id = ?')
+      .get(ctx.workspaceId, itemId).n;
+    const explicitCodes = new Set();
+    const sourceCodes = variants.map((variant) => trimOrNull(variant.code)).filter(Boolean);
+    for (const code of sourceCodes) {
+      const key = code.toLowerCase();
+      if (explicitCodes.has(key)) {
+        throw new ValidationError(`Source SKU code ${code} is duplicated. Foundry will not silently rename it.`);
+      }
+      explicitCodes.add(key);
+    }
+    const existingCodes = new Set();
+    for (let offset = 0; offset < sourceCodes.length; offset += 500) {
+      const page = sourceCodes.slice(offset, offset + 500);
+      if (!page.length) continue;
+      for (const row of db.prepare(`SELECT code FROM skus WHERE workspace_id = ?
+        AND code COLLATE NOCASE IN (${page.map(() => '?').join(',')})`).all(ctx.workspaceId, ...page)) {
+        existingCodes.add(row.code.toLowerCase());
+      }
+    }
+    const taken = new Set();
+    const created = variants.map((variant, index) => {
+      const explicit = trimOrNull(variant.code);
+      if (explicit && existingCodes.has(explicit.toLowerCase())) {
+        throw new ValidationError(`Source SKU code ${explicit} already exists. Foundry will not silently rename it.`);
+      }
+      const optionRows = [...optionByName.values()];
+      const values = optionRows.map((option) => {
+        const key = Object.keys(variant.options || {}).find((candidate) => candidate.toLowerCase() === option.name.toLowerCase());
+        return key ? requireText(variant.options[key], option.name, { max: 160 }) : null;
+      });
+      const label = trimOrNull(variant.label) || values.filter(Boolean).join(' / ') || null;
+      const generated = [item.base_code || codeSlug(item.name), label ? codeSlug(label) : null]
+        .filter(Boolean).join('-');
+      const code = explicit || uniqueCode(db, ctx.workspaceId, generated, taken);
+      const skuId = newId('sku');
+      db.prepare(`INSERT INTO skus
+        (id, workspace_id, item_id, code, barcode, variant_label, is_default, position, is_active, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`)
+        .run(skuId, ctx.workspaceId, itemId, code, trimOrNull(variant.barcode), label,
+          priorCount === 0 && variants.length === 1 && !label ? 1 : 0, priorCount + index, now);
+      optionRows.forEach((option, optionIndex) => {
+        if (values[optionIndex] !== null) db.prepare(`INSERT INTO sku_option_values (sku_id, option_id, value)
+          VALUES (?, ?, ?)`).run(skuId, option.id, values[optionIndex]);
+      });
+      return { skuId, code, label, sourceKey: variant.sourceKey || null };
+    });
+    db.prepare(`UPDATE items SET has_variants = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+      .run((priorCount + created.length > 1 || optionByName.size) ? 1 : 0, now, itemId, ctx.workspaceId);
+    return { itemId, skus: created, skuIds: created.map((row) => row.skuId) };
+  });
+}
+
 /** Archive one variant without pretending that its zero balance is a count change. */
 function setSkuActive(db, ctx, skuId, isActive) {
   const sku = db.prepare(
@@ -484,6 +618,9 @@ function getItemDetail(db, workspaceId, itemId) {
 module.exports = {
   createItem,
   createExactItem,
+  createItemShell,
+  correctTrackingModeForMigration,
+  addExactVariants,
   updateItem,
   addVariant,
   setItemActive,

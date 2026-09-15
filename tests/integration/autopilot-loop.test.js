@@ -338,9 +338,10 @@ test('a transfer that cannot be verified stops autopilot rather than retrying', 
   assert.equal(state.suspended, true);
   assert.equal(state.suspendedScope, 'transfer');
   assert.match(state.suspendedReason, /could not be independently verified/);
-  assert.equal(state.canAutomate, false);
+  assert.equal(state.canAutomate, true,
+    'a transfer failure stops transfers, not unrelated autonomous domains');
 
-  // A further run does nothing while it is suspended.
+  // A further run cannot retry the suspended transfer scope.
   const next = runner.run(env.db, env.ctx, env.membership, { trigger: 'after' });
   assert.equal(next.executed, 0);
 });

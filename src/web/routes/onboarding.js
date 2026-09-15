@@ -10,18 +10,28 @@
  */
 
 const express = require('express');
+const path = require('node:path');
 const paths = require('../../onboarding/paths');
 const sourceService = require('../../onboarding/source-service');
 const migration = require('../../onboarding/migration-service');
+const canonicalMigration = require('../../onboarding/canonical-migration');
+const canonicalMapping = require('../../onboarding/canonical-mapping');
+const ownerMigration = require('../../onboarding/owner-migration');
+const cutoverRunner = require('../../onboarding/cutover-runner');
+const preparationRunner = require('../../onboarding/preparation-runner');
 const providerRegistry = require('../../connections/providers/registry');
 const connections = require('../../connections/service');
 const permissions = require('../../actions/permissions');
 const config = require('../../config');
-const { requireAuth, asyncRoute } = require('../middleware');
+const { requireAuth, requirePermission, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 
 const router = express.Router();
+const databasePathFor = (db) => path.resolve(String(db && db.name || config.databasePath));
 router.use('/onboarding', requireAuth);
+router.use('/onboarding/migrations', requirePermission(permissions.ADMIN, 'manage a verified migration'));
+router.use('/onboarding/migration-mappings', requirePermission(permissions.ADMIN, 'approve source meanings'));
+router.use('/onboarding/migration-datasets', requirePermission(permissions.ADMIN, 'classify source datasets'));
 
 /** The four paths. */
 router.get(
@@ -64,12 +74,277 @@ router.post(
   })
 );
 
+// ---------------------------------------------------------------------------
+// Verified provider-neutral cutovers
+// ---------------------------------------------------------------------------
+
+router.get('/onboarding/migrations', asyncRoute(async (req, res) => {
+  return res.page('onboarding/migrations', {
+    title: 'Migration control', nav: 'foundry',
+    packages: canonicalMigration.listPackages(req.db, req.ctx.workspaceId),
+  });
+}));
+
+router.get('/onboarding/migrations/new', asyncRoute(async (req,res) => {
+  return res.page('onboarding/migration-new',{
+    title:'Move to Foundry',nav:'foundry',types:ownerMigration.OWNER_TYPES,
+  });
+}));
+
+router.post('/onboarding/migrations/new', asyncRoute(async (req,res) => {
+  const wantsJson = String(req.get('accept') || '').includes('application/json');
+  const files = (req.files || []).filter((entry) => entry.field === 'files' && entry.size > 0);
+  try {
+    const result = ownerMigration.createFromFiles(req.db,req.ctx,req.user,{
+      sourceLabel:req.body.sourceLabel,
+      files,
+      pasted:req.body.pasted,
+    });
+    preparationRunner.queue(req.db,databasePathFor(req.db),req.ctx,req.user,result.package.id);
+    const location = `/onboarding/migrations/${result.package.id}/sources`;
+    if (wantsJson) return res.status(201).json({ ok:true,location });
+    req.flash('success','Your exports are stored as an immutable source snapshot. Confirm only the meanings Foundry cannot prove.');
+    return res.redirect(303,location);
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    if (wantsJson) {
+      return res.status(error.status || 400).json({
+        ok:false,
+        message:error.message,
+        files:files.map((file) => ({ name:file.filename,size:file.size })),
+      });
+    }
+    req.flash('error',error.message);
+    return res.redirect(303,'/onboarding/migrations/new');
+  }
+}));
+
+router.get('/onboarding/migrations/:id/sources', asyncRoute(async (req,res) => {
+  const pkg = canonicalMigration.getPackage(req.db,req.ctx.workspaceId,req.params.id);
+  if (['READY','NEEDS_ATTENTION','APPROVED','APPLYING','RECONCILING','VERIFIED','CUTOVER_ACTIVE','FAILED'].includes(pkg.status)) {
+    return res.redirect(303,`/onboarding/migrations/${req.params.id}`);
+  }
+  const datasets = ownerMigration.listDatasets(req.db,req.ctx.workspaceId,req.params.id).map((dataset) => {
+    const profile = dataset.profileId
+      ? canonicalMapping.getProfile(req.db,req.ctx.workspaceId,dataset.profileId) : null;
+    const unresolved = profile ? profile.mappings.filter((mapping) => mapping.disposition === 'UNRESOLVED') : [];
+    const custom = profile ? profile.mappings.filter((mapping) => String(mapping.targetField || '').startsWith('attribute:')) : [];
+    return { ...dataset,profile,unresolved,custom };
+  });
+  return res.page('onboarding/migration-sources',{
+    title:'Review migration sources',nav:'foundry',
+    pkg,
+    datasets,
+    sourceReview:ownerMigration.sourceReview(req.db,req.ctx.workspaceId,req.params.id),
+    types:ownerMigration.OWNER_TYPES,
+  });
+}));
+
+router.post('/onboarding/migrations/:id/prepare-known-evidence', asyncRoute(async (req,res) => {
+  try {
+    preparationRunner.queue(req.db,databasePathFor(req.db),req.ctx,req.user,req.params.id);
+    req.flash('success','Foundry is preparing and verifying every source meaning it can prove. The progress is shown on this page.');
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error',error.message);
+  }
+  return res.redirect(303,`/onboarding/migrations/${req.params.id}/sources`);
+}));
+
+router.post('/onboarding/migrations/:id/choose-operational-truth', asyncRoute(async (req,res) => {
+  try {
+    ownerMigration.decideOperationalTruth(req.db,req.ctx,req.user,req.params.id,req.body.choice);
+    preparationRunner.queue(req.db,databasePathFor(req.db),req.ctx,req.user,req.params.id);
+    req.flash('success','Decision saved. Foundry is now finishing preparation and verification automatically.');
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error',error.message);
+  }
+  return res.redirect(303,`/onboarding/migrations/${req.params.id}/sources`);
+}));
+
+router.post('/onboarding/migrations/:id/reanalyze', asyncRoute(async (req,res) => {
+  try {
+    ownerMigration.reanalyze(req.db,req.ctx,req.user,req.params.id);
+    req.flash('success','Foundry re-read every worksheet and rebuilt the plan from their structure and relationships.');
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error',error.message);
+  }
+  return res.redirect(303,`/onboarding/migrations/${req.params.id}/sources`);
+}));
+
+router.post('/onboarding/migrations/:id/stage-ready', asyncRoute(async (req,res) => {
+  try {
+    preparationRunner.queue(req.db,databasePathFor(req.db),req.ctx,req.user,req.params.id);
+    req.flash('success','Foundry is preparing and verifying the understood datasets automatically.');
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error',error.message);
+  }
+  return res.redirect(303,`/onboarding/migrations/${req.params.id}/sources`);
+}));
+
+router.post('/onboarding/migration-datasets/:id/classify', asyncRoute(async (req,res) => {
+  try {
+    const profile = ownerMigration.attachProfile(req.db,req.ctx,req.user,req.params.id,req.body.entityType);
+    return res.redirect(303,`/onboarding/migration-mappings/${profile.id}`);
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error',error.message);
+    const dataset = ownerMigration.getDataset(req.db,req.ctx.workspaceId,req.params.id);
+    return res.redirect(303,`/onboarding/migrations/${dataset.packageId}/sources`);
+  }
+}));
+
+router.post('/onboarding/migration-datasets/:id/prepare-purchase-orders', asyncRoute(async (req,res) => {
+  const dataset = ownerMigration.getDataset(req.db,req.ctx.workspaceId,req.params.id);
+  try {
+    const result = ownerMigration.preparePurchaseOrderLifecycle(req.db,req.ctx,req.user,dataset.id);
+    preparationRunner.queue(req.db,databasePathFor(req.db),req.ctx,req.user,dataset.packageId);
+    req.flash('success',result.replayed
+      ? 'Those purchase orders were already prepared.'
+      : 'Purchase orders prepared. Only verified outstanding quantities will become incoming supply; received and closed orders remain source history.');
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error',error.message);
+  }
+  return res.redirect(303,`/onboarding/migrations/${dataset.packageId}/sources`);
+}));
+
+router.get('/onboarding/migrations/:id', asyncRoute(async (req, res) => {
+  const report = canonicalMigration.report(req.db, req.ctx.workspaceId, req.params.id);
+  return res.page('onboarding/migration-report', {
+    title: 'Migration reconciliation', nav: 'foundry',
+    report,
+    datasets: ownerMigration.listDatasets(req.db,req.ctx.workspaceId,req.params.id),
+    sourceReview: ownerMigration.sourceReview(req.db,req.ctx.workspaceId,req.params.id),
+  });
+}));
+
+router.get('/onboarding/migrations/:id/progress', asyncRoute(async (req,res) => {
+  const report = canonicalMigration.report(req.db,req.ctx.workspaceId,req.params.id);
+  const pending = report.package.status === 'APPLYING' ? req.db.prepare(`SELECT entity_type AS entityType,COUNT(*) AS count
+    FROM migration_records WHERE package_id=? AND status='VALID' GROUP BY entity_type ORDER BY MIN(ordinal),entity_type LIMIT 1`)
+    .get(req.params.id) : null;
+  return res.json({
+    status:report.package.status,
+    appliedCount:report.package.appliedCount,
+    stagedCount:report.package.stagedCount,
+    problemCount:report.package.problemCount,
+    preparationStatus:report.package.preparationStatus,
+    preparationStage:report.package.preparationStage,
+    preparationCompleted:report.package.preparationCompleted,
+    preparationTotal:report.package.preparationTotal,
+    preparationDetail:report.package.preparationDetail,
+    currentEntityType:pending ? pending.entityType : null,
+  });
+}));
+
+router.get('/onboarding/migration-mappings/:id', asyncRoute(async (req,res) => {
+  return res.page('onboarding/migration-mapping',{
+    title:'Review source meanings',nav:'foundry',profile:canonicalMapping.getProfile(req.db,req.ctx.workspaceId,req.params.id),
+    fields:canonicalMapping.FIELD_CATALOG,fieldLabels:canonicalMapping.FIELD_LABELS,
+  });
+}));
+
+router.post('/onboarding/migration-mappings/:id', asyncRoute(async (req,res) => {
+  const profile = canonicalMapping.getProfile(req.db,req.ctx.workspaceId,req.params.id);
+  const decisions = profile.mappings.filter((mapping) => mapping.disposition === 'UNRESOLVED').map((mapping) => {
+    const value = trimOrNull(req.body[`field_${Buffer.from(mapping.sourceField).toString('hex')}`]);
+    return { sourceField:mapping.sourceField,targetField:value === '__ignore__' ? null : value,
+      disposition:value === '__ignore__' ? 'IGNORED' : 'MAPPED' };
+  });
+  try {
+    canonicalMapping.setMappings(req.db,req.ctx,req.user,profile.id,decisions);
+    canonicalMapping.approve(req.db,req.ctx,req.user,profile.id);
+    const ownerStaged = ownerMigration.stageDataset(req.db,req.ctx,req.user,profile.id);
+    if (ownerStaged) preparationRunner.queue(req.db,databasePathFor(req.db),req.ctx,req.user,profile.packageId);
+    req.flash('success',ownerStaged
+      ? 'Source meanings approved. Foundry staged every row from the exact file you reviewed.'
+      : 'Source meanings approved. The connected source can now stage rows through this locked mapping.');
+    return res.redirect(303,ownerStaged
+      ? `/onboarding/migrations/${profile.packageId}/sources`
+      : `/onboarding/migrations/${profile.packageId}`);
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error',error.message);
+    return res.redirect(303,`/onboarding/migration-mappings/${profile.id}`);
+  }
+}));
+
+function migrationAction(name, action) {
+  router.post(`/onboarding/migrations/:id/${name}`, asyncRoute(async (req, res) => {
+    try {
+      action(req.db, req.ctx, req.user, req.params.id, req.body || {});
+    } catch (error) {
+      if (!error.status || error.status >= 500) throw error;
+      req.flash('error', error.message);
+    }
+    return res.redirect(303, `/onboarding/migrations/${req.params.id}`);
+  }));
+}
+
+migrationAction('validate', canonicalMigration.validate);
+migrationAction('start-delta', canonicalMigration.beginDeltaCapture);
+migrationAction('freeze', canonicalMigration.freezeSource);
+migrationAction('approve', canonicalMigration.approve);
+migrationAction('apply', canonicalMigration.apply);
+migrationAction('reconcile', canonicalMigration.reconcile);
+migrationAction('activate', canonicalMigration.activateCutover);
+
+router.post('/onboarding/migrations/:id/approve-and-activate', asyncRoute(async (req,res) => {
+  try {
+    const pkg = canonicalMigration.getPackage(req.db,req.ctx.workspaceId,req.params.id);
+    if (pkg.stagedCount >= 50000) {
+      canonicalMigration.beginCutover(req.db,req.ctx,req.user,req.params.id);
+      const queued = cutoverRunner.queue(databasePathFor(req.db),req.ctx,req.user,req.params.id);
+      req.flash('success',queued
+        ? 'The verified switch is running in the background. You can keep using Foundry; completed records are saved after every batch.'
+        : 'The verified switch is already running.');
+      return res.redirect(303,`/onboarding/migrations/${req.params.id}`);
+    }
+    const result = canonicalMigration.approveAndActivate(req.db,req.ctx,req.user,req.params.id);
+    req.flash(result.activated || result.replayed ? 'success' : 'error',result.activated
+      ? `Switch complete. Foundry applied ${result.totalApplied} verified records and reconciled the result.`
+      : result.replayed ? 'This verified switch is already active.'
+        : 'Foundry applied the source but did not activate it because reconciliation did not match.');
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error',error.message);
+  }
+  return res.redirect(303,`/onboarding/migrations/${req.params.id}`);
+}));
+
+router.post('/onboarding/migrations/:id/resolve-missing-serials', asyncRoute(async (req,res) => {
+  try {
+    const resolved = canonicalMigration.resolveMissingSerialEvidence(req.db,req.ctx,req.user,req.params.id,req.body.choice);
+    if (resolved.package.status === 'APPROVED') {
+      canonicalMigration.beginCutover(req.db,req.ctx,req.user,req.params.id);
+      cutoverRunner.queue(databasePathFor(req.db),req.ctx,req.user,req.params.id);
+      req.flash('success',`Decision saved. Foundry retained ${resolved.evidence.provenQuantity.toLocaleString()} proven units and resumed the verified switch.`);
+    } else {
+      req.flash('success','Decision saved. Foundry retained the proven quantities and the migration is ready for final approval.');
+    }
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error',error.message);
+  }
+  return res.redirect(303,`/onboarding/migrations/${req.params.id}`);
+}));
+
 /** "Not sure — here's what's going on." */
 router.post(
   '/onboarding/describe',
   asyncRoute(async (req, res) => {
     const description = trimOrNull(req.body.description) || '';
-    const recommendation = paths.recommendFromDescription(description);
+    const recommendationResult = paths.recommendFromDescription(description);
+    const recommendedOption = recommendationResult
+      ? paths.SOURCE_OPTIONS.find((option) => option.id === recommendationResult.path) || null
+      : null;
+    const recommendation = recommendationResult && recommendedOption
+      ? { ...recommendationResult, label: recommendedOption.label }
+      : null;
     const state = paths.ensure(req.db, req.ctx.workspaceId);
 
     return res.page('onboarding/start', {
@@ -81,12 +356,12 @@ router.post(
       recommendation,
       /* The chooser offers a mailbox that PATHS does not carry, so the button
          for a recommendation has to come from the list the page renders. */
-      recommendedOption: recommendation
-        ? paths.SOURCE_OPTIONS.find((option) => option.id === recommendation.id) || null
-        : null,
-      sourcePrompt: description && !recommendation
-        ? 'That explains the kind of business, but it does not contain the actual product names, variants, locations, or quantities. Choose where Foundry should get those real records.'
-        : null,
+      recommendedOption,
+      sourcePrompt: recommendation
+        ? `Foundry recommends this because ${recommendation.reason}. You can still choose any other source below.`
+        : (description
+          ? 'That explains the kind of business, but it does not contain the actual product names, variants, locations, or quantities. Choose where Foundry should get those real records.'
+          : null),
       description,
       canOperate: permissions.can(req.user, permissions.OPERATE),
     });
@@ -299,7 +574,7 @@ router.post(
   asyncRoute(async (req, res) => {
     paths.setExternalSystem(req.db, req.ctx.workspaceId, req.body.system);
     // Without a connector there is exactly one honest next step: an export.
-    return res.redirect(303, '/onboarding/files');
+    return res.redirect(303, '/onboarding/migrations/new');
   })
 );
 

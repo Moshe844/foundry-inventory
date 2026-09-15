@@ -1,0 +1,43 @@
+<div class="rm-head">
+  <a class="rm-back" href="/onboarding/migrations">← Migration control</a>
+  <p class="rm-head__eyebrow">Move to Foundry</p>
+  <h1>Bring the records you already trust.</h1>
+  <p>Upload exports from your current system or spreadsheets. Foundry stores the exact files, works out their structure, and asks only about meanings it cannot prove.</p>
+</div>
+
+<form method="post" action="/onboarding/migrations/new" enctype="multipart/form-data" data-busy data-migration-upload class="rm-panel">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="rm-panel__head"><%- helpers.icon('import',{ size:15 }) %><h2>Source snapshot</h2></div>
+  <div class="rm-panel__body" style="display:grid;gap:16px">
+    <label class="rm-drop">
+      <span class="rm-drop__ic"><%- helpers.icon('import',{ size:20 }) %></span>
+      <span class="rm-drop__b"><span class="rm-drop__t">Choose all relevant exports</span>
+        <span class="rm-drop__d">Products, stock, locations, suppliers, customers, prices, costs and rules · CSV, TSV or XLSX</span></span>
+      <input type="file" name="files" accept=".csv,.tsv,.txt,.xlsx" multiple data-migration-files style="position:absolute;width:1px;height:1px;opacity:0">
+      <span class="rm-btn rm-btn--ghost rm-btn--sm">Browse</span>
+    </label>
+    <div class="rm-upload-selection" data-migration-selection hidden aria-live="polite"></div>
+    <div class="rm-upload-progress" data-migration-progress hidden aria-live="polite">
+      <div class="rm-upload-progress__copy"><strong data-migration-progress-title>Uploading securely…</strong><span data-migration-progress-detail>Preparing your source snapshot.</span></div>
+      <progress max="100" value="0" data-migration-progress-bar></progress>
+    </div>
+    <p class="rm-upload-error" data-migration-error hidden role="alert"></p>
+    <details class="rm-disclosure">
+      <summary>Paste data or add a source label</summary>
+      <div class="rm-upload-options">
+        <label class="rm-field">
+          <span>Source label <small>optional</small></span>
+          <input name="sourceLabel" maxlength="160" placeholder="Foundry can label this from the filenames">
+        </label>
+        <label class="rm-field"><span>Paste one dataset</span>
+          <textarea name="pasted" rows="5" placeholder="SKU,Product,Location,Quantity&#10;ABC-1,Blue shoe,Main warehouse,42"></textarea>
+        </label>
+      </div>
+    </details>
+  </div>
+  <div style="padding:0 20px 20px;display:flex;justify-content:flex-end">
+    <button class="rm-btn" type="submit" data-migration-submit>Read and stage safely</button>
+  </div>
+</form>
+
+<div class="rm-note"><%- helpers.icon('shield',{ size:16 }) %><span><strong>Nothing is live yet.</strong> Uploading records only creates a reviewable source snapshot. Foundry cannot activate it until mappings, dependencies and reconciliation checks pass.</span></div>

@@ -744,8 +744,10 @@ router.post('/sales/clarify', requirePermission(permissions.OPERATE, 'create or 
 router.post('/sales/orders/:id/fulfill', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
   const lineIds = Array.isArray(req.body.lineId) ? req.body.lineId : [req.body.lineId];
   const locationIds = Array.isArray(req.body.locationId) ? req.body.locationId : [req.body.locationId];
+  const kitComponentIds = Array.isArray(req.body.kitComponentId) ? req.body.kitComponentId : [req.body.kitComponentId];
   const quantities = Array.isArray(req.body.quantity) ? req.body.quantity : [req.body.quantity];
-  const lines = lineIds.map((lineId, index) => ({ lineId, locationId: locationIds[index], quantity: quantities[index] }))
+  const lines = lineIds.map((lineId, index) => ({ lineId, locationId: locationIds[index],
+    kitComponentId: kitComponentIds[index] || null, quantity: quantities[index] }))
     .filter((line) => line.lineId && Number(line.quantity) > 0);
 
   /*
@@ -830,8 +832,10 @@ router.get('/fulfilment/:id', requirePermission(permissions.VIEW, 'view fulfilme
   const state = shipment.delivery_method === 'PICKUP' ? null
     : shipping.service.readiness(req.db, req.ctx.workspaceId, req.params.id);
   const rates = state ? shipping.service.ratesFor(req.db, req.ctx.workspaceId, req.params.id) : [];
-  const promised = state ? shipping.service.promisedDate(req.db, req.ctx.workspaceId, state.shipment) : null;
+  const promise = state ? shipping.service.promiseFor(req.db, req.ctx.workspaceId, state.shipment) : null;
+  const promised = promise ? promise.promisedDate : null;
   const ruled = rates.length ? shipping.rules.decide(req.db, req.ctx.workspaceId, rates, { promisedDate: promised }) : null;
+  const shippingHandling = shipping.operationPolicy.get(req.db, req.ctx.workspaceId);
 
   res.page('sales/shipment', {
     title: list.shipment.shipment_number, nav: 'fulfilment',
@@ -845,10 +849,18 @@ router.get('/fulfilment/:id', requirePermission(permissions.VIEW, 'view fulfilme
       boxes: state.boxes,
       rates,
       promised,
+      promise,
+      handling: shippingHandling,
       ruled,
-      recommended: rates.length ? shipping.rules.recommend(rates, promised) : null,
+      recommended: rates.length && shippingHandling.mode !== 'MANUAL'
+        ? shipping.rules.recommend(rates, promised, {
+          customerShippingMinor: promise.customerShippingMinor,
+          performance: shipping.rules.performanceFor(req.db, req.ctx.workspaceId),
+        }) : null,
       rules: shipping.rules.list(req.db, req.ctx.workspaceId),
       events: shipping.tracking.eventsFor(req.db, req.ctx.workspaceId, req.params.id),
+      transactions: shipping.service.labelTransactions(req.db, req.ctx.workspaceId, req.params.id),
+      providerCapabilities: state.provider ? shipping.provider.capabilities(state.provider) : {},
     } : null,
     pickList: list, carriers: carriers.list(),
     notices: notices.forShipment(req.db, req.ctx.workspaceId, req.params.id),
@@ -874,7 +886,7 @@ router.post('/sales/orders/:id/pick', requirePermission(permissions.OPERATE, 'fu
 router.post('/fulfilment/:id/line', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
   try {
     shipments.setLineQuantity(req.db, req.ctx, req.params.id,
-      req.body.lineId, req.body.locationId, req.body.quantity);
+      req.body.lineId, req.body.locationId, req.body.quantity, req.body.kitComponentId || null);
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
     req.flash('warn', err.message);
@@ -931,6 +943,26 @@ router.post('/fulfilment/:id/rates', requirePermission(permissions.OPERATE, 'ful
     res.redirect(303, `/fulfilment/${req.params.id}`);
   }));
 
+router.post('/fulfilment/:id/promise', requirePermission(permissions.MANAGE_SALES, 'change customer delivery promises'),
+  asyncRoute(async (req, res) => {
+    const shipping = require('../../shipping');
+    try {
+      shipping.service.setPromise(req.db, req.ctx, req.params.id, {
+        service: req.body.service,
+        windowStart: req.body.windowStart,
+        windowEnd: req.body.windowEnd,
+        customerShippingMinor: req.body.customerShipping === '' ? null
+          : Math.round(Number(req.body.customerShipping) * 100),
+        source: 'owner',
+      });
+      req.flash('success', 'Saved the customer promise separately from the carrier estimate.');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, `/fulfilment/${req.params.id}#carrier`);
+  }));
+
 /*
  * Buying the label. The one click here that spends money, so it is the one
  * the permission is about.
@@ -950,6 +982,38 @@ router.post('/fulfilment/:id/label', requirePermission(permissions.OPERATE, 'ful
       req.flash('warn', err.message);
     }
     res.redirect(303, `/fulfilment/${req.params.id}`);
+  }));
+
+router.post('/fulfilment/:id/label/void', requirePermission(permissions.FULFILL_SALES, 'void carrier labels'),
+  asyncRoute(async (req, res) => {
+    const shipping = require('../../shipping');
+    try {
+      const result = await shipping.service.voidLabel(req.db, req.ctx, req.params.id);
+      req.flash(result.status === 'SUCCEEDED' ? 'success' : 'warn', result.status === 'SUCCEEDED'
+        ? `The carrier voided the label. ${result.amountMinor ? 'The postage refund was reconciled.' : ''}`
+        : 'The carrier is still deciding the void. Foundry will not reuse or rebuy it while that is uncertain.');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, `/fulfilment/${req.params.id}#label`);
+  }));
+
+router.post('/fulfilment/:id/postage-adjustment',
+  requirePermission(permissions.MANAGE_ACCOUNTING, 'record carrier charge adjustments'),
+  asyncRoute(async (req, res) => {
+    const shipping = require('../../shipping');
+    try {
+      shipping.service.recordAdjustment(req.db, req.ctx, req.params.id, {
+        amountMinor: Math.round(Number(req.body.amount) * 100), evidence: req.body.evidence,
+        idempotencyKey: req.body.idempotencyKey,
+      });
+      req.flash('success', 'The carrier adjustment and its evidence were recorded in shipping and Accounting.');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, `/fulfilment/${req.params.id}#label`);
   }));
 
 router.post('/fulfilment/:id/ship', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
@@ -1057,6 +1121,9 @@ router.post('/fulfilment/settings/notices', requirePermission(permissions.OPERAT
   try {
     notices.setPolicy(req.db, req.ctx, {
       shippingNotice: req.body.shippingNotice,
+      outForDeliveryNotice: req.body.outForDeliveryNotice,
+      deliveredNotice: req.body.deliveredNotice,
+      exceptionNotice: req.body.exceptionNotice,
       connectorId: req.body.connectorId,
       businessName: req.body.businessName,
       replyTo: req.body.replyTo,

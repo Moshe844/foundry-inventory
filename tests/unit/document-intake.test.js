@@ -85,8 +85,10 @@ test('an approved setup document creates products, supplier, order, receipt and 
       summary: 'Each shoe size is counted separately.',
     },
   });
-  const { recommendations, unresolvedDecisions, ...core } = understanding;
-  const provider = fakeProvider([invoiceInterpretation(), core, { recommendations, unresolvedDecisions }]);
+  const { statedRequirements, recommendations, unresolvedDecisions, ...core } = understanding;
+  const provider = fakeProvider([
+    invoiceInterpretation(), core, { statedRequirements, recommendations, unresolvedDecisions },
+  ]);
   const prepared = await documentIntake.prepare(env.db, env.ctx, env.membership, {
     filename: 'opening-invoice.csv', mimeType: 'text/csv',
     buffer: Buffer.from('Code,Style,Color,Size,Qty,Cost\nSH-101-BLK,Kids Classic Loafer,Black,23,12,11.50\n'),

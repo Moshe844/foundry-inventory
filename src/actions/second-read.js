@@ -67,6 +67,7 @@ async function whichOperation(text, operations, options = {}) {
         + `The person typed:\n${text}`,
       schema: SCHEMA,
       schemaName: 'which_operation',
+      signal: options.signal,
     });
     const result = validate(toWireSchema(SCHEMA), response.data, { key: 'which-operation-wire' });
     if (!result.ok) return null;

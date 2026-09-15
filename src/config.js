@@ -8,11 +8,33 @@ const rootDir = path.resolve(__dirname, '..');
 
 // Local development keeps provider credentials in a gitignored .env file.
 // Anything already in the real environment wins, so deployments do not need one.
+// `process.loadEnvFile` is only present on newer Node releases. Foundry still
+// runs on the Node 18 installation used by the local desktop, so keep a small
+// parser here instead of silently ignoring every credential on that runtime.
+function loadLocalEnvironment(envFile) {
+  if (typeof process.loadEnvFile === 'function') {
+    process.loadEnvFile(envFile);
+    return;
+  }
+  const lines = fs.readFileSync(envFile, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/);
+  for (const line of lines) {
+    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!match || process.env[match[1]] !== undefined) continue;
+    let value = match[2];
+    if ((value.startsWith('"') && value.endsWith('"'))
+      || (value.startsWith("'") && value.endsWith("'"))) {
+      const quote = value[0];
+      value = value.slice(1, -1);
+      if (quote === '"') value = value.replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+    } else {
+      value = value.replace(/\s+#.*$/, '').trim();
+    }
+    process.env[match[1]] = value;
+  }
+}
 try {
   const envFile = path.join(rootDir, '.env');
-  if (fs.existsSync(envFile) && typeof process.loadEnvFile === 'function') {
-    process.loadEnvFile(envFile);
-  }
+  if (fs.existsSync(envFile)) loadLocalEnvironment(envFile);
 } catch {
   /* A malformed .env must not stop the server from booting. */
 }
@@ -71,6 +93,20 @@ const config = {
   ensureDataDir,
   get connectionEncryptionKey() {
     return resolveConnectionEncryptionKey();
+  },
+
+  // Capacity is deployment policy, never a Foundry product tier. Operators
+  // can size these to their reverse proxy/object-storage limits without a code
+  // change; defaults comfortably cover multi-export catalogue migrations.
+  uploads: {
+    get maxBytes() {
+      const value = Number(process.env.FOUNDRY_UPLOAD_MAX_BYTES || 512 * 1024 * 1024);
+      return Number.isSafeInteger(value) && value >= 1024 * 1024 ? value : 512 * 1024 * 1024;
+    },
+    get maxFiles() {
+      const value = Number(process.env.FOUNDRY_UPLOAD_MAX_FILES || 500);
+      return Number.isSafeInteger(value) && value >= 1 ? value : 500;
+    },
   },
 
   connections: {

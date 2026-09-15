@@ -70,8 +70,13 @@ function hydrate(row) {
     lastEvaluatedAt: row.last_evaluated_at,
     nextEvaluationAt: row.next_evaluation_at,
     // The one question the rest of the system asks.
-    canAct: row.mode !== MODES.OBSERVE && !row.paused && !row.suspended,
-    canAutomate: row.mode === MODES.POLICY_AUTOMATED && !row.paused && !row.suspended,
+    // A scoped safety stop belongs to one domain. It must not silently freeze
+    // every other manager adapter; each operation rechecks its own scope at
+    // authorization time. Only an unscoped stop is workspace-wide.
+    canAct: row.mode !== MODES.OBSERVE && !row.paused
+      && !(Boolean(row.suspended) && !row.suspended_scope),
+    canAutomate: row.mode === MODES.POLICY_AUTOMATED && !row.paused
+      && !(Boolean(row.suspended) && !row.suspended_scope),
   };
 }
 

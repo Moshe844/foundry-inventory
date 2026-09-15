@@ -21,6 +21,7 @@ const { inTransaction } = require('../db');
 const { newId, nowIso, trimOrNull } = require('../lib/util');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const permissions = require('../actions/permissions');
+const attributes = require('../catalog/attributes');
 const repo = require('../domain/repository');
 
 /**
@@ -190,7 +191,13 @@ function validate(db, workspaceId, input) {
     name,
     description: trimOrNull(input.description),
     allowedActionTypes: actions,
-    scope: input.scope && typeof input.scope === 'object' ? input.scope : {},
+    scope: (() => {
+      const scope = input.scope && typeof input.scope === 'object' ? { ...input.scope } : {};
+      for (const key of ['productSelector', 'locationSelector', 'supplierSelector']) {
+        if (scope[key] !== undefined) scope[key] = attributes.validateSelector(scope[key]);
+      }
+      return scope;
+    })(),
     itemScope,
     locationScope,
     supplierScope,

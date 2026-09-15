@@ -90,6 +90,24 @@ function onOrderBySku(db, workspaceId, { skuIds = null, now = Date.now() } = {})
   return bySku;
 }
 
+/** Aggregate incoming supply by product without building a many-thousand-SKU
+ * IN clause for highly variant catalogues. */
+function onOrderByItem(db,workspaceId,itemIds) {
+  const ids = [...new Set(itemIds || [])];
+  if (!ids.length) return new Map();
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT sku.item_id,
+      SUM(CASE WHEN l.quantity_units>l.quantity_received_units
+        THEN l.quantity_units-l.quantity_received_units ELSE 0 END) AS on_order
+    FROM purchase_order_lines l
+    JOIN purchase_orders po ON po.id=l.purchase_order_id
+    JOIN skus sku ON sku.id=l.sku_id
+    WHERE l.workspace_id=? AND po.status IN (${openStatusList})
+      AND sku.item_id IN (${placeholders})
+    GROUP BY sku.item_id`).all(workspaceId,...OPEN_STATUSES,...ids);
+  return new Map(rows.map((row) => [row.item_id,Number(row.on_order || 0)]));
+}
+
 /** The same figure for one SKU, or zero. */
 function onOrderForSku(db, workspaceId, skuId) {
   const map = onOrderBySku(db, workspaceId, { skuIds: [skuId] });
@@ -107,14 +125,18 @@ function positionForSku(db, workspaceId, skuId) {
   const onHand = db
     .prepare('SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ? AND sku_id = ?')
     .get(workspaceId, skuId).n;
+  const unavailable = db.prepare(`SELECT COALESCE(SUM(remaining_quantity),0) AS n
+    FROM inventory_availability_holds WHERE workspace_id=? AND sku_id=? AND status='OPEN'`)
+    .get(workspaceId,skuId).n;
   const incoming = onOrderForSku(db, workspaceId, skuId);
   const committed = require('../sales/sales-order-service').committedByPosition(db, workspaceId, { skuIds: [skuId] })
     .reduce((total, row) => total + Number(row.committed || 0), 0);
-  const available = onHand - committed;
+  const available = onHand - unavailable - committed;
   return {
     skuId,
     onHand,
     committed,
+    unavailable,
     available,
     onOrder: incoming.onOrder,
     position: available + incoming.onOrder,
@@ -208,6 +230,7 @@ module.exports = {
   draftedForSku,
   OPEN_STATUSES,
   onOrderBySku,
+  onOrderByItem,
   onOrderForSku,
   positionForSku,
   openOrders,

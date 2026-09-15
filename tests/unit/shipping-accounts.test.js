@@ -33,11 +33,13 @@ test.after(cleanupAll);
 function withoutServerKey(run) {
   const held = { ...process.env };
   for (const name of ['SHIPENGINE_API_KEY', 'SHIPENGINE_WEBHOOK_SECRET',
+    'SHIPSTATION_API_KEY', 'SHIPSTATION_WEBHOOK_SECRET',
     'EASYPOST_API_KEY', 'EASYPOST_WEBHOOK_SECRET',
     'SHIPPO_API_KEY', 'SHIPPO_WEBHOOK_SECRET', 'SHIPPING_PROVIDER',
     'SHIPPING_SINGLE_TENANT']) delete process.env[name];
   try { return run(); } finally {
     for (const name of ['SHIPENGINE_API_KEY', 'SHIPENGINE_WEBHOOK_SECRET',
+      'SHIPSTATION_API_KEY', 'SHIPSTATION_WEBHOOK_SECRET',
       'EASYPOST_API_KEY', 'EASYPOST_WEBHOOK_SECRET',
       'SHIPPO_API_KEY', 'SHIPPO_WEBHOOK_SECRET', 'SHIPPING_PROVIDER',
       'SHIPPING_SINGLE_TENANT']) {
@@ -165,7 +167,7 @@ test('disconnecting takes the key with it', () => withoutServerKey(() => {
 test('only a provider Foundry actually has an adapter for can be connected', () => withoutServerKey(() => {
   const env = setup();
   assert.throws(() => accounts.connect(env.db, env.ctx, env.membership,
-    { provider: 'someone-else', apiKey: 'x' }), /easypost or shippo/);
+    { provider: 'someone-else', apiKey: 'x' }), /shipstation.*easypost.*shippo/);
   assert.throws(() => accounts.connect(env.db, env.ctx, env.membership,
     { provider: 'easypost', apiKey: '' }), /API key/);
   env.db.close();

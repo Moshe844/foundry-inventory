@@ -23,6 +23,7 @@ const applyService = require('../../forecasting/apply');
 const outcomes = require('../../forecasting/outcomes');
 const goalsService = require('../../forecasting/goals');
 const preferences = require('../../autopilot/preferences');
+const learningService = require('../../learning/service');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
 
@@ -53,6 +54,8 @@ router.get('/planning', asyncRoute(async (req, res) => {
     { scored: 0, summary: 'No forecast has been scored yet.' });
   const inventoryPosition = safely(() => goalsService.inventoryPosition(req.db, req.ctx.workspaceId, goals),
     { heldMinor: 0, capMinor: null, within: true });
+  const learning = safely(() => learningService.run(req.db, req.ctx.workspaceId),
+    { metrics: { observations:0, supplierLeadTime:[], interventionRate:null }, proposals:[] });
 
   res.page('planning/index', {
     backTo: { href: '/inventory', label: 'Inventory' },
@@ -64,9 +67,46 @@ router.get('/planning', asyncRoute(async (req, res) => {
     goals,
     statedGoals: safely(() => goalsService.describe(req.db, req.ctx.workspaceId), []),
     inventoryPosition,
+    learning,
+    learningProposals: safely(() => learningService.listProposals(req.db, req.ctx.workspaceId), []),
     open: safely(() => recommendations.open(req.db, req.ctx.workspaceId, { limit: 50 }), []),
     canOperate: permissions.can(req.user, permissions.OPERATE),
+    canAdmin: permissions.can(req.user, permissions.ADMIN),
   });
+}));
+
+router.post('/planning/learning/:id/approve', asyncRoute(async (req, res) => {
+  try {
+    learningService.rollout(req.db, req.ctx, req.user, req.params.id,
+      { expectedHash:trimOrNull(req.body.integrityHash) });
+    req.flash('success', 'Applied and verified. Foundry will measure what happens next, and this can be rolled back.');
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error', error.message);
+  }
+  return res.redirect(303, '/planning#learning');
+}));
+
+router.post('/planning/learning/:id/decline', asyncRoute(async (req, res) => {
+  try {
+    learningService.decline(req.db, req.ctx, req.user, req.params.id, trimOrNull(req.body.reason));
+    req.flash('success', 'Kept the current policy. Foundry recorded your decision.');
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error', error.message);
+  }
+  return res.redirect(303, '/planning#learning');
+}));
+
+router.post('/planning/learning/:id/rollback', asyncRoute(async (req, res) => {
+  try {
+    learningService.rollback(req.db, req.ctx, req.user, req.params.id);
+    req.flash('success', 'Rolled back and verified against the previous policy value.');
+  } catch (error) {
+    if (!error.status || error.status >= 500) throw error;
+    req.flash('error', error.message);
+  }
+  return res.redirect(303, '/planning#learning');
 }));
 
 /*
@@ -114,6 +154,7 @@ router.post('/planning/goals', asyncRoute(async (req, res) => {
     ['service_level', req.body.serviceLevel],
     ['max_days_of_supply', req.body.maxDaysOfSupply],
     ['inventory_cap_minor', req.body.inventoryCap],
+    ['cash_reserve_minor', req.body.cashReserve],
     ['prioritise_core_products', req.body.prioritiseCoreProducts === 'on'],
     ['conservative_seasonal', req.body.conservativeSeasonal === 'on'],
   ];

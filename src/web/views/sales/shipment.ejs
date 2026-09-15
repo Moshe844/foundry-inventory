@@ -157,6 +157,7 @@
                         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                         <input type="hidden" name="lineId" value="<%= line.sales_order_line_id %>">
                         <input type="hidden" name="locationId" value="<%= line.location_id %>">
+                        <input type="hidden" name="kitComponentId" value="<%= line.kit_component_id || '' %>">
                         <input class="input input--tiny" type="number" name="quantity" min="0"
                           value="<%= line.quantity %>" aria-label="Quantity of <%= line.item_name %> in this box">
                         <button class="btn btn--ghost btn--sm" type="submit">Set</button>
@@ -238,7 +239,7 @@
   var ship = typeof shipping === 'undefined' ? null : shipping;
   var lbs = function (grams) { return (Number(grams || 0) / 453.59237).toFixed(1); };
 %>
-<% if (ship && s.status === 'PACKED' && !s.tracking_number) { %>
+<% if (ship && s.status === 'PACKED' && (!s.tracking_number || s.label_status === 'VOIDED')) { %>
   <section class="section" id="carrier">
     <div class="panel">
       <div class="panel-head">
@@ -254,6 +255,38 @@
           </span>
         </div>
       </div>
+
+      <details class="disclosure">
+        <summary>Customer delivery promise</summary>
+        <form method="post" action="/fulfilment/<%= s.id %>/promise" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="card-body grid grid--2">
+            <label class="field">
+              <span class="field-label">Service promised</span>
+              <input class="input" name="service" value="<%= ship.promise && ship.promise.service || '' %>"
+                placeholder="Standard, Ground, 2-Day…">
+            </label>
+            <label class="field">
+              <span class="field-label">Customer paid for shipping</span>
+              <input class="input" name="customerShipping" inputmode="decimal"
+                value="<%= ship.promise && ship.promise.customerShippingMinor !== null ? (ship.promise.customerShippingMinor / 100).toFixed(2) : '' %>"
+                placeholder="0.00">
+            </label>
+            <label class="field">
+              <span class="field-label">Window starts</span>
+              <input class="input" type="date" name="windowStart" value="<%= ship.promise && ship.promise.windowStart || '' %>">
+            </label>
+            <label class="field">
+              <span class="field-label">Deliver no later than</span>
+              <input class="input" type="date" name="windowEnd" value="<%= ship.promise && ship.promise.windowEnd || '' %>">
+            </label>
+          </div>
+          <div class="card-foot">
+            <button class="btn" type="submit">Save promise</button>
+            <span class="hint">This records what the customer was told. Carrier estimates never rewrite it.</span>
+          </div>
+        </form>
+      </details>
 
       <% if (ship.blocked.length) { %>
         <div class="card-body stack">
@@ -364,7 +397,7 @@
 <% if (ship && s.tracking_number && s.label_url) { %>
   <section class="section" id="label">
     <div class="panel">
-      <div class="panel-head"><div><h2><%= s.status === 'PACKED' ? 'Label ready — not handed over yet' : 'Shipment' %></h2></div></div>
+      <div class="panel-head"><div><h2><%= s.label_status === 'VOIDED' ? 'Label voided' : s.label_status === 'VOID_PENDING' ? 'Label void pending' : s.status === 'PACKED' ? 'Label ready — not handed over yet' : 'Shipment' %></h2></div></div>
       <div class="card-body">
         <div class="accounting-equation">
           <p><span>Carrier</span><strong><%= helpers.carrierName ? helpers.carrierName(s.carrier) : s.carrier %> <%= s.service || '' %></strong></p>
@@ -374,10 +407,20 @@
           </strong></p>
           <% if (s.expected_delivery_date) { %><p><span>Expected</span><strong><%= s.expected_delivery_date %></strong></p><% } %>
           <% if (s.shipping_cost_minor) { %><p><span>Postage</span><strong><%= helpers.money(s.shipping_cost_minor, s.currency || 'USD') %></strong></p><% } %>
+          <% if (s.postage_refund_minor) { %><p><span>Refunded</span><strong><%= helpers.money(s.postage_refund_minor, s.currency || 'USD') %></strong></p><% } %>
+          <% if (s.postage_adjustment_minor) { %><p><span>Carrier adjustments</span><strong><%= helpers.money(s.postage_adjustment_minor, s.currency || 'USD') %></strong></p><% } %>
           <% if (s.tracking_status) { %><p><span>Where it is</span><strong><%= s.tracking_status.toLowerCase().replace(/_/g, ' ') %></strong></p><% } %>
         </div>
         <div class="button-row" style="margin-top:12px;">
-          <a class="btn btn--primary" href="<%= s.label_url %>" rel="noreferrer noopener" target="_blank">Print label</a>
+          <% if (s.label_status !== 'VOIDED' && s.label_status !== 'VOID_PENDING') { %>
+            <a class="btn btn--primary" href="<%= s.label_url %>" rel="noreferrer noopener" target="_blank">Print label</a>
+          <% } %>
+          <% if (s.status === 'PACKED' && s.label_status !== 'VOIDED' && s.label_status !== 'VOID_PENDING' && ship.providerCapabilities.voidLabel) { %>
+            <form method="post" action="/fulfilment/<%= s.id %>/label/void" data-busy>
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn btn--ghost" type="submit">Void unused label</button>
+            </form>
+          <% } %>
         </div>
       </div>
       <% if (ship.events.length) { %>
@@ -396,6 +439,21 @@
           </ul>
         </div>
       <% } %>
+      <% if (ship.transactions && ship.transactions.length) { %>
+        <div class="card-body">
+          <h3 class="t-sm">Postage audit trail</h3>
+          <ul class="money-feed">
+            <% ship.transactions.slice().reverse().forEach(function (entry) { %>
+              <li class="money-feed-item">
+                <span class="money-feed-when"><%= String(entry.requested_at).slice(0, 16).replace('T', ' ') %></span>
+                <span class="money-feed-what"><strong><%= entry.operation.toLowerCase() %> · <%= entry.status.toLowerCase() %></strong>
+                  <small><%= entry.detail || entry.error_message || '' %></small></span>
+                <% if (entry.amount_minor !== null) { %><strong><%= helpers.money(entry.amount_minor, entry.currency) %></strong><% } %>
+              </li>
+            <% }) %>
+          </ul>
+        </div>
+      <% } %>
     </div>
   </section>
 <% } %>
@@ -409,7 +467,7 @@
           <span class="t-xs t-muted">This is the step that moves stock</span>
         </div>
       </div>
-      <% if (s.label_url && s.tracking_number) { %>
+      <% if (s.label_url && s.tracking_number && s.label_status !== 'VOIDED' && s.label_status !== 'VOID_PENDING') { %>
       <form method="post" action="/fulfilment/<%= s.id %>/ship" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="handover" value="CARRIER">

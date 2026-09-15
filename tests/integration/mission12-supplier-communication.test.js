@@ -18,12 +18,15 @@ const microsoft365 = require('../../src/connections/providers/microsoft365');
 const operatingInstructions = require('../../src/manager/operating-instructions');
 const supplierCommunications = require('../../src/purchasing/supplier-communications');
 const supplierEvidence = require('../../src/purchasing/supplier-evidence');
+const supplierManager = require('../../src/purchasing/supplier-manager');
+const planningService = require('../../src/forecasting/planning-service');
 const receiving = require('../../src/purchasing/receiving-service');
 const sales = require('../../src/sales/sales-order-service');
 const credentials = require('../../src/connections/credentials');
 const modes = require('../../src/autopilot/modes');
 const operationsLog = require('../../src/domain/operations-log');
 const providerService = require('../../src/connections/provider-service');
+const providerRegistry = require('../../src/connections/providers/registry');
 const mailboxScheduler = require('../../src/connections/mailbox-scheduler');
 const queryService = require('../../src/attention/query-service');
 const ledger = require('../../src/accounting/ledger');
@@ -33,6 +36,12 @@ const reactions = require('../../src/manager/reactions');
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, signIn, csrfFrom, plain } = require('../helpers');
 
 test.after(cleanupAll);
+
+test('legacy supplier email connections use canonical supplier-email product metadata', () => {
+  const provider = providerRegistry.get('supplier_email');
+  assert.ok(provider);
+  assert.equal(provider.metadata().name, 'Supplier email');
+});
 
 
 test('the mailbox scheduler wakes often enough to honor a one-minute cadence', () => {
@@ -1019,4 +1028,173 @@ test('the unattended mailbox scheduler renews an expiring push watch', async () 
     else process.env.FOUNDRY_PUBLIC_URL = originalOrigin;
     env.db.close();
   }
+});
+
+test('Mission 12 turns a partial confirmation into one exact consequence and no stock or money mutation', () => {
+  const env = setup();
+  const customerOrder = sales.createOrder(env.db, env.workspace.ctx, {
+    customerName:'Committed customer', neededBy:'2026-09-12', fulfillmentLocationId:env.workspace.store.id,
+    lines:[{ skuId:env.item.skuId, quantity:30, unitPriceMinor:1500 }],
+  });
+  sales.confirm(env.db, env.workspace.ctx, customerOrder.id);
+  const beforeStock = repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id);
+  const beforePayments = env.db.prepare('SELECT COUNT(*) n FROM accounting_payments WHERE workspace_id=?')
+    .get(env.workspace.workspaceId).n;
+  message(env, 'm12-capacity-1', `Capacity update ${env.order.poNumber}`, {
+    documentType:'capacity_notice', poNumber:env.order.poNumber, expectedArrivalDate:'2026-09-20',
+    lines:[{ supplierSku:'ABC-BLK-S', confirmedQuantity:10, backorderedQuantity:14,
+      expectedArrivalDate:'2026-09-20' }],
+  });
+  const facts = env.db.prepare(`SELECT fact_kind,value FROM supplier_operational_facts
+    WHERE workspace_id=? ORDER BY fact_kind`).all(env.workspace.workspaceId);
+  assert.ok(facts.some((row) => row.fact_kind === 'CAPACITY'));
+  assert.ok(facts.some((row) => row.fact_kind === 'CONSTRAINT'));
+  const plan = supplierManager.forOrder(env.db, env.workspace.workspaceId, env.order.id)[0];
+  assert.equal(plan.consequences.shortUnits, 14);
+  assert.equal(plan.consequences.atRiskUnits, 13);
+  assert.equal(plan.status, 'NEEDS_APPROVAL');
+  assert.equal(plan.consequences.inventoryWasChanged, false);
+  assert.equal(plan.consequences.moneyWasChanged, false);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), beforeStock);
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM accounting_payments WHERE workspace_id=?')
+    .get(env.workspace.workspaceId).n, beforePayments);
+  const decision = needsYou.inbox(env.db, env.workspace.workspaceId)
+    .find((entry) => entry.actionLabel === 'Review supplier response');
+  assert.ok(decision);
+  assert.match(decision.href, new RegExp(`/settings/connections/${env.email.connection.id}`));
+  const openSupplierDecisions = env.db.prepare(`SELECT candidate_matches FROM connection_issues
+    WHERE workspace_id=? AND status='OPEN' AND issue_type IN ('SUPPLIER_DOCUMENT_REVIEW','SUPPLIER_RESPONSE_DECISION')`)
+    .all(env.workspace.workspaceId);
+  assert.equal(openSupplierDecisions.length, 1, 'one supplier message becomes one owner decision');
+  assert.ok(JSON.parse(openSupplierDecisions[0].candidate_matches)
+    .some((candidate) => candidate.kind === 'supplier_response_plan'));
+  env.db.close();
+});
+
+test('Mission 12 preserves a proposed substitution as evidence and never treats it as SKU identity', () => {
+  const env = setup();
+  message(env, 'm12-substitute-1', `Alternative for ${env.order.poNumber}`, {
+    documentType:'substitution_offer', poNumber:env.order.poNumber,
+    lines:[{ supplierSku:'ABC-BLK-S' }],
+    substitutions:[{ forSkuCode:'ABC-BLK-S', substituteSkuCode:'ABC-GRY-S',
+      description:'Grey small', unitsPerRequiredUnit:1, unitPrice:6.25 }],
+  });
+  const fact = env.db.prepare(`SELECT * FROM supplier_operational_facts
+    WHERE workspace_id=? AND fact_kind='SUBSTITUTION'`).get(env.workspace.workspaceId);
+  assert.ok(fact);
+  assert.equal(fact.related_sku_id, null, 'supplier words cannot establish a Foundry SKU identity');
+  const plan = supplierManager.forOrder(env.db, env.workspace.workspaceId, env.order.id)[0];
+  assert.equal(plan.status, 'NEEDS_APPROVAL');
+  assert.ok(supplierManager.draftsForPlan(env.db, env.workspace.workspaceId, plan.id)
+    .some((draft) => draft.draft_type === 'NEGOTIATION'));
+  env.db.close();
+});
+
+test('Mission 12 keeps communication approval separate from purchase authority', () => {
+  const env = setup();
+  message(env, 'm12-authority-1', `Short confirmation ${env.order.poNumber}`, {
+    documentType:'capacity_notice', poNumber:env.order.poNumber,
+    lines:[{ supplierSku:'ABC-BLK-S', confirmedQuantity:12, backorderedQuantity:12 }],
+  });
+  const plan = supplierManager.forOrder(env.db, env.workspace.workspaceId, env.order.id)[0];
+  const draft = supplierManager.draftsForPlan(env.db, env.workspace.workspaceId, plan.id)
+    .find((entry) => ['FOLLOW_UP','NEGOTIATION'].includes(entry.draft_type));
+  assert.ok(draft);
+  const communicationsBefore = env.db.prepare('SELECT COUNT(*) n FROM supplier_communications WHERE workspace_id=?')
+    .get(env.workspace.workspaceId).n;
+  assert.throws(() => supplierManager.approveDraft(env.db, env.workspace.ctx, { role:'viewer' }, draft.id),
+    /do not have permission/);
+  const approved = supplierManager.approveDraft(env.db, env.workspace.ctx, env.membership, draft.id);
+  assert.equal(approved.status, 'APPROVED');
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM supplier_communications WHERE workspace_id=?')
+    .get(env.workspace.workspaceId).n, communicationsBefore, 'approval does not secretly send a supplier email');
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM purchase_orders WHERE workspace_id=?')
+    .get(env.workspace.workspaceId).n, 1, 'approval does not secretly create an alternate PO');
+  env.db.close();
+});
+
+test('Mission 12 can prepare an alternate-supplier PO draft without placing another order', () => {
+  const env = setup();
+  const alternate = suppliers.createSupplier(env.db, env.workspace.ctx, env.membership, {
+    name:'Reliable Alternate', email:'orders@alternate.test', defaultLeadTimeDays:2,
+  });
+  suppliers.linkItem(env.db, env.workspace.ctx, env.membership, { supplierId:alternate.id,
+    skuId:env.item.skuId, supplierSku:'ALT-BLK-S', purchaseUnit:'unit', unitsPerPurchaseUnit:1,
+    lastUnitCost:7 });
+  const originalPlanning = planningService.forSku;
+  planningService.forSku = () => ({ adaptivePlan:{
+    alternatives:[
+      { type:'WAIT', feasible:false, explanation:'Waiting misses the evidenced need.' },
+      { type:'BUY_ALTERNATE', feasible:true, supplierId:alternate.id, units:12,
+        unitCostMinor:700, explanation:'The alternate can cover the evidenced shortage in time.' },
+    ],
+    chosen:{ type:'BUY_ALTERNATE', supplierId:alternate.id, units:12, unitCostMinor:700,
+      explanation:'The alternate can cover the evidenced shortage in time.' },
+    constraints:{ cash:{ known:true, availableForNewCommitmentsMinor:20_000, currency:'USD' } },
+    expectedResult:{ shortageUnits:0 },
+  } });
+  try {
+    message(env, 'm12-alternate-1', `Only half available ${env.order.poNumber}`, {
+      documentType:'capacity_notice', poNumber:env.order.poNumber,
+      lines:[{ supplierSku:'ABC-BLK-S', confirmedQuantity:12, backorderedQuantity:12 }],
+    });
+  } finally {
+    planningService.forSku = originalPlanning;
+  }
+  const plan = supplierManager.forOrder(env.db, env.workspace.workspaceId, env.order.id)[0];
+  const alternateDraft = supplierManager.draftsForPlan(env.db, env.workspace.workspaceId, plan.id)
+    .find((entry) => entry.draft_type === 'ALTERNATE_PO');
+  assert.ok(alternateDraft);
+  assert.equal(alternateDraft.supplier_id, alternate.id);
+  assert.equal(alternateDraft.proposedPayload.quantityUnits, 12);
+  assert.equal(alternateDraft.required_permission, require('../../src/actions/permissions').CREATE_PO);
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM purchase_orders WHERE workspace_id=?')
+    .get(env.workspace.workspaceId).n, 1, 'the draft is not a second committed purchase order');
+  env.db.close();
+});
+
+test('Mission 12 routes evidenced deposits and credits to financial drafts without posting money', () => {
+  const env = setup();
+  message(env, 'm12-financial-1', `Credit and deposit terms ${env.order.poNumber}`, {
+    documentType:'credit', poNumber:env.order.poNumber, creditAmount:25, depositAmount:40,
+    depositDueDate:'2026-09-15', currency:'USD',
+    lines:[{ supplierSku:'ABC-BLK-S' }],
+  });
+  const plan = supplierManager.forOrder(env.db, env.workspace.workspaceId, env.order.id)[0];
+  const drafts = supplierManager.draftsForPlan(env.db, env.workspace.workspaceId, plan.id);
+  const deposit = drafts.find((draft) => draft.draft_type === 'DEPOSIT_PAYMENT');
+  const credit = drafts.find((draft) => draft.draft_type === 'SUPPLIER_CREDIT');
+  assert.equal(deposit.proposedPayload.amountMinor, 4000);
+  assert.equal(credit.proposedPayload.amountMinor, 2500);
+  assert.notEqual(deposit.required_permission, credit.required_permission,
+    'paying a deposit and applying a credit remain separately governed');
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM accounting_payments WHERE workspace_id=?')
+    .get(env.workspace.workspaceId).n, 0);
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM accounting_supplier_credits WHERE workspace_id=?')
+    .get(env.workspace.workspaceId).n, 0);
+  env.db.close();
+});
+
+test('Mission 12 decisions are replay-safe, explainable, scored, and visible on the purchase story', async () => {
+  const env = setup();
+  message(env, 'm12-explain-1', `Revised price ${env.order.poNumber}`, {
+    documentType:'price_update', poNumber:env.order.poNumber,
+    lines:[{ supplierSku:'ABC-BLK-S', quantity:24, unitPrice:8.5 }],
+  });
+  const plan = supplierManager.forOrder(env.db, env.workspace.workspaceId, env.order.id)[0];
+  const explanation = supplierManager.explain(env.db, env.workspace.workspaceId, plan.id);
+  assert.equal(explanation.safety, 'The supplier message changed neither physical inventory nor money.');
+  assert.ok(explanation.evidence.length > 0);
+  assert.ok(explanation.alternativesConsidered.length > 0);
+  const card = supplierManager.scorecard(env.db, env.workspace.workspaceId, env.supplier.id);
+  assert.ok(card.metrics.priceFacts >= 1);
+  assert.ok(card.metrics.disputes >= 1);
+  const agent = request.agent(env.app);
+  await signIn(agent, env.workspace.account.email, env.workspace.account.password);
+  const html = (await agent.get(`/purchasing/orders/${env.order.id}`)).text;
+  assert.match(plain(html), /Foundry worked out the consequence/i);
+  assert.match(plain(html), /No stock or money was changed/i);
+  assert.equal(env.db.prepare('SELECT COUNT(*) n FROM supplier_response_plans WHERE workspace_id=?')
+    .get(env.workspace.workspaceId).n, 1);
+  env.db.close();
 });

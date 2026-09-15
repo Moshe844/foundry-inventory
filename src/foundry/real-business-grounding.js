@@ -11,6 +11,7 @@ const GENERIC_LOCATION_WORDS = new Set([
   'warehouses', 'office', 'offices', 'site', 'sites', 'branch', 'branches',
   'storage', 'main', 'primary', 'central', 'current',
 ]);
+const requirementCoverage = require('./requirement-coverage');
 
 function normalise(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -121,6 +122,14 @@ function ground(understanding, description) {
   if (!understanding.variantDimensions.length) {
     understanding.recommendedConfiguration.usesVariants = false;
   }
+
+  // A fallible model may omit a requirement or cite a paraphrase that cannot
+  // be proved. Reconcile against the owner's exact text so nothing explicit is
+  // lost and nothing unsupported is smuggled into the ledger.
+  understanding.statedRequirements = requirementCoverage.reconcile(
+    description,
+    understanding.statedRequirements
+  );
 
   understanding.productStructure.certainty = 'safe_structural_inference';
   understanding.locationModel.certainty = 'safe_structural_inference';

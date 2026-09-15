@@ -288,6 +288,20 @@ test('production readiness requires an immutable release identity', () => {
   }
 });
 
+test('production readiness cannot certify the local single-writer database topology', () => {
+  const { db } = makeDatabase();
+  seedWorkspace(db,{ workspaceName:'Topology readiness' });
+  const local = readiness.snapshot(db,{ env:'production' }).checks
+    .find((row) => row.key === 'database_topology');
+  assert.equal(local.status,'BLOCKED');
+  assert.match(local.message,/not a certified shared multi-writer/);
+
+  const shared = readiness.snapshot(db,{ env:'production',databaseTopology:{
+    engine:'postgresql',shared:true,multiWriter:true,certification:'staging-concurrency',
+  } }).checks.find((row) => row.key === 'database_topology');
+  assert.equal(shared.status,'PASS');
+});
+
 test('due work that has stopped moving is reported before it reaches dead letter', () => {
   const { db } = makeDatabase();
   jobs.enqueue(db, { kind: 'stuck.test', idempotencyKey: 'stuck:1', now: 1_000 });

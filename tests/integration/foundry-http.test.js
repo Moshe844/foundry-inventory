@@ -11,6 +11,7 @@ const request = require('supertest');
 
 const { createApp } = require('../../src/app');
 const planApplier = require('../../src/foundry/plan-applier');
+const onboardingPaths = require('../../src/onboarding/paths');
 const repo = require('../../src/domain/repository');
 const { openDatabase } = require('../../src/db');
 const { makeDatabase, cleanupAll, seedWorkspace, csrfFrom, plain, signIn } = require('../helpers');
@@ -88,10 +89,16 @@ function understandingThen(request, other) {
     return { ownerProvidedInventory: { hasRecords: false, lines: [], ambiguities: [] } };
   }
   if (request.schemaName === 'inventory_understanding_advice') {
-    return { recommendations: SHOE_UNDERSTANDING.recommendations, unresolvedDecisions: [] };
+    return {
+      statedRequirements: SHOE_UNDERSTANDING.statedRequirements,
+      recommendations: SHOE_UNDERSTANDING.recommendations,
+      unresolvedDecisions: [],
+    };
   }
   if (request.schemaName === 'inventory_understanding_core') {
-    const { recommendations, unresolvedDecisions, ownerProvidedInventory, ...core } = SHOE_UNDERSTANDING;
+    const {
+      statedRequirements, recommendations, unresolvedDecisions, ownerProvidedInventory, ...core
+    } = SHOE_UNDERSTANDING;
     return core;
   }
   return other;
@@ -136,7 +143,8 @@ test('a new account is handed to Foundry, not an empty dashboard', async () => {
   const chooser = plain((await agent.get('/onboarding')).text);
   assert.match(chooser, /Where should Foundry get your inventory from/);
   assert.match(chooser, /Enter it in Foundry/);
-  assert.match(chooser, /Upload files or documents/);
+  assert.match(chooser, /Move from files/);
+  assert.match(chooser, /maps and reconciles them before cutover/);
   assert.match(chooser, /Connect another system/);
   assert.match(chooser, /Use several sources/);
 
@@ -170,7 +178,11 @@ test('the whole approval flow works end to end over HTTP', async () => {
   assert.doesNotMatch(proposal, /One thing worth deciding|Let Foundry decide/);
   assert.match(proposal, /What Foundry understood/);
   assert.match(proposal, /What Foundry needs next/);
-  assert.match(proposal, /Choose where my records are/);
+  assert.match(proposal, /Enter records in Foundry/);
+  assert.match(proposal, /Upload inventory files/);
+  assert.match(proposal, /Connect a business system/);
+  assert.match(proposal, /Use email attachments/);
+  assert.doesNotMatch(proposal, /Choose where my records are/);
   assert.match(proposal, /What Foundry knows \/ Why Foundry decided this/);
   assert.doesNotMatch(proposal, /What starts working after this setup|Save the safe structure/);
 
@@ -185,7 +197,9 @@ test('the whole approval flow works end to end over HTTP', async () => {
   assert.match(configured.headers.location, /^\/foundry\/ready\//);
 
   const ready = plain((await agent.get(configured.headers.location)).text);
-  assert.match(ready, /Your inventory is ready/);
+  assert.match(ready, /Your inventory setup is ready/);
+  assert.match(ready, /No products or stock were created/);
+  assert.match(ready, /Next: add your products and starting quantities/);
   assert.match(ready, /2 warehouses configured/);
   assert.match(ready, /Physical adjustments require a reason/);
 
@@ -199,6 +213,108 @@ test('the whole approval flow works end to end over HTTP', async () => {
   );
   // The reversible safe default was applied without interrogating the owner.
   assert.equal(configuration.operationalDefaults.allowNegativeStock, false);
+
+  const staleDescribe = await agent.get('/foundry/describe');
+  assert.equal(staleDescribe.status, 303);
+  assert.equal(staleDescribe.headers.location, '/inventory/describe');
+
+  const emptyInventory = await agent.get('/inventory/table');
+  const emptyText = plain(emptyInventory.text);
+  assert.match(emptyText, /Your setup is ready\. Now add your products/);
+  assert.match(emptyInventory.text, /href="\/inventory\/describe"/);
+  assert.match(emptyText, /Tell Foundry what you sell/);
+  assert.match(emptyInventory.text, /href="\/inventory\/new">Add one manually/);
+
+  const configuredHome = plain((await agent.get('/foundry')).text);
+  assert.match(configuredHome, /Setup is finished\. Your products are the next step/);
+});
+
+test('a reviewed proposal continues directly to every chosen record source without losing its description', async () => {
+  const cases = [
+    ['spreadsheet', '/onboarding/migrations/new', 'spreadsheet'],
+    ['software', '/onboarding/system', 'software'],
+    ['mailbox', '/onboarding/mailbox', 'undecided'],
+  ];
+
+  for (const [choice, destination, storedPath] of cases) {
+    const { app, db, workspace } = setup();
+    const agent = request.agent(app);
+    await signIn(agent, workspace.account.email, workspace.account.password);
+
+    const description = `We wholesale shoes; continue using the ${choice} source.`;
+    const understood = await understand(agent, description);
+    const proposalPath = understood.headers.location;
+    const understandingId = proposalPath.split('/').pop();
+    const selected = await post(
+      agent,
+      `/foundry/proposal/${understandingId}/source`,
+      { recordSource: choice },
+      proposalPath
+    );
+
+    assert.equal(selected.status, 303);
+    assert.equal(selected.headers.location, destination);
+    const state = onboardingPaths.get(db, workspace.workspaceId);
+    assert.equal(state.path, storedPath);
+    assert.equal(state.status, 'collecting');
+    assert.equal(state.describedAs, description);
+  }
+});
+
+test('proposal never silently drops a stated requirement that is outside configured axes', async () => {
+  const description = [
+    'We sell general merchandise with multiple products and SKUs.',
+    'Products can have variants such as Size, Color, Material, and customization options.',
+    'We keep inventory in multiple locations.',
+    'We must preserve supplier-provided compliance certificates and require customer approval before customized orders are released.',
+  ].join(' ');
+  const interpreted = buildUnderstanding({
+    businessDescription: description,
+    variantDimensions: [
+      { name: 'Size', exampleValues: [] },
+      { name: 'Color', exampleValues: [] },
+      { name: 'Material', exampleValues: [] },
+    ],
+    recommendedConfiguration: {
+      trackingMode: 'quantity', usesVariants: true, allowNegativeStock: false,
+      summary: 'Foundry can support Size, Color, Material variants.',
+    },
+    statedRequirements: [
+      {
+        sourceText: 'customization options',
+        understanding: 'Products also need customization choices.',
+        semanticRole: 'resolvable_requirement',
+        status: 'needs_detail',
+        nextStep: 'Provide the actual customization fields.',
+      },
+    ],
+  });
+  const { app, workspace } = setup({ provider: fakeUnderstandingProvider(interpreted) });
+  const agent = request.agent(app);
+  await signIn(agent, workspace.account.email, workspace.account.password);
+
+  const understood = await understand(agent, description);
+  const response = await agent.get(understood.headers.location);
+  const proposal = plain(response.text);
+
+  assert.match(proposal, /Review the exact requirement mapping \(\d+\)/);
+  assert.match(proposal, /Every citation comes from your words/i);
+  assert.match(proposal, /All \d+ explicit statements are preserved and sorted by purpose below/i);
+  assert.match(proposal, /Ready to support|Needs information from your records/);
+  assert.match(response.text, /<summary>What you told Foundry<\/summary>/);
+  assert.doesNotMatch(response.text, /<details[^>]*open[^>]*>\s*<summary>What you told Foundry/i);
+  assert.match(response.text, /<details class="rm-work" style="margin:0">\s*<summary>[\s\S]*?Needs information from your records/);
+  assert.doesNotMatch(response.text, /<details[^>]*open[^>]*>\s*<summary>[\s\S]*?Needs information from your records/i);
+  assert.match(proposal, /You do not confirm these in this list/);
+  assert.match(proposal, /Context and instructions/);
+  assert.match(proposal, /Nothing here needs confirmation/);
+  assert.match(response.text, /href="#record-source-choices"/);
+  assert.match(response.text, /id="record-source-choices"/);
+  assert.match(proposal, /Size, Color, Material, and customization options/);
+  assert.match(proposal, /Products also need customization choices/);
+  assert.match(proposal, /supplier-provided compliance certificates and require customer approval before customized orders are released/);
+  assert.match(proposal, /Needs information/);
+  assert.doesNotMatch(proposal, /biometric chain of custody/);
 });
 
 test('a first stock report is read, previewed, and becomes configured inventory on one approval', async () => {
@@ -224,8 +340,12 @@ test('a first stock report is read, previewed, and becomes configured inventory 
     likelyLocations: [{ name: 'Brooklyn Warehouse', kind: 'warehouse', certainty: 'inferred_confidently' }],
     recommendedConfiguration: { trackingMode: 'quantity', usesVariants: true, allowNegativeStock: false, summary: 'Each shoe size is counted separately.' },
   });
-  const { recommendations, unresolvedDecisions, ...core } = understanding;
-  const { app, db, workspace } = setup({ provider: fakeProvider([interpretation, core, { recommendations, unresolvedDecisions }]) });
+  const { statedRequirements, recommendations, unresolvedDecisions, ...core } = understanding;
+  const { app, db, workspace } = setup({
+    provider: fakeProvider([
+      interpretation, core, { statedRequirements, recommendations, unresolvedDecisions },
+    ]),
+  });
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
 
@@ -425,11 +545,12 @@ test('the configuration survives a refresh and a restart', async () => {
   // Refresh: the same URL renders the same thing.
   const first = plain((await agent.get(configured.headers.location)).text);
   const second = plain((await agent.get(configured.headers.location)).text);
-  assert.match(second, /Your inventory is ready/);
+  assert.match(second, /Your inventory setup is ready/);
   assert.equal(first.includes('2 warehouses configured'), second.includes('2 warehouses configured'));
 
   const foundryHome = plain((await agent.get('/foundry')).text);
   assert.match(foundryHome, /How you're set up/);
+  assert.match(foundryHome, /Setup is finished\. Your products are the next step/);
   db.close();
 
   // Restart: a brand new handle and application over the same file.
@@ -582,6 +703,8 @@ test('the progress page reports the real stage and works without JavaScript', as
   assert.equal(page.status, 200);
   const text = plain(page.text);
   assert.match(text, /Foundry is reading your inventory/);
+  assert.match(page.text, /class="rm-intake-thinking"/);
+  assert.doesNotMatch(page.text, /class="rm-thinking"/);
   assert.match(text, /Reading your operation/);
   assert.match(text, /Working out what to recommend/);
   // No-JS fallback so the page still progresses on its own.

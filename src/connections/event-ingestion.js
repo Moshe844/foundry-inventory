@@ -403,7 +403,7 @@ function eventResult(row, replayed = false) {
     actionType: row.action_type, actionRecordId: row.action_record_id };
 }
 
-function ingest(db, auth, raw) {
+function ingestDomainEvent(db, auth, raw) {
   const event = normalize(raw);
   const payloadHash = hashPayload(raw);
   let existing = db.prepare(`SELECT * FROM connector_feed_events
@@ -514,6 +514,77 @@ function ingest(db, auth, raw) {
       .get(auth.workspaceId, auth.connectorId, event.eventId));
   }
 }
+
+function ingest(db, auth, raw) {
+  const event = normalize(raw);
+  const autonomous = require('../autonomous/service');
+  let operation = autonomous.create(db, { workspaceId:auth.workspaceId, actorId:null }, {
+    operationType:'integration.process_event',
+    idempotencyKey:`provider-event:${auth.connectorId}:${event.eventId}`,
+    sourceKind:'provider_event', sourceId:event.eventId,
+    title:`Process ${event.type} from ${auth.displayName}`,
+    summary:'Apply one provider event through Foundry’s canonical domain commands.',
+    link:`/settings/connections/${auth.connectorId}`,
+    evidence:[{ label:'Provider event', value:event.eventId },
+      { label:'Event type', value:event.type },
+      ...(event.occurredAt ? [{ label:'Occurred', value:event.occurredAt }] : [])],
+    decision:{ connectorId:auth.connectorId, eventId:event.eventId, eventType:event.type },
+    affectedEntities:{ connectorId:auth.connectorId, externalEventId:event.eventId },
+    authorityDimensions:{ confidence:'high', risk:'medium' },
+    expectedOutcome:{ providerEventStatus:'COMPLETED_OR_EXPLICITLY_STALE' },
+  });
+  const prior = db.prepare(`SELECT status FROM connector_feed_events
+    WHERE workspace_id = ? AND connector_id = ? AND external_event_id = ?`)
+    .get(auth.workspaceId, auth.connectorId, event.eventId);
+  if (prior && ['COMPLETED','STALE'].includes(prior.status)) {
+    // The governed operation already finished. Let the domain inbox produce
+    // its explicit replay/conflict answer without reopening execution.
+    return ingestDomainEvent(db, auth, raw);
+  }
+  if (operation.status === 'NEEDS_HUMAN' && prior
+      && ['NEEDS_MAPPING','FAILED'].includes(prior.status)) {
+    db.prepare(`UPDATE autonomous_operations SET actual_outcome = '{}', verification = '{}',
+      status = 'PLANNED', phase = 'OBSERVE', error_message = NULL, updated_at = ?
+      WHERE id = ? AND workspace_id = ?`).run(nowIso(), operation.id, auth.workspaceId);
+    operation = autonomous.find(db, auth.workspaceId, operation.id);
+  }
+  const governed = autonomous.runSync(db, { workspaceId:auth.workspaceId, actorId:null },
+    null, operation.id, { auth, raw });
+  return governed.result || eventResult(db.prepare(`SELECT * FROM connector_feed_events
+    WHERE workspace_id = ? AND connector_id = ? AND external_event_id = ?`)
+    .get(auth.workspaceId, auth.connectorId, event.eventId));
+}
+
+require('../autonomous/service').registerAdapter('integration.process_event', {
+  owner:'connections.event-ingestion', suspendOnFailure:false,
+  authorize:({ db, ctx, operation, runtime }) => {
+    const connector = db.prepare(`SELECT status, paused_at FROM workspace_connectors
+      WHERE workspace_id = ? AND id = ?`).get(ctx.workspaceId,
+      operation.decision.connectorId);
+    const parsed = normalize(runtime.raw);
+    const checks = [
+      { name:'connectionAuthority', passed:Boolean(connector && connector.status === 'connected'
+          && !connector.paused_at),
+      reason:'The provider connection must still be connected and unpaused.' },
+      { name:'registeredEvent', passed:Object.values(TYPES).includes(parsed.type),
+        reason:'The provider event must map to a registered canonical event type.' },
+    ];
+    return { allowed:checks.every((check) => check.passed), checks,
+      source:{ kind:'connection_authorization', connectorId:operation.decision.connectorId } };
+  },
+  execute:({ db, runtime }) => ingestDomainEvent(db, runtime.auth, runtime.raw),
+  verify:({ db, ctx, operation }) => {
+    const row = db.prepare(`SELECT * FROM connector_feed_events WHERE workspace_id = ?
+      AND connector_id = ? AND external_event_id = ?`).get(ctx.workspaceId,
+      operation.decision.connectorId, operation.decision.eventId);
+    const passed = Boolean(row && ['COMPLETED','STALE'].includes(row.status));
+    return { passed, reason:passed
+      ? `The provider event reached the durable ${row.status.toLowerCase()} state.`
+      : (row?.error_message || 'The provider event needs a mapping or corrected evidence.'),
+    providerEventStatus:row?.status || null, actionType:row?.action_type || null,
+    actionRecordId:row?.action_record_id || null };
+  },
+});
 
 function ingestBatch(db, auth, body) {
   const entries = Array.isArray(body && body.events) ? body.events : [body];

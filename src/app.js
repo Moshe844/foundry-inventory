@@ -35,6 +35,7 @@ const shippingRoutes = require('./web/routes/shipping');
 // Registers the payment providers this build ships with.
 require('./payments');
 require('./shipping');
+require('./autonomous/domain-adapters').load();
 const pricingRoutes = require('./web/routes/pricing');
 const connectionRoutes = require('./web/routes/connections');
 const accountingRoutes = require('./web/routes/accounting');
@@ -73,6 +74,24 @@ function createApp(options = {}) {
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
 
+  // Even malformed or oversized requests need the same monitored error path.
+  // This must precede multipart parsing; otherwise an upload rejected before
+  // routing has no database handle and the responder itself throws while
+  // trying to record the incident.
+  app.use((req, res, next) => { req.db = db; next(); });
+
+  // Development-only request timing makes a slow route visible without
+  // profiling the browser or logging cookies/body data. Production monitoring
+  // owns this signal there.
+  if (!isProduction) app.use((req, res, next) => {
+    const started = process.hrtime.bigint();
+    res.on('finish', () => {
+      const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+      if (elapsedMs >= 500) console.warn(`[slow] ${req.method} ${req.path} ${res.statusCode} ${elapsedMs.toFixed(1)}ms`);
+    });
+    next();
+  });
+
   app.use(
     express.static(path.join(__dirname, 'web', 'public'), {
       maxAge: isProduction ? '7d' : 0,
@@ -80,7 +99,7 @@ function createApp(options = {}) {
   );
   // Uploads are parsed before anything else reads the body, so a file arrives
   // as an ordinary form: same CSRF check, same flash messages, same everything.
-  app.use(multipart({ limit: 32 * 1024 * 1024 }));
+  app.use(multipart({ limit: config.uploads.maxBytes, maxFiles:config.uploads.maxFiles }));
   /*
    * Before the body parsers on purpose: a payment webhook authenticates by a
    * signature over the exact bytes it sent, and a parser replaces them. After
@@ -90,8 +109,6 @@ function createApp(options = {}) {
    * deliberately skipped: a provider arrives with no cookie and no token, and
    * its signature is the whole authentication.
   */
-  app.use((req, res, next) => { req.db = db; next(); });
-
   // Orchestrator probes must never create browser sessions or CSRF state. At
   // production polling rates, even an empty session per probe becomes millions
   // of rows. Mount both probes before every session-aware middleware.

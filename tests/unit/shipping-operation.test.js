@@ -362,9 +362,10 @@ test('within authority Foundry buys the label itself, and outside it does nothin
     // Nothing granted yet: a rule on its own is not permission to spend.
     const watching = await shipping.service.shipWithinAuthority(env.db, env.ctx, env.box.id);
     assert.equal(watching.bought, false);
-    assert.match(watching.because, /watch only|ask before acting|authorised/i);
+    assert.match(watching.because, /Recommend mode/i);
     assert.equal(carrier.state.bought.length, 0);
 
+    shipping.operationPolicy.set(env.db, env.ctx, 'AUTOMATIC');
     modes.setMode(env.db, env.ctx, env.membership, modes.MODES.POLICY_AUTOMATED);
 
     // The mode alone is not enough either.
@@ -395,6 +396,7 @@ test('a parcel no rule covers is left alone, with the reason, and nothing is spe
   try {
     shipping.rules.save(env.db, env.ctx, { carrier: 'ups', service: 'Ground',
       maxCostMinor: 2500, requireByPromised: true });
+    shipping.operationPolicy.set(env.db, env.ctx, 'AUTOMATIC');
     modes.setMode(env.db, env.ctx, env.membership, modes.MODES.POLICY_AUTOMATED);
     capabilities.set(env.db, env.ctx, env.membership, 'shipping_labels', true);
 

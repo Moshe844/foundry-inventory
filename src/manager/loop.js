@@ -9,6 +9,7 @@ const reconciliation = require('./reconciliation');
 const brief = require('./brief');
 const repairs = require('../repairs/service');
 const workItems = require('../autopilot/work-items');
+const outcomeLearning = require('../learning/service');
 
 function run(db, ctx, membership, options = {}) {
   const workspaceId = ctx.workspaceId;
@@ -27,13 +28,18 @@ function run(db, ctx, membership, options = {}) {
       idempotencyKey: `repair:work-item:${item.id}`,
     }).repairCase;
     if (assessed.status === 'SIMULATED') {
-      try { recoveredRepairs.push(repairs.execute(db, ctx, membership, assessed.id).repairCase); }
+      try {
+        const governed = repairs.executeAutonomously(db, ctx, membership, assessed.id);
+        recoveredRepairs.push(repairs.get(db, workspaceId,
+          governed.operation.sourceId));
+      }
       catch { /* The failed case itself is now the durable Needs You item. */ }
     }
   }
   const state = modes.ensure(db, workspaceId);
   let work;
-  if (state.paused || state.suspended || state.mode === modes.MODES.OBSERVE) {
+  const globallySuspended = state.suspended && !state.suspendedScope;
+  if (state.paused || globallySuspended || state.mode === modes.MODES.OBSERVE) {
     const refreshed = reevaluate.refresh(db, workspaceId, options.trigger || 'manager');
     work = { readOnly: true, opened: refreshed.opened, resolved: refreshed.resolved, executed: 0, planned: 0 };
   } else {
@@ -47,9 +53,15 @@ function run(db, ctx, membership, options = {}) {
     investigated.push(investigations.investigate(db, workspaceId, entry.investigationId));
   }
   const reconciled = reconciliation.scanWorkspace(db, workspaceId);
+  // Learning is observational by default. Only an exact, versioned learning
+  // grant can promote a proposal here; every actual write still goes through
+  // the deterministic domain adapter owned by the affected setting.
+  let learning = null;
+  try { learning = outcomeLearning.run(db, workspaceId, { ...options, applyAuthorized:true }); }
+  catch { learning = null; }
   const dailyBrief = brief.build(db, workspaceId, { now: options.now || Date.now() });
   return { ...work, recoveredTriggers, recoveredInvestigations, recoveredRepairs: recoveredRepairs.length,
-    investigated: investigated.length, reconciled, brief: dailyBrief };
+    investigated: investigated.length, reconciled, learning, brief: dailyBrief };
 }
 
 function processPending(db, authorityFor, { limit = 25, now = Date.now() } = {}) {

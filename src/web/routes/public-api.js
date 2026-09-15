@@ -6,6 +6,8 @@ const inventory = require('../../domain/inventory-engine');
 const repo = require('../../domain/repository');
 const events = require('../../manager/events');
 const { DomainError } = require('../../domain/errors');
+const migrations = require('../../onboarding/canonical-migration');
+const migrationMappings = require('../../onboarding/canonical-mapping');
 
 function createPublicApi(db) {
   const router = express.Router();
@@ -26,6 +28,61 @@ function createPublicApi(db) {
 
   router.get('/events', handle('events:read', (auth, req, res) => res.json({ data: events.list(db, auth.workspaceId,
     { limit: Math.min(100, Math.max(1, Number(req.query.limit) || 50)) }) })));
+
+  const membershipFor = (auth) => db.prepare('SELECT * FROM users WHERE workspace_id = ? AND id = ?')
+    .get(auth.workspaceId, auth.actorId);
+
+  router.get('/migrations/:id', handle('migration:read', (auth, req, res) =>
+    res.json({ data: migrations.report(db, auth.workspaceId, req.params.id) })));
+
+  router.post('/migrations', handle('migration:write', (auth, req, res) => {
+    const execution = publicApi.executeCommand(db, auth, { idempotencyKey: req.get('idempotency-key'),
+      commandType: 'migration.create', body: req.body }, () => migrations.createPackage(db, auth,
+      membershipFor(auth), req.body));
+    return res.status(execution.replayed ? 200 : 201).json(execution);
+  }));
+
+  router.post('/migrations/:id/records', handle('migration:write', (auth, req, res) => {
+    const execution = publicApi.executeCommand(db, auth, { idempotencyKey: req.get('idempotency-key'),
+      commandType: 'migration.stage-page', body: req.body }, () => migrations.stagePage(db, auth,
+      membershipFor(auth), req.params.id, req.body.records, { startOrdinal: req.body.startOrdinal }));
+    return res.status(execution.replayed ? 200 : 201).json(execution);
+  }));
+
+  router.post('/migrations/:id/validate', handle('migration:write', (auth, req, res) => {
+    const execution = publicApi.executeCommand(db, auth, { idempotencyKey: req.get('idempotency-key'),
+      commandType: 'migration.validate', body: req.body }, () => migrations.validate(db, auth,
+      membershipFor(auth), req.params.id));
+    return res.json(execution);
+  }));
+
+  router.post('/migrations/:id/mappings', handle('migration:write', (auth, req, res) => {
+    const execution = publicApi.executeCommand(db,auth,{ idempotencyKey:req.get('idempotency-key'),
+      commandType:'migration.mapping.propose',body:req.body },() => migrationMappings.createProfile(db,auth,
+      membershipFor(auth),req.params.id,req.body));
+    return res.status(execution.replayed ? 200 : 201).json(execution);
+  }));
+
+  router.post('/migrations/mappings/:profileId/rows', handle('migration:write', (auth, req, res) => {
+    const execution = publicApi.executeCommand(db,auth,{ idempotencyKey:req.get('idempotency-key'),
+      commandType:'migration.mapping.stage-rows',body:req.body },() => migrationMappings.stageRows(db,auth,
+      membershipFor(auth),req.params.profileId,req.body.rows,{ startOrdinal:req.body.startOrdinal }));
+    return res.status(execution.replayed ? 200 : 201).json(execution);
+  }));
+
+  router.post('/migrations/:id/delta/start', handle('migration:write', (auth, req, res) => {
+    const execution = publicApi.executeCommand(db,auth,{ idempotencyKey:req.get('idempotency-key'),
+      commandType:'migration.delta.start',body:req.body },() => migrations.beginDeltaCapture(db,auth,
+      membershipFor(auth),req.params.id,req.body));
+    return res.json(execution);
+  }));
+
+  router.post('/migrations/:id/delta/records', handle('migration:write', (auth, req, res) => {
+    const execution = publicApi.executeCommand(db,auth,{ idempotencyKey:req.get('idempotency-key'),
+      commandType:'migration.delta.records',body:req.body },() => migrations.stageDeltaPage(db,auth,
+      membershipFor(auth),req.params.id,req.body.sourceCursor,req.body.changes,{ startOrdinal:req.body.startOrdinal }));
+    return res.status(execution.replayed ? 200 : 201).json(execution);
+  }));
 
   router.post('/commands/inventory/receive', handle('inventory:write', (auth, req, res) => {
     const execution = publicApi.executeCommand(db, auth, { idempotencyKey: req.get('idempotency-key'),

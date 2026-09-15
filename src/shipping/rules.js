@@ -188,21 +188,66 @@ function decide(db, workspaceId, rates, options = {}) {
  * promise, or simply the cheapest when nothing was promised — which is what a
  * person does when nobody is waiting on a particular day.
  */
-function recommend(rates, promisedDate) {
+function performanceFor(db, workspaceId) {
+  const rows = db.prepare(`SELECT carrier, service,
+      COUNT(*) AS delivered,
+      SUM(CASE WHEN expected_delivery_date IS NOT NULL AND delivered_at IS NOT NULL
+        AND date(delivered_at) <= date(expected_delivery_date) THEN 1 ELSE 0 END) AS on_time,
+      SUM(CASE WHEN expected_delivery_date IS NOT NULL AND delivered_at IS NOT NULL THEN 1 ELSE 0 END) AS measured
+    FROM sales_shipments WHERE workspace_id = ? AND status = 'DELIVERED'
+    GROUP BY carrier, service`).all(workspaceId);
+  return new Map(rows.map((row) => [`${String(row.carrier || '').toLowerCase()}|${String(row.service || '').toLowerCase()}`, {
+    delivered: Number(row.delivered), measured: Number(row.measured), onTime: Number(row.on_time),
+    reliability: Number(row.measured) ? Number(row.on_time) / Number(row.measured) : null,
+  }]));
+}
+
+function recommend(rates, promisedDate, options = {}) {
   if (!rates.length) return null;
   const inTime = promisedDate
     ? rates.filter((rate) => rate.deliveryDate && rate.deliveryDate <= promisedDate)
     : rates;
-  const pool = inTime.length ? inTime : rates;
-  const best = [...pool].sort((a, b) => a.amountMinor - b.amountMinor)[0];
+  let pool = inTime.length ? inTime : rates;
+  const paid = options.customerShippingMinor;
+  const withinPaid = paid === null || paid === undefined ? []
+    : pool.filter((rate) => rate.amountMinor <= paid);
+  if (withinPaid.length) pool = withinPaid;
+  const preferred = new Set((options.preferredCarriers || []).map((value) => String(value).toLowerCase()));
+  const evidence = options.performance || new Map();
+  const details = (rate) => evidence.get(`${String(rate.carrier).toLowerCase()}|${String(rate.service).toLowerCase()}`)
+    || { reliability: null, measured: 0 };
+  const best = [...pool].sort((a, b) => {
+    const preferredDelta = Number(preferred.has(String(b.carrier).toLowerCase()))
+      - Number(preferred.has(String(a.carrier).toLowerCase()));
+    if (preferredDelta) return preferredDelta;
+    if (a.amountMinor !== b.amountMinor) return a.amountMinor - b.amountMinor;
+    return Number(details(b).reliability || 0) - Number(details(a).reliability || 0);
+  })[0];
+  const history = details(best);
+  const reasons = [promisedDate && inTime.length
+    ? `Cheapest qualifying service that still arrives by ${promisedDate}.`
+    : promisedDate
+      ? `Nothing quoted arrives by ${promisedDate}; this is the cheapest available exception.`
+      : 'Cheapest qualifying quoted service.'];
+  if (paid !== null && paid !== undefined) {
+    const difference = Number(best.amountMinor) - Number(paid);
+    reasons.push(difference <= 0
+      ? `It is $${(Math.abs(difference) / 100).toFixed(2)} within the shipping amount charged to the customer.`
+      : `It costs $${(difference / 100).toFixed(2)} more than the customer paid for shipping.`);
+  }
+  if (history.reliability !== null) {
+    reasons.push(`${Math.round(history.reliability * 100)}% on time across ${history.measured} comparable delivered parcels.`);
+  } else {
+    reasons.push('Foundry has no comparable delivery history yet, so it did not invent a reliability score.');
+  }
   return {
     rate: best,
-    because: promisedDate && inTime.length
-      ? `Cheapest that still arrives by ${promisedDate}.`
-      : promisedDate
-        ? `Nothing quoted arrives by ${promisedDate}. This is the cheapest of what there is.`
-        : 'Cheapest quoted.',
+    because: reasons.join(' '),
+    comparisons: rates.map((rate) => ({ rateId: rate.id,
+      keepsPromise: !promisedDate || Boolean(rate.deliveryDate && rate.deliveryDate <= promisedDate),
+      customerShippingDeltaMinor: paid === null || paid === undefined ? null : rate.amountMinor - paid,
+      reliability: details(rate).reliability, measuredDeliveries: details(rate).measured })),
   };
 }
 
-module.exports = { list, get, save, remove, describe, decide, recommend, hydrate };
+module.exports = { list, get, save, remove, describe, decide, recommend, performanceFor, hydrate };

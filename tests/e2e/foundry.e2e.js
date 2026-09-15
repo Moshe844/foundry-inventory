@@ -234,23 +234,19 @@ test(
       assert.match(shown, /Where are your real product and stock records today\?/i);
       assert.match(shown, /You do not need to clean or reorganize anything first/i);
       assert.doesNotMatch(shown, /Configure my inventory/i);
-      assert.equal(await page.locator('a:has-text("Choose where my records are")').count(), 1);
+      assert.equal(await page.locator('button:has-text("Enter records in Foundry")').count(), 1);
+      assert.equal(await page.locator('button:has-text("Upload inventory files")').count(), 1);
+      assert.equal(await page.locator('button:has-text("Connect a business system")').count(), 1);
+      assert.equal(await page.locator('button:has-text("Use email attachments")').count(), 1);
       await shot(page, 'evidence-first-next-step');
     });
 
     await t.test('9-11. manual evidence creates only facts the owner supplies', async () => {
       await Promise.all([
-        page.waitForURL(`${BASE}/onboarding`),
-        page.click('a:has-text("Choose where my records are")'),
+        page.waitForURL(/\/foundry\/ready\//),
+        page.click('button:has-text("Enter records in Foundry")'),
       ]);
-      await Promise.all([
-        page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Enter it in Foundry")'),
-      ]);
-      await Promise.all([
-        page.waitForURL(`${BASE}/locations`),
-        page.click('button:has-text("Set it up manually instead")'),
-      ]);
+      await page.goto(`${BASE}/locations`);
 
       const suppliedLocations = [
         ['Brooklyn Warehouse', 'warehouse'],

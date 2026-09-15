@@ -36,9 +36,41 @@ function isStripeStateReturn(req) {
     && typeof req.query.state === 'string' && req.query.state.length > 0;
 }
 
+const OAUTH_CALLBACK_PROVIDERS = new Set([
+  'shopify', 'square', 'clover', 'gmail', 'microsoft365', 'quickbooks', 'xero',
+]);
+
+function isProviderStateReturn(req) {
+  if (req.method !== 'GET' || typeof req.query.state !== 'string' || !req.query.state) return false;
+  const path = String(req.originalUrl || '').split('?')[0];
+  const match = path.match(/^\/settings\/connections\/([^/]+)\/callback$/);
+  return Boolean(match && OAUTH_CALLBACK_PROVIDERS.has(match[1]));
+}
+
 router.use('/settings/connections', (req, res, next) => (
-  isStripeStateReturn(req) ? next() : requireAuth(req, res, next)
+  (isStripeStateReturn(req) || isProviderStateReturn(req)) ? next() : requireAuth(req, res, next)
 ));
+
+function oauthReturnPage(res, input) {
+  const returnOrigin = String(input.returnOrigin || '').replace(/\/$/, '');
+  const connectionId = input.connection?.id || null;
+  const returnPath = connectionId
+    ? `/settings/connections/${encodeURIComponent(connectionId)}`
+    : '/settings/connections';
+  return res.status(input.connected ? 200 : 400).page('connections/oauth-return', {
+    title: `${input.providerName || 'Connection'} · Foundry`,
+    layout: false,
+    outcome: {
+      connected: Boolean(input.connected),
+      providerName: input.providerName || 'Connection',
+      message: input.message,
+      workspaceId: input.connection?.workspace_id || null,
+      returnUrl: `${returnOrigin}${returnPath}`,
+      returnOrigin: returnOrigin || null,
+      returnPath,
+    },
+  });
+}
 
 function configuredPublicOrigin() {
   if (!process.env.FOUNDRY_PUBLIC_URL) return '';
@@ -105,6 +137,7 @@ router.get('/settings/connections', (req, res, next) => {
   const webhookSecret = req.session.newWebhookSecret || null;
   delete req.session.newPublicApiToken;
   delete req.session.newWebhookSecret;
+  const requestOrigin = `${req.protocol}://${req.get('host')}`;
   res.page('connections/index', { title: 'Connections', nav: 'connections', connections: rows,
     room: true, backTo: { href: '/settings', label: 'Settings' },
     // Whose Stripe account this inventory takes money into. Shown here rather
@@ -113,6 +146,8 @@ router.get('/settings/connections', (req, res, next) => {
     paymentConnect: require('../../payments/connect').describe(req.db, req.ctx.workspaceId),
     shippingAccount: require('../../shipping/accounts').describe(req.db, req.ctx.workspaceId),
     shippingPlatform: require('../../shipping/shipengine-platform').describe(req.db, req.ctx.workspaceId),
+    connectionPublicOrigin: configuredPublicOrigin(),
+    xeroRedirectOrigin: providerService.authorizationOrigin('xero', requestOrigin),
     paymentReturnOrigin: stripeConnectOrigin(req),
     currentWorkspaceId: req.ctx.workspaceId,
     workspaceName: req.workspace ? req.workspace.name : '',
@@ -395,23 +430,51 @@ router.post('/settings/connections/connect', requireOwner, asyncRoute(async (req
   const started = await providerService.beginAuthorization(req.db, req.ctx, req.body, `${req.protocol}://${req.get('host')}`);
   if (started.connected) {
     req.flash('success', `${started.connection.display_name} is connected. Foundry discovered its products and locations.`);
+    if (String(req.body.popup || '') === '1') {
+      return oauthReturnPage(res, {
+        connected: true,
+        providerName: started.connection.display_name,
+        message: `${started.connection.display_name} is connected. Foundry is ready to continue setup.`,
+        connection: started.connection,
+        returnOrigin: `${req.protocol}://${req.get('host')}`,
+      });
+    }
     return res.redirect(303, `/settings/connections/${started.connection.id}`);
   }
   res.redirect(303, started.redirectUrl);
 }));
 
-router.get('/settings/connections/:provider/callback', requireOwner, asyncRoute(async (req, res) => {
-  if (!['shopify', 'square', 'clover', 'gmail', 'microsoft365', 'quickbooks', 'xero'].includes(req.params.provider)) return res.status(404).page('error', {
+router.get('/settings/connections/:provider/callback', asyncRoute(async (req, res) => {
+  if (!OAUTH_CALLBACK_PROVIDERS.has(req.params.provider)) return res.status(404).page('error', {
     title: 'Not found', status: 404, message: 'Provider not found.' });
-  const connection = await providerService.completeOAuth(req.db, req.params.provider, req.query,
-    `${req.protocol}://${req.get('host')}`);
-  req.session.workspaceId = connection.workspace_id;
-  req.flash('success', ['gmail', 'microsoft365'].includes(req.params.provider)
-    ? `${connection.display_name} is connected. Choose the supplier senders Foundry should watch.`
-    : ['quickbooks', 'xero'].includes(req.params.provider)
-      ? `${connection.display_name} is connected read-only. Foundry verified the company; choose what authority it may have.`
-    : `${connection.display_name} is connected. Foundry discovered its products and locations.`);
-  res.redirect(303, `/settings/connections/${connection.id}`);
+  const context = providerService.callbackContext(req.db, req.query.state, req.params.provider);
+  const providerName = context.connection.display_name
+    || providers.get(req.params.provider)?.metadata()?.name
+    || req.params.provider;
+  try {
+    const connection = await providerService.completeOAuth(req.db, req.params.provider, req.query,
+      `${req.protocol}://${req.get('host')}`);
+    if (req.session) req.session.workspaceId = connection.workspace_id;
+    const message = ['gmail', 'microsoft365'].includes(req.params.provider)
+      ? `${connection.display_name} is connected. Choose the supplier senders Foundry should watch.`
+      : ['quickbooks', 'xero'].includes(req.params.provider)
+        ? `${connection.display_name} is connected read-only. Foundry verified the company; choose what authority it may have.`
+        : `${connection.display_name} is connected. Foundry discovered its products and locations.`;
+    if (req.session) req.flash('success', message);
+    if (context.popup) return oauthReturnPage(res, {
+      connected: true, providerName, message, connection, returnOrigin: context.returnOrigin,
+    });
+    return res.redirect(303, `/settings/connections/${connection.id}`);
+  } catch (error) {
+    if (!context.popup) throw error;
+    return oauthReturnPage(res, {
+      connected: false,
+      providerName,
+      message: error.message || `${providerName} did not finish the connection.`,
+      connection: context.connection,
+      returnOrigin: context.returnOrigin,
+    });
+  }
 }));
 
 router.get('/settings/connections/woocommerce/return', requireOwner, asyncRoute(async (req, res) => {
@@ -512,13 +575,32 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
   const provider = providers.get(connection.provider_type)?.metadata() || providers.generic;
   const accounting = provider.integrationClass === 'accounting'
     ? accountingSync.state(req.db, req.ctx.workspaceId, connection.id) : null;
+  const finishedSync = syncRuns.some((run) => run.status === 'COMPLETED');
+  const completedEvent = events.some((event) => event.status === 'COMPLETED');
+  const matchedHistory = reconciliations.some((row) => row.status === 'MATCHED');
+  const testInstruction = connection.provider_type === 'reference_webhook'
+    ? 'Send one test event from the business system, then replay that exact event ID. Foundry must show one completed activity, never two.'
+    : connection.provider_type === 'shopify'
+      ? 'Place one controlled test order, then fulfill or cancel it. Foundry should show each provider event once and keep the exact SKU and location.'
+      : ['square', 'clover'].includes(connection.provider_type)
+        ? 'Run one sandbox or low-value test sale, then a refund. Foundry should record both once against the selected merchant location.'
+        : connection.provider_type === 'woocommerce'
+          ? 'Place one controlled test order, then change its state. Foundry should show the resulting order activity once.'
+          : 'Send one controlled provider event and confirm Foundry records it once in this workspace.';
+  const certification = !isMailbox && !accounting ? {
+    connected: Boolean(connection.provider_account_id || connection.credential_ref),
+    catalog: Boolean(finishedSync),
+    event: Boolean(completedEvent),
+    history: Boolean(matchedHistory),
+    testInstruction,
+  } : null;
   const view = isMailbox ? 'connections/detail-mailbox'
     : connection.provider_type === 'square' && provider.sandboxMode
       ? 'connections/detail-square-sandbox' : 'connections/detail';
   res.page(view, { title: connection.display_name, nav: 'connections', connection, token,
     backTo: { href: '/settings/connections', label: 'Connections' },
     issues, events, mappings, reconciliations, messages, messageAttachments, emailRules, externalRecords, syncRuns, canBootstrapShopify,
-    provider, accounting, mailboxSignature: isMailbox
+    provider, accounting, certification, mailboxSignature: isMailbox
       ? mailboxStateSignature(req.db, req.ctx.workspaceId, connection.id) : null,
     skus: dbSkus(req.db, req.ctx.workspaceId), locations: repo.listLocations(req.db, req.ctx.workspaceId),
     customers: req.db.prepare('SELECT id, name FROM customers WHERE workspace_id = ? ORDER BY name COLLATE NOCASE').all(req.ctx.workspaceId),
@@ -553,6 +635,30 @@ router.post('/settings/connections/:id/accounting-map', requireOwner, asyncRoute
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 
+router.post('/settings/connections/:id/accounting-import-opening', requireOwner, asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  const adapter = providers.get(connection.provider_type);
+  if (adapter?.integrationClass !== 'accounting') throw new ValidationError('This is not an accounting connection.');
+  const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
+  const credentials = await providerService.loadProviderCredentials(req.db, connection, adapter);
+  const current = accountingSync.policy(req.db, req.ctx.workspaceId, connection.id);
+  if (current.requested_authority === 'OBSERVE') {
+    accountingSync.chooseAuthority(req.db, req.ctx, connection.id,
+      { authority: 'SHADOW', accountingSource: 'EXTERNAL' });
+  }
+  // Approval always consumes a fresh provider snapshot. The preview may have
+  // been open in a browser for minutes; it is evidence, not a write payload.
+  await accountingSync.shadow(req.db, req.ctx, connection.id, adapter, credentials,
+    { asOf: req.body.asOf || new Date().toISOString().slice(0, 10) });
+  const imported = accountingSync.importOpeningBooks(req.db, req.ctx, membership, connection.id);
+  const result = await accountingSync.shadow(req.db, req.ctx, connection.id, adapter, credentials,
+    { asOf: imported.preview.asOf });
+  req.flash(result.status === 'MATCHED' ? 'success' : 'warn', result.status === 'MATCHED'
+    ? `${connection.provider_account_name || connection.display_name} is now related to this Foundry inventory. The imported opening books reconcile exactly. Nothing was posted back.`
+    : `The opening books were saved in Foundry, but the fresh provider reread found ${result.differences.length} difference${result.differences.length === 1 ? '' : 's'}. Posting remains blocked.`);
+  res.redirect(303, `/settings/connections/${connection.id}`);
+}));
+
 router.post('/settings/connections/:id/accounting-enable', requireOwner, asyncRoute(async (req, res) => {
   accountingSync.enableWrites(req.db, req.ctx, req.params.id);
   req.flash('success', 'Posting authority is enabled. Foundry remains the source of truth and every external post is idempotent and auditable.');
@@ -568,6 +674,26 @@ router.post('/settings/connections/:id/accounting-post', requireOwner, asyncRout
   req.flash(result.remaining ? 'warn' : 'success', result.remaining
     ? `${result.posted} verified entr${result.posted === 1 ? 'y was' : 'ies were'} posted; ${result.remaining} stopped before an uncertain mapping.`
     : `${result.posted} verified accounting entr${result.posted === 1 ? 'y was' : 'ies were'} posted. Provider identities were recorded.`);
+  res.redirect(303, `/settings/connections/${connection.id}`);
+}));
+
+router.post('/settings/connections/:id/accounting-sandbox-proof', requireOwner, asyncRoute(async (req, res) => {
+  const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
+  const adapter = providers.get(connection.provider_type);
+  const provider = adapter?.metadata?.();
+  if (adapter?.integrationClass !== 'accounting' || provider?.environment !== 'sandbox') {
+    throw new ValidationError('The automatic $1 proof is available only for a provider sandbox.');
+  }
+  const proof = accountingSync.createSandboxProof(req.db, req.ctx, connection.id);
+  const credentials = await providerService.loadProviderCredentials(req.db, connection, adapter);
+  const result = await accountingSync.syncPending(req.db, req.ctx, connection.id, adapter, credentials,
+    { entryIds: proof.entries.map((entry) => entry.id) });
+  const shadow = await accountingSync.shadow(req.db, req.ctx, connection.id, adapter, credentials,
+    { asOf: new Date().toISOString().slice(0, 10) });
+  req.flash(shadow.status === 'MATCHED' && result.posted >= 2 ? 'success' : 'warn',
+    shadow.status === 'MATCHED' && result.posted >= 2
+      ? `$1 was posted to ${connection.provider_account_name || connection.display_name}, reversed, and reread successfully. The books still match exactly.`
+      : `The sandbox proof stopped. ${result.posted} entr${result.posted === 1 ? 'y was' : 'ies were'} confirmed by the provider; review the comparison before relying on posting.`);
   res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 

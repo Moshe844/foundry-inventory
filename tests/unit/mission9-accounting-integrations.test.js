@@ -51,6 +51,15 @@ test('accounting starts verified and read-only, then exact shadow parity gates p
   assert.equal(sync.enableWrites(env.db, env.workspace.ctx, env.connection.id).stage, 'WRITE_ENABLED');
 });
 
+test('provider-omitted zero-balance accounts are not presented as financial differences', async () => {
+  const env = fixture();
+  sync.chooseAuthority(env.db, env.workspace.ctx, env.connection.id, { authority: 'SHADOW', accountingSource: 'EXTERNAL' });
+  const result = await sync.shadow(env.db, env.workspace.ctx, env.connection.id,
+    { readAccountingSnapshot: async () => ({ asOf: '2026-09-10', currency: 'USD', version: 'empty-books', accounts: [] }) }, {});
+  assert.equal(result.status, 'MATCHED');
+  assert.deepEqual(result.differences, []);
+});
+
 test('unmapped or conflicting external facts stop safely and never become silent identity mappings', async () => {
   const env = fixture();
   sync.chooseAuthority(env.db, env.workspace.ctx, env.connection.id, { authority: 'POST', accountingSource: 'FOUNDRY' });
@@ -69,6 +78,11 @@ test('unmapped or conflicting external facts stop safely and never become silent
 test('an approved exact mapping can resolve an uncertain account on the next shadow run', async () => {
   const env = fixture(); sync.chooseAuthority(env.db, env.workspace.ctx, env.connection.id,
     { authority: 'POST', accountingSource: 'FOUNDRY' });
+  const accounts = ledger.listAccounts(env.db, env.workspace.workspaceId);
+  ledger.post(env.db, env.workspace.ctx, { postingDate: '2026-09-10', sourceKey: 'mapping-proof',
+    description: 'Create a material balance that requires an exact mapping', lines: [
+      { accountId: accounts[0].id, debitMinor: 2500 }, { accountId: accounts[1].id, creditMinor: 2500 },
+    ] });
   const local = sync.localSnapshot(env.db, env.workspace.workspaceId, '2026-09-10');
   const target = local.accounts[0];
   const snapshot = exactSnapshot(env, (rows) => rows.map((row) => row.code === target.code
@@ -82,6 +96,60 @@ test('an approved exact mapping can resolve an uncertain account on the next sha
   result = await sync.shadow(env.db, env.workspace.ctx, env.connection.id, adapter, {});
   assert.equal(result.status, 'MATCHED');
   assert.equal(sync.state(env.db, env.workspace.workspaceId, env.connection.id).conflicts.every((row) => row.status === 'RESOLVED'), true);
+});
+
+test('empty Foundry books can import provider opening books with exact identities and reconcile', async () => {
+  const env = fixture();
+  const snapshot = { asOf: '2026-09-10', currency: 'USD', version: 'qb-opening-v1', accounts: [
+    { externalId: '35', name: 'Checking', accountType: 'Bank', classification: 'Asset', balanceMinor: 12500 },
+    { externalId: '33', name: 'Accounts Payable', accountType: 'Accounts Payable', classification: 'Liability', balanceMinor: -7500 },
+    { externalId: '2', name: 'Owner Equity', accountType: 'Equity', classification: 'Equity', balanceMinor: -5000 },
+    { externalId: '7', name: 'Unused expense', accountType: 'Expense', classification: 'Expense', balanceMinor: 0 },
+  ] };
+  sync.chooseAuthority(env.db, env.workspace.ctx, env.connection.id,
+    { authority: 'SHADOW', accountingSource: 'EXTERNAL' });
+  await sync.shadow(env.db, env.workspace.ctx, env.connection.id,
+    { readAccountingSnapshot: async () => snapshot }, {});
+  const imported = sync.importOpeningBooks(env.db, env.workspace.ctx, env.membership, env.connection.id);
+  assert.equal(imported.replayed, false);
+  assert.equal(imported.preview.accountCount, 4);
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM accounting_journal_entries
+    WHERE workspace_id = ? AND source_record_type = 'accounting_connection_opening' AND status = 'POSTED'`)
+    .get(env.workspace.workspaceId).n, 1);
+  assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM accounting_external_identities
+    WHERE workspace_id = ? AND connector_id = ? AND entity_type = 'account'`)
+    .get(env.workspace.workspaceId, env.connection.id).n, 4);
+  const matched = await sync.shadow(env.db, env.workspace.ctx, env.connection.id,
+    { readAccountingSnapshot: async () => snapshot }, {});
+  assert.equal(matched.status, 'MATCHED');
+  assert.equal(sync.policy(env.db, env.workspace.workspaceId, env.connection.id).requested_authority, 'POST');
+});
+
+test('imported opening books are never posted back and sandbox proof posts one charge plus its reversal', async () => {
+  const env = fixture();
+  const snapshot = { asOf: '2026-09-10', currency: 'USD', version: 'qb-proof-v1', accounts: [
+    { externalId: 'bank', name: 'Checking', accountType: 'Bank', classification: 'Asset', balanceMinor: 10000 },
+    { externalId: 'expense', name: 'Other Business Expenses', accountType: 'Expense', classification: 'Expense', balanceMinor: 5000 },
+    { externalId: 'equity', name: 'Opening Equity', accountType: 'Equity', classification: 'Equity', balanceMinor: -15000 },
+  ] };
+  const adapter = { readAccountingSnapshot: async () => snapshot, calls: [],
+    async postJournalEntry(input) { this.calls.push(input); return { externalId: `qb-${this.calls.length}`, version: '1' }; } };
+  sync.chooseAuthority(env.db, env.workspace.ctx, env.connection.id,
+    { authority: 'SHADOW', accountingSource: 'EXTERNAL' });
+  await sync.shadow(env.db, env.workspace.ctx, env.connection.id, adapter, {});
+  sync.importOpeningBooks(env.db, env.workspace.ctx, env.membership, env.connection.id);
+  await sync.shadow(env.db, env.workspace.ctx, env.connection.id, adapter, {});
+  sync.enableWrites(env.db, env.workspace.ctx, env.connection.id);
+  sync.createSandboxProof(env.db, env.workspace.ctx, env.connection.id);
+  const posted = await sync.syncPending(env.db, env.workspace.ctx, env.connection.id, adapter, {});
+  assert.equal(posted.posted, 2);
+  assert.equal(adapter.calls.length, 2);
+  assert.equal(adapter.calls.some((call) => call.entry.source_record_type === 'accounting_connection_opening'), false);
+  await sync.shadow(env.db, env.workspace.ctx, env.connection.id, adapter, {});
+  const finalState = sync.state(env.db, env.workspace.workspaceId, env.connection.id);
+  assert.equal(finalState.policy.stage, 'WRITE_ENABLED');
+  assert.equal(finalState.sandboxProof.passed, true);
+  assert.deepEqual(finalState.sandboxProof.entries.map((entry) => entry.external_id), ['qb-1', 'qb-2']);
 });
 
 test('out-of-order accounting snapshots and revoked authorization stop with actionable evidence', async () => {

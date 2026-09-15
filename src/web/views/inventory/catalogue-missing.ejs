@@ -1,0 +1,129 @@
+<a class="rm-head__back" href="/inventory/describe?review=<%= encodeURIComponent(jobId) %>"><%- helpers.icon('chevron', { size: 13 }) %> Back to edit the catalogue</a>
+
+<div class="rm-head clarification-head">
+  <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Foundry finished reading your catalogue</p>
+  <h1>Answer <%= review.issues.length %> <%= review.issues.length === 1 ? 'question' : 'questions' %>, then review everything.</h1>
+  <p>Foundry understood the products you supplied. It paused because the answers below change how stock is counted. Answer them here—you do not need to rewrite your catalogue.</p>
+</div>
+
+<div class="clarification-safety" role="status">
+  <div><%- helpers.icon('check', { size: 17 }) %></div>
+  <div>
+    <strong>Your catalogue is safe.</strong>
+    <span><%= review.recordCount %> SKU <%= review.recordCount === 1 ? 'record was' : 'records were' %> read. No products or quantities have been added yet.</span>
+  </div>
+</div>
+
+<% if (errors && errors.length) { %>
+  <div class="flash flash--error" role="alert">
+    <div><strong>Please finish the highlighted answer:</strong><ul style="margin:6px 0 0"><% errors.forEach(function(error) { %><li><%= error %></li><% }) %></ul></div>
+  </div>
+<% } %>
+
+<form method="post" action="/inventory/catalogue-review/<%= jobId %>" data-busy data-long-action data-clarification-wizard>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <datalist id="known-skus">
+    <% knownSkus.forEach(function(sku) { %><option value="<%= sku.code %>"><%= sku.name %></option><% }) %>
+  </datalist>
+
+  <div class="clarification-progress" aria-live="polite">
+    <span data-clarification-count>Question 1 of <%= review.issues.length %></span>
+    <span>Next: complete preview and approval</span>
+  </div>
+
+  <div class="clarification-steps">
+    <% review.issues.forEach(function(issue, issueIndex) { %>
+      <%
+        var record = review.records.find(function(candidate) {
+          return candidate.ordinal === issue.recordOrdinal || candidate.code === issue.code;
+        });
+        if (!record) return;
+      %>
+
+      <section class="clarification-step" data-clarification-step data-step-number="<%= issueIndex + 1 %>" <%= issueIndex === 0 ? '' : 'hidden' %>>
+        <p class="clarification-step__number">Question <%= issueIndex + 1 %> of <%= review.issues.length %></p>
+
+        <% if (issue.type === 'serials') { %>
+          <h2>Do you give every <%= record.name %> its own serial number?</h2>
+          <p class="clarification-step__lead">You entered <strong><%= record.locations.reduce(function(total, location) { return total + location.quantity; }, 0) %> units</strong> across <%= record.locations.length %> <%= record.locations.length === 1 ? 'location' : 'locations' %>, and also said “Serial Number Tracking: Yes.” Foundry needs to know which statement reflects how you really work.</p>
+
+          <div class="clarification-why">
+            <strong>How to answer</strong>
+            <p>Choose <strong>Yes</strong> only if each physical unit has a unique code that you scan or record—for example, a manufacturer serial printed on the item. Otherwise choose <strong>No, just count how many I have.</strong></p>
+          </div>
+
+          <fieldset class="clarification-choices">
+            <legend class="sr-only">How <%= record.name %> is tracked</legend>
+            <label class="choice"><input type="radio" name="serial_mode_<%= record.ordinal %>" value="quantity" <%= answers['serial_mode_' + record.ordinal] === 'quantity' ? 'checked' : '' %> required> <span><strong>No—just count how many I have</strong><small>Foundry will keep your quantities by location. You will not need to enter serial numbers.</small></span></label>
+            <label class="choice"><input type="radio" name="serial_mode_<%= record.ordinal %>" value="serial" <%= answers['serial_mode_' + record.ordinal] === 'serial' ? 'checked' : '' %> required> <span><strong>Yes—every physical unit has a unique serial</strong><small>Enter those real serials below so Foundry can identify each unit.</small></span></label>
+          </fieldset>
+
+          <div class="clarification-followup" data-show-for="serial_mode_<%= record.ordinal %>" data-show-value="serial">
+            <h3>Enter the serials printed on the physical units</h3>
+            <p>Look on the item labels or in the system you use today. Paste the serials separated by commas. Foundry checks that the number of serials matches your quantity.</p>
+            <div class="form-grid">
+              <% record.locations.forEach(function(location, index) { %>
+                <label class="field"><span><%= location.name %> — <%= location.quantity %> <%= location.quantity === 1 ? 'serial' : 'serials' %></span><textarea name="serials_<%= record.ordinal %>_<%= index %>" rows="3" data-required-when-shown placeholder="Paste <%= location.quantity %> serial <%= location.quantity === 1 ? 'number' : 'numbers' %>, separated by commas"><%= answers['serials_' + record.ordinal + '_' + index] || '' %></textarea></label>
+              <% }) %>
+            </div>
+          </div>
+        <% } %>
+
+        <% if (issue.type === 'kit_components') { %>
+          <% var matchedComponents = record.components.filter(function(component) { return component.exactSku; }).length; %>
+          <h2>Which exact products are inside <%= record.name %>?</h2>
+          <p class="clarification-step__lead">You described the kit by component names. Foundry matched <strong><%= matchedComponents %> of <%= record.components.length %></strong> to an exact SKU already in your catalogue. Complete only the unmatched rows so a kit sale reduces the correct inventory items.</p>
+
+          <div class="clarification-why">
+            <strong>Where to find the SKU</strong>
+            <p>Use the same code printed on the component’s product record, barcode label, spreadsheet, POS, or ERP. Foundry only fills a match automatically when exactly one submitted product fits.</p>
+          </div>
+
+          <div class="component-map" role="group" aria-label="Components in <%= record.name %>">
+            <% record.components.forEach(function(component, index) { %>
+              <div class="component-map__row">
+                <div class="component-map__source"><span>You wrote</span><strong><%= component.identity %></strong><small class="<%= component.exactSku ? 'component-map__matched' : 'component-map__missing' %>"><%= component.exactSku ? 'Matched from your catalogue' : 'SKU not supplied yet' %></small></div>
+                <label class="field component-map__quantity"><span>How many per kit?</span><input type="number" min="1" step="1" name="component_qty_<%= record.ordinal %>_<%= index %>" value="<%= answers['component_qty_' + record.ordinal + '_' + index] || component.quantity || '' %>" required></label>
+                <label class="field component-map__sku"><span>Which SKU is it?</span><input type="text" name="component_sku_<%= record.ordinal %>_<%= index %>" value="<%= answers['component_sku_' + record.ordinal + '_' + index] || component.exactSku || '' %>" list="known-skus" placeholder="Type or choose the real SKU" autocomplete="off" required></label>
+              </div>
+            <% }) %>
+          </div>
+          <p class="clarification-footnote"><strong>If a component is not a product yet:</strong> enter the SKU you want it to have. Foundry will include a new zero-stock product with that exact name and SKU in the final preview. It will not invent a price, quantity, category, or any other detail.</p>
+        <% } %>
+
+        <% if (issue.type === 'kit_stock') { %>
+          <h2>Are the <%= record.name %> quantities already packed kits?</h2>
+          <p class="clarification-step__lead">You entered quantities for the kit itself. This answer decides whether Foundry tracks those kits as physical stock or calculates how many can be built from their components.</p>
+
+          <div class="clarification-why">
+            <strong>A quick example</strong>
+            <p>If “12 at Main Warehouse” means 12 boxes are already assembled, choose <strong>already packed</strong>. If staff assemble a kit only after it is ordered, choose <strong>build from components</strong>.</p>
+          </div>
+
+          <fieldset class="clarification-choices">
+            <legend class="sr-only">How <%= record.name %> is stocked</legend>
+            <label class="choice"><input type="radio" name="kit_stock_<%= record.ordinal %>" value="preassembled" <%= answers['kit_stock_' + record.ordinal] === 'preassembled' ? 'checked' : '' %> required> <span><strong>They are already packed kits</strong><small>Keep the kit quantities you entered. Selling one kit uses one packed kit.</small></span></label>
+            <label class="choice"><input type="radio" name="kit_stock_<%= record.ordinal %>" value="components" <%= answers['kit_stock_' + record.ordinal] === 'components' ? 'checked' : '' %> required> <span><strong>We build each kit from components</strong><small>Do not keep a separate kit count. Availability comes from the component quantities.</small></span></label>
+          </fieldset>
+        <% } %>
+
+        <div class="clarification-actions">
+          <% if (issueIndex > 0) { %><button class="btn" type="button" data-clarification-back>Back</button><% } %>
+          <span class="spacer"></span>
+          <% if (issueIndex < review.issues.length - 1) { %>
+            <button class="btn btn--primary" type="button" data-clarification-next>Save answer and continue</button>
+          <% } else { %>
+            <button class="btn btn--primary" type="submit" data-busy-label="Building your complete preview…">Build my complete preview</button>
+          <% } %>
+        </div>
+      </section>
+    <% }) %>
+  </div>
+
+  <p class="clarification-final-note"><%- helpers.icon('eye', { size: 15 }) %> The next page shows every product, SKU, location, quantity, and kit rule. Nothing is created until you approve that preview.</p>
+</form>
+
+<details class="rm-work clarification-original">
+  <summary>See the original catalogue you supplied</summary>
+  <div class="rm-work__body"><p style="white-space:pre-wrap;margin:0"><%= description %></p></div>
+</details>

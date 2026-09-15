@@ -15,6 +15,7 @@ const crypto = require('node:crypto');
 const { inTransaction } = require('../db');
 const repo = require('../domain/repository');
 const operatingGuards = require('../domain/operating-guards');
+const kits = require('../domain/kit-service');
 const resolver = require('./resolver');
 const catalog = require('../imports/catalog-service');
 const policy = require('./policy');
@@ -84,6 +85,12 @@ function build(db, ctx, intent, options = {}) {
     if (!shaped.ok) return shaped;
   }
 
+  if (actionType === 'create_item' && options.catalogueUnderstanding) {
+    // Informational model analysis travels with the preview. Executable facts
+    // still come only from the literal, reconciled catalogue records above.
+    draft.settings.catalogueUnderstanding = options.catalogueUnderstanding;
+  }
+
   const classification = policy.classify({
     actionType,
     quantity: draft.quantity,
@@ -101,11 +108,75 @@ function build(db, ctx, intent, options = {}) {
 }
 
 function buildConfiguration(db, ctx, intent, draft, options = {}) {
+  if (draft.actionType === 'configure_kit') {
+    const resolvedKit = noteFrom(draft, resolver.resolveSku(
+      db, ctx.workspaceId, intent.item || intent.productName, intent.variant, {
+        instruction: options.instruction,
+        groundIdentity: options.groundIdentity,
+      }
+    ));
+    if (!resolvedKit.ok) return unresolved(resolvedKit);
+
+    const supplied = Array.isArray(intent.kitComponents) ? intent.kitComponents : [];
+    if (!supplied.length) {
+      return { ok: false, question: 'Which component SKUs are in this kit, and how many of each?' };
+    }
+
+    const components = [];
+    for (const component of supplied) {
+      if (!Number.isSafeInteger(Number(component.quantity)) || Number(component.quantity) <= 0) {
+        const named = [component.item, component.variant].filter(Boolean).join(' ') || 'a component';
+        return { ok: false, question: `How many ${named} are required for one kit?` };
+      }
+      const found = noteFrom(draft, resolver.resolveSku(
+        db, ctx.workspaceId, component.item, component.variant, {
+          instruction: options.instruction,
+          groundIdentity: false,
+        }
+      ));
+      if (!found.ok) return unresolved(found);
+      components.push({ skuId: found.value.id, quantity: Number(component.quantity) });
+    }
+
+    let normalized;
+    try {
+      normalized = kits.normaliseDefinition(db, ctx.workspaceId, resolvedKit.value.id, components);
+    } catch (error) {
+      return { ok: false, question: null, unsupported: error.message };
+    }
+
+    const describeComponent = (component) => {
+      const sku = repo.requireSku(db, ctx.workspaceId, component.skuId);
+      return {
+        skuId: sku.id,
+        code: sku.code,
+        name: [sku.item_name, sku.variant_label].filter(Boolean).join(' / '),
+        quantity: component.quantity,
+      };
+    };
+    const bySku = (left, right) => left.skuId.localeCompare(right.skuId);
+    const current = kits.definition(db, ctx.workspaceId, resolvedKit.value.id).components
+      .map((component) => describeComponent({
+        skuId: component.component_sku_id,
+        quantity: Number(component.quantity),
+      })).sort(bySku);
+    const next = normalized.map(describeComponent).sort(bySku);
+
+    draft.skuId = resolvedKit.value.id;
+    draft.itemId = resolvedKit.value.item_id;
+    draft.subject = { kind: 'sku', sku: resolvedKit.value };
+    draft.settings = { components: next };
+    draft.expectedBeforeState = { total: 0, componentCount: current.length, components: current };
+    draft.expectedAfterState = { total: 0, componentCount: next.length, components: next };
+    return { ok: true };
+  }
+
   if (draft.actionType === 'create_item') {
     const planned = catalog.planItem(db, ctx.workspaceId, {
       name: intent.productName || intent.item,
       code: intent.productCode,
       variantAxes: intent.variantAxes,
+      exactVariants: intent.exactVariants,
       unitLabel: intent.unitLabel,
       trackingMode: ['quantity', 'serial', 'lot'].includes(intent.trackingMode) ? intent.trackingMode : null,
     });
@@ -126,12 +197,30 @@ function buildConfiguration(db, ctx, intent, draft, options = {}) {
       trackingMode: planned.plan.trackingMode,
       hasVariants: planned.plan.hasVariants,
       axes: planned.plan.axes,
+      exactVariants: planned.plan.exactVariants || null,
+      catalogueRecords: (() => {
+        const records = (planned.plan.exactVariants || [])
+          .map((variant) => variant.catalogueRecord).filter(Boolean);
+        return records.length ? records : null;
+      })(),
     };
     draft.assumptions.push(...planned.plan.assumptions);
     // A resemblance is shown, never acted on.
     for (const conflict of planned.plan.conflicts) draft.assumptions.push(conflict.message);
+    const catalogueTotal = (draft.settings.catalogueRecords || []).reduce((total, record) => total
+      + (record.locations || []).reduce((sum, location) => sum + Number(location.quantity || 0), 0), 0);
     draft.expectedBeforeState = { variants: 0, total: 0 };
-    draft.expectedAfterState = { variants: planned.plan.variantCount, total: 0 };
+    draft.expectedAfterState = { variants: planned.plan.variantCount, total: catalogueTotal };
+    if (draft.settings.catalogueRecords) {
+      const stockPositions = draft.settings.catalogueRecords.reduce(
+        (total, record) => total + (record.locations || []).length, 0
+      );
+      draft.assumptions.push(
+        `Copied ${draft.settings.catalogueRecords.length} exact SKU record${draft.settings.catalogueRecords.length === 1 ? '' : 's'} `
+        + `with ${stockPositions} stated stock position${stockPositions === 1 ? '' : 's'}; every supplied field remains attached to its SKU.`
+      );
+      return { ok: true };
+    }
 
     // Creating a catalogue record and recording stock that has just arrived is
     // one business event when the person states both in the same instruction.
@@ -1299,6 +1388,24 @@ function revalidate(db, ctx, proposal, options = {}) {
   }
 
   if (policy.CONFIGURATION_ACTIONS.includes(proposal.actionType)) {
+    if (proposal.actionType === 'configure_kit') {
+      let current;
+      try {
+        current = kits.definition(db, workspaceId, proposal.skuId).components.map((component) => ({
+          skuId: component.component_sku_id,
+          code: component.code,
+          name: [component.item_name, component.variant_label].filter(Boolean).join(' / '),
+          quantity: Number(component.quantity),
+        })).sort((left, right) => left.skuId.localeCompare(right.skuId));
+        kits.normaliseDefinition(db, workspaceId, proposal.skuId, proposal.settings.components);
+      } catch (error) {
+        problems.push(error.message);
+        current = [];
+      }
+      if (stableStringify(current) !== stableStringify(proposal.expectedBeforeState.components || [])) {
+        problems.push('This kit definition changed since Foundry prepared the action.');
+      }
+    }
     if (proposal.actionType === 'add_location') {
       const clash = db
         .prepare('SELECT 1 FROM locations WHERE workspace_id = ? AND name = ? COLLATE NOCASE')
@@ -1458,6 +1565,15 @@ function rebaseForPlan(proposal, applied) {
 }
 
 function currentState(db, workspaceId, proposal) {
+  if (proposal.actionType === 'configure_kit') {
+    const components = kits.definition(db, workspaceId, proposal.skuId).components.map((component) => ({
+      skuId: component.component_sku_id,
+      code: component.code,
+      name: [component.item_name, component.variant_label].filter(Boolean).join(' / '),
+      quantity: Number(component.quantity),
+    })).sort((left, right) => left.skuId.localeCompare(right.skuId));
+    return { total: 0, componentCount: components.length, components };
+  }
   if (proposal.actionType === removals.ACTION_TYPE) {
     const kind = removals.kindOf(proposal);
     return {

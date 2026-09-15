@@ -18,6 +18,7 @@ function createSessionStore(db, options = {}) {
         `INSERT INTO sessions (sid, expires_at, data) VALUES (?, ?, ?)
          ON CONFLICT(sid) DO UPDATE SET expires_at = excluded.expires_at, data = excluded.data`
       );
+      this.touchStmt = db.prepare('UPDATE sessions SET expires_at = ? WHERE sid = ?');
       this.deleteStmt = db.prepare('DELETE FROM sessions WHERE sid = ?');
       this.sweepStmt = db.prepare('DELETE FROM sessions WHERE expires_at <= ?');
       this.timer = setInterval(() => this.sweep(), 60 * 60 * 1000);
@@ -50,7 +51,20 @@ function createSessionStore(db, options = {}) {
     }
 
     touch(sid, sess, callback) {
-      this.set(sid, sess, callback);
+      try {
+        // An unchanged session only needs its expiry extended. Rewriting the
+        // full JSON document on every page view creates needless writer
+        // contention with large migration batches. A missed touch is safe:
+        // the existing authenticated session still has its normal long TTL.
+        this.touchStmt.run(this.expiryFor(sess), sid);
+        callback(null);
+      } catch (err) {
+        if (err && (err.code === 'SQLITE_BUSY' || err.code === 'SQLITE_BUSY_SNAPSHOT')) {
+          callback(null);
+          return;
+        }
+        callback(err);
+      }
     }
 
     destroy(sid, callback) {

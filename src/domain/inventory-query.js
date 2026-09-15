@@ -15,6 +15,16 @@ function listItems(db, workspaceId, options = {}) {
   const where = ['i.workspace_id = @workspaceId'];
   const params = { workspaceId, limit: limit + 1, offset };
 
+  // Stable keyset pagination for very large catalogues. Existing offset URLs
+  // remain compatible, while new callers avoid re-reading every prior row.
+  if (options.afterName !== undefined && options.afterName !== null) {
+    params.afterName = String(options.afterName);
+    params.afterId = String(options.afterId || '');
+    where.push(`(i.name COLLATE NOCASE > @afterName COLLATE NOCASE
+      OR (i.name = @afterName COLLATE NOCASE AND i.id > @afterId))`);
+    params.offset = 0;
+  }
+
   if (options.archivedOnly) where.push('i.is_active = 0');
   else if (!options.includeArchived) where.push('i.is_active = 1');
   if (Array.isArray(options.itemIds) && options.itemIds.length) {
@@ -75,7 +85,10 @@ function listItems(db, workspaceId, options = {}) {
 
   const rows = db.prepare(sql).all(params);
   const hasMore = rows.length > limit;
-  return { items: rows.slice(0, limit), hasMore, offset, limit };
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1] || null;
+  return { items: page, hasMore, offset, limit,
+    nextCursor: hasMore && last ? { afterName: last.name, afterId: last.id } : null };
 }
 
 function orderClause(sort) {

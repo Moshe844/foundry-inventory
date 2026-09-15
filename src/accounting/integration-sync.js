@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const { inTransaction } = require('../db');
 const reports = require('./reports');
+const ledger = require('./ledger');
 const connections = require('../connections/service');
 const { ValidationError, NotFoundError } = require('../domain/errors');
 const { newId, nowIso } = require('../lib/util');
@@ -12,9 +13,20 @@ const hash = (value) => crypto.createHash('sha256').update(typeof value === 'str
 const json = (value, fallback) => { try { return JSON.parse(value) ?? fallback; } catch { return fallback; } };
 
 function policy(db, workspaceId, connectorId) {
-  const row = db.prepare(`SELECT * FROM accounting_sync_policies
+  let row = db.prepare(`SELECT * FROM accounting_sync_policies
     WHERE workspace_id = ? AND connector_id = ?`).get(workspaceId, connectorId);
   if (!row) throw new NotFoundError('Accounting synchronization policy not found. Reconnect this accounting system.');
+  // Repair the old shadow-reread regression: a successful comparison used to
+  // demote an already enabled policy back to WRITE_READY even though its
+  // durable owner approval remained recorded.
+  if (row.stage === 'WRITE_READY' && row.write_enabled_at) {
+    db.prepare(`UPDATE accounting_sync_policies SET stage = 'WRITE_ENABLED', updated_at = ?
+      WHERE workspace_id = ? AND connector_id = ? AND stage = 'WRITE_READY'`)
+      .run(nowIso(), workspaceId, connectorId);
+    db.prepare(`UPDATE workspace_connectors SET setup_status = 'ACCOUNTING_WRITE_ENABLED', updated_at = ?
+      WHERE workspace_id = ? AND id = ?`).run(nowIso(), workspaceId, connectorId);
+    row = { ...row, stage: 'WRITE_ENABLED' };
+  }
   return { ...row, verifiedFact: json(row.verified_fact, {}) };
 }
 
@@ -124,15 +136,22 @@ function compare(local, external) {
   const differences = [];
   for (const account of local.accounts) {
     const other = externalByCode.get(String(account.code).toLowerCase());
-    if (!other) differences.push({ kind: 'MISSING_EXTERNAL_ACCOUNT', code: account.code,
-      foundryMinor: account.balanceMinor, externalMinor: null });
-    else if (Number(other.balanceMinor) !== Number(account.balanceMinor)) differences.push({
+    // A zero-balance account absent from the provider's Trial Balance has no
+    // financial difference. Providers commonly omit these rows. Posting still
+    // requires an exact external identity for every account a journal uses.
+    if (!other) {
+      if (Number(account.balanceMinor) !== 0) differences.push({ kind: 'MISSING_EXTERNAL_ACCOUNT', code: account.code,
+        foundryMinor: account.balanceMinor, externalMinor: null });
+      continue;
+    }
+    if (Number(other.balanceMinor) !== Number(account.balanceMinor)) differences.push({
       kind: 'BALANCE_MISMATCH', code: account.code, foundryMinor: account.balanceMinor,
       externalMinor: Number(other.balanceMinor), differenceMinor: Number(other.balanceMinor) - Number(account.balanceMinor),
     });
   }
   for (const account of external.accounts || []) {
-    if (!account.code || !local.accounts.some((row) => String(row.code).toLowerCase() === String(account.code).toLowerCase())) {
+    if ((!account.code || !local.accounts.some((row) => String(row.code).toLowerCase() === String(account.code).toLowerCase()))
+        && Number(account.balanceMinor || 0) !== 0) {
       differences.push({ kind: 'UNMAPPED_EXTERNAL_ACCOUNT', externalId: account.externalId || null,
         code: account.code || null, externalName: account.name || null, externalMinor: Number(account.balanceMinor || 0) });
     }
@@ -141,6 +160,100 @@ function compare(local, external) {
     differences.push({ kind: 'CURRENCY_MISMATCH', foundry: local.currency, external: external.currency });
   }
   return differences;
+}
+
+function importedAccountShape(providerType, row) {
+  const provider = String(providerType || 'external').toUpperCase();
+  const rawType = `${row.accountType || ''} ${row.accountSubType || ''} ${row.classification || ''}`.toUpperCase();
+  let type = 'EXPENSE';
+  if (/COST OF GOODS|DIRECTCOST|COGS/.test(rawType)) type = 'COGS';
+  else if (/REVENUE|INCOME|SALES/.test(rawType)) type = 'INCOME';
+  else if (/EQUITY/.test(rawType)) type = 'EQUITY';
+  else if (/LIABILITY|PAYABLE|CREDIT CARD|CURRLIAB|TERMLIAB/.test(rawType)) type = 'LIABILITY';
+  else if (/ASSET|BANK|RECEIVABLE|CURRENT|FIXED|INVENTORY|PREPAYMENT/.test(rawType)) type = 'ASSET';
+  const safeExternal = String(row.externalId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 20);
+  const prefix = provider === 'QUICKBOOKS' ? 'QB' : provider === 'XERO' ? 'XE' : 'EXT';
+  const code = safeExternal && `${prefix}-${safeExternal}`.length <= 30
+    ? `${prefix}-${safeExternal}` : `${prefix}-${hash(String(row.externalId)).slice(0, 16).toUpperCase()}`;
+  return { code, name: String(row.name || 'Imported account').slice(0, 120), type,
+    normalBalance: ['ASSET', 'COGS', 'EXPENSE'].includes(type) ? 'DEBIT' : 'CREDIT',
+    subtype: row.accountSubType || row.accountType || null };
+}
+
+function openingBooksPreview(db, workspaceId, connectorId) {
+  const latest = db.prepare(`SELECT external_snapshot FROM accounting_shadow_runs
+    WHERE workspace_id = ? AND connector_id = ? ORDER BY started_at DESC LIMIT 1`)
+    .get(workspaceId, connectorId);
+  const snapshot = latest ? json(latest.external_snapshot, null) : null;
+  if (!snapshot?.accounts?.length) return null;
+  const accounts = snapshot.accounts.filter((row) => row.externalId);
+  const nonzero = accounts.filter((row) => Number(row.balanceMinor || 0) !== 0);
+  return { asOf: snapshot.asOf, currency: snapshot.currency || 'USD', accountCount: accounts.length,
+    nonzeroCount: nonzero.length, debitMinor: nonzero.filter((row) => Number(row.balanceMinor) > 0)
+      .reduce((sum, row) => sum + Number(row.balanceMinor), 0),
+    creditMinor: nonzero.filter((row) => Number(row.balanceMinor) < 0)
+      .reduce((sum, row) => sum - Number(row.balanceMinor), 0),
+    balanced: nonzero.reduce((sum, row) => sum + Number(row.balanceMinor), 0) === 0,
+    alreadyImported: Boolean(db.prepare(`SELECT 1 FROM accounting_journal_entries
+      WHERE workspace_id = ? AND source_record_type = 'accounting_connection_opening'
+        AND source_record_id = ? AND status = 'POSTED'`).get(workspaceId, connectorId)),
+    canImport: nonzero.length >= 2 && nonzero.reduce((sum, row) => sum + Number(row.balanceMinor), 0) === 0
+      && !db.prepare(`SELECT 1 FROM accounting_journal_entries WHERE workspace_id = ? AND status = 'POSTED'
+        LIMIT 1`).get(workspaceId),
+  };
+}
+
+function importOpeningBooks(db, ctx, membership, connectorId) {
+  const connection = connections.get(db, ctx.workspaceId, connectorId);
+  const current = state(db, ctx.workspaceId, connectorId);
+  const snapshot = current?.latestShadow?.externalSnapshot;
+  const preview = openingBooksPreview(db, ctx.workspaceId, connectorId);
+  if (!snapshot || !preview) throw new ValidationError('Run a read-only comparison before importing starting books.');
+  if (preview.alreadyImported) {
+    const entry = db.prepare(`SELECT * FROM accounting_journal_entries WHERE workspace_id = ?
+      AND source_record_type = 'accounting_connection_opening' AND source_record_id = ? AND status = 'POSTED'`)
+      .get(ctx.workspaceId, connectorId);
+    return { entry, replayed: true, preview };
+  }
+  if (!preview.canImport) {
+    throw new ValidationError(preview.balanced
+      ? 'This inventory already has posted accounting activity. Starting books can only initialize empty Foundry books.'
+      : 'The provider trial balance is not balanced, so Foundry stopped before importing it.');
+  }
+  const accounts = snapshot.accounts.filter((row) => row.externalId);
+  const byExternal = new Map();
+  return inTransaction(db, () => {
+    ledger.configure(db, ctx, membership, { startDate: snapshot.asOf,
+      currency: snapshot.currency || 'USD', costingMethod: 'WEIGHTED_AVERAGE' });
+    for (const row of accounts) {
+      let identity = db.prepare(`SELECT foundry_record_id FROM accounting_external_identities
+        WHERE workspace_id = ? AND connector_id = ? AND entity_type = 'account' AND external_id = ?`)
+        .get(ctx.workspaceId, connectorId, String(row.externalId));
+      let account = identity && db.prepare('SELECT * FROM accounting_accounts WHERE id = ? AND workspace_id = ?')
+        .get(identity.foundry_record_id, ctx.workspaceId);
+      if (!account) account = ledger.createAccount(db, ctx, membership,
+        importedAccountShape(connection.provider_type, row));
+      mapAccount(db, ctx, connectorId, { externalId: String(row.externalId), accountId: account.id });
+      byExternal.set(String(row.externalId), account);
+    }
+    const result = ledger.post(db, ctx, { postingDate: snapshot.asOf,
+      description: `Opening books imported from ${connection.display_name}`,
+      sourceType: 'accounting_connection', sourceRecordType: 'accounting_connection_opening',
+      sourceRecordId: connectorId, sourceKey: `accounting-opening:${connectorId}`,
+      createdByType: 'CONNECTOR', approvedByUserId: ctx.actorId,
+      metadata: { providerType: connection.provider_type, providerAccountId: connection.provider_account_id,
+        providerAccountName: connection.provider_account_name, snapshotVersion: snapshot.version,
+        snapshotHash: hash(snapshot) },
+      lines: accounts.filter((row) => Number(row.balanceMinor || 0) !== 0).map((row) => ({
+        accountId: byExternal.get(String(row.externalId)).id,
+        debitMinor: Number(row.balanceMinor) > 0 ? Number(row.balanceMinor) : 0,
+        creditMinor: Number(row.balanceMinor) < 0 ? -Number(row.balanceMinor) : 0,
+        memo: `${connection.display_name}: ${row.name}`,
+      })),
+    });
+    chooseAuthority(db, ctx, connectorId, { authority: 'POST', accountingSource: 'FOUNDRY' });
+    return { ...result, preview };
+  });
 }
 
 async function shadow(db, ctx, connectorId, adapter, credentials, input = {}) {
@@ -182,11 +295,13 @@ async function shadow(db, ctx, connectorId, adapter, credentials, input = {}) {
         .run(status, JSON.stringify(local), JSON.stringify(external), JSON.stringify(differences), done, runId);
       db.prepare(`UPDATE accounting_sync_policies SET last_shadow_run_id = ?, stage = ?, updated_at = ?
         WHERE workspace_id = ? AND connector_id = ?`)
-        .run(runId, status === 'MATCHED' && current.requested_authority === 'POST' ? 'WRITE_READY' : 'SHADOW',
+        .run(runId, status === 'MATCHED' && current.requested_authority === 'POST'
+          ? (current.stage === 'WRITE_ENABLED' ? 'WRITE_ENABLED' : 'WRITE_READY') : 'SHADOW',
           done, ctx.workspaceId, connectorId);
       db.prepare(`UPDATE workspace_connectors SET setup_status = ?, last_synced_at = ?,
         last_activity_at = ?, updated_at = ? WHERE workspace_id = ? AND id = ?`)
-        .run(status === 'MATCHED' ? (current.requested_authority === 'POST' ? 'WRITE_READY' : 'SHADOW_MATCHED') : 'ACCOUNTING_CONFLICT',
+        .run(status === 'MATCHED' ? (current.requested_authority === 'POST'
+          ? (current.stage === 'WRITE_ENABLED' ? 'ACCOUNTING_WRITE_ENABLED' : 'WRITE_READY') : 'SHADOW_MATCHED') : 'ACCOUNTING_CONFLICT',
           done, done, done, ctx.workspaceId, connectorId);
       db.prepare(`INSERT INTO accounting_sync_checkpoints
         (id, workspace_id, connector_id, stream, cursor, external_version, watermark_at, updated_at)
@@ -267,16 +382,21 @@ function enableWrites(db, ctx, connectorId) {
   return policy(db, ctx.workspaceId, connectorId);
 }
 
-async function syncPending(db, ctx, connectorId, adapter, credentials) {
+async function syncPending(db, ctx, connectorId, adapter, credentials, options = {}) {
   const current = policy(db, ctx.workspaceId, connectorId);
   if (current.stage !== 'WRITE_ENABLED') throw new ValidationError('Posting is not enabled for this accounting connection.');
   if (!adapter?.postJournalEntry) throw new ValidationError('This provider does not support governed journal posting.');
-  const entries = db.prepare(`SELECT e.* FROM accounting_journal_entries e
+  let entries = db.prepare(`SELECT e.* FROM accounting_journal_entries e
     WHERE e.workspace_id = ? AND e.status = 'POSTED'
+      AND (e.source_record_type IS NULL OR e.source_record_type <> 'accounting_connection_opening')
       AND NOT EXISTS (SELECT 1 FROM accounting_external_identities x
         WHERE x.workspace_id = e.workspace_id AND x.connector_id = ?
           AND x.entity_type = 'journal_entry' AND x.foundry_record_id = e.id)
     ORDER BY e.entry_number LIMIT 100`).all(ctx.workspaceId, connectorId);
+  if (Array.isArray(options.entryIds)) {
+    const selected = new Set(options.entryIds.map(String));
+    entries = entries.filter((entry) => selected.has(String(entry.id)));
+  }
   let posted = 0;
   for (const entry of entries) {
     const lines = db.prepare(`SELECT l.*, a.code AS account_code, a.name AS account_name,
@@ -317,10 +437,60 @@ async function syncPending(db, ctx, connectorId, adapter, credentials) {
   return { posted, remaining: Math.max(0, entries.length - posted) };
 }
 
+function createSandboxProof(db, ctx, connectorId) {
+  const current = policy(db, ctx.workspaceId, connectorId);
+  if (current.stage !== 'WRITE_ENABLED') {
+    throw new ValidationError('Enable verified posting before running the sandbox proof.');
+  }
+  const mapped = db.prepare(`SELECT a.*, x.external_id FROM accounting_accounts a
+    JOIN accounting_external_identities x ON x.workspace_id = a.workspace_id
+      AND x.connector_id = ? AND x.entity_type = 'account' AND x.foundry_record_id = a.id
+    WHERE a.workspace_id = ? AND a.active = 1 ORDER BY a.code`).all(connectorId, ctx.workspaceId);
+  const cash = mapped.find((row) => row.account_type === 'ASSET' && /checking|cash|bank/i.test(row.name))
+    || mapped.find((row) => row.account_type === 'ASSET');
+  const expense = mapped.find((row) => row.account_type === 'EXPENSE' && /misc|other business|office/i.test(row.name))
+    || mapped.find((row) => row.account_type === 'EXPENSE');
+  if (!cash || !expense) throw new ValidationError('The sandbox proof needs one exactly linked cash account and one expense account.');
+  const date = new Date().toISOString().slice(0, 10);
+  const charge = ledger.post(db, ctx, { postingDate: date,
+    description: 'Foundry sandbox integration proof — $1 test',
+    sourceType: 'accounting_connection_test', sourceRecordType: 'accounting_connection_test',
+    sourceRecordId: connectorId, sourceKey: `accounting-sandbox-proof:${connectorId}:charge`,
+    createdByType: 'USER', approvedByUserId: ctx.actorId,
+    metadata: { connectorId, automaticallyReversed: true }, lines: [
+      { accountId: expense.id, debitMinor: 100, memo: 'Foundry sandbox proof' },
+      { accountId: cash.id, creditMinor: 100, memo: 'Foundry sandbox proof' },
+    ] });
+  const reversal = ledger.post(db, ctx, { postingDate: date,
+    description: 'Reverse Foundry sandbox integration proof',
+    sourceType: 'accounting_connection_test', sourceRecordType: 'accounting_connection_test',
+    sourceRecordId: connectorId, sourceKey: `accounting-sandbox-proof:${connectorId}:reversal`,
+    createdByType: 'USER', approvedByUserId: ctx.actorId,
+    metadata: { connectorId, reversesProofEntryId: charge.entry.id }, lines: [
+      { accountId: cash.id, debitMinor: 100, memo: 'Reverse Foundry sandbox proof' },
+      { accountId: expense.id, creditMinor: 100, memo: 'Reverse Foundry sandbox proof' },
+    ] });
+  return { entries: [charge.entry, reversal.entry], cash, expense };
+}
+
 function state(db, workspaceId, connectorId) {
   let current = null; try { current = policy(db, workspaceId, connectorId); } catch { return null; }
   const latest = db.prepare(`SELECT * FROM accounting_shadow_runs WHERE workspace_id = ? AND connector_id = ?
       ORDER BY started_at DESC LIMIT 1`).get(workspaceId, connectorId) || null;
+  const proofEntries = db.prepare(`SELECT e.id, e.entry_number, e.description, e.posting_date,
+      x.external_id, x.external_version, x.last_seen_at
+    FROM accounting_journal_entries e
+    LEFT JOIN accounting_external_identities x ON x.workspace_id = e.workspace_id
+      AND x.connector_id = ? AND x.entity_type = 'journal_entry' AND x.foundry_record_id = e.id
+    WHERE e.workspace_id = ? AND e.source_record_type = 'accounting_connection_test'
+      AND e.source_record_id = ? AND e.status = 'POSTED' ORDER BY e.entry_number`)
+    .all(connectorId, workspaceId, connectorId);
+  const proofConfirmedAt = proofEntries.reduce((latestAt, entry) => entry.last_seen_at > latestAt ? entry.last_seen_at : latestAt, '');
+  const sandboxProof = proofEntries.length ? { entries: proofEntries,
+    passed: proofEntries.length === 2 && proofEntries.every((entry) => entry.external_id)
+      && latest?.status === 'MATCHED' && Boolean(latest.completed_at)
+      && latest.completed_at >= proofConfirmedAt,
+  } : null;
   return { policy: current,
     latestShadow: latest ? { ...latest, differences: json(latest.differences, []),
       localSnapshot: json(latest.local_snapshot, {}), externalSnapshot: json(latest.external_snapshot, {}) } : null,
@@ -328,8 +498,11 @@ function state(db, workspaceId, connectorId) {
       ORDER BY created_at DESC LIMIT 20`).all(workspaceId, connectorId),
     identities: db.prepare(`SELECT * FROM accounting_external_identities WHERE workspace_id = ? AND connector_id = ?
       ORDER BY entity_type, foundry_record_id`).all(workspaceId, connectorId),
+    openingBooks: openingBooksPreview(db, workspaceId, connectorId),
+    sandboxProof,
   };
 }
 
 module.exports = { policy, initialize, chooseAuthority, localSnapshot, compare, shadow, mapAccount, enableWrites, syncPending,
-  conflict, state, rememberExactAccounts, hash, stable };
+  createSandboxProof, conflict, state, rememberExactAccounts, openingBooksPreview, importOpeningBooks,
+  importedAccountShape, hash, stable };

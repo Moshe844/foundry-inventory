@@ -23,6 +23,8 @@ const managerEvents = require('../../manager/events');
 const reactions = require('../../manager/reactions');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { trimOrNull } = require('../../lib/util');
+const autonomousOperations = require('../../autonomous/service');
+const operationCatalog = require('../../autonomous/catalog');
 
 const router = express.Router();
 router.use('/autopilot', requireAuth);
@@ -58,6 +60,10 @@ router.get(
       reviewAll: Boolean(req.session.policyReviewAll),
       canAdmin: permissions.can(req.user, permissions.ADMIN),
       canOperate: permissions.can(req.user, permissions.OPERATE),
+      operationCatalog: operationCatalog.DEFINITIONS.map((definition) => ({
+        ...definition,
+        grant: autonomousOperations.activeGrant(req.db, workspaceId, definition.type),
+      })),
     });
     delete req.session.policyDraft;
     delete req.session.policyReviewAll;
@@ -133,6 +139,7 @@ router.get(
         needsYou: items.filter((item) => presenter.isCurrentlyActionable(req.db, req.ctx.workspaceId, item)),
         blocked: items.filter((item) => ['FAILED', 'BLOCKED'].includes(item.executionStatus)),
       },
+      operations: autonomousOperations.list(req.db, req.ctx.workspaceId, { limit: 100 }),
       evaluations: presenter.recentEvaluations(req.db, req.ctx.workspaceId, { limit: 50 }),
       // Bound to who owns each order, so history does not offer an approval the
       // replenishment plan has taken over.
@@ -235,6 +242,34 @@ router.post(
 );
 
 // --- authority ---------------------------------------------------------------
+
+router.post(
+  '/autopilot/operation-authority',
+  asyncRoute(async (req, res) => {
+    try {
+      const operationType = trimOrNull(req.body.operationType);
+      if (req.body.enabled === '1') {
+        autonomousOperations.grant(req.db, req.ctx, req.user, operationType, {
+          maximumQuantity:req.body.maximumQuantity === '' ? null : Number(req.body.maximumQuantity),
+          maximumValueMinor:req.body.maximumValue === '' ? null : Math.round(Number(req.body.maximumValue) * 100),
+          maximumDailyCount:req.body.maximumDailyCount === '' ? null : Number(req.body.maximumDailyCount),
+          minimumConfidence:req.body.minimumConfidence || null,
+          maximumRisk:req.body.maximumRisk || null,
+          allowedRoles:Array.isArray(req.body.allowedRoles) ? req.body.allowedRoles
+            : req.body.allowedRoles ? [req.body.allowedRoles] : [],
+        });
+        req.flash('success', 'That operation now has its own explicit limits. No other authority changed.');
+      } else {
+        autonomousOperations.revoke(req.db, req.ctx, req.user, operationType);
+        req.flash('success', 'That autonomous operation is off immediately.');
+      }
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+    }
+    return res.redirect(303, '/autopilot?advanced=1#universal-operation-authority');
+  })
+);
 
 /*
  * One job at a time.

@@ -17,19 +17,37 @@
   var imported = setupDocument && setupDocument.result;
   var generated = s.syntheticGeneration || null;
   var ownerImported = s.ownerProvidedInventory || null;
+  var hasInventoryRecords = Boolean(imported || generated || ownerImported);
 %>
 
 <% if (!addedToExisting) { %><%- include('../partials/setup-steps', { step: 3 }) %><% } %>
 
 <div class="rm-head">
   <p class="rm-head__eyebrow" style="color:var(--good)"><%- helpers.icon('check', { size: 14 }) %> Live now</p>
-  <h1><%= addedToExisting ? 'The file is now recorded.' : 'Your inventory is ready.' %></h1>
+  <h1><%= addedToExisting ? 'The file is now recorded.' : (hasInventoryRecords ? 'Your inventory is ready.' : 'Your inventory setup is ready.') %></h1>
   <p>
     <%= addedToExisting
       ? 'Foundry added exactly what you approved. Your existing inventory setup was not changed.'
-      : 'Foundry has configured the inventory engine. Everything below is true as of now, and every quantity has a movement behind it.' %>
+      : (hasInventoryRecords
+        ? 'Foundry configured the inventory engine and added the records you approved. Everything below is true as of now, and every quantity has a movement behind it.'
+        : 'Foundry configured how this inventory will work. No products or stock were created because you have not supplied those records yet. Add or import them next.') %>
   </p>
 </div>
+
+<% if (!addedToExisting && !hasInventoryRecords && !firstItem) { %>
+  <section class="rm-panel" style="margin-bottom:16px;border-color:var(--brand-line)">
+    <div class="rm-panel__head"><%- helpers.icon('arrowRight', { size: 15 }) %><h2>Next: add your products and starting quantities</h2></div>
+    <div style="padding:16px">
+      <p style="margin:0 0 14px;color:var(--ink-2)">Choose the source that contains the real records. You are finished describing the setup.</p>
+      <div class="rm-choices">
+        <a class="rm-btn" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell Foundry what you sell</a>
+        <a class="rm-btn rm-btn--ghost" href="/inventory/new">Add one manually</a>
+        <a class="rm-btn rm-btn--ghost" href="/onboarding/migrations/new">Import a file</a>
+        <a class="rm-btn rm-btn--ghost" href="/onboarding/system">Connect a business system</a>
+      </div>
+    </div>
+  </section>
+<% } %>
 
 <% if (imported) { %>
   <section class="rm-panel" style="margin-bottom:16px;border-color:var(--brand-line)">

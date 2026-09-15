@@ -132,7 +132,7 @@
                 <div class="act-row">
                   <span class="act-place">
                     <%= row.label %>
-                    <small><%= row.direction === 'out' ? 'stock leaves here' : 'stock arrives here' %></small>
+                    <small><%= row.direction === 'configuration' ? 'required for one kit' : row.direction === 'out' ? 'stock leaves here' : 'stock arrives here' %></small>
                   </span>
                   <span class="act-move">
                     <span class="num"><%= row.before %></span>
@@ -182,8 +182,32 @@
             </div>
           <% } %>
 
+          <% if (action.subject.exactVariants && action.subject.exactVariants.length) { %>
+            <div class="act-ledger" style="margin-top:14px">
+              <% action.subject.exactVariants.forEach(function (variant) { %>
+                <div class="act-row">
+                  <span class="act-place"><strong><%= variant.code %></strong><% if (variant.label) { %> · <%= variant.label %><% } %></span>
+                  <span class="muted">Exact supplied SKU</span>
+                </div>
+                <% if (variant.catalogueRecord && variant.catalogueRecord.fields) { %>
+                  <details class="rm-work" style="margin:6px 0 10px">
+                    <summary>Every supplied field for <%= variant.code %></summary>
+                    <div class="rm-work__body">
+                      <% variant.catalogueRecord.fields.forEach(function (field) { %>
+                        <div class="act-row"><span class="act-place"><%= field.label %></span><strong><%= field.value %></strong></div>
+                      <% }) %>
+                    </div>
+                  </details>
+                <% } %>
+              <% }) %>
+            </div>
+          <% } %>
+
           <% if (action.originalInstruction) { %>
-            <p class="muted act-instruction">You asked: “<%= action.originalInstruction %>”</p>
+            <details class="rm-work act-instruction">
+              <summary>What you told Foundry</summary>
+              <div class="rm-work__body"><p style="white-space:pre-wrap;margin:0"><%= action.originalInstruction.replace(/^Create:\s*/i, '') %></p></div>
+            </details>
           <% } %>
         </div>
 

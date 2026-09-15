@@ -34,6 +34,34 @@
 
 <%- include('../partials/spine', { story: story }) %>
 
+<% var supplierPlan = (locals.supplierResponsePlans || [])[0] || null; %>
+<% if (supplierPlan) { %>
+  <section class="supplier-response" style="margin-top:20px">
+    <div class="supplier-response__head">
+      <span class="rm-kicker">Foundry worked out the consequence</span>
+      <span class="badge <%= supplierPlan.status === 'NEEDS_APPROVAL' ? 'badge--warning' : '' %>"><%= supplierPlan.status.replaceAll('_',' ').toLowerCase() %></span>
+    </div>
+    <h2><%= supplierPlan.summary %></h2>
+    <% if (supplierPlan.consequences.atRiskUnits) { %>
+      <p><strong><%= supplierPlan.consequences.atRiskUnits %> committed units are at risk.</strong> Foundry compared stock already owned, alternate supply, waiting and purchasing before proposing a response.</p>
+    <% } else { %>
+      <p>No stock or money was changed by the supplier message. Foundry is watching the evidenced quantity, date and cost.</p>
+    <% } %>
+    <% if (supplierPlan.status === 'NEEDS_APPROVAL') { %>
+      <a class="rm-btn" href="/needs-you">Review the one decision</a>
+    <% } %>
+    <details class="disclose">
+      <summary>Why Foundry decided this · compare <%= supplierPlan.alternatives.length %> options</summary>
+      <div class="disclose__body">
+        <% supplierPlan.alternatives.forEach(function(option) { %>
+          <p><strong><%= option.type.replaceAll('_',' ') %></strong> — <%= option.explanation || (option.feasible ? 'Possible' : 'Not currently possible') %></p>
+        <% }) %>
+        <p class="rm-sub">Supplier communication and purchasing approval remain separate. A message cannot receive stock, place an order or post money.</p>
+      </div>
+    </details>
+  </section>
+<% } %>
+
 <% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status) && order.hasCosts && permissions.approve) { %>
   <div class="rm-decision" style="margin-top:20px">
     <span class="rm-decision__arrow" aria-hidden="true">→</span>

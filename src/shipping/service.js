@@ -173,6 +173,52 @@ function promisedDate(db, workspaceId, shipment) {
   return order && order.needed_by ? order.needed_by : null;
 }
 
+/** The promise made to the customer, kept apart from a carrier estimate. */
+function promiseFor(db, workspaceId, shipmentOrId) {
+  const shipment = typeof shipmentOrId === 'string'
+    ? requireShipment(db, workspaceId, shipmentOrId) : shipmentOrId;
+  const date = promisedDate(db, workspaceId, shipment);
+  return {
+    service: trimOrNull(shipment.promised_service),
+    windowStart: trimOrNull(shipment.promised_window_start),
+    windowEnd: trimOrNull(shipment.promised_window_end) || date,
+    promisedDate: date,
+    customerShippingMinor: shipment.customer_shipping_minor === null
+      || shipment.customer_shipping_minor === undefined ? null : Number(shipment.customer_shipping_minor),
+    source: trimOrNull(shipment.promise_source) || (date ? 'sales_order' : null),
+  };
+}
+
+function requireDate(value, label) {
+  const date = trimOrNull(value);
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new ValidationError(`${label} must be a calendar date.`);
+  }
+  return date;
+}
+
+/** Record only what the customer was actually offered or accepted. */
+function setPromise(db, ctx, shipmentId, input = {}) {
+  const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
+  if (!['PICKING', 'PACKED'].includes(shipment.status)) {
+    throw new ValidationError('The delivery promise cannot be rewritten after the parcel has left.');
+  }
+  const start = requireDate(input.windowStart, 'Promise window start');
+  const end = requireDate(input.windowEnd || input.promisedDate, 'Promise window end');
+  if (start && end && start > end) throw new ValidationError('The promise window ends before it starts.');
+  const paid = input.customerShippingMinor === '' || input.customerShippingMinor === null
+    || input.customerShippingMinor === undefined ? null : Math.round(Number(input.customerShippingMinor));
+  if (paid !== null && (!Number.isFinite(paid) || paid < 0)) {
+    throw new ValidationError('Customer shipping charged must be zero or more.');
+  }
+  db.prepare(`UPDATE sales_shipments SET promised_service = ?, promised_window_start = ?,
+    promised_window_end = ?, promised_date = ?, customer_shipping_minor = ?, promise_source = ?,
+    updated_at = ? WHERE id = ? AND workspace_id = ?`)
+    .run(trimOrNull(input.service), start, end, end, paid,
+      trimOrNull(input.source) || 'owner', nowIso(), shipmentId, ctx.workspaceId);
+  return promiseFor(db, ctx.workspaceId, shipmentId);
+}
+
 /**
  * Ask the carriers what they would charge.
  *
@@ -183,7 +229,8 @@ function promisedDate(db, workspaceId, shipment) {
 async function quote(db, ctx, shipmentId, options = {}) {
   const state = readiness(db, ctx.workspaceId, shipmentId);
   if (!state.ready) {
-    return { rates: [], blocked: state.blocked, promisedDate: promisedDate(db, ctx.workspaceId, state.shipment) };
+    const promise = promiseFor(db, ctx.workspaceId, state.shipment);
+    return { rates: [], blocked: state.blocked, promisedDate: promise.promisedDate, promise };
   }
   /*
    * The workspace's own key, not the process's. Every adapter reads its key
@@ -217,10 +264,12 @@ async function quote(db, ctx, shipmentId, options = {}) {
       .run(state.provider, (answer.providerShipmentIds || []).join(','), now, shipmentId, ctx.workspaceId);
   });
 
+  const promise = promiseFor(db, ctx.workspaceId, state.shipment);
   return {
     rates: ratesFor(db, ctx.workspaceId, shipmentId),
     blocked: [],
-    promisedDate: promisedDate(db, ctx.workspaceId, state.shipment),
+    promisedDate: promise.promisedDate,
+    promise,
   };
 }
 
@@ -229,6 +278,7 @@ function ratesFor(db, workspaceId, shipmentId) {
     ORDER BY amount_minor, delivery_days`).all(workspaceId, shipmentId)
     .map((row) => ({
       id: row.id,
+      provider: row.provider,
       providerRateId: row.provider_rate_id,
       carrier: row.carrier,
       carrierName: carriers.displayName(row.carrier) || row.carrier,
@@ -244,6 +294,47 @@ function ratesFor(db, workspaceId, shipmentId) {
 
 /* ---------------------------------------------------------------- buying */
 
+function labelTransactions(db, workspaceId, shipmentId) {
+  return db.prepare(`SELECT * FROM shipping_label_transactions
+    WHERE workspace_id = ? AND shipment_id = ? ORDER BY requested_at, id`).all(workspaceId, shipmentId)
+    .map((row) => ({ ...row, providerReference: (() => {
+      try { return JSON.parse(row.provider_reference || '[]'); } catch { return []; }
+    })() }));
+}
+
+function beginLabelTransaction(db, ctx, shipment, operation, idempotencyKey) {
+  const existing = db.prepare(`SELECT * FROM shipping_label_transactions
+    WHERE workspace_id = ? AND idempotency_key = ?`).get(ctx.workspaceId, idempotencyKey);
+  if (existing) return { row: existing, created: false };
+  const now = nowIso();
+  const id = newId('shiptxn');
+  db.prepare(`INSERT INTO shipping_label_transactions
+    (id, workspace_id, shipment_id, provider, operation, status, idempotency_key, currency,
+     requested_by_user_id, requested_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)`)
+    .run(id, ctx.workspaceId, shipment.id, shipment.provider || 'unknown', operation,
+      idempotencyKey, shipment.currency || 'USD', ctx.actorId || null, now, now);
+  return { row: db.prepare('SELECT * FROM shipping_label_transactions WHERE id = ?').get(id), created: true };
+}
+
+function finishLabelTransaction(db, id, input = {}) {
+  const now = nowIso();
+  db.prepare(`UPDATE shipping_label_transactions SET status = ?, provider_reference = ?,
+    amount_minor = ?, currency = ?, detail = ?, error_message = ?, completed_at = ?, updated_at = ?
+    WHERE id = ?`)
+    .run(input.status, input.providerReference ? JSON.stringify(input.providerReference) : null,
+      input.amountMinor === undefined ? null : input.amountMinor, input.currency || 'USD',
+      trimOrNull(input.detail), trimOrNull(input.errorMessage),
+      ['SUCCEEDED', 'FAILED'].includes(input.status) ? now : null, now, id);
+}
+
+function purchaseAttempt(db, workspaceId, shipmentId) {
+  const count = db.prepare(`SELECT COUNT(*) AS n FROM shipping_label_transactions
+    WHERE workspace_id = ? AND shipment_id = ? AND operation = 'PURCHASE'`)
+    .get(workspaceId, shipmentId).n;
+  return Number(count) + 1;
+}
+
 /**
  * Buy the label without claiming the parcel physically left.
  *
@@ -254,7 +345,7 @@ function ratesFor(db, workspaceId, shipmentId) {
  */
 async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
   const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
-  if (shipment.tracking_number && shipment.label_url) {
+  if (shipment.tracking_number && shipment.label_url && shipment.label_status !== 'VOIDED') {
     return { shipment, replayed: true, label: shipment.label_url };
   }
   const rate = db.prepare('SELECT * FROM shipment_rates WHERE id = ? AND workspace_id = ? AND shipment_id = ?')
@@ -264,21 +355,51 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
   const held = require('./accounts').contextFor(db, ctx);
   const provider = options.provider
     || providers.get(shipment.provider || (held && held.account.provider));
-  const bought = await provider.buy(held ? held.ctx : ctx, {
-    providerShipmentIds: String(shipment.provider_shipment_id || '').split(',').filter(Boolean),
-    rateIds: String(rate.provider_rate_id || '').split(',').filter(Boolean),
-  });
+  const pending = db.prepare(`SELECT * FROM shipping_label_transactions WHERE workspace_id = ?
+    AND shipment_id = ? AND operation = 'PURCHASE' AND status IN ('PENDING','REVIEW')
+    ORDER BY requested_at DESC LIMIT 1`).get(ctx.workspaceId, shipmentId);
+  if (pending) {
+    throw new ValidationError('A carrier purchase is still being verified. Foundry will not retry it and risk buying the label twice.');
+  }
+  const operationKey = options.idempotencyKey
+    || `shipment-label:${shipmentId}:${purchaseAttempt(db, ctx.workspaceId, shipmentId)}`;
+  const transaction = beginLabelTransaction(db, ctx,
+    { ...shipment, provider: rate.provider }, 'PURCHASE', operationKey).row;
+  let bought;
+  try {
+    bought = await provider.buy(held ? held.ctx : ctx, {
+      providerShipmentIds: String(shipment.provider_shipment_id || '').split(',').filter(Boolean),
+      rateIds: String(rate.provider_rate_id || '').split(',').filter(Boolean),
+      idempotencyKey: operationKey,
+    });
+  } catch (error) {
+    const definitive = Number(error.status) >= 400 && Number(error.status) < 500;
+    finishLabelTransaction(db, transaction.id, {
+      status: definitive ? 'FAILED' : 'REVIEW', currency: rate.currency,
+      errorMessage: String(error.message || error),
+    });
+    throw error;
+  }
 
   const now = nowIso();
-  db.prepare(`UPDATE sales_shipments SET provider_rate_id = ?, provider_shipment_id = ?,
-    label_url = ?, label_format = ?, tracking_status = 'PRE_TRANSIT', tracked_at = ?,
-    bought_by_rule_id = ?, carrier = ?, service = ?, tracking_number = ?,
-    shipping_cost_minor = ?, currency = ?, expected_delivery_date = ?, updated_at = ?
-    WHERE id = ? AND workspace_id = ?`)
-    .run(rate.provider_rate_id, bought.providerShipmentId || shipment.provider_shipment_id,
-      bought.labelUrl, bought.labelFormat, now, options.ruleId || null,
-      bought.carrier, bought.service, bought.trackingNumber, bought.amountMinor,
-      bought.currency, bought.deliveryDate, now, shipmentId, ctx.workspaceId);
+  const providerReferences = bought.providerLabelIds || bought.providerShipmentIds
+    || [bought.providerShipmentId].filter(Boolean);
+  inTransaction(db, () => {
+    db.prepare(`UPDATE sales_shipments SET provider_rate_id = ?, provider_shipment_id = ?,
+      label_url = ?, label_format = ?, label_status = 'PURCHASED', label_voided_at = NULL,
+      postage_refund_minor = NULL, tracking_status = 'PRE_TRANSIT', tracked_at = ?,
+      bought_by_rule_id = ?, carrier = ?, service = ?, tracking_number = ?,
+      shipping_cost_minor = ?, currency = ?, expected_delivery_date = ?, updated_at = ?
+      WHERE id = ? AND workspace_id = ?`)
+      .run(rate.provider_rate_id, (bought.providerShipmentIds || [bought.providerShipmentId])
+        .filter(Boolean).join(',') || shipment.provider_shipment_id,
+        bought.labelUrl, bought.labelFormat, now, options.ruleId || null,
+        bought.carrier, bought.service, bought.trackingNumber, bought.amountMinor,
+        bought.currency, bought.deliveryDate, now, shipmentId, ctx.workspaceId);
+    finishLabelTransaction(db, transaction.id, { status: 'SUCCEEDED',
+      providerReference: providerReferences, amountMinor: bought.amountMinor,
+      currency: bought.currency, detail: 'Carrier confirmed the label purchase.' });
+  });
 
   // The carrier's own tracking link beats a pattern-built one when there is one.
   if (bought.trackingUrl) {
@@ -309,7 +430,10 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
           sourceType: 'shipment_postage',
           sourceRecordType: 'sales_shipment',
           sourceRecordId: shipmentId,
-          sourceKey: `shipment-postage:${shipmentId}`,
+          // A shipment can legitimately buy a replacement after a successful
+          // void. The durable purchase transaction, not the shipment alone,
+          // is therefore the financial idempotency boundary.
+          sourceKey: `shipment-postage:${shipmentId}:${transaction.id}`,
           createdByType: ctx.actorId ? 'USER' : 'SYSTEM',
           approvedByUserId: ctx.actorId || null,
           lines: [
@@ -344,6 +468,128 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
   };
 }
 
+function postPostageRefund(db, ctx, shipment, amountMinor, detail, transactionId) {
+  if (!(amountMinor > 0)) return;
+  try {
+    const ledger = require('../accounting/ledger');
+    if (!ledger.settings(db, ctx.workspaceId).enabled) return;
+    ledger.post(db, ctx, {
+      postingDate: nowIso().slice(0, 10),
+      description: `Postage refund for ${shipment.shipment_number}`,
+      sourceType: 'shipment_postage_refund', sourceRecordType: 'sales_shipment',
+      sourceRecordId: shipment.id,
+      sourceKey: `shipment-postage-refund:${shipment.id}:${transactionId}`,
+      createdByType: ctx.actorId ? 'USER' : 'SYSTEM', approvedByUserId: ctx.actorId || null,
+      lines: [
+        { accountKey: 'CASH', debitMinor: amountMinor, memo: detail || 'Carrier refund' },
+        { accountKey: 'SHIPPING_EXPENSE', creditMinor: amountMinor, memo: 'Reversed unused postage' },
+      ],
+    });
+  } catch (error) {
+    console.error('[shipping] postage refund was not posted to the books', error.message);
+  }
+}
+
+/** Void unused postage without erasing the original label evidence. */
+async function voidLabel(db, ctx, shipmentId, options = {}) {
+  const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
+  if (['SHIPPED', 'DELIVERED'].includes(shipment.status)) {
+    throw new ValidationError('This parcel already left. Use the return workflow instead of voiding its label.');
+  }
+  if (shipment.label_status === 'VOIDED') {
+    return { shipment, replayed: true, status: 'SUCCEEDED' };
+  }
+  if (!shipment.label_url || !shipment.tracking_number) {
+    throw new ValidationError('This parcel has no purchased carrier label to void.');
+  }
+  const held = require('./accounts').contextFor(db, ctx);
+  const providerName = shipment.provider || (held && held.account.provider);
+  const provider = options.provider || providers.get(providerName);
+  if (typeof provider.voidLabel !== 'function') {
+    throw new ValidationError(`${providerName} does not support label voids through this connection. Contact the carrier and attach its refund evidence.`);
+  }
+  const purchase = labelTransactions(db, ctx.workspaceId, shipmentId)
+    .filter((row) => row.operation === 'PURCHASE' && row.status === 'SUCCEEDED').at(-1);
+  // A replacement label is a new financial effect and may itself need to be
+  // voided. Scope the retry boundary to the exact purchase being reversed.
+  const purchaseBoundary = purchase?.id || shipment.provider_shipment_id || shipment.tracking_number;
+  const key = options.idempotencyKey || `shipment-label-void:${shipmentId}:${purchaseBoundary}`;
+  const started = beginLabelTransaction(db, ctx, shipment, 'VOID', key);
+  if (!started.created) {
+    if (started.row.status === 'SUCCEEDED') return { shipment, replayed: true, status: 'SUCCEEDED' };
+    if (['PENDING', 'REVIEW'].includes(started.row.status)) {
+      return { shipment, replayed: true, status: 'PENDING', detail: started.row.detail };
+    }
+  }
+  const references = purchase?.providerReference?.length ? purchase.providerReference
+    : String(shipment.provider_shipment_id || '').split(',').filter(Boolean);
+  let result;
+  try {
+    result = await provider.voidLabel(held ? held.ctx : ctx, {
+      providerReferences: references, idempotencyKey: key,
+    });
+  } catch (error) {
+    const definitive = Number(error.status) >= 400 && Number(error.status) < 500;
+    finishLabelTransaction(db, started.row.id, { status: definitive ? 'FAILED' : 'REVIEW',
+      providerReference: references, currency: shipment.currency,
+      errorMessage: String(error.message || error) });
+    throw error;
+  }
+  const normalized = ['SUCCEEDED', 'FAILED'].includes(result.status) ? result.status : 'PENDING';
+  const refund = normalized === 'SUCCEEDED' ? Number(shipment.shipping_cost_minor || 0) : null;
+  inTransaction(db, () => {
+    finishLabelTransaction(db, started.row.id, { status: normalized,
+      providerReference: result.references || references, amountMinor: refund,
+      currency: shipment.currency, detail: result.detail });
+    db.prepare(`UPDATE sales_shipments SET label_status = ?, label_voided_at = ?,
+      postage_refund_minor = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+      .run(normalized === 'SUCCEEDED' ? 'VOIDED' : normalized === 'FAILED' ? 'PURCHASED' : 'VOID_PENDING',
+        normalized === 'SUCCEEDED' ? nowIso() : null, refund, nowIso(), shipmentId, ctx.workspaceId);
+  });
+  if (normalized === 'SUCCEEDED') {
+    postPostageRefund(db, ctx, shipment, refund, result.detail, started.row.id);
+  }
+  return { shipment: requireShipment(db, ctx.workspaceId, shipmentId), replayed: false,
+    status: normalized, amountMinor: refund, detail: result.detail };
+}
+
+/** Record a carrier invoice correction from exact evidence; never infer one. */
+function recordAdjustment(db, ctx, shipmentId, input = {}) {
+  const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
+  const amount = Math.round(Number(input.amountMinor));
+  if (!Number.isFinite(amount) || amount === 0) throw new ValidationError('Enter the carrier adjustment amount.');
+  const evidence = trimOrNull(input.evidence);
+  if (!evidence) throw new ValidationError('Carrier adjustments require invoice or carrier evidence.');
+  const key = trimOrNull(input.idempotencyKey) || `shipment-adjustment:${shipmentId}:${newId('evidence')}`;
+  const started = beginLabelTransaction(db, ctx, shipment, 'ADJUSTMENT', key);
+  if (!started.created) return { replayed: true, shipment, transaction: started.row };
+  inTransaction(db, () => {
+    finishLabelTransaction(db, started.row.id, { status: 'SUCCEEDED', amountMinor: amount,
+      currency: shipment.currency || 'USD', detail: evidence });
+    db.prepare(`UPDATE sales_shipments SET postage_adjustment_minor =
+      COALESCE(postage_adjustment_minor, 0) + ?, updated_at = ? WHERE id = ? AND workspace_id = ?`)
+      .run(amount, nowIso(), shipmentId, ctx.workspaceId);
+  });
+  try {
+    const ledger = require('../accounting/ledger');
+    if (ledger.settings(db, ctx.workspaceId).enabled) {
+      ledger.post(db, ctx, {
+        postingDate: nowIso().slice(0, 10), description: `Carrier adjustment for ${shipment.shipment_number}`,
+        sourceType: 'shipment_postage_adjustment', sourceRecordType: 'sales_shipment',
+        sourceRecordId: shipmentId, sourceKey: key, createdByType: ctx.actorId ? 'USER' : 'SYSTEM',
+        approvedByUserId: ctx.actorId || null,
+        lines: amount > 0
+          ? [{ accountKey: 'SHIPPING_EXPENSE', debitMinor: amount, memo: evidence },
+            { accountKey: 'CASH', creditMinor: amount, memo: 'Carrier adjustment' }]
+          : [{ accountKey: 'CASH', debitMinor: Math.abs(amount), memo: 'Carrier credit' },
+            { accountKey: 'SHIPPING_EXPENSE', creditMinor: Math.abs(amount), memo: evidence }],
+      });
+    }
+  } catch (error) { console.error('[shipping] carrier adjustment was not posted', error.message); }
+  return { replayed: false, shipment: requireShipment(db, ctx.workspaceId, shipmentId),
+    transaction: db.prepare('SELECT * FROM shipping_label_transactions WHERE id = ?').get(started.row.id) };
+}
+
 /* ------------------------------------------------------- doing it unasked */
 
 /**
@@ -363,6 +609,13 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
 async function shipWithinAuthority(db, ctx, shipmentId, options = {}) {
   const capabilities = require('../autopilot/capabilities');
   const rules = require('./rules');
+
+  const handling = require('./operation-policy').get(db, ctx.workspaceId);
+  if (handling.mode !== 'AUTOMATIC') {
+    return { bought: false, because: handling.mode === 'MANUAL'
+      ? 'Shipping is in Manual mode. Foundry will show the rates and leave the choice to you.'
+      : 'Shipping is in Recommend mode. Foundry will choose a rate for review but will not buy it.' };
+  }
 
   const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
   if (shipment.status !== 'PACKED') {
@@ -392,9 +645,38 @@ async function shipWithinAuthority(db, ctx, shipmentId, options = {}) {
     { promisedDate: quoted.promisedDate });
   if (!decision.rate) return { bought: false, because: decision.because, rates: quoted.rates };
 
-  const bought = await buyLabel(db, ctx, shipmentId, decision.rate.id,
-    { ...options, ruleId: decision.rule.id });
-  return { bought: true, because: decision.because, rule: decision.rule, ...bought };
+  const autonomous = require('../autonomous/service');
+  const operation = autonomous.create(db, ctx, {
+    operationType:'shipping.purchase_label',
+    idempotencyKey:`shipping-label:${shipmentId}`,
+    sourceKind:'sales_shipment', sourceId:shipmentId,
+    title:`Buy shipping for ${shipment.shipment_number}`,
+    summary:decision.because,
+    link:`/orders/${shipment.sales_order_id}/detail?open=shipping#shipping`,
+    evidence:[
+      { label:'Chosen carrier', value:`${decision.rate.carrierName || decision.rate.carrier} ${decision.rate.service}` },
+      { label:'Quoted price', value:`${decision.rate.currency} ${(decision.rate.amountMinor / 100).toFixed(2)}` },
+      ...(quoted.promisedDate ? [{ label:'Promised by', value:quoted.promisedDate }] : []),
+    ],
+    decision:{ shipmentId, rateId:decision.rate.id, ruleId:decision.rule.id,
+      ruleReason:decision.because },
+    affectedEntities:{ shipmentId, salesOrderId:shipment.sales_order_id },
+    authorityDimensions:{ valueMinor:decision.rate.amountMinor,
+      customerId:shipment.customer_id || undefined,
+      locationId:shipment.ship_from_location_id || undefined,
+      confidence:'high', risk:'high' },
+    expectedOutcome:{ labelPurchased:true, trackingNumberRecorded:true,
+      quotedAmountMinor:decision.rate.amountMinor },
+  });
+  const governed = await autonomous.run(db, ctx, null, operation.id,
+    { ...options, rule:decision.rule, rate:decision.rate });
+  if (governed.operation.status !== 'COMPLETED') {
+    const because = (governed.authority?.checks || []).filter((check) => !check.passed)
+      .map((check) => check.reason).join(' ') || governed.operation.errorMessage;
+    return { bought:false, because, operation:governed.operation };
+  }
+  return { bought:true, because:decision.because, rule:decision.rule,
+    ...governed.operation.actualOutcome, operation:governed.operation };
 }
 
 /**
@@ -425,7 +707,36 @@ async function sweep(db, ctx, options = {}) {
   return { considered: packed.length, bought: results.filter((row) => row.bought).length, results };
 }
 
+require('../autonomous/service').registerAdapter('shipping.purchase_label', {
+  owner:'shipping.service',
+  authorize:({ db, ctx, operation, execution }) => {
+    const capability = require('../autopilot/capabilities').may(db, ctx.workspaceId, 'shipping_labels');
+    const checks = [
+      { name:'executionState', passed:execution.allowed,
+        reason:execution.because || 'Shipping automation is active.' },
+      { name:'shippingGrant', passed:capability.allowed,
+        reason:capability.because || 'Buying shipping labels is explicitly enabled.' },
+      { name:'shippingRule', passed:Boolean(operation.decision.ruleId),
+        reason:'A saved shipping rule must select this exact rate.' },
+    ];
+    return { allowed:checks.every((check) => check.passed), checks };
+  },
+  execute:({ db, ctx, operation, runtime }) => buyLabel(db, ctx,
+    operation.decision.shipmentId, operation.decision.rateId,
+    { ...runtime, ruleId:operation.decision.ruleId }),
+  verify:({ db, ctx, operation, actualOutcome }) => {
+    const shipment = requireShipment(db, ctx.workspaceId, operation.decision.shipmentId);
+    const passed = Boolean(shipment.label_url && shipment.tracking_number)
+      && Number(shipment.shipping_cost_minor || 0) === Number(actualOutcome.amountMinor || 0);
+    return { passed, reason:passed
+      ? 'The carrier label, tracking number, and charged amount were read back from the shipment.'
+      : 'The purchased label could not be reconciled to the shipment.',
+    shipmentId:shipment.id, trackingNumber:shipment.tracking_number || null };
+  },
+});
+
 module.exports = {
   packagesFor, setPackages, endpoints, readiness, quote, ratesFor, buyLabel,
-  promisedDate, requireShipment, shipWithinAuthority, sweep,
+  promisedDate, promiseFor, setPromise, requireShipment, labelTransactions,
+  voidLabel, recordAdjustment, shipWithinAuthority, sweep,
 };

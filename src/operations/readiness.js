@@ -52,6 +52,8 @@ function reconciliationState(db) {
 function snapshot(db, options = {}) {
   const env = options.env || config.env;
   const production = env === 'production';
+  const topology = options.databaseTopology || db.foundryTopology
+    || { engine:'unknown',shared:false,multiWriter:false };
   const now = Number(options.now || Date.now());
   let databaseOk = false;
   let schemaVersion = null;
@@ -138,6 +140,11 @@ function snapshot(db, options = {}) {
 
   const checks = [
     check('database', databaseOk, databaseOk ? 'Database quick-check passed.' : 'Database is unavailable or corrupt.', { schemaVersion }),
+    check('database_topology', !production || (topology.shared === true && topology.multiWriter === true),
+      topology.shared === true && topology.multiWriter === true
+        ? `${topology.engine || 'Shared relational'} database is certified for shared multi-writer operation.`
+        : `${topology.engine || 'This'} database is not a certified shared multi-writer production topology.`,
+      topology,production),
     check('schema', Number(schemaVersion) >= 18, `Schema version ${schemaVersion || 'unknown'} is installed.`, { schemaVersion }),
     check('release_identity', !production || (config.operations.releaseRef && config.operations.releaseRef !== 'development'),
       config.operations.releaseRef && config.operations.releaseRef !== 'development'

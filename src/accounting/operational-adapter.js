@@ -582,7 +582,7 @@ function dispatch(db, event, postingDate) {
   return null;
 }
 
-function captureAndProcess(db, event) {
+function processEvent(db, event) {
   // Legacy workspaces are upgraded at the first real operational event. New
   // workspaces are configured at creation, so there is no user-facing switch
   // and no interval in which business activity silently misses Accounting.
@@ -633,12 +633,72 @@ function captureAndProcess(db, event) {
   return inbox(db, event.workspaceId, event.id);
 }
 
+function captureAndProcess(db, event) {
+  if (!AUTOMATIC.has(event.type)) return processEvent(db, event);
+  const autonomous = require('../autonomous/service');
+  const ctx = { workspaceId:event.workspaceId, actorId:event.actorUserId || null };
+  const operation = autonomous.create(db, ctx, {
+    operationType:'accounting.post', idempotencyKey:`accounting-event:${event.id}`,
+    sourceKind:'domain_event', sourceId:event.id,
+    title:`Account for ${String(event.type).replaceAll('_', ' ').replaceAll('.', ' ')}`,
+    summary:'Post the exact financial consequence of a verified operational event.',
+    link:'/activity?category=accounting',
+    evidence:[{ label:'Domain event', value:event.type },
+      { label:'Source record', value:event.sourceRecordId || event.sourceRecordType || event.id }],
+    decision:{ eventId:event.id, eventType:event.type },
+    affectedEntities:{ domainEventId:event.id,
+      sourceRecordType:event.sourceRecordType, sourceRecordId:event.sourceRecordId },
+    authorityDimensions:{ confidence:'high', risk:'high' },
+    expectedOutcome:{ accountingInboxStatus:'POSTED_OR_EXPLICITLY_IGNORED' },
+  });
+  return autonomous.runSync(db, ctx, null, operation.id, { event }).result
+    || inbox(db, event.workspaceId, event.id);
+}
+
+require('../autonomous/service').registerAdapter('accounting.post', {
+  owner:'accounting.operational-adapter',
+  authorize:({ db, ctx, operation, runtime }) => {
+    const event = runtime.event || require('../manager/events').get(db, ctx.workspaceId,
+      operation.decision.eventId);
+    const configured = require('./automatic').ensure(db, ctx.workspaceId,
+      { startDate:eventBusinessDate(db, event) }).configured;
+    const checks = [
+      { name:'accountingConfigured', passed:Boolean(configured.enabled && configured.startDate),
+        reason:'Automatic accounting requires an enabled ledger and an accountable owner.' },
+      { name:'deterministicPosting', passed:AUTOMATIC.has(event.type),
+        reason:'Only a registered operational event may create an automatic posting.' },
+    ];
+    return { allowed:checks.every((check) => check.passed), checks,
+      source:{ kind:'accounting_policy', startDate:configured.startDate } };
+  },
+  execute:({ db, ctx, operation, runtime }) => processEvent(db,
+    runtime.event || require('../manager/events').get(db, ctx.workspaceId,
+      operation.decision.eventId)),
+  verify:({ db, ctx, operation }) => {
+    const row = inbox(db, ctx.workspaceId, operation.decision.eventId);
+    const passed = Boolean(row && ['POSTED','IGNORED'].includes(row.status));
+    return { passed, reason:passed
+      ? `The accounting inbox reconciled this event as ${row.status.toLowerCase()}.`
+      : (row?.errorMessage || row?.outcome?.message || 'The accounting consequence needs review.'),
+    accountingInboxId:row?.id || null, journalEntryId:row?.journal_entry_id || null,
+    accountingStatus:row?.status || null };
+  },
+});
+
 function retry(db, workspaceId, eventId) {
   const row = inbox(db, workspaceId, eventId);
   if (!row) throw new Error('That accounting event is not waiting for review.');
   db.prepare(`UPDATE accounting_event_inbox SET status = 'PENDING', error_message = NULL,
     processed_at = NULL WHERE id = ?`).run(row.id);
   const domain = require('../manager/events').get(db, workspaceId, eventId);
+  const operation = require('../autonomous/service').create(db,
+    { workspaceId, actorId:null }, { operationType:'accounting.post',
+      idempotencyKey:`accounting-event:${eventId}`, sourceKind:'domain_event', sourceId:eventId });
+  // Clear the persisted failed observation only after a person supplied the
+  // missing evidence; the domain inbox remains the idempotency boundary.
+  db.prepare(`UPDATE autonomous_operations SET actual_outcome = '{}', verification = '{}',
+    status = 'PLANNED', phase = 'OBSERVE', error_message = NULL, updated_at = ?
+    WHERE id = ? AND workspace_id = ?`).run(nowIso(), operation.id, workspaceId);
   return captureAndProcess(db, domain);
 }
 

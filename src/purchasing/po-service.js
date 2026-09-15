@@ -219,14 +219,10 @@ function list(db, workspaceId, { status = null, supplierId = null, limit = 50 } 
 
 /** The next PO number for this workspace: PO-1001, PO-1002, … */
 function nextNumber(db, workspaceId) {
-  const rows = db
-    .prepare("SELECT po_number FROM purchase_orders WHERE workspace_id = ? AND po_number LIKE 'PO-%'")
-    .all(workspaceId);
-  let highest = 1000;
-  for (const row of rows) {
-    const n = Number(String(row.po_number).replace(/^PO-/i, ''));
-    if (Number.isFinite(n) && n > highest) highest = n;
-  }
+  const row = db.prepare(`SELECT COALESCE(MAX(CAST(SUBSTR(po_number, 4) AS INTEGER)), 1000) AS highest
+    FROM purchase_orders WHERE workspace_id = ? AND po_number LIKE 'PO-%'
+      AND SUBSTR(po_number, 4) <> '' AND SUBSTR(po_number, 4) NOT GLOB '*[^0-9]*'`).get(workspaceId);
+  const highest = Math.max(1000, Number(row.highest || 1000));
   return `PO-${highest + 1}`;
 }
 
@@ -652,6 +648,68 @@ function deleteDraft(db, ctx, membership, poId) {
   return { deleted: true, poNumber: order.poNumber };
 }
 
+/**
+ * Correct an imported order whose exact stock-unit quantities were previously
+ * rounded through a supplier pack default. This is a migration-only domain
+ * adapter: it accepts only the immutable staged lines for the same package,
+ * refuses orders with receipts, records the before/after event, and refreshes
+ * the integrity hash. Providers and routes cannot use it to rewrite orders.
+ */
+function correctMigrationQuantities(db,ctx,membership,poId,sourceLines,packageId) {
+  permissions.assertCan(membership,permissions.ADMIN,'reconcile imported purchase-order quantities');
+  if (!ctx || ctx.verifiedMigration !== true) {
+    throw new InvariantError('Only verified migration reconciliation can correct imported order quantities.',
+      'migration_po_correction_required');
+  }
+  const order = get(db,ctx.workspaceId,poId);
+  const sourceDetail = order.sourceDetail || {};
+  if (sourceDetail.migrationPackageId !== packageId) {
+    throw new InvariantError('That order does not belong to this migration package.',
+      'migration_po_package_mismatch');
+  }
+  if (db.prepare('SELECT 1 FROM purchase_order_receipts WHERE workspace_id=? AND purchase_order_id=? LIMIT 1')
+    .get(ctx.workspaceId,poId)) {
+    throw new InvariantError('A received order cannot be rewritten during migration reconciliation.',
+      'migration_po_already_received');
+  }
+  if (!Array.isArray(sourceLines) || sourceLines.length !== order.lines.length) {
+    throw new InvariantError('The staged and imported purchase-order lines do not match.',
+      'migration_po_line_mismatch');
+  }
+  const corrections = [];
+  inTransaction(db,() => {
+    order.lines.forEach((line,index) => {
+      const source = sourceLines[index] || {};
+      const quantity = Number(source.quantityUnits);
+      if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+        throw new ValidationError(`Imported purchase-order line ${index + 1} has no exact positive stock-unit quantity.`);
+      }
+      if (Number(line.quantityUnits) === quantity) return;
+      const explicitUnitsPer = Number(source.unitsPerPurchaseUnit || 0);
+      const canPreservePack = Number.isSafeInteger(explicitUnitsPer) && explicitUnitsPer > 0
+        && quantity % explicitUnitsPer === 0;
+      const unitsPer = canPreservePack ? explicitUnitsPer : 1;
+      const purchaseUnit = canPreservePack ? (trimOrNull(source.purchaseUnit) || 'pack') : 'unit';
+      const purchaseUnits = quantity / unitsPer;
+      const lineTotal = line.unitCost === null || line.unitCost === undefined
+        ? null : Math.round(Number(line.unitCost) * quantity * 100) / 100;
+      db.prepare(`UPDATE purchase_order_lines SET purchase_unit=?,units_per_purchase_unit=?,
+        quantity_purchase_units=?,quantity_units=?,line_total=? WHERE id=? AND workspace_id=?`)
+        .run(purchaseUnit,unitsPer,purchaseUnits,quantity,lineTotal,line.id,ctx.workspaceId);
+      corrections.push({ lineId:line.id,before:Number(line.quantityUnits),after:quantity });
+    });
+    if (corrections.length) {
+      const refreshed = get(db,ctx.workspaceId,poId);
+      db.prepare('UPDATE purchase_orders SET integrity_hash=?,updated_at=? WHERE id=? AND workspace_id=?')
+        .run(computeIntegrityHash(refreshed),nowIso(),poId,ctx.workspaceId);
+      recordEvent(db,ctx.workspaceId,poId,'migration_quantity_reconciled',{
+        migrationPackageId:packageId,corrections,
+      },ctx.actorId);
+    }
+  });
+  return { order:get(db,ctx.workspaceId,poId),corrected:corrections.length };
+}
+
 // ---------------------------------------------------------------------------
 // Cost history
 // ---------------------------------------------------------------------------
@@ -720,6 +778,7 @@ module.exports = {
   approve,
   cancel,
   deleteDraft,
+  correctMigrationQuantities,
   costHistory,
   lastPriceChange,
 };

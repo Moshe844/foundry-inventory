@@ -4,8 +4,11 @@ const config = require('../../config');
 const { ValidationError } = require('../../domain/errors');
 const { jsonRequest } = require('./common');
 
-const READ_SCOPES = ['openid','offline_access','accounting.settings.read','accounting.reports.read'];
-const WRITE_SCOPES = [...READ_SCOPES, 'accounting.transactions'];
+// Xero assigns granular Accounting API scopes to Web apps created from March 2026.
+// Foundry only reads the organisation, chart of accounts and trial balance during
+// shadow reconciliation; posting authority only needs Manual Journals.
+const READ_SCOPES = ['openid','offline_access','accounting.settings.read','accounting.reports.trialbalance.read'];
+const WRITE_SCOPES = [...READ_SCOPES, 'accounting.manualjournals'];
 const basic = () => Buffer.from(`${config.connections.xero.clientId}:${config.connections.xero.clientSecret}`).toString('base64');
 
 function metadata() {
@@ -78,7 +81,9 @@ async function readAccountingSnapshot({ credentials, asOf }) {
   }
   return { asOf, currency: trial.body.Reports?.[0]?.ReportTitles?.at(-1)?.split(' ').at(-1) || 'USD', version: asOf,
     accounts: (chart.body.Accounts || []).filter((row) => row.Status === 'ACTIVE').map((row) => ({ externalId: row.AccountID,
-      code: row.Code || null, name: row.Name, version: row.UpdatedDateUTC || null, balanceMinor: values.get(row.AccountID) || 0 })) };
+      code: row.Code || null, name: row.Name, version: row.UpdatedDateUTC || null,
+      accountType: row.Type || null, accountSubType: row.Class || null, classification: row.Class || null,
+      balanceMinor: values.get(row.AccountID) || 0 })) };
 }
 
 async function postJournalEntry({ credentials, entry, idempotencyKey }) {

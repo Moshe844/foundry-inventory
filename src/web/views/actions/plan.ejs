@@ -2,9 +2,15 @@
   <div class="titles">
     <a class="back-link" href="/actions"><%- helpers.icon('chevron', { size: 14 }) %> Foundry actions</a>
     <h1>Foundry is ready to make <%= lines.length %> changes</h1>
-    <div class="page-sub">
-      <% if (plan.originalInstruction) { %>You asked: “<%= plan.originalInstruction %>”<% } %>
-    </div>
+    <% if (plan.summary) { %>
+      <p class="page-sub" style="max-width:820px"><strong>What Foundry understood:</strong> <%= plan.summary %></p>
+    <% } %>
+    <% if (plan.originalInstruction) { %>
+      <details class="rm-work" style="margin-top:10px;max-width:760px;text-align:left">
+        <summary>What you told Foundry</summary>
+        <div class="rm-work__body"><p style="white-space:pre-wrap;margin:0"><%= plan.originalInstruction.replace(/^Create:\s*/i, '') %></p></div>
+      </details>
+    <% } %>
   </div>
 </div>
 
@@ -41,6 +47,26 @@
         <h2><%= index + 1 %>. <%= line.oneLine %></h2>
       </div>
       <div class="card-body">
+        <% if (line.subject.exactVariants && line.subject.exactVariants.length) { %>
+          <div class="act-ledger" style="margin-bottom:12px">
+            <% line.subject.exactVariants.forEach(function (variant) { %>
+              <div class="act-row">
+                <span class="act-place"><strong><%= variant.code %></strong><% if (variant.label) { %> · <%= variant.label %><% } %></span>
+                <span class="muted">Exact supplied SKU</span>
+              </div>
+              <% if (variant.catalogueRecord && variant.catalogueRecord.fields) { %>
+                <details class="rm-work" style="margin:6px 0 10px">
+                  <summary>Every supplied field for <%= variant.code %></summary>
+                  <div class="rm-work__body">
+                    <% variant.catalogueRecord.fields.forEach(function (field) { %>
+                      <div class="act-row"><span class="act-place"><%= field.label %></span><strong><%= field.value %></strong></div>
+                    <% }) %>
+                  </div>
+                </details>
+              <% } %>
+            <% }) %>
+          </div>
+        <% } %>
         <div class="act-ledger">
           <% line.rows.forEach(function (row) { %>
             <div class="act-row">

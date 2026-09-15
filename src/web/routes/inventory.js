@@ -20,6 +20,7 @@ const transferService = require('../../transfers/transfer-service');
 const purchasingPosition = require('../../purchasing/position');
 const prices = require('../../pricing/price-service');
 const operatingInstructions = require('../../manager/operating-instructions');
+const kits = require('../../domain/kit-service');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { toArray, trimOrNull } = require('../../lib/util');
 
@@ -193,26 +194,10 @@ async function renderTable(req, res) {
      * no query and no rule of its own: committedByPosition is what Sales has
      * already promised, onOrderBySku is what Purchasing has already placed.
      */
-    const skuIdsByItem = new Map();
-    for (const item of result.items) {
-      const skus = repo.listSkusForItem(req.db, req.ctx.workspaceId, item.id) || [];
-      skuIdsByItem.set(item.id, skus.map((sku) => sku.id));
-    }
-    const allSkuIds = [...skuIdsByItem.values()].flat();
-
-    const committedBySku = new Map();
-    const onOrderBySku = new Map();
-    if (allSkuIds.length) {
-      for (const row of salesOrders.committedByPosition(req.db, req.ctx.workspaceId, { skuIds: allSkuIds })) {
-        // Committed is per position; the list is per product, so it sums.
-        committedBySku.set(row.sku_id, (committedBySku.get(row.sku_id) || 0) + (row.committed || 0));
-      }
-      // A Map of skuId to an entry, not a plain object of numbers.
-      const onOrder = purchasingPosition.onOrderBySku(req.db, req.ctx.workspaceId, { skuIds: allSkuIds });
-      for (const [skuId, entry] of onOrder) {
-        onOrderBySku.set(skuId, Number(entry && entry.onOrder) || 0);
-      }
-    }
+    const itemIds = result.items.map((item) => item.id);
+    const committedByItem = new Map(salesOrders.committedByItem(req.db,req.ctx.workspaceId,itemIds)
+      .map((row) => [row.item_id,Number(row.committed || 0)]));
+    const onOrderByItem = purchasingPosition.onOrderByItem(req.db,req.ctx.workspaceId,itemIds);
 
     /*
      * Which of these has ever actually moved. Without it, a product that has
@@ -220,23 +205,23 @@ async function renderTable(req, res) {
      * morning, and only the second is worth alarming anybody about.
      */
     const everMoved = new Set();
-    if (allSkuIds.length) {
-      const placeholders = allSkuIds.map(() => '?').join(',');
-      for (const row of req.db.prepare(`SELECT DISTINCT sku_id FROM movements
-        WHERE workspace_id = ? AND sku_id IN (${placeholders})`).all(req.ctx.workspaceId, ...allSkuIds)) {
-        everMoved.add(row.sku_id);
+    if (itemIds.length) {
+      const placeholders = itemIds.map(() => '?').join(',');
+      for (const row of req.db.prepare(`SELECT DISTINCT sku.item_id FROM movements m
+        JOIN skus sku ON sku.id=m.sku_id
+        WHERE m.workspace_id = ? AND sku.item_id IN (${placeholders})`).all(req.ctx.workspaceId,...itemIds)) {
+        everMoved.add(row.item_id);
       }
     }
 
     const items = result.items.map((item) => {
-      const skuIds = skuIdsByItem.get(item.id) || [];
-      const committed = skuIds.reduce((total, id) => total + (committedBySku.get(id) || 0), 0);
-      const onOrder = skuIds.reduce((total, id) => total + (onOrderBySku.get(id) || 0), 0);
+      const committed = committedByItem.get(item.id) || 0;
+      const onOrder = onOrderByItem.get(item.id) || 0;
       return {
         ...item,
         committed,
         onOrder,
-        hasHistory: skuIds.some((id) => everMoved.has(id)),
+        hasHistory: everMoved.has(item.id),
         // Never below zero: a promise beyond what is held is a shortfall to
         // explain elsewhere, not a negative number to print in a column.
         available: Math.max(0, (item.on_hand || 0) - committed),
@@ -349,6 +334,19 @@ router.get(
   '/inventory/:id',
   asyncRoute(async (req, res) => {
     const detail = itemService.getItemDetail(req.db, req.ctx.workspaceId, req.params.id);
+    // A product can legitimately have tens of thousands of variants. The
+    // product total still covers every variant, while the expensive row-level
+    // joins and HTML are bounded to the page somebody is looking at.
+    const variantTotal = detail.skus.length;
+    const variantPageSize = 25;
+    const variantPageCount = Math.max(1, Math.ceil(variantTotal / variantPageSize));
+    const requestedPage = Number.parseInt(req.query.page, 10) || 1;
+    const variantPage = Math.min(variantPageCount, Math.max(1, requestedPage));
+    const allSkus = detail.skus;
+    detail.skus = allSkus.slice(
+      (variantPage - 1) * variantPageSize,
+      variantPage * variantPageSize
+    );
     const commitments = [];
     for (const sku of detail.skus) {
       const position = salesOrders.availabilityForSku(req.db, req.ctx.workspaceId, sku.id);
@@ -364,11 +362,16 @@ router.get(
       commitments.push(...salesOrders.commitmentsForSku(req.db, req.ctx.workspaceId, sku.id)
         .map((entry) => ({ ...entry, skuId: sku.id, displayName: sku.variant_label || detail.item.name })));
     }
-    detail.committed = detail.skus.reduce((sum, sku) => sum + sku.committed, 0);
+    detail.committed = Number(salesOrders.committedByItem(
+      req.db, req.ctx.workspaceId, [req.params.id]
+    )[0]?.committed || 0);
     detail.available = detail.total - detail.committed;
-    detail.onOrder = detail.skus.reduce((sum, sku) => sum + Number(sku.onOrder || 0), 0);
+    detail.onOrder = Number(purchasingPosition.onOrderByItem(
+      req.db, req.ctx.workspaceId, [req.params.id]
+    ).get(req.params.id) || 0);
     // What Foundry has noticed about this record, on the record itself.
     const findings = attention.listAttentionForItem(req.db, req.ctx.workspaceId, req.params.id);
+    const findingTotal = findings.length;
     const purchasingLines = detail.skus.map((sku) => ({
       skuId: sku.id,
       label: sku.variant_label || detail.item.name,
@@ -390,7 +393,29 @@ router.get(
     let outlook = [];
     try {
       const planning = require('../../forecasting/planning-service');
-      outlook = detail.skus.map((sku) => {
+      // A newly migrated product can have thousands of variants but no demand
+      // history yet. Running the full forecasting/transfer/purchase stack once
+      // per variant only to reach the same "still learning" answer took over a
+      // minute for a 1,600-variant product. Prove the shared no-evidence case in
+      // one indexed read and render that truthful result directly.
+      const hasOutboundEvidence = Boolean(req.db.prepare(`SELECT 1 FROM movements
+        WHERE workspace_id=? AND item_id=? AND operation='issue' LIMIT 1`)
+        .get(req.ctx.workspaceId, req.params.id));
+      const hasOpenPlanning = Boolean(req.db.prepare(`SELECT 1 FROM planning_recommendations r
+        JOIN skus s ON s.id=r.sku_id
+        WHERE r.workspace_id=? AND s.item_id=? AND r.status='OPEN' LIMIT 1`)
+        .get(req.ctx.workspaceId, req.params.id));
+      if (!hasOutboundEvidence && detail.committed === 0 && !hasOpenPlanning) {
+        outlook = detail.skus.map((sku) => ({
+          skuId: sku.id,
+          label: sku.variant_label || detail.item.name,
+          decisions: {},
+          forecast: { dailyRate: null, committedUnits: 0 },
+          advice: { recommendations: [] },
+          transfers: [],
+          anomalies: [],
+        }));
+      } else outlook = detail.skus.map((sku) => {
         const view = planning.forSku(req.db, req.ctx.workspaceId, sku.id);
         if (!view) return null;
         /*
@@ -416,18 +441,54 @@ router.get(
         };
       }).filter(Boolean);
     } catch { outlook = []; }
-
     res.page('inventory/item', {
       title: detail.item.name,
       nav: 'inventory',
       room: true,
+      // The product page already explains itself and its next actions. Avoid
+      // rebuilding workspace-wide setup guidance while opening one product.
+      screenGuide: null,
       ...detail,
-      attention: presentItemFindings(req.db, req.ctx.workspaceId, findings),
+      // A heavily migrated product can have hundreds of variant-level
+      // exceptions. The product page shows the highest-priority few; the
+      // complete, actionable queue belongs on Needs you. Rendering every card
+      // here made an otherwise sub-second product read take several seconds.
+      attention: presentItemFindings(req.db, req.ctx.workspaceId, findings.slice(0, 3)),
+      findingTotal,
       purchasingLines,
       commitments,
       outlook,
+      variantTotal,
+      variantPage,
+      variantPageSize,
+      variantPageCount,
       canOperate: permissions.can(req.user, permissions.OPERATE),
+      kitDefinitions: Object.fromEntries(detail.skus.map((sku) => [sku.id,
+        kits.definition(req.db, req.ctx.workspaceId, sku.id)])),
     });
+  })
+);
+
+router.post(
+  '/inventory/:id/kit',
+  may('create_item'),
+  asyncRoute(async (req, res) => {
+    const kitSku = repo.requireSku(req.db, req.ctx.workspaceId, req.body.kitSkuId);
+    if (kitSku.item_id !== req.params.id) throw new ValidationError('Choose a SKU belonging to this product.');
+    const components = String(req.body.components || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+      .map((line) => {
+        const match = line.match(/^(.+?)\s*[,=:]\s*(\d+)$/) || line.match(/^(\d+)\s*[x×]\s+(.+)$/i);
+        if (!match) throw new ValidationError(`Write each component as “SKU, quantity”. Foundry could not read: ${line}`);
+        const code = /^\d+$/.test(match[1]) ? match[2].trim() : match[1].trim();
+        const quantity = /^\d+$/.test(match[1]) ? Number(match[1]) : Number(match[2]);
+        const sku = req.db.prepare(`${repo.SKU_SELECT} WHERE s.workspace_id = ? AND s.code = ? COLLATE NOCASE
+          AND s.is_active = 1 AND i.is_active = 1`).get(req.ctx.workspaceId, code);
+        if (!sku) throw new ValidationError(`No active SKU exactly matches “${code}”.`);
+        return { skuId: sku.id, quantity };
+      });
+    kits.define(req.db, req.ctx, { kitSkuId: kitSku.id, components });
+    req.flash('success', `${kitSku.code} is now a kit. Customer orders will reserve and move its components automatically.`);
+    res.redirect(303, `/inventory/${req.params.id}#kit-definition`);
   })
 );
 

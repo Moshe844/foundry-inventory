@@ -22,6 +22,7 @@ const INTENTS = [
   // and the recommendation on the purchasing page come from one brain.
   ...require('../forecasting/questions').INTENTS,
   'inventory_summary',
+  'kit_definition',
   'stock_level',
   'stock_by_location',
   'movement_history',
@@ -53,6 +54,13 @@ const INTENTS = [
   'suppliers_for_item',
   'selling_price',
   'sales_summary',
+  // Customer delivery. These reads come from the canonical shipment,
+  // provider-event and postage records; Ask Foundry never asks a model to
+  // infer where a parcel is or what it cost.
+  'shipment_status',
+  'shipping_exceptions',
+  'shipping_costs',
+  'carrier_performance',
   // Mission 14 financial questions. Every answer below is calculated from the
   // posted ledger and subledgers; the model only chooses one bounded intent.
   'financial_summary',
@@ -160,7 +168,7 @@ function searchTerms(query) {
   return (meaningful.length ? meaningful : words).slice(0, 6);
 }
 
-const SKU_SELECT = `SELECT s.id, s.code, i.name, i.unit_label, s.variant_label
+const SKU_SELECT = `SELECT s.id, s.code, i.id AS item_id, i.name, i.unit_label, s.variant_label
      FROM skus s JOIN items i ON i.id = s.item_id
     WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1`;
 
@@ -548,20 +556,179 @@ const EXECUTORS = {
     const locations = db.prepare(
       'SELECT COUNT(*) AS n FROM locations WHERE workspace_id = ? AND is_active = 1'
     ).get(workspaceId).n;
-    const rows = [
-      { measure: 'Active products', value: products },
-      { measure: 'Tracked variants', value: variants },
-      { measure: 'Units on hand', value: units },
-      { measure: 'Active locations', value: locations },
-    ];
+    // The answer already contains the totals. The disclosure should reveal
+    // real records rather than repeat those four figures. Keep it bounded;
+    // the complete paginated catalogue is available through the handoff.
+    const rows = db.prepare(
+      `SELECT i.id, i.name AS product, i.base_code AS code,
+          COUNT(DISTINCT s.id) AS variants,
+          COALESCE(SUM(b.on_hand), 0) AS onHand
+        FROM items i
+        LEFT JOIN skus s ON s.item_id = i.id AND s.is_active = 1
+        LEFT JOIN balances b ON b.sku_id = s.id AND b.workspace_id = i.workspace_id
+        WHERE i.workspace_id = ? AND i.is_active = 1
+        GROUP BY i.id, i.name, i.base_code
+        ORDER BY i.name COLLATE NOCASE, i.id
+        LIMIT 12`
+    ).all(workspaceId).map((row) => ({
+      ...row,
+      href: `/inventory/${row.id}`,
+    }));
+    // "4986628 units" is a number nobody can read at a glance; "4,986,628" is.
+    const n = (value) => new Intl.NumberFormat('en-US').format(Number(value || 0));
     return {
       rows,
+      handoff: { href: '/inventory/table', label: products === 1 ? 'Open the product' : `Browse all ${n(products)} products` },
       answer:
-        `This inventory has ${products} active product${products === 1 ? '' : 's'}, `
-        + `${variants} tracked variant${variants === 1 ? '' : 's'}, and ${units} unit${units === 1 ? '' : 's'} `
-        + `on hand across ${locations} active location${locations === 1 ? '' : 's'}.`,
-      columns: ['measure', 'value'],
+        `This inventory has ${n(products)} active product${products === 1 ? '' : 's'}, `
+        + `${n(variants)} tracked variant${variants === 1 ? '' : 's'}, and ${n(units)} unit${units === 1 ? '' : 's'} `
+        + `on hand across ${n(locations)} active location${locations === 1 ? '' : 's'}.`,
+      columns: ['product', 'code', 'variants', 'onHand'],
     };
+  },
+
+  kit_definition(db, workspaceId, plan) {
+    const kitService = require('../domain/kit-service');
+    const candidates = resolveSkus(db, workspaceId, plan.entityQuery, plan.limit);
+    if (!candidates.length) return { rows: [], answer: notFound(plan) };
+    const definitions = candidates.map((sku) => ({ sku,
+      definition: kitService.definition(db, workspaceId, sku.id) }))
+      .filter((entry) => entry.definition.isKit);
+    if (!definitions.length) {
+      const named = candidates.length === 1 ? label(candidates[0]) : 'Those products';
+      return { rows: [], answer: `${named} does not have a kit/BOM definition in Foundry.` };
+    }
+    const rows = definitions.flatMap(({ sku, definition }) => definition.components.map((component) => ({
+      kit: label(sku), kitSku: sku.code,
+      component: component.variant_label
+        ? `${component.item_name} — ${component.variant_label}` : component.item_name,
+      componentSku: component.code,
+      quantityPerKit: Number(component.quantity),
+      href: `/inventory/${sku.item_id}#kit-definition`,
+    })));
+    const first = definitions[0];
+    const summary = first.definition.components.map((component) =>
+      `${Number(component.quantity)} × ${component.variant_label
+        ? `${component.item_name} / ${component.variant_label}` : component.item_name} (${component.code})`).join(', ');
+    return {
+      rows,
+      columns: ['kit', 'kitSku', 'component', 'componentSku', 'quantityPerKit'],
+      handoff: { href: `/inventory/${first.sku.item_id}#kit-definition`, label: `Open ${label(first.sku)}` },
+      answer: `${label(first.sku)} contains ${summary}. Selling one kit reserves and fulfills those component quantities.`,
+    };
+  },
+
+  shipment_status(db, workspaceId, plan) {
+    const candidates = db.prepare(`SELECT sh.id, sh.shipment_number, sh.status,
+        sh.tracking_status, sh.tracking_status_detail, sh.tracking_number,
+        sh.tracking_url, sh.carrier, sh.service, sh.expected_delivery_date,
+        sh.delivered_at, sh.shipped_at, so.order_number, c.name AS customer_name
+      FROM sales_shipments sh
+      JOIN sales_orders so ON so.id = sh.sales_order_id AND so.workspace_id = sh.workspace_id
+      LEFT JOIN customers c ON c.id = so.customer_id AND c.workspace_id = so.workspace_id
+      WHERE sh.workspace_id = ?
+      ORDER BY COALESCE(sh.delivered_at, sh.shipped_at, sh.updated_at) DESC LIMIT 500`)
+      .all(workspaceId);
+    const terms = searchTerms(plan.entityQuery);
+    const matches = candidates.filter((row) => {
+      const searchable = `${row.shipment_number} ${row.order_number} ${row.customer_name || ''} ${row.tracking_number || ''}`.toLowerCase();
+      return !terms.length || terms.every((term) => searchable.includes(term));
+    }).slice(0, plan.limit);
+    if (!matches.length) return { rows: [], answer: plan.entityQuery
+      ? `No shipment matches “${plan.entityQuery}” in this inventory.`
+      : 'This inventory has no customer shipments yet.' };
+    const rows = matches.map((row) => ({
+      shipment: row.shipment_number, order: row.order_number,
+      customer: row.customer_name || 'No customer name', carrier: row.carrier || 'Not assigned',
+      service: row.service || '', tracking: row.tracking_number || 'Not assigned',
+      status: String(row.tracking_status || row.status).toLowerCase().replaceAll('_', ' '),
+      detail: row.tracking_status_detail || '', expectedDelivery: row.expected_delivery_date || '',
+      deliveredAt: row.delivered_at || '', href: `/fulfilment/${row.id}`,
+    }));
+    const first = rows[0];
+    const evidence = first.detail ? ` The carrier says: ${first.detail}.` : '';
+    const when = first.deliveredAt ? ` Delivery was recorded at ${first.deliveredAt}.`
+      : first.expectedDelivery ? ` Expected delivery is ${first.expectedDelivery}.` : '';
+    return { rows, columns: ['shipment', 'order', 'customer', 'carrier', 'tracking', 'status', 'detail'],
+      handoff: { href: first.href, label: `Open ${first.shipment}` }, answerMode: 'verified',
+      answer: `${first.shipment} for ${first.customer} is ${first.status}.${evidence}${when}` };
+  },
+
+  shipping_exceptions(db, workspaceId, plan) {
+    const cutoff = since(plan.windowDays);
+    const rows = db.prepare(`SELECT sh.id, sh.shipment_number AS shipment,
+        so.order_number AS orderNumber, c.name AS customer,
+        COALESCE(sh.tracking_status, sh.status) AS status,
+        COALESCE(sh.exception_reason, sh.tracking_status_detail, 'Carrier exception') AS problem,
+        sh.carrier, sh.tracking_number AS tracking, sh.tracked_at AS lastCarrierUpdate
+      FROM sales_shipments sh
+      JOIN sales_orders so ON so.id = sh.sales_order_id AND so.workspace_id = sh.workspace_id
+      LEFT JOIN customers c ON c.id = so.customer_id AND c.workspace_id = so.workspace_id
+      WHERE sh.workspace_id = ? AND COALESCE(sh.tracked_at, sh.updated_at) >= ?
+        AND (sh.exception_reason IS NOT NULL OR sh.tracking_status IN ('FAILURE','RETURNED'))
+      ORDER BY COALESCE(sh.tracked_at, sh.updated_at) DESC LIMIT ?`)
+      .all(workspaceId, cutoff, plan.limit).map((row) => ({ ...row,
+        status: String(row.status).toLowerCase().replaceAll('_', ' '), href: `/fulfilment/${row.id}` }));
+    return { rows, columns: ['shipment', 'orderNumber', 'customer', 'carrier', 'status', 'problem', 'lastCarrierUpdate'],
+      handoff: rows[0] ? { href: rows[0].href, label: `Resolve ${rows[0].shipment}` } : null,
+      answerMode: 'verified', answer: rows.length
+        ? `${rows.length} shipment${rows.length === 1 ? '' : 's'} had a carrier exception in the last ${plan.windowDays} days. ${rows[0].shipment}: ${rows[0].problem}.`
+        : `No carrier exception was recorded in the last ${plan.windowDays} days.` };
+  },
+
+  shipping_costs(db, workspaceId, plan) {
+    const cutoff = since(plan.windowDays);
+    const currency = db.prepare('SELECT base_currency FROM accounting_settings WHERE workspace_id = ?')
+      .get(workspaceId)?.base_currency || 'USD';
+    const charged = Number(db.prepare(`SELECT COALESCE(SUM(customer_shipping_minor), 0) AS n
+      FROM sales_shipments WHERE workspace_id = ? AND shipped_at >= ?`).get(workspaceId, cutoff).n);
+    const transactionRows = db.prepare(`SELECT operation, COALESCE(SUM(amount_minor), 0) AS amount
+      FROM shipping_label_transactions WHERE workspace_id = ? AND status = 'SUCCEEDED'
+        AND COALESCE(completed_at, requested_at) >= ? GROUP BY operation`)
+      .all(workspaceId, cutoff);
+    const tx = Object.fromEntries(transactionRows.map((row) => [row.operation, Number(row.amount)]));
+    const manual = Number(db.prepare(`SELECT COALESCE(SUM(shipping_cost_minor), 0) AS n
+      FROM sales_shipments sh WHERE sh.workspace_id = ? AND sh.shipped_at >= ?
+        AND NOT EXISTS (SELECT 1 FROM shipping_label_transactions t
+          WHERE t.workspace_id = sh.workspace_id AND t.shipment_id = sh.id
+            AND t.operation = 'PURCHASE' AND t.status = 'SUCCEEDED')`)
+      .get(workspaceId, cutoff).n);
+    const returnPostage = Number(db.prepare(`SELECT COALESCE(SUM(amount_minor), 0) AS n
+      FROM customer_return_labels WHERE workspace_id = ? AND status NOT IN ('VOIDED','FAILED','PENDING','REVIEW')
+        AND created_at >= ?`).get(workspaceId, cutoff).n);
+    const postage = Number(tx.PURCHASE || 0) + manual;
+    const refunds = Number(tx.VOID || 0);
+    const adjustments = Number(tx.ADJUSTMENT || 0);
+    const spent = postage - refunds + adjustments + returnPostage;
+    const margin = charged - spent;
+    const rows = [
+      { measure: 'Customers paid for shipping', amount: moneyForBrain(charged, currency) },
+      { measure: 'Outbound postage purchased', amount: moneyForBrain(postage, currency) },
+      { measure: 'Label refunds and voids', amount: moneyForBrain(refunds, currency) },
+      { measure: 'Carrier adjustments', amount: moneyForBrain(adjustments, currency) },
+      { measure: 'Return postage', amount: moneyForBrain(returnPostage, currency) },
+      { measure: 'Net shipping spend', amount: moneyForBrain(spent, currency) },
+      { measure: 'Shipping collected minus spend', amount: moneyForBrain(margin, currency) },
+    ];
+    return { rows, columns: ['measure', 'amount'], handoff: { href: '/accounting/transactions', label: 'Open the accounting evidence' },
+      answerMode: 'verified', answer: `In the last ${plan.windowDays} days, customers paid ${moneyForBrain(charged, currency)} for shipping and recorded net shipping spend was ${moneyForBrain(spent, currency)}. The difference is ${moneyForBrain(margin, currency)}. That keeps customer shipping revenue separate from postage, refunds, adjustments and return shipping.` };
+  },
+
+  carrier_performance(db, workspaceId, plan) {
+    const rows = db.prepare(`SELECT carrier, COUNT(*) AS delivered,
+        SUM(CASE WHEN date(delivered_at) <= date(COALESCE(promised_window_end, promised_date)) THEN 1 ELSE 0 END) AS onTime,
+        SUM(CASE WHEN date(delivered_at) > date(COALESCE(promised_window_end, promised_date)) THEN 1 ELSE 0 END) AS late,
+        ROUND(AVG(CASE WHEN date(delivered_at) > date(COALESCE(promised_window_end, promised_date))
+          THEN julianday(date(delivered_at)) - julianday(date(COALESCE(promised_window_end, promised_date))) END), 1) AS averageDaysLate
+      FROM sales_shipments WHERE workspace_id = ? AND status = 'DELIVERED' AND carrier IS NOT NULL
+        AND delivered_at >= ? AND COALESCE(promised_window_end, promised_date) IS NOT NULL
+      GROUP BY carrier ORDER BY late DESC, delivered DESC, carrier COLLATE NOCASE LIMIT ?`)
+      .all(workspaceId, since(plan.windowDays), plan.limit).map((row) => ({ ...row,
+        onTimeRate: row.delivered ? `${Math.round(Number(row.onTime) * 100 / Number(row.delivered))}%` : 'No evidence' }));
+    return { rows, columns: ['carrier', 'delivered', 'onTime', 'late', 'onTimeRate', 'averageDaysLate'],
+      answerMode: 'verified', answer: rows.length
+        ? `${rows[0].carrier} has the most late deliveries in the last ${plan.windowDays} days: ${rows[0].late} of ${rows[0].delivered}. This uses only shipments with both a customer promise and carrier-confirmed delivery.`
+        : `There is not enough carrier-confirmed delivery history with customer promises in the last ${plan.windowDays} days to compare reliability.` };
   },
 
   financial_summary(db, workspaceId, plan) {
@@ -697,17 +864,85 @@ const EXECUTORS = {
       { measure: 'Net income', amountMinor: pnl.netIncomeMinor, display: money(pnl.netIncomeMinor) },
     ];
     const noActivity = pnl.revenueMinor === 0 && pnl.cogsMinor === 0 && pnl.operatingExpenseMinor === 0;
+
+    /*
+     * An empty profit and loss is not the same as nothing having happened.
+     *
+     * The books can be all zeros while goods shipped and money moved — most
+     * often because the sale shipped before the accounting start date and
+     * belongs to the opening balances, or because it shipped and was never
+     * invoiced. "Nothing has been sold or bought" was being said in both of
+     * those cases, to owners who had just watched twenty-five units leave.
+     * So before calling the period quiet, look at what actually left, what
+     * arrived and what was paid inside it, and say which of those the books
+     * are and are not counting.
+     */
+    let quiet = null;
+    if (noActivity) {
+      const shipped = db.prepare(`SELECT so.order_number, c.name AS customer, substr(e.created_at, 1, 10) AS day,
+          (SELECT SUM(l.quantity_fulfilled) FROM sales_order_lines l WHERE l.sales_order_id = so.id) AS units,
+          (SELECT SUM(l.quantity_fulfilled * COALESCE(l.unit_price_minor, 0)) FROM sales_order_lines l WHERE l.sales_order_id = so.id) AS value_minor
+        FROM sales_orders so
+        JOIN customers c ON c.id = so.customer_id
+        JOIN sales_order_events e ON e.sales_order_id = so.id AND e.event_type IN ('FULFILLED', 'PARTIALLY_FULFILLED')
+        WHERE so.workspace_id = ? AND substr(e.created_at, 1, 10) BETWEEN ? AND ?
+        GROUP BY so.id ORDER BY e.created_at`).all(workspaceId, from, to);
+      const received = db.prepare(`SELECT COUNT(*) AS n FROM accounting_journal_entries
+        WHERE workspace_id = ? AND status = 'POSTED' AND posting_date BETWEEN ? AND ? AND description LIKE 'Received PO-%'`)
+        .get(workspaceId, from, to).n;
+      // Money that came in, and what it is against — because "a customer just
+      // paid $540" is the first thing an owner will say back, and the answer
+      // has to know about it before they do.
+      const paid = db.prepare(`SELECT p.payment_number, p.amount_minor, p.payment_date, c.name AS customer,
+          so.order_number, so.status AS order_status
+        FROM accounting_payments p
+        LEFT JOIN customers c ON c.id = p.customer_id
+        LEFT JOIN sales_orders so ON so.id = p.sales_order_id
+        WHERE p.workspace_id = ? AND p.direction = 'CUSTOMER_RECEIPT' AND p.status = 'POSTED'
+          AND p.payment_date BETWEEN ? AND ?
+        ORDER BY p.payment_date`).all(workspaceId, from, to);
+      const start = accounting.startDate;
+      const beforeStart = shipped.filter((s) => start && s.day < start);
+      const afterStart = shipped.filter((s) => !start || s.day >= start);
+      const describe = (s) => `${s.order_number} — ${s.units} unit${s.units === 1 ? '' : 's'}${s.value_minor ? `, ${money(s.value_minor)}` : ''} to ${s.customer}, shipped ${s.day}`;
+      const parts = [];
+      if (beforeStart.length) {
+        parts.push(`${beforeStart.length === 1 ? 'The only sale' : `${beforeStart.length} sales`} in this period (${beforeStart.map(describe).join('; ')}) shipped before your accounting start date of ${start}, so ${beforeStart.length === 1 ? 'it sits' : 'they sit'} in the opening balances rather than as revenue.`);
+      }
+      if (afterStart.length) {
+        parts.push(`${afterStart.length === 1 ? 'A sale' : `${afterStart.length} sales`} shipped after the start date (${afterStart.map(describe).join('; ')}) but no revenue has been posted for ${afterStart.length === 1 ? 'it' : 'them'} — ${afterStart.length === 1 ? 'it has' : 'they have'} not been invoiced.`);
+      }
+      if (received) parts.push(`${received} supplier deliver${received === 1 ? 'y was' : 'ies were'} received and booked to inventory, which is not a cost until the goods are sold.`);
+      for (const p of paid) {
+        const who = p.customer || 'a customer';
+        const day = p.payment_date;
+        if (p.order_number && !['FULFILLED', 'PARTIALLY_FULFILLED'].includes(p.order_status)) {
+          parts.push(`${money(p.amount_minor)} came in from ${who} on ${day} against ${p.order_number}, which has not shipped yet — Foundry holds it as a deposit owed to the customer, and it becomes revenue the day the order ships.`);
+        } else if (p.order_number) {
+          parts.push(`${money(p.amount_minor)} came in from ${who} on ${day} for ${p.order_number}; that settles what was owed for the sale, it is not a second sale.`);
+        } else {
+          parts.push(`${money(p.amount_minor)} came in from ${who} on ${day} and is posted as cash received; money arriving is not revenue on its own.`);
+        }
+      }
+      quiet = {
+        summary: parts.length ? 'the books show no revenue for this period, but that is not because nothing happened.' : 'nothing has been sold or bought in this period yet.',
+        answer: parts.length
+          ? `${parts.join(' ')} No revenue, product cost or operating expense is recognised for ${from} through ${to}, so there is no realised margin to report yet.`
+          : `No revenue, product cost, or operating expense has been posted for ${from} through ${to}, so Foundry does not have a realized margin to report yet. The Accounting inventory view shows on-hand cost, selling value, and potential gross profit separately.`,
+      };
+    }
+
     return { rows, columns: ['measure', 'display'], handoff: { href: `/accounting/reports/profit-and-loss?from=${from}&to=${to}`, label: 'Open profit and loss' },
       // "Have I made any profit yet?" is a yes or no before it is a figure.
       // What this verdict is about, so a question asking the opposite gets
       // the opposite answer rather than an agreeable one.
       assertsProfit: true,
       verdict: noActivity
-        ? { yes: false, asserts: PROFIT_WORDS, opposite: LOSS_WORDS, summary: 'nothing has been sold or bought in this period yet.' }
+        ? { yes: false, asserts: PROFIT_WORDS, opposite: LOSS_WORDS, summary: quiet.summary }
         : { yes: pnl.netIncomeMinor > 0, asserts: PROFIT_WORDS, opposite: LOSS_WORDS,
             summary: `${money(Math.abs(pnl.netIncomeMinor))} ${pnl.netIncomeMinor > 0 ? 'so far' : pnl.netIncomeMinor < 0 ? 'lost so far' : 'exactly break-even'}, on ${money(pnl.revenueMinor)} of sales.` },
       answer: noActivity
-        ? `No revenue, product cost, or operating expense has been posted for ${from} through ${to}, so Foundry does not have a realized margin to report yet. The Accounting inventory view shows on-hand cost, selling value, and potential gross profit separately.`
+        ? quiet.answer
         : `This is ${money(pnl.netIncomeMinor)} net ${pnl.netIncomeMinor >= 0 ? 'profit' : 'loss'} based on the expenses recorded in Foundry for ${from} through ${to}: ${money(pnl.revenueMinor)} revenue minus ${money(pnl.cogsMinor)} cost of goods and ${money(pnl.operatingExpenseMinor)} operating expenses recorded in Foundry. Gross profit is ${money(pnl.grossProfitMinor)}; it is not the same as net profit. This net result is incomplete if business costs such as rent or payroll have not been recorded in Foundry.` };
   },
 

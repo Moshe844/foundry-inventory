@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= outcome.providerName %> connection · Foundry</title>
+  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/product-clarity.css">
+  <link rel="stylesheet" href="/foundry.css">
+  <link rel="stylesheet" href="/room.css">
+  <link rel="stylesheet" href="/design.css">
+  <style>
+    body { min-height:100vh; margin:0; display:grid; place-items:center; background:var(--bg); }
+    .oauth-return { width:min(460px, calc(100vw - 32px)); text-align:center; }
+    .oauth-return .panel { padding:32px; margin:0; }
+    .oauth-return__mark { width:52px; height:52px; margin:0 auto 18px; border-radius:16px;
+      display:grid; place-items:center; color:#fff; background:linear-gradient(135deg, #705cff, #4033c8);
+      font-size:24px; font-weight:800; box-shadow:0 12px 30px rgba(79, 64, 220, .24); }
+    .oauth-return h1 { margin:0 0 10px; font-size:var(--t-2xl); }
+    .oauth-return p { margin:0 0 20px; color:var(--muted); line-height:1.55; }
+  </style>
+</head>
+<body>
+  <main class="oauth-return">
+    <div class="panel">
+      <div class="oauth-return__mark" aria-hidden="true"><%= outcome.connected ? '✓' : '!' %></div>
+      <h1><%= outcome.connected ? outcome.providerName + ' is connected' : outcome.providerName + ' was not connected' %></h1>
+      <p><%= outcome.message %></p>
+      <a class="btn btn--primary" href="<%= outcome.returnUrl %>">Return to Foundry</a>
+    </div>
+  </main>
+  <script>
+    (function () {
+      var message = {
+        type: 'foundry:connection-return',
+        connected: <%- JSON.stringify(Boolean(outcome.connected)) %>,
+        workspaceId: <%- JSON.stringify(outcome.workspaceId || null) %>,
+        returnPath: <%- JSON.stringify(outcome.returnPath) %>
+      };
+      if (!window.opener || window.opener.closed) return;
+      window.opener.postMessage(message, <%- JSON.stringify(outcome.returnOrigin || '*') %>);
+      window.setTimeout(function () { window.close(); }, 650);
+    }());
+  </script>
+</body>
+</html>

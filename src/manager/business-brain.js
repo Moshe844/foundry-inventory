@@ -33,7 +33,10 @@ function inventoryState(db, workspaceId) {
         FROM purchase_order_lines pol JOIN purchase_orders po ON po.id = pol.purchase_order_id
         WHERE pol.workspace_id = b.workspace_id AND pol.sku_id = b.sku_id
           AND COALESCE(pol.destination_location_id, po.destination_location_id) = b.location_id
-          AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')), 0) AS incoming
+          AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')), 0) AS incoming,
+      COALESCE((SELECT SUM(h.remaining_quantity) FROM inventory_availability_holds h
+        WHERE h.workspace_id=b.workspace_id AND h.sku_id=b.sku_id AND h.location_id=b.location_id
+          AND h.status='OPEN'),0) AS unavailable
     FROM balances b JOIN skus s ON s.id = b.sku_id JOIN items i ON i.id = s.item_id
     JOIN locations l ON l.id = b.location_id
     WHERE b.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
@@ -41,7 +44,8 @@ function inventoryState(db, workspaceId) {
     ...row,
     onHand: number(row.on_hand),
     committed: number(row.committed),
-    available: number(row.on_hand) - number(row.committed),
+    unavailable:number(row.unavailable),
+    available: number(row.on_hand) - number(row.unavailable) - number(row.committed),
     incoming: number(row.incoming),
   }));
   return {
@@ -150,14 +154,16 @@ function connectionState(db, workspaceId) {
     unhealthy: rows.filter((row) => row.status !== 'connected' || row.openIssues > 0) };
 }
 
-function consistencyChecks(db, workspaceId, finance) {
+function consistencyChecks(db, workspaceId, finance, options = {}) {
   const checks = [];
-  const inventory = inventoryEngine.verifyIntegrity(db, workspaceId);
-  checks.push({ key: 'inventory-ledger', passed: inventory.ok,
-    title: 'Physical inventory agrees with its movement history',
-    detail: inventory.ok ? 'Every balance is supported by inventory movements.'
-      : `${inventory.problems.length} inventory difference(s) need review.`, evidence: inventory.problems,
-    href: '/activity?view=checks' });
+  if (!options.skipInventoryIntegrity) {
+    const inventory = inventoryEngine.verifyIntegrity(db, workspaceId);
+    checks.push({ key: 'inventory-ledger', passed: inventory.ok,
+      title: 'Physical inventory agrees with its movement history',
+      detail: inventory.ok ? 'Every balance is supported by inventory movements.'
+        : `${inventory.problems.length} inventory difference(s) need review.`, evidence: inventory.problems,
+      href: '/activity?view=checks' });
+  }
 
   const receiptMismatch = db.prepare(`SELECT po.id, po.po_number,
       SUM(COALESCE((SELECT SUM(rl.quantity_units) FROM purchase_order_receipt_lines rl

@@ -43,6 +43,9 @@ function inventoryForEvent(db, providerName, event, hinted) {
     const owned = db.prepare(`SELECT workspace_id FROM sales_shipments
       WHERE tracking_number = ? ORDER BY created_at DESC LIMIT 1`).get(number);
     if (owned) return owned.workspace_id;
+    const returned = db.prepare(`SELECT workspace_id FROM customer_return_labels
+      WHERE tracking_number = ? ORDER BY created_at DESC LIMIT 1`).get(number);
+    if (returned) return returned.workspace_id;
   }
   if (read && read.providerShipmentId) {
     const owned = db.prepare(`SELECT workspace_id FROM sales_shipments
@@ -98,7 +101,12 @@ webhooks.post('/webhooks/shipping/:provider/:workspaceId?',
     }
 
     try {
-      const result = shipping.tracking.receiveEvent(req.db, { workspaceId, actorId: null }, name, event);
+      const read = shipping.provider.get(name).readEvent(event);
+      const returnLabel = read.trackingNumber ? req.db.prepare(`SELECT id FROM customer_return_labels
+        WHERE workspace_id = ? AND tracking_number = ?`).get(workspaceId, read.trackingNumber) : null;
+      const result = returnLabel
+        ? shipping.returns.receiveEvent(req.db, { workspaceId, actorId: null }, name, event)
+        : shipping.tracking.receiveEvent(req.db, { workspaceId, actorId: null }, name, event);
       return res.status(200).json({ ok: true, applied: Boolean(result.applied), outcome: result.outcome });
     } catch (error) {
       // Kept for a retry: this is Foundry failing, not the carrier.
@@ -125,6 +133,7 @@ router.get('/settings/shipping', requirePermission(permissions.VIEW, 'view shipp
     res.page('shipping/rules', {
       title: 'Shipping rules', nav: 'settings',
       rules: shipping.rules.list(req.db, req.ctx.workspaceId, { activeOnly: false }),
+      operationPolicy: shipping.operationPolicy.get(req.db, req.ctx.workspaceId),
       account: shipping.accounts.describe(req.db, req.ctx.workspaceId),
       referral: shipping.referral.describe(req.db, req.ctx.workspaceId),
       shipengine: shipping.shipenginePlatform.describe(req.db, req.ctx.workspaceId),
@@ -165,6 +174,23 @@ router.post('/settings/shipping', requirePermission(permissions.OPERATE, 'set sh
       req.flash('warn', err.message);
     }
     res.redirect(303, '/settings/shipping');
+  }));
+
+router.post('/settings/shipping/operation-mode',
+  requirePermission(permissions.ADMIN, 'change shipping automation'),
+  asyncRoute(async (req, res) => {
+    try {
+      const saved = shipping.operationPolicy.set(req.db, req.ctx, req.body.mode);
+      req.flash('success', saved.mode === 'AUTOMATIC'
+        ? 'Shipping is set to Automatic. Foundry will still buy only when the universal operator, label authority, and an exact shipping rule all allow it.'
+        : saved.mode === 'RECOMMEND'
+          ? 'Shipping is set to Recommend. Foundry compares rates, but you approve every purchase.'
+          : 'Shipping is set to Manual. Foundry shows carrier facts and leaves every choice to you.');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('warn', err.message);
+    }
+    res.redirect(303, '/settings/shipping#handling');
   }));
 
 /*

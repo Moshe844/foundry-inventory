@@ -205,6 +205,23 @@
           </label>
         </div>
 
+        <div class="field-row" style="margin-top:16px;">
+          <% [
+            ['outForDeliveryNotice','Out for delivery',noticePolicy.outForDeliveryNotice],
+            ['deliveredNotice','Delivered',noticePolicy.deliveredNotice],
+            ['exceptionNotice','Carrier exception / return',noticePolicy.exceptionNotice]
+          ].forEach(function (setting) { %>
+            <label class="field">
+              <span class="field-label"><%= setting[1] %></span>
+              <select class="select" name="<%= setting[0] %>">
+                <option value="prepare" <%= setting[2] === 'prepare' ? 'selected' : '' %>>Prepare for review</option>
+                <option value="send" <%= setting[2] === 'send' ? 'selected' : '' %>>Send automatically</option>
+                <option value="off" <%= setting[2] === 'off' ? 'selected' : '' %>>Off</option>
+              </select>
+            </label>
+          <% }) %>
+        </div>
+
         <div class="field-row">
           <label class="field">
             <span class="field-label">Send from</span>

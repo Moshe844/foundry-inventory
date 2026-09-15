@@ -27,9 +27,9 @@ const PATHS = [
   },
   {
     id: 'spreadsheet',
-    label: 'Upload files or documents',
+    label: 'Move from files',
     blurb: 'My real product or quantity details are in files.',
-    detail: 'Upload PDF, Word, Excel, CSV, TSV, or text. Foundry reads what is there and shows a review.',
+    detail: 'Upload Excel, CSV or TSV exports. Foundry maps and reconciles them before cutover.',
     icon: 'import',
   },
   {
@@ -74,9 +74,9 @@ const PATH_IDS = PATHS.map((path) => path.id);
 /** Where each path sends someone once chosen. */
 const NEXT_STEP = {
   fresh: '/foundry/describe',
-  spreadsheet: '/onboarding/files',
+  spreadsheet: '/onboarding/migrations/new',
   software: '/onboarding/system',
-  messy: '/onboarding/files?mode=messy',
+  messy: '/onboarding/migrations/new',
   undecided: '/onboarding',
 };
 
@@ -153,7 +153,7 @@ function choose(db, workspaceId, path, options = {}) {
   return get(db, workspaceId);
 }
 
-function setStatus(db, workspaceId, status) {
+function setStatus(db, workspaceId, status, options = {}) {
   // A workspace can reach a migration without ever having pressed a path
   // button — an API caller, or a test. Recording progress against a row that
   // does not exist would silently lose the whole onboarding state.
@@ -161,9 +161,10 @@ function setStatus(db, workspaceId, status) {
   const now = nowIso();
   db.prepare(
     `UPDATE workspace_onboarding
-        SET status = ?, completed_at = CASE WHEN ? = 'ready' THEN ? ELSE completed_at END, updated_at = ?
+        SET status = ?, described_as = COALESCE(?, described_as),
+            completed_at = CASE WHEN ? = 'ready' THEN ? ELSE completed_at END, updated_at = ?
       WHERE workspace_id = ?`
-  ).run(status, status, now, now, workspaceId);
+  ).run(status, trimOrNull(options.describedAs), status, now, now, workspaceId);
   return get(db, workspaceId);
 }
 
@@ -244,7 +245,7 @@ const SIGNALS = [
     reason: 'you mentioned your inventory is spread across more than one place' },
   { path: 'software', pattern: /\b(erp|netsuite|quickbooks|sap|shopify|square|lightspeed|fishbowl|cin7|unleashed|zoho|odoo|dear|katana|system|software|platform)\b/i,
     reason: 'you mentioned another system you are using today' },
-  { path: 'mailbox', pattern: /\b(gmail|outlook|microsoft 365|office 365|mailbox|email attachment|emailed? (?:invoice|file|sheet|document))\b/i,
+  { path: 'mailbox', pattern: /\b(gmail|outlook|microsoft 365|office 365|mailbox|emails?|emailed|emailing)\b/i,
     reason: 'you mentioned that the real records arrive through email' },
   { path: 'spreadsheet', pattern: /\b(excel|spreadsheet|spread sheet|xlsx|csv|pdf|invoice|document|google sheets?|sheets?|workbook)\b/i,
     reason: 'you mentioned a file or document containing the records' },
@@ -262,13 +263,30 @@ function recommendFromDescription(description) {
   const text = String(description || '').trim();
   if (!text) return null;
 
-  // Most specific first: "spreadsheets all over the place" is a mess, not a
-  // spreadsheet migration, and the mess pattern is checked before the others.
-  for (const signal of SIGNALS) {
-    if (signal.pattern.test(text)) {
-      return { path: signal.path, reason: signal.reason, decidedBy: 'rules' };
-    }
+  const explicitMess = SIGNALS.find((signal) => signal.path === 'messy' && signal.pattern.test(text));
+  if (explicitMess) {
+    return { path: explicitMess.path, reason: explicitMess.reason, decidedBy: 'rules' };
   }
+
+  // More than one actual source is not forced into whichever regex happened
+  // to run first. The whole point of the mixed-source path is reconciling them.
+  const sourceSignals = SIGNALS.filter((signal) => (
+    ['software', 'mailbox', 'spreadsheet'].includes(signal.path) && signal.pattern.test(text)
+  ));
+  if (sourceSignals.length > 1) {
+    return {
+      path: 'messy',
+      reason: 'you mentioned records coming from more than one current source',
+      decidedBy: 'rules',
+    };
+  }
+  if (sourceSignals.length === 1) {
+    const [signal] = sourceSignals;
+    return { path: signal.path, reason: signal.reason, decidedBy: 'rules' };
+  }
+
+  const fresh = SIGNALS.find((signal) => signal.path === 'fresh' && signal.pattern.test(text));
+  if (fresh) return { path: fresh.path, reason: fresh.reason, decidedBy: 'rules' };
   return null;
 }
 

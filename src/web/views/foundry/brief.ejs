@@ -17,12 +17,13 @@
   var today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
 
   var needs = home.needsYou || [];
-  var needsCount = needs.length;
+  var needsCount = Number.isFinite(Number(home.needsYouTotal)) ? Number(home.needsYouTotal) : needs.length;
   var handled = (home.did && home.did.actions) || [];
   var counts = (home.did && home.did.counts) || {};
   var handling = home.handling || [];
   var paused = home.status.paused || home.status.suspended;
   var isEmpty = !!locals.isEmpty;
+  var activeMigration = locals.activeMigration || null;
   var isSettingUp = !!home.setup || !!(home.guidance && !home.guidance.operationalReady);
   var next = locals.whatsNext || [];
   var guide = home.guidance || {};
@@ -38,6 +39,8 @@
 
   var verdict = paused
     ? 'Foundry is paused.'
+    : isEmpty && activeMigration
+      ? 'Your inventory is being prepared.'
     : isEmpty
       ? 'This inventory is empty.'
       : isSettingUp
@@ -63,7 +66,33 @@
   }
 %>
 
-<% if (isEmpty) { %>
+<% if (isEmpty && activeMigration) { %>
+<section class="rm-hero rm-hero--migration">
+  <span class="rm-hero__badge"><span class="rm-dot" aria-hidden="true"></span> Migration in progress</span>
+  <h1>Your workbook is saved. Nothing was cleared.</h1>
+  <p>
+    Foundry has prepared <strong><%= activeMigration.preparedCount %> of <%= activeMigration.operationalCount %></strong>
+    operational datasets from <strong><%= activeMigration.sourceRowsPrepared.toLocaleString() %></strong> source rows.
+    They are still private migration records. <strong><%= activeMigration.liveRecords.toLocaleString() %></strong> records are live.
+  </p>
+  <% if (activeMigration.filenames.length) { %><p class="rm-source-file"><%- helpers.icon('paperclip',{ size:14 }) %> <%= activeMigration.filenames.join(' · ') %></p><% } %>
+  <div class="rm-hero__foot">
+    <span><%- helpers.icon('shield', { size: 15 }) %> Your other inventories are untouched</span>
+    <span><%- helpers.icon('alert', { size: 15 }) %> <%= activeMigration.remainingCount %> source issue<%= activeMigration.remainingCount === 1 ? '' : 's' %> remain</span>
+  </div>
+</section>
+
+<section class="rm-next-card">
+  <div><span class="rm-stamp">Do this next</span><h2><%= activeMigration.remainingCount ? 'Finish the remaining source review.' : 'Verify the prepared records.' %></h2>
+    <p>Foundry will not switch this inventory live until its totals reconcile and you approve the result.</p></div>
+  <a class="rm-btn" href="/onboarding/migrations/<%= activeMigration.id %><%= activeMigration.remainingCount ? '/sources' : '' %>"><%= activeMigration.remainingCount ? 'Continue migration' : 'Run final checks' %></a>
+</section>
+
+<p class="rm-choices">
+  <a class="rm-btn rm-btn--ghost" href="/inventories">See my other inventories</a>
+</p>
+
+<% } else if (isEmpty) { %>
 <%
   /*
    * The first run.
@@ -254,6 +283,9 @@
         </a>
       <% }) %>
     </div>
+    <% if (needsCount > needs.length) { %>
+      <div class="rm-panel__foot"><a href="/needs-you/all">Showing the <%= needs.length %> highest-priority decisions · Open all <%= needsCount %></a></div>
+    <% } %>
   </section>
 <% } %>
 
@@ -413,9 +445,11 @@
       // not repeat it here beside a broader authoritative count.
       var noticedLine = !needsCount && locals.observedBrief ? String(locals.observedBrief).trim() : '';
       var gaps = (home.readiness && home.readiness.evidenceGaps) || [];
+      var gapCount = home.readiness && Number.isInteger(home.readiness.evidenceGapCount)
+        ? home.readiness.evidenceGapCount : gaps.length;
       var notes = (home.readiness && home.readiness.notes) || [];
     %>
-    <% if (noticedLine || gaps.length || notes.length) { %>
+    <% if (noticedLine || gapCount || notes.length) { %>
       <section class="rm-panel">
         <div class="rm-panel__head">
           <%- helpers.icon('eye', { size: 15, className: 'rm-quiet' }) %>
@@ -427,10 +461,10 @@
               <span class="rm-band__v"><%= noticedLine %></span>
             </div>
           <% } %>
-          <% if (gaps.length) { %>
+          <% if (gapCount) { %>
             <div class="rm-band" style="grid-template-columns:minmax(0,1fr)">
-              <span class="rm-band__v"><span class="dim"><%= gaps.length %> product<%= gaps.length === 1 ? ' has' : 's have' %>
-                no outbound history, so I cannot judge demand for <%= gaps.length === 1 ? 'it' : 'them' %> and will not guess.</span></span>
+              <span class="rm-band__v"><span class="dim"><%= gapCount.toLocaleString() %> product<%= gapCount === 1 ? ' has' : 's have' %>
+                insufficient outbound history, so I cannot judge demand for <%= gapCount === 1 ? 'it' : 'them' %> and will not guess.</span></span>
             </div>
           <% } %>
           <% notes.slice(0, 2).forEach(function (note) { %>

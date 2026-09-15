@@ -91,6 +91,14 @@ const KEYS = {
     max: 1_000_000_000_00,
     describe: (v) => `Try to keep the money tied up in stock under $${(v / 100).toFixed(2)}.`,
   },
+  CASH_RESERVE: {
+    key: 'cash_reserve_minor',
+    label: 'Cash to keep available',
+    kind: 'money',
+    min: 0,
+    max: 1_000_000_000_00,
+    describe: (v) => `Keep at least $${(v / 100).toFixed(2)} available after known obligations.`,
+  },
   PRIORITISE_CORE_PRODUCTS: {
     key: 'prioritise_core_products',
     label: 'Protect availability of core products',

@@ -102,7 +102,10 @@ function loadUser(db) {
     req.account = account;
     res.locals.account = { id: account.id, name: account.name, email: account.email, plan: account.plan };
 
-    const memberships = workspaceService.listForAccount(db, account.id);
+    // Resolving the current tenant is on every request. Do not construct every
+    // other tenant's complete Needs You inbox just to draw a closed switcher;
+    // the inventories page loads those counts when somebody asks for them.
+    const memberships = workspaceService.listForAccount(db, account.id, { includeAttention: false });
     res.locals.workspaces = memberships;
     if (memberships.length === 0) return next();
 
@@ -257,17 +260,14 @@ requireOwner.productMetadata = { permission: 'ADMIN', role: 'owner' };
 /*
  * The way back to the page you came from.
  *
- * Settings is a hub: nine things open out of it and none of them led back, so
- * returning meant clicking Settings in the sidebar again — every time, for
- * every one of them. The obvious fix, a fixed "Back to Settings" on each of
- * those pages, would be a lie half the time: Locations is also reached from a
- * product, Suppliers from a purchase order, Imports from setup. A back link
- * that points somewhere the reader has never been is worse than none.
+ * A destination must always retain the real page that opened it. This cannot
+ * be a list of special cases: inventory can open a supplier, a supplier can
+ * open a connection, Ask can open any registered record, and future domains
+ * must receive the same behaviour without being added here.
  *
- * So it is read from where they actually came from. Only same-origin, only
- * hubs that behave like hubs, and only when it is not the page itself — a
- * reload, or a redirect after saving, must not offer to take you back to
- * where you already are. A page that sets its own `backTo` keeps it.
+ * The browser's same-origin referer is the source of truth. We retain its
+ * path and query string, then remember that trail for redirects or reloads on
+ * the destination. Cross-origin values are never accepted as return links.
  */
 const productDestinations = require('../product-brain/registry').canonical;
 const HUBS = [
@@ -284,33 +284,21 @@ const HUBS = [
   { path: '/everything', label: 'Everything else' },
 ];
 
-/*
- * The three surfaces in the chrome are never "inside" anything.
- *
- * Clicking Brief from Settings put "Back to Settings" on the home page, which
- * reads as though home were a page you had opened out of Settings — the one
- * screen where nothing can be behind you. A tab that is always one click away
- * is a destination, not a step, so these never take a back link no matter what
- * the referer says.
- */
-const SURFACES = [
-  productDestinations.destination('home').href,
-  productDestinations.destination('needs-you').href,
-  productDestinations.destination('ask').href,
-  productDestinations.destination('workspaces').href,
-  '/inventories/new',
-];
-
 function entityOrigin(req, from) {
   const brain = req.app && req.app.locals && req.app.locals.productBrain;
   if (!brain || !req.user) return null;
+  const href = `${from.pathname}${from.search || ''}${from.hash || ''}`;
+  const matchedRoute = brain.routeForHref(href);
   for (const entity of brain.listEntities()) {
     if (!entity.route || !entity.route.includes(':')) continue;
+    // An exact collection route such as /inventory/table must not be mistaken
+    // for the dynamic /inventory/:id product route merely because both regexes
+    // happen to match. The registered Express route settles that ambiguity.
+    if (matchedRoute && matchedRoute.path !== entity.route) continue;
     const pattern = new RegExp(`^${entity.route.split('#')[0]
       .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       .replace(/:[A-Za-z0-9_]+/g, '[^/]+')}$`);
     if (!pattern.test(from.pathname)) continue;
-    const href = `${from.pathname}${from.search || ''}${from.hash || ''}`;
     const access = brain.accessForHref(href, req.user);
     if (!access || !access.allowed) return null;
     return { href, label: entity.label };
@@ -318,11 +306,32 @@ function entityOrigin(req, from) {
   return null;
 }
 
+function registeredAreaOrigin(req, from) {
+  const brain = req.app && req.app.locals && req.app.locals.productBrain;
+  if (!brain || !req.user) return null;
+  const href = `${from.pathname}${from.search || ''}${from.hash || ''}`;
+  const exactDestination = brain.listDestinations().find((entry) => {
+    try { return new URL(entry.href, 'http://foundry.local').pathname === from.pathname; }
+    catch { return false; }
+  });
+  if (exactDestination) return { href, label: exactDestination.label };
+  const access = brain.accessForHref(href, req.user);
+  const destinationId = access && access.allowed && access.route && access.route.destinationId;
+  const destination = destinationId && brain.destination(destinationId);
+  return destination ? { href, label: destination.label } : null;
+}
+
 function cameFrom(req) {
   const here = String(req.path || '');
-  if (SURFACES.includes(here)) return null;
+  const hereUrl = (() => {
+    try {
+      const value = new URL(String(req.originalUrl || here), `http://${req.get('host')}`);
+      return `${value.pathname}${value.search}`;
+    } catch { return here; }
+  })();
   const session = req.session;
-  const remembered = session && session.backTo && session.backTo.path === here
+  const remembered = session && session.backTo
+    && (session.backTo.path === hereUrl || session.backTo.path === here)
     ? { href: session.backTo.href, label: session.backTo.label } : null;
 
   const referer = req.get('referer');
@@ -333,15 +342,29 @@ function cameFrom(req) {
   const hub = HUBS.find((entry) => from.pathname === entry.path);
   if (hub) {
     if (here === hub.path) return null;
+    const hubHref = `${from.pathname}${from.search || ''}${from.hash || ''}`;
     // Remembered, because saving something sends you back to this same page and
     // the referer is then the page itself. Losing the way out at the exact
     // moment somebody has finished a task is how a hub stops being a hub.
-    if (session) session.backTo = { path: here, href: hub.path, label: hub.label };
-    return { href: hub.path, label: hub.label };
+    if (session) session.backTo = { path: hereUrl, href: hubHref, label: hub.label };
+    return { href: hubHref, label: hub.label };
   }
 
   // The same page again: a redirect after saving. The trail still holds.
-  if (from.pathname === here) return remembered;
+  if (`${from.pathname}${from.search}` === hereUrl) return remembered;
+
+  // The source page has already been rendered in this session, so its own
+  // title is the most accurate generic label. This works for every present and
+  // future page without deriving names from URL segments or maintaining a
+  // second routing catalogue.
+  const sourceHref = `${from.pathname}${from.search || ''}`;
+  const renderedLabel = session && session.renderedPageLabels
+    && session.renderedPageLabels[sourceHref];
+  if (renderedLabel) {
+    const origin = { href: `${sourceHref}${from.hash || ''}`, label: renderedLabel };
+    if (session) session.backTo = { path: hereUrl, href: origin.href, label: origin.label };
+    return origin;
+  }
 
   // A record is also a real place in a journey. When an owner opens the exact
   // decision behind PO-1002, returning to that exact PO is more useful than a
@@ -349,20 +372,27 @@ function cameFrom(req) {
   // product brain, so this does not become another independent route list.
   const record = entityOrigin(req, from);
   if (record) {
-    if (session) session.backTo = { path: here, href: record.href, label: record.label };
+    if (session) session.backTo = { path: hereUrl, href: record.href, label: record.label };
     return record;
   }
 
+  // Registered route families supply their own product label. New domains get
+  // a useful return trail simply by joining the canonical product registry.
+  const area = registeredAreaOrigin(req, from);
+  if (area) {
+    if (session) session.backTo = { path: hereUrl, href: area.href, label: area.label };
+    return area;
+  }
+
   /*
-   * Arrived from somewhere else entirely, so this is a different journey.
-   *
-   * Suppliers is reached from Settings and also from a purchase order. Coming
-   * in the second way and being offered "Back to Settings" — because of a
-   * visit ten minutes ago — sends somebody somewhere they were not, which is
-   * the failure this whole mechanism exists to avoid.
+   * Every other same-origin page is still a real origin. Keep the full URL so
+   * returning from a record also restores the search, filter or page the owner
+   * was using. The generic label is deliberate: it remains correct for a new
+   * domain without adding another route-name table.
    */
-  if (session) session.backTo = null;
-  return null;
+  const href = `${from.pathname}${from.search || ''}${from.hash || ''}`;
+  if (session) session.backTo = { path: hereUrl, href, label: 'previous page' };
+  return { href, label: 'previous page' };
 }
 
 /** Renders a view inside the application shell. */
@@ -374,17 +404,24 @@ function pageRenderer(req, res, next) {
     let screenGuide = Object.prototype.hasOwnProperty.call(data, 'screenGuide')
       ? data.screenGuide
       : null;
-    if (req.ctx && data.nav && data.nav !== 'home' && data.nav !== 'overview') {
+    // A screen guide is optional presentation. Building the complete business
+    // inbox here made every ordinary page (including Ask, inventory switching
+    // and delete confirmation) run every accounting/inventory consistency
+    // check before it could render. Only the sections that can actually show
+    // an automatically derived guide ask for the lightweight screen context.
+    const automaticGuideSections = new Set([
+      'inventory', 'locations', 'sales', 'purchasing', 'connections', 'activity', 'settings',
+    ]);
+    const hasExplicitScreenGuide = Object.prototype.hasOwnProperty.call(data, 'screenGuide');
+    if (req.ctx && !hasExplicitScreenGuide && automaticGuideSections.has(data.nav)) {
       try {
         const guidance = require('../manager/guidance');
-        workspaceGuidance = guidance.build(req.db, req.ctx.workspaceId, req.user, {
+        workspaceGuidance = guidance.buildForScreen(req.db, req.ctx.workspaceId, req.user, {
           productBrain: req.app.locals.productBrain,
         });
-        if (!Object.prototype.hasOwnProperty.call(data, 'screenGuide')) {
-          // A page under a shared sidebar section can say what it actually is,
-          // rather than inheriting the section's description.
-          screenGuide = guidance.screenContextFor(workspaceGuidance, data.nav, data.screenDescription);
-        }
+        // A page under a shared sidebar section can say what it actually is,
+        // rather than inheriting the section's description.
+        screenGuide = guidance.screenContextFor(workspaceGuidance, data.nav, data.screenDescription);
       } catch {
         // Guidance is presentation support. A partially migrated development
         // database must not make the underlying business screen unavailable.
@@ -395,6 +432,22 @@ function pageRenderer(req, res, next) {
       // A page may opt out of the application chrome — a purchase order printed
       // for a supplier should be the document and nothing else.
       if (data.layout === false) return res.send(html);
+      const resolvedBackTo = (navigationArrival && navigationArrival.backTo)
+        || cameFrom(req) || data.backTo || data.backToFallback || null;
+      if (req.session && data.title) {
+        const currentHref = (() => {
+          try {
+            const value = new URL(String(req.originalUrl || req.path || '/'), `http://${req.get('host')}`);
+            return `${value.pathname}${value.search}`;
+          } catch { return String(req.path || '/'); }
+        })();
+        const labels = req.session.renderedPageLabels || {};
+        // Keep this navigation aid bounded; it is not browsing history.
+        labels[currentHref] = String(data.title).replace(/\s+·\s+Foundry$/, '').slice(0, 100);
+        const keys = Object.keys(labels);
+        for (const key of keys.slice(0, Math.max(0, keys.length - 40))) delete labels[key];
+        req.session.renderedPageLabels = labels;
+      }
       return res.render('layout', {
         ...data,
         body: html,
@@ -409,8 +462,7 @@ function pageRenderer(req, res, next) {
          * the browser's own back button. A page that is always reached from
          * somewhere may name that somewhere as its fallback.
          */
-        backTo: (navigationArrival && navigationArrival.backTo) || data.backTo
-          || cameFrom(req) || data.backToFallback || null,
+        backTo: resolvedBackTo,
         navigationArrival,
         workspaceGuidance,
         screenGuide,
@@ -436,8 +488,15 @@ const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next
 function errorHandler(isProduction) {
   // eslint-disable-next-line no-unused-vars
   return (err, req, res, next) => {
-    const status = err instanceof DomainError ? err.status : 500;
-    const expected = err instanceof DomainError;
+    // Body parsers and reverse-proxy guards fail before a domain service can
+    // construct a DomainError. Their explicit 4xx status still means the
+    // request was refused safely; reporting it as our 500 and raising an
+    // incident hides the useful upload message and creates a false alarm.
+    const declaredStatus = Number(err && err.status);
+    const safeDeclaredStatus = Number.isInteger(declaredStatus) && declaredStatus >= 400 && declaredStatus < 500
+      ? declaredStatus : null;
+    const status = err instanceof DomainError ? err.status : safeDeclaredStatus || 500;
+    const expected = err instanceof DomainError || Boolean(safeDeclaredStatus);
     if (!expected) {
       console.error('[foundry] unexpected error', err);
       // Record and enqueue external delivery without including request bodies,

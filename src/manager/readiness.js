@@ -10,9 +10,11 @@
  */
 
 const signalEngine = require('../signals/signal-engine');
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const plural = (value, singular, pluralForm = `${singular}s`) =>
   `${value} ${Number(value) === 1 ? singular : pluralForm}`;
+const daysAgoIso = (days, now = Date.now()) => new Date(now - days * DAY_MS).toISOString();
 
 function evidenceGap(entry) {
   const floor = signalEngine.EVIDENCE_FLOOR;
@@ -32,7 +34,83 @@ function evidenceGap(entry) {
   };
 }
 
-function assess(db, workspaceId, { now = Date.now() } = {}) {
+/**
+ * Landing-page readiness for a large catalogue.
+ *
+ * The detailed assessor below intentionally returns every SKU and location so
+ * planning and diagnostics can explain an individual recommendation. Home
+ * only needs exact counts and the resulting operating stage. Keep that request
+ * bounded: one aggregate over actual outbound movements plus small count
+ * queries, regardless of how many opening-balance movements were migrated.
+ */
+function summaryAssessment(db, workspaceId, { now = Date.now(), windowDays = 30 } = {}) {
+  const EVIDENCE_FLOOR = signalEngine.EVIDENCE_FLOOR;
+  const windowStart = daysAgoIso(windowDays, now);
+  const skuCount = Number(db.prepare(`SELECT COUNT(*) AS n
+    FROM skus s JOIN items i ON i.id=s.item_id
+    WHERE s.workspace_id=? AND s.is_active=1 AND i.is_active=1`).get(workspaceId).n || 0);
+  const outbound = db.prepare(`SELECT COUNT(*) AS observing_count,
+      COALESCE(SUM(CASE WHEN issue_events>=? AND issued>=? AND first_outbound_at<=? THEN 1 ELSE 0 END),0) AS usage_ready
+    FROM (
+      SELECT sku_id,COUNT(*) AS issue_events,COALESCE(SUM(-quantity_delta),0) AS issued,
+        MIN(occurred_at) AS first_outbound_at
+      FROM movements
+      WHERE workspace_id=? AND operation='issue' AND occurred_at>=?
+      GROUP BY sku_id
+    )`).get(
+      EVIDENCE_FLOOR.minOutboundEvents,
+      EVIDENCE_FLOOR.minOutboundQuantity,
+      daysAgoIso(EVIDENCE_FLOOR.minObservedDays, now),
+      workspaceId,
+      windowStart
+    );
+  const observingCount = Number(outbound.observing_count || 0);
+  const usageReady = Number(outbound.usage_ready || 0);
+  const demandStage = skuCount === 0 ? 'no-products'
+    : usageReady > 0 ? 'ready' : observingCount > 0 ? 'learning' : 'none';
+  const locationCount = Number(db.prepare(
+    'SELECT COUNT(*) AS n FROM locations WHERE workspace_id=? AND is_active=1'
+  ).get(workspaceId).n || 0);
+  const supplierCount = Number(db.prepare(
+    'SELECT COUNT(*) AS n FROM suppliers WHERE workspace_id=?'
+  ).get(workspaceId).n || 0);
+  const connectedSources = Number(db.prepare(`SELECT COUNT(*) AS n FROM workspace_connectors
+    WHERE workspace_id=? AND status='connected' AND last_synced_at IS NOT NULL`)
+    .get(workspaceId).n || 0);
+  const notes = [];
+  if (!connectedSources) notes.push('Nothing is feeding Foundry automatically yet, so tell it when stock comes in or goes out.');
+  if (demandStage === 'none') notes.push('It has not seen anything leave yet, so it cannot say when you will run out.');
+  if (demandStage === 'learning') notes.push(
+    `It has seen ${observingCount.toLocaleString()} of ${skuCount.toLocaleString()} stock positions selling, `
+      + 'but not for long enough to say when you will run out.'
+  );
+  if (locationCount < 2) notes.push('You have one location, so there is nowhere for Foundry to move stock to.');
+  if (!supplierCount) notes.push('No supplier is set up, so Foundry cannot draft an order even when something is low.');
+  const floor = EVIDENCE_FLOOR;
+  return {
+    canAssessDemand: usageReady > 0,
+    demandStage,
+    usageReady,
+    observingCount,
+    positionsWithOutbound: [],
+    positionsWithoutOutbound: [],
+    skuCount,
+    connectedSources,
+    locationCount,
+    supplierCount,
+    evidenceRequirement:
+      `For each stock position, Foundry needs at least ${plural(floor.minObservedDays, 'observed day')}, `
+      + `${plural(floor.minOutboundEvents, 'outbound observation')}, and `
+      + `${plural(floor.minOutboundQuantity, 'unit')} recorded leaving.`,
+    evidenceGaps: [],
+    evidenceGapCount: Math.max(0, skuCount - usageReady),
+    notes,
+  };
+}
+
+function assess(db, workspaceId, options = {}) {
+  const { now = Date.now(), summaryOnly = false } = options;
+  if (summaryOnly) return summaryAssessment(db, workspaceId, options);
   const inventorySignals = signalEngine.skuSignals(db, workspaceId, { now })
     .filter((entry) => entry.isActive);
 
@@ -170,4 +248,4 @@ function decisions(db, workspaceId, options = {}) {
   return result;
 }
 
-module.exports = { assess, decisions };
+module.exports = { assess, summaryAssessment, decisions };

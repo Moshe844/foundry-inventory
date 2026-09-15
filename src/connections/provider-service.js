@@ -55,6 +55,26 @@ function stateConnection(db, state, providerType) {
 
 function providerOrigin(requestOrigin) { return config.connections.publicOrigin || requestOrigin; }
 
+/*
+ * Xero explicitly permits http://localhost OAuth returns while developing.
+ * Prefer that direct loopback route when the owner is already using Foundry
+ * on localhost: it removes the temporary public tunnel (and its DNS/edge
+ * availability) from the interactive authorization round trip. Production,
+ * and every non-loopback provider flow, still uses the configured public
+ * origin exactly as before.
+ */
+function authorizationOrigin(providerType, requestOrigin) {
+  if (providerType === 'xero' && config.env !== 'production') {
+    try {
+      const requested = new URL(requestOrigin);
+      if (requested.hostname === 'localhost') return requested.origin;
+    } catch (_) {
+      // Use the normal validated public-origin path below.
+    }
+  }
+  return providerOrigin(requestOrigin);
+}
+
 async function beginAuthorization(db, ctx, input, requestOrigin) {
   const providerType = requireText(input.providerType, 'Provider', { max: 40 }).toLowerCase();
   const adapter = providers.get(providerType);
@@ -63,7 +83,7 @@ async function beginAuthorization(db, ctx, input, requestOrigin) {
   if (!meta.available) throw new ValidationError(meta.unavailableReason);
   const now = nowIso();
   const connectorId = input.connectorId || newId('con');
-  const origin = providerOrigin(requestOrigin);
+  const origin = authorizationOrigin(providerType, requestOrigin);
   if (!input.connectorId) {
     const expectedIntervalMinutes = ['gmail', 'microsoft365'].includes(providerType)
       ? Math.max(1, Number(input.expectedIntervalMinutes) || 5)
@@ -106,8 +126,26 @@ async function beginAuthorization(db, ctx, input, requestOrigin) {
     callbackUri: `${origin}/api/v1/connections/woocommerce/callback`,
   } });
   db.prepare('UPDATE connection_authorization_states SET metadata = ? WHERE state_hash = ?')
-    .run(JSON.stringify(auth.metadata || {}), stateHash(state));
+    .run(JSON.stringify({
+      ...(auth.metadata || {}),
+      // The OAuth callback may arrive through the public HTTPS hostname while
+      // the owner has Foundry open on localhost. Preserve the exact opener so
+      // the return page can notify that window and send the owner back to the
+      // same installation without relying on cross-host cookies.
+      returnOrigin: requestOrigin,
+      popup: String(input.popup || '') === '1',
+    }), stateHash(state));
   return { connectorId, redirectUrl: auth.url };
+}
+
+function callbackContext(db, stateValue, providerType) {
+  const state = readState(db, stateValue, providerType, false);
+  const connection = connections.get(db, state.workspace_id, state.connector_id);
+  return {
+    connection,
+    returnOrigin: state.metadata.returnOrigin || null,
+    popup: Boolean(state.metadata.popup),
+  };
 }
 
 async function loadProviderCredentials(db, connection, adapter) {
@@ -156,8 +194,17 @@ async function completeOAuth(db, providerType, query, requestOrigin) {
   if (!adapter) throw new NotFoundError('Provider not found.');
   const state = readState(db, query.state, providerType, true);
   const connection = connections.get(db, state.workspace_id, state.connector_id);
-  const result = await adapter.exchangeAuthorization({ query, metadata: state.metadata });
-  return finishAuthorization(db, connection, state.actor_id, result, requestOrigin, adapter);
+  try {
+    const result = await adapter.exchangeAuthorization({ query, metadata: state.metadata });
+    return finishAuthorization(db, connection, state.actor_id, result, requestOrigin, adapter);
+  } catch (error) {
+    db.prepare(`UPDATE workspace_connectors
+      SET status = 'error', setup_status = 'AUTHORIZATION_FAILED', last_error = ?, updated_at = ?
+      WHERE workspace_id = ? AND id = ?`)
+      .run(String(error.message || 'Authorization failed.').slice(0, 500), nowIso(),
+        connection.workspace_id, connection.id);
+    throw error;
+  }
 }
 
 async function completeWooCallback(db, body, requestOrigin) {
@@ -767,5 +814,6 @@ async function createSandboxCheckout(db, workspaceId, connectorId, input, option
 module.exports = { beginAuthorization, completeOAuth, completeWooCallback, sync, syncMailbox,
   bringInSetAside, prepareReply, maintainMailboxWatch, sendMailboxMessage,
   reviewHistory, setSelectedLocations,
-  createSandboxCheckout, ignoreExternal, webhookContext, createState, readState, stateConnection, providerOrigin,
+  createSandboxCheckout, ignoreExternal, webhookContext, createState, readState, stateConnection,
+  callbackContext, providerOrigin, authorizationOrigin,
   deactivateDuplicateProviderAccounts, loadProviderCredentials };

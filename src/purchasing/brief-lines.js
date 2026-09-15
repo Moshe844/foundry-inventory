@@ -21,12 +21,30 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many || `${one}s`}`;
  * @returns {{lines: string[], counts, recommendations}} lines already ordered by
  *          how much they matter, so a caller can take the first two.
  */
-function purchasingBrief(db, workspaceId, { now = Date.now(), maxLines = 3 } = {}) {
+function savedPlan(db, workspaceId) {
+  const total = db.prepare(`SELECT COUNT(*) AS total
+      FROM planning_recommendations
+      WHERE workspace_id = ? AND status = 'OPEN' AND kind = 'order_now'`)
+    .get(workspaceId).total;
+  const bySupplier = db.prepare(`SELECT supplier_id AS supplierId, COUNT(*) AS lineCount
+      FROM planning_recommendations
+      WHERE workspace_id = ? AND status = 'OPEN' AND kind = 'order_now'
+        AND supplier_id IS NOT NULL
+      GROUP BY supplier_id`)
+    .all(workspaceId);
+  return { recommendations: [], recommendationCount: Number(total || 0), bySupplier };
+}
+
+function purchasingBrief(db, workspaceId, { now = Date.now(), maxLines = 3, storedOnly = false } = {}) {
   let plan = { recommendations: [], bySupplier: [] };
   let late = [];
   let arriving = [];
   try {
-    plan = replenishment.evaluateWorkspace(db, workspaceId, { now });
+    // Brief is a presentation surface, not a planning job. Large workspaces
+    // must not recalculate every SKU just because somebody opened Home.
+    plan = storedOnly
+      ? savedPlan(db, workspaceId)
+      : replenishment.evaluateWorkspace(db, workspaceId, { now });
     late = position.lateOrders(db, workspaceId, { now });
     arriving = position.arrivingSoon(db, workspaceId, { days: 3, now });
   } catch {
@@ -40,10 +58,11 @@ function purchasingBrief(db, workspaceId, { now = Date.now(), maxLines = 3 } = {
 
   const lines = [];
 
-  if (plan.recommendations.length) {
+  const recommendationCount = plan.recommendationCount ?? plan.recommendations.length;
+  if (recommendationCount) {
     const suppliers = plan.bySupplier.length;
     lines.push(
-      `${plural(plan.recommendations.length, 'item')} ${plan.recommendations.length === 1 ? 'needs' : 'need'} replenishment` +
+      `${plural(recommendationCount, 'item')} ${recommendationCount === 1 ? 'needs' : 'need'} replenishment` +
         (suppliers > 1 ? ` across ${plural(suppliers, 'supplier')}.` : '.')
     );
   }
@@ -68,7 +87,7 @@ function purchasingBrief(db, workspaceId, { now = Date.now(), maxLines = 3 } = {
   return {
     lines: lines.slice(0, maxLines),
     counts: {
-      recommended: plan.recommendations.length,
+      recommended: recommendationCount,
       late: late.length,
       arriving: arriving.length,
       dueToday: dueToday.length,

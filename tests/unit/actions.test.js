@@ -13,6 +13,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const engine = require('../../src/domain/inventory-engine');
+const kits = require('../../src/domain/kit-service');
 const repo = require('../../src/domain/repository');
 const itemService = require('../../src/domain/item-service');
 const authService = require('../../src/domain/auth-service');
@@ -176,6 +177,73 @@ test('an explicit coded catalogue list is complete without depending on provider
   ]);
 });
 
+test('exact SKU records reconcile into products without generating extra variants', async () => {
+  const env = setup();
+  const createRecord = (overrides) => intentService.normaliseLine(intent({
+    actionType: 'create_item', item: '', variant: '', sourceLocation: '', destinationLocation: '',
+    quantity: -1, adjustmentTarget: -1, reasonCode: '', productName: '', productCode: '',
+    variantAxes: '', unitLabel: '',
+    ...overrides,
+  }));
+  const instruction = [
+    '1. Nitrile Disposable Gloves',
+    'SKU: GLV-NIT-BLK-M-100',
+    'Size: Medium',
+    'Color: Black',
+    '',
+    '2. Nitrile Disposable Gloves',
+    'SKU: GLV-NIT-BLK-L-100',
+    'Size: Large',
+    'Color: Black',
+    '',
+    '3. Clear Machine Stretch Wrap',
+    'SKU: WRAP-CLR-18-1500',
+    'Size: 18 in × 1,500 ft',
+  ].join('\n');
+  const parsedIntent = {
+    lines: [
+      createRecord({ productName: 'Nitrile Disposable Gloves', productCode: 'GLV-NIT-BLK-M-100',
+        variantAxes: 'Size: Medium | Color: Black', unitLabel: 'Box' }),
+      createRecord({ productName: 'Nitrile Disposable Gloves', productCode: 'GLV-NIT-BLK-L-100',
+        variantAxes: 'Size: Large | Color: Black', unitLabel: 'Box' }),
+      createRecord({ productName: 'Clear Machine Stretch Wrap', productCode: 'WRAP-CLR-18-1500',
+        variantAxes: 'Size: 18 in × 1,500 ft', unitLabel: 'Roll' }),
+    ],
+    clarifyingQuestion: '',
+    unsupportedReason: '',
+  };
+
+  const result = await actionService.interpret(env.db, env.ctx, env.membership, instruction, { parsedIntent });
+  assert.equal(result.kind, 'plan', JSON.stringify(result));
+  assert.equal(result.plan.lines.length, 2, 'three SKU records belong to two products');
+
+  const gloves = result.plan.lines.find((line) => line.settings.name === 'Nitrile Disposable Gloves');
+  const wrap = result.plan.lines.find((line) => line.settings.name === 'Clear Machine Stretch Wrap');
+  assert.equal(gloves.expectedAfterState.variants, 2);
+  assert.deepEqual(gloves.settings.exactVariants.map((variant) => variant.code), [
+    'GLV-NIT-BLK-M-100', 'GLV-NIT-BLK-L-100',
+  ]);
+  assert.deepEqual(gloves.settings.exactVariants.map((variant) => variant.options.Size), ['Medium', 'Large']);
+  assert.equal(wrap.expectedAfterState.variants, 1);
+  assert.equal(wrap.settings.exactVariants.length, 1);
+  assert.equal(wrap.settings.exactVariants[0].code, 'WRAP-CLR-18-1500');
+  assert.equal(wrap.settings.exactVariants[0].options.Size, '18 in × 1,500 ft',
+    'a thousands separator inside one evidenced attribute must not create a second SKU');
+
+  execution.approvePlan(env.db, env.ctx, env.membership, result.plan.planId);
+  execution.executePlan(env.db, env.ctx, env.membership, result.plan.planId);
+  const createdGloves = env.db.prepare('SELECT id FROM items WHERE workspace_id = ? AND name = ?')
+    .get(env.workspace.workspaceId, 'Nitrile Disposable Gloves');
+  const createdWrap = env.db.prepare('SELECT id FROM items WHERE workspace_id = ? AND name = ?')
+    .get(env.workspace.workspaceId, 'Clear Machine Stretch Wrap');
+  assert.equal(repo.listSkusForItem(env.db, env.workspace.workspaceId, createdGloves.id).length, 2);
+  assert.deepEqual(repo.listSkusForItem(env.db, env.workspace.workspaceId, createdGloves.id)
+    .map((sku) => sku.code).sort(), ['GLV-NIT-BLK-L-100', 'GLV-NIT-BLK-M-100']);
+  assert.equal(repo.listSkusForItem(env.db, env.workspace.workspaceId, createdWrap.id).length, 1);
+  assert.equal(repo.listSkusForItem(env.db, env.workspace.workspaceId, createdWrap.id)[0].code,
+    'WRAP-CLR-18-1500');
+});
+
 test('a location question offers one atomic all-locations choice', async () => {
   const env = setup();
   makeQuantityItem(env.db, env.ctx, { name: 'Display Hook', baseCode: 'HOOK-1' });
@@ -243,6 +311,25 @@ test('ordinary inventory-count questions use a grounded catalogue summary', asyn
   assert.match(result.answer, /1 active product/);
   assert.match(result.answer, /7 units on hand/);
   assert.equal(result.supported, true);
+  assert.deepEqual(result.handoff, { href: '/inventory/table', label: 'Open the product' });
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].product, 'Sample Badge');
+  assert.equal(result.rows[0].href, `/inventory/${item.itemId}`);
+});
+
+test('Ask Foundry answers what is in a kit from the saved BOM', async () => {
+  const env = setup();
+  const kit = makeQuantityItem(env.db, env.ctx, { name: 'Workshop Kit', baseCode: 'WK-1' });
+  const component = makeQuantityItem(env.db, env.ctx, { name: 'Safety Glove', baseCode: 'SG-1' });
+  kits.define(env.db, env.ctx, { kitSkuId: kit.skuId,
+    components: [{ skuId: component.skuId, quantity: 4 }] });
+  const plan = await queryPlanner.plan('What components are in kit WK-1?');
+  assert.equal(plan.intent, 'kit_definition');
+  assert.equal(plan.entityQuery, 'WK-1');
+  const result = queryService.execute(env.db, env.workspace.workspaceId, plan);
+  assert.match(result.answer, /4 × Safety Glove \(SG-1\)/);
+  assert.match(result.answer, /Selling one kit reserves and fulfills those component quantities/);
+  assert.equal(result.rows[0].quantityPerKit, 4);
 });
 
 function setup(overrides = {}) {
@@ -307,6 +394,57 @@ function completePreparedTransfer(env, result) {
     })),
   });
 }
+
+test('Foundry can configure an exact kit BOM through its normal approved action path', async () => {
+  const env = setup();
+  const kit = makeQuantityItem(env.db, env.ctx, { name: 'Maintenance Starter Kit', baseCode: 'KIT-100' });
+  const gloves = makeQuantityItem(env.db, env.ctx, { name: 'Work Gloves', baseCode: 'GLOVE-10' });
+  const cloth = makeQuantityItem(env.db, env.ctx, { name: 'Cleaning Cloth', baseCode: 'CLOTH-20' });
+  const instruction = 'Make KIT-100 a kit containing 2 GLOVE-10 and 5 CLOTH-20';
+  const read = await intentService.readInstruction(instruction, { context: {
+    itemNames: ['Maintenance Starter Kit', 'Work Gloves', 'Cleaning Cloth'], locationNames: [],
+  } });
+  assert.equal(read.lines[0].actionType, 'configure_kit');
+  assert.deepEqual(read.lines[0].kitComponents.map((component) => [component.item, component.quantity]),
+    [['GLOVE-10', 2], ['CLOTH-20', 5]]);
+  const parsedIntent = {
+    lines: [intentService.normaliseLine({
+      actionType: 'configure_kit', item: 'KIT-100', variant: '',
+      kitComponents: [
+        { item: 'GLOVE-10', variant: '', quantity: 2 },
+        { item: 'CLOTH-20', variant: '', quantity: 5 },
+      ],
+    })],
+    clarifyingQuestion: '',
+    unsupportedReason: '',
+  };
+
+  const interpreted = await actionService.interpret(
+    env.db, env.ctx, env.membership, instruction, { parsedIntent }
+  );
+  assert.equal(interpreted.kind, 'proposal', JSON.stringify(interpreted));
+  assert.equal(interpreted.proposal.actionType, 'configure_kit');
+  assert.deepEqual(
+    interpreted.proposal.settings.components.map((component) => [component.code, component.quantity]).sort(),
+    [['CLOTH-20', 5], ['GLOVE-10', 2]]
+  );
+
+  const preview = presenter.present(env.db, env.workspace.workspaceId, interpreted.proposal);
+  assert.equal(preview.title, 'Foundry is ready to configure a kit');
+  assert.match(preview.oneLine, /2 component SKUs/);
+  assert.equal(preview.rows.length, 2);
+  assert.deepEqual(preview.total, { before: 0, after: 0 });
+
+  execution.approve(env.db, env.ctx, env.membership, interpreted.proposal.proposalId);
+  const done = execution.execute(env.db, env.ctx, env.membership, interpreted.proposal.proposalId);
+  assert.equal(done.verified, true, JSON.stringify(done.verification));
+  assert.deepEqual(
+    kits.definition(env.db, env.workspace.workspaceId, kit.skuId).components
+      .map((component) => [component.code, component.quantity]),
+    [['CLOTH-20', 5], ['GLOVE-10', 2]]
+  );
+  assert.notEqual(gloves.skuId, cloth.skuId);
+});
 
 // --- the preview -------------------------------------------------------------
 

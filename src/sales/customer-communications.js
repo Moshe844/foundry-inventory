@@ -28,6 +28,9 @@ const carriers = require('./carriers');
 
 const DEFAULT_POLICY = {
   shippingNotice: 'prepare',
+  outForDeliveryNotice: 'prepare',
+  deliveredNotice: 'prepare',
+  exceptionNotice: 'prepare',
   connectorId: null,
   businessName: null,
   replyTo: null,
@@ -68,6 +71,9 @@ function policy(db, workspaceId) {
   if (!row) return { ...DEFAULT_POLICY };
   return {
     shippingNotice: row.shipping_notice,
+    outForDeliveryNotice: row.out_for_delivery_notice || 'prepare',
+    deliveredNotice: row.delivered_notice || 'prepare',
+    exceptionNotice: row.exception_notice || 'prepare',
     connectorId: row.connector_id,
     businessName: row.business_name,
     replyTo: row.reply_to,
@@ -81,19 +87,34 @@ function setPolicy(db, ctx, input = {}) {
     throw new ValidationError('Choose whether Foundry writes shipping notices, sends them, or leaves them alone.');
   }
   const connectorId = trimOrNull(input.connectorId);
-  if (mode === 'send' && !connectorId) {
+  const statusMode = (value, fallback, label) => {
+    const selected = trimOrNull(value) || fallback;
+    if (!['off', 'prepare', 'send'].includes(selected)) {
+      throw new ValidationError(`Choose whether Foundry prepares, sends, or turns off ${label}.`);
+    }
+    return selected;
+  };
+  const outForDelivery = statusMode(input.outForDeliveryNotice, 'prepare', 'out-for-delivery notices');
+  const delivered = statusMode(input.deliveredNotice, 'prepare', 'delivery notices');
+  const exception = statusMode(input.exceptionNotice, 'prepare', 'shipping exception notices');
+  if ([mode, outForDelivery, delivered, exception].includes('send') && !connectorId) {
     throw new ValidationError('Choose which mailbox these are sent from before asking Foundry to send them for you.');
   }
   const now = nowIso();
   db.prepare(`INSERT INTO customer_communication_policy
-      (workspace_id, shipping_notice, connector_id, business_name, reply_to, signature, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      (workspace_id, shipping_notice, out_for_delivery_notice, delivered_notice, exception_notice,
+       connector_id, business_name, reply_to, signature, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (workspace_id) DO UPDATE SET
-      shipping_notice = excluded.shipping_notice, connector_id = excluded.connector_id,
+      shipping_notice = excluded.shipping_notice,
+      out_for_delivery_notice = excluded.out_for_delivery_notice,
+      delivered_notice = excluded.delivered_notice,
+      exception_notice = excluded.exception_notice, connector_id = excluded.connector_id,
       business_name = excluded.business_name, reply_to = excluded.reply_to,
       signature = excluded.signature, updated_at = excluded.updated_at`)
-    .run(ctx.workspaceId, mode, connectorId, trimOrNull(input.businessName),
-      trimOrNull(input.replyTo), trimOrNull(input.signature), now, now);
+    .run(ctx.workspaceId, mode, outForDelivery, delivered, exception,
+      connectorId, trimOrNull(input.businessName), trimOrNull(input.replyTo),
+      trimOrNull(input.signature), now, now);
   return policy(db, ctx.workspaceId);
 }
 
@@ -281,6 +302,98 @@ function prepareShippingNotice(db, ctx, shipmentId) {
   return get(db, workspaceId, id);
 }
 
+const STATUS_NOTICE = {
+  OUT_FOR_DELIVERY: {
+    kind: 'shipping_out_for_delivery', policy: 'outForDeliveryNotice',
+    subject: (order) => `${order} is out for delivery`,
+    opening: (order) => `Your order ${order} is out for delivery.`,
+  },
+  DELIVERED: {
+    kind: 'shipping_delivered', policy: 'deliveredNotice',
+    subject: (order) => `${order} was delivered`,
+    opening: (order) => `The carrier reports that your order ${order} was delivered.`,
+  },
+  FAILURE: {
+    kind: 'shipping_exception', policy: 'exceptionNotice',
+    subject: (order) => `An update about ${order}`,
+    opening: (order) => `The carrier reported a problem with your order ${order}.`,
+  },
+  RETURNED: {
+    kind: 'shipping_exception', policy: 'exceptionNotice',
+    subject: (order) => `${order} is returning to us`,
+    opening: (order) => `The carrier reports that your order ${order} is returning to us.`,
+  },
+};
+
+function messagePolicy(settings, messageKind) {
+  if (messageKind === 'shipping_notice') return settings.shippingNotice;
+  if (messageKind === 'shipping_out_for_delivery') return settings.outForDeliveryNotice;
+  if (messageKind === 'shipping_delivered') return settings.deliveredNotice;
+  if (messageKind === 'shipping_exception') return settings.exceptionNotice;
+  return 'prepare';
+}
+
+/** Build a carrier-stage message from recorded scans only. */
+function composeStatusNotice(db, workspaceId, shipmentId, status) {
+  const definition = STATUS_NOTICE[String(status || '').toUpperCase()];
+  if (!definition) return null;
+  const shipment = db.prepare(`SELECT sh.*, so.order_number, so.id AS order_id,
+      c.id AS customer_id, c.name AS customer_name, c.email AS customer_email
+    FROM sales_shipments sh JOIN sales_orders so ON so.id = sh.sales_order_id
+    LEFT JOIN customers c ON c.id = so.customer_id
+    WHERE sh.id = ? AND sh.workspace_id = ?`).get(shipmentId, workspaceId);
+  if (!shipment) throw new NotFoundError('That shipment is not in this inventory.');
+  const scan = db.prepare(`SELECT detail, location, occurred_at FROM shipment_tracking_events
+    WHERE workspace_id = ? AND shipment_id = ? AND status = ?
+    ORDER BY occurred_at DESC, rowid DESC LIMIT 1`).get(workspaceId, shipmentId, status);
+  const carrierName = carriers.displayName(shipment.carrier) || shipment.carrier || 'The carrier';
+  const trackingUrl = shipment.tracking_url
+    || carriers.trackingUrlFor(shipment.carrier, shipment.tracking_number);
+  const settings = policy(db, workspaceId);
+  const businessName = settings.businessName
+    || db.prepare('SELECT name FROM workspaces WHERE id = ?').get(workspaceId)?.name;
+  const facts = [
+    scan?.detail ? `Carrier detail: ${scan.detail}` : null,
+    scan?.location ? `Last location: ${scan.location}` : null,
+    scan?.occurred_at ? `Reported: ${String(scan.occurred_at).replace('T', ' ').slice(0, 16)}` : null,
+    shipment.tracking_number ? `Tracking number: ${shipment.tracking_number}` : null,
+    trackingUrl ? `Track it here: ${trackingUrl}` : null,
+  ].filter(Boolean);
+  return {
+    definition, shipment, customerId: shipment.customer_id,
+    recipient: trimOrNull(shipment.customer_email),
+    subject: definition.subject(shipment.order_number),
+    body: [
+      `Hello${shipment.customer_name ? ` ${shipment.customer_name}` : ''},`, '',
+      definition.opening(shipment.order_number), '',
+      `${carrierName} supplied this update.`, ...facts, '',
+      'We will keep monitoring the shipment.', '', settings.signature || businessName,
+    ].filter((line) => line !== null && line !== undefined).join('\n'),
+  };
+}
+
+/** Prepare at most one message for each consequential carrier stage. */
+function prepareStatusNotice(db, ctx, shipmentId, status) {
+  const draft = composeStatusNotice(db, ctx.workspaceId, shipmentId, status);
+  if (!draft) return null;
+  const settings = policy(db, ctx.workspaceId);
+  if (messagePolicy(settings, draft.definition.kind) === 'off') return null;
+  const key = `shipment:${shipmentId}:${draft.definition.kind}`;
+  const existing = db.prepare(`SELECT * FROM customer_communications
+    WHERE workspace_id = ? AND idempotency_key = ?`).get(ctx.workspaceId, key);
+  if (existing) return get(db, ctx.workspaceId, existing.id);
+  const now = nowIso();
+  const id = newId('ccom');
+  db.prepare(`INSERT INTO customer_communications
+      (id, workspace_id, customer_id, sales_order_id, shipment_id, channel, recipient, subject, body,
+       status, message_kind, connector_id, idempotency_key, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 'email', ?, ?, ?, 'PREPARED', ?, ?, ?, ?, ?)`)
+    .run(id, ctx.workspaceId, draft.customerId, draft.shipment.order_id, shipmentId,
+      draft.recipient, draft.subject, draft.body, draft.definition.kind,
+      settings.connectorId, key, now, now);
+  return get(db, ctx.workspaceId, id);
+}
+
 /**
  * The message that carries a payment link.
  *
@@ -447,7 +560,8 @@ async function sendThroughMailbox(db, workspaceId, id, actorId = null) {
     throw new ValidationError('Choose which mailbox this is sent from before sending it.');
   }
   const state = require('../autopilot/modes').get(db, workspaceId);
-  if (state.paused || state.suspended) {
+  if (state.paused || (state.suspended && (!state.suspendedScope
+      || ['sales','customer'].includes(state.suspendedScope)))) {
     throw new ValidationError('Foundry is paused. Nothing was sent to the customer.');
   }
 
@@ -501,22 +615,102 @@ function onShipped(db, ctx, shipmentId) {
  */
 async function autoSend(db, ctx, message) {
   if (!message || message.status !== 'PREPARED') return { sent: false, reason: null };
-  if (policy(db, ctx.workspaceId).shippingNotice !== 'send') return { sent: false, reason: null };
+  if (messagePolicy(policy(db, ctx.workspaceId), message.messageKind) !== 'send') {
+    return { sent: false, reason: null };
+  }
   /* "Send these for me" is the explicit, workspace-scoped authority for this
      exact notice type. Requiring a second hidden autonomy policy after the
      owner selected it made the visible setting lie about what would happen. */
   try {
-    const sent = await sendThroughMailbox(db, ctx.workspaceId, message.id, ctx.actorId || null);
+    const autonomous = require('../autonomous/service');
+    const operation = autonomous.create(db, ctx, {
+      operationType:'customer.communicate',
+      idempotencyKey:`customer-communication:${message.id}`,
+      sourceKind:'customer_communication', sourceId:message.id,
+      title:`Tell the customer ${message.messageKind === 'shipping_notice' ? 'their order shipped' : 'what changed'}`,
+      summary:'A record-grounded shipping message is ready under the saved communication policy.',
+      link:message.salesOrderId ? `/orders/${message.salesOrderId}/detail?open=shipping#shipping` : '/activity',
+      evidence:[{ label:'Recipient', value:message.recipient },
+        { label:'Message kind', value:message.messageKind }],
+      decision:{ communicationId:message.id, messageKind:message.messageKind },
+      affectedEntities:{ communicationId:message.id, customerId:message.customerId,
+        salesOrderId:message.salesOrderId, shipmentId:message.shipmentId },
+      authorityDimensions:{ customerId:message.customerId || undefined,
+        confidence:'high', risk:'high' },
+      expectedOutcome:{ communicationStatus:'SENT', messageKind:message.messageKind },
+    });
+    const governed = await autonomous.run(db, ctx, null, operation.id);
+    const sent = get(db, ctx.workspaceId, message.id);
+    if (governed.operation.status !== 'COMPLETED') {
+      return { sent:false, reason:governed.operation.errorMessage
+        || (governed.authority?.checks || []).filter((check) => !check.passed)
+          .map((check) => check.reason).join(' '), message:sent, operation:governed.operation };
+    }
     return { sent: sent.status === 'SENT', reason: null, message: sent };
   } catch (error) {
     return { sent: false, reason: String(error.message || error), message: get(db, ctx.workspaceId, message.id) };
   }
 }
 
+require('../autonomous/service').registerAdapter('customer.communicate', {
+  owner:'sales.customer-communications',
+  authorize:({ db, ctx, operation, execution }) => {
+    if (operation.decision.kind === 'mailbox_reply') {
+      const draft = require('../connections/reply-drafting').getDraft(db,
+        ctx.workspaceId, operation.decision.messageId);
+      const checks = [
+        { name:'executionState', passed:execution.allowed,
+          reason:execution.because || 'Customer reply automation is active.' },
+        { name:'groundedReply', passed:Boolean(operation.decision.grounded && draft),
+          reason:'Only a deterministic question derived from the customer’s own request may send automatically.' },
+      ];
+      return { allowed:checks.every((check) => check.passed), checks };
+    }
+    const settings = policy(db, ctx.workspaceId);
+    const mailbox = sendingMailbox(db, ctx.workspaceId);
+    const checks = [
+      { name:'executionState', passed:execution.allowed,
+        reason:execution.because || 'Customer communication automation is active.' },
+      { name:'messagePolicy', passed:messagePolicy(settings, operation.decision.messageKind) === 'send',
+        reason:'The visible policy for this exact shipping message must be set to send.' },
+      { name:'mailbox', passed:Boolean(mailbox.connectorId),
+        reason:'A connected customer mailbox is required.' },
+      { name:'groundedMessage', passed:[
+        'shipping_notice', 'shipping_out_for_delivery', 'shipping_delivered', 'shipping_exception',
+      ].includes(operation.decision.messageKind),
+        reason:'Only record-grounded shipping lifecycle messages are enabled here.' },
+    ];
+    return { allowed:checks.every((check) => check.passed), checks };
+  },
+  execute:({ db, ctx, operation }) => operation.decision.kind === 'mailbox_reply'
+    ? require('../connections/reply-drafting').send(db, ctx,
+      operation.decision.messageId)
+    : sendThroughMailbox(db, ctx.workspaceId, operation.decision.communicationId, null),
+  verify:({ db, ctx, operation }) => {
+    if (operation.decision.kind === 'mailbox_reply') {
+      const draft = require('../connections/reply-drafting').getDraft(db,
+        ctx.workspaceId, operation.decision.messageId);
+      const passed = draft?.status === 'SENT';
+      return { passed, reason:passed
+        ? 'The provider returned a sent identity for the grounded customer reply.'
+        : (draft?.errorMessage || 'The customer reply is not confirmed as sent.'),
+      messageId:operation.decision.messageId, externalMessageId:draft?.externalMessageId || null };
+    }
+    const message = get(db, ctx.workspaceId, operation.decision.communicationId);
+    const passed = message?.status === 'SENT';
+    return { passed, reason:passed
+      ? 'Foundry reread the customer message as sent and retained its provider identity.'
+      : (message?.errorMessage || 'The customer message is not confirmed as sent.'),
+    communicationId:message?.id || operation.decision.communicationId,
+    externalMessageId:message?.externalMessageId || null };
+  },
+});
+
 module.exports = {
   composePaymentLink, preparePaymentLink,
   DEFAULT_POLICY, policy, setPolicy, sendingMailbox,
   get, forShipment, forOrder, waiting,
-  composeShippingNotice, prepareShippingNotice, prepareOwnerMessage, updateDraft, cancel,
+  composeShippingNotice, prepareShippingNotice, composeStatusNotice, prepareStatusNotice,
+  messagePolicy, prepareOwnerMessage, updateDraft, cancel,
   sendThroughMailbox, onShipped, autoSend,
 };

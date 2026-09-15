@@ -14,7 +14,9 @@
  * something in the real world, tells us about it in its own vocabulary, and
  * Foundry has to hold exactly the few facts its own records turn on.
  *
- * A provider implements five things, and Foundry never asks for more:
+ * A provider implements five core things. Charge-changing recovery methods
+ * are advertised as capabilities so a provider without refunds can never be
+ * treated as though it has them:
  *
  *   quote(ctx, { from, to, packages })   -> [{ rateId, carrier, service, amountMinor,
  *                                              currency, deliveryDays, deliveryDate,
@@ -26,6 +28,8 @@
  *                                        -> { status, detail, events: [...] }
  *   verifyEvent(raw, headers, options)   -> the event, or throws
  *   readEvent(event)                     -> a shape Foundry understands
+ *   voidLabel(ctx, { providerReferences, idempotencyKey })
+ *                                        -> { status, references, detail }
  *
  * `readEvent` is the important one, exactly as it is for payments. It turns
  * whatever the carrier calls things into the handful of facts Foundry acts on:
@@ -80,6 +84,21 @@ function has(name) { return providers.has(String(name || '').toLowerCase()); }
 
 function names() { return [...providers.keys()]; }
 
+function capabilities(name) {
+  const implementation = get(name);
+  return Object.freeze({
+    quote: true,
+    buy: true,
+    track: true,
+    voidLabel: typeof implementation.voidLabel === 'function',
+    returnLabel: typeof implementation.returnLabel === 'function',
+  });
+}
+
+function supports(name, capability) {
+  return Boolean(capabilities(name)[capability]);
+}
+
 /**
  * The one configured for this workspace, or null.
  *
@@ -98,4 +117,5 @@ function configured() {
   return null;
 }
 
-module.exports = { STATUSES, SETTLED, TROUBLE, REQUIRED, register, get, has, names, configured };
+module.exports = { STATUSES, SETTLED, TROUBLE, REQUIRED, register, get, has, names,
+  capabilities, supports, configured };

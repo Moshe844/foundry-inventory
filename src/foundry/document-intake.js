@@ -316,6 +316,7 @@ function understandingFromDocument(interpretation, sourceName) {
     likelyRoles: [],
     terminology: { item: '', location: '', serialUnit: '', lot: '', variant: '' },
     importantOperationalPatterns: [],
+    statedRequirements: [],
     recommendedConfiguration: {
       trackingMode: 'quantity', usesVariants, allowNegativeStock: false,
       summary: usesVariants

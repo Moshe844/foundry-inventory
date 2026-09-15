@@ -116,7 +116,7 @@ function describe(db, workspaceId) {
  *        name. Not ceremony: it is the difference between clicking the wrong
  *        row and meaning it, and this cannot be undone.
  */
-function deleteWorkspace(db, accountId, workspaceId, options = {}) {
+function authorizeDeletion(db, accountId, workspaceId, options = {}) {
   const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
   if (!workspace) throw new NotFoundError('That inventory could not be found.');
 
@@ -133,6 +133,12 @@ function deleteWorkspace(db, accountId, workspaceId, options = {}) {
       { field: 'confirmName' }
     );
   }
+
+  return workspace;
+}
+
+function deleteWorkspace(db, accountId, workspaceId, options = {}) {
+  const workspace = authorizeDeletion(db, accountId, workspaceId, options);
 
   const summary = describe(db, workspaceId);
   const tables = deletionOrder(db, scopedTables(db));
@@ -174,9 +180,74 @@ function deleteWorkspace(db, accountId, workspaceId, options = {}) {
   return { name: workspace.name, ...summary };
 }
 
+/**
+ * The same deletion contract, executed in small transactions for a large
+ * workspace. A completed batch is safe to repeat, so a durable worker can
+ * resume after a process failure without duplicating or inventing effects.
+ *
+ * The HTTP route performs the owner/name authorization before it creates the
+ * job. `preAuthorized` exists only for that durable job: after the users table
+ * has been emptied, a retry can no longer repeat the membership lookup.
+ */
+async function deleteWorkspaceInBatches(db, accountId, workspaceId, options = {}) {
+  let workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+  if (!workspace) return { workspaceId, alreadyDeleted: true };
+  if (!options.preAuthorized) {
+    workspace = authorizeDeletion(db, accountId, workspaceId, options);
+  } else if (String(options.confirmName || '').trim().toLowerCase() !== workspace.name.trim().toLowerCase()) {
+    throw new ValidationError('The authorized inventory name no longer matches the deletion request.');
+  }
+
+  const summary = describe(db, workspaceId);
+  const tables = deletionOrder(db, scopedTables(db));
+  const batchSize = Math.max(100, Math.min(10_000, Number(options.batchSize || 1000)));
+  const pauseMs = Math.max(0, Math.min(100, Number(options.pauseMs ?? 8)));
+
+  for (const table of tables) {
+    const selfReferences = db.prepare(`PRAGMA foreign_key_list(${table})`).all()
+      .filter((fk) => fk.table === table && ['RESTRICT', 'NO ACTION'].includes(fk.on_delete));
+    let removed;
+    do {
+      removed = inTransaction(db, () => {
+        const guards = db.prepare(`SELECT name, sql FROM sqlite_master
+          WHERE type = 'trigger' AND tbl_name = ? AND sql LIKE '%BEFORE DELETE%' AND sql LIKE '%RAISE%'`).all(table);
+        for (const guard of guards) db.exec(`DROP TRIGGER IF EXISTS ${guard.name}`);
+        try {
+          const leavesOnly = selfReferences.map((fk) =>
+            `AND NOT EXISTS (SELECT 1 FROM ${table} child WHERE child.${fk.from} = parent.${fk.to})`
+          ).join(' ');
+          return db.prepare(`DELETE FROM ${table} WHERE rowid IN (
+            SELECT parent.rowid FROM ${table} parent
+             WHERE parent.workspace_id = ? ${leavesOnly} LIMIT ?
+          )`).run(workspaceId, batchSize).changes;
+        } finally {
+          for (const guard of guards) db.exec(guard.sql);
+        }
+      });
+      if (removed && typeof options.onProgress === 'function') options.onProgress({ table, removed });
+      // Yield the SQLite writer lock between batches. Browser sessions and
+      // ordinary work can then commit while a very large inventory is leaving.
+      if (removed) await new Promise((resolve) => setTimeout(resolve, pauseMs));
+    } while (removed === batchSize);
+
+    const stranded = db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE workspace_id = ?`).get(workspaceId).n;
+    if (stranded) {
+      throw new ValidationError(`Foundry could not safely remove ${stranded} cyclic ${table} record(s).`);
+    }
+  }
+
+  inTransaction(db, () => {
+    db.prepare('DELETE FROM workspaces WHERE id = ?').run(workspaceId);
+    db.prepare('UPDATE accounts SET last_workspace_id = NULL WHERE last_workspace_id = ?').run(workspaceId);
+  });
+  return { name: workspace.name, ...summary };
+}
+
 module.exports = {
   scopedTables,
   deletionOrder,
   describe,
+  authorizeDeletion,
   deleteWorkspace,
+  deleteWorkspaceInBatches,
 };

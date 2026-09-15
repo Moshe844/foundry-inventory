@@ -25,9 +25,9 @@
   <div class="rm-composer__foot">
     <label class="rm-composer__attach" title="Attach a file">
       <input type="file" name="file" accept=".csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*" data-operator-attachment>
-      <span>Attach a file</span>
+      <%- helpers.icon('paperclip', { size: 16 }) %><span>Attach</span>
     </label>
-    <span class="right"><button class="rm-btn rm-btn--sm" type="submit" data-ask-submit>Send</button></span>
+    <span class="right"><button class="rm-btn rm-btn--sm rm-composer__send" type="submit" data-ask-submit><span>Send</span><%- helpers.icon('send', { size: 16 }) %></button></span>
   </div>
   <p class="rm-composer__pending" data-ask-pending role="status" aria-live="polite" hidden>
     Foundry is working out what that means…

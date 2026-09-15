@@ -73,6 +73,9 @@ test('the planning page shows what is coming and offers the two answers', async 
   assert.match(page.text, /Money asleep on a shelf/);
   assert.match(page.text, /Has Foundry been right\?/);
   assert.match(page.text, /What matters to you/);
+  assert.match(page.text, /Watching first/);
+  assert.match(page.text, /Why this plan · compare \d+ options/);
+  assert.match(page.text, /Keep this much cash available after known obligations/);
   assert.doesNotMatch(page.text, /undefined|NaN/);
   env.db.close();
 });

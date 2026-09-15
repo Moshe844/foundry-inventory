@@ -76,6 +76,15 @@
     <% }) %>
   </div>
 
+  <% if (!position.groups.length) { %>
+    <div class="rm-choices" style="margin-top:16px">
+      <a class="rm-btn" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell Foundry what you sell</a>
+      <a class="rm-btn rm-btn--ghost" href="/inventory/new"><%- helpers.icon('plus', { size: 15 }) %> Add one manually</a>
+      <a class="rm-btn rm-btn--ghost" href="/onboarding/migrations/new">Import existing inventory</a>
+      <a class="rm-btn rm-btn--ghost" href="/onboarding/system">Connect a business system</a>
+    </div>
+  <% } %>
+
 <% } %>
 
 <p class="rm-disclose">

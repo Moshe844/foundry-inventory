@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
   name             TEXT NOT NULL,
   owner_account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
   data_mode        TEXT NOT NULL DEFAULT 'production' CHECK (data_mode IN ('production','synthetic')),
+  deletion_requested_at TEXT,
   created_at       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_account_id);
@@ -208,6 +209,7 @@ CREATE TABLE IF NOT EXISTS movements (
   occurred_at               TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_movements_workspace_time ON movements(workspace_id, occurred_at DESC, seq DESC);
+CREATE INDEX IF NOT EXISTS idx_movements_workspace_operation ON movements(workspace_id, operation);
 CREATE INDEX IF NOT EXISTS idx_movements_group ON movements(group_id);
 CREATE INDEX IF NOT EXISTS idx_movements_sku ON movements(sku_id, seq DESC);
 CREATE INDEX IF NOT EXISTS idx_movements_item ON movements(item_id, seq DESC);
