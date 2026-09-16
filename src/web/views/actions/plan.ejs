@@ -15,18 +15,18 @@
 </div>
 
 <% if (done) { %>
-  <div class="card section">
+  <div class="card section <%= done.verified ? '' : 'card--warn' %>">
     <div class="card-head">
-      <h2><%= done.verified ? 'All done' : 'Ran, but not fully verified' %></h2>
+      <h2><%= done.verified ? 'All done' : 'Done, but one or more results do not match what was expected' %></h2>
       <span class="spacer"></span>
-      <span class="badge badge--<%= done.verified ? 'ok' : 'danger' %>">
+      <span class="badge badge--<%= done.verified ? 'ok' : 'warn' %>">
         <%= done.verified ? 'Verified' : 'Needs checking' %>
       </span>
     </div>
     <div class="card-body">
       <p class="lede">
         <%= lines.length %> changes were carried out together.
-        <%= done.verified ? 'StockChief re-read every balance afterwards and they match.' : 'Please check these records.' %>
+        <%= done.verified ? 'StockChief re-read every balance afterwards and they match.' : 'StockChief re-read every balance afterwards and at least one is not what it predicted. The lines below say which; compare them with the shelf. They are also listed in Needs you until checked.' %>
       </p>
     </div>
   </div>

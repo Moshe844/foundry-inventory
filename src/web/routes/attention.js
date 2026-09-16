@@ -406,6 +406,9 @@ router.get(
           req.session.askConversation = {workspaceId:req.ctx.workspaceId,
             question: continues ? `${conversation.question}\nFollow-up answer: ${question}` : question,
             semanticPlan:result.semanticPlan || null,
+            // What the turn found, so a follow-up that leans on it can be told
+            // when there was nothing there to lean on.
+            rowCount:Number(result.totalMatches ?? result.rowCount ?? 0),
             clarification:result.needsClarification ? result.answer : null};
         }
       } catch (err) {

@@ -304,8 +304,8 @@
                 <span class="cell-sub"><%= helpers.timeAgo(item.completedAt || item.createdAt) %></span>
               </td>
               <td class="right">
-                <span class="badge badge--<%= item.status === 'SUCCEEDED' ? 'ok' : 'muted' %>">
-                  <%= item.status.toLowerCase().replace(/_/g, ' ') %>
+                <span class="badge badge--<%= item.unverified ? 'warn' : item.status === 'SUCCEEDED' ? 'ok' : 'muted' %>">
+                  <%= item.unverified ? 'ran, not verified' : item.status.toLowerCase().replace(/_/g, ' ') %>
                 </span>
               </td>
             </tr>

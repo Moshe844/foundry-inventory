@@ -106,7 +106,7 @@ function get(db, workspaceId, id) {
 }
 
 function prepare(db, ctx, message) {
-  const instruction = requireText(message, 'Purchase-cost instruction', { max: 1200 });
+  const instruction = requireText(message, 'Purchase-cost instruction', { max: 2000 });
   const money = moneyFrom(instruction);
   const skuIds = targetSkuIds(db, ctx.workspaceId, instruction);
   const proposals = db.transaction(() => skuIds.map((skuId) => createProposal(db, ctx, {

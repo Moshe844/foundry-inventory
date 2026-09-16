@@ -254,6 +254,31 @@ function execute(db, ctx, membership, proposalId, options = {}) {
   return claimed;
 }
 
+/*
+ * Ran, but the records do not say what was expected.
+ *
+ * The change was applied; the re-read afterwards disagreed with the
+ * prediction. That is not success, and it used to look exactly like
+ * success: the proposal said SUCCEEDED, the page said done, and the only
+ * trace was a row in the verification table nobody reads. Now it is raised
+ * where somebody will see it — an operational alert for whoever runs the
+ * server, and a Needs You entry for the person whose stock it is, built
+ * from the same verification row.
+ */
+function flagUnverified(db, ctx, proposal, executionId, verdict) {
+  try {
+    require('../operations/monitoring').raise(db, {
+      severity: 'WARNING',
+      kind: 'action.unverified',
+      title: 'An action ran but its result did not verify',
+      detail: `${proposal.actionType} ${proposal.proposalId} (execution ${executionId}): ${(verdict.problems || []).slice(0, 3).join('; ')}`,
+      fingerprint: `action.unverified:${executionId}`,
+    });
+  } catch (err) {
+    console.error('[foundry] could not record the unverified-action alert', err);
+  }
+}
+
 function isDuplicateKey(error) {
   return Boolean(error && typeof error.code === 'string' && error.code.startsWith('SQLITE_CONSTRAINT'));
 }
@@ -323,6 +348,7 @@ function runOnce(db, ctx, membership, proposal, idempotencyKey) {
       after,
       problems: verdict.problems,
     });
+    if (!verdict.verified) flagUnverified(db, ctx, proposal, executionId, verdict);
 
     return {
       executionId,
@@ -712,7 +738,13 @@ function executePlan(db, ctx, membership, planId, options = {}) {
         );
 
         proposals.setStatus(db, ctx, line.proposalId, 'SUCCEEDED', { completed: true });
-        proposals.record(db, ctx, line.proposalId, 'SUCCEEDED', { executionId, before, after }, planId);
+        // The line's own record says what the check found. Every line of a
+        // plan used to be recorded as SUCCEEDED whatever the verdict, so the
+        // one line whose balance did not come out as expected left no trace
+        // of it anywhere but the verification table.
+        proposals.record(db, ctx, line.proposalId, verdict.verified ? 'SUCCEEDED' : 'SUCCEEDED_UNVERIFIED',
+          { executionId, before, after, problems: verdict.problems }, planId);
+        if (!verdict.verified) flagUnverified(db, ctx, line, executionId, verdict);
         results.push({ proposalId: line.proposalId, before, after,
           transferId: result.transferId || null, transferNumber: result.transferNumber || null,
           transferStatus: result.transferStatus || null,

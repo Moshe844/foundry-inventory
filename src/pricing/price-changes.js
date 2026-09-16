@@ -229,7 +229,7 @@ function proposalFromInterpreted(db, ctx, data, statedAs) {
 }
 
 async function interpret(db, ctx, message, options = {}) {
-  const statedAs = requireText(message, 'Price instruction', { max: 1200 });
+  const statedAs = requireText(message, 'Price instruction', { max: 2000 });
   const catalogueRows = catalogue(db, ctx.workspaceId);
   let data;
   try {
@@ -285,7 +285,7 @@ function continueInterpret(db, ctx, continuation, answer) {
 }
 
 function interpretEvery(db, ctx, message) {
-  const statedAs = requireText(message, 'Price instruction', { max: 1200 });
+  const statedAs = requireText(message, 'Price instruction', { max: 2000 });
   // Read locally rather than by model: the only facts needed are the amount and
   // whether it is a removal, and both are already parsed here.
   const parsed = fallback(statedAs, catalogue(db, ctx.workspaceId));
@@ -382,7 +382,7 @@ function createProposal(db, ctx, input) {
     (id, workspace_id, sku_id, amount_minor, currency, source_text, status, current_price_id,
      integrity_hash, created_by_user_id, created_at)
     VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)`)
-    .run(id, ctx.workspaceId, sku.id, amountMinor, currency, requireText(input.sourceText || 'Manual price change', 'Source'),
+    .run(id, ctx.workspaceId, sku.id, amountMinor, currency, requireText(String(input.sourceText || 'Manual price change').slice(0, 2000), 'Source', { max: 2000 }),
       current.id, integrityHash, ctx.actorId, createdAt);
   return get(db, ctx.workspaceId, id);
 }

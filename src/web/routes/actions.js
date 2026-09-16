@@ -89,12 +89,18 @@ router.get(
       )
       .all(req.ctx.workspaceId)
       .map(proposals.hydrate);
+    // A run whose re-read disagreed with the plan is not "succeeded" on the
+    // list either. The verification row says which.
+    const unverifiedIds = new Set(req.db.prepare(
+      `SELECT proposal_id FROM action_verifications WHERE workspace_id = ? AND verified = 0`
+    ).all(req.ctx.workspaceId).map((row) => row.proposal_id));
 
     res.page('actions/list', {
       title: 'StockChief actions',
       nav: 'actions',
       pending: open.map((p) => presenter.present(req.db, req.ctx.workspaceId, p)),
-      recent: recent.map((p) => ({ ...p, oneLine: presenter.oneLine(req.db, req.ctx.workspaceId, p) })),
+      recent: recent.map((p) => ({ ...p, oneLine: presenter.oneLine(req.db, req.ctx.workspaceId, p),
+        unverified: p.status === 'SUCCEEDED' && unverifiedIds.has(p.proposalId) })),
       canOperate: permissions.can(membershipOf(req), permissions.OPERATE),
       aiConfigured: config.ai.configured,
       // A question raised somewhere else — the Tell StockChief box on the home

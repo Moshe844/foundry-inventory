@@ -1,7 +1,8 @@
 <div class="page-head">
   <div class="titles">
     <a class="back-link" href="/actions"><%- helpers.icon('chevron', { size: 14 }) %> StockChief actions</a>
-    <h1><%= action.title %></h1>
+    <%# Once it has run, the page is about what happened, not what StockChief was ready to do. %>
+    <h1><%= locals.outcome ? (outcome.verified ? 'StockChief ' + action.pastVerb + ' ' + (outcome.name || 'this') : 'This ran, but the result needs checking') : action.title %></h1>
     <div class="page-sub"><%= action.subjectName %></div>
   </div>
 </div>
@@ -10,17 +11,17 @@
   <%# ---------------------------------------------------- already executed %>
   <div class="card section <%= outcome.verified ? '' : 'card--warn' %>">
     <div class="card-head">
-      <h2><%= outcome.verified ? (outcome.transferId ? 'Transfer prepared' : 'Done') : 'Ran, but not verified' %></h2>
+      <h2><%= outcome.verified ? (outcome.transferId ? 'Transfer prepared' : 'Done') : 'Done, but the result does not match what was expected' %></h2>
       <span class="spacer"></span>
-      <span class="badge badge--<%= outcome.verified ? 'ok' : 'danger' %>">
+      <span class="badge badge--<%= outcome.verified ? 'ok' : 'warn' %>">
         <%= outcome.verified ? 'Verified against your records' : 'Needs checking' %>
       </span>
     </div>
     <div class="card-body">
       <% if (!outcome.verified) { %>
         <p class="lede">
-          StockChief submitted this, but could not confirm the resulting inventory is what it expected.
-          Please check these records before relying on them.
+          StockChief applied this change, then re-read the balances, and they are not what it predicted.
+          Compare the figures below with the shelf; if the shelf is right, correct the count. This is also listed in Needs you until you have checked it.
         </p>
         <ul class="plain-list">
           <% outcome.problems.forEach(function (problem) { %><li class="is-warn"><%= problem %></li><% }) %>
