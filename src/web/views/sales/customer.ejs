@@ -28,11 +28,11 @@
               ? 'Delete ' + customer.name + '? Nothing refers to them, so the record goes for good.'
               : 'Archive ' + customer.name + '? ' + trail + ' still refer to them, so the record is kept and hidden instead of deleted. You can restore it.' %>">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <button class="btn btn--danger btn--sm" type="submit">
+        <button class="btn btn--ghost" type="submit">
           <%= use.deletable ? 'Delete customer' : 'Archive customer' %>
         </button>
       </form>
-      <a class="btn btn--primary" href="/orders/new">New order</a>
+      <a class="btn btn--primary" href="/orders/new?customer=<%= customer.id %>"><%- helpers.icon('plus', { size: 15 }) %> New order</a>
     <% } %>
   </div>
 </div>
@@ -80,18 +80,20 @@
   </div>
 </div>
 
+<%# The terms fold away: the head already says what they are, and most
+    visits to a customer are to read, not to renegotiate. %>
 <section class="section" id="terms">
-  <div class="panel">
-    <div class="panel-head">
+  <details class="panel advanced-settings"<%= terms.isDefault ? '' : ' open' %>>
+    <summary class="panel-head">
       <div>
         <h2>How <%= customer.name %> pays</h2>
-        <span class="t-xs t-muted"><%= terms.isDefault ? 'Following ' + terms.source : terms.source %></span>
+        <span class="t-xs t-muted"><%= terms.isDefault ? 'Following ' + terms.source + ' — open to set terms just for them' : terms.source %></span>
       </div>
       <span class="spacer"></span>
       <span class="badge badge--<%= terms.kind === 'ON_ACCOUNT' ? 'info' : 'warn' %>">
         <%= terms.kind === 'ON_ACCOUNT' ? 'On account' : terms.kind === 'DEPOSIT' ? 'Deposit' : 'Pays first' %>
       </span>
-    </div>
+    </summary>
     <form method="post" action="/sales/customers/<%= customer.id %>/terms" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="card-body">
@@ -197,7 +199,7 @@
         <% } %>
       </div>
     </form>
-  </div>
+  </details>
   <p class="section-foot t-muted">
     StockChief applies this to every future order for <%= customer.name %> without being asked again.
   </p>

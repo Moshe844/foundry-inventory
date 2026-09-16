@@ -25,6 +25,7 @@
     ? (locals.accounting.outcome || {}) : null;
 %>
 
+<a class="rm-head__back" href="/orders"><span aria-hidden="true">←</span> Orders</a>
 <%- include('../partials/spine', { story: story, collapseHistory: true }) %>
 
 <section class="rm-panel" style="margin-top:22px">
@@ -57,15 +58,67 @@
         <a href="/accounting/entries/<%= locals.accounting.journal_entry_id %>">Show the exact sale and product cost</a>.
       </div>
     <% } %>
-    <% if (next.action) { %>
-      <p style="margin:16px 0 0"><a class="rm-btn" href="/orders/<%= order.id %>/detail?open=<%= nextSection %>#<%= nextSection %>"><%= next.action %></a></p>
-    <% } %>
-    <% if (Number(pay.remainingMinor || 0) > 0 && order.status !== 'CANCELLED') { %>
-      <p><a class="rm-btn rm-btn--wash" href="/orders/<%= order.id %>/detail?open=money#money">Payment options</a></p>
-      <p class="rm-sub">Request payment or record money actually received. Picking and packing do not reduce on-hand stock; dispatch does. Dispatch never marks the order paid.</p>
+    <%# The next step and the money, side by side: one row of buttons, not a
+        column of them. Delivery is named here because a shipped order with no
+        address stops at dispatch, and that was the first place it said so. %>
+    <% var noAddress = order.delivery_method !== 'PICKUP' && !order.ship_to_address && order.status !== 'CANCELLED' && order.status !== 'FULFILLED'; %>
+    <p class="rm-sub" style="margin:10px 0 0">
+      <% if (order.delivery_method === 'PICKUP') { %>
+        Customer collects it.
+      <% } else if (order.ship_to_address) { %>
+        Ships to <%= order.ship_to_address %>.
+      <% } else if (noAddress) { %>
+        <span class="is-warn">No delivery address yet</span> — it can be picked, but nothing can leave until there is one.
+        <a href="/orders/<%= order.id %>/detail?open=fulfilment#fulfilment">Add the address or switch to collection</a>.
+      <% } %>
+    </p>
+    <% if (next.action || (Number(pay.remainingMinor || 0) > 0 && order.status !== 'CANCELLED')) { %>
+      <div class="rm-choices" style="margin-top:16px">
+        <% if (next.action) { %><a class="rm-btn" href="/orders/<%= order.id %>/detail?open=<%= nextSection %>#<%= nextSection %>"><%= next.action %></a><% } %>
+        <% if (Number(pay.remainingMinor || 0) > 0 && order.status !== 'CANCELLED') { %><a class="rm-btn rm-btn--wash" href="/orders/<%= order.id %>/detail?open=money#money">Record or request payment</a><% } %>
+      </div>
+      <% if (Number(pay.remainingMinor || 0) > 0 && order.status !== 'CANCELLED') { %>
+        <p class="rm-sub" style="margin:10px 0 0">Picking and packing do not reduce on-hand stock; dispatch does. Dispatch never marks the order paid.</p>
+      <% } %>
     <% } %>
   </div>
 </section>
+
+<%# What the customer ordered, always in view. %>
+<p class="rm-stamp" style="margin-top:30px">What is on it</p>
+<div class="table-wrap rm-lines">
+  <table class="table table--stack">
+    <thead><tr>
+      <th>Product</th>
+      <th class="num">Ordered</th>
+      <th class="num">Held</th>
+      <th class="num">Shipped</th>
+      <th class="num">Price</th>
+      <th class="num">Total</th>
+    </tr></thead>
+    <tbody>
+      <% (order.lines || []).forEach(function (line) { %>
+        <tr>
+          <td data-label="Product">
+            <div class="cell-main">
+              <span class="cell-title"><% if (line.item_id) { %><a class="rm-u" href="/inventory/<%= line.item_id %>#sku-<%= line.sku_id %>"><%= line.displayName %></a><% } else { %><%= line.displayName %><% } %></span>
+              <span class="cell-sub"><span class="mono"><%= line.code %></span><% if (line.backordered) { %> · <span class="is-warn"><%= line.backordered %> short</span><% } %></span>
+            </div>
+          </td>
+          <td class="num" data-label="Ordered"><%= line.quantity_ordered %></td>
+          <td class="num" data-label="Held"><% if (line.allocated) { %><%= line.allocated %><% } else { %><span class="rm-quiet">0</span><% } %></td>
+          <td class="num" data-label="Shipped"><% if (Number(line.quantity_fulfilled) >= Number(line.quantity_ordered)) { %><span class="badge badge--ok">all <%= line.quantity_fulfilled %></span><% } else if (Number(line.quantity_fulfilled) > 0) { %><span class="badge badge--warn"><%= line.quantity_fulfilled %> of <%= line.quantity_ordered %></span><% } else { %><span class="rm-quiet">0</span><% } %></td>
+          <td class="num" data-label="Price"><% if (line.unit_price_minor != null) { %><%= helpers.money(line.unit_price_minor, order.currency) %><% } else { %><span class="badge badge--warn">no price</span><% } %></td>
+          <td class="num" data-label="Total"><% if (line.lineTotalMinor != null) { %><%= helpers.money(line.lineTotalMinor, order.currency) %><% } else { %>—<% } %></td>
+        </tr>
+      <% }) %>
+    </tbody>
+    <tfoot><tr>
+      <td colspan="5" class="num"><strong><%= order.totals.ordered %> units</strong> · <%= (order.lines || []).length %> line<%= (order.lines || []).length === 1 ? '' : 's' %></td>
+      <td class="num"><strong><%= helpers.money(order.pricing && order.pricing.subtotalMinor != null ? order.pricing.subtotalMinor : (order.lines || []).reduce(function (s, l) { return s + (l.lineTotalMinor || 0); }, 0), order.currency) %></strong></td>
+    </tr></tfoot>
+  </table>
+</div>
 
 <% if (locals.evidenceTrace) { %>
   <details class="rm-work" style="margin-top:24px">
@@ -125,7 +178,6 @@
 
 <div class="rm-spine-foot">
   <a class="rm-btn rm-btn--ghost" href="/ask?about=<%= encodeURIComponent(order.order_number + ' for ' + (order.customer ? order.customer.name : '')) %>">Ask about this order</a>
-  <a class="rm-btn rm-btn--wash" href="/orders/<%= order.id %>/detail?open=<%= nextSection %>#<%= nextSection %>">Open the working detail</a>
 </div>
 
 <%
@@ -144,7 +196,7 @@
    */
 %>
 <details class="rm-work" id="working"<% if (locals.paymentCompleted) { %> open<% } %>>
-  <summary>The lines, money, shipping and documents</summary>
+  <summary>Money, shipping, documents and the full working record</summary>
   <div class="rm-work__body"><%- include('order') %></div>
 </details>
 

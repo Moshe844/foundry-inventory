@@ -1,8 +1,40 @@
 <div class="rm-operation-page">
+<%
+  /*
+   * A return is a short story with fixed chapters: asked, approved, arrived,
+   * checked, settled. The rail says which chapter this is, and the sentence
+   * under the title says what has to happen next — the raw enum said
+   * "REFUND · REQUESTED", which is the record's business, not the reader's.
+   */
+  var STAGES = ['REQUESTED', 'AUTHORIZED', 'RECEIVED', 'INSPECTED', 'DONE'];
+  var stageOf = { REQUESTED: 0, AUTHORIZED: 1, PARTIALLY_RECEIVED: 1, RECEIVED: 2, INSPECTED: 3, AWAITING_REFUND: 3, REFUNDED: 4, EXCHANGED: 4, CLOSED: 4, COMPLETED: 4, CANCELLED: 4 };
+  var at = stageOf[record.status] === undefined ? 0 : stageOf[record.status];
+  var labels = ['Asked to return', 'Approved', 'Goods back', 'Checked', record.resolution === 'EXCHANGE' ? 'Exchanged' : record.resolution === 'NO_REFUND' ? 'Closed' : 'Refunded'];
+  var RESOLUTION = { REFUND: 'for a refund', EXCHANGE: 'for an exchange', NO_REFUND: 'with no refund' };
+  var SAYS = {
+    REQUESTED: 'The return is requested and waits for your approval. Nothing has moved.',
+    AUTHORIZED: 'Approved. When the goods arrive, record what actually came back.',
+    PARTIALLY_RECEIVED: 'Some of it is back. Record the rest when it arrives.',
+    RECEIVED: 'The goods are back, in quarantine. Say what condition each unit was in.',
+    INSPECTED: 'Checked. Settle it with the customer.',
+    AWAITING_REFUND: 'Checked. Record the refund to close it.',
+    REFUNDED: 'Refunded and closed.',
+    EXCHANGED: 'Exchanged and closed.',
+    COMPLETED: 'Settled and closed.',
+    CANCELLED: 'Cancelled.',
+  };
+  var units = record.lines.reduce(function (n, l) { return n + Number(l.quantity_authorized || 0); }, 0);
+%>
+<a class="rm-head__back" href="/orders/<%= record.sales_order_id %>"><span aria-hidden="true">←</span> <%= record.order_number %></a>
 <p class="rm-stamp"><a href="/warehouse/operations#customer-returns">Customer returns</a> · <%= record.return_number %></p>
-<h1 class="rm-figure"><%= record.customer_name %> returned goods.</h1>
-<p class="rm-sub"><%= record.order_number %> · <%= record.resolution %> · <%= record.status.replace('_',' ') %></p>
-<section class="rm-panel"><div class="rm-panel__head"><div><p class="rm-kicker">One governed return</p><h2>Where the goods are and what happens next</h2></div></div>
+<h1 class="rm-figure"><%= record.customer_name %> <%= at === 4 ? 'returned' : 'is returning' %> <%= units %> unit<%= units === 1 ? '' : 's' %> <%= RESOLUTION[record.resolution] || '' %>.</h1>
+<p class="rm-sub"><%= SAYS[record.status] || record.status.replace('_', ' ').toLowerCase() %><% if (record.reason) { %> Reason given: “<%= record.reason %>”.<% } %></p>
+<div class="rm-stages" style="margin-bottom:18px">
+  <% labels.forEach(function (label, i) { %>
+    <div class="rm-stage <%= i < at || at === 4 ? 'is-done' : i === at ? 'is-now' : '' %>"><span class="rm-stage__bar"></span><span class="rm-stage__t"><%= label %></span></div>
+  <% }) %>
+</div>
+<section class="rm-panel"><div class="rm-panel__head"><div><h2>What is coming back</h2></div><span class="right rm-quiet">From <%= record.order_number %></span></div>
   <div class="rm-list"><% record.lines.forEach(function(line){ %><div class="rm-row"><span><strong><%= line.item_name %><%= line.variant_label?' / '+line.variant_label:'' %></strong><small><%= line.sku_code %> · <%= line.quantity_authorized %> authorized</small></span><span><%= line.quantity_received %> in · <%= line.quantity_restocked %> restocked · <%= line.quantity_scrapped %> scrapped · <%= line.quantity_repair %> repair</span></div><% }) %></div>
   <% if(record.status==='REQUESTED'){ %><form method="post" action="/warehouse/returns/customer/<%= record.id %>/authorize"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button rm-button--primary">Authorize return</button></form><% } %>
   <% if(['AUTHORIZED','PARTIALLY_RECEIVED'].includes(record.status)){ %>
@@ -25,9 +57,9 @@
       <% } %>
     </section>
   <% } %>
-  <% if(record.status==='AUTHORIZED'||record.status==='PARTIALLY_RECEIVED'){ var line=record.lines.find(function(l){return l.quantity_received<l.quantity_authorized}); %><form method="post" action="/warehouse/returns/customer/<%= record.id %>/receive" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="lineId" value="<%= line.id %>"><label>Quantity physically received<input type="number" name="quantity" min="1" max="<%= line.quantity_authorized-line.quantity_received %>" required></label><label>Lot/batch <span class="optional">when tracked</span><input name="lotCode"></label><label class="rm-span-2">Serials <span class="optional">one per line when tracked</span><textarea name="serials"></textarea></label><div class="rm-span-2"><button class="rm-button rm-button--primary">Receive into <%= record.quarantine_name %></button></div></form><% } %>
-  <% if(record.status==='RECEIVED'){ var inspect=record.lines[0]; %><p class="rm-note">StockChief cannot decide physical condition. Record how every received unit was actually inspected.</p><form method="post" action="/warehouse/returns/customer/<%= record.id %>/inspect" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="lineId" value="<%= inspect.id %>"><label>Restock<input type="number" name="restock" min="0" value="0"></label><label>Restock location<select name="restockLocationId"><% locations.forEach(function(l){ %><option value="<%= l.id %>"><%= l.name %></option><% }) %></select></label><label>Scrap<input type="number" name="scrap" min="0" value="0"></label><label>Repair<input type="number" name="repair" min="0" value="0"></label><label>Repair location<select name="repairLocationId"><% locations.forEach(function(l){ %><option value="<%= l.id %>"><%= l.name %></option><% }) %></select></label><label>Condition evidence<input name="conditionNote" required placeholder="Box opened; sole unworn"></label><div class="rm-span-2"><button class="rm-button rm-button--primary">Record inspection</button></div></form><% } %>
-  <% if(record.status==='AWAITING_REFUND'){ %><form method="post" action="/warehouse/returns/customer/<%= record.id %>/refund" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Refund merchandise<input name="revenue" inputmode="decimal" required></label><label>Refund tax<input name="tax" inputmode="decimal" value="0"></label><label>Returned inventory cost<input name="cogs" inputmode="decimal" value="0"></label><label>Refund to<select name="destination"><option value="CASH">Cash/bank</option><option value="AR">Customer balance</option></select></label><div class="rm-span-2"><button class="rm-button rm-button--primary">Approve refund and reconcile</button></div></form><% } %>
+  <% if(record.status==='AUTHORIZED'||record.status==='PARTIALLY_RECEIVED'){ var line=record.lines.find(function(l){return l.quantity_received<l.quantity_authorized}); %><form method="post" action="/warehouse/returns/customer/<%= record.id %>/receive" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="lineId" value="<%= line.id %>"><label>How many actually came back<input type="number" name="quantity" min="1" max="<%= line.quantity_authorized-line.quantity_received %>" value="<%= line.quantity_authorized-line.quantity_received %>" required><small class="rm-quiet">Up to <%= line.quantity_authorized-line.quantity_received %> still expected.</small></label><% if (line.tracking_mode === 'lot') { %><label>Lot/batch<input name="lotCode" required></label><% } else if (line.tracking_mode === 'serial') { %><label class="rm-span-2">Serials <span class="optional">one per line</span><textarea name="serials" required></textarea></label><% } %><div class="rm-span-2"><button class="rm-button rm-button--primary">Receive into <%= record.quarantine_name %></button> <span class="rm-quiet" style="margin-left:8px">Goes into quarantine, not back on sale, until it is checked.</span></div></form><% } %>
+  <% if(record.status==='RECEIVED'){ var inspect=record.lines[0]; %><p class="rm-note">StockChief cannot decide physical condition. Record how every received unit was actually inspected.</p><form method="post" action="/warehouse/returns/customer/<%= record.id %>/inspect" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="lineId" value="<%= inspect.id %>"><label>Back on sale (good)<input type="number" name="restock" min="0" value="<%= inspect.quantity_received %>"></label><label>Put it back on the shelf at<select name="restockLocationId"><% var sellable = locations.filter(function(l){ return l.id !== record.quarantine_location_id; }); (sellable.length ? sellable : locations).forEach(function(l){ %><option value="<%= l.id %>"><%= l.name %></option><% }) %></select><small class="rm-quiet">It is in quarantine at <%= record.quarantine_name %> now; restocking moves it somewhere it can sell from.</small></label><label>Scrapped (unsellable)<input type="number" name="scrap" min="0" value="0"></label><label>To repair<input type="number" name="repair" min="0" value="0"></label><label>Repairs happen at<select name="repairLocationId"><% locations.forEach(function(l){ %><option value="<%= l.id %>" <%= l.id === record.quarantine_location_id ? 'selected' : '' %>><%= l.name %></option><% }) %></select></label><label class="rm-span-2">What you found<input name="conditionNote" required placeholder="Box opened; sole unworn"><small class="rm-quiet">The three counts must add up to the <%= inspect.quantity_received %> received.</small></label><div class="rm-span-2"><button class="rm-button rm-button--primary">Record inspection</button></div></form><% } %>
+  <% if(record.status==='AWAITING_REFUND'){ %><form method="post" action="/warehouse/returns/customer/<%= record.id %>/refund" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Refund for the goods<input name="revenue" inputmode="decimal" required placeholder="0.00"></label><label>Tax refunded<input name="tax" inputmode="decimal" value="0"></label><label>Cost of the stock that came back<input name="cogs" inputmode="decimal" value="0"><small class="rm-quiet">What it cost you, so the books can put it back. Leave 0 if it was scrapped.</small></label><label>Refund by<select name="destination"><option value="CASH">Paying them back (cash or bank)</option><option value="AR">Crediting their account</option></select></label><div class="rm-span-2"><button class="rm-button rm-button--primary">Record the refund</button></div></form><% } %>
   <% if(record.status==='INSPECTED'&&record.resolution==='EXCHANGE'){ %><form method="post" action="/warehouse/returns/customer/<%= record.id %>/exchange" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label>Replacement product<select name="skuId"><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %></option><% }) %></select></label><label>Quantity<input type="number" name="quantity" min="1" value="1"></label><div class="rm-span-2"><button class="rm-button rm-button--primary">Create confirmed exchange order</button></div></form><% } %>
 </section>
 </div>

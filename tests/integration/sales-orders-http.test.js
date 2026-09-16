@@ -56,8 +56,8 @@ test('a pickup order stays pickup on the visible pick list', async () => {
   assert.match(story, /The customer collected everything on this order/i);
   assert.doesNotMatch(story, /Shipped — \$[\d,.]+ still owed/i);
   const list = plain((await agent.get('/orders')).text);
-  assert.match(list, /0 open.*1 collected/i);
-  assert.match(list, /2 units collected/i);
+  assert.match(list, /0 need you.*1 unpaid.*Collected/is);
+  assert.match(list, /2 units.*Collected/is);
   assert.doesNotMatch(list, /1 shipped|2 units shipped/i);
   env.db.close();
 });

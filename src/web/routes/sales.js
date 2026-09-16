@@ -133,6 +133,7 @@ router.get(['/orders', '/sales'], requirePermission(permissions.VIEW, 'view sale
     });
   res.page('sales/orders', {
     title: 'Orders', nav: 'sales', room: true, status,
+    view: ['stuck', 'ready', 'moving', 'unpaid', 'done'].includes(req.query.view) ? req.query.view : 'all',
     sellingConnectionCount,
     orders: ranked,
     summary: orderStatus.summarise(ranked),
@@ -145,7 +146,8 @@ router.get(['/orders/new', '/sales/new'], requirePermission(permissions.OPERATE,
   const skus = catalogue(req.db, req.ctx.workspaceId);
   res.page('sales/order-new', {
     title: 'New sales order', nav: 'sales', customers: sales.listCustomers(req.db, req.ctx.workspaceId),
-    skus, locations: repo.listLocations(req.db, req.ctx.workspaceId), form: {}, formError: null,
+    // Arriving from a customer's page or row: that customer is already chosen.
+    skus, locations: repo.listLocations(req.db, req.ctx.workspaceId), form: { customerId: trimOrNull(req.query.customer) }, formError: null,
     unpricedCount: skus.filter((sku) => !sku.price.isSet).length,
     // A focused form explains its own missing fields in context. A global
     // setup task above it creates two unrelated "next" actions.
