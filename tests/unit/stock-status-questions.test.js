@@ -43,7 +43,7 @@ test('stock status answers use product history and network quantity rather than 
 
   const empty = queries.execute(db, workspace.workspaceId, { intent: 'out_of_stock' });
   assert.deepEqual(empty.rows.map((row) => row.product), ['Brass Collar']);
-  assert.match(empty.answer, /1 product is out of stock across all locations/);
+  assert.match(empty.answer, /1 product is completely out of stock: Brass Collar/);
   assert.doesNotMatch(empty.answer, /Steel Washer/);
   assert.doesNotMatch(empty.answer, /Ceramic Sleeve|Graphite Seal/);
 

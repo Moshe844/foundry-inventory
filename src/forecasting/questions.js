@@ -67,8 +67,8 @@ const EXECUTORS = {
       columns: ['product', 'skus', 'status'],
       handoff: { href: '/inventory/table', label: 'Open inventory' },
       answer: rows.length
-        ? `${rows.length} product${rows.length === 1 ? '' : 's'} show “None yet” because no stock has ever been recorded for them: ${rows.map((row) => row.product).join(', ')}.`
-        : 'No active product shows “None yet”. Every active product has stock-movement history.',
+        ? `${rows.length} product${rows.length === 1 ? ' shows' : 's show'} “None yet” because no stock has ever been recorded for ${rows.length === 1 ? 'it' : 'them'}: ${rows.map((row) => row.product).join(', ')}.`
+        : 'None. Every product has had stock recorded at some point, so nothing is showing “None yet”.',
     };
   },
 
@@ -101,10 +101,10 @@ const EXECUTORS = {
       columns: ['product', 'expectedUnits', 'days', 'dailyRate', 'confidence', 'evidence'],
       handoff: { href: '/planning', label: 'Open Planning and forecasts' },
       answer: !rows.length
-        ? 'There are no active products to forecast yet.'
+        ? 'There are no active products to forecast yet. Add products and record some sales first.'
         : !measurable.length
-          ? `StockChief checked ${rows.length} product${rows.length === 1 ? '' : 's'}, but none has enough recorded demand history for a sales-rate forecast. Known customer commitments are shown instead.`
-          : `StockChief can estimate demand for ${measurable.length} product${measurable.length === 1 ? '' : 's'} over the next ${horizonDays} days. ${measurable[0].product} is highest at about ${measurable[0].expectedUnits} units, with ${measurable[0].confidence} confidence.`,
+          ? `None of your ${rows.length} product${rows.length === 1 ? '' : 's'} has sold often enough yet for StockChief to predict demand. What customers have already ordered is listed instead — that part is certain.`
+          : `Over the next ${horizonDays} days StockChief expects the most demand for ${measurable[0].product}: about ${measurable[0].expectedUnits} units (${measurable[0].confidence} confidence). It can predict ${measurable.length} of your ${rows.length} product${rows.length === 1 ? '' : 's'}; the rest have not sold enough yet to say.`,
     };
   },
   /**
@@ -176,9 +176,8 @@ const EXECUTORS = {
       columns: ['product', 'variants', 'onHand', 'onTheWay'],
       handoff: { href: '/inventory/table', label: 'Open inventory' },
       answer: rows.length
-        ? `${rows.length} product${rows.length === 1 ? ' is' : 's are'} out of stock across all locations: ${rows.map((row) => row.product).join(', ')}. `
-          + `The active catalogue holds ${held.units} units across ${held.products} products in total.`
-        : `No previously stocked product is out of stock across all locations. The active catalogue holds ${held.units} units across ${held.products} products. Products marked “None yet” are counted separately because they have never had stock recorded.`,
+        ? `${rows.length} product${rows.length === 1 ? ' is' : 's are'} completely out of stock: ${rows.map((row) => `${row.product} (${row.onTheWay})`).join(', ')}. Everything else adds up to ${held.units} units across ${held.products} products.`
+        : `Nothing is at zero. You hold ${held.units} units across ${held.products} products. (Products that have never had stock recorded are not counted here — ask “which products show None yet” for those.)`,
     };
   },
   /** What am I likely to run out of? */
@@ -265,7 +264,7 @@ const EXECUTORS = {
       answer: rows.length
         ? `${rows.length} line${rows.length === 1 ? '' : 's'} need ordering. ${result.recommendations[0].explanation}`
         : blocked.length
-          ? `${blocked.length} line${blocked.length === 1 ? '' : 's'} need ordering, but no supplier is linked yet. ${blocked[0].headline}.`
+          ? `${blocked.length} product${blocked.length === 1 ? ' needs' : 's need'} ordering, but StockChief does not know who to buy ${blocked.length === 1 ? 'it' : 'them'} from yet. ${blocked[0].headline}. Link a supplier and it will write the order for you to check.`
           : 'Nothing needs ordering right now. Every product StockChief has enough sales history for is covered, either by what is on the shelf or by an order already on its way.',
     };
   },
@@ -310,11 +309,8 @@ const EXECUTORS = {
       rows,
       columns: ['product', 'currentTarget', 'suggestedTarget', 'why'],
       answer: rows.length
-        ? `Yes — ${rows.length} stock target${rows.length === 1 ? ' is' : 's are'} higher than the `
-          + 'current pace of sales needs. Lowering them leaves every reorder point where it is, so the '
-          + `protection against running out does not change. ${review.headline}`
-        : 'StockChief cannot find stock it could release without lowering the protection against running '
-          + `out. ${review.headline}`,
+        ? `Yes. ${rows.length} product${rows.length === 1 ? ' is' : 's are'} being kept higher than sales justify. Lowering ${rows.length === 1 ? 'that target' : 'those targets'} frees cash without touching any reorder point, so you are no more likely to run out. ${review.headline}`
+        : `No. Every stock target is already as low as it can go without raising the risk of running out. ${review.headline}`,
     };
   },
 
@@ -341,8 +337,7 @@ const EXECUTORS = {
       columns: ['supplier', 'deliveredOrders', 'onTime', 'averageDays', 'allArrived'],
       answer: rated.length
         ? rated[0].summary
-        : 'No supplier has enough delivered orders on record for StockChief to say which is most reliable. '
-          + 'It will not rank them on one or two deliveries.',
+        : 'Not enough deliveries yet to say. StockChief needs a few completed orders from each supplier before it will rank them — one or two deliveries is not a pattern.',
     };
   },
 
@@ -362,9 +357,9 @@ const EXECUTORS = {
       columns: ['product', 'setting', 'current', 'suggested', 'why'],
       handoff: rows.length ? { href: '/needs-you', label: 'Open Needs you' } : null,
       answer: rows.length
-        ? `${rows.length} setting${rows.length === 1 ? '' : 's'} no longer match what StockChief measures. `
+        ? `${rows.length} reorder setting${rows.length === 1 ? ' is' : 's are'} out of date compared with how those products actually sell and how long suppliers take. `
           + result.policyChanges[0].why
-        : 'Your reorder settings still match the demand and delivery times StockChief measures.',
+        : 'Your reorder settings still fit how your products sell and how long your suppliers take. Nothing to change.',
     };
   },
 
@@ -374,7 +369,7 @@ const EXECUTORS = {
     const sku = plan && plan.entityQuery ? findSku(db, workspaceId, plan.entityQuery) : null;
     if (!sku) {
       return { rows: [], columns: [],
-        answer: 'StockChief needs to know which product you mean before it can explain its demand.' };
+        answer: 'Which product? Name it and StockChief will explain what it expects to sell and why.' };
     }
     const view = planning().forSku(db, workspaceId, sku.id, {});
     if (!view) return { rows: [], columns: [], answer: 'That product could not be read.' };
@@ -411,7 +406,7 @@ const EXECUTORS = {
       columns: ['product', 'units', 'from', 'to', 'because'],
       answer: rows.length
         ? filtered[0].why
-        : 'StockChief cannot see a location that is short of stock another location can spare.',
+        : 'No move is worth making right now. No location is short of something another location has spare.',
     };
   },
 };
