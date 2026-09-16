@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const express = require('express');
 const config = require('../../config');
 const attention = require('../../attention/attention-engine');
@@ -307,12 +308,56 @@ function askExamples(db, workspaceId) {
   return examples;
 }
 
+/*
+ * The conversation, as the person remembers it.
+ *
+ * Ask used to show one question and one answer, with the question before it
+ * folded away under a "Previous question" line and everything earlier gone.
+ * A person who has asked three things wants to see the three things and what
+ * came back, so each turn is kept here — the question, the sentence
+ * StockChief said, how many records it read and where it pointed — for this
+ * workspace, twelve turns deep. It is a record of what was said, not a cache:
+ * an old turn is never re-read and never re-run.
+ */
+const TRANSCRIPT_TURNS = 12;
+function transcriptFor(req) {
+  const state = req.session.askTranscript;
+  return state && state.workspaceId === req.ctx.workspaceId ? state : { workspaceId: req.ctx.workspaceId, turns: [] };
+}
+function rememberTurn(req, token, question, result, error) {
+  const state = transcriptFor(req);
+  if (state.turns.some((turn) => turn.token === token)) return;
+  const last = state.turns[state.turns.length - 1];
+  // A refresh of /ask?q=… arrives without a token; the same question straight
+  // after itself is the same turn, not a new one.
+  if (!req.query.turn && last && last.question === question) return;
+  const said = error ? error : (result.spoken && !result.progressiveDisclosure ? result.spoken : result.answer);
+  state.turns = [...state.turns.slice(-(TRANSCRIPT_TURNS - 1)), {
+    token, at: Date.now(), question, said: String(said || ''),
+    error: !!error,
+    rowCount: result ? result.rowCount || 0 : 0,
+    handoff: result && result.handoff ? { href: result.handoff.href, label: result.handoff.label } : null,
+    needsClarification: !!(result && result.needsClarification),
+    isAction: !!(result && result.isAction),
+  }];
+  req.session.askTranscript = state;
+}
+
+router.post('/ask/new', asyncRoute(async (req, res) => {
+  delete req.session.askTranscript;
+  delete req.session.askConversation;
+  delete req.session.askTurns;
+  delete req.session.pendingAskResult;
+  res.redirect(303, '/ask');
+}));
+
 router.get(
   '/ask',
   asyncRoute(async (req, res) => {
     const question = trimOrNull(req.query.q);
     let result = null;
     let error = null;
+    const currentToken = trimOrNull(req.query.turn) || crypto.randomUUID();
     const submittedTurn = (req.session.askTurns || []).find(turn => turn.token === req.query.turn
       && turn.workspaceId === req.ctx.workspaceId && turn.question === question);
     const conversation = req.query.followup === '1' && submittedTurn
@@ -353,8 +398,13 @@ router.get(
           return res.redirect(303, '/actions');
         }
         if (result && !result.isAction) {
+          // The earlier question is joined to this one only when the planner
+          // read this message as an answer to it. A pending clarification used
+          // to swallow whatever came next — "Draft an email…" typed after
+          // "which product did you mean?" became one sentence about prices.
+          const continues = conversation?.clarification && result.semanticPlan?.continuesPrevious === true;
           req.session.askConversation = {workspaceId:req.ctx.workspaceId,
-            question: conversation?.clarification ? `${conversation.question}\nFollow-up answer: ${question}` : question,
+            question: continues ? `${conversation.question}\nFollow-up answer: ${question}` : question,
             semanticPlan:result.semanticPlan || null,
             clarification:result.needsClarification ? result.answer : null};
         }
@@ -362,7 +412,9 @@ router.get(
         if (err.status && err.status < 500) error = err.message;
         else throw err;
       }
+      if (result || error) rememberTurn(req, currentToken, question, result, error);
     }
+    const transcript = transcriptFor(req).turns;
 
     /*
      * The rules already said, beside the box they were said into. A standing
@@ -390,6 +442,8 @@ router.get(
       result,
       error,
       conversation,
+      transcript,
+      currentToken,
       aiConfigured: config.ai.configured,
       // Written with this inventory's own product and place where there is one.
       // "How many navy oxfords do we have?" in a business that sells t-shirts

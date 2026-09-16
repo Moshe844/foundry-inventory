@@ -421,7 +421,15 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       return res.redirect(303, `/ask?q=${encodeURIComponent(message)}&followup=1&turn=${token}`);
     }
     chatAction = true;
-    if (previous?.clarification) message=`${previous.question}\nFollow-up answer: ${message}`;
+    /*
+     * A pending clarification joins this message only when the planner read
+     * it as the answer. Before, any message typed after "which product did
+     * you mean?" was glued to that question, so "Draft an email to Acme"
+     * became a selling-price change. A message that starts something new
+     * closes the old question instead.
+     */
+    if (previous?.clarification && result.semanticPlan?.continuesPrevious === true) message=`${previous.question}\nFollow-up answer: ${message}`;
+    else delete req.session.askConversation;
   }
   const tabular = attached && /\.(csv|tsv|xlsx|xls|txt)$/i.test(attached.filename || '');
   const operationalDocument = attached && /\.(pdf|docx|xlsx|xls|csv|tsv|txt)$/i.test(attached.filename || '');
@@ -830,7 +838,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       return res.redirect(303, '/actions');
     }
     if (specific.kind === 'unsupported' && specific.message && (specific.purchaseSpecific || namesAProduct)) {
-      req.session.pendingActionQuestion = { unsupported: specific.message, instruction: message };
+      req.session.pendingActionQuestion = { unsupported: specific.message, where: specific.where || null, instruction: message };
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
       return res.redirect(303, '/actions');
     }
@@ -943,6 +951,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       req.session.pendingActionQuestion = {
         unsupported: result.message || result.unsupported,
         blocked: result.blocked || null,
+        where: result.where || null,
         instruction: message,
       };
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null,

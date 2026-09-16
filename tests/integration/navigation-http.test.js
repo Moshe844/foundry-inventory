@@ -38,7 +38,7 @@ test('the line is one address, and the box it promises is on it', async () => {
   const line = (await agent.get('/ask')).text;
   assert.match(line, /<textarea[^>]*id="ask-question"/, 'and the box is actually there');
   assert.match(line, /action="\/foundry\/tell"/, 'posting to the router that reads a sentence');
-  assert.match(line, /class="rm-line rm-chat"/, 'the line is rendered as a conversation');
+  assert.match(line, /class="rm-chat"/, 'the line is rendered as a conversation');
   assert.match(line, /class="rm-chat__intro"/, 'the conversation has a deliberate chat header');
 
   const guide = (await agent.get('/guide')).text;

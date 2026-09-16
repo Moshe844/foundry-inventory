@@ -42,15 +42,29 @@
 .rm-composer__pending { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; }
 @keyframes rm-in { from { opacity: .45; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 
-/* Ask StockChief is a conversation, not a collection of raw form blocks. */
+/* Ask StockChief is a conversation, not a collection of raw form blocks.
+   It is not a card either: the frame that .rm-line drew around the whole
+   exchange clipped the composer's shadow and made three bubbles read as one
+   form. The turns sit on the page, each its own object. */
 .rm-chat {
-  width: min(100%, 1040px);
-  max-width: 1040px;
+  width: min(100%, 960px);
+  max-width: 960px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
+.rm-chat__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+  margin-bottom: 2px;
+}
+.rm-chat__bar .rm-stamp { margin: 0; }
+.rm-chat__new { margin: 0; }
+.rm-chat__new .rm-btn { min-height: 32px; padding: 5px 12px; border-radius: var(--pill); font-size: 12.5px; }
 .rm-chat__intro {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
@@ -79,30 +93,94 @@
 .rm-chat__intro .rm-stamp { margin: 1px 0 5px; color: var(--brand-2); }
 .rm-chat__intro .rm-verdict { margin: 0; font-size: clamp(25px, 3vw, 34px); line-height: 1.15; }
 .rm-chat__intro .rm-prose { max-width: 68ch; margin: 8px 0 0; font-size: 14px; line-height: 1.55; }
+/* A turn is as wide as what it says. The person's bubble used to be a fixed
+   three-quarters of the page whatever it held, so "hi" was a 700px blue bar. */
 .rm-chat > .rm-turn {
-  width: min(86%, 820px);
+  width: auto;
+  max-width: min(88%, 840px);
   margin: 0;
   padding: 0;
   border: 0;
+  animation: rm-in var(--dur-2, .18s) var(--ease, ease-out);
 }
-.rm-chat > .rm-turn--you { width: min(74%, 720px); align-self: flex-end; }
+.rm-chat > .rm-turn--you {
+  scroll-margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  align-self: flex-end;
+  max-width: min(74%, 680px);
+}
 .rm-chat > .rm-turn--you .rm-turn__who { justify-content: flex-end; padding-right: 4px; }
 .rm-chat > .rm-turn--you .rm-turn__said {
-  padding: 12px 16px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 11px 16px;
   border-radius: 18px 18px 5px 18px;
   color: #fff;
   background: linear-gradient(145deg, var(--brand), var(--brand-3));
   box-shadow: 0 8px 22px -16px rgba(72, 50, 190, .8);
+  overflow-wrap: anywhere;
 }
-.rm-chat > .rm-turn--foundry { align-self: flex-start; }
+.rm-chat > .rm-turn--you details.rm-turn__said > summary { cursor: pointer; list-style: none; }
+.rm-chat > .rm-turn--you details.rm-turn__said > summary::-webkit-details-marker { display: none; }
+.rm-chat > .rm-turn--you details.rm-turn__said > summary::after { content: ' Show all'; opacity: .8; font-size: 12.5px; }
+.rm-chat > .rm-turn--you details[open].rm-turn__said > summary::after { content: ' Show less'; }
+.rm-chat > .rm-turn--foundry { align-self: flex-start; min-width: min(100%, 420px); }
 .rm-chat > .rm-turn--foundry .rm-turn__who { padding-left: 4px; color: var(--brand-2); }
+/* StockChief mid-thought (inserted by the script while the answer is computed). */
 .rm-chat > .rm-turn--foundry > .rm-turn__said {
-  padding: 16px 18px;
+  padding: 14px 18px;
   border: 1px solid var(--line);
   border-radius: 18px 18px 18px 5px;
   background: var(--surface);
   box-shadow: var(--sh-1);
-  font-size: 16px;
+  font-size: 15.5px;
+}
+/* The answer is one object: the sentence, then the records and the reading
+   folded beneath it inside the same frame, not three boxes of three widths. */
+.rm-said {
+  border: 1px solid var(--line);
+  border-radius: 18px 18px 18px 5px;
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+  overflow: hidden;
+}
+.rm-said__text {
+  margin: 0;
+  padding: 15px 18px;
+  font-size: 15.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.rm-turn--past .rm-said__text { font-size: 14.5px; padding: 12px 16px; }
+details.rm-said__text > summary { cursor: pointer; list-style: none; }
+details.rm-said__text > summary::-webkit-details-marker { display: none; }
+details.rm-said__text > summary::after { content: ' Show all'; color: var(--brand-2); font-size: 12.5px; font-weight: 650; }
+details[open].rm-said__text > summary::after { content: ' Show less'; }
+.rm-said--problem { border-color: var(--flag-line, var(--line)); background: var(--flag-wash, var(--surface)); }
+.rm-said__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0 18px 12px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.rm-turn--past .rm-said__meta { padding: 0 16px 11px; }
+.rm-said__meta a { color: var(--brand-2); font-weight: 650; }
+.rm-said > .rm-chat-actions { margin: -4px 0 0; padding: 0 18px 14px; }
+.rm-said > .rm-suggest { margin: 0; padding: 0 18px 14px; }
+.rm-said > .rm-rule { margin: 0 18px 16px; }
+.rm-said > .rm-chat-evidence,
+.rm-said > .rm-chat-reading {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--line-2);
+  border-radius: 0;
+  box-shadow: none;
 }
 .rm-chat > .rm-composer {
   position: sticky;
@@ -213,37 +291,32 @@
 .rm-chat-evidence__row:nth-child(odd) { border-right: 1px solid var(--line-2); }
 .rm-chat-evidence__row span { overflow: hidden; color: var(--ink); font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .rm-chat-evidence__row small { color: var(--muted); font-size: 12px; line-height: 1.4; }
-.rm-chat .rm-chat-reading {
-  display: block;
-  width: fit-content;
-  margin-top: 10px;
-  padding-top: 0;
-  border: 0;
-  overflow: visible;
-}
-.rm-chat .rm-chat-reading::before,
-.rm-chat .rm-chat-reading::after { display: none; }
+.rm-chat .rm-chat-reading { display: block; background: var(--surface); }
 .rm-chat .rm-chat-reading > summary::marker { content: ''; }
+.rm-chat .rm-chat-reading > summary::-webkit-details-marker { display: none; }
 .rm-chat .rm-chat-reading > summary {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 9px;
-  border-radius: var(--pill);
+  min-height: 40px;
+  padding: 9px 14px;
+  list-style: none;
+  cursor: pointer;
   color: var(--muted);
-  background: transparent;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
 }
+.rm-chat .rm-chat-reading > summary::before { content: '›'; display: inline-block; transition: transform .15s; font-size: 15px; line-height: 1; }
+.rm-chat .rm-chat-reading[open] > summary::before { transform: rotate(90deg); }
 .rm-chat .rm-chat-reading > summary:hover { color: var(--brand-2); background: var(--brand-wash); }
-.rm-chat .rm-chat-reading .rm-working__body {
-  width: min(78vw, 720px);
-  margin-top: 6px;
-  padding: 12px 14px;
-  border: 1px solid var(--line-2);
-  border-radius: 12px;
-  background: var(--surface-2);
+.rm-chat .rm-chat-reading__body {
+  padding: 2px 16px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
 }
+.rm-chat .rm-chat-reading__body p { margin: 0; }
+.rm-chat .rm-chat-reading__record { margin: 0 0 8px !important; color: var(--ink-2); font-size: 14px; }
 .rm-chat-thinking {
   display: inline-flex;
   align-items: center;
@@ -258,8 +331,9 @@
 @media (max-width: 680px) {
   .rm-chat__intro { grid-template-columns: 36px minmax(0, 1fr); padding: 18px; border-radius: 18px; }
   .rm-chat__mark { width: 36px; height: 36px; border-radius: 11px; }
-  .rm-chat > .rm-turn { width: 94%; }
-  .rm-chat > .rm-turn--you { width: 90%; }
+  .rm-chat > .rm-turn { max-width: 96%; }
+  .rm-chat > .rm-turn--you { max-width: 90%; }
+  .rm-chat > .rm-turn--foundry { min-width: 0; }
   .rm-chat > .rm-composer { grid-template-columns: 1fr; border-radius: 18px; }
   .rm-chat > .rm-composer .rm-composer__foot { justify-content: space-between; padding: 0 4px 2px; }
   .rm-chat > .rm-composer .rm-composer__foot .right { margin-left: auto; }

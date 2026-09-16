@@ -1659,8 +1659,26 @@
     if (window.ResizeObserver) new ResizeObserver(apply).observe(rail);
   }
 
+  /*
+   * A conversation opens at its latest turn.
+   *
+   * The page arrives at the top, which after a few questions is the first
+   * thing that was said, not the answer that just came back. The person's
+   * newest question is scrolled to the top of the window so the answer sits
+   * under it and the box to reply is beneath both.
+   */
+  function initAskScroll() {
+    const chat = document.querySelector('.rm-chat');
+    if (!chat || !chat.querySelector('.rm-turn--past')) return;
+    const current = chat.querySelector('.rm-turn--you:not(.rm-turn--past)') || chat.querySelector('.rm-composer');
+    if (!current) return;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    current.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     initRailHeight();
+    initAskScroll();
     initNavigationLanding();
     initSearch();
     initModals();

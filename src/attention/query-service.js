@@ -183,6 +183,19 @@ function resolveSkus(db, workspaceId, query, limit) {
     return db.prepare(`${SKU_SELECT} ORDER BY i.name, s.position LIMIT ?`).all(workspaceId, limit);
   }
 
+  // The name as typed, first. "Copper Elbow 1/2 in." is the full name of one
+  // product and also two words of another's, and matching word by word put
+  // both in the answer and asked which was meant. A query that is exactly a
+  // product's name, a SKU code or a base code is that product, full stop.
+  const typed = String(query).trim().replace(/[.\s]+$/, '');
+  if (typed) {
+    const exact = db
+      .prepare(`${SKU_SELECT} AND (i.name = ? COLLATE NOCASE OR s.code = ? COLLATE NOCASE OR i.base_code = ? COLLATE NOCASE
+                 OR TRIM(i.name, '. ') = ? COLLATE NOCASE) ORDER BY i.name, s.position LIMIT ?`)
+      .all(workspaceId, typed, typed, typed, typed, limit);
+    if (exact.length) return exact;
+  }
+
   const terms = searchTerms(query);
   if (terms.length) {
     const clauses = terms.map(() => MATCHES_TERM).join(' AND ');
@@ -1746,7 +1759,7 @@ const EXECUTORS = {
     const ids = skus.map((s) => s.id);
     const placeholders = ids.map(() => '?').join(',');
 
-    const rows = db
+    const everywhere = db
       .prepare(
         `SELECT l.name AS location, i.name AS name, s.variant_label, b.on_hand AS onHand
            FROM balances b
@@ -1759,10 +1772,24 @@ const EXECUTORS = {
       .all(workspaceId, ...ids, MAX_ROWS)
       .map((r) => ({ location: r.location, label: label(r), onHand: r.onHand }));
 
-    const answer = rows.length
-      ? `${rows.map((r) => `${r.location}: ${r.onHand}`).join('; ')}.`
+    // A named place is the question. "How many at Main Warehouse?" was
+    // answered with every location's figure, the one asked for somewhere in
+    // the list; the place asked about is the answer, and the rest is context.
+    const place = resolveLocation(db, workspaceId, plan.locationQuery);
+    if (place) {
+      const here = everywhere.filter((r) => r.location === place.name);
+      const elsewhere = everywhere.filter((r) => r.location !== place.name);
+      const total = here.reduce((n, r) => n + r.onHand, 0);
+      const answer = here.length
+        ? `${place.name}: ${total} on hand${elsewhere.length ? ` (elsewhere: ${elsewhere.map((r) => `${r.location} ${r.onHand}`).join(', ')})` : ''}.`
+        : `None at ${place.name}.${elsewhere.length ? ` There ${elsewhere.length === 1 ? 'is' : 'are'} ${elsewhere.map((r) => `${r.onHand} at ${r.location}`).join(', ')}.` : ' There is none on hand anywhere.'}`;
+      return { rows: here, answer, columns: ['location', 'label', 'onHand'] };
+    }
+
+    const answer = everywhere.length
+      ? `${everywhere.map((r) => `${r.location}: ${r.onHand}`).join('; ')}.`
       : 'There is none on hand at any location.';
-    return { rows, answer, columns: ['location', 'label', 'onHand'] };
+    return { rows: everywhere, answer, columns: ['location', 'label', 'onHand'] };
   },
 
   movement_history(db, workspaceId, plan) {

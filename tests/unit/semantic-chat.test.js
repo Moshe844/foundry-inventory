@@ -44,14 +44,14 @@ test('arbitrary supplied fields are discovered and missing is distinct from an i
  assert.equal(missing.rows[0].value,2);
  const sum=records.execute(db,w.workspaceId,query({dataset:'variants',filters:[],aggregate:'sum',measure:'attribute:Thermal coefficient'}));
  assert.equal(sum.rows[0].value,42);
- assert.throws(()=>records.execute(db,w.workspaceId,query({filters:[{field:'imagined_field',operator:'eq',value:'x'}]})),/verified safely/);
+ assert.throws(()=>records.execute(db,w.workspaceId,query({filters:[{field:'imagined_field',operator:'eq',value:'x'}]})),/verified safely|records do not have one/);
 });
 test('tenant scoping, parameterized values and invalid field/operator rejection',()=>{
  const {db,w}=setup();const other=seedWorkspace(db,{email:'other-chat@example.com'});
  makeQuantityItem(db,other.ctx,{name:'Private Product',baseCode:'P'});
  assert.equal(records.execute(db,w.workspaceId,query()).rows[0].value,3);
  assert.equal(records.execute(db,w.workspaceId,query({filters:[{field:'product',operator:'contains',value:"' OR 1=1 --"}]})).rows[0].value,0);
- for(const f of [{field:'on_hand; DROP TABLE items',operator:'eq',value:1},{field:'product',operator:'sql',value:'x'}])assert.throws(()=>records.execute(db,w.workspaceId,query({filters:[f]})),/verified safely/);
+ for(const f of [{field:'on_hand; DROP TABLE items',operator:'eq',value:1},{field:'product',operator:'sql',value:'x'}])assert.throws(()=>records.execute(db,w.workspaceId,query({filters:[f]})),/verified safely|records do not have one/);
  assert.equal(db.prepare('SELECT count(*) n FROM items').get().n,4);
 });
 test('production ask uses one semantic interpretation for novel wording and keeps every subquestion',async()=>{

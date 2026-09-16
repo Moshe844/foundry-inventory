@@ -387,6 +387,29 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   // own object with its own approval. It leaves this pipeline here rather than
   // being forced into an action proposal that would mean something else.
   const purchase = usable.find((line) => line.actionType === 'purchase');
+  /*
+   * One product per spoken order, and said so.
+   *
+   * The purchase builder writes an order for one line. "12 Copper Elbow and
+   * 6 Trail Ration Pack from Acme" used to come back as a purchase order for
+   * the copper elbows alone, drafted and ready to approve, with nothing to
+   * say the second product had been dropped. A sentence naming several
+   * products, or mixing an order with stock movements, is refused whole and
+   * pointed at the order form that takes every line.
+   */
+  if (purchase && usable.length > 1) {
+    const named = usable.map((line) => [line.quantity > 0 ? line.quantity : '', line.item, line.variant].filter(Boolean).join(' ')).filter(Boolean);
+    const purchases = usable.filter((line) => line.actionType === 'purchase');
+    const supplierHint = purchase.supplier ? ` from ${purchase.supplier}` : '';
+    return {
+      kind: 'unsupported',
+      purchaseSpecific: true,
+      message: purchases.length === usable.length
+        ? `That order names ${purchases.length} products (${named.join('; ')})${supplierHint}. From a sentence StockChief writes an order for one product at a time, so it prepared nothing rather than order only the first. Order them one per message, or write the whole order on the purchase order form.`
+        : `That mixes a purchase with other changes (${named.join('; ')}). StockChief prepares one kind of change at a time, so it prepared nothing rather than do part of it. Send the order on its own, then the rest.`,
+      where: { label: 'Write the purchase order', href: '/purchasing/orders/new' },
+    };
+  }
   if (purchase) {
     const purchaseSpecific = Boolean(
       String(purchase.item || purchase.variant || purchase.supplier || '').trim()

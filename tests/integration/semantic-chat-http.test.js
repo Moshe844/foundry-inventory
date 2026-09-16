@@ -19,7 +19,7 @@ test('Ask composer continues a clarification with workspace-scoped context and n
  const before=db.prepare('SELECT COUNT(*) n FROM movements').get().n;
  const posted=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(first.text),queryConversation:'1',message:'Products.'});
  assert.equal(posted.status,303);assert.equal(calls,2,'one semantic interpretation at submission; no operational classifier');
- const result=await agent.get(posted.headers.location);assert.equal(result.status,200);assert.match(plain(result.text),/1 products match your question/);assert.match(result.text,/<details class="rm-disclose"><summary>Previous question/);
+ const result=await agent.get(posted.headers.location);assert.equal(result.status,200);assert.match(plain(result.text),/1 products match your question/);assert.match(plain(result.text),/You How many entries\? StockChief Do you mean products or individual SKUs\? You Products\./,'the earlier turn stays on the page as it was said');
   assert.equal(calls,2);assert.equal(db.prepare('SELECT COUNT(*) n FROM movements').get().n,before);
  const refreshed=await agent.get(posted.headers.location);assert.equal(refreshed.status,200);
  assert.equal(calls,3,'refresh uses the same prior question, not its own answer');
@@ -28,7 +28,7 @@ test('multi-part evidence renders separately and a semantic action offers the re
  let next=read();next.parts.push({...next.parts[0],question:'And quantities?',recordQuery:{...next.parts[0].recordQuery,aggregate:'sum',measure:'on_hand'}});
  const {app,w}=setup({complete:async()=>({data:next})});const agent=request.agent(app);await signIn(agent,w.account.email,w.account.password);
  const page=await agent.get('/ask').query({q:'How many products and how many units?'});
- assert.equal(page.status,200);assert.match(plain(page.text),/Records for: How many catalogue products/);assert.match(plain(page.text),/Records for: And quantities/);
+ assert.equal(page.status,200);assert.match(plain(page.text),/How many catalogue products\? 1 match/);assert.match(plain(page.text),/And quantities\? 1 match/);
  next={decision:'action',interpretation:'Prepare a supplier email',clarification:'This needs a reviewed supplier communication.',parts:[]};
  const action=await agent.get('/ask').query({q:'Send an order to a supplier'});assert.equal(action.status,200);
  assert.match(action.text,/action="\/foundry\/tell"/);assert.match(plain(action.text),/Nothing has changed/);
