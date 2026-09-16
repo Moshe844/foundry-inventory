@@ -5,6 +5,13 @@
     <h1><%= plan.sourceName %></h1>
     <div class="page-sub"><%= summary %></div>
   </div>
+  <% if (!report) { %>
+    <div class="page-actions">
+      <span class="import-steps" aria-label="Where you are">
+        <span class="is-done">1 Read</span><span class="<%= plan.approvalStatus === 'APPROVED' ? 'is-done' : 'is-now' %>">2 Check</span><span class="<%= plan.approvalStatus === 'APPROVED' ? 'is-now' : '' %>">3 Import</span>
+      </span>
+    </div>
+  <% } %>
 </div>
 
 <% if (scopeWarning && scopeWarning.needsConfirmation && !plan.scopeConfirmedAt) { %>
@@ -223,7 +230,7 @@
   <div class="card section">
     <%# Once the import has run these are notes about what it did — "read as
         Warehouse" is not something StockChief could not do. %>
-    <div class="card-head"><h2><%= report ? 'What StockChief had to interpret' : 'What StockChief could not do' %></h2></div>
+    <div class="card-head"><h2><%= report ? 'What StockChief had to interpret' : 'What StockChief noticed' %></h2><span class="spacer"></span><% if (!report) { %><span class="hint">Rows marked “Check” still import; only “Invalid” rows are left out.</span><% } %></div>
     <div class="card-body">
       <ul class="plain-list">
         <% problems.forEach(function (problem) { %>
@@ -247,7 +254,7 @@
       <% ['VALID', 'NEEDS_REVIEW', 'INVALID', 'IMPORTED', 'FAILED'].forEach(function (status) { %>
         <% if (counts[status]) { %>
           <a class="btn btn--sm <%= filter === status ? 'btn--primary' : '' %>" href="/imports/<%= plan.id %>?rows=<%= status %>">
-            <%= helpers.columnLabel(status.toLowerCase().replace('_', ' ')) %> <%= counts[status] %>
+            <%= status === 'NEEDS_REVIEW' ? 'Check' : helpers.columnLabel(status.toLowerCase().replace('_', ' ')) %> <%= counts[status] %>
           </a>
         <% } %>
       <% }) %>
@@ -275,8 +282,8 @@
               <td class="muted"><%= row.parsed.locationName || row.parsed.locationText || '—' %></td>
             <% } %>
             <td>
-              <span class="badge badge--<%= row.status === 'IMPORTED' ? 'ok' : row.status === 'INVALID' || row.status === 'FAILED' ? 'danger' : 'muted' %>">
-                <%= helpers.columnLabel(row.status.toLowerCase().replace('_', ' ')) %>
+              <span class="badge badge--<%= row.status === 'IMPORTED' ? 'ok' : row.status === 'INVALID' || row.status === 'FAILED' ? 'danger' : row.status === 'NEEDS_REVIEW' ? 'warn' : 'muted' %>">
+                <%= row.status === 'NEEDS_REVIEW' ? 'Check' : helpers.columnLabel(row.status.toLowerCase().replace('_', ' ')) %>
               </span>
               <% (row.problems || []).forEach(function (problem) { %>
                 <div class="muted"><%= problem.message %></div>

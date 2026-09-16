@@ -23,12 +23,12 @@
   var serialDecision = report.serialIdentityGap && report.serialIdentityGap.products.length
     ? report.serialIdentityGap : null;
   var title = pkg.status === 'CUTOVER_ACTIVE' ? 'This inventory is live and verified.'
-    : pkg.status === 'APPLYING' ? 'StockChief is switching this inventory.'
+    : pkg.status === 'APPLYING' ? 'StockChief is making these records live.'
     : pkg.status === 'VERIFIED' ? 'Every material check matches.'
     : remaining.length ? (remaining.length === 1 ? 'One source issue remains.' : remaining.length + ' source issues remain.')
     : pkg.status === 'STAGING' ? 'Everything is prepared. Run the final checks.'
-    : pkg.status === 'READY' ? 'The source totals match. Approve the switch.'
-    : pkg.status === 'FAILED' ? 'The switch stopped safely.'
+    : pkg.status === 'READY' ? 'Everything checks out. Make it live.'
+    : pkg.status === 'FAILED' ? 'Going live stopped safely.'
     : serialDecision ? 'One decision is needed before StockChief can continue.'
     : 'StockChief is verifying this migration.';
 %>
@@ -78,7 +78,7 @@
   <% } else if (pkg.appliedCount) { %>
     <span><strong>Your source and completed batches are saved.</strong> <%= pkg.appliedCount.toLocaleString() %> verified records are now in this separate inventory. The switch is not complete until the stopped record is resolved and final reconciliation passes. Your other inventories remain untouched.</span>
   <% } else { %>
-    <span><strong>Your source is saved.</strong> Prepared records remain separate until verification passes and you approve the switch.</span>
+    <span><strong>Your source is saved.</strong> Prepared records remain separate until verification passes and you approve going live.</span>
   <% } %>
   <a href="<%= pkg.status === 'CUTOVER_ACTIVE' ? '/' : '/inventories' %>"><%= pkg.status === 'CUTOVER_ACTIVE' ? 'Open this inventory →' : 'See my inventories' %></a>
 </div>
@@ -110,14 +110,14 @@
 </section>
 <% } else if (pkg.status === 'READY') { %>
 <section class="rm-next-card rm-next-card--ready">
-  <div><span class="rm-stamp">Verification passed</span><h2>Approve the switch to StockChief.</h2>
+  <div><span class="rm-stamp">Verification passed</span><h2>Make these records live in StockChief.</h2>
     <p>StockChief will apply the prepared records through the normal inventory, purchasing and accounting services, then reread and reconcile the result.</p></div>
-  <form method="post" action="/onboarding/migrations/<%= pkg.id %>/approve-and-activate" data-long-action><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" data-busy-label="Starting the verified switch…">Approve and switch</button></form>
+  <form method="post" action="/onboarding/migrations/<%= pkg.id %>/approve-and-activate" data-long-action><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" data-busy-label="Making it live…">Approve and go live</button></form>
 </section>
 <% } else if (pkg.status === 'NEEDS_ATTENTION' && !serialDecision) { %>
 <section class="rm-next-card">
   <div><span class="rm-stamp">Stopped safely</span><h2>Check the corrected source links again.</h2>
-    <p>Nothing was applied. StockChief will rerun every identity and quantity check before a switch can be offered.</p></div>
+    <p>Nothing was applied. StockChief will rerun every identity and quantity check before it can be made live.</p></div>
   <form method="post" action="/onboarding/migrations/<%= pkg.id %>/validate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn">Run verification again</button></form>
 </section>
 <% } else if (pkg.status === 'APPLYING') { %>
@@ -125,11 +125,11 @@
   <div class="rm-working-copy"><span class="rm-stamp">Switch running</span><h2>StockChief is applying the verified records.</h2><p data-migration-progress-copy><%= pkg.appliedCount.toLocaleString() %> of <%= pkg.stagedCount.toLocaleString() %> prepared records are safely applied through the inventory, purchasing and accounting engines. Nothing is called complete until the live totals reconcile.</p>
     <div class="rm-live-progress"><span data-migration-progress-phase>Applying verified records</span><span data-migration-progress-fraction><%= pkg.appliedCount.toLocaleString() %> of <%= pkg.stagedCount.toLocaleString() %></span></div>
     <progress max="<%= Math.max(1,pkg.stagedCount) %>" value="<%= pkg.appliedCount %>" data-migration-job-bar></progress>
-    <small>You can leave this page. Completed batches become visible in this separate inventory, are saved, and cannot be duplicated. The switch is not complete until final reconciliation passes.</small></div>
+    <small>You can leave this page. Completed batches become visible in this separate inventory, are saved, and cannot be duplicated. The switch is not complete until the final check passes.</small></div>
 </section>
 <% } else if (pkg.status === 'APPROVED' || (pkg.status === 'FAILED' && !hasBlockingIssues)) { %>
 <section class="rm-next-card">
-  <div><span class="rm-stamp">Stopped safely</span><h2>Resume the verified switch.</h2><p>Retries continue from saved records and do not duplicate completed effects.</p></div>
+  <div><span class="rm-stamp">Stopped safely</span><h2>Carry on making it live.</h2><p>Retries continue from saved records and do not duplicate completed effects.</p></div>
   <form method="post" action="/onboarding/migrations/<%= pkg.id %>/approve-and-activate" data-long-action><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" data-busy-label="Resuming from the saved batch…">Resume switch</button></form>
 </section>
 <% } else if (pkg.status === 'FAILED' && !report.serialIdentityGap) { %>

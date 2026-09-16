@@ -352,6 +352,9 @@ function cameFrom(req) {
 
   // The same page again: a redirect after saving. The trail still holds.
   if (`${from.pathname}${from.search}` === hereUrl) return remembered;
+  // The same page with a different filter or page number is still the same
+  // page; offering "Back to <this page>" after a chip click is not a way out.
+  if (from.pathname === here) return remembered;
 
   // The source page has already been rendered in this session, so its own
   // title is the most accurate generic label. This works for every present and

@@ -344,7 +344,7 @@ function validateRows(db, workspaceId, sheet, plan) {
         parsed: { name: cell(row, mappings.name), code: cell(row, mappings.code) },
         problems: [{
           code: PROBLEM.TRAILER,
-          message: 'Below the last product on the sheet, so Foundry read this as part of the '
+          message: 'Below the last product on the sheet, so StockChief read this as part of the '
             + 'document rather than as stock — a subtotal, a fee, a note or the invoice total. '
             + 'Nothing will be created from it.',
         }],
@@ -378,7 +378,7 @@ function validateRows(db, workspaceId, sheet, plan) {
         // Not a blocking fault: the stock is still real, it simply arrives
         // without a value, and Foundry says so rather than inventing one.
         problems.push({ code: PROBLEM.BAD_COST,
-          message: 'This row\'s unit cost is not an amount Foundry can read. The stock can still '
+          message: 'This row\'s unit cost is not an amount StockChief can read. The stock can still '
             + 'import, but it will have no value until a cost is recorded.' });
       }
     }
@@ -426,10 +426,10 @@ function validateRows(db, workspaceId, sheet, plan) {
         code: quantity.problem,
         message:
           quantity.problem === PROBLEM.BAD_QUANTITY
-            ? `“${text}” is not a number Foundry can count.`
+            ? `“${text}” is not a number StockChief can count.`
             : quantity.problem === PROBLEM.NEGATIVE_QUANTITY
               ? `Quantity is ${text}. Stock cannot start out negative.`
-              : `Quantity is ${text}. Foundry counts in whole units.`,
+              : `Quantity is ${text}. StockChief counts in whole units.`,
       });
       parsed.quantity = null;
     } else {
@@ -515,7 +515,7 @@ function validateRows(db, workspaceId, sheet, plan) {
       if (!date.ok) {
         problems.push({
           code: PROBLEM.BAD_DATE,
-          message: `Foundry could not read the date “${cell(row, mappings[field])}” — it is left blank.`,
+          message: `StockChief could not read the date “${cell(row, mappings[field])}” — it is left blank.`,
         });
       } else if (date.ambiguous) {
         problems.push({
@@ -547,7 +547,7 @@ function validateRows(db, workspaceId, sheet, plan) {
     if (exactSkus.length > 1) {
       problems.push({
         code: PROBLEM.AMBIGUOUS_EXISTING_CODE,
-        message: `Code ${code} belongs to more than one active variant. Foundry will not guess which one to update.`,
+        message: `Code ${code} belongs to more than one active variant. StockChief will not guess which one to update.`,
       });
     }
     const exactSku = exactSkus.length === 1 ? exactSkus[0] : null;
@@ -574,7 +574,7 @@ function validateRows(db, workspaceId, sheet, plan) {
       if (near) {
         problems.push({
           code: PROBLEM.POSSIBLE_DUPLICATE,
-          message: `This may be the same product as ${near.name.replace(/\.$/, '')}. Foundry creates it separately unless you say otherwise.`,
+          message: `This may be the same product as ${near.name.replace(/\.$/, '')}. StockChief creates it separately unless you say otherwise.`,
           itemId: near.id,
         });
       }

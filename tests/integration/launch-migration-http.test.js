@@ -31,9 +31,9 @@ test('the owner sees staged source truth, reconciliation and the gated cutover i
   const response = await agent.get(`/onboarding/migrations/${pkg.id}`);
   assert.equal(response.status, 200);
   const text = plain(response.text);
-  assert.match(text, /The source totals match. Approve the switch/);
+  assert.match(text, /Everything checks out. Make it live/);
   assert.match(text, /StockChief records prepared 1/);
-  assert.match(text, /Approve and switch/);
+  assert.match(text, /Approve and go live/);
   const needsYou = plain((await agent.get('/needs-you')).text);
   assert.match(needsYou,/Previous system is verified and ready to become live/);
   assert.match(needsYou,/Review and switch/);

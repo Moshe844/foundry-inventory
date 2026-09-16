@@ -3406,3 +3406,11 @@ details.bill-pay > summary.btn::before, details.bill-pay[open] > summary.btn::be
 .bill-pay[open] > summary { display: inline-flex; }
 .bill-pay__form { text-align: left; }
 .cell-sub.is-warn, .page-sub .is-warn { color: var(--flag-2); font-weight: 500; }
+
+/* Where an import is: read, check, import. Three words, the current one lit. */
+.import-steps { display: inline-flex; gap: 6px; font-size: var(--t-xs); font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted); }
+.import-steps span { padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); }
+.import-steps .is-done { color: var(--good); border-color: transparent; background: var(--good-wash, #ecfdf3); }
+.import-steps .is-now { color: var(--accent); border-color: var(--accent); }
+.status-pill.is-warn { color: var(--flag-2); border-color: var(--flag-line); background: var(--flag-wash); }
+.status-pill.is-ok { color: var(--good); background: var(--good-wash); }

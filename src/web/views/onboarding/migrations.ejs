@@ -1,32 +1,55 @@
+<%
+  /*
+   * Migrations, in the owner's words. "Cutover packages" and "stages into the
+   * same contract" are how the engine thinks about it; the person moving
+   * from a spreadsheet or another system wants to know what is uploaded,
+   * what is still being checked, and what is live.
+   */
+  var SAYS = {
+    STAGING: { text: 'Being read and checked', tone: '' },
+    NEEDS_ATTENTION: { text: 'Needs you', tone: 'is-warn' },
+    READY: { text: 'Ready for your approval', tone: 'is-warn' },
+    APPROVED: { text: 'Approved, going live', tone: '' },
+    APPLYING: { text: 'Going live', tone: '' },
+    RECONCILING: { text: 'Checking totals', tone: '' },
+    VERIFIED: { text: 'Verified', tone: 'is-ok' },
+    CUTOVER_ACTIVE: { text: 'Live', tone: 'is-ok' },
+    FAILED: { text: 'Stopped', tone: 'is-warn' },
+    CANCELLED: { text: 'Cancelled', tone: '' },
+  };
+%>
 <div class="rm-head">
-  <p class="rm-head__eyebrow">Migration control</p>
-  <h1>Move your operation without losing the truth.</h1>
-  <p>Every source stages into the same contract. StockChief checks identities, dependencies and totals before it allows cutover.</p>
+  <a class="rm-back" href="/onboarding">← Get your inventory in</a>
+  <p class="rm-head__eyebrow">Moving from another system</p>
+  <h1>Bring everything across, checked.</h1>
+  <p>Upload the exports from your old system or spreadsheets. StockChief reads them, checks that identities and totals agree, and asks you before anything goes live.</p>
 </div>
 
 <div style="display:flex;justify-content:flex-end;margin:-44px 0 18px">
-  <a class="rm-btn" href="/onboarding/migrations/new">Start a migration</a>
+  <a class="rm-btn" href="/onboarding/migrations/new"><%- helpers.icon('plus', { size: 15 }) %> Start a migration</a>
 </div>
 
 <section class="rm-panel">
   <div class="rm-panel__head">
     <%- helpers.icon('shield', { size: 15 }) %>
-    <h2>Cutover packages</h2>
+    <h2>Migrations</h2>
     <span class="right"><%= packages.length %></span>
   </div>
   <% if (!packages.length) { %>
     <div class="empty-state">
-      <h3>No staged migration yet</h3>
-      <p>Connect the source or provide its exports. StockChief will stage them here before changing live records.</p>
-      <a class="rm-btn" href="/onboarding/migrations/new">Upload your exports</a>
+      <h3>Nothing uploaded yet</h3>
+      <p>Start with the exports you already trust — products, stock, suppliers, customers, prices. Nothing changes in this inventory until you approve it.</p>
+      <a class="rm-btn" href="/onboarding/migrations/new">Start a migration</a>
+      <p class="hint" style="margin-top:10px">Just a stock spreadsheet? <a href="/imports">Bring it in as a file</a> instead — it is quicker.</p>
     </div>
   <% } else { %>
-    <div class="rm-list">
+    <div class="rm-told">
       <% packages.forEach(function (pkg) { %>
-        <a class="rm-row" href="/onboarding/migrations/<%= pkg.id %>">
-          <span><strong><%= pkg.sourceLabel %></strong><small><%= pkg.stagedCount %> staged · <%= pkg.appliedCount %> applied</small></span>
-          <span class="status-pill"><%= pkg.status.replaceAll('_', ' ').toLowerCase() %></span>
-        </a>
+        <% var say = SAYS[pkg.status] || { text: pkg.status.replaceAll('_', ' ').toLowerCase(), tone: '' }; %>
+        <div class="rm-told__row">
+          <span class="rm-told__t"><a class="rm-u" href="/onboarding/migrations/<%= pkg.id %>"><%= pkg.sourceLabel %></a><small><%= pkg.stagedCount %> record<%= pkg.stagedCount === 1 ? '' : 's' %> prepared · <%= pkg.appliedCount %> live<% if (pkg.createdAt) { %> · <%= helpers.shortDate(pkg.createdAt) %><% } %></small></span>
+          <span class="rm-told__m <%= say.tone === 'is-warn' ? 'is-paused' : say.tone %>"><%= say.text %> <a href="/onboarding/migrations/<%= pkg.id %>">Open</a></span>
+        </div>
       <% }) %>
     </div>
   <% } %>

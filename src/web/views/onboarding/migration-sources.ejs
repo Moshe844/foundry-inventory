@@ -12,7 +12,14 @@
 <% var automaticConflict = allPrepared && sourceReview && sourceReview.autoResolvable; %>
 <% var decisionPending = allPrepared && sourceReview && sourceReview.requiresDecision && !sourceReview.resolved && !automaticConflict; %>
 <% var isPreparing = pkg.preparationStatus === 'RUNNING'; %>
-<% var canAutoStart = ['IDLE','FAILED','WAITING'].includes(pkg.preparationStatus) && pkg.status === 'STAGING' && (ready.length || automaticallyUnderstood.length || (allPrepared && !decisionPending)); %>
+<%
+  /* A WAITING preparation that carries an error is a stop, not a pause: the
+     worker found a source fact it will not guess at. Auto-starting again from
+     here re-ran it in a loop and the page only ever showed "Starting…", so
+     the one thing the person had to read never appeared. */
+  var stoppedOnEvidence = pkg.preparationStatus === 'WAITING' && !!pkg.preparationError && !decisionPending;
+  var canAutoStart = !stoppedOnEvidence && ['IDLE','FAILED','WAITING'].includes(pkg.preparationStatus) && pkg.status === 'STAGING' && (ready.length || automaticallyUnderstood.length || (allPrepared && !decisionPending));
+%>
 
 <div class="rm-head rm-migration-head">
   <a class="rm-back" href="/onboarding/migrations/<%= pkg.id %>">← Migration progress</a>
@@ -59,8 +66,14 @@
 
 <% if (pkg.preparationStatus === 'WAITING' && pkg.preparationError && !decisionPending) { %>
 <section class="rm-next-card rm-next-card--attention">
-  <div><span class="rm-stamp">Source evidence needed</span><h2>StockChief stopped before guessing.</h2>
-    <p><%= pkg.preparationError %></p><small>Correct that fact in the source or review its mapping. Everything already prepared remains saved, and nothing has been switched live.</small></div>
+  <div><span class="rm-stamp">Needs you · source evidence</span><h2>StockChief stopped before guessing.</h2>
+    <p><%= pkg.preparationError %></p>
+    <small>Fix that row in the file and upload it again, or check the mapping below. Everything already prepared is kept, and nothing has gone live.</small>
+    <div class="rm-choices" style="margin-top:12px">
+      <a class="rm-btn" href="/onboarding/migrations/new">Upload a corrected file</a>
+      <form method="post" action="/onboarding/migrations/<%= pkg.id %>/prepare-known-evidence" style="margin:0"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Try again</button></form>
+    </div>
+  </div>
 </section>
 <% } %>
 
