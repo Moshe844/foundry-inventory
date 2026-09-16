@@ -161,11 +161,11 @@ function execute(db, workspaceId, plan, options={}) {
  }
  if (!['all','any'].includes(plan.filterMode)) fail();
  const predicates=plan.filters.map(f=>{
-  const expr=field(f.field);if(!OPERATORS.includes(f.operator)) fail();
+  const expr=field(f.field);if(!OPERATORS.includes(f.operator)) fail(`I tried to compare ${String(f.field).replace(/_/g,' ')} using “${String(f.operator).slice(0,30)}”, which is not a comparison I can make. I can check equals, not equal, less than, greater than, contains, missing and present. Ask again in those terms.`);
   if(f.operator==='is_missing')return `${expr} IS NULL`;
   if(f.operator==='is_present')return `${expr} IS NOT NULL`;
   if(typeof f.value!=='string'&&typeof f.value!=='number')fail();
-  if(d.number.includes(f.field)&&typeof f.value!=='number')fail();
+  if(d.number.includes(f.field)&&typeof f.value!=='number')fail(`${String(f.field).replace(/_/g,' ')} is a number, and “${String(f.value).slice(0,40)}” is not one. Give me the figure to compare against.`);
   if(f.operator==='contains'){
    if(d.number.includes(f.field))fail();return `${expr} LIKE ${bind(`%${escapeLike(f.value)}%`)} ESCAPE '\\' COLLATE NOCASE`;
   }

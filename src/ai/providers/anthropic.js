@@ -72,6 +72,30 @@ const OUTLIVABLE = new Set(['EACCES', 'EPERM', 'ECONNRESET', 'ETIMEDOUT', 'EAI_A
 // the shorter budget — so the longer one exists, but only where the cost of
 // waiting is a scheduled run finishing later rather than a person watching a
 // spinner.
+/*
+ * What a person is told when the model fails, in four sentences.
+ *
+ * "The model ran out of room before finishing its answer", "Provider request
+ * aborted" and "returned output that is not valid JSON" are all true and
+ * none says what to do. Every failure a person can see is one of four
+ * things — busy, too long, could not read, declined — and each says that
+ * nothing changed and what to do next. The technical text stays on the
+ * error as `technical`, for the log.
+ */
+const SAID = {
+  busy: 'StockChief’s reading service is busy right now. Nothing changed. Please try again in a moment.',
+  tooLong: 'StockChief took too long on that and stopped. Nothing changed. Try again, or send it in smaller pieces.',
+  couldNotRead: 'StockChief could not read that all the way through. Nothing changed. Try a shorter message, or one thing at a time.',
+  declined: 'StockChief will not act on that request. Nothing changed.',
+};
+
+function aborted(err) {
+  if (!err) return false;
+  if (err.name === 'AbortError' || err.name === 'APIUserAbortError' || err.name === 'APIConnectionTimeoutError') return true;
+  if (err.message === 'read_timeout') return true;
+  return false;
+}
+
 const BACKOFF_MS = [2000, 6000, 15000];
 const BACKOFF_UNATTENDED = [5000, 15000, 30000, 60000, 120000];
 
@@ -86,11 +110,11 @@ function outlivable(err) {
 }
 
 const pause = (ms, signal) => new Promise((resolve, reject) => {
-  if (signal && signal.aborted) return reject(signal.reason || new Error('Provider request aborted.'));
+  if (signal && signal.aborted) return reject(new ProviderError(SAID.tooLong, { code: 'ai_timeout', status: 503, retryable: true, cause: signal.reason || null }));
   const timer = setTimeout(resolve, ms);
   if (signal) signal.addEventListener('abort', () => {
     clearTimeout(timer);
-    reject(signal.reason || new Error('Provider request aborted.'));
+    reject(new ProviderError(SAID.tooLong, { code: 'ai_timeout', status: 503, retryable: true, cause: signal.reason || null }));
   }, { once: true });
 });
 
@@ -109,7 +133,7 @@ function backoffFor() {
 async function outlive(attempt, delays = backoffFor(), signal = null) {
   let last;
   for (let tries = 0; tries <= delays.length; tries += 1) {
-    if (signal && signal.aborted) throw signal.reason || new Error('Provider request aborted.');
+    if (signal && signal.aborted) throw new ProviderError(SAID.tooLong, { code: 'ai_timeout', status: 503, retryable: true, cause: signal.reason || null });
     try {
       return await attempt();
     } catch (err) {
@@ -174,13 +198,13 @@ function create(options = {}) {
       );
 
       if (response.stop_reason === 'refusal') {
-        throw new ProviderError('The model declined to answer that request.', {
+        throw new ProviderError(SAID.declined, {
           code: 'ai_refusal',
           status: 422,
         });
       }
       if (response.stop_reason === 'max_tokens') {
-        throw new ProviderOutputError('The model ran out of room before finishing its answer.');
+        throw new ProviderOutputError(SAID.couldNotRead, { technical: 'stop_reason max_tokens: the answer did not fit in ' + maxTokens + ' tokens' });
       }
 
       const text = response.content
@@ -189,14 +213,15 @@ function create(options = {}) {
         .join('');
 
       if (!text.trim()) {
-        throw new ProviderOutputError('The model returned an empty response.');
+        throw new ProviderOutputError(SAID.couldNotRead, { technical: 'empty response' });
       }
 
       let data;
       try {
         data = JSON.parse(text);
       } catch (err) {
-        throw new ProviderOutputError('The model returned output that is not valid JSON.', {
+        throw new ProviderOutputError(SAID.couldNotRead, {
+          technical: 'output is not valid JSON',
           preview: text.slice(0, 400),
         });
       }
@@ -308,6 +333,9 @@ function translateError(err) {
   // rate limit and an outage are all equally invisible to somebody reading a
   // calm sentence on a screen, and all three were.
   recordFailure(err);
+  if (aborted(err)) {
+    return new ProviderError(SAID.tooLong, { code: 'ai_timeout', status: 503, retryable: true, cause: err });
+  }
   if (status === 401 || status === 403) {
     return new ProviderError('StockChief could not authenticate with the model provider.', {
       code: 'ai_unauthorized',
@@ -316,7 +344,7 @@ function translateError(err) {
     });
   }
   if (status === 429) {
-    return new ProviderError('The model provider is rate limiting StockChief. Try again shortly.', {
+    return new ProviderError(SAID.busy, {
       code: 'ai_rate_limited',
       status: 503,
       retryable: true,
@@ -324,7 +352,7 @@ function translateError(err) {
     });
   }
   if (status && status >= 500) {
-    return new ProviderError('The model provider is unavailable right now. Try again shortly.', {
+    return new ProviderError(SAID.busy, {
       code: 'ai_unavailable',
       status: 503,
       retryable: true,
@@ -375,4 +403,4 @@ function translateError(err) {
 // outlive and translateError are exported so the reachability rules can be
 // tested without a network: which failures are worth waiting out, and what a
 // customer is told about the ones that are not.
-module.exports = { create, outlive, backoffFor, translateError };
+module.exports = { create, outlive, backoffFor, translateError, SAID };

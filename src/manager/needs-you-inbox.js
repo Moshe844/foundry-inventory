@@ -257,6 +257,43 @@ function fromTransfers(db, workspaceId) {
     }));
 }
 
+/*
+ * A change that ran, whose result did not come out as expected.
+ *
+ * The proposal says SUCCEEDED because the engine call succeeded; the re-read
+ * afterwards is what disagreed. That is a decision for the person whose
+ * stock it is — check the records, correct them or accept them — and it
+ * belongs here rather than in a success flash. Dismissing it is the
+ * ordinary Needs You dismissal; the verification row itself stays.
+ */
+function fromUnverifiedExecutions(db, workspaceId) {
+  const rows = db.prepare(`SELECT v.id, v.execution_id, v.proposal_id, v.problems, v.created_at
+      FROM action_verifications v
+      JOIN action_proposals p ON p.id = v.proposal_id AND p.workspace_id = v.workspace_id
+     WHERE v.workspace_id = ? AND v.verified = 0 AND v.created_at >= datetime('now', '-90 days')
+     ORDER BY v.created_at DESC LIMIT 20`).all(workspaceId);
+  return rows.map((row) => {
+    const proposal = proposals.get(db, workspaceId, row.proposal_id);
+    if (!proposal) return null;
+    let problems = [];
+    try { problems = JSON.parse(row.problems || '[]'); } catch { problems = []; }
+    const said = actionPresenter.oneLine(db, workspaceId, proposal);
+    return {
+      id: `unverified:${row.execution_id}`,
+      kind: 'correction',
+      title: 'A change ran, but the result does not match what was expected',
+      happened: `${said}. StockChief applied it, then re-read the balances, and they are not what it predicted${problems.length ? `: ${problems.slice(0, 3).join('; ')}` : ''}.`,
+      why: 'StockChief will not call a change done when the records afterwards disagree with the plan it showed you.',
+      recommendation: 'Open the action, compare the before and after figures with the shelf, and correct the count if the shelf is right.',
+      missing: 'Your check of these records.',
+      actionLabel: 'Check the records',
+      href: `/actions/${row.proposal_id}`,
+      at: row.created_at,
+      priority: 88,
+    };
+  }).filter(Boolean);
+}
+
 function fromCorrections(db, workspaceId) {
   return proposals
     .listOpen(db, workspaceId, { limit: 20 })
@@ -1640,6 +1677,7 @@ function operationalEntries(db, workspaceId) {
     ...safely(fromLearning),
     ...safely(fromTransfers),
     ...safely(fromCorrections),
+    ...safely(fromUnverifiedExecutions),
     ...safely(fromImports),
     ...safely(fromMailboxRemovedImportChoices),
     ...safely(fromMailboxAttachmentChoices),

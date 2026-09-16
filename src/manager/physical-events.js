@@ -10,7 +10,7 @@ const managerEvents = require('./events');
 const reactions = require('./reactions');
 
 function record(db, ctx, input) {
-  const statedAs = requireText(input.statedAs, 'What happened', { max: 1200 });
+  const statedAs = requireText(input.statedAs, 'What happened', { max: 2000 });
   const type = String(input.eventType || '').trim().toLowerCase();
   if (!['physical_count', 'shipment_arrived', 'damage', 'return', 'found_stock', 'reported_event'].includes(type)) {
     throw new ValidationError('StockChief needs to know whether this was a count, delivery, damage, return, or found stock.');

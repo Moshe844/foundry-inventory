@@ -130,6 +130,27 @@ function scopeProblems(db, workspaceId, question, part) {
  }
  return problems;
 }
+function planValues(plan) {
+ const values=new Set();
+ for(const part of (plan&&plan.parts)||[]){
+  if(part.entityQuery)values.add(String(part.entityQuery).toLowerCase());
+  for(const f of (part.recordQuery&&part.recordQuery.filters)||[])if(typeof f.value==='string'&&f.value.trim())values.add(f.value.trim().toLowerCase());
+ }
+ return values;
+}
+function inheritedFromEmpty(question,data,context) {
+ if(!context||data.continuesPrevious!==true||!context.semanticPlan)return null;
+ if(Number(context.rowCount)!==0||context.clarification)return null;
+ if(!/\b(?:this|that|their|its|his|her|them|the same|they)\b/i.test(question))return null;
+ const before=planValues(context.semanticPlan);
+ const now=planValues(data);
+ const reused=[...now].filter((v)=>before.has(v)&&!question.toLowerCase().includes(v));
+ if(!reused.length)return null;
+ const earlier=(context.semanticPlan.parts||[]).map((p)=>p.recordQuery&&p.recordQuery.dataset).find(Boolean)||'record';
+ const noun=earlier.replace(/_/g,' ').replace(/s$/,'');
+ const typed=[...(context.semanticPlan.parts||[])].flatMap((p)=>[p.entityQuery,...((p.recordQuery&&p.recordQuery.filters)||[]).map((f)=>f.value)]).find((v)=>typeof v==='string'&&v.trim().toLowerCase()===reused[0])||reused[0];
+ return `Your earlier question found no ${noun} matching “${typed}”, so there is no “this ${noun}” to look at yet. Name the ${noun} — or check the spelling of “${typed}” — and I will look it up.`;
+}
 async function boundedComplete(provider,request,timeoutMs=20000) {
  const controller = new AbortController();let timer;
  const timeout = new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new ValidationError('StockChief could not interpret that question in time. Your message is preserved; please try again.'));},timeoutMs);});
@@ -238,6 +259,17 @@ async function ask(db,workspaceId,question,options){
   return {...empty(clean,data.clarification||fallback,data.decision),semanticPlan:data};
  }
  if(!data.parts.length||data.parts.some(p=>['action','unsupported'].includes(p.intent)))return empty(clean,'I could not produce a complete, read-only lookup for every part. Please clarify which question to answer first.');
+ /*
+  * "This customer" after a search that found nobody.
+  *
+  * A follow-up inherits whatever the previous turn named. When that turn
+  * found no record, the thing being referred to does not exist, and the
+  * follow-up used to run anyway — a second empty answer that read as if the
+  * customer existed and simply had no orders. The inherited value is checked
+  * against what the previous turn found before anything runs.
+  */
+ const inherited=inheritedFromEmpty(clean,data,context);
+ if(inherited)return {...empty(clean,inherited),semanticPlan:data};
  let sections;
  try{sections=data.parts.map(part=>({question:part.question,...executePart(db,workspaceId,part,{...options,catalog})}));}
  catch(err){if(err instanceof ValidationError)return {...empty(clean,err.message),semanticPlan:data};throw err;}
