@@ -1636,7 +1636,26 @@
     window.setTimeout(check,600);
   }
 
+  /*
+   * The rail is fixed and the page is padded by --rail-h to sit under it. On
+   * a phone the rail wraps to three rows (brand, tabs, search) and is taller
+   * than the constant, so the top of every page — the way back and the title
+   * — sat hidden underneath it. Measure the rail and tell the page.
+   */
+  function initRailHeight() {
+    const rail = document.querySelector('.rm-rail');
+    if (!rail) return;
+    const apply = () => {
+      const h = Math.ceil(rail.getBoundingClientRect().height);
+      if (h > 0) document.documentElement.style.setProperty('--rail-h', h + 'px');
+    };
+    apply();
+    window.addEventListener('resize', apply);
+    if (window.ResizeObserver) new ResizeObserver(apply).observe(rail);
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
+    initRailHeight();
     initNavigationLanding();
     initSearch();
     initModals();

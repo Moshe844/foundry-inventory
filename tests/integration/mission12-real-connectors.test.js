@@ -63,7 +63,7 @@ test('Connections UI offers real business providers and does not instruct owners
   assert.equal(page.status, 200);
   assert.match(text, /Selling/); assert.match(text, /Business systems/); assert.match(text, /Supplier communication/);
   assert.match(text, /Shopify/); assert.match(text, /Square/); assert.match(text, /Clover/); assert.match(text, /WooCommerce/);
-  assert.match(text, /Custom business system/); assert.match(text, /No scripts, manual JSON, or Check now/);
+  assert.match(text, /Your own software/); assert.match(text, /only asks you when something cannot be matched/);
   assert.doesNotMatch(text, /PowerShell|curl/i);
   env.db.close();
 });

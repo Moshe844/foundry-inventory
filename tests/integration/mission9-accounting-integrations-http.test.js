@@ -57,7 +57,7 @@ test('Connections UI exposes accounting safety stages and developer integrations
   let page = await agent.get('/settings/connections');
   assert.equal(page.status, 200); const listing = plain(page.text);
   assert.match(listing, /Accounting/); assert.match(listing, /QuickBooks Online/); assert.match(listing, /Xero/);
-  assert.match(listing, /Any ERP or business system/);
+  assert.match(listing, /An ERP not listed here/);
   assert.match(listing, /Start verified ERP connection/);
   assert.doesNotMatch(listing, /More ERP connectors[\s\S]{0,300}Not available here/);
   assert.match(listing, /Advanced: connect custom software with APIs and webhooks/);

@@ -21,7 +21,7 @@
 .setup-journey__head { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
 .setup-journey__head-copy { flex: 1; }
 .setup-journey__eyebrow { color: var(--accent-dark); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
-.setup-journey h1 { margin-top: 3px; font-size: 22px; }
+.setup-journey h1, .setup-journey__title { margin-top: 3px; font-size: 22px; }
 .setup-journey__head p { margin-top: 5px; color: var(--muted); max-width: 760px; }
 .setup-steps { display: grid; gap: 8px; }
 .setup-step {

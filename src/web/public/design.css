@@ -3414,3 +3414,9 @@ details.bill-pay > summary.btn::before, details.bill-pay[open] > summary.btn::be
 .import-steps .is-now { color: var(--accent); border-color: var(--accent); }
 .status-pill.is-warn { color: var(--flag-2); border-color: var(--flag-line); background: var(--flag-wash); }
 .status-pill.is-ok { color: var(--good); background: var(--good-wash); }
+
+/* Big-number tiles on a phone: two across, not a tower of five cards. */
+@media (max-width: 720px) {
+  .rm-pulse, .stat-grid, .stats-row, .stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rm-stat__n, .stat-value, .stats-row .stat strong, .stat > strong { font-size: clamp(22px, 7vw, 30px); }
+}

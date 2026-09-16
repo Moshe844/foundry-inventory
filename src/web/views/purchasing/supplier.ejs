@@ -65,7 +65,7 @@
   <div class="setup-journey__head">
     <div class="setup-journey__head-copy">
       <span class="setup-journey__eyebrow">Supplier setup</span>
-      <h1><%= supplierSetupComplete ? supplier.name + ' is ready' : 'Set up ' + supplier.name %></h1>
+      <h2 class="setup-journey__title"><%= supplierSetupComplete ? supplier.name + ' is ready' : 'Set up ' + supplier.name %></h2>
       <p><%= supplierSetupComplete
         ? 'StockChief can prepare orders, watch the approved sender, understand purchasing documents, and keep this supplier\'s purchase orders current.'
         : 'Work from top to bottom. StockChief highlights one thing to do now and keeps every later step visible, so you never have to guess where setup continues.' %></p>

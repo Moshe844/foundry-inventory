@@ -60,9 +60,10 @@
         <h3>Nothing is <%= activeGroup.name.replace(/^[0-9]+ /, '') %> right now</h3>
         <p>Every product StockChief has judged is in another group. <a href="/inventory/table">See all products</a> or <a href="/inventory">go back to the stock room</a>.</p>
       <% } else if (filters.q || filters.trackingMode || filters.locationId) { %>
-        <h3>Nothing matches those filters</h3>
-        <p>Try a different search term, or clear the filters to see everything you track.</p>
-        <a class="btn" href="/inventory">Clear filters</a>
+        <h3><% if (filters.q) { %>Nothing called “<%= filters.q %>”<% } else { %>Nothing matches those filters<% } %></h3>
+        <p><% if (filters.q) { %>Check the spelling, try part of the name or the code, or add it if it is new.<% } else { %>Clear the filters to see everything you track.<% } %></p>
+        <a class="btn" href="/inventory/table">Clear filters</a>
+        <% if (filters.q) { %><a class="btn btn--primary" href="/inventory/new?name=<%= encodeURIComponent(filters.q) %>">Add “<%= filters.q %>”</a><% } %>
       <% } else { %>
         <% if (filters.archivedOnly) { %>
           <h3>No archived products</h3><p>None of this inventory’s products are currently archived.</p><% if (returnTo) { %><a class="btn btn--primary" href="<%= returnTo %>">Back to <%= returnLabel %> message history</a><% } %>

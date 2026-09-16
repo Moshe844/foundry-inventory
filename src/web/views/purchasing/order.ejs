@@ -225,9 +225,9 @@
         Printable order
       </a>
       <% if (order.canCancel && permissions.approve) { %>
-        <form method="post" action="/purchasing/orders/<%= order.id %>/cancel">
+        <form method="post" action="/purchasing/orders/<%= order.id %>/cancel" data-confirm="Cancel <%= order.poNumber %>? Nothing already received is undone; the order simply stops expecting the rest.">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input class="input input--sm" type="text" name="reason" placeholder="Why cancel?" maxlength="200">
+          <input class="input input--sm" type="text" name="reason" placeholder="Why cancel?" aria-label="Reason for cancelling" maxlength="200">
           <button class="btn btn--ghost btn--sm" type="submit">Cancel order</button>
         </form>
       <% } %>

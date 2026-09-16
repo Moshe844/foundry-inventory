@@ -152,7 +152,7 @@ test('chat carries explicitly stated delivery details into a draft and refuses i
   const blockedStory = await agent.get(`/orders/${invented.order.id}`).expect(200);
   assert.match(blockedStory.text, /detail\?open=delivery-decision#delivery-decision/);
   assert.match(plain(blockedStory.text), /Delivery details needed/);
-  assert.match(blockedStory.text, /Payment options/);
+  assert.match(blockedStory.text, /Record or request payment/);
   const pickup = salesIntent.apply(e.db, e.w.ctx, { ...read, customerText: 'Pickup Fixture Buyer', statedAs: 'Prepare 2 Existing fixture part for customer pickup', deliveryMethod: 'PICKUP', deliverySource: 'customer pickup', shippingAddress: '', customerEmail: '' }, { previewOnly: true });
   assert.equal(pickup.order.delivery_method, 'PICKUP'); assert.equal(pickup.order.delivery_decision_required, 0);
 });

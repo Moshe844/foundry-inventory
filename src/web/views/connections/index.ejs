@@ -379,7 +379,7 @@
             <a class="rm-btn" href="/settings/connections/payments/start"
               target="_blank" data-stripe-connect>Connect existing Stripe account</a>
           <% } %>
-          <form method="post" action="/settings/connections/payments/remove" data-busy>
+          <form method="post" action="/settings/connections/payments/remove" data-busy data-confirm="Disconnect the payment account? New payment links stop working until one is connected again. Payments already recorded are kept.">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <button class="rm-btn rm-btn--ghost" type="submit"><%= unfinishedStripe
               ? 'Discard unfinished setup' : 'Disconnect' %></button>
@@ -396,7 +396,7 @@
         </p>
         <p class="quiet">Webhook address for this inventory: <code><%= paymentWebhookUrl %></code></p>
         <div class="rm-choices">
-          <form method="post" action="/settings/connections/payments/remove" data-busy>
+          <form method="post" action="/settings/connections/payments/remove" data-busy data-confirm="Disconnect the payment account? New payment links stop working until one is connected again. Payments already recorded are kept.">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <button class="rm-btn rm-btn--ghost" type="submit">Disconnect</button>
           </form>

@@ -29,10 +29,10 @@ test('Connections presents Stripe as one top-level sign-in flow, without nested 
   assert.match(html, /data-stripe-connect/);
   assert.match(html, /window\.open\(link\.href, 'foundry-stripe-connect'/);
   assert.match(html, /popup=yes,width=620,height=760/);
-  assert.match(html, /This is Stripe sandbox—not your live Stripe account/);
+  assert.match(html, /Stripe is in test mode on this installation/);
   assert.match(html, /fetch\('\/settings\/connections\/payments\/state'/);
   assert.match(html, /window\.setInterval/);
-  assert.match(html, /choose the Stripe account this\s+business already uses/);
+  assert.match(html, /choose the account this business already uses/);
   assert.match(html, /foundry:stripe-return/);
   assert.match(html, /trustedStripeReturnOrigins/);
   assert.match(html, /https:\/\/foundry\.example\.test/);
