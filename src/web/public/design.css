@@ -3371,3 +3371,38 @@ details.rm-panel > summary { list-style: none; }
 details.rm-panel > summary::-webkit-details-marker { display: none; }
 details.rm-panel > summary.rm-panel__head::before { content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); margin-right: 4px; transition: transform .15s; flex: none; }
 details.rm-panel[open] > summary.rm-panel__head::before { transform: rotate(45deg); }
+
+/* A decision that is not urgent: same shape, quieter colour, so "book this in
+   when it comes" does not shout like "this is late". */
+.rm-decision--calm { background: var(--n-50, #f7f7fa); border-color: var(--line); border-left-color: var(--n-400, #a7a9b8); }
+.rm-decision__go--pair { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
+.rm-decision__go--pair form { margin: 0; }
+.rm-lines .table td, .rm-lines .table th { padding-top: 9px; padding-bottom: 9px; }
+.rm-lines tfoot td { color: var(--muted); font-size: var(--t-sm); border-top: 1px solid var(--line); }
+
+/* A bill or invoice row: who and when on the left, the balance, then the one
+   thing you can do to it. The payment form opens in place under the row. */
+.bill-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--s3) var(--s4); }
+.bill-row .cell-sub .is-warn { color: var(--flag-2); font-weight: 600; }
+.bill-row .cell-sub .is-ok { color: var(--good); font-weight: 600; }
+.bill-row__amt { text-align: right; font-variant-numeric: tabular-nums; }
+.bill-row__amt strong { display: block; font-size: var(--t-lg); }
+.bill-row__amt small { color: var(--muted); font-size: var(--t-xs); }
+.bill-row__do { min-width: 128px; text-align: right; }
+.bill-pay > summary { list-style: none; display: inline-flex; cursor: pointer; }
+.bill-pay > summary::-webkit-details-marker { display: none; }
+.bill-pay[open] { grid-column: 1 / -1; width: 100%; }
+.bill-pay__form { display: flex; flex-wrap: wrap; gap: var(--s3); align-items: flex-end; padding: var(--s3) 0 var(--s2); }
+.bill-pay__form .field { margin: 0; min-width: 150px; flex: 1 1 150px; }
+.bill-pay__form .hint { flex-basis: 100%; margin: 0; }
+.stat.stat--warn strong { color: var(--flag-2); }
+@media (max-width: 720px) {
+  .bill-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .bill-row__do { grid-column: 1 / -1; text-align: left; }
+}
+.bill-pay > summary::marker { content: ""; }
+details.bill-pay > summary.btn::before, details.bill-pay[open] > summary.btn::before { content: none; display: none; }
+.bill-pay { min-width: 128px; text-align: right; }
+.bill-pay[open] > summary { display: inline-flex; }
+.bill-pay__form { text-align: left; }
+.cell-sub.is-warn, .page-sub .is-warn { color: var(--flag-2); font-weight: 500; }

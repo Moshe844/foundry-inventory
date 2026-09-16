@@ -4,6 +4,9 @@
     <h1>Suppliers</h1>
     <div class="page-sub">Who you buy from, what they sell you, and how they pack it.</div>
   </div>
+  <% if (permissions.suppliers) { %>
+    <div class="page-actions"><a class="btn btn--primary" href="#add-supplier"><%- helpers.icon('plus', { size: 15 }) %> Add a supplier</a></div>
+  <% } %>
 </div>
 
 <div class="card section">
@@ -12,7 +15,7 @@
     <div class="empty-state"><p class="empty-state__title">No suppliers yet</p><p class="empty-state__body">Add who you buy inventory from so StockChief can prepare replenishment orders and understand pack sizes, costs and lead times.</p><a class="btn btn--primary" href="#add-supplier">Add supplier</a><p class="hint">StockChief needs their pack sizes, lead time and costs, so this one is a form rather than a sentence.</p></div>
   <% } else { %>
     <table class="table table--tight">
-      <thead><tr><th>Supplier</th><th>Contact</th><th class="num">Lead time</th><th class="num">Products</th><th class="num">Open orders</th></tr></thead>
+      <thead><tr><th>Supplier</th><th>Contact</th><th class="num">Lead time</th><th class="num">Products</th><th class="num">Open orders</th><th class="num"><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>
         <% suppliers.forEach(function (supplier) { %>
           <tr>
@@ -20,10 +23,14 @@
               <a href="/suppliers/<%= supplier.id %>"><%= supplier.name %></a>
               <% if (!supplier.isActive) { %><span class="badge badge--muted">inactive</span><% } %>
             </td>
-            <td class="muted"><%= supplier.contactName || supplier.email || '—' %></td>
+            <td class="muted">
+              <%= supplier.contactName || supplier.email || '—' %>
+              <% if (!supplier.email) { %><span class="cell-sub is-warn">No email — orders cannot be sent</span><% } %>
+            </td>
             <td class="num"><%= supplier.defaultLeadTimeDays === null ? '—' : supplier.defaultLeadTimeDays + ' days' %></td>
             <td class="num"><%= supplier.itemCount %></td>
-            <td class="num"><%= supplier.openOrders %></td>
+            <td class="num"><% if (supplier.openOrders) { %><a href="/purchasing/orders?view=open"><%= supplier.openOrders %></a><% } else { %><span class="muted">0</span><% } %></td>
+            <td class="num"><% if (permissions.create && supplier.isActive) { %><a class="btn btn--sm" href="/purchasing/orders/new?supplier=<%= supplier.id %>">Write an order</a><% } %></td>
           </tr>
         <% }) %>
       </tbody>
@@ -32,8 +39,9 @@
 </div>
 
 <% if (permissions.suppliers) { %>
-  <form method="post" action="/suppliers" class="card section" id="add-supplier">
-    <div class="card-head"><div><h2>Add a supplier</h2><p class="muted">Start with what you know. After this, StockChief walks you through products, email, permissions, and the first order.</p></div></div>
+  <details class="card section advanced-settings" id="add-supplier"<%= suppliers.length ? '' : ' open' %>>
+    <summary class="card-head"><div><h2>Add a supplier</h2><p class="muted">Start with what you know. After this, StockChief walks you through products, email, permissions, and the first order.</p></div></summary>
+    <form method="post" action="/suppliers">
     <div class="card-body">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <div class="grid grid--2">
@@ -68,5 +76,6 @@
     <div class="card-foot">
       <button class="btn btn--primary" type="submit">Create supplier and continue</button>
     </div>
-  </form>
+    </form>
+  </details>
 <% } %>

@@ -1,18 +1,157 @@
-<div class="page-head"><div><a class="back-link" href="/accounting">‹ Money</a><p class="eyebrow"><%= kind === 'receivables' ? 'Accounts receivable' : 'Accounts payable' %></p><h1><%= title %></h1>
-  <p class="lede"><%= kind === 'receivables' ? 'Customer invoices and payments, with the remaining balance kept separate from revenue.' : 'Supplier bills and payments, matched to purchasing evidence where available.' %></p></div><a class="btn" href="<%= kind === 'receivables' ? '/sales/new' : '/purchasing/orders' %>"><%= kind === 'receivables' ? 'Create in Sales' : 'Open Purchasing' %></a></div>
+<%
+  /*
+   * One ledger, two directions: what you owe suppliers, what customers owe
+   * you. Each row says who, how much is left, and when — in days, not codes —
+   * and the one thing you can do to it (record the payment) is a button on
+   * the row, not a form two disclosures down.
+   */
+  var isAP = kind === 'payables';
+  var today = new Date().toISOString().slice(0, 10);
+  var dayMs = 86400000;
+  function daysBetween(a, b) { return Math.round((Date.parse(b) - Date.parse(a)) / dayMs); }
+  function isOpen(row) { return ['OPEN', 'PARTIALLY_PAID'].includes(row.status); }
 
-<div class="notice"><div><strong><%= kind === 'receivables' ? 'Invoices normally start with the customer order.' : 'Bills normally start with the supplier invoice or purchasing record.' %></strong><br><%= kind === 'receivables' ? 'StockChief uses the confirmed selling price and posts the invoice automatically from that source.' : 'Mission 13 supplier email and PO matching carry the supplier, amounts, and evidence into Accounting automatically.' %></div></div>
+  // What the row says about time and state, in plain words.
+  function says(row) {
+    if (row.status === 'PAID') return { text: 'paid', tone: 'ok' };
+    if (row.status === 'VOID' || row.status === 'CANCELLED') return { text: row.status.toLowerCase(), tone: 'muted' };
+    if (row.status === 'DRAFT') return { text: isAP ? 'draft — not matched to a delivery yet' : 'draft — not posted yet', tone: 'muted' };
+    if (row.status === 'DISPUTED') return { text: 'does not agree with what was ordered or arrived', tone: 'warn' };
+    if (!row.due_date) return { text: row.status === 'PARTIALLY_PAID' ? 'partly paid · no due date' : 'no due date', tone: '' };
+    var d = daysBetween(today, row.due_date);
+    var head = row.status === 'PARTIALLY_PAID' ? 'partly paid · ' : '';
+    if (d < 0) return { text: head + (-d) + ' day' + (d === -1 ? '' : 's') + ' late', tone: 'warn' };
+    if (d === 0) return { text: head + 'due today', tone: 'warn' };
+    return { text: head + 'due in ' + d + ' day' + (d === 1 ? '' : 's'), tone: '' };
+  }
 
-<section class="card"><div class="card-head"><h2>Aging</h2><strong><%= helpers.money(aging.totalMinor) %> open</strong></div><div class="card-body"><div class="stat-grid">
-  <div class="stat"><span>Current</span><strong><%= helpers.money(aging.buckets.current) %></strong></div><div class="stat"><span>1–30 days late</span><strong><%= helpers.money(aging.buckets.days1to30) %></strong></div><div class="stat"><span>31–60</span><strong><%= helpers.money(aging.buckets.days31to60) %></strong></div><div class="stat"><span>61–90</span><strong><%= helpers.money(aging.buckets.days61to90) %></strong></div><div class="stat"><span>Over 90</span><strong><%= helpers.money(aging.buckets.over90) %></strong></div>
-</div></div></section>
+  var open = rows.filter(isOpen);
+  var attention = rows.filter(function (r) { return ['DRAFT', 'DISPUTED'].includes(r.status); });
+  var settled = rows.filter(function (r) { return !isOpen(r) && !['DRAFT', 'DISPUTED'].includes(r.status); });
+  var lateCount = open.filter(function (r) { return r.due_date && r.due_date < today; }).length;
+  var view = locals.view || 'all';
+%>
 
-<section class="card"><div class="card-head"><h2><%= kind === 'receivables' ? 'Customer invoices' : 'Supplier bills' %></h2></div><div class="card-body">
-  <% if (!rows.length) { %><div class="empty"><strong>Nothing recorded yet.</strong><p><%= kind === 'receivables' ? 'Customer invoices will appear here.' : 'Supplier bills and matched Mission 13 invoices will appear here.' %></p></div><% } else { %><div class="stack"><% rows.forEach(function(row){ var open = ['OPEN','PARTIALLY_PAID'].includes(row.status); %>
-    <details class="list-row"><summary><div><strong><%= kind === 'receivables' ? row.invoice_number : row.bill_number %> · <%= kind === 'receivables' ? row.customer_name : row.supplier_name %></strong><p class="muted">Due <%= row.due_date || 'not set' %> · <%= row.status.replaceAll('_',' ') %><%= kind === 'payables' ? ` · ${row.match_status.replaceAll('_',' ')}` : '' %></p></div><strong><%= helpers.money(row.balance_minor,row.currency) %></strong></summary>
-      <div class="stack-sm"><p>Original total: <strong><%= helpers.money(row.total_minor,row.currency) %></strong>. Remaining: <strong><%= helpers.money(row.balance_minor,row.currency) %></strong>.</p>
-      <% if (open) { %><details class="advanced-settings"><summary><strong>Record a payment that did not arrive through a connection</strong><p class="hint">Manual fallback only. Connected or imported bank evidence should be matched instead of entered twice.</p></summary><form method="post" action="/accounting/<%= kind %>/<%= row.id %>/payment" class="form-inline"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= row.id %>-<%= Date.now() %>"><label class="field"><span class="field-label">Payment date</span><input class="input" type="date" name="paymentDate" value="<%= new Date().toISOString().slice(0,10) %>" required></label><label class="field"><span class="field-label">Amount actually paid</span><input class="input" name="amount" inputmode="decimal" value="<%= (row.balance_minor/100).toFixed(2) %>" required></label><label class="field"><span class="field-label">Reference</span><input class="input" name="reference" placeholder="Check, transfer, card…"></label><button class="btn btn--sm" type="submit">Record this payment</button></form><p class="hint">This reduces the open balance; it does not create revenue or expense again.</p></details><% } %></div>
-    </details><% }) %></div><% } %>
-</div></section>
+<div class="page-head">
+  <div>
+    <a class="back-link" href="/accounting">‹ Money</a>
+    <p class="eyebrow"><%= isAP ? 'Accounts payable' : 'Accounts receivable' %></p>
+    <h1><%= title %></h1>
+    <p class="lede">
+      <% if (!rows.length) { %>
+        <%= isAP ? 'Supplier bills appear here once a supplier invoices you; recording a payment reduces what is owed.' : 'Customer invoices appear here once an order is invoiced; recording a payment reduces what is owed to you.' %>
+      <% } else if (lateCount) { %>
+        <%= helpers.money(aging.totalMinor) %> open · <strong><%= lateCount %> <%= isAP ? 'bill' : 'invoice' %><%= lateCount === 1 ? ' is' : 's are' %> past due</strong>.
+      <% } else if (open.length) { %>
+        <%= helpers.money(aging.totalMinor) %> open across <%= open.length %> <%= isAP ? 'bill' : 'invoice' %><%= open.length === 1 ? '' : 's' %>, none past due.
+      <% } else { %>
+        Nothing is open. <%= isAP ? 'Every bill is paid.' : 'Every invoice is paid.' %>
+      <% } %>
+    </p>
+  </div>
+  <div class="page-actions">
+    <a class="btn" href="<%= isAP ? '/purchasing/orders' : '/sales/new' %>"><%= isAP ? 'Open Purchasing' : 'Create in Sales' %></a>
+  </div>
+</div>
 
-<details class="card advanced-settings"><summary class="card-head"><div><p class="eyebrow">Manual exception</p><h2><%= kind === 'receivables' ? 'Record an invoice created outside StockChief' : 'Record a bill StockChief did not receive' %></h2><p class="hint">Use only when there is no Sales, Purchasing, supplier-email, document, or connection record to use as the source.</p></div></summary><div class="card-body"><a class="btn btn--ghost" href="/accounting/<%= kind %>/new">Open manual entry</a></div></details>
+<% if (rows.length) { %>
+  <section class="card">
+    <div class="card-head"><h2>How old the open balance is</h2><strong><%= helpers.money(aging.totalMinor) %> open</strong></div>
+    <div class="card-body"><div class="stat-grid">
+      <div class="stat"><span>Not yet due</span><strong><%= helpers.money(aging.buckets.current) %></strong></div>
+      <div class="stat <%= aging.buckets.days1to30 ? 'stat--warn' : '' %>"><span>1–30 days late</span><strong><%= helpers.money(aging.buckets.days1to30) %></strong></div>
+      <div class="stat <%= aging.buckets.days31to60 ? 'stat--warn' : '' %>"><span>31–60 days late</span><strong><%= helpers.money(aging.buckets.days31to60) %></strong></div>
+      <div class="stat <%= aging.buckets.days61to90 ? 'stat--warn' : '' %>"><span>61–90 days late</span><strong><%= helpers.money(aging.buckets.days61to90) %></strong></div>
+      <div class="stat <%= aging.buckets.over90 ? 'stat--warn' : '' %>"><span>Over 90 days late</span><strong><%= helpers.money(aging.buckets.over90) %></strong></div>
+    </div></div>
+  </section>
+<% } %>
+
+<%
+  /* One row, for either direction. */
+  function renderRows(list, opts) {
+    list.forEach(function (row) {
+      var state = says(row);
+      var number = isAP ? row.bill_number : row.invoice_number;
+      var who = isAP ? row.supplier_name : row.customer_name;
+      var open = isOpen(row);
+%>
+      <div class="list-row bill-row <%= state.tone === 'warn' ? 'is-late' : '' %>">
+        <div class="cell-main">
+          <span class="cell-title">
+            <%= who %> <span class="rm-quiet">· <%= number %></span>
+            <% if (row.supplier_invoice_number) { %><span class="rm-quiet">· their ref <%= row.supplier_invoice_number %></span><% } %>
+          </span>
+          <span class="cell-sub">
+            <span class="<%= state.tone === 'warn' ? 'is-warn' : state.tone === 'ok' ? 'is-ok' : '' %>"><%= state.text %></span><%
+            %><% if (row.due_date) { %> · due <%= helpers.shortDate(row.due_date) %><% } %><%
+            %><% if (isAP && row.po_number && row.purchase_order_id) { %> · from <a href="/purchasing/orders/<%= row.purchase_order_id %>"><%= row.po_number %></a><% } %><%
+            %><% if (isAP && row.match_status === 'MATCHED') { %> · matched to the delivery<% } %>
+          </span>
+        </div>
+        <div class="bill-row__amt">
+          <strong><%= helpers.money(row.balance_minor, row.currency) %></strong>
+          <% if (row.balance_minor !== row.total_minor) { %><small>of <%= helpers.money(row.total_minor, row.currency) %></small><% } %>
+        </div>
+        <% if (open && locals.canPay !== false) { %>
+            <details class="bill-pay">
+              <summary class="btn btn--sm <%= state.tone === 'warn' ? 'btn--primary' : '' %>">Record payment</summary>
+              <form method="post" action="/accounting/<%= kind %>/<%= row.id %>/payment" class="bill-pay__form" data-busy>
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="idempotencyKey" value="<%= row.id %>-<%= Date.now() %>">
+                <label class="field"><span class="field-label">Amount <%= isAP ? 'paid' : 'received' %></span><input class="input input--sm" name="amount" inputmode="decimal" value="<%= (row.balance_minor / 100).toFixed(2) %>" required></label>
+                <label class="field"><span class="field-label">On</span><input class="input input--sm" type="date" name="paymentDate" value="<%= today %>" required></label>
+                <label class="field"><span class="field-label">Reference</span><input class="input input--sm" name="reference" placeholder="Cheque, transfer, card…"></label>
+                <button class="btn btn--primary btn--sm" type="submit">Record it</button>
+                <p class="hint">Reduces what is owed; nothing else moves. If the money arrived through a connected bank, match it there instead of entering it twice.</p>
+              </form>
+            </details>
+          <% } else if (isAP && ['DISPUTED', 'DRAFT'].includes(row.status) && row.purchase_order_id) { %>
+            <div class="bill-row__do"><a class="btn btn--sm" href="/purchasing/orders/<%= row.purchase_order_id %>/detail#bills">Look at it</a></div>
+          <% } else { %><div class="bill-row__do"></div><% } %>
+      </div>
+<%  });
+  }
+%>
+
+<% if (!rows.length) { %>
+  <section class="card"><div class="card-body">
+    <div class="empty">
+      <strong>Nothing recorded yet.</strong>
+      <p><%= isAP ? 'When a supplier invoices you for a delivery, the bill lands here with the amount, the due date and the order it belongs to.' : 'When you invoice a customer, it lands here with the amount and the due date.' %></p>
+      <p><a class="btn" href="<%= isAP ? '/purchasing/orders' : '/sales/new' %>"><%= isAP ? 'Go to purchases' : 'Create in Sales' %></a></p>
+    </div>
+  </div></section>
+<% } else { %>
+
+  <% if (attention.length) { %>
+    <section class="card">
+      <div class="card-head"><h2>Needs a look · <%= attention.length %></h2><span class="hint"><%= isAP ? 'Not posted yet: the invoice does not yet agree with an order or a delivery.' : 'Not posted yet.' %></span></div>
+      <div class="list-rows"><% renderRows(attention) %></div>
+    </section>
+  <% } %>
+
+  <section class="card">
+    <div class="card-head"><h2>Open · <%= open.length %></h2><% if (open.length) { %><span class="hint"><%= isAP ? 'Oldest due first.' : 'Oldest due first.' %></span><% } %></div>
+    <% if (open.length) { %>
+      <div class="list-rows"><% renderRows(open.slice().sort(function (a, b) { return (a.due_date || '9999') < (b.due_date || '9999') ? -1 : 1; })) %></div>
+    <% } else { %>
+      <div class="card-body"><p class="hint">Nothing is open right now.</p></div>
+    <% } %>
+  </section>
+
+  <% if (settled.length) { %>
+    <details class="card advanced-settings">
+      <summary class="card-head"><h2>Settled · <%= settled.length %></h2></summary>
+      <div class="list-rows"><% renderRows(settled) %></div>
+    </details>
+  <% } %>
+<% } %>
+
+<%# The manual path stays one line at the bottom: bills come from supplier
+    invoices and purchases, invoices from orders, and typing one in by hand is
+    the exception for when there is no record to start from. %>
+<details class="card advanced-settings">
+  <summary class="card-head"><div><p class="eyebrow">Manual exception</p><h2><%= isAP ? 'Record a bill StockChief did not receive' : 'Record an invoice created outside StockChief' %></h2><p class="hint"><%= isAP ? 'Bills normally start with the supplier invoice or the purchase; use this only when there is no record to start from.' : 'Invoices normally start with the customer order; use this only when there is no record to start from.' %></p></div></summary>
+  <div class="card-body"><a class="btn btn--ghost" href="/accounting/<%= kind %>/new"><%= isAP ? 'Record a bill by hand' : 'Record an invoice by hand' %></a></div>
+</details>

@@ -32,6 +32,7 @@
   var sentToSupplier = (locals.communications || []).some(function (message) { return message.status === 'SENT'; });
 %>
 
+<a class="rm-head__back" href="/purchasing/orders"><span aria-hidden="true">←</span> Purchases</a>
 <%- include('../partials/spine', { story: story }) %>
 
 <% var supplierPlan = (locals.supplierResponsePlans || [])[0] || null; %>
@@ -142,6 +143,88 @@
   </details>
 <% } %>
 
+<%
+  var today = new Date().toISOString().slice(0, 10);
+  var isLate = order.isOpen && order.outstandingUnits > 0 && order.expectedDate && order.expectedDate < today;
+  var needsArrivalDetail = (order.lines || []).some(function (line) {
+    return line.outstandingUnits > 0 && (line.trackingMode === 'lot' || line.trackingMode === 'serial');
+  });
+%>
+<% if (order.isOpen && order.outstandingUnits > 0 && permissions.receive) { %>
+  <div class="rm-decision<%= isLate ? '' : ' rm-decision--calm' %>" style="margin-top:20px">
+    <span class="rm-decision__arrow" aria-hidden="true">→</span>
+    <span class="rm-decision__txt">
+      <% if (isLate) { %>
+        <%= order.outstandingUnits %> units should have arrived by <%= helpers.shortDate(order.expectedDate) %>.
+        <small>Nothing is booked in until you say it arrived. If it has, one click does it; if it is late, <%= order.supplierName %> has not said why.</small>
+      <% } else if (order.expectedDate) { %>
+        <%= order.outstandingUnits %> units are due <%= helpers.shortDate(order.expectedDate) %>.
+        <small>When the boxes turn up, book them in here. Stock changes only for what you count.</small>
+      <% } else { %>
+        <%= order.outstandingUnits %> units are still to come; nobody has said when.
+        <small>When the boxes turn up, book them in here. Stock changes only for what you count.</small>
+      <% } %>
+    </span>
+    <span class="rm-decision__go rm-decision__go--pair">
+      <% if (needsArrivalDetail) { %>
+        <a class="rm-btn" href="/purchasing/orders/<%= order.id %>/receive">Book in the delivery</a>
+      <% } else { %>
+        <form method="post" action="/purchasing/orders/<%= order.id %>/receive-all" data-busy>
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="rm-btn" type="submit">It all arrived — book it in</button>
+        </form>
+        <a class="rm-btn rm-btn--wash" href="/purchasing/orders/<%= order.id %>/receive">Only some of it</a>
+      <% } %>
+    </span>
+  </div>
+<% } %>
+
+<% if (order.receivedUnits > 0 && !bills.length && permissions.payments) { %>
+  <div class="rm-decision rm-decision--calm" style="margin-top:20px">
+    <span class="rm-decision__arrow" aria-hidden="true">→</span>
+    <span class="rm-decision__txt">
+      No invoice from <%= order.supplierName %> yet.
+      <small>Stock is in, but nothing is owed until their invoice is recorded. StockChief fills it in from this order.</small>
+    </span>
+    <span class="rm-decision__go"><a class="rm-btn rm-btn--wash" href="/accounting/payables/new?purchaseOrderId=<%= order.id %>">Record their invoice</a></span>
+  </div>
+<% } %>
+
+<%# What is actually on the order, always in view. Approving or chasing a
+    purchase without seeing its lines was the one thing this page hid. %>
+<p class="rm-stamp" style="margin-top:34px">What is on it</p>
+<div class="table-wrap rm-lines">
+  <table class="table table--stack">
+    <thead><tr>
+      <th>Product</th>
+      <th class="num">Ordered</th>
+      <th class="num">Received</th>
+      <th class="num">Unit cost</th>
+      <th class="num">Total</th>
+    </tr></thead>
+    <tbody>
+      <% (order.lines || []).forEach(function (line) { %>
+        <tr>
+          <td data-label="Product">
+            <div class="cell-main">
+              <span class="cell-title"><%= line.displayName %></span>
+              <span class="cell-sub"><% if (line.supplierSku) { %><span class="mono"><%= line.supplierSku %></span> · <% } %><% if (line.unitsPerPurchaseUnit > 1) { %><%= line.quantityPurchaseUnits %> <%= line.purchaseUnit %><%= line.quantityPurchaseUnits === 1 ? '' : 's' %> of <%= line.unitsPerPurchaseUnit %> · <% } %><%= line.destinationLocationName || '' %></span>
+            </div>
+          </td>
+          <td class="num" data-label="Ordered"><%= line.quantityUnits %></td>
+          <td class="num" data-label="Received"><% if (line.quantityReceivedUnits >= line.quantityUnits) { %><span class="badge badge--ok"><%= line.quantityReceivedUnits %></span><% } else if (line.quantityReceivedUnits > 0) { %><span class="badge badge--warn"><%= line.quantityReceivedUnits %> of <%= line.quantityUnits %></span><% } else { %><span class="rm-quiet">0</span><% } %></td>
+          <td class="num" data-label="Unit cost"><% if (line.unitCost != null) { %><%= helpers.money(Math.round(line.unitCost * 100), order.currency) %><% } else { %><span class="badge badge--warn">no price</span><% } %></td>
+          <td class="num" data-label="Total"><% if (line.lineTotal != null) { %><%= helpers.money(Math.round(line.lineTotal * 100), order.currency) %><% } else { %>—<% } %></td>
+        </tr>
+      <% }) %>
+    </tbody>
+    <tfoot><tr>
+      <td colspan="4" class="num"><strong><%= order.orderedUnits %> units</strong> · <%= (order.lines || []).length %> line<%= (order.lines || []).length === 1 ? '' : 's' %></td>
+      <td class="num"><strong><%= helpers.money(Math.round((order.subtotal || 0) * 100), order.currency) %></strong></td>
+    </tr></tfoot>
+  </table>
+</div>
+
 <p class="rm-stamp" style="margin-top:34px">Delivery and payment are tracked separately</p>
 <div class="rm-ledger" style="margin-bottom:24px">
   <div class="rm-ledger__row">
@@ -195,20 +278,17 @@
 
 <div class="rm-spine-foot">
   <a class="rm-btn rm-btn--ghost" href="/ask?about=<%= encodeURIComponent(order.poNumber + ' from ' + order.supplierName) %>">Ask about this purchase</a>
-  <% if ((order.status === 'ORDERED' && sentToSupplier) || order.status === 'PARTIALLY_RECEIVED') { %>
-    <a class="rm-btn" href="/purchasing/orders/<%= order.id %>/receive">Book in what arrived</a>
-  <% } %>
   <% if ((locals.receipts || []).length && permissions.landedCosts) { %>
     <a class="rm-btn rm-btn--wash" href="/purchasing/orders/<%= order.id %>/landed-costs"><%= awaitingLandedCostApproval ? 'Review landed-cost draft' : 'Add freight, duty or handling' %></a>
   <% } %>
-  <a class="rm-btn rm-btn--wash" href="/purchasing/orders/<%= order.id %>/detail">See or edit details</a>
+  <% if (order.isEditable) { %><a class="rm-btn rm-btn--wash" href="/purchasing/orders/<%= order.id %>/detail">Edit lines and prices</a><% } %>
 </div>
 
 <%# The working page, on the same page, one disclosure down. Same reasoning as
     a customer order: understanding it and acting on it must not be two
     addresses. /purchasing/orders/:id/detail renders it on its own. %>
 <details class="rm-work" id="working">
-  <summary>The lines, costs, receipts and documents</summary>
+  <summary>Receipts, invoices, documents and the full working record</summary>
   <div class="rm-work__body"><%- include('order') %></div>
 </details>
 

@@ -31,6 +31,7 @@
   });
 %>
 
+<% var drafts = locals.drafts || []; %>
 <div class="page-head">
   <div>
     <h1>Purchasing</h1>
@@ -39,7 +40,25 @@
       has been selling. Nothing is ordered until you say so.
     </p>
   </div>
+  <div class="page-actions">
+    <% if (permissions.create) { %><a class="btn btn--primary" href="/purchasing/orders/new"><%- helpers.icon('plus', { size: 15 }) %> Write a purchase order</a><% } %>
+    <% if (permissions.receive) { %><a class="btn" href="/purchasing/receive"><%- helpers.icon('receive', { size: 15 }) %> Book in a delivery</a><% } %>
+  </div>
 </div>
+
+<% if (drafts.length) { %>
+  <div class="flash section" role="status" style="margin-top:0">
+    <%- helpers.icon('alert', { size: 18 }) %>
+    <div>
+      <strong><%= drafts.length %> purchase order<%= drafts.length === 1 ? ' is' : 's are' %> waiting on you.</strong>
+      <p>
+        <%= drafts.length === 1 ? 'It has' : 'They have' %> not been sent to anyone.
+        <a href="/purchasing/orders?view=waiting">Check and approve <%= drafts.length === 1 ? 'it' : 'them' %></a><%
+        %><% if (drafts.some(function (po) { return !po.hasCosts; })) { %> — <%= drafts.filter(function (po) { return !po.hasCosts; }).length === drafts.length ? 'every one' : 'some' %> still need<%= drafts.length === 1 ? 's' : '' %> a price<% } %>.
+      </p>
+    </div>
+  </div>
+<% } %>
 
 <% if (setup && setup.lines && !setup.alreadySet) { %>
   <div class="flash flash--warn section" role="status">
@@ -253,8 +272,8 @@
 <%# ------------------------------------------------------------- On the way %>
 <section class="section">
   <div class="section-head">
-    <h2>On the way</h2>
-    <a class="section-more" href="/purchasing/orders">All orders</a>
+    <h2>On the way<% if (late.length) { %> <span class="badge badge--warn" style="margin-left:6px;vertical-align:middle"><%= late.length %> late</span><% } %></h2>
+    <a class="section-more" href="/purchasing/orders">All purchases</a>
   </div>
   <% if (!onTheWay.length) { %>
     <div class="quiet-note">Nothing is on order at the moment.</div>
@@ -265,7 +284,7 @@
           <thead>
             <tr>
               <th>Order</th><th>Supplier</th><th>Expected</th>
-              <th class="num">Still to come</th><th>Stage</th>
+              <th class="num">Still to come</th><th>Stage</th><% if (permissions.receive) { %><th class="num"><span class="sr-only">Action</span></th><% } %>
             </tr>
           </thead>
           <tbody>
@@ -277,7 +296,7 @@
                 </td>
                 <td data-label="Supplier"><%= po.supplier_name %></td>
                 <td data-label="Expected" class="<%= daysLate ? 'is-warn' : 't-muted' %>">
-                  <%= po.expected_date || 'No date' %>
+                  <%= po.expected_date ? helpers.shortDate(po.expected_date) : 'No date' %>
                   <% if (daysLate) { %>
                     <span class="cell-sub is-warn"><%= daysLate %> day<%= daysLate === 1 ? '' : 's' %> late</span>
                   <% } %>
@@ -286,6 +305,7 @@
                 <td data-label="Stage">
                   <span class="badge badge--<%= daysLate ? 'warn' : 'info' %>"><%= daysLate ? 'Late' : helpers.columnLabel(po.status.toLowerCase().replace('_', ' ')) %></span>
                 </td>
+                <% if (permissions.receive) { %><td class="num" data-label=""><a class="btn btn--sm" href="/purchasing/orders/<%= po.id %>/receive">Book in</a></td><% } %>
               </tr>
             <% }) %>
           </tbody>
@@ -345,8 +365,7 @@
 <% } %>
 
 <nav class="page-links" aria-label="Purchasing pages">
-  <a href="/suppliers">Suppliers</a>
-  <a href="/purchasing/orders">All purchase orders</a>
-  <% if (permissions.create) { %><a href="/purchasing/orders/new">Write an order yourself</a><% } %>
-  <% if (permissions.receive) { %><a href="/purchasing/receive">Book in a delivery</a><% } %>
+  <a href="/suppliers">Suppliers and their terms</a>
+  <a href="/purchasing/orders">All purchases</a>
+  <a href="/accounting/payables">Bills to pay</a>
 </nav>

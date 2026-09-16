@@ -1,8 +1,18 @@
+<% var chosen = supplierId ? suppliers.find(function (s) { return s.id === supplierId; }) : null; %>
 <div class="page-head">
   <div class="titles">
-    <a class="back-link" href="/purchasing/orders"><%- helpers.icon('chevron', { size: 14 }) %> Purchase orders</a>
-    <h1>New purchase order</h1>
-    <div class="page-sub">Manual, for when you already know what you want. StockChief can also prepare one for you.</div>
+    <a class="back-link" href="/purchasing/orders"><%- helpers.icon('chevron', { size: 14 }) %> Purchases</a>
+    <h1><% if (chosen) { %>New order from <%= chosen.name %><% } else { %>New purchase order<% } %></h1>
+    <div class="page-sub">
+      <% if (chosen) { %>
+        Step 2 of 2 · <a href="/purchasing/orders/new">Different supplier</a><%
+        %><% if (chosen.defaultLeadTimeDays !== null && chosen.defaultLeadTimeDays !== undefined) { %> · usually <%= chosen.defaultLeadTimeDays %> days<% } %><%
+        %><% if (chosen.paymentTerms) { %> · <%= chosen.paymentTerms %><% } %>.
+        Saved as a draft: nothing reaches <%= chosen.name %> until you approve it.
+      <% } else { %>
+        Step 1 of 2 · pick who you are buying from. StockChief can also prepare one for you from what is running low.
+      <% } %>
+    </div>
   </div>
 </div>
 
@@ -13,17 +23,23 @@
       <% if (suppliers.length === 0) { %>
         <p class="muted">No suppliers yet. <a href="/suppliers">Add one first.</a></p>
       <% } else { %>
-        <ul class="plain-list">
+        <div class="list-rows">
           <% suppliers.forEach(function (supplier) { %>
-            <li><a href="/purchasing/orders/new?supplier=<%= supplier.id %>"><%= supplier.name %></a></li>
+            <a class="list-row" href="/purchasing/orders/new?supplier=<%= supplier.id %>">
+              <span class="cell-main">
+                <span class="cell-title"><%= supplier.name %></span>
+                <span class="cell-sub"><%= supplier.contactName || supplier.email || 'No contact on file' %><% if (supplier.defaultLeadTimeDays !== null && supplier.defaultLeadTimeDays !== undefined) { %> · usually <%= supplier.defaultLeadTimeDays %> days<% } %></span>
+              </span>
+              <span class="btn btn--sm">Choose</span>
+            </a>
           <% }) %>
-        </ul>
+        </div>
       <% } %>
     </div>
   </div>
 <% } else { %>
   <form method="post" action="/purchasing/orders" class="card section" data-busy>
-    <div class="card-head"><h2>Lines</h2></div>
+    <div class="card-head"><div><h2>What to order</h2><p class="muted">Only lines with a quantity go on the order.</p></div></div>
     <div class="card-body">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input type="hidden" name="supplierId" value="<%= supplierId %>">
@@ -84,7 +100,7 @@
       <% } %>
     </div>
     <% if (supplierItems.length) { %>
-      <div class="card-foot"><button class="btn btn--primary" type="submit">Create draft order</button></div>
+      <div class="card-foot"><button class="btn btn--primary" type="submit">Create draft order</button> <a class="btn btn--ghost" href="/purchasing/orders">Cancel</a></div>
     <% } %>
   </form>
 <% } %>

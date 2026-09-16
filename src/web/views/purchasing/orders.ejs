@@ -6,32 +6,71 @@
    * one line each, saying who and what is waiting on whom, ordered by whether
    * anybody is waiting. The table this replaced sorted by creation date and
    * printed the stored status enum, which answers neither question.
+   *
+   * Three groups, by who is waiting: drafts wait on you, open orders wait on
+   * the supplier (late ones first), and done orders wait on nobody. A draft
+   * used to be filed under "closed", which is the one place nobody would look
+   * for the thing they had not finished.
    */
   var today = new Date().toISOString().slice(0, 10);
+  var view = locals.view || 'all';
+  var byNewest = function (a, b) { return (b.createdAt || '') < (a.createdAt || '') ? -1 : 1; };
+  var isLateOrder = function (o) { return o.isOpen && o.expectedDate && o.expectedDate < today && o.outstandingUnits > 0; };
+
+  var waiting = orders.filter(function (o) { return ['DRAFT', 'AWAITING_APPROVAL'].includes(o.status); }).sort(byNewest);
   var open = orders.filter(function (o) { return o.isOpen; });
-  var closed = orders.filter(function (o) { return !o.isOpen; });
-  var late = open.filter(function (o) { return o.expectedDate && o.expectedDate < today && o.outstandingUnits > 0; });
-  var waiting = open.filter(function (o) { return ['DRAFT', 'AWAITING_APPROVAL'].includes(o.status); });
+  var done = orders.filter(function (o) { return ['RECEIVED', 'CANCELLED'].includes(o.status); }).sort(byNewest);
+
+  // Late first, then by when the rest are due; orders with no date go last.
+  open.sort(function (a, b) {
+    var al = isLateOrder(a);
+    var bl = isLateOrder(b);
+    if (al !== bl) return al ? -1 : 1;
+    return (a.expectedDate || '9999') < (b.expectedDate || '9999') ? -1 : 1;
+  });
+
+  var counts = {
+    all: orders.length,
+    late: open.filter(isLateOrder).length,
+    waiting: waiting.length,
+    open: open.length,
+    done: done.length,
+  };
+
+  if (view === 'late') { open = open.filter(isLateOrder); waiting = []; done = []; }
+  else if (view === 'waiting') { open = []; done = []; }
+  else if (view === 'open') { waiting = []; done = []; }
+  else if (view === 'done') { waiting = []; open = []; }
 
   var SAYS = {
     DRAFT: 'a draft — the supplier has not been told anything',
     AWAITING_APPROVAL: 'ready to send, and waiting on you',
-    APPROVED: 'approved and ready to go to the supplier',
+    APPROVED: 'approved, not yet with the supplier',
     ORDERED: 'with the supplier',
     PARTIALLY_RECEIVED: 'part of it arrived',
     RECEIVED: 'all of it arrived',
     CANCELLED: 'cancelled',
   };
+  function daysLate(o) { return Math.round((Date.parse(today) - Date.parse(o.expectedDate)) / 86400000); }
+  function dollars(o) { return o.subtotal ? ' · $' + Math.round(o.subtotal).toLocaleString('en-US') : ''; }
 %>
 
-<p class="rm-stamp"><%= open.length %> open · <%= closed.length %> closed</p>
+<p class="rm-stamp"><%= counts.open %> on the way · <%= counts.waiting %> waiting on you · <%= counts.done %> done</p>
 <h1 class="rm-figure">
-  <% if (late.length) { %>
-    <%= late.length %> purchase<%= late.length === 1 ? '' : 's' %> should have arrived by now.
-  <% } else if (waiting.length) { %>
-    <%= waiting.length %> purchase<%= waiting.length === 1 ? ' is' : 's are' %> waiting on you.
-  <% } else if (open.length) { %>
-    <%= open.length %> purchase<%= open.length === 1 ? ' is' : 's are' %> on their way.
+  <% if (view === 'late') { %>
+    <%= counts.late %> purchase<%= counts.late === 1 ? ' is' : 's are' %> late.
+  <% } else if (view === 'waiting') { %>
+    <%= counts.waiting %> purchase<%= counts.waiting === 1 ? ' is' : 's are' %> waiting on you.
+  <% } else if (view === 'open') { %>
+    <%= counts.open %> purchase<%= counts.open === 1 ? ' is' : 's are' %> on their way.
+  <% } else if (view === 'done') { %>
+    <%= counts.done %> purchase<%= counts.done === 1 ? ' is' : 's are' %> done.
+  <% } else if (counts.late) { %>
+    <%= counts.late %> purchase<%= counts.late === 1 ? '' : 's' %> should have arrived by now.
+  <% } else if (counts.waiting) { %>
+    <%= counts.waiting %> purchase<%= counts.waiting === 1 ? ' is' : 's are' %> waiting on you.
+  <% } else if (counts.open) { %>
+    <%= counts.open %> purchase<%= counts.open === 1 ? ' is' : 's are' %> on their way.
   <% } else { %>
     Nothing is on order.
   <% } %>
@@ -45,9 +84,46 @@
   <% } %>
 </p>
 
+<div class="rm-choices" style="margin:4px 0 18px">
+  <% if (permissions.create) { %><a class="rm-btn" href="/purchasing/orders/new"><%- helpers.icon('plus', { size: 15 }) %> Write a purchase order</a><% } %>
+  <% if (permissions.receive) { %><a class="rm-btn rm-btn--ghost" href="/purchasing/receive"><%- helpers.icon('receive', { size: 15 }) %> Book in a delivery</a><% } %>
+  <a class="rm-btn rm-btn--ghost" href="/purchasing">What needs buying</a>
+</div>
+
+<% if (orders.length) { %>
+  <div class="att-filters" style="margin-bottom:14px">
+    <a class="chip <%= view === 'all' ? 'is-active' : '' %>" href="/purchasing/orders">All · <%= counts.all %></a>
+    <% if (counts.late) { %><a class="chip <%= view === 'late' ? 'is-active' : '' %>" href="/purchasing/orders?view=late">Late · <%= counts.late %></a><% } %>
+    <a class="chip <%= view === 'waiting' ? 'is-active' : '' %>" href="/purchasing/orders?view=waiting">Waiting on you · <%= counts.waiting %></a>
+    <a class="chip <%= view === 'open' ? 'is-active' : '' %>" href="/purchasing/orders?view=open">On the way · <%= counts.open %></a>
+    <a class="chip <%= view === 'done' ? 'is-active' : '' %>" href="/purchasing/orders?view=done">Done · <%= counts.done %></a>
+  </div>
+<% } %>
+
+<% if (waiting.length) { %>
+  <p class="rm-stamp">Waiting on you · <%= waiting.length %></p>
+  <div class="rm-told">
+    <% waiting.forEach(function (order) { %>
+      <div class="rm-told__row">
+        <span class="rm-told__t">
+          <a class="rm-u" href="/purchasing/orders/<%= order.id %>"><%= order.supplierName %></a>
+          <span class="rm-quiet">· <%= order.poNumber %></span>
+          <small><%= SAYS[order.status] %><% if (!order.hasCosts) { %> — a price is missing<% } %></small>
+        </span>
+        <span class="rm-told__m">
+          <%= order.orderedUnits %> units<%= dollars(order) %>
+          <% if (permissions.approve) { %><a href="/purchasing/orders/<%= order.id %>"><%= order.hasCosts ? 'Approve' : 'Add prices' %></a><% } %>
+        </span>
+      </div>
+    <% }) %>
+  </div>
+<% } %>
+
 <% if (open.length) { %>
+  <p class="rm-stamp">On the way · <%= open.length %></p>
   <div class="rm-told">
     <% open.forEach(function (order) { %>
+      <% var late = isLateOrder(order); %>
       <div class="rm-told__row">
         <span class="rm-told__t">
           <a class="rm-u" href="/purchasing/orders/<%= order.id %>"><%= order.supplierName %></a>
@@ -55,36 +131,51 @@
           <small>
             <%= SAYS[order.status] || order.status %><%
             %><% if (order.expectedDate && order.outstandingUnits) { %>
-              — <%= order.expectedDate < today ? 'was due' : 'due' %> <%= helpers.shortDate(order.expectedDate) %><%
+              — <% if (late) { %><strong><%= daysLate(order) %> day<%= daysLate(order) === 1 ? '' : 's' %> late</strong>, was due <%= helpers.shortDate(order.expectedDate) %><% } else { %>due <%= helpers.shortDate(order.expectedDate) %><% } %><%
             %><% } else if (order.outstandingUnits && order.status === 'ORDERED') { %>
               — nobody has said when<%
             %><% } %>
           </small>
         </span>
-        <span class="rm-told__m <%= order.expectedDate && order.expectedDate < today && order.outstandingUnits ? 'is-paused' : '' %>">
-          <%= order.outstandingUnits || order.orderedUnits %> units
-          <% if (order.subtotal) { %>· $<%= Math.round(order.subtotal).toLocaleString('en-US') %><% } %>
+        <span class="rm-told__m <%= late ? 'is-paused' : '' %>">
+          <%= order.outstandingUnits || order.orderedUnits %> units still to come<%= dollars(order) %>
+          <% if (permissions.receive && order.outstandingUnits) { %><a href="/purchasing/orders/<%= order.id %>/receive">Book in</a><% } %>
         </span>
       </div>
     <% }) %>
   </div>
 <% } %>
 
-<% if (closed.length) { %>
-  <p class="rm-stamp">Closed · <%= closed.length %></p>
+<% if (done.length) { %>
+  <p class="rm-stamp">Done · <%= done.length %></p>
   <div class="rm-told">
-    <% closed.slice(0, 8).forEach(function (order) { %>
+    <% done.slice(0, view === 'done' ? done.length : 6).forEach(function (order) { %>
       <div class="rm-told__row">
-        <span class="rm-told__t rm-quiet"><a class="rm-u" href="/purchasing/orders/<%= order.id %>"><%= order.supplierName %></a> · <%= order.poNumber %></span>
-        <span class="rm-told__m <%= order.status === 'RECEIVED' ? 'is-ok' : '' %>"><%= SAYS[order.status] || order.status %></span>
+        <span class="rm-told__t rm-quiet">
+          <a class="rm-u" href="/purchasing/orders/<%= order.id %>"><%= order.supplierName %></a> · <%= order.poNumber %>
+          <small><%= order.orderedUnits %> units<%= dollars(order) %></small>
+        </span>
+        <span class="rm-told__m <%= order.status === 'RECEIVED' ? 'is-ok' : 'is-paused' %>"><%= SAYS[order.status] || order.status %></span>
       </div>
     <% }) %>
   </div>
+  <% if (view !== 'done' && done.length > 6) { %>
+    <p class="rm-disclose" style="margin-top:8px"><a href="/purchasing/orders?view=done">All <%= done.length %> done purchases</a></p>
+  <% } %>
+<% } %>
+
+<% if (orders.length && !waiting.length && !open.length && !done.length) { %>
+  <div class="empty" style="margin-top:8px">
+    <strong>Nothing here right now.</strong>
+    <p><a href="/purchasing/orders">Show every purchase</a></p>
+  </div>
+<% } %>
+
+<% if (locals.truncated) { %>
+  <p class="rm-sub" style="margin-top:14px">Showing the latest <%= orders.length %>. Older purchases are listed on each supplier&rsquo;s page.</p>
 <% } %>
 
 <p class="rm-disclose">
-  <a href="/purchasing">What needs buying</a>
-  <% if (permissions.create) { %><a href="/purchasing/orders/new">Write a purchase order</a><% } %>
-  <a href="/purchasing/receive">Book in a delivery</a>
   <a href="/suppliers">Suppliers and their terms</a>
+  <a href="/ask?about=<%= encodeURIComponent('my purchases') %>">Ask about your purchases</a>
 </p>

@@ -409,10 +409,10 @@ test('routine accounting pages lead owners back to source workflows and progress
     startDate: '2026-01-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
   });
   const receivablesPage = await env.agent.get('/accounting/receivables').expect(200);
-  assert.match(plain(receivablesPage.text), /Create in Sales.*Invoices normally start with the customer order.*Manual exception/i);
+  assert.match(plain(receivablesPage.text), /Create in Sales.*Manual exception.*Invoices normally start with the customer order/i);
   assert.match(receivablesPage.text, /href="\/sales\/new"/);
   const payablesPage = await env.agent.get('/accounting/payables').expect(200);
-  assert.match(plain(payablesPage.text), /Open Purchasing.*Bills normally start with the supplier invoice or purchasing record.*Mission 13.*Manual exception/i);
+  assert.match(plain(payablesPage.text), /Open Purchasing.*Manual exception.*Bills normally start with the supplier invoice or the purchase/i);
   assert.match(payablesPage.text, /href="\/purchasing\/orders"/);
   const bankingPage = await env.agent.get('/accounting/banking').expect(200);
   assert.match(plain(bankingPage.text), /should not re-enter an amount.*Manual statement entry.*fallback/i);

@@ -200,6 +200,9 @@ router.get(
       ahead,
       open: position.openOrders(req.db, req.ctx.workspaceId),
       late: position.lateOrders(req.db, req.ctx.workspaceId),
+      // Drafts are the orders waiting on a person, and the room is where that
+      // person looks; without this they were only findable on the full list.
+      drafts: poService.list(req.db, req.ctx.workspaceId, { status: ['DRAFT', 'AWAITING_APPROVAL'], limit: 50 }),
       arriving: position.arrivingSoon(req.db, req.ctx.workspaceId, { days: 7 }),
       suppliers: supplierService.listWithCounts(req.db, req.ctx.workspaceId),
       // Whether this inventory has purchasing set up at all. Without it the
@@ -475,11 +478,16 @@ router.get(
   asyncRoute(async (req, res) => {
     guard(req, permissions.VIEW_PURCHASING, 'see purchasing');
     const status = req.query.status && poService.STATUS[req.query.status] ? req.query.status : null;
+    // Grouped and filtered in the view by who is waiting. The limit is high
+    // enough that a working business sees every open order at once.
+    const listed = poService.list(req.db, req.ctx.workspaceId, { status, limit: 201 });
     res.page('purchasing/orders', {
       title: 'Purchases',
       nav: 'purchasing',
       room: true,
-      orders: poService.list(req.db, req.ctx.workspaceId, { status }),
+      orders: listed.slice(0, 200),
+      truncated: listed.length > 200,
+      view: ['late', 'waiting', 'open', 'done'].includes(req.query.view) ? req.query.view : 'all',
       status,
       statuses: Object.keys(poService.STATUS),
       permissions: can(req),
