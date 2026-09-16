@@ -284,7 +284,7 @@ test('a customer can be created directly without first creating an order', async
   assert.equal(response.headers.location, `/sales/customers/${customer.id}`);
 
   page = await env.agent.get('/orders');
-  assert.match(page.text, /href="\/sales\/customers\/new"[^>]*>Add customer</);
+  assert.match(page.text, /href="\/sales\/customers\/new"[^>]*>[^<]*Add a customer</);
   env.db.close();
 });
 

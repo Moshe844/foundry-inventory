@@ -157,6 +157,9 @@
       <% if (isLate) { %>
         <%= order.outstandingUnits %> units should have arrived by <%= helpers.shortDate(order.expectedDate) %>.
         <small>Nothing is booked in until you say it arrived. If it has, one click does it; if it is late, <%= order.supplierName %> has not said why.</small>
+      <% } else if (order.expectedDate && locals.expectedInFuture) { %>
+        <%= order.outstandingUnits %> units are expected <%= helpers.shortDate(order.expectedDate) %>.
+        <small>Nothing is booked in until you say it arrived. If it turns up early, report it and StockChief fills in what it already knows.</small>
       <% } else if (order.expectedDate) { %>
         <%= order.outstandingUnits %> units are due <%= helpers.shortDate(order.expectedDate) %>.
         <small>When the boxes turn up, book them in here. Stock changes only for what you count.</small>
@@ -166,7 +169,9 @@
       <% } %>
     </span>
     <span class="rm-decision__go rm-decision__go--pair">
-      <% if (needsArrivalDetail) { %>
+      <% if (locals.expectedInFuture) { %>
+        <a class="rm-btn rm-btn--wash" href="/purchasing/orders/<%= order.id %>/receive">Report an early delivery</a>
+      <% } else if (needsArrivalDetail) { %>
         <a class="rm-btn" href="/purchasing/orders/<%= order.id %>/receive">Book in the delivery</a>
       <% } else { %>
         <form method="post" action="/purchasing/orders/<%= order.id %>/receive-all" data-busy>

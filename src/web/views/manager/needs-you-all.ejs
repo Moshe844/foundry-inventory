@@ -8,25 +8,39 @@
    * pass. The place decisions are actually made is the desk — this page exists
    * because a stack with no way to see its contents is a black box, not
    * because triage is a good way to work.
+   *
+   * Decisions that share one fix are one line here too: a supplier with no
+   * email address is one job however many orders are waiting on it.
    */
   var items = locals.inbox || [];
+  var groups = []; var byFix = {};
+  items.forEach(function (item, i) {
+    var key = item.href || ('#' + i);
+    if (!byFix[key]) { byFix[key] = { lead: item, index: i, members: [] }; groups.push(byFix[key]); }
+    else byFix[key].members.push({ item: item, index: i });
+  });
+  var urgent = items.filter(function (e) { return e.importance === 'Urgent'; }).length;
 %>
 
 <p class="rm-stamp"><a href="/needs-you">← The desk</a></p>
-<h1 class="rm-h"><%= items.length %> decision<%= items.length === 1 ? '' : 's' %>, in the order StockChief would take them.</h1>
+<h1 class="rm-h"><%= items.length %> decision<%= items.length === 1 ? '' : 's' %><% if (groups.length < items.length) { %>, <%= groups.length %> distinct fix<%= groups.length === 1 ? '' : 'es' %><% } %>, in the order StockChief would take them.</h1>
+<% if (urgent) { %><p class="rm-sub"><%= urgent %> <%= urgent === 1 ? 'is' : 'are' %> urgent. The rest can wait for a quiet moment.</p><% } %>
 
 <% if (!items.length) { %>
   <p class="rm-prose">Nothing is waiting.</p>
 <% } else { %>
   <div class="rm-told">
-    <% items.forEach(function (entry, i) { %>
+    <% groups.forEach(function (group) { var entry = group.lead; var i = group.index; var n = group.members.length + 1; %>
       <div class="rm-told__row">
         <span class="rm-told__t">
           <a class="rm-u" href="/needs-you?at=<%= i %>"><%= entry.title %></a>
-          <% if (entry.happened) { %><small><%= entry.happened %></small><% } %>
+          <% if (n > 1) { %>
+            <small><% var refs = group.members.map(function (m) { var t = String(m.title || (m.item && m.item.title) || ''); var r = t.match(/(?:PO|SO|RMA|BILL|INV|SHP)-[0-9]+/); return r ? r[0] : null; }).filter(Boolean); %><% if (refs.length) { %>The same fix also clears <%= refs.slice(0, 5).join(', ') %><%= refs.length > 5 ? ' and ' + (refs.length - 5) + ' more' : '' %>.<% } else { %>The same fix clears <%= n %> decisions.<% } %></small>
+          <% } else if (entry.happened) { %><small><%= entry.happened %></small><% } %>
         </span>
         <span class="rm-told__m <%= entry.importance === 'Urgent' ? 'is-paused' : '' %>">
-          <%= entry.importance === 'Needs You' ? '' : entry.importance %>
+          <% if (n > 1) { %><span class="rm-pillbadge"><%= n %> in one</span> <% } %><%= entry.importance === 'Needs You' ? '' : entry.importance %>
+          <a href="<%= entry.href %>"><%= entry.actionLabel || 'Open' %></a>
         </span>
       </div>
     <% }) %>

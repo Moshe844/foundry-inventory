@@ -93,7 +93,7 @@
       <% if (recommendation && !sameAnswer) { %>
         <div class="rm-qa__row rm-qa__row--rec"><span class="rm-qa__k">What I'd do</span><span class="rm-qa__v"><%= recommendation %></span></div>
       <% } %>
-      <% if (missing) { %>
+      <% if (missing && !(entry.why && missing.trim().toLowerCase() === String(entry.why).trim().toLowerCase())) { %>
         <div class="rm-qa__row"><span class="rm-qa__k">What I need</span><span class="rm-qa__v"><%= missing %></span></div>
       <% } %>
     </div>
@@ -133,22 +133,33 @@
        * about the same product. Names only, no detail, each going straight to
        * its own position — visible without becoming a second queue to triage.
        */
-      var rest = items.map(function (item, i) { return { item: item, index: i }; })
-        .filter(function (row) { return row.index !== at; })
-        .slice(0, 8);
+      /*
+       * Decisions that share one fix are shown as one line. Eight purchase
+       * orders that all need the same supplier's email address are one job
+       * (add the address), not eight; listing them separately made the stack
+       * look eight times deeper than it is.
+       */
+      var groups = []; var byFix = {};
+      items.forEach(function (item, i) {
+        if (i === at) return;
+        var key = item.href || ('#' + i);
+        if (!byFix[key]) { byFix[key] = { lead: item, index: i, members: [] }; groups.push(byFix[key]); }
+        else byFix[key].members.push(item);
+      });
+      var rest = groups.slice(0, 8);
     %>
     <% if (rest.length) { %>
-      <p class="rm-stamp" style="margin-top:30px;margin-bottom:8px"><%= total - 1 %> other <%= total === 2 ? 'thing' : 'things' %> waiting</p>
+      <p class="rm-stamp" style="margin-top:30px;margin-bottom:8px"><%= total - 1 %> other <%= total === 2 ? 'thing' : 'things' %> waiting<% if (groups.length < total - 1) { %> · <%= groups.length %> distinct fix<%= groups.length === 1 ? '' : 'es' %><% } %></p>
       <div class="rm-feed" style="margin-top:0">
-        <% rest.forEach(function (row) { var other = row.item; var i = row.index; %>
+        <% rest.forEach(function (group) { var other = group.lead; var i = group.index; var n = group.members.length + 1; %>
           <a class="rm-feed__row" href="/needs-you?at=<%= i %>">
             <span class="rm-feed__ic"><%= i + 1 %></span>
-            <span class="rm-feed__t"><%= other.title %><% if (other.happened) { %><small><%= other.happened %></small><% } %></span>
-            <span class="rm-feed__m">Open</span>
+            <span class="rm-feed__t"><%= other.title %><% if (n > 1) { %><small><% var refs = group.members.map(function (m) { var t = String(m.title || (m.item && m.item.title) || ''); var r = t.match(/(?:PO|SO|RMA|BILL|INV|SHP)-[0-9]+/); return r ? r[0] : null; }).filter(Boolean); %><% if (refs.length) { %>The same fix also clears <%= refs.slice(0, 5).join(', ') %><%= refs.length > 5 ? ' and ' + (refs.length - 5) + ' more' : '' %>.<% } else { %>The same fix clears <%= n %> decisions.<% } %></small><% } else if (other.happened) { %><small><%= other.happened %></small><% } %></span>
+            <span class="rm-feed__m"><% if (n > 1) { %><span class="rm-pillbadge"><%= n %> in one</span> <% } %>Open</span>
           </a>
         <% }) %>
       </div>
-      <% if (total - 1 > rest.length) { %><p class="rm-disclose"><a href="/needs-you/all">See all <%= total %> decisions</a></p><% } %>
+      <% if (groups.length > rest.length) { %><p class="rm-disclose"><a href="/needs-you/all">See all <%= total %> decisions</a></p><% } %>
     <% } %>
 
     <p class="rm-disclose">

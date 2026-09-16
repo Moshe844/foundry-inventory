@@ -43,12 +43,12 @@
       ? 'Your inventory is being prepared.'
     : isEmpty
       ? 'This inventory is empty.'
-      : isSettingUp
-        ? 'Getting StockChief ready.'
-        : needsCount === 1
-          ? '1 thing needs your attention.'
-          : needsCount > 1
-            ? needsCount + ' things need your attention.'
+      : needsCount === 1
+        ? '1 thing needs your attention.'
+        : needsCount > 1
+          ? needsCount + ' things need your attention.'
+          : isSettingUp
+            ? 'Getting StockChief ready.'
             : 'Everything is under control.';
   var verdictAside = paused || isEmpty
     ? null
@@ -274,12 +274,20 @@
       <h2><%= needsCount %> <%= needsCount === 1 ? 'thing needs' : 'things need' %> you</h2>
       <span class="right"><a href="/needs-you/all">See all together</a></span>
     </div>
+    <%# Decisions that share one fix are one line: a supplier with no email
+        is one job however many orders are waiting on it. %>
+    <% var needGroups = []; var needByFix = {};
+       needs.forEach(function (item, i) {
+         var key = item.link || item.href || ('#' + i);
+         if (!needByFix[key]) { needByFix[key] = { lead: item, index: i, members: [] }; needGroups.push(needByFix[key]); }
+         else needByFix[key].members.push(item);
+       }); %>
     <div class="rm-feed">
-      <% needs.forEach(function (item, i) { %>
+      <% needGroups.forEach(function (group) { var item = group.lead; var i = group.index; var n = group.members.length + 1; %>
         <a class="rm-feed__row" href="<%= item.link || item.href || ('/needs-you?at=' + i) %>">
           <span class="rm-feed__ic is-flag"><%= i + 1 %></span>
-          <span class="rm-feed__t"><%= item.title %><% if (item.because) { %><small><%= item.because %></small><% } %></span>
-          <span class="rm-feed__m"><%= item.action || 'Open' %></span>
+          <span class="rm-feed__t"><%= item.title %><% if (n > 1) { %><small><% var refs = group.members.map(function (m) { var t = String(m.title || (m.item && m.item.title) || ''); var r = t.match(/(?:PO|SO|RMA|BILL|INV|SHP)-[0-9]+/); return r ? r[0] : null; }).filter(Boolean); %><% if (refs.length) { %>The same fix also clears <%= refs.slice(0, 5).join(', ') %><%= refs.length > 5 ? ' and ' + (refs.length - 5) + ' more' : '' %>.<% } else { %>The same fix clears <%= n %> decisions.<% } %></small><% } else if (item.because) { %><small><%= item.because %></small><% } %></span>
+          <span class="rm-feed__m"><% if (n > 1) { %><span class="rm-pillbadge"><%= n %> in one</span> <% } %><%= item.action || 'Open' %></span>
         </a>
       <% }) %>
     </div>
@@ -311,11 +319,19 @@
           <% }) %>
         <% } %>
         <% if (handled.length) { %>
-          <% handled.slice(0, 6).forEach(function (action) { %>
-            <a class="rm-feed__row" href="<%= action.link || '/activity' %>">
+          <%# The same action done several times is one line with a count, not
+              the same line repeated until the panel is full of it. %>
+          <% var didGroups = []; var didByKey = {};
+             handled.forEach(function (action) {
+               var key = String(action.headline) + '|' + String(action.detail || '');
+               if (!didByKey[key]) { didByKey[key] = { lead: action, count: 0, verified: 0 }; didGroups.push(didByKey[key]); }
+               didByKey[key].count += 1; if (action.verified) didByKey[key].verified += 1;
+             }); %>
+          <% didGroups.slice(0, 6).forEach(function (group) { var action = group.lead; %>
+            <a class="rm-feed__row" href="<%= (group.count > 1 ? '/activity' : action.link) || '/activity' %>">
               <span class="rm-feed__ic is-done"><%- helpers.icon('check', { size: 14 }) %></span>
-              <span class="rm-feed__t"><%= action.headline %><% if (action.detail) { %><small><%= action.detail %></small><% } %></span>
-              <span class="rm-feed__m"><%= action.verified ? 'verified' : '' %></span>
+              <span class="rm-feed__t"><%= action.headline %><% if (group.count > 1) { %> <span class="rm-quiet">× <%= group.count %></span><% } %><% if (action.detail) { %><small><%= action.detail %></small><% } %></span>
+              <span class="rm-feed__m"><%= group.verified === group.count ? 'verified' : group.verified ? group.verified + ' of ' + group.count + ' verified' : '' %></span>
             </a>
           <% }) %>
         <% } else if (!handling.length) { %>
@@ -339,7 +355,7 @@
           <% next.forEach(function (line) { %>
             <a class="rm-feed__row" href="<%= line.href %>">
               <span class="rm-feed__ic <%= line.tone === 'late' ? 'is-flag' : '' %>"><%- helpers.icon(nextIcon(line), { size: 14 }) %></span>
-              <span class="rm-feed__t"><%= line.text %></span>
+              <span class="rm-feed__t"><%= String(line.text).replace(/[0-9]{4}-[0-9]{2}-[0-9]{2}/g, function (d) { return helpers.shortDate(d); }) %></span>
               <span class="rm-feed__m"><%= line.tone === 'late' ? 'late' : '' %></span>
             </a>
           <% }) %>
