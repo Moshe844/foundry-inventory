@@ -61,6 +61,13 @@
       </p>
     </div>
     <div class="rm-title__do">
+      <% if (canAct) { %>
+        <%# What a person does to stock, in their words: the four things you can do to a product, in the header where an action is looked for. %>
+        <button class="rm-btn rm-btn--sm" type="button" data-modal-open="modal-receive"><%- helpers.icon('receive', { size: 15 }) %> Some came in</button>
+        <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-issue"><%- helpers.icon('issue', { size: 15 }) %> Sold or used</button>
+        <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-transfer" <%= locations.length < 2 ? 'disabled' : '' %>><%- helpers.icon('transfer', { size: 15 }) %> Move it</button>
+        <button class="rm-btn rm-btn--wash rm-btn--sm" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 15 }) %> Fix the count</button>
+      <% } %>
       <a class="rm-btn rm-btn--ghost rm-btn--sm" href="<%= skus.length === 1 ? '/purchasing/why/' + skus[0].id : '#reorder-settings' %>"><%- helpers.icon('purchasing', { size: 15 }) %> Reorder settings</a>
       <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-edit"><%- helpers.icon('settings', { size: 15 }) %> Edit details</button>
     </div>
@@ -127,48 +134,14 @@
   </div>
 </div>
 
-<section class="rm-panel" id="kit-definition" style="margin-bottom:18px">
-  <% var shownKitDefinition = Object.values(kitDefinitions).find(function(definition){ return definition.isKit; }); %>
-  <div class="rm-panel__head">
-    <%- helpers.icon('layers', { size: 15, className: 'rm-quiet' }) %>
-    <h2>Kit / bill of materials</h2>
-    <span class="right"><%= shownKitDefinition && shownKitDefinition.stockBasis === 'preassembled'
-      ? 'StockChief tracks the assembled kits on hand; selling one moves the kit SKU itself.'
-      : 'The customer buys this SKU; StockChief moves its components.' %></span>
-  </div>
-  <div class="rm-panel__body">
-    <% skus.forEach(function(sku){ var definition=kitDefinitions[sku.id]; if(definition && definition.isKit){ %>
-      <div class="rm-note" style="margin-bottom:12px"><div><strong><%= sku.code %> contains</strong>
-        <% if (definition.stockBasis === 'preassembled') { %><span class="badge badge--ok" style="margin-left:8px">Preassembled stock</span><% } %><br>
-        <% definition.components.forEach(function(component,index){ %><%= index ? ' · ' : '' %><%= component.quantity %> × <%= component.item_name %><%= component.variant_label ? ' / ' + component.variant_label : '' %> (<span class="mono"><%= component.code %></span>)<% }) %>
-      </div></div>
-    <% } }); %>
-    <details class="rm-disclosure">
-      <summary><%= Object.values(kitDefinitions).some(function(definition){return definition.isKit}) ? 'Change kit components' : 'Make this product a kit' %></summary>
-      <form method="post" action="/inventory/<%= item.id %>/kit" class="rm-form-grid" style="margin-top:12px">
-        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <label>Kit SKU<select name="kitSkuId" required><% skus.forEach(function(sku){ %><option value="<%= sku.id %>"><%= sku.code %><%= sku.variant_label ? ' · ' + sku.variant_label : '' %></option><% }) %></select></label>
-        <label class="rm-span-2">Components <span class="field-help">One exact component SKU per line: <strong>SKU, quantity</strong></span><textarea name="components" rows="5" required placeholder="CLEANER-1, 2&#10;CLOTH-RED, 5"></textarea></label>
-        <div class="rm-span-2"><button class="rm-button rm-button--primary">Save kit definition</button></div>
-      </form>
-    </details>
-  </div>
-</section>
-
 <% if (canAct) { %>
   <%# Receive, Issue, Transfer and Adjust are warehouse words. A shop owner
       thinks "some came in", "I sold one", "the count is wrong". The verbs stayed
       in the engine, where they are precise; the buttons say what the person is
       actually doing. None is styled as the main action: these are four things
       you can do, not something owed. %>
-  <div class="rm-choices" style="margin-bottom:8px">
-    <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-receive"><%- helpers.icon('receive', { size: 15 }) %> Some came in</button>
-    <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-issue"><%- helpers.icon('issue', { size: 15 }) %> Sold or used</button>
-    <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-transfer" <%= locations.length < 2 ? 'disabled' : '' %>><%- helpers.icon('transfer', { size: 15 }) %> Move it</button>
-    <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 15 }) %> Fix the count</button>
-  </div>
   <p class="rm-quiet" style="font-size:12.5px;margin:0 0 18px">
-    Or just <a href="/#tell-foundry">tell StockChief</a> what happened.
+    Use the buttons above, or just <a href="/#tell-foundry">tell StockChief</a> what happened.
     <%# A greyed-out button explains itself in a tooltip, which nobody hovers and
         no phone has. Say it on the page. %>
     <% if (locations.length < 2) { %>
@@ -274,6 +247,34 @@
       sell — or you set it yourself.
     </p>
   </section>
+<% var isKitProduct = Object.values(kitDefinitions).some(function (definition) { return definition.isKit; }); %>
+<details class="rm-disclosure rm-panel" id="kit-definition" style="margin-top:18px" <%= isKitProduct ? "open" : "" %>>
+  <% var shownKitDefinition = Object.values(kitDefinitions).find(function(definition){ return definition.isKit; }); %>
+  <summary class="rm-panel__head" style="cursor:pointer">
+    <%- helpers.icon('layers', { size: 15, className: 'rm-quiet' }) %>
+    <h2>Kit / bill of materials</h2>
+    <span class="right"><%= shownKitDefinition && shownKitDefinition.stockBasis === 'preassembled'
+      ? 'StockChief tracks the assembled kits on hand; selling one moves the kit SKU itself.'
+      : 'The customer buys this SKU; StockChief moves its components.' %></span>
+  </summary>
+  <div class="rm-panel__body">
+    <% skus.forEach(function(sku){ var definition=kitDefinitions[sku.id]; if(definition && definition.isKit){ %>
+      <div class="rm-note" style="margin-bottom:12px"><div><strong><%= sku.code %> contains</strong>
+        <% if (definition.stockBasis === 'preassembled') { %><span class="badge badge--ok" style="margin-left:8px">Preassembled stock</span><% } %><br>
+        <% definition.components.forEach(function(component,index){ %><%= index ? ' · ' : '' %><%= component.quantity %> × <%= component.item_name %><%= component.variant_label ? ' / ' + component.variant_label : '' %> (<span class="mono"><%= component.code %></span>)<% }) %>
+      </div></div>
+    <% } }); %>
+    <details class="rm-disclosure">
+      <summary><%= Object.values(kitDefinitions).some(function(definition){return definition.isKit}) ? 'Change kit components' : 'Make this product a kit' %></summary>
+      <form method="post" action="/inventory/<%= item.id %>/kit" class="rm-form-grid" style="margin-top:12px">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <label>Kit SKU<select name="kitSkuId" required><% skus.forEach(function(sku){ %><option value="<%= sku.id %>"><%= sku.code %><%= sku.variant_label ? ' · ' + sku.variant_label : '' %></option><% }) %></select></label>
+        <label class="rm-span-2">Components <span class="field-help">One exact component SKU per line: <strong>SKU, quantity</strong></span><textarea name="components" rows="5" required placeholder="CLEANER-1, 2&#10;CLOTH-RED, 5"></textarea></label>
+        <div class="rm-span-2"><button class="rm-button rm-button--primary">Save kit definition</button></div>
+      </form>
+    </details>
+  </div>
+</details>
 
 <div class="rm-split">
   <div class="rm-stack">

@@ -3355,3 +3355,19 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover {
 .table th a.sort.is-asc::after { transform: rotate(180deg); }
 .table th a.sort.is-asc, .table th a.sort.is-desc { color: var(--ink); }
 .table th.num a.sort { flex-direction: row-reverse; }
+
+/* An outlook is one label and a run of paragraphs, not key/value pairs: the
+   label keeps the first column and everything else stays in the second, so a
+   variant's reasoning reads as one block instead of ping-ponging across
+   columns. */
+.rm-outlook { align-items: start; row-gap: 6px; }
+.rm-outlook > :not(.rm-outlook__k) { grid-column: 2; }
+.rm-outlook .rm-rule { margin: 4px 0 0; }
+.rm-outlook > details.rm-disclosure { margin-top: 2px; }
+@media (max-width: 720px) { .rm-outlook { grid-template-columns: minmax(0, 1fr); } .rm-outlook > :not(.rm-outlook__k) { grid-column: 1; } }
+
+/* A panel that folds: its head is the summary. */
+details.rm-panel > summary { list-style: none; }
+details.rm-panel > summary::-webkit-details-marker { display: none; }
+details.rm-panel > summary.rm-panel__head::before { content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); margin-right: 4px; transition: transform .15s; flex: none; }
+details.rm-panel[open] > summary.rm-panel__head::before { transform: rotate(45deg); }
