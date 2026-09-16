@@ -192,12 +192,48 @@ const EXECUTORS = {
       confidence: row.confidence,
     }));
     const exposed = result.shortages.filter((row) => !row.coveredByIncoming);
+
+    /*
+     * "No" has to be a sentence a person can check. The old wording —
+     * "nothing StockChief can measure a sales rate for is heading for zero
+     * inside the period it can see" — described the engine's limits instead
+     * of answering the question. So: what is already at zero (running low by
+     * anyone's definition), how many products were checked, and how many it
+     * cannot judge yet, in that order.
+     */
+    let nothingAnswer = null;
+    let nothingHandoff = null;
+    if (!rows.length) {
+      const empty = EXECUTORS.out_of_stock(db, workspaceId);
+      const checked = Number(result.evaluated || 0);
+      const scanned = Number(result.scanned || 0);
+      const unjudged = Math.max(0, scanned - checked);
+      const parts = [];
+      if (empty.rows.length) {
+        const named = empty.rows.slice(0, 3).map((row) => `${row.product} (${row.onTheWay})`).join(', ');
+        const more = empty.rows.length > 3 ? ` and ${empty.rows.length - 3} more` : '';
+        parts.push(`${empty.rows.length === 1 ? 'One product is' : `${empty.rows.length} products are`} already at zero: ${named}${more}.`);
+        parts.push(checked
+          ? `Nothing else is on track to run out — StockChief checked ${checked} product${checked === 1 ? '' : 's'} against how fast they sell.`
+          : 'Nothing else is on track to run out.');
+        nothingHandoff = { href: '/inventory/table?group=low', label: 'See what is at zero' };
+      } else {
+        parts.push(checked
+          ? `No. StockChief checked ${checked} product${checked === 1 ? '' : 's'} against how fast they sell, and none is on track to run out.`
+          : 'No. Nothing is at zero and nothing is on track to run out.');
+      }
+      if (unjudged) {
+        parts.push(`${unjudged} product${unjudged === 1 ? ' has' : 's have'} not sold enough yet for StockChief to judge, so it is not guessing about ${unjudged === 1 ? 'that one' : 'those'}.`);
+      }
+      nothingAnswer = parts.join(' ');
+    }
+
     return {
       rows,
       columns: ['product', 'runsOut', 'inDays', 'alreadyCovered', 'confidence'],
-      handoff: exposed.length ? { href: '/needs-you', label: 'Open Needs you' } : null,
+      handoff: exposed.length ? { href: '/needs-you', label: 'Open Needs you' } : nothingHandoff,
       answer: !rows.length
-        ? 'Nothing StockChief can measure a sales rate for is heading for zero inside the period it can see.'
+        ? nothingAnswer
         : exposed.length
           ? `${exposed[0].displayName} is the nearest problem. ${exposed[0].explanation}`
           : `${rows[0].product} runs low around ${rows[0].runsOut}, and an order already placed covers it.`,
@@ -230,7 +266,7 @@ const EXECUTORS = {
         ? `${rows.length} line${rows.length === 1 ? '' : 's'} need ordering. ${result.recommendations[0].explanation}`
         : blocked.length
           ? `${blocked.length} line${blocked.length === 1 ? '' : 's'} need ordering, but no supplier is linked yet. ${blocked[0].headline}.`
-          : 'Nothing needs ordering right now. Everything StockChief can measure is covered either by stock on hand or by an order already placed.',
+          : 'Nothing needs ordering right now. Every product StockChief has enough sales history for is covered, either by what is on the shelf or by an order already on its way.',
     };
   },
 
