@@ -867,7 +867,7 @@ function fromLateShipments(db, workspaceId) {
 }
 
 function fromPredictedTrouble(db, workspaceId) {
-  const rows = db.prepare(`SELECT r.*, i.name AS item_name, s.variant_label
+  const rows = db.prepare(`SELECT r.*, i.name AS item_name, s.variant_label, s.item_id AS item_id
     FROM planning_recommendations r
     LEFT JOIN skus s ON s.id = r.sku_id
     LEFT JOIN items i ON i.id = s.item_id
@@ -893,7 +893,8 @@ function fromPredictedTrouble(db, workspaceId) {
       recommendation: shape.recommendation(row, evidence),
       missing: shape.missing,
       actionLabel: shape.actionLabel,
-      href: row.sku_id ? `/inventory/skus/${row.sku_id}#planning` : '/purchasing',
+      // The product page is the registered destination; /inventory/skus/... never was.
+      href: row.item_id ? `/inventory/${row.item_id}#sku-${row.sku_id}` : '/purchasing',
       at: row.created_at,
       priority: shape.priority(row, evidence),
     };
