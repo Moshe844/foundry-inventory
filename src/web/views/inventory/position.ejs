@@ -76,6 +76,14 @@
     <% }) %>
   </div>
 
+  <% if (position.groups.length) { %>
+    <div class="rm-choices" style="margin-top:16px">
+      <a class="rm-btn" href="/inventory/table"><%- helpers.icon('inventory', { size: 15 }) %> Open the stock table</a>
+      <a class="rm-btn rm-btn--ghost" href="/inventory/new"><%- helpers.icon('plus', { size: 15 }) %> Add a product</a>
+      <a class="rm-btn rm-btn--ghost" href="/actions">Record stock activity</a>
+    </div>
+  <% } %>
+
   <% if (!position.groups.length) { %>
     <div class="rm-choices" style="margin-top:16px">
       <a class="rm-btn" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell StockChief what you sell</a>
@@ -89,8 +97,7 @@
 
 <p class="rm-disclose">
   <a href="/ask?about=<%= encodeURIComponent('my stock') %>">Ask about your stock</a>
-  <a href="/inventory/table">Full stock table — every code, version and location</a>
   <a href="/purchasing/orders">What is on order</a>
   <a href="/locations">Your locations</a>
-  <a href="/inventory/new">Add a product</a>
+  <a href="/inventory/table?archived=only">Archived products</a>
 </p>

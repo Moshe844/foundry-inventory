@@ -1,8 +1,8 @@
 <div class="page-head">
   <div class="titles">
     <% if (returnTo) { %><a class="back-link" href="<%= returnTo %>">← Back to <%= returnLabel %> message history</a><% } %>
-    <h1><%= sourceLabel ? `Products from ${sourceLabel}` : filters.archivedOnly ? 'Archived products' : 'Inventory' %></h1>
-    <div class="page-sub"><%= sourceLabel ? 'The exact original product records from this import, whether active or archived.' : filters.archivedOnly ? 'Products kept for history but not currently active.' : 'Everything you track, and how much of it you have.' %></div>
+    <h1><%= sourceLabel ? `Products from ${sourceLabel}` : filters.archivedOnly ? 'Archived products' : activeGroup ? activeGroup.name.replace(/^[0-9]+ /, '').replace(/^[a-z]/, function (c) { return c.toUpperCase(); }) : 'Inventory' %></h1>
+    <div class="page-sub"><%= sourceLabel ? 'The exact original product records from this import, whether active or archived.' : filters.archivedOnly ? 'Products kept for history but not currently active.' : activeGroup ? activeGroup.detail : 'Everything you track, and how much of it you have.' %></div>
   </div>
   <div class="page-actions">
       <%# Purchasing is how stock arrives, so it belongs to Inventory rather
@@ -12,6 +12,14 @@
     <a class="btn btn--primary" href="/inventory/new"><%- helpers.icon('plus', { size: 16 }) %> Add item</a>
   </div>
 </div>
+
+<% if (!sourceLabel && !filters.archivedOnly && stockGroups.length) { %>
+  <%# The same groups the stock room shows, as filters. A room group and a table filter are the same question asked in two places. %>
+  <div class="att-filters" role="navigation" aria-label="Stock groups">
+    <a class="chip <%= !activeGroup ? 'is-active' : '' %>" href="/inventory/table">All products</a>
+    <% stockGroups.forEach(function (g) { %><a class="chip <%= activeGroup && activeGroup.key === g.key ? 'is-active' : '' %>" href="/inventory/table?group=<%= g.key %>"><%= g.name %></a><% }) %>
+  </div>
+<% } %>
 
 <form class="filters" method="get" action="/inventory">
   <input class="input filter-search" type="search" name="q" value="<%= filters.q %>" placeholder="Search items, SKUs, serials, lots" aria-label="Search inventory">
@@ -33,6 +41,7 @@
     <option value="stock_asc" <%= filters.sort === 'stock_asc' ? 'selected' : '' %>>Least stock</option>
     <option value="newest" <%= filters.sort === 'newest' ? 'selected' : '' %>>Newest</option>
   </select>
+  <% if (activeGroup) { %><input type="hidden" name="group" value="<%= activeGroup.key %>"><% } %>
   <% if (filters.includeArchived) { %><input type="hidden" name="archived" value="<%= filters.archivedOnly ? 'only' : '1' %>"><% } %>
   <% if (fromConnection) { %><input type="hidden" name="fromConnection" value="<%= fromConnection %>"><% } %>
   <% if (fromMessage) { %><input type="hidden" name="fromMessage" value="<%= fromMessage %>"><% } %>
@@ -47,7 +56,10 @@
   <% if (items.length === 0) { %>
     <div class="empty">
       <div class="icon-wrap"><%- helpers.icon('empty', { size: 22 }) %></div>
-      <% if (filters.q || filters.trackingMode || filters.locationId) { %>
+      <% if (activeGroup && !filters.q && !filters.trackingMode && !filters.locationId) { %>
+        <h3>Nothing is <%= activeGroup.name.replace(/^[0-9]+ /, '') %> right now</h3>
+        <p>Every product StockChief has judged is in another group. <a href="/inventory/table">See all products</a> or <a href="/inventory">go back to the stock room</a>.</p>
+      <% } else if (filters.q || filters.trackingMode || filters.locationId) { %>
         <h3>Nothing matches those filters</h3>
         <p>Try a different search term, or clear the filters to see everything you track.</p>
         <a class="btn" href="/inventory">Clear filters</a>
@@ -83,9 +95,9 @@
         %>
         <thead>
           <tr>
-            <th>Product</th>
+            <th><a class="sort <%= filters.sort === 'name' ? 'is-asc' : '' %>" href="/inventory<%= helpers.queryString(query, { sort: 'name', page: null }) %>" title="Sort by name">Product</a></th>
             <th>Status</th>
-            <th class="num"><%= filters.locationId ? 'At location' : 'On hand' %></th>
+            <th class="num"><a class="sort <%= filters.sort === 'stock_asc' ? 'is-asc' : filters.sort === 'stock_desc' ? 'is-desc' : '' %>" href="/inventory<%= helpers.queryString(query, { sort: filters.sort === 'stock_desc' ? 'stock_asc' : 'stock_desc', page: null }) %>" title="Sort by stock"><%= filters.locationId ? 'At location' : 'On hand' %></a></th>
             <th class="num">Committed</th>
             <th class="num">Available</th>
             <th class="num">On order</th>
@@ -101,7 +113,10 @@
                 stocked at all. Saying "Out of stock" in red to all three made
                 a correctly-imported proforma look like a catastrophe.
               */
+              var groupKey = activeGroup ? activeGroup.key : null;
               var status = !item.is_active ? { label: 'Archived', tone: 'muted' }
+                : groupKey === 'low' && item.on_hand > 0 ? { label: 'Running low', tone: 'warn' }
+                : groupKey === 'over' ? { label: 'Overstocked', tone: 'muted' }
                 : item.on_hand > 0 && item.available === 0 ? { label: 'All committed', tone: 'warn' }
                 : item.on_hand > 0 ? { label: 'In stock', tone: 'ok' }
                 : item.onOrder > 0 ? { label: 'On the way', tone: 'muted' }
@@ -143,7 +158,7 @@
     </div>
     <% if (page > 1 || hasMore) { %>
       <div class="card-foot" style="display:flex; gap:8px; align-items:center;">
-        <span class="muted">Page <%= page %></span>
+        <span class="muted"><%= items.length %> on this page · page <%= page %></span>
         <span class="spacer" style="margin-left:auto;"></span>
         <% if (page > 1) { %>
           <a class="btn btn--sm" href="/inventory<%= helpers.queryString(query, { page: page - 1 }) %>">Previous</a>

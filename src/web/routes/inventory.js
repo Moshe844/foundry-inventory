@@ -153,6 +153,22 @@ async function renderTable(req, res) {
         if (sourceItemIds.length) sourceLabel = document.source_name;
       }
     }
+    /*
+     * The stock room links here as ?group=low and friends. The group is the
+     * same one the room computed, so the table shows exactly the products the
+     * room was talking about, and says which group it is showing.
+     */
+    const groupKey = trimOrNull(req.query.group) || '';
+    let stockGroups = [];
+    let activeGroup = null;
+    if (!sourceLabel) {
+      try {
+        const position = require('../stock-view').build(req.db, req.ctx.workspaceId);
+        stockGroups = position.tooLarge ? [] : position.groups;
+        activeGroup = stockGroups.find((g) => g.key === groupKey) || null;
+      } catch { stockGroups = []; }
+    }
+    const groupItemIds = activeGroup ? (activeGroup.itemIds.length ? activeGroup.itemIds : ['__none__']) : [];
     const filters = {
       q: trimOrNull(req.query.q) || '',
       trackingMode: trimOrNull(req.query.tracking) || '',
@@ -160,7 +176,8 @@ async function renderTable(req, res) {
       sort: trimOrNull(req.query.sort) || 'name',
       includeArchived: Boolean(sourceLabel) || req.query.archived === '1' || req.query.archived === 'only',
       archivedOnly: req.query.archived === 'only',
-      itemIds: sourceItemIds,
+      itemIds: sourceItemIds.length ? sourceItemIds : groupItemIds,
+      group: groupKey,
       limit,
       offset: (page - 1) * limit,
     };
@@ -242,6 +259,9 @@ async function renderTable(req, res) {
       fromMessage,
       sourceDocument: sourceLabel ? sourceDocument : null,
       sourceLabel,
+      stockGroups,
+      activeGroup,
+      query: Object.assign({}, req.query),
     });
   }
 }

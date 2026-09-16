@@ -102,11 +102,13 @@ function build(db, workspaceId, { now = Date.now() } = {}) {
     WHERE so.workspace_id = ? AND so.status IN ('CONFIRMED','BACKORDERED','PARTIALLY_FULFILLED')`)
     .get(workspaceId).n;
 
+  const ids = (list) => Array.from(new Set(list.map((sku) => sku.itemId).filter(Boolean)));
+
   const groups = [];
 
   if (low.length) {
     groups.push({
-      key: 'low', icon: 'alert', tone: 'hot', count: low.length,
+      key: 'low', icon: 'alert', itemIds: ids(low), tone: 'hot', count: low.length,
       name: `${low.length} running low`,
       detail: orderedAlready
         ? `${low.slice(0, 2).map((s) => s.displayName).join(', ')}${low.length > 2 ? ' and others' : ''} — I have ${plural(orderedAlready, 'of them on order', 'of them on order')}${stillOpen ? `, ${stillOpen} still waiting on a decision` : ''}`
@@ -117,27 +119,27 @@ function build(db, workspaceId, { now = Date.now() } = {}) {
 
   if (arriving.length) {
     groups.push({
-      key: 'arriving', icon: 'arrive', count: arriving.length,
+      key: 'arriving', icon: 'arrive', itemIds: ids(arriving), count: arriving.length,
       name: `${arriving.length} arriving`,
       detail: nextArrivals.length
         ? `${plural(incomingUnits, 'unit', 'units')} — next from ${nextArrivals[0].supplier} on ${nextArrivals[0].expected_date}`
         : `${plural(incomingUnits, 'unit', 'units')} on order, and nobody has given a date`,
-      href: '/purchasing/orders',
+      href: '/inventory/table?group=arriving',
     });
   }
 
   if (committed.length) {
     groups.push({
-      key: 'committed', icon: 'lot', count: committed.length,
+      key: 'committed', icon: 'lot', itemIds: ids(committed), count: committed.length,
       name: `${committed.length} committed`,
       detail: `${plural(committedUnits, 'unit is', 'units are')} held for ${plural(openOrders, 'customer order', 'customer orders')}, and not available to anybody else`,
-      href: '/orders',
+      href: '/inventory/table?group=committed',
     });
   }
 
   if (over.length) {
     groups.push({
-      key: 'over', icon: 'layers', count: over.length,
+      key: 'over', icon: 'layers', itemIds: ids(over), count: over.length,
       name: `${over.length} overstocked`,
       detail: `${over[0].displayName} has ${Math.round(over[0].estimated.daysOfStockRemaining)} days of cover — worth a decision, not urgent`,
       href: '/inventory/table?group=over',
@@ -146,7 +148,7 @@ function build(db, workspaceId, { now = Date.now() } = {}) {
 
   if (healthy.length) {
     groups.push({
-      key: 'healthy', icon: 'check', tone: 'ok', count: healthy.length,
+      key: 'healthy', icon: 'check', itemIds: ids(healthy), tone: 'ok', count: healthy.length,
       name: `${healthy.length} healthy`,
       detail: 'Covered past their lead times. Nothing to do.',
       href: '/inventory/table?group=healthy',
@@ -155,7 +157,7 @@ function build(db, workspaceId, { now = Date.now() } = {}) {
 
   if (unknown.length) {
     groups.push({
-      key: 'unknown', icon: 'question', count: unknown.length,
+      key: 'unknown', icon: 'question', itemIds: ids(unknown), count: unknown.length,
       name: `${unknown.length} I can't judge yet`,
       detail: 'No outbound history, so there is nothing to work demand out from. I will not guess it.',
       href: '/inventory/table?group=unknown',
