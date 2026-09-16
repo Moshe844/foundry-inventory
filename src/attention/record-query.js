@@ -76,7 +76,10 @@ const REGISTRY = {
  },
  movements: {
   description: 'One immutable stock-ledger movement per row. quantity_delta is signed, operation describes the recorded event. Filter occurred_at explicitly for date windows.',
-  href: '/movements',
+  // The stock ledger has no page of its own; its records are inventory's, and
+  // an address the product brain does not know is a dataset no member can
+  // read. '/movements' hid this dataset from every planner call.
+  href: '/inventory',
   sql: `SELECT m.id,i.name product,s.code sku,l.name location,m.operation,m.quantity_delta,m.occurred_at
    FROM movements m JOIN items i ON i.id=m.item_id AND i.workspace_id=@w
    JOIN skus s ON s.id=m.sku_id AND s.workspace_id=@w
@@ -90,7 +93,7 @@ const REGISTRY = {
   text: ['location','kind','barcode','created_at'], number: ['active'], defaults: ['location','kind','active'],
  },
  customers: {
-  description: 'Recorded customers; record_state distinguishes ACTIVE, PROVISIONAL and ARCHIVED.', href: '/customers',
+  description: 'Recorded customers; record_state distinguishes ACTIVE, PROVISIONAL and ARCHIVED.', href: '/sales/customers',
   sql: 'SELECT id,name customer,company,email,phone,record_state,created_at FROM customers WHERE workspace_id=@w',
   text: ['customer','company','email','phone','record_state','created_at'], number: [], defaults: ['customer','company','record_state'],
  },
@@ -138,13 +141,17 @@ function promptCatalogue(catalog) {
 function execute(db, workspaceId, plan, options={}) {
  const catalog = options.catalog || catalogue(db,workspaceId,options.membership);
  const d = catalog[plan.dataset];
- const fail = () => {throw new ValidationError('That lookup could not be verified safely. Please clarify which records and measure you want.');};
+ // Every refusal here used to be the same sentence, so "Find customer John
+ // Smith" read as "could not be verified safely" and nobody could tell that
+ // the planner had asked for a field the customers dataset does not have.
+ // The reason is said where it is known.
+ const fail = (reason) => {throw new ValidationError(reason || 'That lookup could not be verified safely. Please clarify which records and measure you want.');};
  if (!d || !Array.isArray(plan.filters) || plan.filters.length>12 || !Array.isArray(plan.fields) || plan.fields.length>12 || !Array.isArray(plan.groupBy) || plan.groupBy.length>3) fail();
- if (options.membership && !destinations.contract(d.href,options.membership).allowed) fail();
+ if (options.membership && !destinations.contract(d.href,options.membership).allowed) fail(`Your role does not include viewing ${plan.dataset.replace(/_/g,' ')}. Ask an inventory owner if you need that access.`);
  const params={w:workspaceId}; let paramIndex=0;
  function bind(value){const key=`p${paramIndex++}`;params[key]=value;return `@${key}`;}
  function field(name){
-  if (!d.fields.includes(name)) fail();
+  if (!d.fields.includes(name)) fail(`I tried to read a detail called “${String(name).slice(0,60)}” and ${plan.dataset.replace(/_/g,' ')} records do not have one. What I can read about them: ${d.fields.filter(f=>!f.startsWith('attribute:')).join(', ')}. Ask again naming one of those.`);
   if (!name.startsWith('attribute:')) return `r."${name}"`;
   const key=bind(name.slice(10));
   // Exact arbitrary owner-supplied keys, parameterized rather than interpolated.
@@ -236,6 +243,9 @@ function execute(db, workspaceId, plan, options={}) {
   ? `${display(rows[0].value)} ${noun} match your question.`
   : `${metricText(rows[0],0)}. Based on ${total.toLocaleString('en-US')} matching ${noun}.`;
  else if(group)answer=`By ${plan.groupBy.map(f=>f.replace(/_/g,' ')).join(' / ')}:\n${rows.map((r,i)=>`${plan.groupBy.map(f=>r[f]??'Not recorded').join(' / ')} — ${metricText(r,i)} (${r.matching_records} matching ${noun})`).join('\n')}${groupCount>limit?`\nShowing the first ${limit} of ${groupCount} groups.`:''}`;
+ // No match is said as a no-match, with what was looked for: "0 matching
+ // customers" tells nobody whether John Smith is absent or misspelt.
+ else if(!total)answer=`No ${noun} on record ${plan.filters.length?`with ${plan.filters.map(f=>`${f.field.replace(/_/g,' ').replace(/^attribute:/,'')} ${{eq:'=',ne:'≠',lt:'<',lte:'≤',gt:'>',gte:'≥',contains:'containing',is_missing:'missing',is_present:'present'}[f.operator]||f.operator}${f.value===null||f.value===undefined?'':` “${f.value}”`}`).join(plan.filterMode==='any'?' or ':' and ')}`:'at all'}. That is a search result, not a failure — check the spelling, or try part of the name.`;
  else answer=`${total} matching ${noun}.${total?` ${rows.map(r=>`${r[columns[0]]??'Not recorded'}${columns.length>1?` (${columns.slice(1).map(c=>`${c.replace(/_/g,' ')}: ${r[c]??'not recorded'}`).join(', ')})`:''}`).join('; ')}.`:''}${total>limit?` Showing the first ${limit}; the total includes all matches.`:''}`;
  return {plan:{intent:'record_query',...plan},answer,rows,columns,rowCount:rows.length,totalMatches:total,supported:true,isAction:false,answerMode:'verified',handoff:null};
 }

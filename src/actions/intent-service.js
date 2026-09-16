@@ -15,7 +15,7 @@
  * pick.
  */
 
-const { createProviderForTier } = require('../ai/provider');
+const { createProviderForTier, ProviderError, ProviderOutputError } = require('../ai/provider');
 const config = require('../config');
 const removals = require('./removals');
 const { validate } = require('../foundry/validator');
@@ -658,6 +658,76 @@ function deterministicOutboundMessage(instruction) {
   };
 }
 
+/*
+ * The separate changes a person listed.
+ *
+ * "Please do all of the following: 1) move … 2) move … 21) issue …" is
+ * twenty-one changes, and the number of them is knowable from the sentence
+ * alone: a numbered marker, a semicolon or a new line starts each one. That
+ * count is what the reader's answer is checked against, so an answer with one
+ * line for a twenty-one-line request is caught here rather than approved as
+ * a complete plan.
+ */
+function enumeratedClauses(instruction) {
+  const clean = String(instruction || '').replace(/\r/g, '').trim();
+  const body = clean.replace(/^\s*(?:please\s+)?(?:do|make|handle|process)\s+(?:all\s+(?:of\s+)?)?(?:the\s+)?following\s*[:\-–—]?\s*/i, '');
+  const numbered = body.split(/(?:^|\s|;)\s*(?:\(?\d{1,2}[).:\]]|\d{1,2}\s*[-–—])\s+(?=[A-Za-z])/).map((s) => s.trim()).filter(Boolean);
+  if (numbered.length > 1) return numbered.map((s) => s.replace(/[;.,]\s*$/, '').trim());
+  const separated = body.split(/\s*(?:;|\n)+\s*/).map((s) => s.trim()).filter(Boolean);
+  return separated.length ? separated.map((s) => s.replace(/[;.,]\s*$/, '').trim()) : [clean];
+}
+
+/*
+ * One movement, as most people write it.
+ *
+ * "move 2 Copper Elbow 1/2 in. from Main Warehouse to Downtown Store" and
+ * "issue 1 Solder Wire 500g from Downtown Store as sold" name a quantity,
+ * a product, and the places, in that order. Every word of the result is
+ * copied from the sentence: the product must be one this inventory has and
+ * the places must be its own, or the clause is not read here at all.
+ */
+const ISSUE_REASONS = { sold: 'sold', sale: 'sold', delivered: 'sold', damaged: 'damaged', damage: 'damaged', scrapped: 'damaged', scrap: 'damaged',
+  used: 'used', consumed: 'used', 'used in work': 'used', returned: 'returned', 'returned to supplier': 'returned' };
+function movementClause(clause, context = {}) {
+  const text = String(clause || '').trim().replace(/[.]+$/, '');
+  const transfer = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+from\s+(?:the\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s*$/i.exec(text);
+  const issue = /^(?:please\s+)?(?:issue|take|remove|book\s+out)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:from|out\s+of|at)\s+(?:the\s+)?(.+?)(?:\s+as\s+(.+?))?\s*$/i.exec(text);
+  const match = transfer || issue;
+  if (!match) return null;
+  const item = namedMatch(match[2].trim(), context.itemNames);
+  const sourceLocation = namedMatch(match[3].trim(), context.locationNames);
+  if (!item || !sourceLocation || sourceLocation.toLowerCase() !== match[3].trim().toLowerCase().replace(/^the\s+/, '')) return null;
+  const variant = removeNamed(match[2].trim(), item);
+  if (transfer) {
+    const destinationLocation = namedMatch(match[4].trim(), context.locationNames);
+    if (!destinationLocation || destinationLocation.toLowerCase() !== match[4].trim().toLowerCase().replace(/^the\s+/, '')) return null;
+    if (destinationLocation === sourceLocation) return null;
+    return normaliseLine({ actionType: 'transfer', item, variant, sourceText: text, sourceLocation, destinationLocation,
+      quantity: Number(match[1]), adjustmentTarget: -1, reasonCode: '' });
+  }
+  const reasonWords = String(match[4] || '').trim().toLowerCase();
+  if (reasonWords && !ISSUE_REASONS[reasonWords]) return null;
+  return normaliseLine({ actionType: 'issue', item, variant, sourceText: text, sourceLocation,
+    quantity: Number(match[1]), adjustmentTarget: -1, reasonCode: reasonWords ? ISSUE_REASONS[reasonWords] : '' });
+}
+
+/*
+ * A list of movements, read without a model when every clause is one.
+ *
+ * A twenty-one-line transfer list took a model two minutes and came back as
+ * one line. Where each clause is the plain movement grammar above, the whole
+ * list is read here in the same instant, one line per clause, and nothing
+ * is left for a model to lose. A single clause that fails the grammar sends
+ * the entire list to the model instead — this never reads half a list.
+ */
+function deterministicMovementList(instruction, context = {}) {
+  const clauses = enumeratedClauses(instruction);
+  if (!clauses.length || clauses.length > MAX_LINES) return null;
+  const lines = clauses.map((clause) => movementClause(clause, context));
+  if (!lines.every(Boolean)) return null;
+  return { lines, clarifyingQuestion: '', unsupportedReason: '' };
+}
+
 /**
  * Common, fully explicit stock instructions do not need a model round trip.
  * Every product and location still comes from the workspace context and is
@@ -670,6 +740,8 @@ function deterministicInstruction(instruction, context = {}) {
   if (outboundMessage) return outboundMessage;
   const catalogue = deterministicCatalogueList(clean);
   if (catalogue) return catalogue;
+  const movements = deterministicMovementList(clean, context);
+  if (movements) return movements;
   const kitDefinition = /^(?:make|configure|define|set\s+up)\s+(.+?)\s+(?:as\s+)?(?:a\s+)?(?:kit|bundle|bom|bill\s+of\s+materials)\s+(?:containing|contains|with|made\s+(?:up\s+)?of)\s+(.+?)\s*$/i.exec(clean);
   if (kitDefinition) {
     const componentClauses = kitDefinition[2].split(/\s*[,;]\s*|\s+and\s+/i)
@@ -723,7 +795,7 @@ function deterministicInstruction(instruction, context = {}) {
     quantity: -1, adjustmentTarget: -1, reasonCode: '',
   })], clarifyingQuestion: '', unsupportedReason: '' };
 
-  const purchase = /^(?:order|buy|purchase)\s+(\d+)\s+(?:more\s+)?(.+)$/i.exec(clean);
+  const purchase = /^(?:order|buy|purchase|(?:create|raise|write|draft|make|prepare)\s+(?:a\s+|an\s+)?(?:po|purchase\s+order)\s+for)\s+(\d+)\s+(?:more\s+)?(.+?)\.?$/i.exec(clean);
   if (purchase) {
     let productWords = purchase[2].trim();
     let supplier = '';
@@ -732,20 +804,62 @@ function deterministicInstruction(instruction, context = {}) {
       productWords = from[1].trim();
       supplier = from[2].trim();
     }
-    let purchaseUnit = '';
-    const packed = /^([^\s]+)\s+of\s+(.+)$/i.exec(productWords);
-    if (packed) {
-      purchaseUnit = packed[1].trim();
-      productWords = packed[2].trim();
-    }
-    const item = namedMatch(productWords, context.itemNames);
-    if (item) return { lines: [normaliseLine({
-      actionType: 'purchase', item, variant: removeNamed(productWords, item),
-      sourceText: clean, quantity: Number(purchase[1]), supplier, purchaseUnit,
-      adjustmentTarget: -1, reasonCode: '',
-    })], clarifyingQuestion: '', unsupportedReason: '' };
+    /*
+     * "12 Copper Elbow and 6 Trail Ration Pack" is two products. Each one
+     * becomes its own line so the purchase step can see there are two and
+     * say so, instead of a model reading one and the other vanishing.
+     */
+    const wanted = [`${purchase[1]} ${productWords}`, ...productWords.split(/\s*(?:,|;|\band\b)\s*(?=\d+\s)/i).slice(1)]
+      .map((clause, index) => (index === 0 ? clause.replace(/\s*(?:,|;|\band\b)\s*\d+\s.*$/i, '') : clause).trim());
+    const lines = wanted.map((clause) => {
+      const counted = /^(\d+)\s+(?:more\s+)?(.+)$/i.exec(clause);
+      if (!counted) return null;
+      let words = counted[2].trim();
+      let purchaseUnit = '';
+      const packed = /^([^\s]+)\s+of\s+(.+)$/i.exec(words);
+      if (packed) {
+        purchaseUnit = packed[1].trim();
+        words = packed[2].trim();
+      }
+      const item = namedMatch(words, context.itemNames);
+      if (!item) return null;
+      return normaliseLine({
+        actionType: 'purchase', item, variant: removeNamed(words, item),
+        sourceText: clean, quantity: Number(counted[1]), supplier, purchaseUnit,
+        adjustmentTarget: -1, reasonCode: '',
+      });
+    });
+    if (lines.length && lines.every(Boolean)) return { lines, clarifyingQuestion: '', unsupportedReason: '' };
   }
   return null;
+}
+
+const READ_MAX_TOKENS = Number(process.env.FOUNDRY_AI_READ_MAX_TOKENS || 24000);
+const READ_TIMEOUT_MS = Number(process.env.FOUNDRY_AI_READ_TIMEOUT_MS || 75000);
+
+/*
+ * What the person is told when the reader fails.
+ *
+ * "The model ran out of room before finishing its answer" and "Provider
+ * request aborted" are true and useless. Each failure becomes one sentence
+ * that says what happened, that nothing changed, and what to do next. A
+ * refusal keeps its own message; anything else about the provider is
+ * reported as the provider being unreachable.
+ */
+function plainReadingError(err, clock) {
+  const timedOut = clock && clock.signal.aborted;
+  if (timedOut) {
+    return new ValidationError('StockChief took too long to read that and stopped. Nothing changed. Your message is still in the box — try again, or send it in smaller pieces.');
+  }
+  if (err && err.code === 'ai_refusal') return err;
+  if (err && err.code === 'ai_not_configured') return err;
+  if (err instanceof ProviderOutputError) {
+    return new ValidationError('StockChief could not read that instruction all the way through. Nothing changed. Try a shorter sentence, or put each change on its own line.');
+  }
+  if (err instanceof ProviderError) {
+    return new ValidationError('StockChief could not reach its reading service just now. Nothing changed. Please try again in a moment.');
+  }
+  return err;
 }
 
 /** Turns an instruction into a validated intent. Never returns free-form SQL. */
@@ -764,15 +878,31 @@ async function readInstruction(instruction, options = {}) {
     throw new ValidationError('StockChief needs an AI provider configured before it can read instructions.');
   }
 
-  const provider = options.provider || createProviderForTier('standard');
+  /*
+   * A long list needs room to be written out: forty lines of structured
+   * output plus the reasoning that precedes it is more than the general
+   * budget, and running out of room came back as a two-minute wait ending in
+   * "the model ran out of room". The reader gets its own budget, and its
+   * own clock: past the limit it stops, says so plainly, and nothing changes.
+   */
+  const provider = options.provider || createProviderForTier('standard', { maxTokens: READ_MAX_TOKENS });
+  const clock = options.signal ? null : new AbortController();
+  const timer = clock ? setTimeout(() => clock.abort(new Error('read_timeout')), options.readTimeoutMs || READ_TIMEOUT_MS) : null;
   const request = {
     system: SYSTEM,
     prompt: intentPrompt(clean, options.context || {}),
     schema: INTENT_SCHEMA,
     schemaName: 'inventory_action_intent',
-    signal: options.signal,
+    signal: options.signal || clock.signal,
   };
-  const response = await provider.complete(request);
+  let response;
+  try {
+    response = await provider.complete(request);
+  } catch (err) {
+    throw plainReadingError(err, clock);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 
   const result = validate(toWireSchema(ACCEPTED_INTENT_SCHEMA), response.data, { key: 'action-intent-wire' });
   if (!result.ok) {
@@ -783,21 +913,46 @@ async function readInstruction(instruction, options = {}) {
     };
   }
   const intent = normalise(result.data);
-  if (!needsNumberedClauseRetry(clean, intent)) return intent;
-  const expanded = expandSimpleNumberedTransfer(clean, intent);
+  const expanded = needsNumberedClauseRetry(clean, intent) ? expandSimpleNumberedTransfer(clean, intent) : null;
   if (expanded) return expanded;
-  return {
+  /*
+   * Every listed change, or none.
+   *
+   * The reader is not trusted to have read the whole list: the number of
+   * changes the sentence lists is counted here and compared with the number
+   * of lines that came back. Fewer lines than clauses used to become a
+   * perfectly correct-looking proposal for the first change, approved as if
+   * it were all of them.
+   */
+  const clauses = enumeratedClauses(clean);
+  const readsAsChanges = intent.lines.length > 0 && !intent.lines.some((line) => ['clarify', 'unsupported'].includes(line.actionType));
+  if (readsAsChanges && clauses.length > 1 && intent.lines.length < clauses.length) {
+    const read = intent.lines.map((line) => line.sourceText).filter(Boolean);
+    const unread = clauses.filter((clause) => !read.some((text) => clause.toLowerCase().includes(text.toLowerCase()) || text.toLowerCase().includes(clause.toLowerCase())));
+    const missing = unread.length && unread.length < clauses.length ? ` It did not read: ${unread.slice(0, 5).map((c) => `“${c.slice(0, 80)}”`).join(', ')}${unread.length > 5 ? ` and ${unread.length - 5} more` : ''}.` : '';
+    return {
+      lines: [],
+      clarifyingQuestion:
+        `That lists ${clauses.length} changes and StockChief could only read ${intent.lines.length} of them, so it prepared none — it will not carry out part of a list.${missing} `
+        + 'Write each one as “move 2 <product> from <place> to <place>” on its own line, or send them a few at a time.',
+      unsupportedReason: '',
+    };
+  }
+  if (needsNumberedClauseRetry(clean, intent)) return {
     lines: [],
     clarifyingQuestion:
-      'StockChief could not safely separate every numbered change in that instruction. Please put each change on its own line.',
+      'That names more than one thing to do and StockChief could only read one of them, so it prepared none. Put each change on its own line and send them again.',
     unsupportedReason: '',
   };
+  return intent;
 }
 
 module.exports = {
   INTENT_SCHEMA,
   LINE_SCHEMA,
   MAX_LINES,
+  enumeratedClauses,
+  deterministicMovementList,
   ACTION_TYPES,
   SYSTEM,
   MAX_INSTRUCTION,

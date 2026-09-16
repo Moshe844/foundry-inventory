@@ -10,6 +10,12 @@
    * of sentence, and where the sentence goes is StockChief's problem rather than
    * the owner's.
    *
+   * It reads as a conversation because it is one. Every turn this session is
+   * on the page — what was asked, what came back — with the latest answer in
+   * full and the earlier ones as they were said. The page used to show one
+   * question and fold the one before it under a "Previous question" line, so
+   * a person three questions in could not see what they had asked.
+   *
    * This is also where StockChief is taught. A rule typed here comes back as a
    * card that can be read, changed, paused and revoked — and that card is the
    * settings record. There is no form: the sentence is the form.
@@ -17,6 +23,11 @@
   var recent = locals.recentRules || [];
   var pending = locals.pendingRules || [];
   var about = locals.about || '';
+  var transcript = locals.transcript || [];
+  var currentToken = locals.currentToken || '';
+  var earlier = transcript.filter(function (turn) { return turn.token !== currentToken; });
+  var showingCurrent = !!(result || error);
+  var started = earlier.length > 0 || showingCurrent;
   var askReturnHref = question ? '/ask?q=' + encodeURIComponent(question) : '/ask';
   /*
    * A cell, as a person would read it. Numbers get their thousands separators;
@@ -41,12 +52,18 @@
   }
 %>
 
-<div class="rm-line rm-chat">
-  <% if (locals.conversation) { %>
-    <details class="rm-disclose"><summary>Previous question</summary><p class="rm-prose"><%= conversation.question %></p></details>
+<div class="rm-chat">
+  <% if (started) { %>
+  <div class="rm-chat__bar">
+    <p class="rm-stamp">This conversation</p>
+      <form method="post" action="/ask/new" class="rm-chat__new">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button>
+      </form>
+  </div>
   <% } %>
 
-  <% if (!question && !result && !error) { %>
+  <% if (!started && !question) { %>
     <header class="rm-chat__intro">
       <span class="rm-chat__mark" aria-hidden="true"><%- helpers.icon('spark', { size: 18 }) %></span>
       <div>
@@ -63,18 +80,54 @@
     <p class="rm-stamp">About: <%= about %></p>
   <% } %>
 
+  <%#
+    Earlier turns, as they were said. The sentence StockChief gave and where it
+    pointed are kept; the records it read are not re-fetched — an old answer is
+    a record of what was said, not a live figure.
+  %>
+  <% earlier.forEach(function (turn) { %>
+    <div class="rm-turn rm-turn--you rm-turn--past">
+      <p class="rm-turn__who">You</p>
+      <% if (turn.question.length > 400) { %>
+        <details class="rm-turn__said"><summary><%= turn.question.slice(0, 160) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= turn.question %></p></details>
+      <% } else { %><p class="rm-turn__said"><%= turn.question %></p><% } %>
+    </div>
+    <div class="rm-turn rm-turn--foundry rm-turn--past">
+      <p class="rm-turn__who">StockChief</p>
+      <div class="rm-said">
+        <% if (turn.said.length > 600) { %>
+          <details class="rm-said__text"><summary><%= turn.said.slice(0, 220) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= helpers.figures(turn.said) %></p></details>
+        <% } else { %><p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(turn.said) %></p><% } %>
+        <% if (turn.rowCount || turn.handoff || turn.isAction) { %>
+          <p class="rm-said__meta">
+            <% if (turn.rowCount) { %><span><%= helpers.qty(turn.rowCount) %> <%= helpers.plural(turn.rowCount, 'record') %> read</span><% } %>
+            <% if (turn.isAction) { %><span>Handed to the actions page</span><% } %>
+            <% if (turn.handoff) { %><a href="<%= turn.handoff.href %>"><%= turn.handoff.label %> →</a><% } %>
+          </p>
+        <% } %>
+      </div>
+    </div>
+  <% }) %>
+
   <% if (error) { %>
+    <div class="rm-turn rm-turn--you">
+      <p class="rm-turn__who">You</p>
+      <p class="rm-turn__said"><%= question %></p>
+    </div>
     <div class="rm-turn rm-turn--foundry">
       <p class="rm-turn__who">StockChief</p>
-      <p class="rm-turn__said"><%= error %></p>
+      <div class="rm-answer rm-said--problem">
+        <p class="rm-said__text"><%= error %></p>
+        <p class="rm-said__meta"><span>Nothing changed. Your message is still in the box below.</span></p>
+      </div>
     </div>
   <% } %>
 
   <% if (result) { %>
     <div class="rm-turn rm-turn--you">
       <p class="rm-turn__who">You</p>
-      <% if (result.question.length > 600) { %>
-        <details class="rm-turn__said"><summary>Your full message</summary><p style="white-space:pre-line"><%= result.question %></p></details>
+      <% if (result.question.length > 400) { %>
+        <details class="rm-turn__said"><summary><%= result.question.slice(0, 160) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= result.question %></p></details>
       <% } else { %><p class="rm-turn__said"><%= result.question %></p><% } %>
     </div>
 
@@ -93,100 +146,106 @@
          */
         var said = (result.spoken && !result.progressiveDisclosure) ? result.spoken : result.answer;
         var record = said === result.answer ? null : result.answer;
+        var sections = (result.sections || []).filter(function (s) { return s.rows.length || s.handoff; });
+        var answerIsSummary = result.columns && result.columns[0] === 'measure' && result.columns[1] === 'value';
+        var hasRows = result.rows && result.rows.length;
       %>
-      <p class="rm-turn__said" style="white-space:pre-line"><%= helpers.figures(said) %></p>
-      <% if (result.needsClarification) { %><p class="rm-stamp">Reply below to continue this question. Nothing has changed.</p><% } %>
-      <% (result.sections || []).forEach(function(section) { %>
-        <% if (section.rows.length) { %>
+      <div class="rm-said">
+        <p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(said) %></p>
+        <% if (result.needsClarification) { %><p class="rm-said__meta"><span>Reply below to continue this question. Nothing has changed.</span></p><% } %>
+
+        <% if (result.handoff) { %>
+          <p class="rm-chat-actions"><a class="rm-btn" href="<%= result.handoff.href %>"><%= result.handoff.label %> <span aria-hidden="true">→</span></a></p>
+        <% } %>
+
+        <% if (result.isAction) { %>
+          <%# Saying "StockChief cannot move stock" would be false — it can. So the
+              request is handed straight over rather than explained away. %>
+          <form method="post" action="<%= result.semanticPlan ? '/foundry/tell' : '/actions/ask' %>" class="rm-chat-actions" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="instruction" value="<%= result.question %>">
+            <% if (result.semanticPlan) { %><input type="hidden" name="message" value="<%= result.question %>"><input type="hidden" name="prepareOnly" value="1"><% } %>
+            <button class="rm-btn" type="submit">Prepare for review <span aria-hidden="true">→</span></button>
+          </form>
+          <p class="rm-said__meta"><span>Nothing has changed. You will see the exact change before it happens.</span></p>
+        <% } %>
+
+        <% if (!result.supported && !result.isAction && !result.needsClarification) { %>
+          <p class="rm-said__meta"><span>Things I can answer</span></p>
+          <div class="rm-suggest">
+            <% examples.slice(0, 4).forEach(function (example) { %>
+              <a href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
+            <% }) %>
+          </div>
+        <% } %>
+
+        <% sections.forEach(function(section) { %>
+          <% if (section.rows.length) { %>
+            <details class="rm-chat-evidence">
+              <summary>
+                <span><%- helpers.icon('layers', { size: 15 }) %> <%= section.question %></span>
+                <small><%= helpers.qty(section.totalMatches === undefined ? section.rowCount : section.totalMatches) %> <%= helpers.plural(section.totalMatches === undefined ? section.rowCount : section.totalMatches, 'match', 'matches') %></small>
+              </summary>
+              <div class="rm-chat-evidence__rows">
+                <% section.rows.slice(0,12).forEach(function(row) { %>
+                  <div class="rm-chat-evidence__row"><span><%= row[section.columns[0]] === null ? 'Not recorded' : row[section.columns[0]] %></span>
+                    <small><%= section.columns.slice(1).map(function(c){return cellText(c,row[c]);}).filter(Boolean).join(' · ') %></small></div>
+                <% }); %>
+              </div>
+            </details>
+          <% } %>
+          <% if (section.handoff) { %><p class="rm-said__meta"><a href="<%= evidenceHref(section.handoff.href, section.handoff.label) %>"><%= section.handoff.label %> →</a></p><% } %>
+        <% }); %>
+
+        <% if (hasRows) { %>
           <details class="rm-chat-evidence">
-            <summary>Records for: <%= section.question %> · <%= section.totalMatches === undefined ? section.rowCount : section.totalMatches %> matches</summary>
+            <summary>
+              <span><%- helpers.icon('layers', { size: 15 }) %> <%= answerIsSummary ? 'Answer details' : 'The records behind this' %></span>
+              <small>
+                <% if (result.rowCount > 12) { %>first <%= helpers.qty(12) %> of <%= helpers.qty(result.rowCount) %><% } else { %><%= helpers.qty(result.rows.length) %> <%= helpers.plural(result.rows.length, 'record') %><% } %>
+              </small>
+            </summary>
             <div class="rm-chat-evidence__rows">
-              <% section.rows.slice(0,12).forEach(function(row) { %>
-                <div class="rm-chat-evidence__row"><span><%= row[section.columns[0]] === null ? 'Not recorded' : row[section.columns[0]] %></span>
-                  <small><%= section.columns.slice(1).map(function(c){return cellText(c,row[c]);}).filter(Boolean).join(' · ') %></small></div>
-              <% }); %>
+              <% result.rows.slice(0, 12).forEach(function (row) { %>
+                <%
+                  var first = result.columns[0];
+                  var label = row[first] === null || row[first] === undefined ? '—' : row[first];
+                  var rest = result.columns.slice(1).map(function (column) {
+                    return cellText(column, row[column]);
+                  }).filter(Boolean).join(' · ');
+                  var linkHref = evidenceHref(row.href, label);
+                %>
+                <div class="rm-chat-evidence__row">
+                  <span><% if (linkHref) { %><a href="<%= linkHref %>"><%= label %></a><% } else { %><%= label %><% } %></span>
+                  <small><%= rest %></small>
+                </div>
+              <% }) %>
             </div>
           </details>
         <% } %>
-        <% if (section.handoff) { %><p><a class="rm-btn rm-btn--sm" href="<%= evidenceHref(section.handoff.href, section.handoff.label) %>"><%= section.handoff.label %></a></p><% } %>
-      <% }); %>
 
-      <% if (result.handoff) { %>
-        <p class="rm-chat-actions"><a class="rm-btn" href="<%= result.handoff.href %>"><%= result.handoff.label %> <span aria-hidden="true">→</span></a></p>
-      <% } %>
-
-      <% if (result.rows && result.rows.length) { %>
-        <% var answerIsSummary = result.columns && result.columns[0] === 'measure' && result.columns[1] === 'value'; %>
-        <details class="rm-chat-evidence">
-          <summary>
-            <span><%- helpers.icon('layers', { size: 15 }) %> <%= answerIsSummary ? 'Answer details' : 'Supporting records' %></span>
-            <small>
-              <%= helpers.qty(Math.min(result.rows.length, 12)) %> sample <%= helpers.plural(Math.min(result.rows.length, 12), 'record') %>
-            </small>
-          </summary>
-          <div class="rm-chat-evidence__rows">
-            <% result.rows.slice(0, 12).forEach(function (row) { %>
-              <%
-                var first = result.columns[0];
-                var label = row[first] === null || row[first] === undefined ? '—' : row[first];
-                var rest = result.columns.slice(1).map(function (column) {
-                  return cellText(column, row[column]);
-                }).filter(Boolean).join(' · ');
-                var linkHref = evidenceHref(row.href, label);
-              %>
-              <div class="rm-chat-evidence__row">
-                <span><% if (linkHref) { %><a href="<%= linkHref %>"><%= label %></a><% } else { %><%= label %><% } %></span>
-                <small><%= rest %></small>
-              </div>
-            <% }) %>
-          </div>
-        </details>
-      <% } %>
-
-      <% if (result.isAction) { %>
-        <%# Saying "StockChief cannot move stock" would be false — it can. So the
-            request is handed straight over rather than explained away. %>
-        <form method="post" action="<%= result.semanticPlan ? '/foundry/tell' : '/actions/ask' %>" style="margin-top:18px" data-busy>
-          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <input type="hidden" name="instruction" value="<%= result.question %>">
-          <% if (result.semanticPlan) { %><input type="hidden" name="message" value="<%= result.question %>"><input type="hidden" name="prepareOnly" value="1"><% } %>
-          <button class="rm-btn" type="submit">Prepare for review</button>
-        </form>
-        <p class="rm-stamp" style="margin-top:10px">Nothing has changed. You will see the exact change before it happens.</p>
-      <% } %>
-
-      <% if (!result.supported && !result.isAction && !result.needsClarification) { %>
-        <p class="rm-stamp" style="margin-top:18px">Things I can answer</p>
-        <div class="rm-suggest">
-          <% examples.slice(0, 4).forEach(function (example) { %>
-            <a href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
-          <% }) %>
-        </div>
-      <% } %>
-
-      <% if (result.supported || result.isAction) { %>
-        <%#
-          The working, folded. This was a link dressed as a heading that toggled
-          a hidden paragraph by hand, so it sat on the page as a title with
-          nothing under it. A native disclosure says what it is, opens without
-          a script, and is where the statement of record now lives.
-        %>
-        <details class="rm-disclose rm-working rm-chat-reading">
-          <summary>How StockChief read this</summary>
-          <div class="rm-working__body">
-            <% if (record) { %>
-              <p class="rm-working__record"><%= helpers.figures(record) %></p>
-            <% } %>
-            <p class="rm-stamp">
-              Read as “<%= result.interpretation || result.plan.intent.replace(/_/g, ' ') %>”<%
-              %><% if (result.plan.entityQuery) { %> for “<%= result.plan.entityQuery %>”<% } %><%
-              %><% if (result.plan.locationQuery) { %> at “<%= result.plan.locationQuery %>”<% } %>
-              · <%= helpers.qty(result.rowCount) %> <%= helpers.plural(result.rowCount, 'row') %> from your records
-              · nothing changed — asking is not doing, and changes are approved on the actions page
-            </p>
-          </div>
-        </details>
-      <% } %>
+        <% if (result.supported || result.isAction) { %>
+          <%#
+            The working, folded. A native disclosure says what it is, opens
+            without a script, and is where the statement of record lives.
+          %>
+          <details class="rm-chat-reading">
+            <summary>How StockChief read this</summary>
+            <div class="rm-chat-reading__body">
+              <% if (record) { %>
+                <p class="rm-chat-reading__record"><%= helpers.figures(record) %></p>
+              <% } %>
+              <p>
+                Read as “<%= result.interpretation || result.plan.intent.replace(/_/g, ' ') %>”<%
+                %><% if (result.plan.entityQuery) { %> for “<%= result.plan.entityQuery %>”<% } %><%
+                %><% if (result.plan.locationQuery) { %> at “<%= result.plan.locationQuery %>”<% } %>.
+                <%= helpers.qty(result.rowCount) %> <%= helpers.plural(result.rowCount, 'row') %> read from your records.
+                Nothing changed — asking is not doing, and changes are approved on the actions page.
+              </p>
+            </div>
+          </details>
+        <% } %>
+      </div>
     </div>
   <% } %>
 
@@ -200,16 +259,18 @@
   <% pending.forEach(function (rule) { %>
     <div class="rm-turn rm-turn--foundry">
       <p class="rm-turn__who">StockChief</p>
-      <p class="rm-turn__said">I read that as a standing rule. Is this right?</p>
-      <div class="rm-rule">
-        <p class="rm-rule__k">Waiting for you · not in force yet</p>
-        <p class="rm-rule__t"><%= rule.summary || rule.statedAs %></p>
-        <p class="rm-rule__m">
-          <a href="/operating-instructions/<%= rule.id %>">Check it and turn it on</a>
-          <% if (rule.questions && rule.questions.length) { %>
-            <span class="rm-quiet">— <%= rule.questions[0] %></span>
-          <% } %>
-        </p>
+      <div class="rm-said">
+        <p class="rm-said__text">I read that as a standing rule. Is this right?</p>
+        <div class="rm-rule">
+          <p class="rm-rule__k">Waiting for you · not in force yet</p>
+          <p class="rm-rule__t"><%= rule.summary || rule.statedAs %></p>
+          <p class="rm-rule__m">
+            <a href="/operating-instructions/<%= rule.id %>">Check it and turn it on</a>
+            <% if (rule.questions && rule.questions.length) { %>
+              <span class="rm-quiet">— <%= rule.questions[0] %></span>
+            <% } %>
+          </p>
+        </div>
       </div>
     </div>
   <% }) %>
@@ -224,7 +285,7 @@
     <p class="rm-stamp" style="margin-top:14px;color:var(--copper)">
       StockChief needs its model connection before it can read a sentence. Everything on the desk works without one.
     </p>
-  <% } else if (!result) { %>
+  <% } else if (!started) { %>
     <div class="rm-suggest">
       <% examples.forEach(function (example) { %>
         <a href="/ask?q=<%= encodeURIComponent(example) %>"><%= example %></a>
@@ -233,7 +294,7 @@
   <% } %>
 
   <%# ------------------------------------------------- what has already been said %>
-  <% if (recent.length) { %>
+  <% if (recent.length && !started) { %>
     <p class="rm-stamp" style="margin-top:48px">Lately you told me</p>
     <div class="rm-told">
       <% recent.slice(0, 4).forEach(function (rule) { %>

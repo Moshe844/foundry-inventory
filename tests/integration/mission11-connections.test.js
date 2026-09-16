@@ -667,7 +667,7 @@ test('Ask StockChief answers connection health and last-event questions from con
   assert.equal(summary.plan.intent, 'connection_summary');
   assert.match(summary.answer, /1 connection/);
   const last = await queryPlanner.ask(env.db, env.workspace.workspaceId, 'What was the last event received from the POS?', {});
-  assert.equal(last.plan.intent, 'connection_last_event');
+  assert.equal(last.plan.intent, 'connection_last_event', last.answer);
   assert.match(last.answer, /latest-pos-event/);
   env.db.close();
 });
