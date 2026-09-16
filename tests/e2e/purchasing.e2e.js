@@ -300,7 +300,7 @@ test(
       // working detail, reached by the explicit action on that story.
       await Promise.all([
         page.waitForURL(`${BASE}${orderPath}/detail`),
-        page.getByRole('link', { name: 'See or edit details' }).click(),
+        page.getByRole('link', { name: 'Edit lines and prices' }).click(),
       ]);
       assert.match(await page.locator('body').innerText(), /OX-NV-08/);
     });

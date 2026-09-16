@@ -115,8 +115,8 @@ test('a real browser proves a staged migration before activating cutover', { tim
   assert.match(await page.locator('body').innerText(), /StockChief records prepared\s+4/i);
   await page.screenshot({ path:path.join(SHOTS, '01-staged-not-cut-over.png'), fullPage:true });
 
-  await page.getByRole('button',{ name:'Approve and switch' }).waitFor();
-  await clickAndLoad(page, 'Approve and switch');
+  await page.getByRole('button',{ name:'Approve and go live' }).waitFor();
+  await clickAndLoad(page, 'Approve and go live');
   const reconciled = await page.locator('body').innerText();
   assert.match(reconciled, /This inventory is live and verified/);
   assert.match(reconciled, /Open this inventory/);
@@ -177,7 +177,7 @@ test('a real browser reviews an unfamiliar mapping and proves a frozen live-sour
   migrations.validate(live,ctx,member,pkg.id);
   live.close();
   await page.goto(`${BASE}/onboarding/migrations/${pkg.id}`);
-  await clickAndLoad(page,'Approve and switch');
+  await clickAndLoad(page,'Approve and go live');
   assert.match(await page.locator('body').innerText(),/Frozen source checkpoint\s+event-401\s+event-401\s+matched/i);
   assert.match(await page.locator('body').innerText(),/This inventory is live and verified/);
   await page.screenshot({ path:path.join(SHOTS,'04-live-custom-source-active.png'),fullPage:true });
@@ -234,10 +234,10 @@ test('an owner starts and completes a migration entirely in the browser with the
   await page.screenshot({ path:path.join(SHOTS,'05-owner-upload-working.png'),fullPage:true });
   await destination;
   assert.match(await page.locator('body').innerText(),/open-purchase-orders\.csv · inventory-export\.csv · open-sales-orders\.csv|StockChief is preparing this inventory/);
-  await page.getByRole('button',{ name:'Approve and switch' }).waitFor({ timeout:30_000 });
+  await page.getByRole('button',{ name:'Approve and go live' }).waitFor({ timeout:30_000 });
   assert.match(await page.locator('body').innerText(),/Verification passed|source totals match/i);
   await page.screenshot({ path:path.join(SHOTS,'05-owner-upload-staged.png'),fullPage:true });
-  await clickAndLoad(page,'Approve and switch');
+  await clickAndLoad(page,'Approve and go live');
   assert.match(await page.locator('body').innerText(),/Purchase-order units/);
   assert.match(await page.locator('body').innerText(),/Sales-order units/);
   assert.match(await page.locator('body').innerText(),/This inventory is live and verified/);

@@ -1645,7 +1645,12 @@
   function initRailHeight() {
     const rail = document.querySelector('.rm-rail');
     if (!rail) return;
+    // Only where the rail is allowed to wrap. On wider screens its height is
+    // set *from* the variable, so feeding the measurement back would grow it
+    // by a border's width every frame.
+    const wraps = window.matchMedia('(max-width: 720px)');
     const apply = () => {
+      if (!wraps.matches) { document.documentElement.style.removeProperty('--rail-h'); return; }
       const h = Math.ceil(rail.getBoundingClientRect().height);
       if (h > 0) document.documentElement.style.setProperty('--rail-h', h + 'px');
     };
