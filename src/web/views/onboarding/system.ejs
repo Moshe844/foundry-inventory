@@ -44,14 +44,13 @@
   </section>
 <% } %>
 
-<p class="rm-stamp"><%- helpers.icon('layers', { size: 14 }) %> Connection options — working connectors, not placeholder logos</p>
+<p class="rm-stamp"><%- helpers.icon('layers', { size: 14 }) %> Pick the system you use</p>
 <div class="rm-grid2">
   <% providerCatalog.forEach(function (provider) { %>
     <article class="rm-provider">
       <div class="rm-provider__top">
         <span class="rm-provider__mark"><%= provider.mark %></span>
         <span class="rm-provider__n"><%= provider.name %></span>
-        <span class="rm-provider__s"><span class="rm-pillbadge is-ok">Available</span></span>
       </div>
       <p><%= provider.description %></p>
       <p class="quiet">Brings in: <%= provider.provides.join(', ') %>.</p>
@@ -116,15 +115,15 @@
 <div class="rm-note">
   <%- helpers.icon('shield', { size: 16 }) %>
   <span>
-    <strong>One source of inventory truth.</strong>
-    This inventory is currently <%= sourceOfTruth === 'FOUNDRY_NATIVE' ? 'owned by StockChief' : 'owned by an external system' %>.
-    Connecting a selling system brings its activity into StockChief's guarded engines — it does not start
+    <strong>Stock has one owner.</strong>
+    Right now that is <%= sourceOfTruth === 'FOUNDRY_NATIVE' ? 'StockChief' : 'the system you connected' %>.
+    Connecting a shop or till brings its sales into StockChief; it does not start
     a second competing balance, and it never silently rewrites stock.
   </span>
 </div>
 
 <p class="rm-disclose">
-  <a href="/onboarding/migrations">Migration control and reconciliation</a>
+  <a href="/onboarding/migrations">Moving from another system</a>
   <a href="/onboarding">Choose a different source</a>
   <a href="/onboarding/migrations/new">I would rather upload exports</a>
   <a href="/everything">Everything else</a>

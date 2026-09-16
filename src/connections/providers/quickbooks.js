@@ -14,7 +14,7 @@ function metadata() {
   return { type: 'quickbooks', name: 'QuickBooks Online', mark: 'QB', category: 'accounting', authMode: 'oauth',
     integrationClass: 'accounting', available: config.connections.quickbooks.configured,
     environment: config.connections.quickbooks.environment,
-    description: 'Verify the company, compare the books in shadow mode, then post only after parity and explicit authority.',
+    description: 'StockChief reads your books first and shows you where they agree. It only posts entries after they match and you say so.',
     provides: ['company identity', 'chart of accounts', 'trial-balance comparison', 'governed journal posting'],
     unavailableReason: config.connections.quickbooks.configured ? null : 'QuickBooks app credentials have not been configured on this installation.',
     minimumScopes: SCOPES,

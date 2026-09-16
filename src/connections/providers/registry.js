@@ -14,16 +14,16 @@ const adapters = Object.freeze({ shopify, square, clover, woocommerce, gmail, mi
   quickbooks, xero, supplier_email:supplierEmail });
 
 const generic = Object.freeze({
-  type: 'reference_webhook', name: 'Custom business system', mark: 'API', category: 'business', authMode: 'token',
-  description: 'Connect a custom POS, ERP, or internal system with a StockChief API key and documented event endpoint.',
+  type: 'reference_webhook', name: 'Your own software', mark: 'API', category: 'business', authMode: 'token',
+  description: 'A till, ERP or in-house system your developer can point at StockChief. You get an API key and a documented address to send events to.',
   provides: ['sales', 'customer orders', 'fulfillment', 'returns', 'receipts and transfers'],
   available: true,
 });
 
 const future = Object.freeze([
-  { type: 'erp_future', name: 'Any ERP or business system', mark: 'ERP', category: 'business', available: true,
+  { type: 'erp_future', name: 'An ERP not listed here', mark: 'ERP', category: 'business', available: true,
     integrationMode: 'custom_contract',
-    description: 'Connect a bespoke ERP now through StockChief’s verified event contract; packaged adapters are added only after their provider-specific certification passes.',
+    description: 'Name the system and StockChief sets up a connection for it using the same events as everything else. A ready-made connector is added once that system has been certified.',
     provides: ['sales, orders, fulfillment, returns, receipts, transfers, adjustments, products and locations'] },
 ]);
 

@@ -14,7 +14,7 @@ const basic = () => Buffer.from(`${config.connections.xero.clientId}:${config.co
 function metadata() {
   return { type: 'xero', name: 'Xero', mark: 'X', category: 'accounting', authMode: 'oauth',
     integrationClass: 'accounting', available: config.connections.xero.configured,
-    description: 'Verify the organization and prove shadow parity before StockChief can request posting authority.',
+    description: 'StockChief reads your books first and shows you where they agree. It only posts entries after they match and you say so.',
     provides: ['organization identity', 'chart of accounts', 'trial-balance comparison', 'governed journal posting'],
     unavailableReason: config.connections.xero.configured ? null : 'Xero app credentials have not been configured on this installation.',
     minimumScopes: READ_SCOPES,

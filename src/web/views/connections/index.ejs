@@ -138,8 +138,8 @@
   <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 15 }) %> Connections</p>
   <h1>Where your business already happens</h1>
   <p>
-    Connect the systems where your business actually happens and StockChief keeps itself informed.
-    No scripts, manual JSON, or Check now.
+    Connect your shop, till, mailbox, books, payments and carriers. Once connected, StockChief keeps
+    itself up to date and only asks you when something cannot be matched.
   </p>
 </header>
 
@@ -416,21 +416,15 @@
             <%= grant.lastAttemptError %></p>
         <% } %>
         <% if (grant && grant.available && !grant.connected) { %>
-          <% if (grant.testMode) { %>
-            <p class="quiet">
-              <strong>This is Stripe sandbox—not your live Stripe account.</strong>
-              StockChief is currently using Stripe test credentials. Stripe may ask you to create
-              or finish a sandbox account even when the same email already owns a live Stripe
-              account. Live existing-account connection requires StockChief’s live Stripe client
-              ID and live secret key.
-            </p>
-          <% } %>
           <p class="quiet">
-            Stripe opens in its own secure window. Sign in and choose the Stripe account this
-            business already uses. When
-            Stripe is finished, that tab closes and StockChief shows the account as connected. You
-            never copy an API key into StockChief.
+            Stripe opens in its own window. Sign in, choose the account this business already uses,
+            and StockChief shows it here as connected. You never paste a key into StockChief.
           </p>
+          <% if (grant.testMode) { %>
+            <details class="rm-more"><summary>Stripe is in test mode on this installation</summary>
+              <p class="quiet">StockChief is using Stripe test credentials, so Stripe may ask you to create or finish a sandbox account even if the same email owns a live one. Connecting a live account needs the live Stripe client ID and secret on the server.</p>
+            </details>
+          <% } %>
           <div class="rm-choices">
             <a class="rm-btn rm-btn--wash" href="/settings/connections/payments/start"
               target="_blank" data-stripe-connect>Connect Stripe</a>
@@ -482,12 +476,14 @@
         <% } %>
       <% } %>
       <div class="rm-choices">
+        <% if (shipping.connected || !(shippingSetup && !shippingSetup.available)) { %>
         <a class="rm-btn <%= shipping.connected && shipping.billingReady ? 'rm-btn--ghost' : 'rm-btn--wash' %>"
           href="/settings/shipping<%= shipping.connected && shipping.source === 'platform' && !shipping.billingReady
             ? '?setup=shipengine#account' : '#account' %>">
           <%= shipping.connected && shipping.billingReady ? 'Manage shipping'
             : shipping.connected ? 'Finish shipping setup' : 'Set up shipping for me' %>
         </a>
+        <% } %>
         <% if (!shipping.connected) { %>
           <a class="rm-btn rm-btn--ghost" href="/settings/shipping#existing-carrier-connection">
             Connect my carrier accounts

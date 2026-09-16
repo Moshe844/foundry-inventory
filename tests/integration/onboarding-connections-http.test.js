@@ -50,7 +50,7 @@ test('new-inventory onboarding exposes real connection choices before sending ow
   const system = await agent.get('/onboarding/system');
   const systemText = plain(system.text);
   assert.equal(system.status, 200);
-  assert.match(systemText, /Connection options/);
+  assert.match(systemText, /Pick the system you use/);
   assert.match(systemText, /Connect Shopify/);
   assert.match(systemText, /Connect Square/);
   assert.match(systemText, /Connect Clover/);

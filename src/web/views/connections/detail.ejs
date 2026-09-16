@@ -19,6 +19,28 @@
   <div class="stat"><strong><%= connection.last_activity_at ? helpers.timeAgo(connection.last_activity_at) : 'None yet' %></strong><span>last event received</span></div>
 </div><% } %>
 
+<%# A disconnected connection has one next step, and it belongs at the top,
+    not in a control card at the foot of the right-hand column. %>
+<% var reconnectable = connection.status === 'disconnected' && ['shopify','square','clover','woocommerce','gmail','microsoft365','quickbooks','xero'].includes(connection.provider_type); %>
+<% if (reconnectable) { %>
+  <div class="rm-decision section" style="margin-top:0">
+    <span class="rm-decision__txt">
+      <%= connection.display_name %> is disconnected.
+      <small>Nothing is arriving from it. Sign in again and StockChief carries on from where it left off; mappings and history are kept.</small>
+    </span>
+    <span class="rm-decision__go">
+      <form method="post" action="/settings/connections/connect" style="margin:0">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <input type="hidden" name="providerType" value="<%= connection.provider_type %>">
+        <input type="hidden" name="connectorId" value="<%= connection.id %>">
+        <% if (connection.provider_type === 'shopify') { %><input type="hidden" name="shop" value="<%= connection.config.shop || '' %>"><% } %>
+        <% if (connection.provider_type === 'woocommerce') { %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl || '' %>"><% } %>
+        <button class="rm-btn" type="submit">Reconnect <%= provider.name %></button>
+      </form>
+    </span>
+  </div>
+<% } %>
+
 <% if (token) { %>
   <div class="notice notice--warn section"><div><strong>Copy this secure connection key now. StockChief will not show it again.</strong><input class="input mono" value="<%= token %>" readonly onclick="this.select()"></div></div>
 <% } %>
@@ -26,15 +48,15 @@
 <% if (certification) { %>
   <section class="setup-journey section">
     <div class="setup-journey__head"><div class="setup-journey__head-copy">
-      <span class="setup-journey__eyebrow">Connection certification</span>
-      <h2><%= certification.history ? 'This connection has passed its operational proof' : 'Prove this connection before relying on it' %></h2>
-      <p>Connected is not the finish line. Each proof below is based on recorded evidence from this connection in this inventory.</p>
+      <span class="setup-journey__eyebrow">Is it working?</span>
+      <h2><%= certification.history ? 'This connection is proven' : 'Four checks before you rely on it' %></h2>
+      <p>Connected is not the same as working. Each step below is ticked only when StockChief has real evidence from this connection.</p>
     </div></div>
     <div class="setup-steps">
-      <div class="setup-step <%= certification.connected ? 'setup-step--done' : 'setup-step--current' %>"><span class="setup-step__number"><%= certification.connected ? '✓' : '1' %></span><div><strong>Authorize the right account</strong><p><%= connection.provider_account_name || 'StockChief must verify the provider account identity.' %></p></div><span class="setup-step__state"><%= certification.connected ? 'Verified' : 'Waiting' %></span></div>
+      <div class="setup-step <%= certification.connected ? 'setup-step--done' : 'setup-step--current' %>"><span class="setup-step__number"><%= certification.connected ? '✓' : '1' %></span><div><strong>Sign in to the right account</strong><p><%= connection.provider_account_name || 'StockChief checks which account this is before trusting anything from it.' %></p></div><span class="setup-step__state"><%= certification.connected ? 'Verified' : (connection.status === 'disconnected' ? 'Reconnect above' : 'Waiting') %></span></div>
       <div class="setup-step <%= certification.catalog ? 'setup-step--done' : certification.connected ? 'setup-step--current' : '' %>"><span class="setup-step__number"><%= certification.catalog ? '✓' : '2' %></span><div><strong>Read products and locations</strong><p>StockChief reads identities first; it does not replay old sales into stock.</p></div><span class="setup-step__state"><%= certification.catalog ? 'Recorded' : 'Refresh below' %></span></div>
-      <div class="setup-step <%= certification.event ? 'setup-step--done' : certification.catalog ? 'setup-step--current' : '' %>"><span class="setup-step__number"><%= certification.event ? '✓' : '3' %></span><div><strong>Prove one real workflow</strong><p><%= certification.testInstruction %></p></div><span class="setup-step__state"><%= certification.event ? 'Received once' : 'Run test' %></span></div>
-      <div class="setup-step <%= certification.history ? 'setup-step--done' : certification.event ? 'setup-step--current' : '' %>"><span class="setup-step__number"><%= certification.history ? '✓' : '4' %></span><div><strong>Compare provider history</strong><p>StockChief compares what it safely processed. A mismatch stops for review; it never overwrites stock.</p></div><span class="setup-step__state"><%= certification.history ? 'Matched' : 'Compare below' %></span></div>
+      <div class="setup-step <%= certification.event ? 'setup-step--done' : certification.catalog ? 'setup-step--current' : '' %>"><span class="setup-step__number"><%= certification.event ? '✓' : '3' %></span><div><strong>Send one real event</strong><p><%= certification.testInstruction %></p></div><span class="setup-step__state"><%= certification.event ? 'Received once' : 'Run test' %></span></div>
+      <div class="setup-step <%= certification.history ? 'setup-step--done' : certification.event ? 'setup-step--current' : '' %>"><span class="setup-step__number"><%= certification.history ? '✓' : '4' %></span><div><strong>Check the history agrees</strong><p>StockChief compares what it safely processed. A mismatch stops for review; it never overwrites stock.</p></div><span class="setup-step__state"><%= certification.history ? 'Matched' : 'Compare below' %></span></div>
     </div>
   </section>
 <% } %>
@@ -279,7 +301,7 @@
       </div></section>
     <% } %>
     <<%= isMailbox ? 'details' : 'section' %> class="card"><%- isMailbox ? '<summary class="card-head"><h2>Connection settings</h2></summary>' : '<div class="card-head"><h2>Connection control</h2></div>' %><div class="card-body form-actions"><% if (currentUser.role === 'owner') { %>
-      <% if (connection.status === 'disconnected' && connection.provider_type === 'reference_webhook') { %><form method="post" action="/settings/connections/<%= connection.id %>/rotate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Reconnect with new token</button></form><% } else if (connection.status === 'disconnected' && ['shopify','square','clover','woocommerce','gmail','microsoft365'].includes(connection.provider_type)) { %><form method="post" action="/settings/connections/connect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= connection.provider_type %>"><input type="hidden" name="connectorId" value="<%= connection.id %>"><% if (connection.provider_type === 'shopify') { %><input type="hidden" name="shop" value="<%= connection.config.shop || '' %>"><% } %><% if (connection.provider_type === 'woocommerce') { %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl || '' %>"><% } %><button class="btn btn--primary" type="submit">Reconnect <%= provider.name %></button></form><% } else if (connection.paused_at) { %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Resume trusting events</button></form><% } else if (connection.status !== 'disconnected') { %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Pause ingestion</button></form><% } %>
+      <% if (connection.status === 'disconnected' && connection.provider_type === 'reference_webhook') { %><form method="post" action="/settings/connections/<%= connection.id %>/rotate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Reconnect with new token</button></form><% } else if (connection.status === 'disconnected' && ['shopify','square','clover','woocommerce','gmail','microsoft365','quickbooks','xero'].includes(connection.provider_type)) { %><form method="post" action="/settings/connections/connect"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="providerType" value="<%= connection.provider_type %>"><input type="hidden" name="connectorId" value="<%= connection.id %>"><% if (connection.provider_type === 'shopify') { %><input type="hidden" name="shop" value="<%= connection.config.shop || '' %>"><% } %><% if (connection.provider_type === 'woocommerce') { %><input type="hidden" name="storeUrl" value="<%= connection.config.storeUrl || '' %>"><% } %><button class="btn btn--primary" type="submit">Reconnect <%= provider.name %></button></form><% } else if (connection.paused_at) { %><form method="post" action="/settings/connections/<%= connection.id %>/resume"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary" type="submit">Resume trusting events</button></form><% } else if (connection.status !== 'disconnected') { %><form method="post" action="/settings/connections/<%= connection.id %>/pause"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Pause ingestion</button></form><% } %>
       <% if (connection.status !== 'disconnected') { %><% if (connection.provider_type === 'reference_webhook') { %><form method="post" action="/settings/connections/<%= connection.id %>/rotate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Rotate token</button></form><% } %><form method="post" action="/settings/connections/<%= connection.id %>/disconnect" data-confirm="Disconnect this source? Mappings and audit history will be kept."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--danger" type="submit">Disconnect</button></form><% } %>
     <% } %></div></<%= isMailbox ? 'details' : 'section' %>>
     <% } %>

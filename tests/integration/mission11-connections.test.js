@@ -650,7 +650,7 @@ test('Connections UI is simple by default and advanced diagnostics are opt-in', 
   // The heading is the name of the page now, not a sentence about what
   // connecting is for. That belongs in the line underneath it.
   assert.match(text, /Connections/);
-  assert.match(text, /No scripts, manual JSON, or Check now/);
+  assert.match(text, /keeps itself up to date and only asks you when something cannot be matched/);
   assert.match(text, /Downtown POS/);
   assert.match(text, /Connected/);
   const detail = await agent.get(`/settings/connections/${env.connection.id}`);
