@@ -57,7 +57,7 @@ test('action decisions without questions never display an analytics clarificatio
  for(const q of ['Prepare a purchase order','Raise a customer order','Move stock to another warehouse','Email a supplier']){
   const page=await agent.get('/ask').query({q});assert.equal(page.status,200);
   assert.doesNotMatch(plain(page.text),/Which records and measure/);
-  assert.match(plain(page.text),/prepare it for review/);
+  assert.match(plain(page.text),/Press Prepare for review/);
  }
 });
 

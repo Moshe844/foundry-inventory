@@ -1672,8 +1672,7 @@
     if (!chat || !chat.querySelector('.rm-turn--past')) return;
     const current = chat.querySelector('.rm-turn--you:not(.rm-turn--past)') || chat.querySelector('.rm-composer');
     if (!current) return;
-    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    current.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+    current.scrollIntoView({ block: 'start' });
   }
 
   document.addEventListener('DOMContentLoaded', () => {

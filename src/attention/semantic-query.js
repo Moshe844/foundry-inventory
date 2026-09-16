@@ -232,7 +232,7 @@ async function ask(db,workspaceId,question,options){
   // decision", which told the person nothing; the decision itself is
   // what matters, and the parts are dropped.
   const fallback=data.decision==='action'
-   ? 'I understood this as a request to do work. I will prepare it for review and ask only for missing details; this message does not approve execution or sending.'
+   ? 'That is something to do rather than something to look up. Press Prepare for review and I will work it out and show you exactly what would change. Nothing is sent or changed until you approve it.'
    : data.decision==='unavailable' ? 'I cannot verify that request with the available evidence. Please describe the outcome you need.'
    : 'Which records and measure should I use?';
   return {...empty(clean,data.clarification||fallback,data.decision),semanticPlan:data};
