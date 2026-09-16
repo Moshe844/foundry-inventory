@@ -1,6 +1,6 @@
 <%
   // A plain document, styled for paper. Deliberately not "sent" anywhere:
-  // Foundry does not contact suppliers, so this is something a person prints,
+  // StockChief does not contact suppliers, so this is something a person prints,
   // saves as a PDF from their browser, or attaches to their own email.
 %>
 <meta charset="utf-8">
@@ -8,8 +8,8 @@
 <%# This page is the document itself — it renders without the application
     chrome, because a supplier receives a purchase order rather than a screen.
     It therefore carries its own stylesheet, written from the same type and
-    the same neutral ramp as design.css, so a printed Foundry document and a
-    Foundry screen are recognisably the same product. %>
+    the same neutral ramp as design.css, so a printed StockChief document and a
+    StockChief screen are recognisably the same product. %>
 <style>
   :root { color-scheme: light; }
   body {
@@ -124,6 +124,6 @@
   <div class="note">
     Quantities are stated in supplier units; the inventory equivalent is
     <%= order.orderedUnits %> unit<%= order.orderedUnits === 1 ? '' : 's' %>.
-    This document was produced by Foundry Inventory and has not been sent to the supplier.
+    This document was produced by StockChief Inventory and has not been sent to the supplier.
   </div>
 </div>

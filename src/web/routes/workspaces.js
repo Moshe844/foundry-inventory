@@ -59,7 +59,7 @@ router.get(
 );
 
 /**
- * Creating an inventory switches to it and hands straight to Foundry, so the
+ * Creating an inventory switches to it and hands straight to StockChief, so the
  * second inventory is set up exactly the way the first one was.
  */
 router.post(
@@ -84,8 +84,8 @@ router.post(
 
     req.session.workspaceId = created.workspaceId;
     req.flash('success', created.dataMode === 'synthetic'
-      ? `${created.name} is a test inventory. Foundry can generate the realistic synthetic business data you request.`
-      : `${created.name} is ready. Tell Foundry how you manage it today.`);
+      ? `${created.name} is a test inventory. StockChief can generate the realistic synthetic business data you request.`
+      : `${created.name} is ready. Tell StockChief how you manage it today.`);
     return req.session.save(() => res.redirect(303, '/onboarding'));
   })
 );

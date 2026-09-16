@@ -90,7 +90,7 @@ function react(req, type, payload, options = {}) {
 // ---------------------------------------------------------------------------
 
 // Landed cost is kept beside the purchase it belongs to. The owner selects
-// receipt evidence and an already-posted supplier-bill expense; Foundry then
+// receipt evidence and an already-posted supplier-bill expense; StockChief then
 // shows the exact split before an accounting authority applies it.
 router.get(
   '/purchasing/orders/:id/landed-costs',
@@ -123,7 +123,7 @@ router.post(
       note: trimOrNull(req.body.note), charges: [{ category: req.body.category, description: req.body.description,
         amountMinor, sourceBillLineId: req.body.sourceBillLineId, sourceEvidence: 'owner-selected supplier bill line' }],
     });
-    req.flash('success', 'Foundry prepared the landed-cost allocation. Review the exact split before approving it.');
+    req.flash('success', 'StockChief prepared the landed-cost allocation. Review the exact split before approving it.');
     return res.redirect(303, `/purchasing/orders/${order.id}/landed-costs/${created.document.id}`);
   })
 );
@@ -159,7 +159,7 @@ router.post(
     guard(req, permissions.ALLOCATE_LANDED_COST, 'apply landed-cost allocations');
     const document = landedCosts.document(req.db, req.ctx.workspaceId, req.params.documentId);
     landedCosts.apply(req.db, req.ctx, req.user, document.id);
-    req.flash('success', 'Foundry capitalised the evidenced landed cost and updated future product cost.');
+    req.flash('success', 'StockChief capitalised the evidenced landed cost and updated future product cost.');
     return res.redirect(303, `/purchasing/orders/${req.params.id}/landed-costs/${document.id}`);
   })
 );
@@ -338,7 +338,7 @@ router.post(
             ? `${result.supplier.name} now supplies all ${skuIds.length} variants of ${currentSku.item_name}.`
             : `${result.supplier.name} now supplies that product.`) +
           (recovered.recoveredUnits
-            ? ` Foundry also used the costs you entered to value ${recovered.recoveredUnits} untouched opening units in Accounting.`
+            ? ` StockChief also used the costs you entered to value ${recovered.recoveredUnits} untouched opening units in Accounting.`
             : '')
       );
     } catch (err) {
@@ -367,8 +367,8 @@ router.post(
       req.flash(
         'info',
         activePlans.length === 1
-          ? 'Foundry already prepared this as one decision. Review that decision so the same supplier order is not created twice.'
-          : 'Foundry already prepared these recommendations as decisions. Review them in Needs You so no supplier order is created twice.'
+          ? 'StockChief already prepared this as one decision. Review that decision so the same supplier order is not created twice.'
+          : 'StockChief already prepared these recommendations as decisions. Review them in Needs You so no supplier order is created twice.'
       );
       return res.redirect(activePlans.length === 1
         ? `/autopilot/work/${activePlans[0].id}`
@@ -403,7 +403,7 @@ router.post(
     guard(req, permissions.MANAGE_REPLENISHMENT, 'set reorder policies');
     if (req.body.clear === '1') {
       // Say what was removed. A line that silently reverts to "not enough
-      // history" afterwards looks like Foundry lost the settings rather than
+      // history" afterwards looks like StockChief lost the settings rather than
       // like something the person asked for.
       const had = policyService.effectivePolicy(req.db, req.ctx.workspaceId, req.params.skuId);
       policyService.clearPolicy(req.db, req.ctx, req.user, req.params.skuId);
@@ -414,8 +414,8 @@ router.post(
         'success',
         had && had.isSet
           ? `Your settings for this line are gone (reorder at ${had.reorderPoint}, up to ${had.targetStock}). `
-            + 'Foundry works it out from usage again, and will say so if it has not seen enough selling.'
-          : 'Foundry will work this line out from usage again.'
+            + 'StockChief works it out from usage again, and will say so if it has not seen enough selling.'
+          : 'StockChief will work this line out from usage again.'
       );
     } else {
       const currentSku = repo.requireSku(req.db, req.ctx.workspaceId, req.params.skuId);
@@ -457,7 +457,7 @@ router.post(
       const location = repo.requireLocation(req.db, req.ctx.workspaceId, result.locationId);
       req.flash('success', result.minimum === null
         ? `Removed the keep-back level at ${location.name}.`
-        : `Foundry will keep at least ${result.minimum} at ${location.name} when planning transfers.`);
+        : `StockChief will keep at least ${result.minimum} at ${location.name} when planning transfers.`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);
@@ -684,7 +684,7 @@ router.post(
     if (owner) {
       req.flash(
         'error',
-        'This order is part of a replenishment plan. Approve the plan and Foundry will place it, ' +
+        'This order is part of a replenishment plan. Approve the plan and StockChief will place it, ' +
           'so the same stock is not ordered twice.'
       );
       return res.redirect(303, `/autopilot/work/${owner.id}`);
@@ -764,7 +764,7 @@ router.get(
       title: 'Book in a delivery',
       nav: 'purchasing',
       screenGuide: {
-        description: 'Choose the purchase order for the goods that physically arrived. Foundry will use its outstanding lines and destinations.',
+        description: 'Choose the purchase order for the goods that physically arrived. StockChief will use its outstanding lines and destinations.',
         next: null,
       },
       orders: matched.length ? matched : all,
@@ -778,13 +778,13 @@ router.get(
 /**
  * "It arrived, all of it, as ordered."
  *
- * The overwhelmingly common delivery: the boxes match the order. Foundry
+ * The overwhelmingly common delivery: the boxes match the order. StockChief
  * already knows the products, the quantities outstanding and where they go, so
  * making somebody navigate to the order, open a form and retype numbers it
  * holds is work it should be doing for them.
  *
  * What it will not do is decide by itself that the delivery came. Nobody has
- * told Foundry the boxes are on the floor, and booking in ninety pairs of shoes
+ * told StockChief the boxes are on the floor, and booking in ninety pairs of shoes
  * that are still on a lorry — or arrived short, or damaged — puts stock in the
  * ledger that does not exist. That is the one mistake an inventory system must
  * never make on its own.
@@ -852,7 +852,7 @@ router.get(
       sourceEvent.matchedEntities.purchaseOrderId === order.id;
     const submitted = eventMatchesOrder ? {
       reference: sourceEvent.matchedEntities.documentNumber || sourceEvent.attachmentName || '',
-      note: `Prepared by Foundry from ${sourceEvent.attachmentName || 'the attached receiving document'}`,
+      note: `Prepared by StockChief from ${sourceEvent.attachmentName || 'the attached receiving document'}`,
       physicalEventId: sourceEvent.id,
       ...Object.fromEntries((sourceEvent.matchedEntities.receiptLines || []).flatMap((line) => [
         [`qty_${line.lineId}`, line.quantityUnits],
@@ -1003,7 +1003,7 @@ router.get(
       title: supplier.name,
       nav: 'purchasing',
       // The list page says what it is; so should the supplier's own page.
-      screenDescription: 'Set up one supplier: what they sell you, where orders go, and what Foundry may send them.',
+      screenDescription: 'Set up one supplier: what they sell you, where orders go, and what StockChief may send them.',
       supplier,
       // So the page can promise the right thing before anybody presses it.
       usage: supplierService.supplierUsage(req.db, req.ctx.workspaceId, supplier.id),
@@ -1100,7 +1100,7 @@ router.post(
       senderPattern: req.body.senderPattern, supplierId: supplier.id, documentMode: 'supplier_documents',
     });
     supplierService.updateSupplier(req.db, req.ctx, req.user, supplier.id, { watchedConnectorId: connectorId });
-    req.flash('success', `Foundry will treat messages from ${req.body.senderPattern} as trusted evidence for ${supplier.name}.`);
+    req.flash('success', `StockChief will treat messages from ${req.body.senderPattern} as trusted evidence for ${supplier.name}.`);
     return res.redirect(303, `/suppliers/${supplier.id}`);
   })
 );
@@ -1191,7 +1191,7 @@ router.post(
     guard(req, permissions.MANAGE_SUPPLIERS, 'approve supplier code mappings');
     try {
       const applied = supplierCodeMappings.apply(req.db, req.ctx, req.user, req.params.id);
-      req.flash('success', `${applied.vendorCode} will stay the vendor code. Foundry now uses ${applied.internalBaseCode} as your code and will remember that mapping.`);
+      req.flash('success', `${applied.vendorCode} will stay the vendor code. StockChief now uses ${applied.internalBaseCode} as your code and will remember that mapping.`);
       return res.redirect(303, `/suppliers/${applied.supplierId}#code-mappings`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;

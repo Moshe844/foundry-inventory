@@ -36,7 +36,7 @@ test('the fulfilment queue, a pick list, packing and shipping all work from the 
     skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 40,
   });
   const order = sales.confirm(env.db, env.workspace.ctx, sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'ABC School', lines: [{ skuId: env.item.skuId, quantity: 12 }],
+    customerName: 'ABC School', shipToAddress: '7 Example Lane, Albany, NY 12207, US', lines: [{ skuId: env.item.skuId, quantity: 12 }],
   }).id);
 
   const agent = request.agent(env.app);
@@ -106,7 +106,7 @@ test('the sales order names its fulfilment state and links the box that carried 
     skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20,
   });
   const order = sales.confirm(env.db, env.workspace.ctx, sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'ABC School', lines: [{ skuId: env.item.skuId, quantity: 5 }],
+    customerName: 'ABC School', shipToAddress: '7 Example Lane, Albany, NY 12207, US', lines: [{ skuId: env.item.skuId, quantity: 5 }],
   }).id);
 
   const agent = request.agent(env.app);
@@ -130,7 +130,7 @@ test('the sales order names its fulfilment state and links the box that carried 
 test('an order with nothing committed says why there is nothing to pick', async () => {
   const env = setup();
   const order = sales.confirm(env.db, env.workspace.ctx, sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'ABC School', lines: [{ skuId: env.item.skuId, quantity: 4 }],
+    customerName: 'ABC School', shipToAddress: '7 Example Lane, Albany, NY 12207, US', lines: [{ skuId: env.item.skuId, quantity: 4 }],
   }).id);
 
   const agent = request.agent(env.app);
@@ -165,7 +165,7 @@ test('with a box open, the direct ship form stands down and its route refuses', 
     skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20,
   });
   const order = sales.confirm(env.db, env.workspace.ctx, sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'ABC School', lines: [{ skuId: env.item.skuId, quantity: 6 }],
+    customerName: 'ABC School', shipToAddress: '7 Example Lane, Albany, NY 12207, US', lines: [{ skuId: env.item.skuId, quantity: 6 }],
   }).id);
 
   const agent = request.agent(env.app);
@@ -209,7 +209,7 @@ test('one customer order is one page: the whole story without leaving it', async
     skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 40,
   });
   const customer = sales.createCustomer(env.db, env.workspace.ctx, {
-    name: 'ABC School', email: 'orders@abcschool.test',
+    name: 'ABC School', email: 'orders@abcschool.test', shippingAddress: '7 Example Lane, Albany, NY 12207, US',
   });
   const order = sales.confirm(env.db, env.workspace.ctx, sales.createOrder(env.db, env.workspace.ctx, {
     customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 12 }],

@@ -2,11 +2,11 @@
 
 /**
  * DEVELOPMENT ONLY. Creates a demo workspace that has actually been through
- * the Foundry flow: a real description, a real model call, a real approved
- * plan, and real stock built on the structure Foundry configured.
+ * the StockChief flow: a real description, a real model call, a real approved
+ * plan, and real stock built on the structure StockChief configured.
  *
  * The stock below is fixture data created through the ordinary Mission 1
- * services — Foundry itself still creates nothing but configuration.
+ * services — StockChief itself still creates nothing but configuration.
  */
 
 const config = require('../src/config');
@@ -46,7 +46,7 @@ if (!config.ai.configured) {
 
   const existing = db.prepare('SELECT 1 FROM accounts WHERE email = ? COLLATE NOCASE').get(ACCOUNT.email);
   if (existing) {
-    console.log(`Foundry demo already present (${ACCOUNT.email}). Nothing to do.`);
+    console.log(`StockChief demo already present (${ACCOUNT.email}). Nothing to do.`);
     process.exit(0);
   }
 
@@ -59,7 +59,7 @@ if (!config.ai.configured) {
     role: 'staff',
   });
 
-  console.log('Asking Foundry to read the business (this is a real model call)...');
+  console.log('Asking StockChief to read the business (this is a real model call)...');
   const started = Date.now();
   const { id: understandingId, understanding } = await understandingService.describeBusiness(
     db,
@@ -71,9 +71,9 @@ if (!config.ai.configured) {
     + `${understanding.recommendedConfiguration.usesVariants ? ' + variants' : ''}`);
   console.log(`  variant axes  : ${understanding.variantDimensions.map((d) => d.name).join(' → ') || '—'}`);
   console.log(`  locations     : ${understanding.likelyLocations.map((l) => l.name).join(', ')}`);
-  console.log(`  questions     : ${understanding.unresolvedDecisions.length} (all delegated to Foundry below)`);
+  console.log(`  questions     : ${understanding.unresolvedDecisions.length} (all delegated to StockChief below)`);
 
-  // Accept every configuration-scoped recommendation and let Foundry decide the
+  // Accept every configuration-scoped recommendation and let StockChief decide the
   // open questions, so the demo shows both kinds of decision on record.
   const recommendations = understandingService.listRecommendations(db, workspaceId, understandingId);
   const { planId } = planBuilder.buildPlan(db, ctx, {
@@ -85,7 +85,7 @@ if (!config.ai.configured) {
   console.log(`  configured    : v${applied.configurationVersion}, `
     + `locations ${applied.locationsCreated.map((l) => l.name).join(', ')}`);
 
-  // --- Real stock, built on the structure Foundry configured -----------------
+  // --- Real stock, built on the structure StockChief configured -----------------
   const locations = repo.listLocations(db, workspaceId);
   const [first, second] = locations;
   const axes = applied.variantDimensions.length
@@ -154,7 +154,7 @@ if (!config.ai.configured) {
   const integrity = engine.verifyIntegrity(db, workspaceId);
   db.close();
 
-  console.log('\nSeeded the Foundry demo workspace.');
+  console.log('\nSeeded the StockChief demo workspace.');
   console.log(`  Database : ${config.databasePath}`);
   console.log(`  Owner    : ${ACCOUNT.email} / ${ACCOUNT.password}`);
   console.log(`  Staff    : sam@harbourshoe.test / foundry-demo-1`);

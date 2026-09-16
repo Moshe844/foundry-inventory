@@ -122,7 +122,7 @@ function get(db, workspaceId, id) {
 function create(db, ctx, membership, instruction) {
   const found = relevantImport(db, ctx.workspaceId, instruction);
   if (!found) {
-    throw new ValidationError('Foundry could not find a recent completed import that created products. Nothing was removed.');
+    throw new ValidationError('StockChief could not find a recent completed import that created products. Nothing was removed.');
   }
   const snapshot = snapshotFor(db, ctx.workspaceId, found.plan, found.itemIds);
   const activeItems = snapshot.items.filter((item) => item.active);

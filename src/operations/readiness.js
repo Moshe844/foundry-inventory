@@ -104,7 +104,7 @@ function snapshot(db, options = {}) {
     ['oauth_popup', 'integration.oauth_popup', (d) => d.releaseRef === config.operations.releaseRef
       && d.popupReturned === true
       && d.sessionPreserved === true && d.liveMode === true,
-      'OAuth popup return and signed-in Foundry session'],
+      'OAuth popup return and signed-in StockChief session'],
     ['token_refresh', 'integration.token_refresh', (d) => d.releaseRef === config.operations.releaseRef
       && d.refreshed === true && d.liveMode === true,
       'OAuth token refresh'],

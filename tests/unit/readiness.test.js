@@ -1,12 +1,12 @@
 'use strict';
 
 /**
- * What Foundry will say about demand, and when.
+ * What StockChief will say about demand, and when.
  *
  * The distinction that matters here is between having seen nothing leave and
  * having seen something leave but not enough to act on. They are different
  * facts, they call for different words, and only the first is a job for the
- * person. Reporting a real sale as "tell Foundry when you sell something" made
+ * person. Reporting a real sale as "tell StockChief when you sell something" made
  * the system look broken to somebody who had just used it correctly.
  */
 
@@ -40,7 +40,7 @@ function setup() {
 const outboundItem = (db, workspace) =>
   readiness.decisions(db, workspace.workspaceId).find((entry) => entry.id === 'outbound-source');
 
-test('before anything is sold, Foundry says it has seen nothing leave and asks', () => {
+test('before anything is sold, StockChief says it has seen nothing leave and asks', () => {
   const { db, workspace } = setup();
 
   const state = readiness.assess(db, workspace.workspaceId);
@@ -65,7 +65,7 @@ test('after the first real sale it is learning, and stops asking to be told', ()
   assert.equal(state.positionsWithOutbound[0].ready, false);
   assert.equal(
     state.evidenceRequirement,
-    'For each stock position, Foundry needs at least 7 observed days, 2 outbound observations, and 3 units recorded leaving.'
+    'For each stock position, StockChief needs at least 7 observed days, 2 outbound observations, and 3 units recorded leaving.'
   );
   assert.deepEqual(state.positionsWithOutbound[0].missing, {
     outboundEvents: 1,
@@ -88,7 +88,7 @@ test('after the first real sale it is learning, and stops asking to be told', ()
   );
 });
 
-test('with enough qualifying history Foundry can judge demand', () => {
+test('with enough qualifying history StockChief can judge demand', () => {
   const { db, workspace, sku } = setup();
   for (const daysAgo of [21, 14, 7, 2]) {
     scenarios.at(db, workspace.ctx, daysAgo, 'issue', {

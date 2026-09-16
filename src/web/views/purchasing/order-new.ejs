@@ -2,7 +2,7 @@
   <div class="titles">
     <a class="back-link" href="/purchasing/orders"><%- helpers.icon('chevron', { size: 14 }) %> Purchase orders</a>
     <h1>New purchase order</h1>
-    <div class="page-sub">Manual, for when you already know what you want. Foundry can also prepare one for you.</div>
+    <div class="page-sub">Manual, for when you already know what you want. StockChief can also prepare one for you.</div>
   </div>
 </div>
 
@@ -35,7 +35,7 @@
       <% if (supplierItems.length === 0) { %>
         <p class="muted">
           Nothing is linked to this supplier yet. <a href="/suppliers/<%= supplierId %>">Link some products</a>
-          so Foundry knows the pack size and price.
+          so StockChief knows the pack size and price.
         </p>
       <% } else { %>
         <p class="muted" style="margin-bottom:12px;">These are the products linked to this supplier. Enter a pack quantity for each product you want to order. <a href="/suppliers/<%= supplierId %>#link-product">Link another product</a>.</p>
@@ -74,7 +74,7 @@
           <label class="field">
             <span class="field-label">Expected date</span>
             <input class="input" type="date" name="expectedDate">
-            <span class="field-help">Leave blank and Foundry works it out from the lead time.</span>
+            <span class="field-help">Leave blank and StockChief works it out from the lead time.</span>
           </label>
         </div>
         <label class="field">

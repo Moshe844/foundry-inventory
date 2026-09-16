@@ -3,7 +3,7 @@
 /**
  * What this customer has to pay, when, and what that lets happen.
  *
- * Foundry could already record that money arrived. What it could not do was
+ * StockChief could already record that money arrived. What it could not do was
  * know that money was *supposed* to arrive first — so an order with nothing
  * paid on it picked, packed and shipped exactly like one paid in full, and the
  * only thing standing between a business and shipping to a customer who never
@@ -208,7 +208,7 @@ function positionForOrder(db, workspaceId, order) {
   /*
    * Money on an order that has not been invoiced yet.
    *
-   * Foundry raises the customer invoice when the goods ship, which is right
+   * StockChief raises the customer invoice when the goods ship, which is right
    * for revenue and wrong for everything else: before that moment an order had
    * no money on it at all, so there was no way to take a deposit, and the
    * deposit hold this file exists for could never fire — it asked whether the

@@ -12,7 +12,7 @@
  * what is not. Two spellings of "Brooklyn Warehouse" are the same warehouse and
  * nobody needs to be consulted. Eighteen units in one file and fourteen in
  * another is a real disagreement about what the business physically owns, and
- * picking one silently would be inventing a stock figure. Foundry may recommend
+ * picking one silently would be inventing a stock figure. StockChief may recommend
  * — with a reason, when the files themselves establish which is newer — but a
  * conflict without a decision blocks the migration rather than resolving itself.
  *
@@ -181,7 +181,7 @@ function groupLocations(names) {
     const match = groups.find((group) => group.variants.some((variant) => sameLocation(variant, name)));
     if (match) {
       if (!match.variants.includes(name)) match.variants.push(name);
-      // The fullest spelling becomes the one Foundry uses.
+      // The fullest spelling becomes the one StockChief uses.
       if (name.length > match.canonical.length) match.canonical = name;
     } else {
       groups.push({ canonical: name, variants: [name] });
@@ -228,10 +228,10 @@ function analyse(db, workspaceId, sources) {
    * A stock file that never says where the stock is.
    *
    * Perfectly ordinary — a shop with one store room lists what it has, not
-   * where, because there is only one answer. Foundry proposed no locations,
+   * where, because there is only one answer. StockChief proposed no locations,
    * and then every row failed validation with "No location for this stock,
    * and no default chosen": forty good rows, nothing created, and a migration
-   * that reported "There is nothing in that file Foundry can import" about a
+   * that reported "There is nothing in that file StockChief can import" about a
    * file it had just read forty products and 751 units out of.
    *
    * Somewhere is required before stock can exist, so one is proposed. It is
@@ -328,7 +328,7 @@ function analyse(db, workspaceId, sources) {
         })),
         options: names.map((name) => ({ id: `name:${name}`, label: `Call it "${name}"` })),
         // Same code means same product. Which name to keep is a preference,
-        // not a risk, so Foundry recommends the fullest one and moves on.
+        // not a risk, so StockChief recommends the fullest one and moves on.
         recommendedOption: `name:${names.reduce((a, b) => (b.length > a.length ? b : a))}`,
         recommendationReason: 'Same SKU in both files, so these are one product. The longer name usually carries more detail.',
       });
@@ -361,7 +361,7 @@ function analyse(db, workspaceId, sources) {
 
     conflicts.push({
       kind: CONFLICT.QUANTITY_CONFLICT,
-      // Blocking without a recommendation: Foundry will not invent a stock
+      // Blocking without a recommendation: StockChief will not invent a stock
       // figure, and a migration that guessed here would be silently wrong.
       severity: recommended ? 'review' : 'blocking',
       subject: `${first.product}${first.variants.length ? ` ${first.variants.join('/')}` : ''} at ${first.location || 'no location'}`,
@@ -423,7 +423,7 @@ function analyse(db, workspaceId, sources) {
         evidence: group.variants.map((variant) => ({ source: 'files', says: variant })),
         options: group.variants.map((variant) => ({ id: `name:${variant}`, label: `Call it "${variant}"` })),
         recommendedOption: `name:${group.canonical}`,
-        recommendationReason: 'These are spellings of one place, so Foundry treats them as one location.',
+        recommendationReason: 'These are spellings of one place, so StockChief treats them as one location.',
       });
     }
   }
@@ -467,7 +467,7 @@ function analyse(db, workspaceId, sources) {
        *
        * Rows sharing a name and differing by a mapped variant column are the
        * ordinary shape of a product sheet — the same shirt in black and in
-       * medium. Foundry had already recognised Color and Size as variant axes
+       * medium. StockChief had already recognised Color and Size as variant axes
        * on this very file, so the sheet had answered the question before it
        * was asked.
        */

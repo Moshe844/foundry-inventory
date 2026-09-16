@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Closed catalog of work Foundry may perform. Language can select one of these
+ * Closed catalog of work StockChief may perform. Language can select one of these
  * operations, but it cannot create a new mutation or choose its permission.
  */
 const permissions = require('../actions/permissions');

@@ -2,7 +2,7 @@
   /*
    * The other Home.
    *
-   * "/" renders this when Foundry has not been configured for the workspace,
+   * "/" renders this when StockChief has not been configured for the workspace,
    * and the briefing page when it has — so the first screen a new customer ever
    * sees was the one that had not been redesigned. It called itself Overview
    * while the sidebar entry said Home, opened with a page of stacked notices,
@@ -38,7 +38,7 @@
    *
    * needs-you-count says it plainly: "The inbox is the customer-facing source
    * of truth", and the sidebar, the workspace switcher and the Needs you page
-   * all count it. So does this page now. The findings Foundry has noticed but
+   * all count it. So does this page now. The findings StockChief has noticed but
    * cannot turn into a decision are still one link away, named as what they
    * are rather than as a second thing needing you.
    */
@@ -60,10 +60,10 @@
     <h1 class="briefing__verdict"><%= verdict %></h1>
     <p class="briefing__sub">
       <% if (isEmpty_) { %>
-        Tell Foundry what you keep here and it will work out how to track it — what counts as an item,
+        Tell StockChief what you keep here and it will work out how to track it — what counts as an item,
         which locations you need, and whether anything needs serial numbers or batch dates.
       <% } else if (needing) { %>
-        Everything else, Foundry is getting on with.
+        Everything else, StockChief is getting on with.
       <% } else { %>
         Nothing is waiting on you.
       <% } %>
@@ -85,7 +85,7 @@
 <% if (isEmpty_) { %>
   <section class="section">
     <div class="btn-row">
-      <a class="btn btn--primary" href="/foundry">Set it up with Foundry</a>
+      <a class="btn btn--primary" href="/foundry">Set it up with StockChief</a>
       <a class="btn" href="/locations">Add a location</a>
       <a class="btn" href="/inventory/new">Add an item</a>
     </div>
@@ -121,7 +121,7 @@
        * was first seen, which lot and location, and three buttons: Why this?,
        * I'm on it, Not a problem. Four of those stacked is most of a screen, and
        * it is a second Needs-you pattern living beside the first, so the same
-       * idea looked different depending on whether Foundry had been configured.
+       * idea looked different depending on whether StockChief had been configured.
        *
        * Home states the decision and offers the one action that resolves it.
        * Dismissing, claiming and reading the evidence are all still there, on
@@ -152,12 +152,12 @@
       </div>
     <% } %>
 
-    <%# Everything else Foundry has spotted in the stock but cannot turn into a
+    <%# Everything else StockChief has spotted in the stock but cannot turn into a
         decision — an expiring lot, something that has not moved in months. Worth
         a look, not the same as being asked for something, and named accordingly. %>
     <% if (attentionTotal) { %>
       <p class="section-foot t-muted">
-        Foundry has also noticed <%= attentionTotal %>
+        StockChief has also noticed <%= attentionTotal %>
         thing<%= attentionTotal === 1 ? '' : 's' %> about your stock
         <% if (findings.length) { %>— <%= findings[0].title %><% } %>.
         <a href="/attention">Take a look</a>.
@@ -305,7 +305,7 @@
     </details>
   <% } %>
 
-  <%# How Foundry is set up for this inventory. One line, where the numbers are,
+  <%# How StockChief is set up for this inventory. One line, where the numbers are,
       rather than its own panel with a button in the middle of the page. %>
   <% if (configured) { %>
     <%
@@ -313,7 +313,7 @@
       var modeLabel = m.primaryArchetype ? helpers.TRACKING_MODES[m.primaryArchetype].label.toLowerCase() : 'quantity';
     %>
     <p class="section-foot t-muted">
-      <a href="/foundry">Ask Foundry about your inventory</a> — set up for <%= modeLabel %> tracking<%= m.usesVariants ? ' with variants' : '' %>
+      <a href="/foundry">Ask StockChief about your inventory</a> — set up for <%= modeLabel %> tracking<%= m.usesVariants ? ' with variants' : '' %>
       across <%= stats.locationCount %> <%= helpers.plural(stats.locationCount, term('location').toLowerCase()) %>.
     </p>
   <% } %>

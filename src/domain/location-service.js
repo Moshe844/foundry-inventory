@@ -17,7 +17,7 @@ function createLocation(db, ctx, input) {
    *
    * Optional, because most locations never post anything and a stockroom does
    * not need a postal address to hold stock. It matters at exactly one moment:
-   * a carrier will not quote a rate without an origin, and Foundry will not
+   * a carrier will not quote a rate without an origin, and StockChief will not
    * invent one.
    */
   const address = trimOrNull(input.address);

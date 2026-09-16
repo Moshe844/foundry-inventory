@@ -152,7 +152,7 @@ test('a parsed invoice prepares a landed-cost draft only after it can prove the 
 
 test('Test C: an invoice with no order records the money and asks one question', () => {
   /*
-   * Businesses buy things outside Foundry. The invoice is not discarded and no
+   * Businesses buy things outside StockChief. The invoice is not discarded and no
    * purchasing history is invented — the money is real either way, and whether
    * goods are coming is a question only the owner can answer.
    */

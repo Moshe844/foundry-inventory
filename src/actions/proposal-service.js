@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Building and re-checking what Foundry proposes to do.
+ * Building and re-checking what StockChief proposes to do.
  *
  * A proposal is a *request* to run one Mission 1 operation. It records what the
  * inventory looked like when it was written, what it expects afterwards, and a
@@ -63,7 +63,7 @@ function build(db, ctx, intent, options = {}) {
   const actionType = intent.actionType;
 
   if (!policy.MUTATION_ACTIONS.includes(actionType) && !policy.CONFIGURATION_ACTIONS.includes(actionType)) {
-    return { ok: false, question: null, unsupported: intent.unsupportedReason || 'Foundry cannot do that yet.' };
+    return { ok: false, question: null, unsupported: intent.unsupportedReason || 'StockChief cannot do that yet.' };
   }
 
   const draft = {
@@ -329,7 +329,7 @@ function buildConfiguration(db, ctx, intent, draft, options = {}) {
       const names = (found.candidates || []).map((row) => row.name).filter(Boolean).slice(0, 8);
       return {
         ok: false,
-        question: names.length ? `${found.message} Foundry has ${names.join(', ')}.` : found.message,
+        question: names.length ? `${found.message} StockChief has ${names.join(', ')}.` : found.message,
         choices: names.length ? names : null,
       };
     }
@@ -433,9 +433,9 @@ function buildConfiguration(db, ctx, intent, draft, options = {}) {
   // rename_terminology
   const term = String(intent.terminologyKey || '').trim();
   const value = String(intent.terminologyValue || '').trim();
-  if (!term || !value) return { ok: false, question: 'What word would you like Foundry to use, and for what?' };
+  if (!term || !value) return { ok: false, question: 'What word would you like StockChief to use, and for what?' };
   if (!['item', 'location', 'variant', 'lot', 'serialUnit'].includes(term)) {
-    return { ok: false, question: null, unsupported: 'Foundry can only rename items, locations, variants, lots and units.' };
+    return { ok: false, question: null, unsupported: 'StockChief can only rename items, locations, variants, lots and units.' };
   }
   draft.settings = { key: term, value };
   draft.expectedBeforeState = { term };
@@ -465,7 +465,7 @@ function unresolved(result, fallback = null) {
  * A lot-tracked move has to identify a lot — the engine will not move generic
  * stock of a lot-tracked product, and it is right not to. But "which batch" is
  * usually not a real question: if only one batch of this product is at that
- * location, there is nothing to choose, and asking would be Foundry making its
+ * location, there is nothing to choose, and asking would be StockChief making its
  * own record-keeping into the person's problem. Several batches is a genuine
  * question, and it is asked with the codes and quantities rather than as a bare
  * instruction to go and find out.
@@ -503,8 +503,8 @@ function resolveLotAtSource(db, workspaceId, draft, location, verb) {
   // oldest batch, which is ordinarily the right instinct, issues expired stock.
   //
   // So each batch says when it expires, expired ones say so, and the one
-  // Foundry would take — the earliest-expiring batch that is still good — is
-  // named. It is still a question: which batch leaves is not Foundry's to
+  // StockChief would take — the earliest-expiring batch that is still good — is
+  // named. It is still a question: which batch leaves is not StockChief's to
   // assume, and using up an expired batch deliberately is a real decision
   // somebody is allowed to make.
   const today = new Date().toISOString().slice(0, 10);
@@ -516,7 +516,7 @@ function resolveLotAtSource(db, workspaceId, draft, location, verb) {
   const usable = lots.filter((lot) => !lot.expires_at || String(lot.expires_at).slice(0, 10) >= today);
   const expired = lots.filter((lot) => !usable.includes(lot));
   const suggestion = usable.length
-    ? ` Foundry would take ${usable[0].code}, the earliest to expire of the ones still good.`
+    ? ` StockChief would take ${usable[0].code}, the earliest to expire of the ones still good.`
     : ' Every batch here has expired.';
 
   return {
@@ -686,7 +686,7 @@ function resolveSubject(db, workspaceId, intent, draft, options = {}) {
   // A serialized product cannot be moved by quantity alone. Asking which units
   // without naming any is the same bad question the location resolver refuses
   // to ask below: one unit in stock is not a choice at all, and several is only
-  // answerable if Foundry says what they are.
+  // answerable if StockChief says what they are.
   if (sku.value.tracking_mode === 'serial' && ['issue', 'transfer', 'adjust'].includes(draft.actionType)) {
     const units = db
       .prepare(
@@ -736,7 +736,7 @@ function resolveSubject(db, workspaceId, intent, draft, options = {}) {
 /**
  * Where stock currently is.
  *
- * Asking someone to tell Foundry where their own stock is, when the records
+ * Asking someone to tell StockChief where their own stock is, when the records
  * already say, is a bad question. Three answers are possible and they are not
  * the same: exactly one place (use it), several (ask, and *list* them with what
  * is in each), or none at all (say that, rather than asking which of the
@@ -862,7 +862,7 @@ function shapeOperation(db, workspaceId, intent, draft) {
     draft.assumptions.push(
       available === 1
         ? 'You did not say how many, and there is only one.'
-        : `You did not say how many, so Foundry is proposing all ${available}.`
+        : `You did not say how many, so StockChief is proposing all ${available}.`
     );
     return available;
   };
@@ -1003,7 +1003,7 @@ function shapeOperation(db, workspaceId, intent, draft) {
   if (actionType === 'transfer') {
     // A transfer needs somewhere to go. With a single location there is no
     // answer to "which location?", and asking anyway sends someone hunting the
-    // screen for an option that does not exist. Foundry knows how many
+    // screen for an option that does not exist. StockChief knows how many
     // locations it has, so it should say this rather than ask.
     const places = repo.listLocations(db, workspaceId);
     if (places.length < 2) {
@@ -1012,7 +1012,7 @@ function shapeOperation(db, workspaceId, intent, draft) {
         question: null,
         unsupported: places.length === 1
           ? `${places[0].name} is the only location in this inventory, so there is nowhere to move stock to. ` +
-            'Add a second location and Foundry can move stock between them.'
+            'Add a second location and StockChief can move stock between them.'
           : 'This inventory has no locations yet, so there is nowhere to move stock to.',
       };
     }
@@ -1138,12 +1138,12 @@ function shapeOperation(db, workspaceId, intent, draft) {
   if (!ADJUSTMENT_REASON_IDS.includes(intent.reasonCode)) {
     return {
       ok: false,
-      question: `Why is the count changing from ${current} to ${target}? Foundry needs the reason on record.`,
+      question: `Why is the count changing from ${current} to ${target}? StockChief needs the reason on record.`,
       needsReason: true,
       // The action service uses these resolved facts to describe a grouped
       // correction truthfully. They are not accepted from the browser and do
       // not mutate stock; they only prevent a twelve-line opening balance from
-      // being presented as though Foundry understood its first line alone.
+      // being presented as though StockChief understood its first line alone.
       reasonContext: { current, target },
       clarification: { dimension: 'reason', choices: [] },
     };
@@ -1384,7 +1384,7 @@ function revalidate(db, ctx, proposal, options = {}) {
     return { ok: false, problems: ['This proposal has been altered since it was created.'], fatal: true };
   }
   if (!options.ignoreExpiry && expired(proposal)) {
-    return { ok: false, problems: ['This proposal has expired. Foundry will work it out again.'], expired: true };
+    return { ok: false, problems: ['This proposal has expired. StockChief will work it out again.'], expired: true };
   }
 
   if (policy.CONFIGURATION_ACTIONS.includes(proposal.actionType)) {
@@ -1403,7 +1403,7 @@ function revalidate(db, ctx, proposal, options = {}) {
         current = [];
       }
       if (stableStringify(current) !== stableStringify(proposal.expectedBeforeState.components || [])) {
-        problems.push('This kit definition changed since Foundry prepared the action.');
+        problems.push('This kit definition changed since StockChief prepared the action.');
       }
     }
     if (proposal.actionType === 'add_location') {
@@ -1429,7 +1429,7 @@ function revalidate(db, ctx, proposal, options = {}) {
     }
     if (proposal.actionType === removals.ACTION_TYPE) {
       const kind = removals.kindOf(proposal);
-      if (!kind) problems.push('Foundry no longer knows how to remove that sort of record.');
+      if (!kind) problems.push('StockChief no longer knows how to remove that sort of record.');
       else if (kind.isGone(db, workspaceId, proposal.settings.recordId)) {
         problems.push(`${proposal.settings.recordName} has already been removed.`);
       } else {

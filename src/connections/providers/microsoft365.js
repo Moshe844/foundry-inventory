@@ -13,7 +13,7 @@ function metadata() {
     available: config.connections.microsoft365.configured,
     description: 'Watch approved supplier senders and send authorized purchasing messages through Outlook.',
     provides: ['supplier messages', 'purchasing documents', 'authorized supplier email'],
-    unavailableReason: config.connections.microsoft365.configured ? null : 'Add the Microsoft 365 OAuth client ID and secret to this Foundry installation.' };
+    unavailableReason: config.connections.microsoft365.configured ? null : 'Add the Microsoft 365 OAuth client ID and secret to this StockChief installation.' };
 }
 
 function authorizationUrl({ state, input }) {
@@ -123,7 +123,7 @@ async function poll({ credentials, since }) {
 }
 
 /*
- * One message, asked for by name — see the Gmail adapter. Foundry keeps only
+ * One message, asked for by name — see the Gmail adapter. StockChief keeps only
  * the envelope of mail it set aside, so bringing one in goes back to Graph.
  */
 async function fetchMessage({ credentials, messageId }) {

@@ -6,11 +6,11 @@
  * The owner's complaint was that all of this was manual: an order shipped, and
  * then somebody had to remember to go and ask for the money, find the button,
  * press it, find the link, and send it. That is a job, and it is the job
- * Foundry is supposed to be doing.
+ * StockChief is supposed to be doing.
  *
  * What it may do is not decided here. Three things have to agree:
  *
- *   1. Workspace authority. `autopilot/modes` already answers "may Foundry act
+ *   1. Workspace authority. `autopilot/modes` already answers "may StockChief act
  *      on its own", and OBSERVE means it may not do anything at all — not even
  *      prepare, because preparing a Stripe invoice is a real object in a real
  *      account.
@@ -18,7 +18,7 @@
  *      limit. Both are required: a switch with no limit is an open cheque.
  *   3. A mailbox to send from.
  *
- * When all three agree, Foundry asks and sends and says it did. When authority
+ * When all three agree, StockChief asks and sends and says it did. When authority
  * is short of that, it still gets everything ready — the link and the written
  * email — and leaves it for a person, which is one press instead of five. That
  * split is the owner's instruction, not a default chosen here: automatic when
@@ -33,30 +33,30 @@
 const { nowIso } = require('../lib/util');
 
 /** The three questions, answered separately so the reason can be reported. */
-function whatFoundryMay(db, workspaceId, terms, amountMinor) {
+function whatStockChiefMay(db, workspaceId, terms, amountMinor) {
   const state = require('../autopilot/modes').get(db, workspaceId);
   const accountingSuspended = state.suspended && (!state.suspendedScope
     || ['accounting','finance','payments'].includes(state.suspendedScope));
   if (state.paused || accountingSuspended || state.mode === 'OBSERVE') {
     return { prepare: false, send: false,
-      because: state.paused ? 'Foundry is paused.'
-        : accountingSuspended ? 'Foundry has stopped payment work and is waiting to be looked at.'
-          : 'Foundry is set to watch only, so it prepares nothing on its own.' };
+      because: state.paused ? 'StockChief is paused.'
+        : accountingSuspended ? 'StockChief has stopped payment work and is waiting to be looked at.'
+          : 'StockChief is set to watch only, so it prepares nothing on its own.' };
   }
 
   const sending = require('./customer-communications').sendingMailbox(db, workspaceId);
   if (!terms || !terms.autoRequestEnabled) {
     return { prepare: true, send: false,
-      because: 'Nobody has agreed that Foundry may ask this customer for money on its own.' };
+      because: 'Nobody has agreed that StockChief may ask this customer for money on its own.' };
   }
   if (terms.autoRequestLimitMinor === null || terms.autoRequestLimitMinor === undefined) {
     return { prepare: true, send: false,
-      because: 'There is no limit on what Foundry may ask this customer for, so it did not ask.' };
+      because: 'There is no limit on what StockChief may ask this customer for, so it did not ask.' };
   }
   if (amountMinor > Number(terms.autoRequestLimitMinor)) {
     return { prepare: true, send: false,
       because: `${(amountMinor / 100).toFixed(2)} is over the `
-        + `${(Number(terms.autoRequestLimitMinor) / 100).toFixed(2)} Foundry may ask for on its own.` };
+        + `${(Number(terms.autoRequestLimitMinor) / 100).toFixed(2)} StockChief may ask for on its own.` };
   }
   /*
    * Authorised for this job specifically. Being allowed to chase an invoice
@@ -122,7 +122,7 @@ async function attempt(db, ctx, orderId) {
   const customer = db.prepare('SELECT * FROM customers WHERE id = ? AND workspace_id = ?')
     .get(order.customer_id, workspaceId);
   const terms = paymentTerms.forCustomer(db, workspaceId, order.customer_id);
-  const may = whatFoundryMay(db, workspaceId, terms, amountMinor);
+  const may = whatStockChiefMay(db, workspaceId, terms, amountMinor);
   if (!may.prepare) return { asked: false, sent: false, because: may.because };
 
   // A link has to be able to reach somebody, however it is going to be sent.
@@ -191,7 +191,7 @@ require('../autonomous/service').registerAdapter('finance.collect', {
       .get(operation.decision.orderId, ctx.workspaceId);
     const terms = order && require('./payment-terms').forCustomer(db, ctx.workspaceId,
       order.customer_id);
-    const current = whatFoundryMay(db, ctx.workspaceId, terms,
+    const current = whatStockChiefMay(db, ctx.workspaceId, terms,
       Number(operation.authorityDimensions.valueMinor || 0));
     const checks = [
       { name:'executionState', passed:execution.allowed,
@@ -216,4 +216,4 @@ require('../autonomous/service').registerAdapter('finance.collect', {
   },
 });
 
-module.exports = { onMoneyDue, whatFoundryMay };
+module.exports = { onMoneyDue, whatStockChiefMay };

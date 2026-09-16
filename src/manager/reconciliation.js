@@ -195,7 +195,7 @@ function reconcileUnifiedBusinessState(db, workspaceId) {
       }
       else investigations.resolveByTrigger(db, workspaceId, `business_consistency_${check.key}`,
         check.complete === false
-          ? 'Foundry reclassified this as missing financial evidence, not a contradiction in the business records.'
+          ? 'StockChief reclassified this as missing financial evidence, not a contradiction in the business records.'
           : 'The related records now agree.');
       return result;
     });

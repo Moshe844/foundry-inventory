@@ -6,7 +6,7 @@
  *
  * The model does not author the plan. This module does, deterministically, from
  * a vocabulary the engine already implements — which is what stops a persuasive
- * model answer from becoming a configuration Foundry cannot honour.
+ * model answer from becoming a configuration StockChief cannot honour.
  */
 
 const { PLAN_SCHEMA, sealPlan } = require('./plan-schema');
@@ -205,7 +205,7 @@ function buildPlan(db, ctx, {
 
 /**
  * Unanswered questions are not a blocker: the customer may always delegate, and
- * Foundry's own recommendation is used with the delegation recorded.
+ * StockChief's own recommendation is used with the delegation recorded.
  */
 function resolveDecisions(understanding, answers) {
   const customer = [];
@@ -234,7 +234,7 @@ function resolveDecisions(understanding, answers) {
         answerLabel: recommended.label,
         effect: recommended.effect,
         decidedBy: 'foundry',
-        because: `Foundry chose this because ${question.whyItMatters}`.slice(0, 400),
+        because: `StockChief chose this because ${question.whyItMatters}`.slice(0, 400),
       });
     }
   }
@@ -255,7 +255,7 @@ function normaliseTerminology(terminology) {
   const result = {};
   for (const key of TERMINOLOGY_KEYS) {
     const value = trimOrNull(terminology && terminology[key]);
-    // A term identical to Foundry's own default is not a rename.
+    // A term identical to StockChief's own default is not a rename.
     result[key] = value && value.toLowerCase() !== DEFAULT_TERMS[key].toLowerCase()
       ? value.slice(0, 40)
       : null;

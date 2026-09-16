@@ -3,7 +3,7 @@
 /*
  * Asking a customer to pay, and hearing back.
  *
- * The webhook is the only route in Foundry that a stranger can reach without
+ * The webhook is the only route in StockChief that a stranger can reach without
  * signing in, so it is the only one that has to prove who is talking before it
  * believes anything. Everything else here is behind the ordinary permissions.
  */
@@ -32,12 +32,12 @@ const router = express.Router();
  *
  * No session, no CSRF, and no trust: the provider's signature over the raw body
  * is the whole authentication, so the body has to arrive unparsed. A workspace
- * is named in the path because one Foundry instance serves many, and an event
+ * is named in the path because one StockChief instance serves many, and an event
  * has to land in the right books.
  *
  * It answers 200 to anything it has understood, including events it decided not
  * to act on, because a provider that receives an error retries — and retrying
- * an event Foundry has deliberately ignored achieves nothing but noise.
+ * an event StockChief has deliberately ignored achieves nothing but noise.
  */
 /*
  * Which inventory an event belongs to.
@@ -47,10 +47,10 @@ const router = express.Router();
  * once, at setup, about where money would arrive for ever after — and when
  * that inventory was deleted the endpoint went on pointing at it. Stripe
  * delivered every event to a URL naming a workspace that no longer existed,
- * Foundry answered 404, and an order sat saying "unpaid" beside a Stripe
+ * StockChief answered 404, and an order sat saying "unpaid" beside a Stripe
  * account holding a declined charge. Not one event was ever recorded.
  *
- * The invoice already knows. Foundry created it, kept its id, and can look up
+ * The invoice already knows. StockChief created it, kept its id, and can look up
  * which inventory it was created for — so that is what decides, and the id in
  * the address is only a fallback for events that name no invoice.
  */
@@ -110,14 +110,14 @@ webhooks.post('/webhooks/payments/:provider/:workspaceId?',
       event = providers.get(name).verifyEvent(raw, req.headers, { webhookSecret });
     } catch (error) {
       // 400, not 500: the message was refused, and a provider should not retry
-      // something Foundry will refuse identically next time.
+      // something StockChief will refuse identically next time.
       return res.status(400).json({ error: error.message });
     }
 
     const workspaceId = inventoryForEvent(req.db, name, event, req.params.workspaceId);
     if (!workspaceId) {
       /*
-       * 200, not 404. A signed event Foundry cannot place is not a delivery
+       * 200, not 404. A signed event StockChief cannot place is not a delivery
        * failure, and answering an error makes the provider retry it for days.
        * It is said out loud instead, because an event about money that landed
        * nowhere is worth a line in the log.
@@ -134,7 +134,7 @@ webhooks.post('/webhooks/payments/:provider/:workspaceId?',
       const result = collection.receiveEvent(req.db, ctx, name, event);
       return res.status(200).json({ ok: true, applied: Boolean(result.applied), outcome: result.outcome });
     } catch (error) {
-      // Kept for a retry: this is Foundry failing, not the provider.
+      // Kept for a retry: this is StockChief failing, not the provider.
       return res.status(500).json({ error: error.message });
     }
   }));
@@ -164,7 +164,7 @@ router.post('/sales/orders/:id/payment-request',
         req.flash('success', 'That payment link will not be accepted any more.');
       } else if (action === 'email') {
         const sent = await emailTheLink(req, trimOrNull(req.body.requestId));
-        req.flash('success', `Sent to ${sent.recipient}. Foundry records the payment itself when it arrives.`);
+        req.flash('success', `Sent to ${sent.recipient}. StockChief records the payment itself when it arrives.`);
       } else {
         const asked = await collection.request(req.db, req.ctx, req.params.id, {
           provider: trimOrNull(req.body.provider) || 'stripe',
@@ -174,13 +174,13 @@ router.post('/sales/orders/:id/payment-request',
         if (then === 'send') {
           const sent = await emailTheLink(req, asked.id);
           req.flash('success', `Asked for ${amount} and sent it to ${sent.recipient}. `
-            + 'Foundry records the payment itself when it arrives.');
+            + 'StockChief records the payment itself when it arrives.');
         } else if (then === 'open' && asked.hostedUrl) {
           /*
            * Straight to the page they pay on, because somebody is waiting at
            * the counter — but back to the order first, which opens that page
            * over it. Redirecting the browser to Stripe left the merchant on
-           * Stripe, signed out of Foundry, with the customer watching.
+           * Stripe, signed out of StockChief, with the customer watching.
            */
           openRequestId = asked.id;
         } else {

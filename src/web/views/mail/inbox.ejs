@@ -2,7 +2,7 @@
   /*
    * Three drawers, and nothing else to learn.
    *
-   * Foundry sorted this mail on arrival and every message carries the reason
+   * StockChief sorted this mail on arrival and every message carries the reason
    * it landed where it did, shown in the list rather than hidden behind the
    * message — somebody skimming needs to see why they are being asked, not
    * click three times to find out.
@@ -31,10 +31,10 @@
 <% if (drawer.state === 'SET_ASIDE') { %>
   <%
     /*
-     * Mail Foundry looked at and left alone.
+     * Mail StockChief looked at and left alone.
      *
      * Shown as an envelope and a reason, because that is genuinely all that
-     * was kept. Foundry does not store the contents of mail that is not the
+     * was kept. StockChief does not store the contents of mail that is not the
      * business's — that restraint is the feature, and the empty preview line
      * is what it looks like from here.
      */
@@ -45,7 +45,7 @@
       <h2>Nothing has been set aside</h2>
       <p>
         Every message that arrived was about the business. When a newsletter, a bank alert
-        or somebody's personal mail turns up in the shop mailbox, Foundry leaves it where it
+        or somebody's personal mail turns up in the shop mailbox, StockChief leaves it where it
         is and notes here what it was and why.
       </p>
     </div>
@@ -73,8 +73,8 @@
         </ul>
       </div>
       <p class="section-foot t-muted">
-        None of this was read, stored or acted on — Foundry kept who it was from, what it was
-        called and why it was left. Bring one in and Foundry fetches it from the mailbox again
+        None of this was read, stored or acted on — StockChief kept who it was from, what it was
+        called and why it was left. Bring one in and StockChief fetches it from the mailbox again
         and treats it like any other message.
       </p>
     </section>
@@ -95,7 +95,7 @@
         When you answer somebody and the ball is with them, move it here so it stops
         asking for your attention without disappearing.
       <% } else { %>
-        Mail Foundry filed — a document it took what it needed from, or a message
+        Mail StockChief filed — a document it took what it needed from, or a message
         nobody needs to answer — collects here.
       <% } %>
     </p>
@@ -152,7 +152,7 @@
     </div>
     <% if (drawer.state === 'NEEDS_REPLY') { %>
       <p class="section-foot t-muted">
-        Open one and Foundry will draft the reply from what it holds about the sender —
+        Open one and StockChief will draft the reply from what it holds about the sender —
         their orders, shipments, tracking and balances. Nothing is sent until you send it.
       </p>
     <% } %>

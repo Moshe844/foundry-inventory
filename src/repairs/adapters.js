@@ -106,7 +106,7 @@ function wrongMapping() {
       return { confidence: r.foundryRecordId ? 'high' : 'low', materiality: 'high', requiresApproval: true,
         evidence: [{ source: 'connection_mapping', connectorId: r.connectorId,
           entityType: r.entityType, externalId: r.externalId,
-          currentFoundryRecordId: current && current.foundry_record_id }],
+          currentStockChiefRecordId: current && current.foundry_record_id }],
         timeline: current ? [{ at: current.updated_at || current.created_at, event: 'current mapping recorded' }] : [],
         proposedRepair: { connectorId: r.connectorId, entityType: r.entityType,
           externalId: r.externalId, foundryRecordId: r.foundryRecordId } };
@@ -114,7 +114,7 @@ function wrongMapping() {
     simulate({ repairCase }) {
       const p = repairCase.proposedRepair;
       const recordLabel = p.entityType === 'sku' ? 'product/SKU' : (p.entityType || 'record');
-      return { summary: `Future imported activity for ${p.externalId || 'this external record'} will use the approved Foundry ${recordLabel}.`,
+      return { summary: `Future imported activity for ${p.externalId || 'this external record'} will use the approved StockChief ${recordLabel}.`,
         before: repairCase.evidence[0] || {}, after: { foundryRecordId: p.foundryRecordId },
         consequences: ['Historical business records are not rewritten.', 'Future imported activity uses the corrected mapping.'],
         externalEffects: [] };

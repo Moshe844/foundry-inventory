@@ -1,14 +1,14 @@
 'use strict';
 
 /*
- * Foundry does not say goods were shipped unless they were.
+ * StockChief does not say goods were shipped unless they were.
  *
  * The complaint this answers was short and correct: an order reported itself
  * shipped when nobody had chosen a carrier, entered an address, or in fact
- * shipped anything. One click moved the stock and Foundry supplied the word.
+ * shipped anything. One click moved the stock and StockChief supplied the word.
  *
  * So the claim now has to be backed. A shipment records how the goods left,
- * the question has no default, and every sentence Foundry writes about it is
+ * the question has no default, and every sentence StockChief writes about it is
  * built from the answer rather than from an assumption.
  */
 
@@ -32,7 +32,7 @@ function setup() {
 }
 
 function confirmedOrder(env, quantity = 5) {
-  const customer = sales.createCustomer(env.db, env.ctx, { name: 'ABC School' });
+  const customer = sales.createCustomer(env.db, env.ctx, { name: 'ABC School', shippingAddress: '7 Example Lane, Albany, NY 12207, US' });
   return sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
     customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity }],
   }).id);
@@ -82,7 +82,7 @@ test('we took it round ourselves, and the order says so', () => {
 test('a shipment recorded before the question existed says only what is true', () => {
   /*
    * Eight of these exist in the owner's real data, rebuilt from fulfilment
-   * events that predate shipments. Foundry cannot know how they went, so it
+   * events that predate shipments. StockChief cannot know how they went, so it
    * says that, rather than defaulting to the word that reads best.
    */
   assert.equal(shipments.wentBy({ status: 'SHIPPED', handover: null, carrier: null, tracking_number: null }),
@@ -104,5 +104,5 @@ test('an order that went two different ways does not claim either one', () => {
   shipments.ship(env.db, env.ctx, second.id, { handover: 'CARRIER', carrier: 'ups' });
 
   assert.equal(shipments.wordForOrder(env.db, env.workspace.workspaceId, order.id), 'gone',
-    'half collected and half posted is neither, so Foundry says the true thing');
+    'half collected and half posted is neither, so StockChief says the true thing');
 });

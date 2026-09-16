@@ -6,7 +6,7 @@
  * "Please email motty6700@gmail.com that we received is order and processing
  * it now" was read correctly — the reader returned a message draft with the
  * right recipient and the person's own words — and then the home page came
- * back with "Foundry needs more detail" over it. The route that called the
+ * back with "StockChief needs more detail" over it. The route that called the
  * reader only knew where proposals and questions go; a draft fell through to
  * a generic error, and so did a reported supplier payment.
  *
@@ -50,7 +50,7 @@ function scripted(lines) {
     if (call.schemaName === 'inventory_action_intent') {
       return { lines, clarifyingQuestion: '', unsupportedReason: '' };
     }
-    return { intentClass: 'INVENTORY_ACTION', confidence: 'high', reason: 'asks Foundry to act',
+    return { intentClass: 'INVENTORY_ACTION', confidence: 'high', reason: 'asks StockChief to act',
       resolvedReference: '', clarifyingQuestion: '' };
   });
 }
@@ -218,7 +218,7 @@ test('the mailbox page says an order was drafted from the email, not "Ignored se
   assert.equal(page.status, 200);
   const text = plain(page.text);
   assert.match(text, new RegExp(`Order ${order.order_number} drafted · Needs your approval`));
-  assert.match(text, new RegExp(`Foundry read this as an order and drafted ${order.order_number}`));
+  assert.match(text, new RegExp(`StockChief read this as an order and drafted ${order.order_number}`));
   assert.match(page.text, new RegExp(`href="/orders/${order.id}"`), 'with a way to the order');
   assert.doesNotMatch(text, /Ignored sender/);
   assert.doesNotMatch(text, /It did not change purchasing or inventory/);
@@ -256,7 +256,7 @@ test('an unknown email order presents one clear customer and delivery path befor
   page = await env.agent.get(`/orders/${order.id}`);
   text = plain(page.text);
   assert.match(text, /Where should this order go\?/);
-  assert.match(text, /Foundry already emailed|Foundry wrote the exact question|did not provide a usable destination/);
+  assert.match(text, /StockChief already emailed|StockChief wrote the exact question|did not provide a usable destination/);
   assert.doesNotMatch(text, /Record what physically left/);
 
   response = await env.agent.post(`/sales/orders/${order.id}/resolve-delivery`).type('form')
@@ -292,7 +292,7 @@ test('an order whose product has no selling price can still be approved: the pri
   /*
    * Needs you sent the owner to approve SO-1001 and the page showed a warning
    * and no button, because the shoes had come from a supplier invoice and had
-   * a cost but no selling price. Foundry will not invent one. It asks for it
+   * a cost but no selling price. StockChief will not invent one. It asks for it
    * on the approval itself and confirms in the same step.
    */
   const env = await setup([]);
@@ -355,9 +355,9 @@ test('a blank price is not a price: confirming without one is refused, not zeroe
   env.db.close();
 });
 
-test('the payment email Foundry wrote is on the order, readable, with the send button — not just a button to write it', async () => {
+test('the payment email StockChief wrote is on the order, readable, with the send button — not just a button to write it', async () => {
   /*
-   * After confirming, the page said "Foundry made a $300.00 payment link and
+   * After confirming, the page said "StockChief made a $300.00 payment link and
    * wrote the email — it is on the order, ready to send", and the order
    * showed a button labelled "Email it to Moshe Ekstein" and nothing else.
    * The owner asked where the email was. Fair question.
@@ -400,7 +400,7 @@ test('the payment email Foundry wrote is on the order, readable, with the send b
     page = await env.agent.get(`/orders/${order.id}`);
     const text = plain(page.text);
     assert.match(text, /\$300\.00 asked for/);
-    assert.match(text, /Foundry wrote the email to Moshe Ekstein\. It has not been sent\./);
+    assert.match(text, /StockChief wrote the email to Moshe Ekstein\. It has not been sent\./);
     assert.match(text, /Read the email and send it/, 'the email is a thing on the page, not a button to write one');
     assert.doesNotMatch(text, /Email it to Moshe Ekstein/, 'and not offered a second time');
     assert.doesNotMatch(text, /Nothing has been committed/, 'a confirmed order no longer tells you to confirm it');

@@ -4,7 +4,7 @@
  * One job at a time.
  *
  * "Handle routine work" used to be a single workspace-wide switch. Turning it
- * on so Foundry could email a payment request also let it place supplier
+ * on so StockChief could email a payment request also let it place supplier
  * orders, move stock between locations, and answer customers. One authority,
  * six unrelated consequences, and no way to want one without the others.
  *
@@ -12,7 +12,7 @@
  * authorised separately and starts off, and the two have to agree: raising the
  * mode grants nothing, and granting a job does nothing while the mode is below
  * it. The point of the whole arrangement is the last test in this file —
- * authorising Foundry to chase an invoice must not authorise it to spend money.
+ * authorising StockChief to chase an invoice must not authorise it to spend money.
  */
 
 const test = require('node:test');
@@ -88,7 +88,7 @@ test('pausing stops every job at once, however much was granted', () => {
 test('a job nobody has heard of is refused rather than allowed', () => {
   const env = setup();
   assert.throws(() => capabilities.may(env.db, env.ws, 'launch_missiles'),
-    /no Foundry job called/);
+    /no StockChief job called/);
 });
 
 test('taking authority back is not harder than giving it', () => {

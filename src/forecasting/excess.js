@@ -259,14 +259,14 @@ function headline(rows, totals, { currency, overstockDays, fromOwnerGoal }) {
     const noun = `${count} product${count === 1 ? '' : 's'}`;
     const amount = valueMinor > 0
       ? `${money(valueMinor, currency)} is tied up in ${noun}`
-      : `${unitCount} units across ${noun} (their purchase cost is not recorded, so Foundry will not put a figure on it)`;
+      : `${unitCount} units across ${noun} (their purchase cost is not recorded, so StockChief will not put a figure on it)`;
     return `${amount} ${tail}`;
   };
 
   const parts = [
     describe('overstock', totals.overstockValueMinor, totals.overstockUnits,
       `carrying more than ${overstockDays} days of supply`
-      + (fromOwnerGoal ? ', the limit you asked Foundry to hold to' : '')),
+      + (fromOwnerGoal ? ', the limit you asked StockChief to hold to' : '')),
     describe('dead', totals.deadValueMinor, totals.deadUnits, 'that has not sold at all'),
     describe('slow', totals.slowValueMinor, totals.slowUnits, 'barely moving'),
   ].filter(Boolean);

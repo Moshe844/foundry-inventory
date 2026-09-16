@@ -89,7 +89,7 @@ test('fulfillment posts AR/revenue/tax and exact weighted-average COGS without c
     ],
   });
   let order = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'Town School', fulfillmentLocationId: env.workspace.main.id,
+    customerName: 'Town School', deliveryMethod: 'PICKUP', fulfillmentLocationId: env.workspace.main.id,
     discount: '20.00', tax: '38.00',
     lines: [{ skuId: env.product.skuId, quantity: 20 }],
   });
@@ -129,7 +129,7 @@ test('missing cost evidence becomes reviewable and never invents a journal entry
     skuId: env.product.skuId, locationId: env.workspace.main.id, quantity: 1,
   });
   let order = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'Town School', fulfillmentLocationId: env.workspace.main.id,
+    customerName: 'Town School', deliveryMethod: 'PICKUP', fulfillmentLocationId: env.workspace.main.id,
     lines: [{ skuId: env.product.skuId, quantity: 1 }],
   });
   order = sales.confirm(env.db, env.workspace.ctx, order.id);

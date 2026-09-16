@@ -3,7 +3,7 @@
 /**
  * Retiring a record, whatever kind of record it is.
  *
- * Foundry could already be told to archive a product, because `archive_item`
+ * StockChief could already be told to archive a product, because `archive_item`
  * was written by hand: an entry in the intent enum, a paragraph in the prompt,
  * a permission, a branch in the proposal builder, a branch in the executor, a
  * branch in the verifier, a line in the presenter. Eight places. Doing that
@@ -232,10 +232,10 @@ function promptSection() {
     '  recordName — the words that name it and nothing else: "ABC Apparel",',
     '  "Downtown Store". Not the verb, not the word supplier/customer/location,',
     '  not the rest of the sentence, and never a word repeated. If they gave no',
-    '  name, leave it empty; Foundry will ask. Use this for remove, delete,',
+    '  name, leave it empty; StockChief will ask. Use this for remove, delete,',
     '  archive, deactivate, "get rid of" and "we do not use them any more".',
     ...lines,
-    '  This never touches stock counts. Foundry works out on its own whether the',
+    '  This never touches stock counts. StockChief works out on its own whether the',
     '  record can be deleted outright or has to be kept and hidden, and refuses',
     '  safely when something is still open against it.',
   ].join('\n');

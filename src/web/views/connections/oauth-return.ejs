@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title><%= outcome.providerName %> connection · Foundry</title>
+  <title><%= outcome.providerName %> connection · StockChief</title>
   <link rel="stylesheet" href="/app.css">
   <link rel="stylesheet" href="/product-clarity.css">
   <link rel="stylesheet" href="/foundry.css">
@@ -26,7 +26,7 @@
       <div class="oauth-return__mark" aria-hidden="true"><%= outcome.connected ? '✓' : '!' %></div>
       <h1><%= outcome.connected ? outcome.providerName + ' is connected' : outcome.providerName + ' was not connected' %></h1>
       <p><%= outcome.message %></p>
-      <a class="btn btn--primary" href="<%= outcome.returnUrl %>">Return to Foundry</a>
+      <a class="btn btn--primary" href="<%= outcome.returnUrl %>">Return to StockChief</a>
     </div>
   </main>
   <script>

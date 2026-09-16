@@ -2,11 +2,11 @@
 
 /**
  * Multi-inventory acceptance run, in a real browser, from a clean database,
- * with two real Foundry configurations.
+ * with two real StockChief configurations.
  *
- * Sign up → create "Clothing Business" → let Foundry understand its structure →
+ * Sign up → create "Clothing Business" → let StockChief understand its structure →
  * supply its real locations and variant item → add "Equipment Company" → let
- * Foundry understand serialized tracking → supply its real locations and item →
+ * StockChief understand serialized tracking → supply its real locations and item →
  * switch between them → confirm each has its own facts, data and intelligence →
  * confirm nothing whatsoever leaks between them.
  */
@@ -133,7 +133,7 @@ async function createLocation(page, name, kind) {
 }
 
 /**
- * Describe the business, verify Foundry asks for evidence rather than creating
+ * Describe the business, verify StockChief asks for evidence rather than creating
  * inferred facts, then choose manual entry and supply the exact real locations.
  */
 async function understandThenEnterFacts(page, description, locations) {
@@ -148,7 +148,7 @@ async function understandThenEnterFacts(page, description, locations) {
   assert.doesNotMatch(proposal, /Configure my inventory/i);
   await Promise.all([
     page.waitForURL(/\/foundry\/ready\//),
-    page.click('button:has-text("Enter records in Foundry")'),
+    page.click('button:has-text("Enter records in StockChief")'),
   ]);
   await page.goto(`${BASE}/locations`);
   for (const [name, kind] of locations) await createLocation(page, name, kind);
@@ -224,14 +224,14 @@ test(
       // the Mission 2 experience, unchanged.
       await Promise.all([
         page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Enter it in Foundry")'),
+        page.click('button:has-text("Enter it in StockChief")'),
       ]);
 
       assert.equal(await currentInventory(page), CLOTHING.name);
       await shot(page, 'first-inventory-setup');
     });
 
-    await t.test('3. Foundry understands variants and the owner supplies real locations', async () => {
+    await t.test('3. StockChief understands variants and the owner supplies real locations', async () => {
       const suppliedLocations = [
         ['Brooklyn Warehouse', 'warehouse'],
         ['New Jersey Warehouse', 'warehouse'],
@@ -267,25 +267,25 @@ test(
       await page.waitForURL(`${BASE}/inventories/new`);
 
       await page.fill('#name', EQUIPMENT.name);
-      await page.click('button:has-text("Continue with Foundry")');
+      await page.click('button:has-text("Continue with StockChief")');
       await page.waitForURL(`${BASE}/onboarding`);
       // A new inventory is asked how it is managed today. These customers are
       // starting from nothing, so they take the Starting Fresh path — which is
       // the Mission 2 experience, unchanged.
       await Promise.all([
         page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Enter it in Foundry")'),
+        page.click('button:has-text("Enter it in StockChief")'),
       ]);
 
       assert.equal(await currentInventory(page), EQUIPMENT.name, 'the new inventory is now open');
       const body = await page.locator('body').innerText();
-      assert.match(body, /Give Foundry what you already have/);
+      assert.match(body, /Give StockChief what you already have/);
       assert.match(body, new RegExp(EQUIPMENT.name));
       assert.match(body, /Nothing here is shared/);
       await shot(page, 'second-inventory-setup');
     });
 
-    await t.test('6. Foundry understands serial tracking and the owner supplies real locations', async () => {
+    await t.test('6. StockChief understands serial tracking and the owner supplies real locations', async () => {
       const suppliedLocations = [
         ['Main Yard', 'warehouse'],
         ['Service Center', 'other'],

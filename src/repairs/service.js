@@ -99,7 +99,7 @@ function open(db, ctx, input) {
      timeline, evidence, proposed_repair, adapter_id, adapter_version,
      required_permissions, idempotency_key, created_by_user_id, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, ctx.workspaceId, kind, String(input.symptom || 'Foundry found inconsistent records.'),
+    .run(id, ctx.workspaceId, kind, String(input.symptom || 'StockChief found inconsistent records.'),
       String(input.failedInvariant || 'Related business records must agree.'),
       input.confidence || 'low', encode(affected), encode(input.timeline || []),
       encode(input.evidence || []), encode(input.proposedRepair || {}), adapter.id,

@@ -127,6 +127,10 @@ const ADDED_COLUMNS = [
   // scanner reads off the box, and a file usually carries both in separate
   // columns. Nullable, because most inventories never have one.
   { table: 'skus', column: 'barcode', definition: 'TEXT' },
+  // A BOM can represent a built-to-order kit whose sale consumes components,
+  // or an already assembled SKU whose sale consumes the finished kit stock.
+  // The definition remains attached in both cases; only fulfilment differs.
+  { table: 'kit_components', column: 'stock_basis', definition: "TEXT NOT NULL DEFAULT 'components' CHECK (stock_basis IN ('components','preassembled'))" },
   { table: 'locations', column: 'parent_location_id', definition: 'TEXT REFERENCES locations(id) ON DELETE RESTRICT' },
   { table: 'locations', column: 'barcode', definition: 'TEXT' },
   { table: 'locations', column: 'pick_sequence', definition: 'INTEGER NOT NULL DEFAULT 0' },
@@ -194,7 +198,7 @@ const ADDED_COLUMNS = [
   // Why a customer's order email produced no draft order. NULL until a
   // draft has been attempted; the owner sees this rather than silence.
   { table: 'connection_email_messages', column: 'order_draft_reason', definition: 'TEXT' },
-  // When Foundry last asked the provider what happened to this request,
+  // When StockChief last asked the provider what happened to this request,
   // so an order can be right about money without an inbound webhook.
   { table: 'payment_requests', column: 'checked_at', definition: 'TEXT' },
   { table: 'connection_email_attachments', column: 'extracted_text', definition: 'TEXT' },
@@ -242,7 +246,7 @@ const ADDED_COLUMNS = [
    */
   { table: 'sales_shipments', column: 'handover', definition: 'TEXT' },
   /*
-   * Whether Foundry may ask this customer for money without being told to.
+   * Whether StockChief may ask this customer for money without being told to.
    *
    * Off for every existing customer, deliberately. Automation that arrives
    * switched on for people who never agreed to it is how an upgrade sends
@@ -256,7 +260,7 @@ const ADDED_COLUMNS = [
    * A deposit paid before the goods ship has no invoice to be allocated to, so
    * the order it belongs to has to be recorded somewhere of its own. Without
    * it, a customer who had paid their deposit through Stripe still showed as
-   * owing the whole order, and Foundry went on holding their goods.
+   * owing the whole order, and StockChief went on holding their goods.
    *
    * Not the reference field, which is where a person writes "cheque 4021", and
    * not the source key, which has to stay unique per provider event.
@@ -276,7 +280,7 @@ const ADDED_COLUMNS = [
    * A shipment already recorded which goods went where and that they left.
    * These are the facts a carrier owns: what it charged, which label it sold,
    * and where the parcel is now. `tracking_status` is the carrier's word, kept
-   * apart from `status`, which stays Foundry's own account of the box — a
+   * apart from `status`, which stays StockChief's own account of the box — a
    * parcel can be "in transit" for a week while the shipment is simply shipped.
    */
   { table: 'sales_shipments', column: 'provider', definition: 'TEXT' },
@@ -314,7 +318,7 @@ const ADDED_COLUMNS = [
   { table: 'skus', column: 'weight_grams', definition: 'INTEGER' },
 
   // Where a parcel leaves from. A carrier cannot quote a rate without it, and
-  // Foundry cannot invent it — so it is asked for once, per location.
+  // StockChief cannot invent it — so it is asked for once, per location.
   { table: 'locations', column: 'address', definition: 'TEXT' },
 
   // Live cutovers use durable source cursors. Existing migrations remain
@@ -326,7 +330,7 @@ const ADDED_COLUMNS = [
   { table: 'migration_packages', column: 'final_checkpoint', definition: 'TEXT' },
   { table: 'migration_packages', column: 'source_frozen_at', definition: 'TEXT' },
   // Preparation is a real, visible job. These fields let every browser page,
-  // the Needs You inbox, and restart recovery agree on whether Foundry is
+  // the Needs You inbox, and restart recovery agree on whether StockChief is
   // working or genuinely waiting for a person.
   { table: 'migration_packages', column: 'preparation_status', definition: "TEXT NOT NULL DEFAULT 'IDLE'" },
   { table: 'migration_packages', column: 'preparation_stage', definition: 'TEXT' },
@@ -875,7 +879,7 @@ function migrate(db) {
   // never be something the operational schema depends on.
   db.exec(fs.readFileSync(FORECASTING_SCHEMA_PATH, 'utf8'));
   // Shipping hangs off sales_shipments, so it follows sales. It holds what a
-  // carrier said — rates, labels, scans — and never what Foundry decided.
+  // carrier said — rates, labels, scans — and never what StockChief decided.
   db.exec(fs.readFileSync(SHIPPING_SCHEMA_PATH, 'utf8'));
   // The graph indexes records owned by every domain above it, so its schema is
   // intentionally last and no operational table depends on it.
@@ -961,13 +965,13 @@ function migrate(db) {
   migrateLandedCostPermission(db);
   dropLegacyUserLogin(db);
   db.prepare(
-    `INSERT INTO schema_meta (key, value) VALUES ('version', '26')
+    `INSERT INTO schema_meta (key, value) VALUES ('version', '27')
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`
   ).run();
   const schemaFingerprint = crypto.createHash('sha256');
   for (const schemaPath of SCHEMA_PATHS) schemaFingerprint.update(fs.readFileSync(schemaPath));
   db.prepare(`INSERT OR IGNORE INTO database_releases
-    (release_ref, schema_version, schema_fingerprint, applied_at) VALUES (?, 26, ?, ?)`)
+    (release_ref, schema_version, schema_fingerprint, applied_at) VALUES (?, 27, ?, ?)`)
     .run(process.env.FOUNDRY_RELEASE_REF || process.env.GIT_COMMIT || 'development',
       schemaFingerprint.digest('hex'), new Date().toISOString());
 }

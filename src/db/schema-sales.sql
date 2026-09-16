@@ -1,4 +1,4 @@
--- Foundry Inventory : Sales Orders & demand commitments (Mission 10)
+-- StockChief Inventory : Sales Orders & demand commitments (Mission 10)
 -- Physical truth remains in balances/movements. These tables record promised
 -- demand and its allocation without pretending that committed stock has left.
 
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS customers (
   email               TEXT,
   phone               TEXT,
   shipping_address    TEXT,
-  -- An email sender Foundry has never seen is kept as a provisional identity
+  -- An email sender StockChief has never seen is kept as a provisional identity
   -- until the owner creates or matches the customer. It is not silently
   -- presented as a trusted customer record.
   --
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS sales_orders (
   ship_to_source           TEXT,
   notes                    TEXT,
   reference                TEXT,
-  -- The email this order was read out of, when Foundry drafted it from one.
+  -- The email this order was read out of, when StockChief drafted it from one.
   source_email_message_id  TEXT REFERENCES connection_email_messages(id) ON DELETE SET NULL,
   customer_decision_required INTEGER NOT NULL DEFAULT 0,
   delivery_decision_required INTEGER NOT NULL DEFAULT 0,
@@ -162,7 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_price_change_proposals_workspace
 -- The current purchase/replacement cost of one inventory unit. This is not an
 -- opening-balance valuation and does not rewrite historical COGS. It is kept
 -- append-only for the same reason selling prices are: the owner must be able
--- to see what Foundry knew when it made a purchasing or margin decision.
+-- to see what StockChief knew when it made a purchasing or margin decision.
 CREATE TABLE IF NOT EXISTS sku_purchase_costs (
   id                    TEXT PRIMARY KEY,
   workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -221,7 +221,7 @@ CREATE TABLE IF NOT EXISTS sales_shipments (
   status                 TEXT NOT NULL CHECK (status IN ('PICKING','PACKED','SHIPPED','DELIVERED','CANCELLED')),
   ship_from_location_id  TEXT REFERENCES locations(id) ON DELETE RESTRICT,
   ship_to_address        TEXT,
-  -- How the goods actually left. Foundry says "shipped" only when they were.
+  -- How the goods actually left. StockChief says "shipped" only when they were.
   handover               TEXT CHECK (handover IN ('CARRIER','COLLECTED','DELIVERED_BY_US')),
   carrier                TEXT,
   service                TEXT,
@@ -262,7 +262,7 @@ CREATE INDEX IF NOT EXISTS idx_sales_shipment_lines_line
 -- Telling the customer (Mission 14.6)
 --
 -- The same outbox shape as supplier communication, for the same reason:
--- preparing a message is not sending one, and Foundry writes nothing to a
+-- preparing a message is not sending one, and StockChief writes nothing to a
 -- customer that the owner has not seen unless they have said, in a setting,
 -- that it may.
 --
@@ -347,7 +347,7 @@ CREATE TABLE IF NOT EXISTS customer_payment_terms (
   hold_shipping       INTEGER NOT NULL DEFAULT 0 CHECK (hold_shipping IN (0,1)),
   -- Credit somebody actually agreed to give, as opposed to credit taken.
   credit_approved     INTEGER NOT NULL DEFAULT 0 CHECK (credit_approved IN (0,1)),
-  -- Whether Foundry may ask this customer for money on its own, and up to what.
+  -- Whether StockChief may ask this customer for money on its own, and up to what.
   -- Both are needed: the switch is the permission, the limit is its size. A
   -- switch with no limit is an open cheque, so an absent limit means no.
   auto_request_enabled     INTEGER NOT NULL DEFAULT 0 CHECK (auto_request_enabled IN (0,1)),

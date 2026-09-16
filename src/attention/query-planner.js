@@ -1,15 +1,13 @@
 'use strict';
 
 /**
- * Ask Foundry — the language half.
+ * Ask StockChief — the language half.
  *
- * The model's entire job is to choose one intent from a fixed list and fill in a
- * handful of bounded parameters. It is not given a database, a table name, or a
- * query language, so "the AI wrote a bad query" is not a failure mode that
- * exists here: the worst it can produce is a supported question about the wrong
- * thing, which the person can see and correct.
+ * Production chat interprets meaning into a composable, reviewed read plan.
+ * Legacy single-intent planning remains available for offline integrations.
+ * Neither path lets model-generated SQL or factual prose reach the answer.
  *
- * A question Foundry cannot answer is answered honestly as such. Guessing at an
+ * A question StockChief cannot answer is answered honestly as such. Guessing at an
  * intent to avoid saying "I can't" is how a tool starts lying.
  */
 
@@ -24,8 +22,9 @@ const { ValidationError } = require('../domain/errors');
 const productNavigation = require('../product-brain/navigation');
 const { canonical: productBrain } = require('../product-brain/registry');
 const destinationContracts = require('../product-brain/destinations');
+const semanticQuery = require('./semantic-query');
 
-const MAX_QUESTION = 400;
+const MAX_QUESTION = 2000;
 
 const PLAN_SCHEMA = {
   type: 'object',
@@ -39,7 +38,7 @@ const PLAN_SCHEMA = {
     locationQuery: { type: 'string' },
     windowDays: { type: 'integer' },
     limit: { type: 'integer' },
-    // Only when intent is 'unsupported': what Foundry cannot do, in one line.
+    // Only when intent is 'unsupported': what StockChief cannot do, in one line.
     unsupportedReason: { type: 'string' },
   },
 };
@@ -47,7 +46,7 @@ const PLAN_SCHEMA = {
 const SYSTEM = `You translate a question about inventory into a lookup plan.
 
 You choose one intent and fill in its parameters. You do not answer the question
-— Foundry queries its own records and answers from what it finds.
+— StockChief queries its own records and answers from what it finds.
 
 Intents:
 - inventory_summary: how many active products, tracked variants, units and
@@ -65,6 +64,11 @@ Intents:
   orders. Put a named customer in entityQuery only when one was supplied.
 - attention_summary: what needs attention right now.
 - replenishment: what they should buy or reorder, and how much.
+- never_stocked: active catalogue products that show "None yet" because no
+  stock movement has ever been recorded for them. This is different from a
+  previously stocked product whose current quantity has fallen to zero.
+- out_of_stock: previously stocked products whose total current quantity is
+  zero across all locations.
 - demand_forecast: expected demand over a future period, calculated from
   recorded demand history. This is an estimate with evidence and confidence,
   not a promise. Use 90 days for a quarter and 365 for a year.
@@ -138,23 +142,23 @@ Intents:
 - connection_last_event: the last activity or event received from a named
   external connection. Put the connection name in entityQuery.
 - connection_mapping_issues: products or locations from a named connection that
-  still need a Foundry mapping. Put the provider or connection in entityQuery.
+  still need a StockChief mapping. Put the provider or connection in entityQuery.
 - connection_diagnostics: why a named connection's activity is missing or not
   showing. Put the provider or connection in entityQuery.
-- foundry_activity: what Foundry itself has been doing — "what did you do",
+- foundry_activity: what StockChief itself has been doing — "what did you do",
   "what have you handled today", "what did you get done", "what did you
   create from that invoice", or "what did setup create".
-- foundry_why: why Foundry did something — "why did you move those tights",
+- foundry_why: why StockChief did something — "why did you move those tights",
   "why did you order that". Put what they named in entityQuery.
-- stop_automation: they want Foundry to stop doing something by itself —
+- stop_automation: they want StockChief to stop doing something by itself —
   "stop moving stock", "don't do that automatically any more".
-- action: they are telling Foundry to DO something rather than asking it
+- action: they are telling StockChief to DO something rather than asking it
   something — move, transfer, receive, issue, adjust, correct a count, add a
   location, pay a supplier, email a customer, delete the whole inventory.
   Anything phrased as an instruction belongs here, even when it is polite or
   begins "can you". This used to be limited to things that change stock, so a
   request to delete an inventory or send an email had nowhere to go and came
-  back as "Foundry cannot do that" — which was untrue both times. Foundry has
+  back as "StockChief cannot do that" — which was untrue both times. StockChief has
   a separate reader for carrying instructions out; your job is only to notice
   that this is one.
 - unsupported: anything else.
@@ -165,21 +169,21 @@ Rules:
 - locationQuery is the place they named, or ''.
 - windowDays is the period they implied. Default 30. "This week" is 7.
 - limit is how many rows to return. Default 10.
-- Choose 'action' for anything that would change stock — Foundry can do that,
+- Choose 'action' for anything that would change stock — StockChief can do that,
   just not from this page, and it hands the request over.
-- Foundry now keeps suppliers, purchase orders and replenishment, so questions
+- StockChief now keeps suppliers, purchase orders and replenishment, so questions
   about buying, incoming stock, lead times, what something cost and who sells
   it all have real answers. Use the purchasing intents for those.
-- Never state what Foundry cannot do beyond "that is not one of the operations
-  listed above". You are shown a list of operations, not a list of Foundry's
+- Never infer what StockChief cannot do merely because a question has no matching
+  lookup. You are shown a list of operations, not a list of StockChief's
   abilities, and it does far more than this list — it emails customers and
   suppliers, keeps books, deletes inventories, takes payments. Three times a
-  reader with no matching operation invented a limitation instead: "Foundry
-  cannot send emails", "Foundry cannot delete an inventory", "Foundry does not
+  reader with no matching operation invented a limitation instead: "StockChief
+  cannot send emails", "StockChief cannot delete an inventory", "StockChief does not
   handle payments". All three were false and all three were read by the owner
-  as fact. If nothing here matches, say only that, and say it in one line.
+  as fact. If nothing here matches, ask what evidence or measure the person needs.
 - Choose 'unsupported' only after the deterministic product contract below says
-  the capability is unavailable. Foundry can answer
+  the capability is unavailable. StockChief can answer
   financial questions from its posted ledger and can prepare, send and
   follow up supplier messages according to its recorded authority. Put one plain sentence in
   unsupportedReason saying what it cannot do.
@@ -260,6 +264,9 @@ async function plan(question, options = {}) {
     return queryService.normalisePlan({ intent: 'shipment_status', entityQuery });
   }
 
+  if (/\bnone\s+yet\b|\bnever\s+(?:been\s+)?stocked\b|\b(?:no|zero)\s+(?:stock|stocks|inventory)\s+yet\b|\b(?:do(?:es)?n['’]?t|do(?:es)?\s+not|haven['’]?t|hasn['’]?t)\s+(?:have|had|got)\s+(?:any\s+)?(?:stock|stocks|inventory)\s+yet\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'never_stocked' });
+  }
   if (/\bout\s+of\s+stock\b|\bnothing\s+in\s+stock\b|\b(?:everything|all).*\bshow(?:s|ing)?\s+(?:as\s+)?empty\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'out_of_stock' });
   }
@@ -324,7 +331,7 @@ async function plan(question, options = {}) {
   }
   if (/\b(?:should|do you recommend)\b.*\b(?:raise|lower|change|set)\b.*\b(?:price|prices|pricing)\b|\bwhat\b.*\b(?:price|prices|pricing)\b.*\b(?:should|recommend)\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'unsupported',
-      unsupportedReason: 'Foundry can show and set recorded selling prices, but it does not yet calculate a recommended selling price.' });
+      unsupportedReason: 'StockChief can show and set recorded selling prices, but it does not yet calculate a recommended selling price.' });
   }
   if (/\b(?:which|what)\s+location\b.*\b(?:profit|money|margin)|\bmost\s+profitable\s+location/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'location_profitability', windowDays: /year/i.test(clean) ? 365 : 30 });
@@ -401,7 +408,7 @@ async function plan(question, options = {}) {
     return queryService.normalisePlan({ intent: 'connection_diagnostics', entityQuery });
   }
   if (!options.provider && !config.ai.configured) {
-    throw new ValidationError('Ask Foundry needs an AI provider configured before it can read questions.');
+    throw new ValidationError('Ask StockChief needs an AI provider configured before it can read questions.');
   }
 
   const provider = options.provider || createProviderForTier('standard');
@@ -416,7 +423,7 @@ async function plan(question, options = {}) {
   if (!result.ok) {
     return queryService.normalisePlan({
       intent: 'unsupported',
-      unsupportedReason: 'Foundry could not work out what that question was asking for.',
+      unsupportedReason: 'StockChief could not work out what that question was asking for.',
     });
   }
 
@@ -433,10 +440,16 @@ async function ask(db, workspaceId, question, options = {}) {
   );
   if (navigation) return productNavigation.asQueryResult(question, navigation);
 
-  const queryPlan = await plan(question, options);
-  const rawResult = queryService.execute(db, workspaceId, queryPlan, {
-    question: String(question).trim(), membership: options.membership || null,
-  });
+  const useSemantic = options.semantic !== false && (options.provider || config.ai.configured);
+  const rawResult = useSemantic
+    ? await semanticQuery.ask(db, workspaceId, question, {
+      ...options, provider: options.provider || createProviderForTier('standard'),
+      intentSystem: SYSTEM, legacySchema: PLAN_SCHEMA,
+      legacyPlan: (text, response) => plan(text, {...options,provider:{complete:async()=>response}}),
+    })
+    : queryService.execute(db, workspaceId, await plan(question, options), {
+      question: String(question).trim(), membership: options.membership || null,
+    });
   const brain = options.productBrain || productBrain;
   const result = { ...rawResult };
   if (result.handoff && options.membership) {
@@ -456,18 +469,26 @@ async function ask(db, workspaceId, question, options = {}) {
       return safe;
     });
   }
+  if (result.sections && options.membership) {
+    result.sections = result.sections.map(section => ({...section,
+      handoff: section.handoff && destinationContracts.contract(section.handoff.href,options.membership,{brain}).allowed ? section.handoff : null,
+      rows: section.rows.map(row => {
+        if (!row.href || destinationContracts.contract(row.href,options.membership,{brain}).allowed) return row;
+        const safe={...row};delete safe.href;return safe;
+      }),
+    }));
+  }
 
   /*
    * The wording, once the figures are settled.
    *
-   * The deterministic answer stays exactly as it was and is what the page shows
-   * as the statement of record. `spoken` is a sentence arranged around those
-   * same numbers, and it is dropped the moment it contains one it was not
-   * given. No provider, a failed call, or an ungrounded sentence all end in the
-   * same place: the answer Foundry computed.
+   * The deterministic answer is already complete and is the statement of
+   * record. Cosmetic rephrasing must never sit between a person and figures
+   * StockChief has already read locally. Callers may explicitly opt into it for a
+   * non-blocking surface; Ask StockChief returns the proved answer immediately.
    */
   let spoken = null;
-  if (result.answerMode !== 'verified') {
+  if (options.phraseAnswers === true && result.answerMode !== 'verified') {
     try {
       spoken = await phrasing.phrase(String(question).trim(), result, options);
     } catch {

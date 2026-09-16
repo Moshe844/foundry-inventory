@@ -69,8 +69,8 @@ test('Accounting starts with automatic posting and keeps opening amounts in a se
   const env = await setup();
   const page = await env.agent.get('/accounting').expect(200);
   const text = plain(page.text);
-  assert.match(text, /Foundry.*Accounting Web Co.*Your business right now.*Up to date/i);
-  assert.doesNotMatch(text, /A Keeper product/i, 'the customer-facing product is Foundry');
+  assert.match(text, /StockChief.*Accounting Web Co.*Your business right now.*Up to date/i);
+  assert.doesNotMatch(text, /A Keeper product/i, 'the customer-facing product is StockChief');
   assert.match(text, /Customers still need to pay.*You owe suppliers.*Customer cash received.*Cash paid to suppliers.*Inventory you own/i);
   assert.match(text, /What that means.*Show me the accounting details.*Where the product cost went.*What updates automatically/i);
   assert.doesNotMatch(text, /Every product currently in inventory|complete on-hand list/i);
@@ -169,7 +169,7 @@ test('the missing-cost action opens a focused product-cost screen instead of the
   assert.doesNotMatch(focused, /Cash and bank accounts.*Customers owe you.*You owe suppliers/i);
 });
 
-test('Foundry automatically applies the proven PO portion when older stock has mixed cost evidence', async () => {
+test('StockChief automatically applies the proven PO portion when older stock has mixed cost evidence', async () => {
   const env = await setup();
   const product = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Mixed evidence shirt' });
   inventory.receive(env.db, env.workspace.ctx, { skuId: product.skuId,
@@ -219,7 +219,7 @@ test('automatic setup carries forward exact PO receipt costs and a shipped Sales
   assert.equal(openingCost.total_cost_minor, 13_000);
 
   let order = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'Clear Workflow Customer', fulfillmentLocationId: env.workspace.main.id,
+    customerName: 'Clear Workflow Customer', deliveryMethod: 'PICKUP', fulfillmentLocationId: env.workspace.main.id,
     lines: [{ skuId: stock.product.skuId, quantity: 7 }],
   });
   order = sales.confirm(env.db, env.workspace.ctx, order.id);
@@ -237,14 +237,14 @@ test('automatic setup carries forward exact PO receipt costs and a shipped Sales
   /*
    * This order was fulfilled without a shipment record, so nobody ever said
    * how the goods left. The page used to call that "Shipped"; it now says
-   * "Gone", which is the most Foundry can honestly claim. The accounting
+   * "Gone", which is the most StockChief can honestly claim. The accounting
    * sentence — the thing this test is actually about — is unchanged.
    */
   assert.match(plain(orderPage.text),
     /went on the books automatically: revenue, the customer receivable, product cost, and inventory value/i);
   const saleEvidence = await env.agent.get(`/accounting/entries/${entry.id}`).expect(200);
   const saleEvidenceText = plain(saleEvidence.text);
-  assert.match(saleEvidenceText, /How Foundry worked out this sale.*Clear Workflow Customer bought \$70\.00 of products/i);
+  assert.match(saleEvidenceText, /How StockChief worked out this sale.*Clear Workflow Customer bought \$70\.00 of products/i);
   assert.match(saleEvidenceText, /products cost the business \$45\.50.*\$24\.50 gross profit/i);
   assert.match(saleEvidenceText, /Exactly what was sold.*7 × Verified Cost Shirt.*\$45\.50 product cost/i);
   assert.match(saleEvidence.text, /<details class="card disclose">[\s\S]*Advanced accounting details/i,
@@ -269,7 +269,7 @@ test('a legacy workspace automatically recovers exact PO cost evidence and never
     startDate: '2026-08-31', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
   });
   let order = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'Legacy Review Customer', fulfillmentLocationId: env.workspace.main.id,
+    customerName: 'Legacy Review Customer', deliveryMethod: 'PICKUP', fulfillmentLocationId: env.workspace.main.id,
     lines: [{ skuId: stock.product.skuId, quantity: 7 }],
   });
   order = sales.confirm(env.db, env.workspace.ctx, order.id);
@@ -305,7 +305,7 @@ test('same-day verified receipt cost survives earlier legacy issues and the next
     reasonCode: 'sold', occurredAt: '2026-08-31T23:52:48.427Z',
   });
   let order = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'Hendel', fulfillmentLocationId: env.workspace.main.id,
+    customerName: 'Hendel', deliveryMethod: 'PICKUP', fulfillmentLocationId: env.workspace.main.id,
     lines: [{ skuId: stock.product.skuId, quantity: 8 }],
   });
   order = sales.confirm(env.db, env.workspace.ctx, order.id);
@@ -478,7 +478,7 @@ test('owner accounting UI carries exact PO and Sales evidence through partial pa
   assert.equal(bill.balance_minor, 6_000);
 
   let order = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'Owner Evidence Customer', fulfillmentLocationId: env.workspace.main.id,
+    customerName: 'Owner Evidence Customer', deliveryMethod: 'PICKUP', fulfillmentLocationId: env.workspace.main.id,
     lines: [{ skuId: product.skuId, quantity: 5 }],
   });
   order = sales.confirm(env.db, env.workspace.ctx, order.id);

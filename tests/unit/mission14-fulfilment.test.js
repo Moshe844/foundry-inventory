@@ -32,7 +32,7 @@ function setup(name = 'Fulfilment Co') {
 
 function confirmedOrder(env, quantity) {
   const order = sales.createOrder(env.db, env.ctx, {
-    customerName: 'ABC School',
+    customerName: 'ABC School', shipToAddress: '7 Example Lane, Albany, NY 12207, US',
     lines: [{ skuId: env.item.skuId, quantity }],
   });
   return sales.confirm(env.db, env.ctx, order.id);
@@ -163,7 +163,7 @@ test('a part shipment leaves the order partly shipped and the rest still pickabl
 test('the fulfilment state is derived, and names what the order is waiting for', () => {
   const env = setup();
   const draft = sales.createOrder(env.db, env.ctx, {
-    customerName: 'ABC School', lines: [{ skuId: env.item.skuId, quantity: 6 }],
+    customerName: 'ABC School', shipToAddress: '7 Example Lane, Albany, NY 12207, US', lines: [{ skuId: env.item.skuId, quantity: 6 }],
   });
   const state = (order) => shipments.fulfilmentState(env.db, env.workspace.workspaceId, order).state;
   assert.equal(state(draft), 'Not confirmed');
@@ -205,7 +205,7 @@ test('the pick list is grouped by location, because picking costs footsteps', ()
 test('an unconfirmed or unallocated order cannot start a box', () => {
   const env = setup();
   const draft = sales.createOrder(env.db, env.ctx, {
-    customerName: 'ABC School', lines: [{ skuId: env.item.skuId, quantity: 3 }],
+    customerName: 'ABC School', shipToAddress: '7 Example Lane, Albany, NY 12207, US', lines: [{ skuId: env.item.skuId, quantity: 3 }],
   });
   assert.throws(() => shipments.startPicking(env.db, env.ctx, draft.id), /Confirm this sales order/);
 

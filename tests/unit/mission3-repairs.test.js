@@ -59,7 +59,7 @@ test('a wrong mapping is simulated, authority-gated, applied through the connect
   });
   let repair = repairs.openAndAssess(env.db, env.ctx, {
     kind: 'wrong_mapping', symptom: 'EXT-9 is mapped to the wrong product',
-    failedInvariant: 'External product EXT-9 must resolve to the owner-approved Foundry SKU',
+    failedInvariant: 'External product EXT-9 must resolve to the owner-approved StockChief SKU',
     affectedRecords: { connectorId: connection.id, entityType: 'sku', externalId: 'EXT-9',
       foundryRecordId: correctProduct.skuId },
   }).repairCase;
@@ -152,7 +152,7 @@ test('inventory/accounting mismatch retries the exact source and resolves only a
     reference: 'repair-opening', occurredAt: '2026-01-02',
   });
   let order = sales.createOrder(env.db, env.ctx, {
-    customerName: 'Repair Buyer', fulfillmentLocationId: env.workspace.main.id,
+    customerName: 'Repair Buyer', deliveryMethod: 'PICKUP', fulfillmentLocationId: env.workspace.main.id,
     lines: [{ skuId: product.skuId, quantity: 1 }],
   });
   order = sales.confirm(env.db, env.ctx, order.id);

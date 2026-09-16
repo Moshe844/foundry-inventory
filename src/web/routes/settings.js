@@ -9,6 +9,7 @@ const operatingInstructions = require('../../manager/operating-instructions');
 const operatingGuards = require('../../domain/operating-guards');
 const workspaceExport = require('../../domain/workspace-export');
 const config = require('../../config');
+const emailAlerts = require('../../notifications/email-alerts');
 const { requireAuth, requireOwner, asyncRoute } = require('../middleware');
 
 const router = express.Router();
@@ -21,7 +22,7 @@ router.get('/support', requireAuth, asyncRoute(async (req, res) => res.page('sup
 /*
  * Settings is a transcript.
  *
- * Foundry is taught by talking to it, so what an owner needs is a readable
+ * StockChief is taught by talking to it, so what an owner needs is a readable
  * record of what they already said, with the ability to change, pause or
  * revoke any line of it — not a tree of forms. The forms still exist, at
  * /settings and behind it; this is the page somebody actually arrives at
@@ -104,7 +105,7 @@ router.get('/everything', requireAuth, asyncRoute(async (req, res) => res.page('
     },
     {
       title: 'Buying and suppliers',
-      why: 'A purchase is one story too. Foundry prepares these; the queue is here for when you want to work through them yourself.',
+      why: 'A purchase is one story too. StockChief prepares these; the queue is here for when you want to work through them yourself.',
       links: [
         { href: '/purchasing', label: 'What needs buying' },
         { href: '/purchasing/orders', label: 'All purchase orders' },
@@ -123,7 +124,7 @@ router.get('/everything', requireAuth, asyncRoute(async (req, res) => res.page('
         { href: '/locations', label: 'Locations' },
         { href: '/warehouse', label: 'Warehouse tasks and scanning' },
         { href: '/transfers', label: 'Transfers and in-transit stock' },
-        { href: '/planning', label: 'What Foundry expects to go wrong' },
+        { href: '/planning', label: 'What StockChief expects to go wrong' },
         { href: '/pricing/new', label: 'Change selling prices' },
         { href: '/imports/start', label: 'Bring data in from a file' },
       ],
@@ -146,14 +147,14 @@ router.get('/everything', requireAuth, asyncRoute(async (req, res) => res.page('
     },
     {
       title: 'Messages',
-      why: 'Foundry is not an email client. Supplier mail lives on the purchase, customer mail on the order, and anything waiting on a reply is on the desk. This is the whole mailbox, for when you want to look through it.',
+      why: 'StockChief is not an email client. Supplier mail lives on the purchase, customer mail on the order, and anything waiting on a reply is on the desk. This is the whole mailbox, for when you want to look through it.',
       links: [
         { href: '/mail', label: 'All conversations' },
         { href: '/activity', label: 'Everything that happened, in order' },
       ],
     },
     {
-      title: 'What Foundry may do on its own',
+      title: 'What StockChief may do on its own',
       why: 'Authority is two choices: ask me first, or handle routine work inside limits you approve. The exact limits are here.',
       links: [
         { href: '/autopilot', label: 'Standing authority' },
@@ -179,7 +180,7 @@ router.get('/everything', requireAuth, asyncRoute(async (req, res) => res.page('
         { href: '/foundry', label: 'How this inventory is configured' },
         { href: '/inventories', label: 'Your other inventories' },
         { href: '/settings/export', label: 'Export everything' },
-        { href: '/guide', label: 'How to use Foundry' },
+        { href: '/guide', label: 'How to use StockChief' },
         { href: '/support', label: 'Support' },
       ],
     },
@@ -224,7 +225,47 @@ router.get(
           boundary: operatingGuards.describeBoundary(guard),
           instructionId: activeInstructionByRecordId.get(guard.id) || null,
         })),
+      emailAlerts: emailAlerts.get(req.db, req.ctx.workspaceId),
     });
+  })
+);
+
+router.post(
+  '/settings/email-alerts',
+  requireOwner,
+  asyncRoute(async (req, res) => {
+    const saved = emailAlerts.save(req.db, req.ctx.workspaceId, {
+      enabled: req.body.enabled === '1',
+      minimumSeverity: req.body.minimumSeverity,
+      recipients: req.body.recipients,
+    });
+    if (saved.enabled && !saved.deliveryConfigured) {
+      req.flash('warn', 'Email alert rules are saved, but delivery still needs a verified StockChief sender and email API key.');
+    } else {
+      req.flash('success', saved.enabled
+        ? 'Automatic email alerts are on. Each newly opened item is emailed once.'
+        : 'Automatic email alerts are off. Needs You still works in StockChief.');
+    }
+    res.redirect(303, '/settings#email-alerts');
+  })
+);
+
+router.post(
+  '/settings/email-alerts/test',
+  requireOwner,
+  asyncRoute(async (req, res) => {
+    const setting = emailAlerts.get(req.db, req.ctx.workspaceId);
+    if (!setting.enabled) {
+      req.flash('warn', 'Turn on automatic email alerts and save them before sending a test.');
+    } else if (!setting.deliveryConfigured) {
+      req.flash('warn', 'The alert is configured, but this StockChief server does not yet have a verified email sender and API key.');
+    } else {
+      const result = emailAlerts.queueTest(req.db, req.ctx.workspaceId);
+      req.flash('success', result.queued
+        ? `Test email queued for ${result.queued} recipient${result.queued === 1 ? '' : 's'}.`
+        : 'That identical test is already queued.');
+    }
+    res.redirect(303, '/settings#email-alerts');
   })
 );
 
@@ -234,7 +275,7 @@ router.post(
   asyncRoute(async (req, res) => {
     const enabled = eventFeed.enable(req.db, req.ctx, req.user);
     req.session.newFeedToken = enabled.token;
-    req.flash('success', 'The live operating feed is connected. Copy the token now; Foundry will not show it again.');
+    req.flash('success', 'The live operating feed is connected. Copy the token now; StockChief will not show it again.');
     res.redirect(303, '/settings#live-event-feed');
   })
 );

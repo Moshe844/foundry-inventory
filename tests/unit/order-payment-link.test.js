@@ -4,7 +4,7 @@
  * The address of the payment page, as it reaches the browser.
  *
  * A merchant asked a customer for money with the customer standing there, and
- * the window that opened was a Foundry page saying "We could not find that".
+ * the window that opened was a StockChief page saying "We could not find that".
  * Nothing was wrong with the payment: Stripe had the invoice, the link was
  * valid, and the order was correct. What was wrong was one attribute.
  *
@@ -12,7 +12,7 @@
  * `<%=` then escaped them into `&#34;` — so the attribute arrived unquoted
  * with literal quote characters inside its value. The browser read the value
  * as `"https://…stripe.com/…"`, which is not an absolute URL, so it resolved
- * it against Foundry's own origin and opened
+ * it against StockChief's own origin and opened
  *
  *   /orders/%22https://invoice.stripe.com/i/acct_1?s=ap%22
  *
@@ -60,7 +60,7 @@ test('the order page is a template a browser can be given', () => {
   ejs.compile(fs.readFileSync(VIEW, 'utf8'), { filename: VIEW });
 });
 
-test('the payment window opens the carrier of the money, not a Foundry page', () => {
+test('the payment window opens the carrier of the money, not a StockChief page', () => {
   const rendered = ejs.render(payWindowTag(), { openPaymentUrl: STRIPE }, { filename: VIEW });
 
   const value = attributeValue(rendered, 'data-open-now');
@@ -68,13 +68,13 @@ test('the payment window opens the carrier of the money, not a Foundry page', ()
 
   /*
    * The failure this is really about: a value the browser cannot read as an
-   * absolute address is resolved against Foundry, and the merchant is sent to
+   * absolute address is resolved against StockChief, and the merchant is sent to
    * a page that does not exist while a customer waits.
    */
   const resolved = new URL(value, 'http://localhost:4000/orders/so_1').href;
   assert.equal(resolved, STRIPE);
   assert.ok(!resolved.startsWith('http://localhost:4000'),
-    'and never somewhere on Foundry itself');
+    'and never somewhere on StockChief itself');
 });
 
 test('no payment asked for means no window to open', () => {

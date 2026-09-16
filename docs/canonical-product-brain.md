@@ -47,7 +47,7 @@ it reads and exposes their deterministic contracts.
 
 ## Navigation contract
 
-Foundry conversation links pass through `/foundry/navigate`. The gateway checks
+StockChief conversation links pass through `/foundry/navigate`. The gateway checks
 that the destination is a registered local GET route, checks the current
 membership, remembers the expected page and return context, redirects, and the
 page renderer verifies that the requested destination was actually reached.
@@ -66,7 +66,7 @@ exposed.
 
 - The manager capability planner now reads the product brain through a small
   compatibility adapter.
-- Foundry onboarding and Ask prompts receive generated availability truth;
+- StockChief onboarding and Ask prompts receive generated availability truth;
   stale prompt prose no longer decides whether forecasting exists.
 - Guidance screen descriptions and core destination links derive from the
   canonical capability/destination contract.

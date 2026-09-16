@@ -1,4 +1,4 @@
-# Foundry pre-checkout decision API
+# StockChief pre-checkout decision API
 
 `POST /api/v1/precheckout`
 
@@ -18,7 +18,7 @@ The response has an overall `decision` and one result per aggregated SKU:
 
 - `ALLOW`: no current warning or blocking rule.
 - `WARN`: shortage, reorder-point crossing, or an unmapped record. The checkout may continue.
-- `BLOCK`: an owner-set Foundry stock-protection rule would be violated. The checkout must stop.
+- `BLOCK`: an owner-set StockChief stock-protection rule would be violated. The checkout must stop.
 
 This endpoint is read-only. It does not reserve, commit, issue, or otherwise mutate stock. Completed sales and orders must still be sent through the normalized event API or provider webhook.
 

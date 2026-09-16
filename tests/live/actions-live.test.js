@@ -256,7 +256,7 @@ test('creating a product is proposed, not done', { skip: !LIVE, timeout: TIMEOUT
 /**
  * The two boxes look identical to a person, so both must recognise what they
  * have been handed. Getting this wrong is not a small annoyance: it tells
- * someone Foundry cannot do a thing it can do.
+ * someone StockChief cannot do a thing it can do.
  */
 test('the question box recognises an instruction as work', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const queryPlanner = require('../../src/attention/query-planner');
@@ -312,14 +312,14 @@ test('forecast questions stay read-only and use the forecasting engine', { skip:
 
   // Mission 13 added supplier-message status/follow-up workflows. Asking to
   // chase a supplier is no longer refused, but it still is not sent as an
-  // unapproved stock action from Ask Foundry.
+  // unapproved stock action from Ask StockChief.
   const followUp = await queryPlanner.ask(env.db, env.workspace.workspaceId,
     'Email ABC Footwear and chase the order', {});
   assert.ok(['supplier_order_status', 'action'].includes(followUp.plan.intent));
   assert.equal(followUp.isAction, followUp.plan.intent === 'action');
 
   // Mission 12 added current selling-price records. Asking what is already
-  // configured is supported; Foundry still does not invent a recommended price.
+  // configured is supported; StockChief still does not invent a recommended price.
   const price = await queryPlanner.ask(env.db, env.workspace.workspaceId, 'What do we charge for these?', {});
   assert.equal(price.plan.intent, 'selling_price');
   assert.equal(price.isAction, false);
@@ -363,7 +363,7 @@ test('a misspelled instruction still lands on the right records', { skip: !LIVE,
 });
 
 /**
- * Conversational catalogue creation. The interesting property is that Foundry
+ * Conversational catalogue creation. The interesting property is that StockChief
  * does not ask how the business tracks stock — Mission 2 answered that once.
  */
 test('a described product becomes the right variants', { skip: !LIVE, timeout: TIMEOUT }, async () => {

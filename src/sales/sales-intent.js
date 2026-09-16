@@ -16,6 +16,9 @@ const SCHEMA = {
     customerText: { type: 'string' }, orderText: { type: 'string' }, itemText: { type: 'string' },
     variantText: { type: 'string' }, locationText: { type: 'string' }, quantity: { type: 'integer', minimum: -1 },
     neededBy: { type: 'string' }, reason: { type: 'string' },
+    deliveryMethod: { type: 'string', enum: ['', 'SHIP', 'PICKUP'] },
+    shippingAddress: { type: 'string' }, customerEmail: { type: 'string' },
+    deliverySource: { type: 'string' },
   },
 };
 
@@ -26,10 +29,14 @@ owner explicitly asks to complete, finish, or ship the entire named order and di
 Use cancel_line when one product was cancelled,
 cancel_order when the whole order was cancelled, and list_waiting for a read-only question about customer orders
 waiting for stock. Preserve customer, order, product, variant, location, quantity and requested date exactly.
+For create, preserve any explicitly supplied delivery address in shippingAddress and customer email in
+customerEmail, copied verbatim from the request. deliveryMethod is SHIP or PICKUP only when stated;
+deliverySource is the exact excerpt supporting that choice, or empty when no choice was supplied.
+Never turn a request to prepare an order into evidence that goods have physically left or money was received.
 neededBy must be YYYY-MM-DD when an exact date can be resolved from today's date; otherwise empty.
 A request to create, place or start an order for someone — "can you create a customer order for
 Marlow?" — is also create: customerText is who the order is for, itemText is empty when no product was
-named, and quantity is -1. Foundry will ask for what is missing; do not fill it in.
+named, and quantity is -1. StockChief will ask for what is missing; do not fill it in.
 Never invent missing records or quantities. Use -1 when quantity was not stated. Return only the schema.`;
 
 function asksToCompleteWholeOrder(message) {
@@ -111,7 +118,7 @@ function fallback(message) {
  *
  * "Marlow ordered 12 Copper Elbow" states something that happened, and the
  * order is recorded in one step. "Can you create a customer order for
- * Marlow?" asks Foundry to start one, with the details still to come — so it
+ * Marlow?" asks StockChief to start one, with the details still to come — so it
  * is answered as a conversation: which customer, which product, how many.
  */
 function asksToCreateOrder(message) {
@@ -203,8 +210,8 @@ function findOrder(db, workspaceId, intent) {
     .filter((order) => !customerText || order.customer.name.toLowerCase() === customerText
       || String(order.customer.company || '').toLowerCase() === customerText);
   if (candidates.length === 1) return candidates[0];
-  if (!candidates.length) throw new ValidationError('Foundry could not find an open sales order matching that customer or order number.');
-  throw new ValidationError('More than one open sales order matches. Name the order number so Foundry does not change the wrong one.');
+  if (!candidates.length) throw new ValidationError('StockChief could not find an open sales order matching that customer or order number.');
+  throw new ValidationError('More than one open sales order matches. Name the order number so StockChief does not change the wrong one.');
 }
 
 function findSku(db, workspaceId, intent) {
@@ -242,12 +249,15 @@ function priceForOrder(db, ctx, intent, sku) {
 }
 
 function apply(db, ctx, intent, options = {}) {
+  // Carry review-only mode through every grounded clarification continuation.
+  if (options.previewOnly) intent={...intent,previewOnly:true};
+  options={...options,previewOnly:Boolean(options.previewOnly||intent.previewOnly)};
   if (intent.operation === 'list_waiting') return { kind: 'list', orders: sales.waitingForStock(db, ctx.workspaceId) };
   if (intent.operation === 'create') {
     /*
      * A conversation, not a form.
      *
-     * When somebody asks Foundry to create an order rather than reporting one,
+     * When somebody asks StockChief to create an order rather than reporting one,
      * each missing piece is asked for in turn, from real records: which
      * customer (with the ones on file to pick from), whether an unknown name
      * should become a new customer, which product (with what is actually
@@ -268,7 +278,7 @@ function apply(db, ctx, intent, options = {}) {
         intent = { ...intent, customerText: match.exact.name, customerSettled: true };
       } else if (match.close.length) {
         return question(intent, 'customerText',
-          `There is no customer called “${intent.customerText}” on file. Did you mean one of these, or should Foundry create them?`,
+          `There is no customer called “${intent.customerText}” on file. Did you mean one of these, or should StockChief create them?`,
           { choices: [
             ...match.close.slice(0, CHOICE_LIMIT - 1).map((c) => ({ label: c.name, value: c.name })),
             { label: `Create “${intent.customerText}” as a new customer`, value: `__create__:${intent.customerText}` },
@@ -306,11 +316,22 @@ function apply(db, ctx, intent, options = {}) {
         `${displayName} does not have a selling price. What price should this customer order use?`, { skuId: sku.id });
     }
     const draft = sales.createOrder(db, ctx, { customerName: intent.customerText, neededBy: intent.neededBy || null,
+      requireDeliveryDecision: true,
+      ...(intent.deliverySource && String(intent.statedAs || '').includes(intent.deliverySource)
+        && ['SHIP', 'PICKUP'].includes(intent.deliveryMethod) ? { deliveryMethod: intent.deliveryMethod } : {}),
+      ...(intent.shippingAddress && String(intent.statedAs || '').includes(intent.shippingAddress)
+        ? { shipToAddress: intent.shippingAddress } : {}),
+      ...(intent.customerEmail && String(intent.statedAs || '').includes(intent.customerEmail)
+        ? { customerEmail: intent.customerEmail } : {}),
       lines: [{ skuId: sku.id, quantity: intent.quantity, unitPriceMinor }], notes: intent.statedAs,
       requirePrices: true });
+    if (options.previewOnly || draft.delivery_decision_required) return {kind:'created',order:draft,
+      message:`${draft.order_number} is a draft for review. No stock is reserved or shipped and no customer has been contacted. Confirm the order only after reviewing its details.`};
     return { kind: 'created', order: sales.confirm(db, ctx, draft.id, { idempotencyKey: `tell-confirm:${draft.id}` }) };
   }
   const order = findOrder(db, ctx.workspaceId, intent);
+  if (options.previewOnly) return {kind:'review',order,
+    message:`Review ${order.order_number} before applying the requested ${intent.operation.replace(/_/g,' ')}. Nothing was changed; use the order's explicit controls to approve the next step.`};
   if (intent.operation === 'complete_order') {
     if (order.status === 'FULFILLED') {
       return { kind: 'already_completed', order,
@@ -350,7 +371,7 @@ function apply(db, ctx, intent, options = {}) {
   const sku = resolved.value;
   const line = order.lines.find((entry) => entry.sku_id === sku.id);
   if (intent.operation === 'add') {
-    if (intent.quantity < 1) return question(intent, 'quantity', 'How many units should Foundry add?');
+    if (intent.quantity < 1) return question(intent, 'quantity', 'How many units should StockChief add?');
     const unitPriceMinor = priceForOrder(db, ctx, intent, sku);
     if (unitPriceMinor === null) {
       const displayName = sku.variant_label ? `${sku.item_name} / ${sku.variant_label}` : sku.item_name;
@@ -375,7 +396,7 @@ function apply(db, ctx, intent, options = {}) {
       lineId: line.id, locationId: allocation.location_id, quantity: intent.quantity,
     }] }, options) };
   }
-  throw new ValidationError('Foundry could not safely determine the requested sales-order change.');
+  throw new ValidationError('StockChief could not safely determine the requested sales-order change.');
 }
 
 function continueApply(db, ctx, continuation, answer, options = {}) {

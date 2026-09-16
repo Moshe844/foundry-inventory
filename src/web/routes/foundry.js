@@ -28,7 +28,7 @@ const router = express.Router();
 router.use('/foundry', requireAuth);
 router.use('/api/foundry', requireAuth);
 
-/** First run shows setup; a configured workspace gets Foundry's home. */
+/** First run shows setup; a configured workspace gets StockChief's home. */
 router.get(
   // /foundry/describe is the Starting Fresh path: the same Mission 2 screen,
   // reached deliberately rather than shown to everybody by default.
@@ -43,7 +43,7 @@ router.get(
         return res.redirect(303, '/inventory/describe');
       }
       return res.page('foundry/home', {
-        title: 'Foundry',
+        title: 'StockChief',
         nav: 'foundry',
         configuration,
         stats,
@@ -116,14 +116,14 @@ router.post(
       otherWorkspaces: Math.max(0, (res.locals.workspaces || []).length - 1),
         aiConfigured: config.ai.configured,
         description,
-        error: 'Add an invoice, spreadsheet, Word document, or PDF — or tell Foundry a sentence or two about what you keep track of.',
+        error: 'Add an invoice, spreadsheet, Word document, or PDF — or tell StockChief a sentence or two about what you keep track of.',
       });
     }
 
     /*
      * The progress screen names its own subject.
      *
-     * Waiting a minute in front of "Foundry is reading your inventory" with no
+     * Waiting a minute in front of "StockChief is reading your inventory" with no
      * sign of *what* it is reading is indistinguishable from a stalled page.
      * The filename, or the opening of what they typed, is theirs and proves
      * the right thing arrived.
@@ -135,7 +135,7 @@ router.post(
     const jobId = jobRunner.createJob(req.ctx.workspaceId, 'understanding', description || '', {
       track: source ? 'document' : 'description',
       subject: source ? source.filename : firstWords(description),
-      subjectDetail: source ? fileSize(source.size) : 'what you told Foundry',
+      subjectDetail: source ? fileSize(source.size) : 'what you told StockChief',
       db: req.db,
     });
 
@@ -167,7 +167,7 @@ router.get(
     const job = jobRunner.getJob(req.params.jobId, req.ctx.workspaceId, req.db);
 
     if (!job) {
-      req.flash('error', 'That went out of date — Foundry can read your description again.');
+      req.flash('error', 'That went out of date — StockChief can read your description again.');
       return res.redirect(303, '/foundry');
     }
     if (job.status === 'done' && job.result) {
@@ -187,11 +187,11 @@ router.get(
       }
       if (job.kind === 'catalogue_review') {
         return res.status(422).page('inventory/describe', {
-          title: 'Tell Foundry what you sell',
+          title: 'Tell StockChief what you sell',
           nav: 'inventory',
           description: job.description || '',
           error: job.result.errorMessage
-            || 'Foundry could not make a safe product preview from that description. Nothing was added.',
+            || 'StockChief could not make a safe product preview from that description. Nothing was added.',
           catalogueReview: null,
         });
       }
@@ -199,7 +199,7 @@ router.get(
     if (job.status === 'failed') {
       if (job.kind === 'catalogue_review') {
         return res.status(503).page('inventory/describe', {
-          title: 'Tell Foundry what you sell',
+          title: 'Tell StockChief what you sell',
           nav: 'inventory',
           description: job.description || '',
           error: job.error.message,
@@ -217,7 +217,7 @@ router.get(
     }
 
     return res.page('foundry/thinking', {
-      title: 'Foundry is reading your inventory',
+      title: 'StockChief is reading your inventory',
       nav: 'foundry',
       job,
       stages: jobRunner.STAGES,
@@ -265,7 +265,7 @@ router.post(
          ON CONFLICT(workspace_id) DO UPDATE SET configured_at = COALESCE(workspace_configuration.configured_at, excluded.configured_at), updated_at = excluded.updated_at`
       )
       .run(req.ctx.workspaceId, now, now);
-    req.flash('info', 'Set up manually. Foundry is still here whenever you want it.');
+    req.flash('info', 'Set up manually. StockChief is still here whenever you want it.');
     res.redirect(303, '/locations');
   })
 );
@@ -295,7 +295,7 @@ router.get(
       understanding: displayUnderstanding,
     });
     if (setupDocument?.status === 'APPLIED') {
-      req.flash('warning', `Duplicate ignored: ${setupDocument.sourceName} was already imported${setupDocument.appliedAt ? ` on ${new Date(setupDocument.appliedAt).toLocaleString()}` : ''}. Foundry added nothing again.`);
+      req.flash('warning', `Duplicate ignored: ${setupDocument.sourceName} was already imported${setupDocument.appliedAt ? ` on ${new Date(setupDocument.appliedAt).toLocaleString()}` : ''}. StockChief added nothing again.`);
       return res.redirect(303, '/inventory');
     }
     return res.page('foundry/proposal', {
@@ -310,8 +310,8 @@ router.get(
       setupDocument,
       /*
        * What this document proves, worked out before the page describes what
-       * Foundry would build from it. The order matters: somebody approving an
-       * import should read what Foundry thinks the paper means before they
+       * StockChief would build from it. The order matters: somebody approving an
+       * import should read what StockChief thinks the paper means before they
        * read a summary of products and quantities, because the summary looks
        * the same whether the goods exist or not.
        */
@@ -319,10 +319,10 @@ router.get(
         ? require('../../foundry/document-meaning').meaningOf(setupDocument.interpretation, {
           isNewWorkspace: !planApplier.isConfigured(req.db, req.ctx.workspaceId),
           /*
-           * The order this bill is about, if Foundry can find it. With one,
+           * The order this bill is about, if StockChief can find it. With one,
            * the page says "it matches PO-1055 and nothing needs you"; without
            * one it has to ask whether goods are expected, because a business
-           * buying outside Foundry is normal and inventing the purchase would
+           * buying outside StockChief is normal and inventing the purchase would
            * not be.
            */
           matchedPurchaseOrder: (() => {
@@ -382,7 +382,7 @@ router.post(
     } else {
       onboardingPaths.choose(req.db, req.ctx.workspaceId, choice, {
         chosenBy: 'customer',
-        reason: 'Chosen after reviewing Foundry’s understanding of this inventory.',
+        reason: 'Chosen after reviewing StockChief’s understanding of this inventory.',
         describedAs: stored.source_description,
       });
     }
@@ -416,7 +416,7 @@ router.post(
       if (!key.startsWith('answer_')) continue;
       const questionId = key.slice('answer_'.length);
       const answer = trimOrNull(value);
-      // '__foundry__' means "let Foundry decide" — recorded, not answered.
+      // '__foundry__' means "let StockChief decide" — recorded, not answered.
       if (answer && answer !== '__foundry__') answers[questionId] = answer;
     }
 
@@ -502,7 +502,7 @@ router.get(
         req.ctx.workspaceId,
         stored.id
       ),
-      // What Foundry would create from what they already described. Null once
+      // What StockChief would create from what they already described. Null once
       // the inventory has anything in it.
       firstItem: firstItemService.suggest(req.db, req.ctx.workspaceId),
     });
@@ -546,7 +546,7 @@ router.post(
 );
 
 /**
- * Finish the starting-fresh conversation. Foundry has built the structure, but
+ * Finish the starting-fresh conversation. StockChief has built the structure, but
  * it must not pretend that zeroes are the customer's real stock. The customer
  * chooses how to supply current quantities instead of being dropped into a
  * traditional item screen.
@@ -640,7 +640,7 @@ router.post(
   '/foundry/quantities/complete',
   asyncRoute(async (req, res) => {
     onboardingPaths.setStatus(req.db, req.ctx.workspaceId, 'ready');
-    req.flash('success', 'Setup complete. Foundry is now watching and managing this inventory.');
+    req.flash('success', 'Setup complete. StockChief is now watching and managing this inventory.');
     return res.redirect(303, '/');
   })
 );
@@ -673,7 +673,7 @@ router.post(
       provider: req.app.locals.aiProvider || undefined,
     });
     if (!result.supported) {
-      req.flash('info', 'Foundry explained why that is not something it can change yet.');
+      req.flash('info', 'StockChief explained why that is not something it can change yet.');
       return res.redirect(303, '/foundry#conversation');
     }
     return res.redirect(303, `/foundry/change/${result.planId}`);

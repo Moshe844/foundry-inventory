@@ -10,7 +10,7 @@
  *
  * The cause was not a bad reader. It was that every document took the same
  * path: read the lines, create the products, receive the stock. So what is
- * under test here is that Foundry works out what a document *proves* first,
+ * under test here is that StockChief works out what a document *proves* first,
  * says what it will and will not do, and then only does the part the paper
  * actually supports.
  */
@@ -112,7 +112,7 @@ test("the reader's old vocabulary cannot mean 'receive everything' any more", ()
   assert.equal(meaning.kindOf({ documentType: 'stock_report' }), 'opening_inventory');
   assert.equal(meaning.kindOf({ documentType: 'nonsense' }), 'other');
   assert.equal(meaning.KINDS.other.establishes.onHand, false,
-    'a document Foundry cannot identify changes nothing');
+    'a document StockChief cannot identify changes nothing');
 });
 
 test('placing the order commits to buy and moves nothing', () => {
@@ -134,8 +134,8 @@ test('a document reconciles against its own stated total, whatever was done with
    * with the total the document states — but it only knew the goods value when
    * the document had been used to open the books. Answer the same proforma with
    * "Place the order" and the goods fell to zero, so the sum came out short by
-   * exactly the value of the shoes, and Foundry printed "these lines do not add
-   * up ... which means Foundry read a line wrong" about a document it had read
+   * exactly the value of the shoes, and StockChief printed "these lines do not add
+   * up ... which means StockChief read a line wrong" about a document it had read
    * perfectly.
    */
   const documentCosts = require('../../src/accounting/document-costs');
@@ -154,9 +154,9 @@ test('a document reconciles against its own stated total, whatever was done with
 
     const charges = doc.charges.reduce((sum, charge) => sum + charge.amountMinor, 0);
     assert.equal(doc.addsUpMinor, doc.goodsMinor + charges,
-      `${answer}: what Foundry adds up is the goods plus the charges`);
+      `${answer}: what StockChief adds up is the goods plus the charges`);
     assert.equal(doc.differsFromStatedMinor, 0,
-      `${answer}: and it matches the document's own total, so Foundry does not accuse `
+      `${answer}: and it matches the document's own total, so StockChief does not accuse `
       + 'itself of a misread it did not make');
     env.db.close();
   }

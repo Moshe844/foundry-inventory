@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * The import plan: what Foundry proposes to create, before it creates any of it.
+ * The import plan: what StockChief proposes to create, before it creates any of it.
  *
- * An import is the largest thing Foundry can be asked to do — a file can carry
+ * An import is the largest thing StockChief can be asked to do — a file can carry
  * a whole business's catalogue — so it follows exactly the same shape as a
  * single action in Mission 4: interpret, resolve deterministically, write down
  * what will happen, show it, and only then execute against a person's approval.
@@ -60,7 +60,7 @@ function firstSentence(text, limit) {
   const stop = clean.search(/[.!?](\s|$)/);
   const sentence = stop === -1 ? clean : clean.slice(0, stop + 1);
   if (sentence.length <= limit) return sentence;
-  // Cut at a word, not mid-word: a note ending "Foundry's readin…" looks broken
+  // Cut at a word, not mid-word: a note ending "StockChief's readin…" looks broken
   // rather than shortened.
   const cut = sentence.slice(0, limit);
   const space = cut.lastIndexOf(' ');
@@ -185,7 +185,7 @@ async function analyse(db, ctx, membership, input) {
 
   if (operationScope === 'selling_price_update' && proposal.mappings.sellingPrice === undefined) {
     throw new ValidationError(
-      'Foundry could not find a selling-price column in that file. Nothing was imported.'
+      'StockChief could not find a selling-price column in that file. Nothing was imported.'
     );
   }
 
@@ -298,7 +298,7 @@ function warningsFor(validated, proposal, operationScope = null) {
     warnings.push(`${validated.summary.invalid} row(s) cannot be imported as they stand.`);
   }
   if (proposal.detectedType === 'unknown') {
-    warnings.push('Foundry could not tell what kind of file this is. Check the columns below.');
+    warnings.push('StockChief could not tell what kind of file this is. Check the columns below.');
   }
   if (operationScope === 'selling_price_update') {
     warnings.push('Only selling prices on exact existing SKU-code matches will change. Products and stock quantities will not change.');
@@ -568,7 +568,7 @@ function approve(db, ctx, membership, importId, { expectedHash = null } = {}) {
     throw new ValidationError('The file no longer matches what you approved. Check it again.');
   }
   if (!plan.recordsValid) {
-    throw new ValidationError('There is nothing in that file Foundry can import.');
+    throw new ValidationError('There is nothing in that file StockChief can import.');
   }
 
   db.prepare(

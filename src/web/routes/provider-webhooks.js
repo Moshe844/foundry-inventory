@@ -66,7 +66,7 @@ async function handleGmailWebhook(db, req, res) {
   if (!connections.length) return res.status(202).json({ received: true, message: 'No active Gmail mailbox matched.' });
 
   // The same mailbox may be deliberately connected to separate workspaces.
-  // Pub/Sub identifies the mailbox, not a Foundry connector, so every active
+  // Pub/Sub identifies the mailbox, not a StockChief connector, so every active
   // workspace must run its own isolated sender rules and idempotency checks.
   // A failure in one workspace must not prevent the others from seeing mail;
   // scheduled polling remains the safe retry path for the failed one.
@@ -125,7 +125,7 @@ async function handleCloverWebhook(db, req, res, adapter) {
     totals.results.push(...(result.results || []));
     handled += 1;
   }
-  if (!handled) return res.status(202).json({ received: true, message: 'No active Foundry connection matched this Clover merchant.', ...totals });
+  if (!handled) return res.status(202).json({ received: true, message: 'No active StockChief connection matched this Clover merchant.', ...totals });
   return res.status(200).json({ received: true, ...totals });
 }
 

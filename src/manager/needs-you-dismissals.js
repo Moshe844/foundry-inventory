@@ -4,7 +4,7 @@
  * Durable, workspace-scoped decisions to stop surfacing an inbox item.
  *
  * This does not change or delete the business record that caused the prompt.
- * Its only effect is that Foundry stops treating this exact actionable prompt
+ * Its only effect is that StockChief stops treating this exact actionable prompt
  * as work the owner needs to see, everywhere the unified inbox is used.
  */
 

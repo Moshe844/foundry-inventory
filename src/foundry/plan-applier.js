@@ -42,7 +42,7 @@ function applyPlan(db, ctx, planId, options = {}) {
     const plan = JSON.parse(row.payload);
     if (!verifyPlanIntegrity(plan)) {
       throw new InvariantError(
-        'This configuration plan has been altered since it was proposed. Foundry will not apply it.',
+        'This configuration plan has been altered since it was proposed. StockChief will not apply it.',
         'plan_integrity_failed'
       );
     }

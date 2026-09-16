@@ -4,7 +4,7 @@
  * The planning questions, answered.
  *
  * "What am I likely to run out of?" "Should I order anything this week?" "Are
- * my reorder settings still any good?" These arrive through Tell Foundry as
+ * my reorder settings still any good?" These arrive through Tell StockChief as
  * ordinary English and are routed here by the same deterministic planner that
  * handles every other question — no model decides what the answer is, only
  * which question was asked.
@@ -36,7 +36,43 @@ function findSku(db, workspaceId, query) {
 }
 
 const EXECUTORS = {
-  /** What demand is Foundry expecting over the requested future period? */
+  /**
+   * Products which exist in the catalogue but have never had a stock movement.
+   *
+   * This deliberately matches the inventory list's "None yet" status. A
+   * missing balance row is not the same thing as a zero balance: it means no
+   * stock has ever been recorded, so a balance-only query silently loses the
+   * very products the owner is asking about.
+   */
+  never_stocked(db, workspaceId) {
+    const rows = db.prepare(`SELECT i.id AS item_id, i.name AS product,
+        COUNT(DISTINCT s.id) AS tracked_variants,
+        GROUP_CONCAT(DISTINCT s.code) AS sku_codes
+      FROM items i
+      JOIN skus s ON s.item_id = i.id AND s.is_active = 1
+      WHERE i.workspace_id = ? AND i.is_active = 1
+        AND NOT EXISTS (
+          SELECT 1 FROM movements m
+          WHERE m.workspace_id = i.workspace_id AND m.item_id = i.id
+        )
+      GROUP BY i.id, i.name
+      ORDER BY i.name`).all(workspaceId).map((row) => ({
+      product: row.product,
+      skus: Number(row.tracked_variants) === 1 ? row.sku_codes : `${row.tracked_variants} variants`,
+      status: 'None yet — no stock movement has been recorded',
+    }));
+
+    return {
+      rows,
+      columns: ['product', 'skus', 'status'],
+      handoff: { href: '/inventory/table', label: 'Open inventory' },
+      answer: rows.length
+        ? `${rows.length} product${rows.length === 1 ? '' : 's'} show “None yet” because no stock has ever been recorded for them: ${rows.map((row) => row.product).join(', ')}.`
+        : 'No active product shows “None yet”. Every active product has stock-movement history.',
+    };
+  },
+
+  /** What demand is StockChief expecting over the requested future period? */
   demand_forecast(db, workspaceId, plan = {}) {
     const horizonDays = Math.max(1, Math.min(Number(plan.windowDays || 30), 365));
     const skuIds = db.prepare(`SELECT s.id FROM skus s
@@ -67,8 +103,8 @@ const EXECUTORS = {
       answer: !rows.length
         ? 'There are no active products to forecast yet.'
         : !measurable.length
-          ? `Foundry checked ${rows.length} product${rows.length === 1 ? '' : 's'}, but none has enough recorded demand history for a sales-rate forecast. Known customer commitments are shown instead.`
-          : `Foundry can estimate demand for ${measurable.length} product${measurable.length === 1 ? '' : 's'} over the next ${horizonDays} days. ${measurable[0].product} is highest at about ${measurable[0].expectedUnits} units, with ${measurable[0].confidence} confidence.`,
+          ? `StockChief checked ${rows.length} product${rows.length === 1 ? '' : 's'}, but none has enough recorded demand history for a sales-rate forecast. Known customer commitments are shown instead.`
+          : `StockChief can estimate demand for ${measurable.length} product${measurable.length === 1 ? '' : 's'} over the next ${horizonDays} days. ${measurable[0].product} is highest at about ${measurable[0].expectedUnits} units, with ${measurable[0].confidence} confidence.`,
     };
   },
   /**
@@ -81,28 +117,52 @@ const EXECUTORS = {
    * depend on a guess, and this was an obvious question with no rule behind it.
    */
   out_of_stock(db, workspaceId) {
-    const empty = db.prepare(`SELECT i.name AS item_name, s.variant_label, s.id AS sku_id,
-        l.name AS location_name
-      FROM balances b
-      JOIN skus s ON s.id = b.sku_id
-      JOIN items i ON i.id = s.item_id
-      JOIN locations l ON l.id = b.location_id
-      WHERE b.workspace_id = ? AND b.on_hand <= 0 AND s.is_active = 1 AND l.is_active = 1
-      ORDER BY i.name, s.position`).all(workspaceId);
+    const empty = db.prepare(`SELECT i.id AS item_id, i.name AS product,
+        COUNT(DISTINCT s.id) AS tracked_variants,
+        COALESCE(SUM(b.on_hand), 0) AS on_hand
+      FROM items i
+      JOIN skus s ON s.item_id = i.id AND s.is_active = 1
+      LEFT JOIN balances b ON b.sku_id = s.id AND b.workspace_id = i.workspace_id
+      WHERE i.workspace_id = ? AND i.is_active = 1
+        AND EXISTS (
+          SELECT 1 FROM movements m
+          WHERE m.workspace_id = i.workspace_id AND m.item_id = i.id
+        )
+      GROUP BY i.id, i.name
+      HAVING COALESCE(SUM(b.on_hand), 0) <= 0
+      ORDER BY i.name`).all(workspaceId);
 
     const held = db.prepare(`SELECT COALESCE(SUM(b.on_hand), 0) AS units,
-        COUNT(DISTINCT b.sku_id) AS positions
-      FROM balances b JOIN skus s ON s.id = b.sku_id
-      WHERE b.workspace_id = ? AND s.is_active = 1`).get(workspaceId);
+        COUNT(DISTINCT i.id) AS products
+      FROM items i
+      JOIN skus s ON s.item_id = i.id AND s.is_active = 1
+      LEFT JOIN balances b ON b.sku_id = s.id AND b.workspace_id = i.workspace_id
+      WHERE i.workspace_id = ? AND i.is_active = 1`).get(workspaceId);
 
     const incoming = require("../purchasing/position").onOrderBySku(db, workspaceId);
 
-    const rows = empty.map((row) => {
+    const itemSkuRows = db.prepare(`SELECT i.id AS item_id, s.id AS sku_id
+      FROM items i JOIN skus s ON s.item_id = i.id AND s.is_active = 1
+      WHERE i.workspace_id = ? AND i.is_active = 1`).all(workspaceId);
+    const incomingByItem = new Map();
+    for (const row of itemSkuRows) {
       const onOrder = incoming.get(row.sku_id);
+      if (!onOrder || !Number(onOrder.onOrder)) continue;
+      const current = incomingByItem.get(row.item_id) || { quantity: 0, nextExpectedDate: null };
+      current.quantity += Number(onOrder.onOrder);
+      if (onOrder.nextExpectedDate && (!current.nextExpectedDate || onOrder.nextExpectedDate < current.nextExpectedDate)) {
+        current.nextExpectedDate = onOrder.nextExpectedDate;
+      }
+      incomingByItem.set(row.item_id, current);
+    }
+
+    const rows = empty.map((row) => {
+      const onOrder = incomingByItem.get(row.item_id);
       return {
-        product: row.variant_label ? `${row.item_name} / ${row.variant_label}` : row.item_name,
-        location: row.location_name,
-        onTheWay: onOrder && onOrder.onOrder ? `${onOrder.onOrder} due${onOrder.nextExpectedDate ? ' ' + onOrder.nextExpectedDate : ''}` : 'nothing ordered',
+        product: row.product,
+        variants: Number(row.tracked_variants),
+        onHand: Number(row.on_hand),
+        onTheWay: onOrder ? `${onOrder.quantity} due${onOrder.nextExpectedDate ? ' ' + onOrder.nextExpectedDate : ''}` : 'nothing ordered',
       };
     });
 
@@ -113,13 +173,12 @@ const EXECUTORS = {
      */
     return {
       rows,
-      columns: ['product', 'location', 'onTheWay'],
+      columns: ['product', 'variants', 'onHand', 'onTheWay'],
+      handoff: { href: '/inventory/table', label: 'Open inventory' },
       answer: rows.length
-        ? `${rows.length} product/location position${rows.length === 1 ? ' is' : 's are'} at zero. `
-          + `Everything else adds up to ${held.units} units across ${held.positions} products.`
-        : `Nothing is out of stock. Foundry counts ${held.units} units across ${held.positions} `
-          + 'products right now. If a screen is showing empty, it is either filtered, or it is a '
-          + 'different inventory to the one this question was asked in.',
+        ? `${rows.length} product${rows.length === 1 ? ' is' : 's are'} out of stock across all locations: ${rows.map((row) => row.product).join(', ')}. `
+          + `The active catalogue holds ${held.units} units across ${held.products} products in total.`
+        : `No previously stocked product is out of stock across all locations. The active catalogue holds ${held.units} units across ${held.products} products. Products marked “None yet” are counted separately because they have never had stock recorded.`,
     };
   },
   /** What am I likely to run out of? */
@@ -138,7 +197,7 @@ const EXECUTORS = {
       columns: ['product', 'runsOut', 'inDays', 'alreadyCovered', 'confidence'],
       handoff: exposed.length ? { href: '/needs-you', label: 'Open Needs you' } : null,
       answer: !rows.length
-        ? 'Nothing Foundry can measure a sales rate for is heading for zero inside the period it can see.'
+        ? 'Nothing StockChief can measure a sales rate for is heading for zero inside the period it can see.'
         : exposed.length
           ? `${exposed[0].displayName} is the nearest problem. ${exposed[0].explanation}`
           : `${rows[0].product} runs low around ${rows[0].runsOut}, and an order already placed covers it.`,
@@ -171,7 +230,7 @@ const EXECUTORS = {
         ? `${rows.length} line${rows.length === 1 ? '' : 's'} need ordering. ${result.recommendations[0].explanation}`
         : blocked.length
           ? `${blocked.length} line${blocked.length === 1 ? '' : 's'} need ordering, but no supplier is linked yet. ${blocked[0].headline}.`
-          : 'Nothing needs ordering right now. Everything Foundry can measure is covered either by stock on hand or by an order already placed.',
+          : 'Nothing needs ordering right now. Everything StockChief can measure is covered either by stock on hand or by an order already placed.',
     };
   },
 
@@ -218,7 +277,7 @@ const EXECUTORS = {
         ? `Yes — ${rows.length} stock target${rows.length === 1 ? ' is' : 's are'} higher than the `
           + 'current pace of sales needs. Lowering them leaves every reorder point where it is, so the '
           + `protection against running out does not change. ${review.headline}`
-        : 'Foundry cannot find stock it could release without lowering the protection against running '
+        : 'StockChief cannot find stock it could release without lowering the protection against running '
           + `out. ${review.headline}`,
     };
   },
@@ -246,7 +305,7 @@ const EXECUTORS = {
       columns: ['supplier', 'deliveredOrders', 'onTime', 'averageDays', 'allArrived'],
       answer: rated.length
         ? rated[0].summary
-        : 'No supplier has enough delivered orders on record for Foundry to say which is most reliable. '
+        : 'No supplier has enough delivered orders on record for StockChief to say which is most reliable. '
           + 'It will not rank them on one or two deliveries.',
     };
   },
@@ -267,9 +326,9 @@ const EXECUTORS = {
       columns: ['product', 'setting', 'current', 'suggested', 'why'],
       handoff: rows.length ? { href: '/needs-you', label: 'Open Needs you' } : null,
       answer: rows.length
-        ? `${rows.length} setting${rows.length === 1 ? '' : 's'} no longer match what Foundry measures. `
+        ? `${rows.length} setting${rows.length === 1 ? '' : 's'} no longer match what StockChief measures. `
           + result.policyChanges[0].why
-        : 'Your reorder settings still match the demand and delivery times Foundry measures.',
+        : 'Your reorder settings still match the demand and delivery times StockChief measures.',
     };
   },
 
@@ -279,7 +338,7 @@ const EXECUTORS = {
     const sku = plan && plan.entityQuery ? findSku(db, workspaceId, plan.entityQuery) : null;
     if (!sku) {
       return { rows: [], columns: [],
-        answer: 'Foundry needs to know which product you mean before it can explain its demand.' };
+        answer: 'StockChief needs to know which product you mean before it can explain its demand.' };
     }
     const view = planning().forSku(db, workspaceId, sku.id, {});
     if (!view) return { rows: [], columns: [], answer: 'That product could not be read.' };
@@ -316,7 +375,7 @@ const EXECUTORS = {
       columns: ['product', 'units', 'from', 'to', 'because'],
       answer: rows.length
         ? filtered[0].why
-        : 'Foundry cannot see a location that is short of stock another location can spare.',
+        : 'StockChief cannot see a location that is short of stock another location can spare.',
     };
   },
 };

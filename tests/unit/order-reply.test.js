@@ -3,14 +3,14 @@
 /*
  * What a customer hears when their order does not simply go through.
  *
- * A real customer wrote "I want to order size 36 2 pieces". Foundry read it
+ * A real customer wrote "I want to order size 36 2 pieces". StockChief read it
  * as an order, could not tell which of four shoes they meant, and produced:
  * a line in Needs You saying read it yourself, a second line saying reply to
  * them, and — for the customer — nothing at all.
  *
  * Three things were wrong and each is asserted here. The catalogue could
  * answer "which four", and was never asked. The refusal said "nothing matched"
- * when Foundry knew exactly what could have been meant. And nobody wrote back.
+ * when StockChief knew exactly what could have been meant. And nobody wrote back.
  */
 
 const test = require('node:test');
@@ -74,7 +74,7 @@ test('a word the catalogue has never heard of does not veto the whole search', (
   const env = setup();
   const vague = resolver.resolveSku(env.db, env.workspace.workspaceId, '', 'size 36');
   assert.equal(vague.ok, false);
-  assert.equal(vague.reason, 'ambiguous', 'Foundry knows which products come in a 36');
+  assert.equal(vague.reason, 'ambiguous', 'StockChief knows which products come in a 36');
   assert.equal(vague.candidates.length, 2);
   assert.deepEqual(vague.ignored, ['size'], 'and says which word it could not place');
 
@@ -95,7 +95,7 @@ test('an ambiguous order names the actual choices, and writes the question to se
   const result = await orderFromEmail.draft(env.db, env.ctx, messageId,
     reads([{ itemText: '', variantText: 'size 36', quantity: 2 }]));
 
-  assert.equal(result.order, null, 'Foundry does not choose between four shoes');
+  assert.equal(result.order, null, 'StockChief does not choose between four shoes');
   assert.match(result.because, /2 different products here/);
   assert.match(result.because, /moc toe lace/);
   assert.match(result.because, /moc toe slip in/);
@@ -113,7 +113,7 @@ test('an ambiguous order names the actual choices, and writes the question to se
 
 test('one email is one decision, not two', async () => {
   /*
-   * The same message arrived in Needs You twice — once as an order Foundry
+   * The same message arrived in Needs You twice — once as an order StockChief
    * could not read, once as mail nobody had answered — with the same sender,
    * the same button and the same destination.
    */
@@ -126,7 +126,7 @@ test('one email is one decision, not two', async () => {
     .filter((entry) => entry.href === `/mail/${messageId}`);
   assert.equal(mine.length, 1, 'one email, one card');
   assert.match(mine[0].title, /Read the order/);
-  assert.match(mine[0].recommendation, /Foundry has written the question/);
+  assert.match(mine[0].recommendation, /StockChief has written the question/);
   env.db.close();
 });
 
@@ -145,11 +145,11 @@ function arriveOnThread(env, threadId, body, subject = '') {
 
 test('the customer answers the question, and the order is made from the conversation', async () => {
   /*
-   * The whole round trip, as it actually happened. Foundry asked which of
+   * The whole round trip, as it actually happened. StockChief asked which of
    * four shoes; the owner sent it; the customer replied "I would like the moc
    * toe slip in 36 please" — and that reply arrived as an unrelated message,
    * because there is no buying language in it. The customer had answered and
-   * Foundry did not notice.
+   * StockChief did not notice.
    *
    * Neither email is an order on its own: the first says how many and not
    * which, the second says which and not how many. Together they are one.
@@ -158,7 +158,7 @@ test('the customer answers the question, and the order is made from the conversa
   const first = arriveOnThread(env, 'gmail-thread-1', 'Hi,\nI want to order size 36 2 pieces');
   await orderFromEmail.draft(env.db, env.ctx, first.id,
     reads([{ itemText: '', variantText: 'size 36', quantity: 2 }]));
-  // The owner reads Foundry's question and sends it.
+  // The owner reads StockChief's question and sends it.
   env.db.prepare(`UPDATE connection_email_messages SET reply_sent_at = ?, reply_state = 'WAITING'
     WHERE id = ?`).run(new Date().toISOString(), first.id);
 
@@ -267,7 +267,7 @@ test('when the answer makes the order, the email that started it stops asking', 
 
 /* ---------------------------------------------------------------- the stock */
 
-test('an order Foundry can fill only partly says so, before it ships', async () => {
+test('an order StockChief can fill only partly says so, before it ships', async () => {
   const env = setup();
   const messageId = arrive(env, 'I would like to order 20 moc toe lace size 36');
   const result = await orderFromEmail.draft(env.db, env.ctx, messageId,

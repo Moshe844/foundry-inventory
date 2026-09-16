@@ -97,7 +97,7 @@ const balance = (env, locationId) =>
 
 // --- natural language --------------------------------------------------------
 
-test('the actions-page Tell Foundry box uses the same general manager route as Home', async () => {
+test('the actions-page Tell StockChief box uses the same general manager route as Home', async () => {
   const env = setup({ provider: fakeProvider(intentResponse()) });
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
@@ -119,7 +119,7 @@ test('a written instruction becomes a preview, not a movement', async () => {
   assert.match(res.headers.location, /^\/actions\/act_/);
 
   const preview = plain((await agent.get(res.headers.location)).text);
-  assert.match(preview, /Foundry is ready to prepare a real transfer/);
+  assert.match(preview, /StockChief is ready to prepare a real transfer/);
   assert.match(preview, /Children's Sweater \/ Navy \/ 4/);
   assert.match(preview, /From Main Warehouse\s+48 on hand now · 15 will be reserved after approval/);
   assert.match(preview, /To Downtown Store\s+4 on hand now · \+15 only after receipt/);
@@ -170,7 +170,7 @@ test('an unknown transfer destination offers to create it, then previews and ver
 
   const transferPage = await agent.get(continued.headers.location);
   const transferText = plain(transferPage.text);
-  assert.match(transferText, /Foundry is ready to prepare a real transfer/);
+  assert.match(transferText, /StockChief is ready to prepare a real transfer/);
   assert.match(transferText, /From Main Warehouse\s+48 on hand now · 2 will be reserved after approval/);
   assert.match(transferText, /To Overflow Warehouse\s+0 on hand now · \+2 only after receipt/);
   assert.match(transferText, /52 total on hand unchanged while the stock moves/);
@@ -191,12 +191,12 @@ test('an unknown transfer destination offers to create it, then previews and ver
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM inventory_transfers').get().n, 1);
 });
 
-test('an instruction Foundry cannot carry out is refused honestly', async () => {
+test('an instruction StockChief cannot carry out is refused honestly', async () => {
   const env = setup({
     provider: fakeProvider({
       lines: [],
       clarifyingQuestion: '',
-      unsupportedReason: 'Foundry cannot raise purchase orders — it can only move stock you already have.',
+      unsupportedReason: 'StockChief cannot raise purchase orders — it can only move stock you already have.',
     }),
   });
   const agent = request.agent(env.app);
@@ -326,7 +326,7 @@ test('a proposal whose stock has moved is shown as recalculated, not executed', 
   });
 
   const preview = plain((await agent.get(`/actions/${proposal.proposalId}`)).text);
-  assert.match(preview, /The stock changed since Foundry worked this out/);
+  assert.match(preview, /The stock changed since StockChief worked this out/);
   assert.match(preview, /From Main Warehouse\s+31 on hand now/, 'the current figure is shown');
 
   const res = await post(agent, `/actions/${proposal.proposalId}/approve`, {}, `/actions/${proposal.proposalId}`);
@@ -473,8 +473,8 @@ test('a finding offers a review, never a "do it now"', async () => {
   assert.match(res.headers.location, /^\/actions\/act_/);
 
   const preview = plain((await agent.get(res.headers.location)).text);
-  assert.match(preview, /Foundry is ready to prepare a real transfer/);
-  assert.match(preview, /A Foundry finding/);
+  assert.match(preview, /StockChief is ready to prepare a real transfer/);
+  assert.match(preview, /A StockChief finding/);
 });
 
 test('a stockout finding offers no action at all', async () => {
@@ -566,7 +566,7 @@ test('a question can be answered without retyping the instruction', async () => 
   assert.match(proposal.originalInstruction, /take some Navy 4 off Downtown — they were sold/);
 });
 
-test('Tell Foundry keeps the quantity when one sentence adds a new product and records its receipt', async () => {
+test('Tell StockChief keeps the quantity when one sentence adds a new product and records its receipt', async () => {
   const parsed = intentResponse({
     actionType: 'create_item',
     item: '',
@@ -592,7 +592,7 @@ test('Tell Foundry keeps the quantity when one sentence adds a new product and r
 
   const previewPage = await agent.get(asked.headers.location);
   const preview = plain(previewPage.text);
-  assert.match(preview, /Foundry is ready to add a product and receive its stock/);
+  assert.match(preview, /StockChief is ready to add a product and receive its stock/);
   assert.match(preview, /white_socks/);
   assert.match(preview, /Size: 6/);
   assert.match(preview, /AE_345/);
@@ -685,7 +685,7 @@ test('twelve opening balances use one grouped reason and resume the same atomic 
 
   const previewResponse = await agent.get(answered.headers.location);
   const preview = plain(previewResponse.text);
-  assert.match(preview, /Foundry is ready to make 12 changes/);
+  assert.match(preview, /StockChief is ready to make 12 changes/);
   assert.match(preview, /Approve all 12/);
   assert.equal(
     store.db.prepare('SELECT COUNT(*) AS n FROM action_proposals WHERE plan_id IS NOT NULL').get().n,
@@ -835,8 +835,8 @@ test('an imported split-variant catalogue keeps supplied product words and asks 
 
 /**
  * The two boxes look the same to a person, so neither may claim the other's
- * work is impossible. Asking Foundry to move stock from the question page used
- * to answer "Foundry cannot move stock", which is simply untrue.
+ * work is impossible. Asking StockChief to move stock from the question page used
+ * to answer "StockChief cannot move stock", which is simply untrue.
  */
 test('an instruction typed into the question box is handed over, not refused', async () => {
   const env = setup({
@@ -867,12 +867,12 @@ test('an instruction typed into the question box is handed over, not refused', a
   assert.ok(!page.includes('cannot move'), 'never claims it is impossible');
 });
 
-test('a question typed into the action box points back at Ask Foundry', async () => {
+test('a question typed into the action box points back at Ask StockChief', async () => {
   const env = setup({
     provider: fakeProvider({
       lines: [],
       clarifyingQuestion: '',
-      unsupportedReason: 'Foundry cannot answer that from this page.',
+      unsupportedReason: 'StockChief cannot answer that from this page.',
     }),
   });
   const agent = request.agent(env.app);
@@ -880,12 +880,12 @@ test('a question typed into the action box points back at Ask Foundry', async ()
 
   const res = await post(agent, '/actions/ask', { instruction: 'how many navy 4 do we have' });
   const page = plain(res.text);
-  assert.match(page, /Foundry can look that up/);
+  assert.match(page, /StockChief can look that up/);
   assert.match(res.text, /href="\/ask\?q=how%20many%20navy%204%20do%20we%20have"/);
 });
 
 test('a question is rendered where it can be answered, not as a message you dismiss', async () => {
-  // Reported from the console: asking Foundry to move stock produced a toast
+  // Reported from the console: asking StockChief to move stock produced a toast
   // carrying the question "which location should this be moved to?" — which
   // disappears on the next click and cannot be typed into.
   //
@@ -925,7 +925,7 @@ test('a question is rendered where it can be answered, not as a message you dism
  * The manual screens had no permission check at all, so they were a way around
  * the whole scheme: a staff member could correct a count from the item page —
  * the one operation that changes a balance without stock moving — while the
- * same correction through Tell Foundry was refused.
+ * same correction through Tell StockChief was refused.
  */
 test('a staff member can handle stock but cannot correct a count from the item page', async () => {
   const env = setup();
@@ -967,7 +967,7 @@ test('an owner may still correct a count from the item page', async () => {
  * as well as in the engine.
  *
  * Reported from a clean QA run: a correction for Black/Medium at Downtown, 8 to
- * 5, said "The stock changed since Foundry worked this out. This proposal has
+ * 5, said "The stock changed since StockChief worked this out. This proposal has
  * expired." and then rendered its warning box already ticked above a live
  * Approve button. The engine refuses it, so nothing could actually go wrong in
  * the ledger; being told to press a button that cannot work is the bug.

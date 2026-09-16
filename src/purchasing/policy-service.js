@@ -5,12 +5,12 @@
  *
  * Every field is optional, and a product with no policy at all is the normal
  * case. That is deliberate — requiring a reorder point on every line before
- * Foundry will help would mean it helps nobody on the first day, which is
+ * StockChief will help would mean it helps nobody on the first day, which is
  * exactly when a new customer most needs it. Where nothing is set, the
  * replenishment engine derives figures from real usage and labels them as
  * derived; a policy simply replaces a derived number with a decided one.
  *
- * Foundry may propose policies from history. It never writes them by itself:
+ * StockChief may propose policies from history. It never writes them by itself:
  * a proposal is shown with the figures it came from, and a person accepts it.
  */
 
@@ -231,7 +231,7 @@ function clearPolicy(db, ctx, membership, skuId) {
 }
 
 /**
- * A policy Foundry would suggest for a line, from what it has actually seen.
+ * A policy StockChief would suggest for a line, from what it has actually seen.
  *
  * Returned as a proposal with the figures it was derived from, never written.
  * A line without enough usage history gets no proposal rather than a made-up
@@ -248,7 +248,7 @@ function proposePolicy(db, workspaceId, skuId, options = {}) {
       displayName: sku.displayName,
       canPropose: false,
       // Repeated once per product down a whole table, so it has to read as a
-      // fact about that product rather than a sentence about Foundry's method.
+      // fact about that product rather than a sentence about StockChief's method.
       because: sku.measured.issuedInWindow === 0
         ? `None sold in the last ${sku.measured.windowDays} days`
         : `${sku.measured.issuedInWindow} sold in the last ${sku.measured.windowDays} days — too few to judge by`,

@@ -2,7 +2,7 @@
   /*
    * One message, and the only three things anybody does with it.
    *
-   * The body is shown as it arrived. Foundry offers no reply here, and the
+   * The body is shown as it arrived. StockChief offers no reply here, and the
    * page says so plainly rather than leaving somebody hunting for a button
    * that does not exist.
    */
@@ -40,7 +40,7 @@
         <h2>What they wrote</h2>
         <% if (m.trust_status !== 'TRUSTED') { %>
           <span class="t-xs t-muted">
-            This sender is not one Foundry treats as evidence — nothing in it changed any record.
+            This sender is not one StockChief treats as evidence — nothing in it changed any record.
           </span>
         <% } %>
       </div>
@@ -63,7 +63,7 @@
           <% }) %>
         </ul>
         <p class="hint">
-          What Foundry did with these is on
+          What StockChief did with these is on
           <a href="/settings/connections/<%= m.connector_id %>#message-<%= m.id %>">the mailbox connection</a>.
         </p>
       <% } %>
@@ -74,7 +74,7 @@
 <% if (prepared && (prepared.order || prepared.because)) { %>
   <%
     /*
-     * What Foundry did about this before anybody read it.
+     * What StockChief did about this before anybody read it.
      *
      * A draft order is not a decision — it is the work done, waiting for one.
      * And when there is no draft, the reason belongs here just as much: an
@@ -84,7 +84,7 @@
   %>
   <section class="section">
     <div class="panel">
-      <div class="panel-head"><div><h2>What Foundry prepared</h2></div></div>
+      <div class="panel-head"><div><h2>What StockChief prepared</h2></div></div>
       <div class="card-body">
         <% if (prepared.order) { %>
           <p class="lede">
@@ -100,7 +100,7 @@
             <% } %>
           </p>
         <% } else { %>
-          <p class="lede">Foundry did not turn this into an order.</p>
+          <p class="lede">StockChief did not turn this into an order.</p>
           <p class="hint"><%= prepared.because %></p>
         <% } %>
       </div>
@@ -125,7 +125,7 @@
           <span class="t-xs t-muted">Sent <%= helpers.dateTime(draft.sentAt) %></span>
         <% } else if (draft) { %>
           <span class="t-xs t-muted">
-            <%= draft.source === 'model' ? 'Written by Foundry from your records'
+            <%= draft.source === 'model' ? 'Written by StockChief from your records'
               : draft.source === 'person' ? 'Your words'
               : 'Built from your records' %> · nothing has been sent
           </span>
@@ -136,7 +136,7 @@
     <% if (draft && draft.rejected) { %>
       <div class="card-body">
         <div class="notice notice--warn"><div>
-          <strong>Foundry wrote a reply and threw it away.</strong><br>
+          <strong>StockChief wrote a reply and threw it away.</strong><br>
           It was rejected because <%= draft.rejected %>. What is below uses your records only,
           so it is duller and it is true. Edit it however you like before sending.
         </div></div>
@@ -160,7 +160,7 @@
             <span class="field-label">Reply</span>
             <textarea class="input textarea message-edit" name="body" rows="14"><%= draft.body %></textarea>
             <span class="field-hint">
-              Foundry may only use figures and dates that are already in your records. Anything
+              StockChief may only use figures and dates that are already in your records. Anything
               it wrote that was not is gone before you saw it — but you are the one sending this,
               so read it.
             </span>
@@ -176,7 +176,7 @@
       </form>
     <% } else { %>
       <div class="card-body">
-        <p class="lede">Foundry can draft this from what it holds about <%= m.sender %>.</p>
+        <p class="lede">StockChief can draft this from what it holds about <%= m.sender %>.</p>
         <p class="hint">
           It reads their orders, shipments, tracking and balances first, and may only use
           figures and dates that are already there. Nothing is sent until you send it.
@@ -219,7 +219,7 @@
           <% } %>
         <% }) %>
         <% if (!m.decidedByPerson) { %>
-          <button class="btn btn--ghost" type="submit" name="state" value="RETHINK">Ask Foundry to look again</button>
+          <button class="btn btn--ghost" type="submit" name="state" value="RETHINK">Ask StockChief to look again</button>
         <% } %>
       </div>
     </form>

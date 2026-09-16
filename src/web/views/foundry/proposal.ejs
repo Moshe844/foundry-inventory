@@ -1,9 +1,9 @@
 <%
   /*
-   * The review. Everything Foundry would do, before it does any of it.
+   * The review. Everything StockChief would do, before it does any of it.
    *
    * The order on this page is load-bearing and has not changed: what the paper
-   * proves, what Foundry will change, what it is deliberately leaving alone,
+   * proves, what StockChief will change, what it is deliberately leaving alone,
    * and only then the catalogue. A summary of products and quantities looks
    * identical whether the goods exist or not, and somebody approving an import
    * once read one and assumed the other — a proforma invoice for shoes still
@@ -43,7 +43,7 @@
   var requirementRole = {
     business_context: 'Business context',
     evidence_instruction: 'Evidence instruction',
-    behavioral_guardrail: 'Foundry guardrail'
+    behavioral_guardrail: 'StockChief guardrail'
   };
   var requirementDisplayStatus = function (requirement) {
     return requirementRole[requirement.semanticRole]
@@ -57,10 +57,10 @@
 
 <div class="rm-head">
   <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Nothing has been created yet</p>
-  <h1><%= addingToExisting ? "Here's what Foundry read from your file" : "Here's how I'd organize your inventory" %></h1>
+  <h1><%= addingToExisting ? "Here's what StockChief read from your file" : "Here's how I'd organize your inventory" %></h1>
   <% if (u.businessDescription) { %>
     <details class="rm-work" style="margin-top:12px;text-align:left">
-      <summary>What you told Foundry</summary>
+      <summary>What you told StockChief</summary>
       <div class="rm-work__body"><p style="margin:0">“<%= u.businessDescription %>”</p></div>
     </details>
   <% } %>
@@ -140,7 +140,7 @@
           <p class="rm-quiet" style="font-size:12.5px;padding:12px 16px;border-top:1px solid var(--line-2);margin:0">
             The document itself states <%= helpers.money(dm.totals.statedTotalMinor, dm.totals.currency) %><%
               if (reckoned !== dm.totals.statedTotalMinor) { %> — <%= helpers.money(Math.abs(dm.totals.statedTotalMinor - reckoned), dm.totals.currency)
-              %> away from the lines above. Foundry has not adjusted anything to make them agree.<% } else { %>, and these lines come to the same.<% } %>
+              %> away from the lines above. StockChief has not adjusted anything to make them agree.<% } else { %>, and these lines come to the same.<% } %>
           </p>
         <% } %>
       </section>
@@ -175,7 +175,7 @@
           <div><span>Already here<% if (scopeWarning.currentProductCount > scopeWarning.currentExamples.length) { %> — showing 4 of <%= scopeWarning.currentProductCount %><% } %></span><strong><%= scopeWarning.currentExamples.join(', ') %></strong></div>
           <div><span>In this file<% if (scopeWarning.incomingProductCount > scopeWarning.incomingExamples.length) { %> — showing 4 of <%= scopeWarning.incomingProductCount %><% } %></span><strong><%= scopeWarning.incomingExamples.join(', ') %></strong></div>
         </div>
-        <p class="muted">Foundry has read the file, but nothing has been added. Continue only if these records belong in the inventory currently open.</p>
+        <p class="muted">StockChief has read the file, but nothing has been added. Continue only if these records belong in the inventory currently open.</p>
       </div>
       <div class="modal-foot">
         <a class="rm-btn rm-btn--ghost" href="/">Cancel</a>
@@ -193,7 +193,7 @@
   <% if (doc) { %>
     <p class="rm-stamp">
       <%- helpers.icon('import', { size: 14 }) %>
-      What Foundry read from <%= setupDocument.sourceName %>
+      What StockChief read from <%= setupDocument.sourceName %>
       <span class="rm-pillbadge is-ok">Read from file</span>
       <span class="rm-quiet"><%= doc.documentType.replace('_', ' ') %><% if (doc.documentNumber) { %> · <%= doc.documentNumber %><% } %><% if (doc.documentDate) { %> · <%= doc.documentDate %><% } %></span>
     </p>
@@ -223,14 +223,14 @@
       <%- helpers.icon('tag', { size: 16 }) %>
       <span>
         This file calls the vendor's product identifier <strong><%= setupDocument.detectedSupplierCodeLabel %></strong>.
-        Foundry read every value in that column as the vendor's code.
+        StockChief read every value in that column as the vendor's code.
       </span>
     </div>
 
     <section class="rm-panel" style="margin-bottom:16px">
       <div class="rm-panel__head">
         <%- helpers.icon('serial', { size: 15, className: 'rm-quiet' }) %>
-        <h2>What should Foundry call that field?</h2>
+        <h2>What should StockChief call that field?</h2>
       </div>
       <div style="padding:16px">
         <label class="rm-field" style="max-width:520px;margin:0">
@@ -238,7 +238,7 @@
           <input type="text" name="supplierCodeLabel" value="<%= docCodeLabel %>" maxlength="60" required data-vendor-code-label-input>
           <small>
             Examples: Style #, Item No., Vendor SKU, or Catalogue number. Set it once — future
-            documents from this vendor may use different headings, and Foundry will recognize them as
+            documents from this vendor may use different headings, and StockChief will recognize them as
             the same field and keep showing your chosen name.
           </small>
         </label>
@@ -259,7 +259,7 @@
             <tr>
               <th>Style</th><th>Color</th><th>Size</th>
               <th data-vendor-code-label><%= docCodeLabel %></th>
-              <th>Foundry action</th><th>Qty</th><th>Unit cost</th>
+              <th>StockChief action</th><th>Qty</th><th>Unit cost</th>
             </tr>
           </thead>
           <tbody>
@@ -313,7 +313,7 @@
     <section class="rm-panel" style="margin-bottom:16px">
       <div class="rm-panel__head">
         <%- helpers.icon('spark', { size: 15, className: 'rm-quiet' }) %>
-        <h2>What Foundry understood</h2>
+        <h2>What StockChief understood</h2>
       </div>
       <div style="padding:16px">
         <p class="rm-figure" style="font-size:19px;margin-bottom:6px"><%= u.businessType || 'Your inventory operation' %></p>
@@ -336,12 +336,12 @@
         <details class="rm-work" style="margin:0">
           <summary><%- helpers.icon('question', { size: 14 }) %> Needs information from your records · <%= reqSummary.needsDetail.length %></summary>
           <div class="rm-work__body">
-            <p style="font-size:13.5px;line-height:1.55;color:var(--ink-2);margin:0 0 12px"><strong>You do not confirm these in this list.</strong> Choose how to provide your records below. Foundry will resolve what it can from those records, then show you only the remaining decisions it needs you to answer.</p>
+            <p style="font-size:13.5px;line-height:1.55;color:var(--ink-2);margin:0 0 12px"><strong>You do not confirm these in this list.</strong> Choose how to provide your records below. StockChief will resolve what it can from those records, then show you only the remaining decisions it needs you to answer.</p>
             <ul class="plain-list" style="margin:0">
             <% reqSummary.needsDetail.forEach(function (requirement) { %>
               <li>
                 <strong style="display:block;color:var(--ink);font-weight:650"><%= requirement.understanding %></strong>
-                <span style="display:block;margin-top:2px;color:var(--muted)">Needed to resolve this: <%= requirement.nextStep ? requirement.nextStep.replace(/\bconfirm\s+(?=(?:whether|which|what|how|the)\b)/gi, '') : 'Foundry will compare this requirement with the records you provide.' %></span>
+                <span style="display:block;margin-top:2px;color:var(--muted)">Needed to resolve this: <%= requirement.nextStep ? requirement.nextStep.replace(/\bconfirm\s+(?=(?:whether|which|what|how|the)\b)/gi, '') : 'StockChief will compare this requirement with the records you provide.' %></span>
               </li>
             <% }) %>
             </ul>
@@ -353,7 +353,7 @@
         <details class="rm-work" style="margin:0">
           <summary><%- helpers.icon('question', { size: 14 }) %> Needs a decision from you · <%= reqSummary.needsOwnerInput.length %></summary>
           <div class="rm-work__body">
-            <p style="font-size:13.5px;line-height:1.55;color:var(--ink-2);margin:0 0 12px">These cannot be settled from records alone. Foundry keeps them separate and will ask before applying the affected setup.</p>
+            <p style="font-size:13.5px;line-height:1.55;color:var(--ink-2);margin:0 0 12px">These cannot be settled from records alone. StockChief keeps them separate and will ask before applying the affected setup.</p>
             <ul class="plain-list" style="margin:0">
               <% reqSummary.needsOwnerInput.forEach(function (requirement) { %>
                 <li><strong style="display:block;color:var(--ink);font-weight:650"><%= requirement.understanding %></strong><% if (requirement.nextStep) { %><span style="display:block;margin-top:2px;color:var(--muted)"><%= requirement.nextStep %></span><% } %></li>
@@ -366,7 +366,7 @@
         <details class="rm-work" style="margin:0">
           <summary><%- helpers.icon('eye', { size: 14 }) %> Context and instructions · <%= reqSummary.context.length %></summary>
           <div class="rm-work__body">
-            <p style="font-size:13.5px;line-height:1.55;color:var(--ink-2);margin:0 0 12px"><strong>Nothing here needs confirmation.</strong> Foundry preserves these statements as business context, evidence instructions, or operating guardrails.</p>
+            <p style="font-size:13.5px;line-height:1.55;color:var(--ink-2);margin:0 0 12px"><strong>Nothing here needs confirmation.</strong> StockChief preserves these statements as business context, evidence instructions, or operating guardrails.</p>
             <ul class="plain-list" style="margin:0">
               <% reqSummary.context.forEach(function (requirement) { %>
                 <li><strong style="display:block;color:var(--ink);font-weight:650"><%= requirement.understanding %></strong><span style="display:block;margin-top:2px;color:var(--muted)"><%= requirementRole[requirement.semanticRole] || 'Context' %></span></li>
@@ -389,19 +389,19 @@
 
     <div class="rm-decision" id="record-source-choices">
       <span class="rm-decision__txt">
-        <span class="rm-stamp"><%- helpers.icon('hand', { size: 13 }) %> What Foundry needs next</span>
+        <span class="rm-stamp"><%- helpers.icon('hand', { size: 13 }) %> What StockChief needs next</span>
         <%= onboardingPriority.question %>
         <small>
           <%= onboardingPriority.reason %>
           <strong>You do not need to clean or reorganize anything first.</strong>
-          Foundry reads what you already have and shows you the exact records before changing anything.
+          StockChief reads what you already have and shows you the exact records before changing anything.
         </small>
       </span>
     </div>
     <div class="rm-answers" aria-label="Choose how to add inventory records">
       <% if (currentUser.role === 'owner') { %>
         <button class="rm-answer is-primary" type="submit">
-          <strong>Enter records in Foundry</strong>
+          <strong>Enter records in StockChief</strong>
           <span>Keep this reviewed structure and continue to product entry. Nothing is invented.</span>
         </button>
       <% } %>
@@ -468,7 +468,7 @@
           </table>
         </div>
         <p class="rm-quiet" style="font-size:13px;margin:12px 0 0">
-          Check each row. Foundry will create exactly these products and variants, then record these
+          Check each row. StockChief will create exactly these products and variants, then record these
           quantities as opening stock at the locations shown.
         </p>
       </div>
@@ -493,7 +493,7 @@
   <%# ------------------------------------------------------- audit detail %>
   <% if (factGroups && focusedOnboarding) { %>
     <details class="rm-work" style="margin:16px 0">
-      <summary>What Foundry knows / Why Foundry decided this</summary>
+      <summary>What StockChief knows / Why StockChief decided this</summary>
       <div class="rm-work__body">
         <div class="rm-cols" style="margin-bottom:12px">
           <div class="rm-col">
@@ -585,7 +585,7 @@
           <li><strong>Adjustments</strong><span><%= u.adjustmentWorkflow || 'Physical-count corrections require a reason and remain auditable.' %></span></li>
         </ul>
         <% if (terms.length) { %>
-          <p style="font-size:12.5px;color:var(--muted);margin:12px 0 0">Foundry will use your words:</p>
+          <p style="font-size:12.5px;color:var(--muted);margin:12px 0 0">StockChief will use your words:</p>
           <div class="rm-badges">
             <% terms.forEach(function (key) { %>
               <span class="rm-pillbadge"><%= key %> → <%= u.terminology[key] %></span>
@@ -598,13 +598,13 @@
 
   <%# -------------------------------------------------- what starts working %>
   <% if (!addingToExisting && !focusedOnboarding) { %>
-    <%# True, and not a decision. It was six paragraphs of what Foundry can do
+    <%# True, and not a decision. It was six paragraphs of what StockChief can do
         sitting between somebody and the button they came here to press. %>
     <details class="rm-work" style="margin:0 0 16px">
       <summary>What starts working after this setup</summary>
       <div class="rm-work__body">
         <p class="rm-quiet" style="font-size:13px;margin:0 0 12px;max-width:74ch">
-          This page chooses how stock is organised. The rest of Foundry is already built in and
+          This page chooses how stock is organised. The rest of StockChief is already built in and
           updates from the same verified activity.
         </p>
         <div class="rm-cols" style="margin:0">
@@ -616,14 +616,14 @@
           </div>
           <div class="rm-col">
             <ul>
-              <li><strong>Purchasing</strong><span>Foundry calculates replenishment, prepares supplier orders and keeps incoming quantities separate from stock already here.</span></li>
-              <li><strong>Supplier email</strong><span>Connect Gmail or Microsoft 365 and approve the supplier sender; Foundry then matches replies, invoices and shipment updates.</span></li>
+              <li><strong>Purchasing</strong><span>StockChief calculates replenishment, prepares supplier orders and keeps incoming quantities separate from stock already here.</span></li>
+              <li><strong>Supplier email</strong><span>Connect Gmail or Microsoft 365 and approve the supplier sender; StockChief then matches replies, invoices and shipment updates.</span></li>
             </ul>
           </div>
           <div class="rm-col">
             <ul>
               <li><strong>Accounting</strong><span>On automatically. Verified receipts, bills, sales and payments update what you own, owe, earned and received.</span></li>
-              <li><strong>Needs you</strong><span>Foundry handles supported routine work and asks only when evidence, authority or a real business decision is missing.</span></li>
+              <li><strong>Needs you</strong><span>StockChief handles supported routine work and asks only when evidence, authority or a real business decision is missing.</span></li>
             </ul>
           </div>
         </div>
@@ -650,7 +650,7 @@
               <span>
                 <span class="rm-pick__t">
                   <%= option.label %>
-                  <% if (option.id === decision.recommendedOptionId) { %><span class="rm-pillbadge is-ok">Foundry recommends</span><% } %>
+                  <% if (option.id === decision.recommendedOptionId) { %><span class="rm-pillbadge is-ok">StockChief recommends</span><% } %>
                 </span>
                 <span class="rm-pick__d"><%= option.consequence %></span>
               </span>
@@ -660,8 +660,8 @@
             <input type="radio" name="answer_<%= decision.id %>" value="__foundry__">
             <span class="rm-pick__box" aria-hidden="true"></span>
             <span>
-              <span class="rm-pick__t">Let Foundry decide</span>
-              <span class="rm-pick__d">Foundry picks the option it recommends and records that it decided.</span>
+              <span class="rm-pick__t">Let StockChief decide</span>
+              <span class="rm-pick__d">StockChief picks the option it recommends and records that it decided.</span>
             </span>
           </label>
         </div>
@@ -675,7 +675,7 @@
     <% if (configRecs.length) { %>
       <p class="rm-quiet" style="font-size:13px;margin:0 0 10px;max-width:74ch">
         Tick anything you want to act on. Ticking it does not change the setup below — it records
-        that you agreed, and Foundry lists it on the next screen with what to do about it. Leaving
+        that you agreed, and StockChief lists it on the next screen with what to do about it. Leaving
         one unticked simply means no.
       </p>
       <div class="rm-picks" style="margin-bottom:16px">
@@ -729,7 +729,7 @@
   <% if (caveats.length && !focusedOnboarding) { %>
     <details class="rm-work proposal-caveats" style="margin:0 0 16px">
       <summary>
-        <%= caveats.length %> thing<%= caveats.length === 1 ? '' : 's' %> Foundry had to assume
+        <%= caveats.length %> thing<%= caveats.length === 1 ? '' : 's' %> StockChief had to assume
         or could not read cleanly
       </summary>
       <div class="rm-work__body">
@@ -753,13 +753,13 @@
   <% if (!focusedOnboarding) { %>
     <div class="rm-confirm">
       <span class="rm-confirm__t">
-        <strong><%= askedOptions.length ? 'What should Foundry do with this?' : 'Ready when you are.' %></strong>
+        <strong><%= askedOptions.length ? 'What should StockChief do with this?' : 'Ready when you are.' %></strong>
         <% if (askedOptions.length) { %>
           <span>Three different answers, and they do different things. Nothing happens until you pick one.</span>
         <% } else if (syntheticSetup) { %>
-          <span><strong>This is a synthetic test environment.</strong> Foundry will generate realistic test products, variants, suppliers, stock, transactions, and history within the approved scope.</span>
+          <span><strong>This is a synthetic test environment.</strong> StockChief will generate realistic test products, variants, suppliers, stock, transactions, and history within the approved scope.</span>
         <% } else if (!doc) { %>
-          <span>Foundry sets up structure only — no products, stock or serial numbers are invented.</span>
+          <span>StockChief sets up structure only — no products, stock or serial numbers are invented.</span>
         <% } else if (arrivesAsStock) { %>
           <span><%= addingToExisting ? 'This adds the shown products and supplier records, then puts ' : 'This creates the shown structure and puts ' %><%= docUnits %> <%= docUnitText %> from <%= setupDocument.sourceName %> into stock, because the file is evidence they arrived.</span>
         <% } else { %>

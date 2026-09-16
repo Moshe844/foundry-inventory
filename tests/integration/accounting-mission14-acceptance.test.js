@@ -59,7 +59,7 @@ test('Mission 14 deterministic company reconciles operations, subledgers, statem
   const bill = payables.open(db, workspace.ctx, membership, supplierInvoice.bill.id);
   assert.equal(bill.match_status, 'MATCHED');
 
-  let order = sales.createOrder(db, workspace.ctx, { customerName: 'Mission Customer',
+  let order = sales.createOrder(db, workspace.ctx, { customerName: 'Mission Customer', deliveryMethod: 'PICKUP',
     fulfillmentLocationId: workspace.main.id,
     lines: [{ skuId: shirt.skuId, quantity: 20 }] });
   order = sales.confirm(db, workspace.ctx, order.id);
@@ -111,7 +111,7 @@ test('Mission 14 deterministic company reconciles operations, subledgers, statem
   db.close();
 });
 
-test('Foundry keeps partial delivery and partial supplier payment as two independent balances', async () => {
+test('StockChief keeps partial delivery and partial supplier payment as two independent balances', async () => {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Autonomous Purchasing Company' });
   const membership = auth.getMembership(db, workspace.workspaceId, workspace.accountId);

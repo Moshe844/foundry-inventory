@@ -1,11 +1,11 @@
--- Foundry Inventory : intelligence layer (Mission 2)
+-- StockChief Inventory : intelligence layer (Mission 2)
 --
 -- Additive only. No Mission 1 table is altered — the inventory truth engine is
--- untouched by anything in here. Foundry proposes configuration; these tables
+-- untouched by anything in here. StockChief proposes configuration; these tables
 -- record what it understood, what it proposed, what the customer decided, and
 -- what was actually applied.
 
--- What Foundry understood from a business description. Immutable once written:
+-- What StockChief understood from a business description. Immutable once written:
 -- a new description produces a new row, so the audit trail is complete.
 CREATE TABLE IF NOT EXISTS foundry_understandings (
   id                 TEXT PRIMARY KEY,
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS foundry_plans (
 CREATE INDEX IF NOT EXISTS idx_plans_workspace ON foundry_plans(workspace_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_plan_version ON foundry_plans(workspace_id, configuration_version);
 
--- Who decided what, and whether the customer or Foundry made the call.
+-- Who decided what, and whether the customer or StockChief made the call.
 CREATE TABLE IF NOT EXISTS foundry_decisions (
   id           TEXT PRIMARY KEY,
   workspace_id       TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS workspace_configuration (
   updated_at            TEXT NOT NULL
 );
 
--- Foundry stays available after onboarding; answers are grounded in the
+-- StockChief stays available after onboarding; answers are grounded in the
 -- workspace's real configuration, and the exchange is kept.
 CREATE TABLE IF NOT EXISTS foundry_messages (
   id            TEXT PRIMARY KEY,

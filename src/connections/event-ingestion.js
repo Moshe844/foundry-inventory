@@ -109,7 +109,7 @@ function autoMap(db, auth, entityType, externalId, foundryRecordId) {
 
 class MappingRequired extends Error {
   constructor(entityType, externalId, candidatesList) {
-    super(`Foundry cannot safely match external ${entityType} ${externalId}.`);
+    super(`StockChief cannot safely match external ${entityType} ${externalId}.`);
     this.entityType = entityType;
     this.externalId = externalId;
     this.candidates = candidatesList;
@@ -242,6 +242,10 @@ function apply(db, auth, event) {
     const hasFulfillmentLocation = data.fulfillmentLocation || data.fulfillmentLocationId
       || data.fulfillmentLocationName || data.externalFulfillmentLocationId;
     const created = sales.createOrder(db, ctx, { customerId, customerName, company: data.company,
+      customerEmail: data.customerEmail || data.customer?.email,
+      deliveryMethod: data.deliveryMethod,
+      shipToAddress: data.shippingAddress ?? data.customer?.shippingAddress ?? null,
+      shipToSource: 'EXTERNAL_ORDER',
       fulfillmentLocationId: hasFulfillmentLocation ? locationFor(db, auth, data, 'fulfillmentLocation').id : null,
       orderNumber: trimOrNull(data.orderNumber), orderDate: data.orderDate || (event.occurredAt && event.occurredAt.slice(0, 10)),
       neededBy: data.neededBy, reference: `Source: ${auth.displayName}; ${externalOrderId}`,
@@ -291,7 +295,7 @@ function apply(db, auth, event) {
   if (event.type === 'sales_order.changed') {
     const order = orderFor(db, auth, data);
     if (!Array.isArray(data.addLines) || !data.addLines.length) {
-      throw new ValidationError('An order change must state addLines; Foundry will not infer whether provider totals are deltas.');
+      throw new ValidationError('An order change must state addLines; StockChief will not infer whether provider totals are deltas.');
     }
     let changed = order;
     for (const line of data.addLines) changed = sales.addLine(db, ctx, order.id,
@@ -335,8 +339,8 @@ function apply(db, auth, event) {
       externalEventId: event.eventId, issueType: 'RETURN_REVIEW_REQUIRED',
       fingerprint: `return-review:${auth.connectorId}:${event.eventId}`,
       title: `${auth.displayName} reported a refund that needs return confirmation`,
-      detail: `${trimOrNull(data.reference) || `External refund ${event.eventId}`} is financial evidence only. Foundry has not increased stock.`,
-      resolutionHint: 'Confirm that the product physically returned, then record the return in Foundry.',
+      detail: `${trimOrNull(data.reference) || `External refund ${event.eventId}`} is financial evidence only. StockChief has not increased stock.`,
+      resolutionHint: 'Confirm that the product physically returned, then record the return in StockChief.',
     });
     return { actionType: 'return.review_required', actionRecordId: null, movementIds: [], skuIds: [] };
   }
@@ -349,7 +353,7 @@ function apply(db, auth, event) {
   if (event.type === 'reconciliation.summary') {
     return reconcile(db, auth, event);
   }
-  throw new ValidationError(`No Foundry handler exists for ${event.type}.`);
+  throw new ValidationError(`No StockChief handler exists for ${event.type}.`);
 }
 
 function compareVersion(incoming, existing) {
@@ -380,9 +384,9 @@ function reconcile(db, auth, event) {
       JSON.stringify(discrepancies), discrepancies.length ? 'MISMATCH' : 'MATCHED', nowIso());
   if (discrepancies.length) connections.issue(db, { workspaceId: auth.workspaceId, connectorId: auth.connectorId,
     externalEventId: event.eventId, issueType: 'RECONCILIATION_MISMATCH', fingerprint: `reconciliation:${auth.connectorId}:${id}`,
-    title: `${auth.displayName} does not match Foundry's event history`,
-    detail: discrepancies.map((d) => `${d.type}: external ${d.expected}, Foundry ${d.observed}`).join('; '),
-    resolutionHint: 'Review the missing or duplicated external records. Foundry has not overwritten inventory.' });
+    title: `${auth.displayName} does not match StockChief's event history`,
+    detail: discrepancies.map((d) => `${d.type}: external ${d.expected}, StockChief ${d.observed}`).join('; '),
+    resolutionHint: 'Review the missing or duplicated external records. StockChief has not overwritten inventory.' });
   return { actionType: 'reconciliation', actionRecordId: id, movementIds: [], skuIds: [] };
 }
 
@@ -393,7 +397,7 @@ function recordMappingIssue(db, auth, event, error) {
     fingerprint: `${type}:${auth.connectorId}:${error.externalId}`,
     title: `Unknown ${error.entityType} from ${auth.displayName}`,
     detail: `I received ${event.type} for ${error.externalId}, but cannot safely match it to this inventory.`,
-    resolutionHint: 'Choose the matching Foundry record once. Foundry will remember it and retry this event.',
+    resolutionHint: 'Choose the matching StockChief record once. StockChief will remember it and retry this event.',
     candidates: error.candidates });
 }
 
@@ -416,7 +420,7 @@ function ingestDomainEvent(db, auth, raw) {
         fingerprint: `conflicting-event:${auth.connectorId}:${event.eventId}`,
         title: `Conflicting replay from ${auth.displayName}`,
         detail: `External event ${event.eventId} was replayed with different content. The first completed action remains authoritative.`,
-        resolutionHint: 'Inspect the provider event history; Foundry did not apply the changed replay.' });
+        resolutionHint: 'Inspect the provider event history; StockChief did not apply the changed replay.' });
     }
     return eventResult(existing, true);
   }
@@ -523,7 +527,7 @@ function ingest(db, auth, raw) {
     idempotencyKey:`provider-event:${auth.connectorId}:${event.eventId}`,
     sourceKind:'provider_event', sourceId:event.eventId,
     title:`Process ${event.type} from ${auth.displayName}`,
-    summary:'Apply one provider event through Foundry’s canonical domain commands.',
+    summary:'Apply one provider event through StockChief’s canonical domain commands.',
     link:`/settings/connections/${auth.connectorId}`,
     evidence:[{ label:'Provider event', value:event.eventId },
       { label:'Event type', value:event.type },

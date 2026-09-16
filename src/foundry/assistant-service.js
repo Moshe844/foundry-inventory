@@ -1,13 +1,13 @@
 'use strict';
 
 /**
- * Foundry after onboarding: explaining the configuration, and proposing safe
+ * StockChief after onboarding: explaining the configuration, and proposing safe
  * changes to it.
  *
  * Two rules hold everywhere in this file. Answers are grounded in the
  * workspace's real configuration, read fresh from the database — never in
  * what a typical setup looks like. And a change is only ever *proposed*: the
- * model classifies the request, Foundry decides whether the engine can honour
+ * model classifies the request, StockChief decides whether the engine can honour
  * it, and the customer confirms before anything is applied.
  */
 
@@ -141,7 +141,7 @@ async function ask(db, ctx, question, options = {}) {
   // sees them, so enforcing them here would reject a perfectly good answer.
   const result = validate(toWireSchema(ANSWER_SCHEMA), data, { key: 'answer-wire' });
   if (!result.ok) {
-    throw new ValidationError('Foundry could not put together a reliable answer. Try asking again.', {
+    throw new ValidationError('StockChief could not put together a reliable answer. Try asking again.', {
       errors: result.errors.slice(0, 10),
     });
   }
@@ -168,7 +168,7 @@ async function proposeChange(db, ctx, request, options = {}) {
 
   const current = planApplier.getConfiguration(db, ctx.workspaceId);
   if (!current || !current.configuredAt) {
-    throw new InvariantError('Foundry has not configured this workspace yet.', 'not_configured');
+    throw new InvariantError('StockChief has not configured this workspace yet.', 'not_configured');
   }
 
   const { data } = await provider.complete({
@@ -180,7 +180,7 @@ async function proposeChange(db, ctx, request, options = {}) {
 
   const result = validate(toWireSchema(CHANGE_SCHEMA), data, { key: 'change-wire' });
   if (!result.ok) {
-    throw new ValidationError('Foundry could not work out what that change would involve.', {
+    throw new ValidationError('StockChief could not work out what that change would involve.', {
       errors: result.errors.slice(0, 10),
     });
   }

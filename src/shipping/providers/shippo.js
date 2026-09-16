@@ -24,7 +24,7 @@ const BASE = 'https://api.goshippo.com';
 function apiKey(ctx = {}) {
   const key = ctx.shippoApiKey || process.env.SHIPPO_API_KEY;
   if (!key) {
-    throw new ValidationError('No Shippo API key is configured, so Foundry cannot ask a carrier for '
+    throw new ValidationError('No Shippo API key is configured, so StockChief cannot ask a carrier for '
       + 'rates. Set SHIPPO_API_KEY and restart, or hand the parcel over yourself and record it.');
   }
   return String(key);
@@ -55,7 +55,7 @@ async function call(ctx, path, options = {}) {
   return body;
 }
 
-/** Foundry's address shape, in Shippo's. Nothing is invented. */
+/** StockChief's address shape, in Shippo's. Nothing is invented. */
 function address(input = {}) {
   return {
     name: input.name || undefined,
@@ -78,7 +78,7 @@ const MM_PER_INCH = 25.4;
  * Shippo wants every parcel to carry dimensions, and refuses without them.
  * A shop that has not measured its boxes is not a shop that cannot ship, so a
  * conservative default stands in — and it is a default, stated here, rather
- * than a measurement Foundry pretends to have.
+ * than a measurement StockChief pretends to have.
  */
 const DEFAULT_BOX_MM = { length: 300, width: 200, height: 150 };
 
@@ -95,7 +95,7 @@ function parcel(box = {}) {
 
 const minorFrom = (amount) => Math.round(Number(amount || 0) * 100);
 
-/** A Shippo rate, in Foundry's shape. */
+/** A Shippo rate, in StockChief's shape. */
 function readRate(row) {
   const days = row.estimated_days === null || row.estimated_days === undefined
     ? null : Number(row.estimated_days);
@@ -166,7 +166,7 @@ async function buy(ctx, input = {}) {
 
 async function voidLabel(ctx, input = {}) {
   const ids = (input.providerReferences || input.providerLabelIds || []).filter(Boolean);
-  if (!ids.length) throw new ValidationError('Foundry has no Shippo transaction reference to refund.');
+  if (!ids.length) throw new ValidationError('StockChief has no Shippo transaction reference to refund.');
   const answers = [];
   for (const id of ids) {
     answers.push(await call(ctx, '/refunds/', { method: 'POST', body: { transaction: id },

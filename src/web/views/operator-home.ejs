@@ -2,17 +2,17 @@
   /*
    * Home is a manager's morning briefing, not a product tour.
    *
-   * It used to open with eight sections, three of which explained Foundry to
-   * the person already using it: a "just tell Foundry what happened" panel, a
+   * It used to open with eight sections, three of which explained StockChief to
+   * the person already using it: a "just tell StockChief what happened" panel, a
    * six-card guide to what the product can do, and a readiness section whose
-   * headline was "Foundry is still learning demand for 6 tracked variants".
+   * headline was "StockChief is still learning demand for 6 tracked variants".
    * The three questions somebody actually opens this page to answer — how is my
-   * business doing, what needs me, what has Foundry handled — were below all of
+   * business doing, what needs me, what has StockChief handled — were below all of
    * it, styled the same as everything else.
    *
    * So the order is now the order of those questions, the explanations have
    * moved to the guide where somebody can go looking for them, and the
-   * vocabulary is the operation's rather than Foundry's.
+   * vocabulary is the operation's rather than StockChief's.
    */
   var hour = new Date().getHours();
   var greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
@@ -27,24 +27,24 @@
   // most important sentence on the page, so it is the largest thing on it.
   // A workspace still being set up has nothing to be under control yet, and
   // telling somebody on their first morning that everything is fine — when
-  // Foundry does not yet know what they hold — is the friendliest possible way
+  // StockChief does not yet know what they hold — is the friendliest possible way
   // to be wrong. Setup gets its own verdict until it is finished.
   var verdict = paused
-    ? 'Foundry is paused'
+    ? 'StockChief is paused'
     : needsCount > 0
       ? needsCount + (needsCount === 1 ? ' thing needs you' : ' things need you')
       : isSettingUp
-        ? 'Getting Foundry ready'
+        ? 'Getting StockChief ready'
         : 'Everything is under control';
 
   var subVerdict = paused
     ? (home.status.suspendedReason || home.status.pausedReason || 'Nothing happens automatically until you resume.')
     : needsCount > 0
-      ? (isSettingUp ? 'Finish the setup step below, then settle the decisions Foundry has already found.' : 'Everything else, Foundry is getting on with.')
+      ? (isSettingUp ? 'Finish the setup step below, then settle the decisions StockChief has already found.' : 'Everything else, StockChief is getting on with.')
       : isSettingUp
-        ? 'Give Foundry your inventory once. After that, tell it what happens and it manages the routine work.'
+        ? 'Give StockChief your inventory once. After that, tell it what happens and it manages the routine work.'
         : (handlingCount
-            ? 'Foundry is handling ' + handlingCount + ' thing' + (handlingCount === 1 ? '' : 's') + ' and needs nothing from you.'
+            ? 'StockChief is handling ' + handlingCount + ' thing' + (handlingCount === 1 ? '' : 's') + ' and needs nothing from you.'
             : 'Nothing is waiting on you.');
 
   var didHeadline = needsCount && /nothing needed doing/i.test(home.did.headline || '')
@@ -68,7 +68,7 @@
        * The verdict above answers "is anything wrong". This answers "what is
        * going on", which is the other half of the question somebody actually
        * asked when they opened this page. Every line is counted from records
-       * and names a date somebody gave rather than one Foundry worked out.
+       * and names a date somebody gave rather than one StockChief worked out.
        *
        * It sits inside the briefing rather than below it because it is part of
        * the same sentence: everything is under control, and here is what today
@@ -96,10 +96,10 @@
       <% if (paused) { %>
         <form method="post" action="/autopilot/resume">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn btn--sm btn--primary" type="submit">Resume Foundry</button>
+          <button class="btn btn--sm btn--primary" type="submit">Resume StockChief</button>
         </form>
       <% } else { %>
-        <form method="post" action="/autopilot/pause" data-confirm="Pause Foundry? Nothing will happen automatically until you resume it.">
+        <form method="post" action="/autopilot/pause" data-confirm="Pause StockChief? Nothing will happen automatically until you resume it.">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <button class="btn btn--sm btn--ghost" type="submit">Pause</button>
         </form>
@@ -124,16 +124,16 @@
   <%- include('partials/operating-guidance', { guidance: home.guidance }) %>
 <% } %>
 
-<%# Tell Foundry follows the single next action and teaches with examples from
+<%# Tell StockChief follows the single next action and teaches with examples from
     the same workspace state. It is an alternative way to perform the work,
     not a competing first decision. %>
 <section class="section tell" id="tell-foundry">
   <form class="tell__form" method="post" action="/foundry/tell" enctype="multipart/form-data" data-busy data-ask-form data-operator-command-form>
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <span class="tell__mark" aria-hidden="true"><%- helpers.icon('foundry', { size: 18 }) %></span>
-    <label class="visually-hidden" for="ask-question">Tell Foundry what happened</label>
+    <label class="visually-hidden" for="ask-question">Tell StockChief what happened</label>
     <input class="tell__input" id="ask-question" data-ask-input type="text" name="message"
-           placeholder="<%= home.guidance.examples[0] || 'Tell Foundry what happened' %>"
+           placeholder="<%= home.guidance.examples[0] || 'Tell StockChief what happened' %>"
            maxlength="400" autocomplete="off">
     <label class="tell__attach" title="Attach a file">
       <input type="file" name="file" accept=".csv,.tsv,.xlsx,.xls,.txt,.pdf,.docx,image/*" data-operator-attachment>
@@ -143,7 +143,7 @@
   </form>
   <div class="ask-pending tell__pending" data-ask-pending role="status" aria-live="polite" hidden>
     <span class="working-spinner" aria-hidden="true"></span>
-    Foundry is working out what that means…
+    StockChief is working out what that means…
   </div>
   <div class="tell__status" data-operator-attachment-status role="status" aria-live="polite" hidden>
     <%- helpers.icon('check', { size: 15 }) %>
@@ -169,7 +169,7 @@
     <div><span class="stat-value"><%= helpers.money(brain.acquisition.receivedCostMinor, brain.currency) %></span><span class="stat-label">Inventory received at recorded cost</span></div>
   </div>
   <% if (brain.acquisition.receivedWithoutBillMinor > 0) { %>
-    <div class="quiet-note quiet-note--warn"><strong>A cost is not the same as a bill.</strong> Foundry has received inventory costing <%= helpers.money(brain.acquisition.receivedWithoutBillMinor, brain.currency) %>, but no supplier bill proves what is owed yet. The purchase has not disappeared; it is waiting for bill evidence.</div>
+    <div class="quiet-note quiet-note--warn"><strong>A cost is not the same as a bill.</strong> StockChief has received inventory costing <%= helpers.money(brain.acquisition.receivedWithoutBillMinor, brain.currency) %>, but no supplier bill proves what is owed yet. The purchase has not disappeared; it is waiting for bill evidence.</div>
   <% } %>
 </section>
 <% } %>
@@ -222,9 +222,9 @@
   </div>
   <%
     // Coming up is the operation's diary: deliveries arriving, dates that
-    // matter to a customer. Foundry's own next cron tick was appearing in it
+    // matter to a customer. StockChief's own next cron tick was appearing in it
     // as "Next scheduled evaluation", which tells an owner nothing about their
-    // business and everything about Foundry's internals. When Foundry last
+    // business and everything about StockChief's internals. When StockChief last
     // looked, and when it looks next, is already stated in the briefing.
     var upcoming = home.next.filter(function (event) {
       return !/scheduled evaluation|scheduled check/i.test(event.title || '');
@@ -248,16 +248,16 @@
   <% } %>
 </section>
 
-<%# --------------------------------------------------------- Foundry noticed %>
+<%# --------------------------------------------------------- StockChief noticed %>
 <%
-  // Trouble that has not happened yet. Deliberately above "Foundry handled":
+  // Trouble that has not happened yet. Deliberately above "StockChief handled":
   // what went right yesterday is reassuring, and what is about to go wrong is
   // the reason to be on this page at all.
 %>
 <% if (locals.noticed && noticed.length) { %>
 <section class="section">
   <div class="section-head">
-    <h2>Foundry noticed</h2>
+    <h2>StockChief noticed</h2>
     <a class="section-more" href="/needs-you">Open Needs you</a>
   </div>
   <div class="panel"><div class="stack">
@@ -267,12 +267,12 @@
         <p class="t-muted"><%= item.why %></p>
         <p class="t-muted">
           <% if (item.confidence === 'learning') { %>
-            Foundry is still learning this product's demand, so it is going on what is already ordered.
+            StockChief is still learning this product's demand, so it is going on what is already ordered.
           <% } else if (item.confidence === 'moderate') { %>
             Moderate confidence — the history behind this is short or uneven.
           <% } %>
           <% if (item.authority_verdict === 'refused') { %>
-            Foundry is not authorised to do this itself.
+            StockChief is not authorised to do this itself.
           <% } %>
         </p>
         <% if (item.sku_id) { %><a href="/inventory/skus/<%= item.sku_id %>">Open the product</a><% } %>
@@ -282,10 +282,10 @@
 </section>
 <% } %>
 
-<%# ------------------------------------------------------------ Foundry handled %>
+<%# ------------------------------------------------------------ StockChief handled %>
 <section class="section">
   <div class="section-head">
-    <h2>Foundry handled</h2>
+    <h2>StockChief handled</h2>
     <a class="section-more" href="/autopilot/history">See everything</a>
   </div>
   <% if (home.did.actions.length) { %>
@@ -323,19 +323,19 @@
 
   <%
     // Progressive disclosure, exactly where the old page put its worst
-    // sentence. One plain line about where Foundry stands; the evidence
+    // sentence. One plain line about where StockChief stands; the evidence
     // thresholds and per-variant gaps stay one click away for anyone who
     // wants them.
     var demandStage = home.readiness.demandStage
       || (home.readiness.usageReady > 0 ? 'ready' : home.readiness.skuCount > 0 ? 'none' : 'no-products');
     var demandLine = demandStage === 'none'
-      ? 'Foundry knows what you have, but has not seen anything leave yet — so it cannot tell you what is running low.'
+      ? 'StockChief knows what you have, but has not seen anything leave yet — so it cannot tell you what is running low.'
       : demandStage === 'learning'
-        ? 'Still learning what sells. Keep recording normal activity and Foundry will start managing low stock.'
+        ? 'Still learning what sells. Keep recording normal activity and StockChief will start managing low stock.'
         : 'Watching demand, and will act when the numbers support it.';
   %>
   <%
-    // When Foundry has already put "tell me when you sell something" in Needs
+    // When StockChief has already put "tell me when you sell something" in Needs
     // you, saying the same thing again down here is the page repeating itself.
     // The pulse keeps the numbers; the decision stays where decisions live.
     var demandAlreadyAsked = needsCount > 0 && demandStage === 'none';

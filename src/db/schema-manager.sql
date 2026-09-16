@@ -1,4 +1,4 @@
--- Foundry Inventory : Inventory Manager (Mission 8)
+-- StockChief Inventory : Inventory Manager (Mission 8)
 --
 -- These tables do not duplicate inventory truth. They persist the manager's
 -- inbox, investigations, reconciliation results and conversational references
@@ -349,7 +349,7 @@ CREATE TABLE IF NOT EXISTS document_restore_reviews (
 CREATE INDEX IF NOT EXISTS idx_document_restore_reviews_workspace
   ON document_restore_reviews(workspace_id, created_at DESC);
 
--- Controlled catalogue code transformations prepared from Tell Foundry.
+-- Controlled catalogue code transformations prepared from Tell StockChief.
 -- External supplier codes are deliberately excluded: these are the owner's
 -- internal item/SKU identifiers, shown old -> new before one atomic approval.
 CREATE TABLE IF NOT EXISTS catalog_code_change_proposals (
@@ -371,7 +371,7 @@ CREATE INDEX IF NOT EXISTS idx_catalog_code_changes_workspace
   ON catalog_code_change_proposals(workspace_id, created_at DESC);
 
 -- A person can decide that a valid operational prompt is not something they
--- want Foundry to keep pursuing.  This is intentionally separate from the
+-- want StockChief to keep pursuing.  This is intentionally separate from the
 -- underlying record: dismissing a missing-email prompt, for example, must not
 -- delete the supplier or cancel its order.  The inbox reads this durable,
 -- workspace-scoped decision everywhere it is presented (home, Brief and

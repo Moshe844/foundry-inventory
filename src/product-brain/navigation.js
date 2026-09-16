@@ -78,7 +78,7 @@ function semanticPrompt(text, brain) {
     const capability = brain.capability(destination.capability);
     return `- ${destination.id}: ${destination.label}. ${capability ? capability.description : ''}`;
   }).join('\n');
-  return `Interpret whether the user is asking where a part of Foundry is or asking Foundry to open it.
+  return `Interpret whether the user is asking where a part of StockChief is or asking StockChief to open it.
 Choose exactly one destinationId from the registered destinations below. Use not_navigation if this is a business-data question or an operation rather than website navigation.
 Do not invent a route, capability, destination, permission, or product fact. Your selection is only a proposal; deterministic application code validates it.
 
@@ -193,7 +193,7 @@ function unavailableMatch(text, brain) {
 
 function capabilityMatch(text, brain) {
   const input = String(text).toLowerCase();
-  const ignored = new Set(['foundry', 'manage', 'management', 'business', 'record', 'records']);
+  const ignored = new Set(['foundry', 'stockchief', 'manage', 'management', 'business', 'record', 'records']);
   const scored = brain.listCapabilities().map((entry) => {
     const words = `${entry.label} ${entry.id.replace(/[.-]/g, ' ')}`.toLowerCase()
       .split(/[^a-z0-9]+/).filter((word) => word.length >= 4 && !ignored.has(word));
@@ -218,7 +218,7 @@ function resolve(db, workspaceId, membership, input, options = {}) {
   }
 
 
-  if (/\b(?:can (?:i|we|foundry)|do (?:you|we) (?:have|support)|is .*available)\b/i.test(text)) {
+  if (/\b(?:can (?:i|we|foundry|stockchief)|do (?:you|we) (?:have|support)|is .*available)\b/i.test(text)) {
     const capability = capabilityMatch(text, brain);
     if (capability) {
       const evaluation = brain.evaluateCapability(db, workspaceId, capability.id, membership);
@@ -227,12 +227,12 @@ function resolve(db, workspaceId, membership, input, options = {}) {
         capabilityId: capability.id, answer: `${capability.label} is not available yet. ${evaluation.reason}`
           + (evaluation.prerequisites.length ? ` Required first: ${evaluation.prerequisites.join(' ')}` : '') };
       if (!evaluation.allowed) return { kind: 'capability', supported: true, available: evaluation.available, canNavigate: false,
-        capabilityId: capability.id, answer: `${capability.label} is available in Foundry, but ${evaluation.reason}` };
+        capabilityId: capability.id, answer: `${capability.label} is available in StockChief, but ${evaluation.reason}` };
       const autonomy = capability.authorityCapability
         ? evaluation.foundryCanExecuteAutomatically
-          ? 'Foundry is currently authorised to handle it automatically.'
-          : `Foundry cannot do it automatically right now. ${evaluation.autonomyReason}`
-        : 'It is not an autonomous operation; Foundry can still guide or perform the supported workflow with you.';
+          ? 'StockChief is currently authorised to handle it automatically.'
+          : `StockChief cannot do it automatically right now. ${evaluation.autonomyReason}`
+        : 'It is not an autonomous operation; StockChief can still guide or perform the supported workflow with you.';
       return { kind: 'capability', supported: true, available: evaluation.available, canNavigate: Boolean(destination),
         href: destination && destination.href, label: destination && `Open ${destination.label}`,
         capabilityId: capability.id,
@@ -313,7 +313,7 @@ async function resolveNatural(db, workspaceId, membership, input, options = {}) 
   }
   if (NAVIGATION_WORDS.test(text) || WEBSITE_LOCATION_WORDS.test(text)) {
     return { kind: 'navigation', supported: true, available: false, canNavigate: false,
-      answer: 'I understood that you are looking for something in Foundry, but I could not safely match it to a registered destination. Describe the business task or name the record you want to open.' };
+      answer: 'I understood that you are looking for something in StockChief, but I could not safely match it to a registered destination. Describe the business task or name the record you want to open.' };
   }
   return null;
 }
@@ -359,7 +359,7 @@ function verifyArrival(req) {
       return value.host === req.get('host') ? `${value.pathname}${value.search}${value.hash}` : '/ask';
     } catch { return '/ask'; }
   })();
-  return { message: `Foundry opened the requested place: ${pending.label.replace(/^Open /, '')}.`,
+  return { message: `StockChief opened the requested place: ${pending.label.replace(/^Open /, '')}.`,
     backTo: { href: returnPath, label: 'your question' } };
 }
 

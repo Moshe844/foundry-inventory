@@ -3,7 +3,7 @@
 /**
  * What was actually wanted, day by day — which is not the same as what sold.
  *
- * Every forecast in Foundry reads its history from here, and the whole point of
+ * Every forecast in StockChief reads its history from here, and the whole point of
  * this module is the difference between those two sentences. A movement log
  * says what left the building. Demand is what customers asked for, and the two
  * come apart in four ways that quietly ruin a forecast if nobody separates them:
@@ -18,7 +18,7 @@
  *
  * Only the first is subtle enough to be worth a warning. A product that ran out
  * on the 3rd and was restocked on the 11th will, to a naive average, look like
- * it stopped selling — so Foundry will forecast less, order less, and run out
+ * it stopped selling — so StockChief will forecast less, order less, and run out
  * sooner. Each round is worse than the last, and every number involved is
  * correct. This is the failure that makes forecasting systems untrustworthy,
  * and it is invisible unless the availability of the product is reconstructed

@@ -68,7 +68,7 @@ test('a parcel weighs what is in it, and says when that was worked out rather th
   const boxes = shipping.service.packagesFor(env.db, env.workspace.workspaceId, env.box.id);
   assert.equal(boxes.length, 1, 'one package unless somebody says otherwise');
   assert.equal(boxes[0].weightGrams, 1800, 'two pairs at 900g');
-  assert.equal(boxes[0].estimated, true, 'and Foundry says it added that up rather than weighed it');
+  assert.equal(boxes[0].estimated, true, 'and StockChief says it added that up rather than weighed it');
 
   shipping.service.setPackages(env.db, env.ctx, env.box.id, [{ weightGrams: 2100 }]);
   const measured = shipping.service.packagesFor(env.db, env.workspace.workspaceId, env.box.id);
@@ -77,7 +77,7 @@ test('a parcel weighs what is in it, and says when that was worked out rather th
   env.db.close();
 });
 
-test('a carrier is not asked anything until Foundry has what a carrier needs', async () => {
+test('a carrier is not asked anything until StockChief has what a carrier needs', async () => {
   const env = setup({ address: 'somewhere in town' });
   const carrier = fakeCarrier();
   const undo = withCarrier(carrier);
@@ -174,7 +174,7 @@ test('buying the label records postage but only physical handoff ships the order
     assert.equal(row.handover, null);
     assert.equal(row.tracking_number, TRACKING);
     assert.equal(row.tracking_url, 'https://carrier.test/track/1Z999AA10123456784',
-      'the carrier\'s own link, not one Foundry assembled');
+      'the carrier\'s own link, not one StockChief assembled');
     assert.equal(Number(row.shipping_cost_minor), 1842);
     assert.equal(row.expected_delivery_date, '2026-09-14');
 
@@ -340,9 +340,9 @@ test('"track this number" attaches it to a parcel, and refuses to invent one', a
 
 /* --------------------------------------------------- doing it unasked */
 
-test('within authority Foundry buys the label itself, and outside it does nothing but say why', async () => {
+test('within authority StockChief buys the label itself, and outside it does nothing but say why', async () => {
   /*
-   * Three permissions, all of which have to hold: the mode has to let Foundry
+   * Three permissions, all of which have to hold: the mode has to let StockChief
    * act, the owner has to have granted buying labels specifically, and a rule
    * has to cover this parcel at this price by this date. Each is asserted
    * separately, because "it did not ship" is only useful next to which one

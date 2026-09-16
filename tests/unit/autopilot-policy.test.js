@@ -3,7 +3,7 @@
 /**
  * Mission 7: the gate every autonomous action has to pass.
  *
- * These are the tests that decide whether it is safe to let Foundry act
+ * These are the tests that decide whether it is safe to let StockChief act
  * unattended. Almost none of them are about it doing the right thing — they are
  * about it declining: when it is paused, when nothing authorises it, when the
  * quantity is over the limit, when it moved the same stock yesterday, when the
@@ -170,7 +170,7 @@ test('a policy with no ceiling is refused as a policy at all', () => {
   );
 });
 
-test('a policy cannot authorise an action Foundry will not automate', () => {
+test('a policy cannot authorise an action StockChief will not automate', () => {
   const env = setup();
   for (const action of ['adjust', 'issue', 'receive', 'purchase']) {
     assert.throws(
@@ -262,7 +262,7 @@ test('an authorised transfer shows every check it passed', () => {
   assert.equal(verdict.decision, 'authorized');
   const names = verdict.checks.filter((c) => c.passed).map((c) => c.name);
   for (const required of [
-    'Foundry is able to act',
+    'StockChief is able to act',
     'Policy is in force',
     'Within the policy quantity limit',
     'Within the daily budget',
@@ -523,7 +523,7 @@ test('an inventory really kept in another system is never written to automatical
 //
 // A migration fills a workspace in minutes with numbers that came from a
 // spreadsheet. Acting on them straight away means acting on somebody else's
-// figures before Foundry has watched a single thing happen.
+// figures before StockChief has watched a single thing happen.
 
 /**
  * Marks this workspace's stock as having arrived from an import, followed by
@@ -580,5 +580,5 @@ test('an inventory that never imported anything needs no settling period', () =>
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
 
   const verdict = engine.evaluate(env.db, env.workspace.workspaceId, goodPlan(env));
-  assert.equal(verdict.decision, 'authorized', 'every movement here was Foundry\u2019s own from the start');
+  assert.equal(verdict.decision, 'authorized', 'every movement here was StockChief\u2019s own from the start');
 });

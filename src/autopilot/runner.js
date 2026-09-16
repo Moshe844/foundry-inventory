@@ -50,10 +50,19 @@ const policySnapshot = (verdict) => ({
 });
 
 function notify(db, workspaceId, { kind, severity = 'info', title, body = '', workItemId = null, link = null }) {
+  const id = newId('ntf');
   db.prepare(
     `INSERT INTO notifications (id, workspace_id, kind, severity, title, body, work_item_id, link, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(newId('ntf'), workspaceId, kind, severity, title, body, workItemId, link, nowIso());
+  ).run(id, workspaceId, kind, severity, title, body, workItemId, link, nowIso());
+  try {
+    require('../notifications/email-alerts').queueNotification(db, workspaceId, {
+      id, kind, severity, title, body, workItemId, link,
+    });
+  } catch (error) {
+    console.error('[notifications] could not queue work email: %s', error.message);
+  }
+  return id;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,7 +83,7 @@ function planWork(db, ctx, membership, options = {}) {
   //
   // A person pressing "check now" is not that. Bucketing them by the minute
   // would mean the button did nothing for up to sixty seconds and said nothing
-  // about why, which reads as Foundry ignoring them. Duplicate *work* is still
+  // about why, which reads as StockChief ignoring them. Duplicate *work* is still
   // impossible — that is the work item's idempotency key, one layer down, and it
   // does not depend on when the question was asked.
   const key = options.idempotencyKey ||
@@ -157,7 +166,7 @@ function planWork(db, ctx, membership, options = {}) {
         transferUnits: moved,
         orderUnits: plan.purchase ? plan.purchase.quantityUnits : 0,
       },
-      // A plan that both moves stock and spends money is never Foundry's alone.
+      // A plan that both moves stock and spends money is never StockChief's alone.
       // Autopilot may rebalance under an approved policy; it may not decide to
       // buy, and a single approval covering both has to be a person's.
       approvalRequirement: 'REQUIRED',
@@ -286,7 +295,7 @@ function planWork(db, ctx, membership, options = {}) {
 
   // --- work that was only waiting on authority -------------------------------
   //
-  // A transfer prepared while Foundry was supervised is waiting for a person
+  // A transfer prepared while StockChief was supervised is waiting for a person
   // because nobody had given it authority yet — not because there was anything
   // wrong with it. Once the owner does, the same work qualifies on its own, and
   // leaving it sitting there would mean handing over authority changed nothing.
@@ -371,7 +380,7 @@ function planWork(db, ctx, membership, options = {}) {
       priority: 60,
       urgency: 'normal',
       confidence: 'high',
-      // Preparing a draft is not buying anything, so Foundry may do it — but
+      // Preparing a draft is not buying anything, so StockChief may do it — but
       // sending an order to a supplier is never automatic in Mission 7.
       approvalRequirement: 'NONE',
       executionStatus: workItems.STATUS.AUTHORIZED,
@@ -385,7 +394,7 @@ function planWork(db, ctx, membership, options = {}) {
 
   // --- deliveries -----------------------------------------------------------
   //
-  // Always a person's job. Foundry raises it, links straight to receiving, and
+  // Always a person's job. StockChief raises it, links straight to receiving, and
   // never books anything in: what actually came in the box is a physical fact,
   // and Mission 7 does not guess at those.
   for (const delivery of proposed.receiving) {
@@ -426,7 +435,7 @@ function planWork(db, ctx, membership, options = {}) {
         title: delivery.late
           ? `${delivery.poNumber} from ${delivery.supplierName} is ${delivery.daysLate} days late`
           : `${delivery.poNumber} from ${delivery.supplierName} is due today`,
-        body: `${delivery.outstandingUnits} units still outstanding. Foundry cannot book these in for you.`,
+        body: `${delivery.outstandingUnits} units still outstanding. StockChief cannot book these in for you.`,
         workItemId: item.id,
         link: `/purchasing/orders/${delivery.purchaseOrderId}`,
       });
@@ -754,7 +763,7 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
     return { executed: false, item: workItems.get(db, workspaceId, item.id), error: error.message };
   }
 
-  // The order is prepared, never placed. Approving a plan authorises Foundry to
+  // The order is prepared, never placed. Approving a plan authorises StockChief to
   // work out the order and put it in front of somebody; telling the supplier is
   // a separate act, and stays one.
   let purchaseOrderId = null;
@@ -816,7 +825,7 @@ function executeReplenishmentPlan(db, ctx, membership, item) {
   }
 
   // An order this plan owns and said it would place. Placing is recording that
-  // the order has been put to the supplier; Foundry still contacts nobody.
+  // the order has been put to the supplier; StockChief still contacts nobody.
   for (const entry of placing) {
     for (const order of entry.orders || []) {
       try {
@@ -921,7 +930,7 @@ function executeWorkItemInternal(db, ctx, membership, workItemId, options = {}) 
   }
 
   if (item.category !== 'balance_transfer') {
-    throw new ValidationError('Foundry does not carry out that kind of work on its own.');
+    throw new ValidationError('StockChief does not carry out that kind of work on its own.');
   }
 
   const action = item.recommendedAction;
@@ -1061,7 +1070,7 @@ function executeWorkItemInternal(db, ctx, membership, workItemId, options = {}) 
     // would only repeat.
     modes.suspend(db, workspaceId, {
       scope: 'transfer',
-      reason: `Foundry paused automatic transfers because the last one could not be independently verified (${action.displayName}).`,
+      reason: `StockChief paused automatic transfers because the last one could not be independently verified (${action.displayName}).`,
     });
     return { executed: true, verified: false, item: workItems.get(db, workspaceId, item.id), checks };
   }
@@ -1103,7 +1112,7 @@ function universalWorkItemAuthority({ db, ctx, membership, operation, execution:
   const checks = [];
   const check = (name, passed, reason) => checks.push({ name, passed:Boolean(passed), reason });
   check('executionState', executionState.allowed,
-    executionState.because || 'Foundry is active for this domain.');
+    executionState.because || 'StockChief is active for this domain.');
   if (item.approvedAt) {
     check('ownerApproval', permissions.can(membership, definition.permission),
       `The approving person must still have ${definition.permission}.`);
@@ -1288,7 +1297,7 @@ function preparePurchase(db, ctx, membership, item, options = {}) {
   }
 }
 
-/** A person approving work Foundry prepared. */
+/** A person approving work StockChief prepared. */
 function approveWorkItem(db, ctx, membership, workItemId) {
   permissions.assertCan(membership, permissions.OPERATE, 'approve inventory work');
   const item = workItems.get(db, ctx.workspaceId, workItemId);

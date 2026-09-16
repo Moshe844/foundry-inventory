@@ -47,7 +47,7 @@ function countEntries(db, workspaceId, locationId, skuIds, kind) {
   const entries=[];
   for (const sku of candidateSkus(db,workspaceId,locationId,skuIds,kind)) {
     if (sku.tracking_mode === 'serial') {
-      throw new ValidationError(`${sku.code} is serial-tracked. Count it with the scan-first serial count so Foundry can verify every identity; a total alone is not accepted.`);
+      throw new ValidationError(`${sku.code} is serial-tracked. Count it with the scan-first serial count so StockChief can verify every identity; a total alone is not accepted.`);
     }
     if (sku.tracking_mode === 'lot') {
       const lots=db.prepare(`SELECT l.id,l.code,COALESCE(b.quantity,0) AS quantity FROM lots l
@@ -203,7 +203,7 @@ function approve(db, ctx, membership, sessionId) {
     if(session.status!=='AWAITING_APPROVAL') throw new ValidationError('This count is not waiting for variance approval.');
     for(const line of session.lines){
       const current=line.lot_id?repo.getLotBalance(db,ctx.workspaceId,line.lot_id,line.location_id):repo.getBalance(db,ctx.workspaceId,line.sku_id,line.location_id);
-      if(current!==Number(line.expected_quantity)) throw new ValidationError(`${line.item_name} changed after the count began. Start a fresh count; Foundry will not overwrite newer stock activity.`);
+      if(current!==Number(line.expected_quantity)) throw new ValidationError(`${line.item_name} changed after the count began. Start a fresh count; StockChief will not overwrite newer stock activity.`);
       if(Number(line.variance)===0) continue;
       const result=engine.adjust(db,ctx,{skuId:line.sku_id,locationId:line.location_id,lotId:line.lot_id||undefined,countedQty:Number(line.counted_quantity),reasonCode:'physical_count',reference:`Count ${session.campaign_name}`});
       db.prepare('UPDATE inventory_count_lines SET adjustment_movement_id=?,updated_at=? WHERE id=?').run(result.movementIds[0],nowIso(),line.id);

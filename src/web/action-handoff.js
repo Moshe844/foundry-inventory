@@ -8,7 +8,7 @@
  * correctly and then dropped, because the two routes that call the reader
  * only knew where proposals and questions go. "Please email motty@… that we
  * received the order" produced a perfectly good draft, and what the person
- * saw was "Foundry needs more detail" over the home page.
+ * saw was "StockChief needs more detail" over the home page.
  *
  * Both routes call this first. It returns where to send the person, having
  * done whatever is needed for that page to exist, or null when the result is

@@ -3,7 +3,7 @@
 /*
  * Carriers, without pretending to be integrated with any of them.
  *
- * Foundry has no carrier account and no rate contract, so it cannot buy a
+ * StockChief has no carrier account and no rate contract, so it cannot buy a
  * label, quote a real price, or poll a delivery scan. What it can do is stop
  * a tracking number from being a dead string: hold the carrier's own tracking
  * URL, recognise a number the owner pasted, and hand the customer a link that

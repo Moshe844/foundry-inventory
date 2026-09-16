@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * The thing that makes Foundry an employee rather than a button.
+ * The thing that makes StockChief an employee rather than a button.
  *
  * Everything else in Mission 7 answers "what should happen?". This answers
  * "when?" — and until it existed the product promise quietly depended on
@@ -12,7 +12,7 @@
  * It decides nothing. Every tick calls the same `runner.run` a person's button
  * calls, so a scheduled action and a clicked one go through the identical
  * policy gate, the identical engine, and the identical verification. If this
- * file were deleted, Foundry would lose its timing and none of its judgement.
+ * file were deleted, StockChief would lose its timing and none of its judgement.
  *
  * It acts under somebody's authority, never its own. The actor for automatic
  * work is the person who approved the policy that allows it — they wrote the
@@ -24,7 +24,7 @@
  *
  * Paused means paused. A paused, suspended or watching workspace still gets its
  * attention re-evaluated — the calendar keeps moving and a customer who paused
- * Foundry still wants to know their lot expires — but no work is planned and
+ * StockChief still wants to know their lot expires — but no work is planned and
  * nothing is executed.
  */
 
@@ -42,7 +42,7 @@ const os = require('os');
 
 /**
  * Quarter-hourly. Inventory does not change by the second, and a customer who
- * receives a delivery expects Foundry to have noticed by the time they have made
+ * receives a delivery expects StockChief to have noticed by the time they have made
  * a cup of tea — not instantly, and not tomorrow.
  */
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
@@ -101,7 +101,7 @@ function acquireLease(db, leaseMs, { now = Date.now() } = {}) {
  * put a movement in somebody's name that they had nothing to do with.
  *
  * Returns null when nobody has authorised anything — which is not an error, it
- * is a workspace that has not asked Foundry to act.
+ * is a workspace that has not asked StockChief to act.
  */
 function authorityFor(db, workspaceId) {
   const policies = policyService
@@ -113,7 +113,7 @@ function authorityFor(db, workspaceId) {
     // The approver may have left since. Their membership row survives — the
     // ledger has to keep saying who did what — but leaving unlinks it from a
     // real account, and an account nobody can sign in to is not a person who
-    // can authorise anything. Foundry would otherwise go on acting in a
+    // can authorise anything. StockChief would otherwise go on acting in a
     // departed employee's name indefinitely.
     const membership = db
       .prepare(
@@ -167,7 +167,7 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
   /*
    * Look ahead before doing anything else.
    *
-   * Deliberately above the paused and watching-only branches. Pausing Foundry
+   * Deliberately above the paused and watching-only branches. Pausing StockChief
    * stops it acting, not thinking — an owner who pauses for a stock take still
    * wants to be told on Monday that something is about to run out, and a
    * system that goes blind the moment it is told to keep its hands still is one
@@ -220,7 +220,7 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
   }
 
   /*
-   * Levels Foundry has actually been authorised to keep current.
+   * Levels StockChief has actually been authorised to keep current.
    *
    * Below the paused and watching-only branches on purpose — those return
    * before reaching here, so a paused workspace predicts and reports but
@@ -241,7 +241,7 @@ function runWorkspace(db, workspaceId, { now = Date.now(), trigger = 'scheduled'
 
   const authority = authorityFor(db, workspaceId);
   if (!authority) {
-    // Supervised with nothing approved: Foundry may still prepare work, but it
+    // Supervised with nothing approved: StockChief may still prepare work, but it
     // has nobody's permission to execute, so it plans under the owner and stops
     // there. Planning writes no movements, so no authority is being borrowed.
     const owner = db

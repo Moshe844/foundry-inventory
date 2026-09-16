@@ -34,7 +34,7 @@ test('a natural sale-profit-and-payment question is answered as one exact story'
     movementIds: received.movementIds, unitCostMinor: 500,
     sourceType: 'opening_balance', sourceRecordId: 'qa-opening',
   });
-  const customer = sales.createCustomer(db, workspace.ctx, { name: 'Human Test Customer' });
+  const customer = sales.createCustomer(db, workspace.ctx, { name: 'Human Test Customer', shippingAddress: '7 Example Lane, Albany, NY 12207, US' });
   const order = sales.confirm(db, workspace.ctx, sales.createOrder(db, workspace.ctx, {
     customerId: customer.id,
     lines: [{ skuId: shirt.skuId, quantity: 2 }],
@@ -75,7 +75,7 @@ test('a profit-versus-customer-cash question reconciles the whole period, not on
   });
 
   for (const [name, quantity] of [['First Customer', 2], ['Second Customer', 1]]) {
-    const customer = sales.createCustomer(db, workspace.ctx, { name });
+    const customer = sales.createCustomer(db, workspace.ctx, { name, shippingAddress: '7 Example Lane, Albany, NY 12207, US' });
     const order = sales.confirm(db, workspace.ctx, sales.createOrder(db, workspace.ctx, {
       customerId: customer.id, lines: [{ skuId: shirt.skuId, quantity }],
     }).id);

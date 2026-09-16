@@ -4,7 +4,7 @@
  * Deterministic detectors.
  *
  * Each takes measured signals and returns candidate attention items. Every
- * candidate carries the evidence that produced it, so "why is Foundry telling
+ * candidate carries the evidence that produced it, so "why is StockChief telling
  * me this?" is answerable without re-deriving anything — and so a detector can
  * never assert something the ledger does not support.
  *
@@ -188,7 +188,7 @@ function detectStockoutRisk(signals) {
           `across ${sku.measured.issueEventsInWindow} movements, about ` +
           `${sku.estimated.averageDailyUsage} per day. At that rate the ${sku.measured.onHand} on hand ` +
           `lasts roughly ${Math.round(days)} days.`,
-        recommendation: 'Foundry recommends reviewing replenishment.',
+        recommendation: 'StockChief recommends reviewing replenishment.',
         affectedEntityType: 'sku',
         affectedEntityIds: [sku.skuId],
         affectedLocationIds: sku.perLocation.filter((l) => l.onHand > 0).map((l) => l.locationId),
@@ -319,7 +319,7 @@ function detectUnusualAdjustment(signals) {
       // adjustment from nothing to whatever is there, and the larger the
       // business the larger that number. Judged as a correction it is a 100%
       // swing every time, so a clean setup filled Needs you with exceptions
-      // for the entirely expected act of telling Foundry what it holds.
+      // for the entirely expected act of telling StockChief what it holds.
       //
       // It is skipped on the shape of the ledger — first movement at this
       // position, from zero — and not on the reason text, which anyone can
@@ -644,7 +644,7 @@ function detectReplenishment(signals, options = {}) {
         conciseSummary,
         explanation: plan.explanation,
         recommendation: plan.blocked === 'no_supplier'
-          ? 'Add a supplier for this line and Foundry can work out the quantity.'
+          ? 'Add a supplier for this line and StockChief can work out the quantity.'
           : recommendation,
         affectedEntityType: 'sku',
         affectedEntityIds: [plan.skuId],
@@ -738,7 +738,7 @@ function detectStockProtectionBoundary(signals, options = {}) {
         ? `${onHand} on hand${where} · the next outgoing unit would reach the configured limit of ${boundary.configuredLimit}`
         : `${onHand} on hand${where} · configured protected limit ${boundary.configuredLimit}`,
       explanation: warningOnly
-        ? `${onHand} ${sku.unitLabel || 'units'} are on hand${where}. You asked Foundry to warn at or below `
+        ? `${onHand} ${sku.unitLabel || 'units'} are on hand${where}. You asked StockChief to warn at or below `
           + `${boundary.configuredLimit}. Outgoing stock remains allowed.`
         : approachingInclusiveLimit
         ? `${onHand} ${sku.unitLabel || 'units'} are on hand${where}. The configured rule blocks any result `
@@ -746,7 +746,7 @@ function detectStockProtectionBoundary(signals, options = {}) {
           + 'Any further outgoing stock will be blocked.'
         : `${onHand} ${sku.unitLabel || 'units'} are on hand${where}. The configured rule blocks any result `
           + `${boundary.blockedWhen}. ${boundary.permittedExplanation}`,
-      recommendation: warningOnly ? 'Review stock or replenishment. Foundry will not block outgoing stock.' : release,
+      recommendation: warningOnly ? 'Review stock or replenishment. StockChief will not block outgoing stock.' : release,
       affectedEntityType: 'sku',
       affectedEntityIds: [rule.skuId],
       affectedLocationIds: rule.locationId ? [rule.locationId] : [],
@@ -940,7 +940,7 @@ function detectDataIntegrity(signals, { integrity }) {
         title: 'Inventory records need review',
         conciseSummary: `${integrity.problems.length} discrepancy between balances and movement history`,
         explanation:
-          'Foundry re-derived every balance from the movement ledger and found values that do not agree. ' +
+          'StockChief re-derived every balance from the movement ledger and found values that do not agree. ' +
           'This does not change what the ledger records; it means something needs investigating.',
         recommendation: 'Review the affected records in Settings before relying on these numbers.',
         affectedEntityType: 'workspace',
@@ -986,11 +986,11 @@ function detectDataIntegrity(signals, { integrity }) {
 /**
  * A purchase order past its expected date with stock still outstanding.
  *
- * The care here is in what is *not* said. Foundry does not know whether the
+ * The care here is in what is *not* said. StockChief does not know whether the
  * supplier is at fault, whether the date was ever agreed, or whether the van is
  * outside — it knows a date has passed and units have not arrived. So the
  * finding states exactly that, and only for orders whose expected date came
- * from a stated lead time or a person, never from Foundry's own assumption.
+ * from a stated lead time or a person, never from StockChief's own assumption.
  */
 function detectLatePurchaseOrders(signals) {
   const orders = (signals.purchasing && signals.purchasing.lateOrders) || [];
@@ -1051,7 +1051,7 @@ function detectLatePurchaseOrders(signals) {
  * What a product costs has moved between one order and the next.
  *
  * Reported as a fact, not a verdict. Prices move for ordinary reasons, and
- * Foundry has no way to tell a negotiated increase from an overcharge — so it
+ * StockChief has no way to tell a negotiated increase from an overcharge — so it
  * shows both figures and suggests a look, and never uses words like "wrong".
  * An increase and a decrease are both worth knowing.
  */

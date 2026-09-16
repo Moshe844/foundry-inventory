@@ -1,0 +1,27 @@
+<div class="breadcrumb"><a href="/ask">Ask StockChief</a><span>New product for your PO</span></div>
+<div class="page-head"><div><h1>Buy a new product</h1>
+  <p class="page-sub">This SKU is not in your catalogue yet. Review its details here, then continue to the purchase-order draft.</p>
+</div></div>
+<div class="notice notice--info"><div>Adding a catalogue record does not add stock. Nothing is ordered, paid, or emailed until you review and approve the PO.</div></div>
+<form method="post" action="/actions/ask" class="card form-card section" data-busy>
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <input type="hidden" name="continuationId" value="<%= continuationId %>">
+  <input type="hidden" name="answer" value="add_and_draft">
+  <div class="card-body form-grid">
+    <label class="field"><span class="field-label">Product name</span><input class="input" name="name" value="<%= product.name || '' %>" maxlength="200" required></label>
+    <label class="field"><span class="field-label">New SKU</span><input class="input" name="code" value="<%= product.code || '' %>" maxlength="100" required></label>
+    <label class="field"><span class="field-label">Inventory unit</span><input class="input" name="unitLabel" value="<%= product.unitLabel || '' %>" placeholder="For example: piece, pair, box" maxlength="100" required><span class="field-hint">What does one inventory unit mean? The quantity below uses this unit, not an assumed supplier pack.</span></label>
+    <label class="field"><span class="field-label">How will stock be tracked?</span><select class="input" name="trackingMode" required>
+      <option value="">Choose tracking</option>
+      <% [['quantity','Count quantities'],['lot','Track lots'],['serial','Track individual serial numbers']].forEach(function(t) { %><option value="<%= t[0] %>" <%= product.trackingMode === t[0] ? 'selected' : '' %>><%= t[1] %></option><% }); %>
+    </select><span class="field-hint">Lot or serial identities are collected when the goods arrive, not invented for this PO.</span></label>
+    <label class="field"><span class="field-label">Supplier</span><input class="input" name="supplier" value="<%= product.supplier || '' %>" maxlength="200" required><span class="field-hint">If this is a new supplier, StockChief will ask before adding it.</span></label>
+    <label class="field"><span class="field-label">Quantity to buy, in inventory units</span><input class="input" name="quantity" type="number" min="1" step="1" value="<%= product.quantity || '' %>" required></label>
+    <label class="field"><span class="field-label">Cost per inventory unit (optional)</span><input class="input" name="unitCost" type="number" min="0" step="0.0001" value="<%= product.unitCost ?? '' %>"><span class="field-hint">Leave unknown prices blank. Review the final purchase-unit price on the draft.</span></label>
+    <label class="field"><span class="field-label">Expected delivery date (optional)</span><input class="input" name="expectedDate" type="date" value="<%= product.expectedDate || '' %>"></label>
+    <label class="field field--full"><span class="field-label">Receive into (optional)</span><select class="input" name="destinationLocationId"><option value="">Choose on the PO draft</option><% locations.forEach(function(l) { %><option value="<%= l.id %>" <%= product.destinationLocationId === l.id ? 'selected' : '' %>><%= l.name %></option><% }); %></select></label>
+    <label class="field field--full"><span class="field-label">Delivery instructions and other details (optional)</span><textarea class="input" name="notes" maxlength="4000"><%= product.notes || '' %></textarea><span class="field-hint">The original request remains attached to the draft; review any additional conditions before approval.</span></label>
+  </div>
+  <div class="card-foot"><button class="btn btn--primary" type="submit" <%= canCreate ? '' : 'disabled' %>>Add this product and prepare PO draft</button><a class="btn btn--ghost" href="/ask">Back to Ask StockChief</a></div>
+</form>
+<details class="rm-disclose"><summary>See my original request</summary><p><%= instruction %></p></details>

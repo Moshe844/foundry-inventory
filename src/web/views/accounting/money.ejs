@@ -78,7 +78,7 @@
   <div class="rm-ledger__row">
     <span class="rm-ledger__k">In the bank</span>
     <span class="rm-ledger__v"><a href="/accounting/banking"><%= money(story.position.cashMinor) %></a></span>
-    <span class="rm-ledger__n">what Foundry can prove you hold</span>
+    <span class="rm-ledger__n">what StockChief can prove you hold</span>
   </div>
   <div class="rm-ledger__row">
     <span class="rm-ledger__k"><%= story.inventory.missingCostUnits ? 'Known stock cost' : 'Stock you own' %></span>
@@ -182,7 +182,7 @@
             </div>
           <% }) %>
           <% if (doc.documentTotalMinor !== null) { %>
-            <p class="rm-sub">The document totals <strong><%= money(doc.documentTotalMinor) %></strong>. Foundry keeps every charge separate so this can be checked against the source.</p>
+            <p class="rm-sub">The document totals <strong><%= money(doc.documentTotalMinor) %></strong>. StockChief keeps every charge separate so this can be checked against the source.</p>
           <% } %>
           <div class="rm-choices">
             <form method="post" action="/accounting/document-costs/<%= doc.documentId %>">

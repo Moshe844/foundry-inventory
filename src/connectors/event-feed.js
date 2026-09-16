@@ -10,7 +10,7 @@ const { AuthenticationError, ValidationError } = require('../domain/errors');
 const { newId, nowIso, requireText, trimOrNull } = require('../lib/util');
 
 const CONNECTOR_KEY = 'foundry_event_feed';
-const DISPLAY_NAME = 'Foundry operating event feed';
+const DISPLAY_NAME = 'StockChief operating event feed';
 const TOKEN_PREFIX = 'fnd_live_';
 const MAX_BATCH = 500;
 
@@ -123,7 +123,7 @@ function authenticate(db, authorization) {
   const match = /^Bearer\s+(.+)$/i.exec(String(authorization || '').trim());
   const token = match && match[1];
   if (!token || token.length > 200 || !token.startsWith(TOKEN_PREFIX)) {
-    throw new AuthenticationError('A valid Foundry event-feed bearer token is required.');
+    throw new AuthenticationError('A valid StockChief event-feed bearer token is required.');
   }
   const visiblePrefix = token.slice(TOKEN_PREFIX.length).split('.')[0];
   const row = db.prepare(
@@ -134,7 +134,7 @@ function authenticate(db, authorization) {
       WHERE t.token_prefix = ? AND t.token_hash = ? AND t.revoked_at IS NULL
         AND c.status = 'connected' AND c.connector_key = ?`
   ).get(visiblePrefix, hashToken(token), CONNECTOR_KEY);
-  if (!row) throw new AuthenticationError('That Foundry event-feed token is invalid or has been revoked.');
+  if (!row) throw new AuthenticationError('That StockChief event-feed token is invalid or has been revoked.');
   db.prepare('UPDATE connector_feed_tokens SET last_used_at = ? WHERE id = ?').run(nowIso(), row.id);
   return {
     tokenId: row.id,

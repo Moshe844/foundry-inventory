@@ -110,7 +110,7 @@ function demandShift({ history, displayName, skuId, daysOfCover }) {
  * One order much larger than this product's normal day.
  *
  * Reported so the owner knows why the numbers look odd, and explicitly so they
- * know Foundry has *not* treated it as a new normal.
+ * know StockChief has *not* treated it as a new normal.
  */
 function largeOrder({ history, displayName, skuId }) {
   if (!history.totals.exceptionalUnits) return null;
@@ -121,7 +121,7 @@ function largeOrder({ history, displayName, skuId }) {
     kind: 'large_one_off_order',
     skuId,
     headline: `A single order of ${order ? order.units : day.exceptional} ${displayName} on ${day.date}`,
-    detail: 'Much larger than this product\'s usual day, so Foundry has kept it out of the ongoing '
+    detail: 'Much larger than this product\'s usual day, so StockChief has kept it out of the ongoing '
       + 'demand rate rather than letting it raise every future order.',
     severity: SEVERITY.INFORMATIONAL,
     measurements: { date: day.date, units: order ? order.units : day.exceptional, reference: order ? order.reference : null },
@@ -137,7 +137,7 @@ function returns({ history, displayName, skuId }) {
     kind: 'high_return_rate',
     skuId,
     headline: `${Math.round(rate * 100)}% of ${displayName} sold has come back`,
-    detail: `${history.totals.returned} of ${history.totals.grossDemand} units returned. Foundry has `
+    detail: `${history.totals.returned} of ${history.totals.grossDemand} units returned. StockChief has `
       + 'taken them off demand, so forecasts are not counting sales that unhappened.',
     severity: SEVERITY.DECISION,
     recommendation: 'Worth checking the product or its description before ordering more.',
@@ -196,7 +196,7 @@ function leadTimeDrift(timing) {
     supplierId: timing.supplierId,
     headline: `${timing.supplierName || 'A supplier'} is taking ${timing.differenceDays} days longer than configured`,
     detail: `Configured at ${timing.configuredDays} days; the last ${timing.measured.samples} orders `
-      + `averaged ${timing.measured.meanDays}. Foundry is planning on the longer figure and has left `
+      + `averaged ${timing.measured.meanDays}. StockChief is planning on the longer figure and has left `
       + 'your setting alone.',
     severity: SEVERITY.DECISION,
     recommendation: 'Either the reorder points for this supplier\'s products need to rise, or the '

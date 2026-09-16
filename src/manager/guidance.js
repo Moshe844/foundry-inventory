@@ -3,7 +3,7 @@
 /**
  * The operating layer: what a person should do first, and what they should do
  * next. There is no tour state here. Every completed step and recommendation
- * is derived from the same records Foundry operates on.
+ * is derived from the same records StockChief operates on.
  */
 
 const needsYouInbox = require('./needs-you-inbox');
@@ -28,7 +28,7 @@ function facts(db, workspaceId) {
     'SELECT id, name FROM locations WHERE workspace_id = ? AND is_active = 1 ORDER BY name'
   ).all(workspaceId);
   // Home needs aggregate movement facts, not the complete ledger payload.
-  // Loading every movement into JavaScript made opening Foundry scale with its
+  // Loading every movement into JavaScript made opening StockChief scale with its
   // entire history.
   // These values choose setup copy; they are existence facts, not report
   // totals. COUNT/SUM scanned every historical movement whenever Home or a
@@ -169,10 +169,10 @@ const displayName = (record) => record
  * The next step in getting set up, in the order things actually happen.
  *
  * "No items yet" was tested before anything else, so a workspace that had just
- * been through the whole descriptive setup — Foundry read the business, agreed
+ * been through the whole descriptive setup — StockChief read the business, agreed
  * the tracking model, created the locations and said "Your inventory is ready,
  * everything below is live now" — was met on its own home page by "Do this
- * next: choose where Foundry should get your inventory", pointing back at the
+ * next: choose where StockChief should get your inventory", pointing back at the
  * screen it had just come from. The one thing missing was a product, and that
  * was the one thing it did not say.
  *
@@ -196,7 +196,7 @@ function replenishmentAction(state) {
     return {
       href: `/purchasing/supplier-for/${state.missingSupplier.sku_id}`,
       action: 'Add its supplier',
-      detail: `Tell Foundry who supplies ${displayName(state.missingSupplier)} and how they sell it.`,
+      detail: `Tell StockChief who supplies ${displayName(state.missingSupplier)} and how they sell it.`,
     };
   }
   const record = state.missingReorder || state.first;
@@ -204,7 +204,7 @@ function replenishmentAction(state) {
     return {
       href: `/purchasing/why/${record.sku_id}?guide=1#reorder-settings`,
       action: 'Set replenishment rules',
-      detail: `Set when ${displayName(record)} is low and what stock level Foundry should restore.`,
+      detail: `Set when ${displayName(record)} is low and what stock level StockChief should restore.`,
     };
   }
   return { href: '/purchasing/setup', action: 'Set up purchasing', detail: 'Add suppliers and the products you buy from them.' };
@@ -230,12 +230,12 @@ function examples(state) {
   if (state.missingSupplier) {
     /*
      * "ABC Apparel supplies Copper Elbow 15mm in cases of 12" was the first
-     * suggestion here, and Foundry answers that sentence with "Foundry cannot
+     * suggestion here, and StockChief answers that sentence with "StockChief cannot
      * store supplier catalogue details like pricing, pack size or lead time".
      * It can — there is a form for exactly those fields — but not through this
      * box, which prepares stock movements. Offering a sentence the product then
      * refuses is worse than offering nothing: it teaches somebody that Tell
-     * Foundry does not work.
+     * StockChief does not work.
      *
      * These are things this box does handle, and the supplier's own terms are
      * one click away in "Do this next" directly above.
@@ -310,12 +310,12 @@ function buildChecklist(state) {
       id: 'supplier', title: 'Add who you buy from', complete: supplier,
       detail: supplier
         ? 'At least one product is linked to a supplier.'
-        : 'Add a supplier so Foundry knows who can replenish your stock.',
+        : 'Add a supplier so StockChief knows who can replenish your stock.',
       href: replenishment.href,
       action: state.missingSupplier ? 'Add supplier' : 'Set up purchasing',
     },
     {
-      id: 'replenishment', title: 'Decide when Foundry should reorder', complete: replenishmentReady,
+      id: 'replenishment', title: 'Decide when StockChief should reorder', complete: replenishmentReady,
       detail: replenishmentReady
         ? 'A low-stock point and target stock level are saved.'
         : 'Set the simple low-stock point and the quantity you want restored.',
@@ -323,7 +323,7 @@ function buildChecklist(state) {
     },
   ];
   steps.push({
-    id: 'authority', title: 'Choose how much routine work Foundry may handle', complete: authority,
+    id: 'authority', title: 'Choose how much routine work StockChief may handle', complete: authority,
     detail: authority
       ? activeAuthorityCopy(state)
       : 'Keep Ask me first, or explicitly approve narrow limits for routine transfers and purchasing.',
@@ -341,7 +341,7 @@ function buildChecklist(state) {
     steps,
     active: !setup || !opening || !supplier || !replenishmentReady || !authority,
     // Products, locations and a movement-backed opening balance are enough for
-    // Foundry to operate truthfully. Supplier, replenishment and automatic-
+    // StockChief to operate truthfully. Supplier, replenishment and automatic-
     // authority choices increase what it can handle, but they must not make a
     // working inventory look as though the product itself is still booting.
     operationalReady: setup && opening,
@@ -352,13 +352,13 @@ function activeAuthorityCopy(state) {
   if (state.activePolicies) {
     return `${state.activePolicies} approved routine-work ${state.activePolicies === 1 ? 'policy is' : 'policies are'} available.`;
   }
-  return 'You reviewed the automatic-work mode; Foundry will follow that choice.';
+  return 'You reviewed the automatic-work mode; StockChief will follow that choice.';
 }
 
 function nextBestAction(db, workspaceId, state, membership = null, productBrain = null, preparedInbox = null) {
   const inbox = preparedInbox || needsYouInbox.inbox(db, workspaceId, membership, { productBrain, limit: 1 });
   // A source the owner already chose outranks a generic manual-setup prompt.
-  // This is especially important for unattended mailbox checks: Foundry can
+  // This is especially important for unattended mailbox checks: StockChief can
   // finish reading a file while the browser is closed, and Home must expose
   // the resulting review instead of pretending that nothing happened.
   const sourceTask = inbox.find((entry) => entry.kind === 'import'
@@ -373,7 +373,7 @@ function nextBestAction(db, workspaceId, state, membership = null, productBrain 
   if (!state.itemCount || !state.locations.length) {
     const action = setupAction(state);
     const missingLocation = !state.locations.length;
-    // A workspace that has already agreed a setup with Foundry is not choosing
+    // A workspace that has already agreed a setup with StockChief is not choosing
     // a source any more; it is waiting for its first product. Saying otherwise
     // sent somebody back through a flow they had just finished.
     const chosen = state.configured;
@@ -387,13 +387,13 @@ function nextBestAction(db, workspaceId, state, membership = null, productBrain 
       },
       product: {
         title: 'Add the first thing you sell.',
-        what: `Foundry has agreed how this inventory works and set up ${state.locations.length === 1 ? 'its location' : 'its locations'}, but there are no products in it yet.`,
-        why: 'Foundry can only count, watch and reorder things it has a record of.',
-        recommendation: 'Add one by hand, tell Foundry what you stock, or attach the file that lists it.',
+        what: `StockChief has agreed how this inventory works and set up ${state.locations.length === 1 ? 'its location' : 'its locations'}, but there are no products in it yet.`,
+        why: 'StockChief can only count, watch and reorder things it has a record of.',
+        recommendation: 'Add one by hand, tell StockChief what you stock, or attach the file that lists it.',
       },
       source: {
-        title: 'Choose where Foundry should get your inventory.',
-        what: 'Foundry knows something about the business, but it has not received real product records yet.',
+        title: 'Choose where StockChief should get your inventory.',
+        what: 'StockChief knows something about the business, but it has not received real product records yet.',
         why: 'A general description such as “I sell clothing” does not contain product names, variants, or quantities.',
         recommendation: 'Choose manual entry, file upload, approved email attachments, a connected POS/ERP, or several sources.',
       },
@@ -405,7 +405,7 @@ function nextBestAction(db, workspaceId, state, membership = null, productBrain 
      * Say what is already known before asking for what is not.
      *
      * An owner who had just imported an order for 800 pairs was asked "tell
-     * Foundry how much you have now", with no sign that Foundry knew anything
+     * StockChief how much you have now", with no sign that StockChief knew anything
      * at all. It did: five products, a supplier, and 800 pairs on order. Being
      * asked a question by something that has just read your paperwork and says
      * nothing about it is what makes software feel like a form.
@@ -419,7 +419,7 @@ function nextBestAction(db, workspaceId, state, membership = null, productBrain 
 
     const onOrder = Number(incoming?.units || 0);
     return {
-      kind: 'setup', eyebrow: 'Do this next', title: 'Tell Foundry how much you have now.',
+      kind: 'setup', eyebrow: 'Do this next', title: 'Tell StockChief how much you have now.',
       what: onOrder
         ? `Your products are ready and ${onOrder} unit${onOrder === 1 ? '' : 's'} are on order from `
           + `${incoming.supplier}, but nothing has been recorded as being on the shelf yet.`
@@ -429,7 +429,7 @@ function nextBestAction(db, workspaceId, state, membership = null, productBrain 
           + 'later sales and receipts cannot produce a truthful balance.'
         : 'Until the starting amount is known, later sales and receipts cannot produce a truthful balance.',
       recommendation: onOrder
-        ? 'Enter what is physically there now — if the answer is none, say none and Foundry will '
+        ? 'Enter what is physically there now — if the answer is none, say none and StockChief will '
           + 'start from zero and add the order when it arrives.'
         : 'Enter current quantities or attach the inventory file that contains them.',
       action: 'Add opening inventory', href: state.first ? `/foundry/quantities/${state.first.id}` : '/foundry/quantities',
@@ -439,8 +439,8 @@ function nextBestAction(db, workspaceId, state, membership = null, productBrain 
     return {
       kind: 'supplier', eyebrow: 'Do this next',
       title: `Add who supplies ${displayName(state.missingSupplier)}.`,
-      what: 'Foundry knows the product and its current quantity, but not where replacement stock comes from.',
-      why: 'A supplier relationship is needed before Foundry can prepare an honest replenishment order.',
+      what: 'StockChief knows the product and its current quantity, but not where replacement stock comes from.',
+      why: 'A supplier relationship is needed before StockChief can prepare an honest replenishment order.',
       recommendation: 'Add the supplier, pack size, lead time and current cost if known.',
       action: 'Add supplier', href: `/purchasing/supplier-for/${state.missingSupplier.sku_id}`,
     };
@@ -449,8 +449,8 @@ function nextBestAction(db, workspaceId, state, membership = null, productBrain 
     return {
       kind: 'replenishment', eyebrow: 'Do this next',
       title: `Decide when to reorder ${displayName(state.missingReorder)}.`,
-      what: 'Foundry knows who supplies this product, but not when you consider it low.',
-      why: 'Foundry will never invent your low-stock point or target quantity.',
+      what: 'StockChief knows who supplies this product, but not when you consider it low.',
+      why: 'StockChief will never invent your low-stock point or target quantity.',
       recommendation: 'Set the quantity that means “low” and the quantity you want restored.',
       action: 'Set when to reorder',
       href: `/purchasing/why/${state.missingReorder.sku_id}?guide=1#reorder-settings`,
@@ -458,8 +458,8 @@ function nextBestAction(db, workspaceId, state, membership = null, productBrain 
   }
   if (!state.authorityReviewed) {
     return {
-      kind: 'authority', eyebrow: 'Do this next', title: 'Choose what Foundry may handle without asking you.',
-      what: 'Inventory and replenishment are ready. Foundry is still using the safe “ask first” default.',
+      kind: 'authority', eyebrow: 'Do this next', title: 'Choose what StockChief may handle without asking you.',
+      what: 'Inventory and replenishment are ready. StockChief is still using the safe “ask first” default.',
       why: 'Automatic authority is never inferred from your activity.',
       recommendation: 'Keep Ask me first, or approve narrow limits for routine purchasing and transfers.',
       action: 'Choose automatic work', href: '/autopilot',
@@ -478,16 +478,16 @@ function nextBestAction(db, workspaceId, state, membership = null, productBrain 
       kind: 'purchase-order', eyebrow: 'What should I do next?',
       title: `${state.partialOrder.outstanding} units are still outstanding on ${state.partialOrder.po_number}.`,
       what: 'Part of this purchase order has arrived and part is still expected.',
-      why: 'Foundry keeps the remainder on order until it is physically received or the order is closed.',
+      why: 'StockChief keeps the remainder on order until it is physically received or the order is closed.',
       recommendation: 'Open the order when the next delivery arrives and record only what is in the box.',
       action: 'Open the purchase order', href: `/purchasing/orders/${state.partialOrder.id}`,
     };
   }
   return {
-    kind: 'clear', eyebrow: 'Do this next', title: 'You’re set up. Foundry is managing inventory.',
-    what: 'Foundry has no unresolved decision or physical fact waiting.',
+    kind: 'clear', eyebrow: 'Do this next', title: 'You’re set up. StockChief is managing inventory.',
+    what: 'StockChief has no unresolved decision or physical fact waiting.',
     why: 'Recorded inventory, purchasing and exception state are currently consistent.',
-    recommendation: 'Keep telling Foundry about normal sales, receipts, transfers and counts.',
+    recommendation: 'Keep telling StockChief about normal sales, receipts, transfers and counts.',
     action: null, href: null,
   };
 }
@@ -572,7 +572,7 @@ function screenContext(guidance, nav) {
     return null;
   } else if (nav === 'activity') {
     next = state.movementCount
-      ? { title: 'Keep recording what comes in, goes out, moves or gets counted', action: 'Tell Foundry', href: '/#tell-foundry' }
+      ? { title: 'Keep recording what comes in, goes out, moves or gets counted', action: 'Tell StockChief', href: '/#tell-foundry' }
       : guidance.next;
   }
   /*
@@ -580,7 +580,7 @@ function screenContext(guidance, nav) {
    *
    * Descriptions are keyed by the sidebar section, and every page under
    * Purchasing shares that key — so Suppliers, a page listing who you buy from,
-   * introduced itself as "See what Foundry wants to buy, orders already placed,
+   * introduced itself as "See what StockChief wants to buy, orders already placed,
    * what is arriving, and what still needs receiving". Nothing on that screen
    * does any of those things.
    */
@@ -605,16 +605,16 @@ function guideTopics(db, workspaceId) {
   const count = `I counted ${item}${here ? ` at ${here}` : ''}`;
 
   return [
-    { title: 'Set up inventory', path: 'Choose the setup path that matches where your records live, then approve the products, variants and locations Foundry found.', tell: '“We are starting from scratch” or attach your existing file.', href: setupAction(state).href, action: setupAction(state).action },
-    { title: 'Record a sale', path: 'Tell Foundry what sold, how many, and where. Check the preview, then approve it.', tell: `“${sale}.”`, href: `/actions?q=${encodeURIComponent(sale)}`, action: 'Record a sale' },
-    { title: 'Receive stock', path: 'Tell Foundry what arrived and where. If it belongs to a PO, name the PO number.', tell: `“${receipt}.”`, href: `/actions?q=${encodeURIComponent(receipt)}`, action: 'Receive stock' },
-    { title: 'Move stock', path: there ? 'Name the item, quantity, source and destination. Foundry verifies that totals stay unchanged.' : 'Add a second location first; a transfer needs a source and a destination.', tell: there ? `“Move 5 ${item} from ${here} to ${there}.”` : '“Add a second location.”', href: there ? `/actions?q=${encodeURIComponent(`Move 5 ${item} from ${here} to ${there}`)}` : '/locations', action: there ? 'Move stock' : 'Add a location' },
-    { title: 'Fix a count', path: 'Report the physical count. If it disagrees with the ledger, Foundry opens one investigation and does not silently change stock.', tell: `“${count}.”`, href: `/actions?q=${encodeURIComponent(count)}`, action: 'Report a count' },
+    { title: 'Set up inventory', path: 'Choose the setup path that matches where your records live, then approve the products, variants and locations StockChief found.', tell: '“We are starting from scratch” or attach your existing file.', href: setupAction(state).href, action: setupAction(state).action },
+    { title: 'Record a sale', path: 'Tell StockChief what sold, how many, and where. Check the preview, then approve it.', tell: `“${sale}.”`, href: `/actions?q=${encodeURIComponent(sale)}`, action: 'Record a sale' },
+    { title: 'Receive stock', path: 'Tell StockChief what arrived and where. If it belongs to a PO, name the PO number.', tell: `“${receipt}.”`, href: `/actions?q=${encodeURIComponent(receipt)}`, action: 'Receive stock' },
+    { title: 'Move stock', path: there ? 'Name the item, quantity, source and destination. StockChief verifies that totals stay unchanged.' : 'Add a second location first; a transfer needs a source and a destination.', tell: there ? `“Move 5 ${item} from ${here} to ${there}.”` : '“Add a second location.”', href: there ? `/actions?q=${encodeURIComponent(`Move 5 ${item} from ${here} to ${there}`)}` : '/locations', action: there ? 'Move stock' : 'Add a location' },
+    { title: 'Fix a count', path: 'Report the physical count. If it disagrees with the ledger, StockChief opens one investigation and does not silently change stock.', tell: `“${count}.”`, href: `/actions?q=${encodeURIComponent(count)}`, action: 'Report a count' },
     { title: 'Set low-stock/reorder rules', path: 'Open the exact variant and set its reorder point, order-up-to level, safety stock and preferred supplier.', tell: `“Set a reorder point for ${item}.”`, href: replenish.href, action: replenish.action },
-    { title: 'Set up suppliers and purchase orders', path: 'Add the supplier, connect the variants it sells, and record price, pack size, minimum and lead time. Foundry can then prepare a PO.', tell: `“Help me add a supplier for ${item}.”`, href: state.missingSupplier ? `/purchasing/supplier-for/${state.missingSupplier.sku_id}` : '/purchasing/setup', action: 'Set up purchasing' },
+    { title: 'Set up suppliers and purchase orders', path: 'Add the supplier, connect the variants it sells, and record price, pack size, minimum and lead time. StockChief can then prepare a PO.', tell: `“Help me add a supplier for ${item}.”`, href: state.missingSupplier ? `/purchasing/supplier-for/${state.missingSupplier.sku_id}` : '/purchasing/setup', action: 'Set up purchasing' },
     { title: 'Receive a purchase order', path: state.openOrder ? `Open ${state.openOrder.po_number}, count what arrived, and record a partial or full receipt.` : 'Open the placed purchase order when the delivery arrives, count the box, and record only what actually arrived.', tell: state.openOrder ? `“We received stock for ${state.openOrder.po_number}.”` : '“The purchase order arrived.”', href: state.openOrder ? `/purchasing/orders/${state.openOrder.id}` : '/purchasing', action: state.openOrder ? `Open ${state.openOrder.po_number}` : 'View purchase orders' },
-    { title: 'Control what Foundry may do automatically', path: 'Choose Ask me first or explicitly enable bounded routine transfers and purchasing. Custom contains the advanced policy engine.', tell: '“Automatically transfer up to 5 units at a time.”', href: canonicalHref('autopilot', '/autopilot'), action: 'Choose automatic work' },
-    { title: 'Find what needs my attention', path: 'Needs you is the inbox for real decisions and physical facts. Each item says what happened, why Foundry stopped, and the one action to take.', tell: '“What needs my attention?”', href: canonicalHref('needs-you', '/needs-you'), action: 'Open Needs you' },
+    { title: 'Control what StockChief may do automatically', path: 'Choose Ask me first or explicitly enable bounded routine transfers and purchasing. Custom contains the advanced policy engine.', tell: '“Automatically transfer up to 5 units at a time.”', href: canonicalHref('autopilot', '/autopilot'), action: 'Choose automatic work' },
+    { title: 'Find what needs my attention', path: 'Needs you is the inbox for real decisions and physical facts. Each item says what happened, why StockChief stopped, and the one action to take.', tell: '“What needs my attention?”', href: canonicalHref('needs-you', '/needs-you'), action: 'Open Needs you' },
   ];
 }
 

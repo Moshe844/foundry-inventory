@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * How much of this will be wanted, how sure Foundry is, and why.
+ * How much of this will be wanted, how sure StockChief is, and why.
  *
  * The confidence is not decoration. A forecast without one is a number that
  * looks the same after five days of history as after five years, and an owner
@@ -15,7 +15,7 @@
  *
  * "Still learning" is a first-class result rather than a failure. A new product
  * has no demand history, and the correct thing to say about next month is that
- * nobody knows — the wrong thing is a number with two decimal places. Foundry
+ * nobody knows — the wrong thing is a number with two decimal places. StockChief
  * falls back to what it does know: what customers have actually committed to,
  * and what the owner configured.
  *
@@ -277,9 +277,9 @@ function summarise(forecast, displayName) {
   const name = displayName || 'This product';
   if (forecast.confidence === CONFIDENCE.LEARNING) {
     const known = forecast.committedUnits > 0
-      ? ` Customers have ordered ${forecast.committedUnits} that have not shipped, and that is what Foundry is going on.`
+      ? ` Customers have ordered ${forecast.committedUnits} that have not shipped, and that is what StockChief is going on.`
       : '';
-    return `${name} does not have enough trading history for Foundry to estimate demand yet.${known}`;
+    return `${name} does not have enough trading history for StockChief to estimate demand yet.${known}`;
   }
   const hedge = forecast.confidence === CONFIDENCE.MODERATE ? 'roughly ' : 'about ';
   return `${name} is selling ${hedge}${forecast.dailyRate} a day, `

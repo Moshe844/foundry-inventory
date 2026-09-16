@@ -6,8 +6,8 @@
 
 <div class="page-head">
   <div class="titles">
-    <h1><%- helpers.icon('foundry', { size: 20 }) %> How Foundry is set up</h1>
-    <div class="page-sub">The operating model Foundry uses to manage this inventory.</div>
+    <h1><%- helpers.icon('foundry', { size: 20 }) %> How StockChief is set up</h1>
+    <div class="page-sub">The operating model StockChief uses to manage this inventory.</div>
   </div>
 </div>
 
@@ -15,9 +15,9 @@
   <div class="card" style="margin-bottom:16px;border-color:var(--brand-line)">
     <div class="card-body">
       <h2 style="margin:0 0 6px">Setup is finished. Your products are the next step.</h2>
-      <p class="muted" style="margin:0">Foundry knows the tracking rules and locations, but no product or stock records have been added. Add one product now, or bring in the records you already use.</p>
+      <p class="muted" style="margin:0">StockChief knows the tracking rules and locations, but no product or stock records have been added. Add one product now, or bring in the records you already use.</p>
       <div class="btn-row" style="margin-top:14px">
-        <a class="btn btn--primary" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell Foundry what you sell</a>
+        <a class="btn btn--primary" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell StockChief what you sell</a>
         <a class="btn" href="/inventory/new">Add one manually</a>
         <a class="btn" href="/onboarding/migrations/new">Import a file</a>
         <a class="btn" href="/onboarding/system">Connect a business system</a>
@@ -29,11 +29,11 @@
 <div class="grid grid--sidebar">
   <div class="grid">
     <div class="card" id="conversation">
-      <div class="card-head"><h2>Ask Foundry about your inventory</h2></div>
+      <div class="card-head"><h2>Ask StockChief about your inventory</h2></div>
 
       <% if (messages.length === 0) { %>
         <div class="card-body">
-          <p class="muted">Foundry answers from your real configuration — not from what a typical setup looks like.</p>
+          <p class="muted">StockChief answers from your real configuration — not from what a typical setup looks like.</p>
           <div class="ask-suggestions">
             <button class="example example--sm" type="button" data-fill-ask="How is my inventory configured?">How is my inventory configured?</button>
             <button class="example example--sm" type="button" data-fill-ask="Why are my items tracked this way?">Why are my items tracked this way?</button>
@@ -44,7 +44,7 @@
         <div class="conversation">
           <% messages.forEach(function (message) { %>
             <div class="turn turn--<%= message.role %>">
-              <span class="turn-who"><%= message.role === 'user' ? 'You' : 'Foundry' %></span>
+              <span class="turn-who"><%= message.role === 'user' ? 'You' : 'StockChief' %></span>
               <div class="turn-body"><%= message.body %></div>
               <% if (message.grounding && message.grounding.length) { %>
                 <div class="turn-grounding">
@@ -62,7 +62,7 @@
       <div class="card-body" style="border-top:1px solid var(--line-soft);">
         <form method="post" action="/foundry/ask" class="ask-form" data-busy>
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <label class="visually-hidden" for="ask">Ask Foundry</label>
+          <label class="visually-hidden" for="ask">Ask StockChief</label>
           <input class="input" id="ask" name="question" data-ask-input required
                  placeholder="How is my inventory configured?" <%= aiConfigured ? '' : 'disabled' %>>
           <button class="btn btn--primary" type="submit" <%= aiConfigured ? '' : 'disabled' %>>
@@ -70,7 +70,7 @@
           </button>
         </form>
         <% if (!aiConfigured) { %>
-          <div class="hint">Foundry needs a model provider. Add <code class="mono">ANTHROPIC_API_KEY</code> and restart.</div>
+          <div class="hint">StockChief needs a model provider. Add <code class="mono">ANTHROPIC_API_KEY</code> and restart.</div>
         <% } %>
       </div>
     </div>
@@ -80,7 +80,7 @@
         <div class="card-head"><h2>Ask for a change</h2></div>
         <div class="card-body">
           <p class="muted">
-            Foundry will show you what would change and what it would affect. Nothing happens until you confirm.
+            StockChief will show you what would change and what it would affect. Nothing happens until you confirm.
           </p>
           <form method="post" action="/foundry/change" class="ask-form" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -135,14 +135,14 @@
     <% } %>
 
     <div class="card">
-      <div class="card-head"><h2>How Foundry uses this</h2></div>
+      <div class="card-head"><h2>How StockChief uses this</h2></div>
       <div class="card-body">
         <p class="muted" style="font-size:12.5px;">
-          Foundry watches this inventory, prepares routine work, and carries out only the actions
+          StockChief watches this inventory, prepares routine work, and carries out only the actions
           covered by authority you explicitly approve. Everything else comes back to you.
         </p>
         <div class="btn-row" style="margin-top:12px;">
-          <a class="btn btn--sm" href="/">Back to Foundry</a>
+          <a class="btn btn--sm" href="/">Back to StockChief</a>
           <a class="btn btn--sm btn--ghost" href="/autopilot">Authority &amp; policies</a>
         </div>
       </div>

@@ -15,11 +15,11 @@ test.after(cleanupAll);
 const EXACT_REQUEST = 'Create a realistic established company with 400 products, 2,000 SKUs, 20 suppliers and 12 months of realistic operating history. It should feel like a real company, not toy data.';
 const REAL_BUSINESS_REQUEST = `I run a footwear and apparel business. We sell shoes, shirts, pants, jackets and accessories in different sizes, colors and styles.
 
-We currently keep inventory in a main warehouse and several stores. I want Foundry to help me properly set up and manage the entire operation, including products, stock, purchasing, suppliers, transfers between locations, sales, receiving and replenishment.
+We currently keep inventory in a main warehouse and several stores. I want StockChief to help me properly set up and manage the entire operation, including products, stock, purchasing, suppliers, transfers between locations, sales, receiving and replenishment.
 
 I don't have everything organized perfectly yet. Walk me through what you need from me, figure out what you safely can from the information I provide, and don't make me answer questions that aren't necessary yet.
 
-I want Foundry eventually handling as much routine inventory work as possible, but never invent real business facts that I haven't provided.`;
+I want StockChief eventually handling as much routine inventory work as possible, but never invent real business facts that I haven't provided.`;
 const AMBIGUOUS_TYPED_RECORDS = 'I sell shoes, loafer size 35 38, foe size 35, 20, quantity for lafoer both siezes, 30 quantity for foe both sizes 15';
 
 async function post(agent, path, body, formPath) {
@@ -134,17 +134,17 @@ test('real-business onboarding grounds facts and asks for source records before 
   const proposal = await agent.get(proposalPath);
   assert.equal(proposal.status, 200);
   const text = plain(proposal.text);
-  assert.match(text, /What Foundry understood/i);
-  assert.match(text, /What Foundry needs next/i);
+  assert.match(text, /What StockChief understood/i);
+  assert.match(text, /What StockChief needs next/i);
   assert.match(text, /Where are your real product and stock records today/i);
   assert.match(text, /You do not need to clean or reorganize anything first/i);
-  assert.match(text, /Enter records in Foundry/i);
+  assert.match(text, /Enter records in StockChief/i);
   assert.match(text, /Upload inventory files/i);
   assert.match(text, /Connect a business system/i);
   assert.match(text, /Use email attachments/i);
   assert.doesNotMatch(text, /Choose where my records are/i);
-  assert.match(proposal.text, /<summary>What Foundry knows \/ Why Foundry decided this<\/summary>/i);
-  assert.doesNotMatch(proposal.text, /<details[^>]*open[^>]*>[^]*What Foundry knows \/ Why Foundry decided this/i);
+  assert.match(proposal.text, /<summary>What StockChief knows \/ Why StockChief decided this<\/summary>/i);
+  assert.doesNotMatch(proposal.text, /<details[^>]*open[^>]*>[^]*What StockChief knows \/ Why StockChief decided this/i);
   assert.doesNotMatch(text, /Save the safe structure|Choose where my records are/i);
   assert.match(text, /Verified fact/i);
   assert.match(text, /Safe structural inference/i);
@@ -187,7 +187,7 @@ test('a contradictory model flag cannot turn a business description into owner i
   const proposalPath = await understand(agent, description);
   const text = plain((await agent.get(proposalPath)).text);
   assert.match(text, /Where are your real product and stock records today/i);
-  assert.match(text, /Enter records in Foundry/i);
+  assert.match(text, /Enter records in StockChief/i);
   assert.match(text, /Upload inventory files/i);
   assert.match(text, /Connect a business system/i);
   assert.match(text, /Use email attachments/i);
@@ -267,7 +267,7 @@ test('clear typed owner inventory creates only the approved products variants an
 
   const proposalPath = await understand(agent, description);
   const proposal = await agent.get(proposalPath);
-  assert.match(plain(proposal.text), /Review the exact inventory records you gave Foundry/i);
+  assert.match(plain(proposal.text), /Review the exact inventory records you gave StockChief/i);
   const configured = await agent.post(`${proposalPath}/configure`).type('form').send({
     _csrf: csrfFrom(proposal.text), owner_records_present: '1', owner_record_count: '2',
     owner_product_0: 'Loafer', owner_variant_0: '35', owner_quantity_0: '20', owner_location_0: 'Main Warehouse',

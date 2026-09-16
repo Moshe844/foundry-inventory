@@ -5,7 +5,7 @@
                 SENT: 'Sent', FAILED: 'Did not send', CANCELLED: 'Not sent' }[message.status];
 %>
 <nav class="breadcrumb" aria-label="Breadcrumb">
-  <a href="/#tell-foundry">Tell Foundry</a><span>›</span><span>Message</span>
+  <a href="/#tell-foundry">Tell StockChief</a><span>›</span><span>Message</span>
 </nav>
 
 <section class="section">
@@ -58,13 +58,13 @@
             <textarea class="input textarea message-edit" name="body" rows="10"><%= message.body %></textarea>
             <span class="field-hint">
               <% if (message.messageKind === 'owner_message') { %>
-                These are your words as you typed them. Foundry has not added, expanded or
+                These are your words as you typed them. StockChief has not added, expanded or
                 reworded anything. Change whatever you like before it goes.
               <% } else if (message.messageKind === 'payment_request') { %>
                 Written from the order's own record: the amount owed and the page they pay on.
-                Foundry states nothing here it cannot show you on the order.
+                StockChief states nothing here it cannot show you on the order.
               <% } else { %>
-                Written from the shipment's own record. Foundry states nothing here it cannot
+                Written from the shipment's own record. StockChief states nothing here it cannot
                 show you elsewhere. Change whatever you like before it goes.
               <% } %>
             </span>
@@ -82,7 +82,7 @@
             </label>
           <% } else { %>
             <p class="hint">
-              No mailbox is connected, so Foundry cannot send this for you. Copy the words
+              No mailbox is connected, so StockChief cannot send this for you. Copy the words
               above into your own email, or
               <a href="/settings/connections">connect a mailbox</a>.
             </p>

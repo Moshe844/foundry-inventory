@@ -40,7 +40,7 @@ function setup(result) {
   return { db, workspace, membership, item, app };
 }
 
-test('Tell Foundry → structured review → approve → same Settings record → remove', async () => {
+test('Tell StockChief → structured review → approve → same Settings record → remove', async () => {
   const result = {
     understood: true, summary: 'Charcoal Long replenishment', clarifyingQuestion: '', unsupportedReason: '',
     changes: [{ ...blank(), domain: 'replenishment', itemText: 'Canvas Apron', variantText: 'Charcoal Long', reorderPoint: 18, targetStock: 34 }],
@@ -61,7 +61,7 @@ test('Tell Foundry → structured review → approve → same Settings record �
 
   const review = await agent.get(routed.headers.location);
   const reviewText = plain(review.text);
-  assert.match(reviewText, /Review what Foundry should remember/);
+  assert.match(reviewText, /Review what StockChief should remember/);
   assert.match(reviewText, /reorder at 18/);
   assert.match(reviewText, /bring the network position to 34/);
   assert.match(reviewText, /Nothing changes until you approve/);
@@ -84,7 +84,7 @@ test('Tell Foundry → structured review → approve → same Settings record �
   env.db.close();
 });
 
-test('Tell Foundry accepts a general low-stock sales guard and shows the same rule in Settings', async () => {
+test('Tell StockChief accepts a general low-stock sales guard and shows the same rule in Settings', async () => {
   const result = {
     understood: true, summary: 'Protect Charcoal Short outgoing stock', clarifyingQuestion: '', unsupportedReason: '',
     changes: [{ ...blank(), domain: 'stock_protection', itemText: 'Canvas Apron', variantText: 'Charcoal Short',
@@ -178,7 +178,7 @@ test('a missing stock-protection release uses contextual buttons and the choice 
   env.db.close();
 });
 
-test('Tell Foundry overrides an incorrect model rejection for the supported outgoing-order guard', async () => {
+test('Tell StockChief overrides an incorrect model rejection for the supported outgoing-order guard', async () => {
   const env = setup({ understood: false, summary: '', changes: [], clarifyingQuestion: '', unsupportedReason: 'No matching setting.' });
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
@@ -216,7 +216,7 @@ test('a broad restriction question is answered with choices in the conversation,
   assert.equal(routed.headers.location, '/actions');
   const answer = await agent.get('/actions');
   const text = plain(answer.text);
-  assert.match(text, /Yes\. Foundry can protect low stock/i);
+  assert.match(text, /Yes\. StockChief can protect low stock/i);
   assert.match(text, /Which restriction do you want to set first/i);
   assert.match(text, /Protect low stock/);
   assert.match(text, /Limit purchasing/);
@@ -235,7 +235,7 @@ test('a broad restriction question is answered with choices in the conversation,
   assert.equal(continued.headers.location, '/actions');
   const next = await agent.get('/actions');
   const nextText = plain(next.text);
-  assert.match(nextText, /Which product should Foundry protect/i);
+  assert.match(nextText, /Which product should StockChief protect/i);
   assert.match(nextText, /at what quantity/i);
   assert.doesNotMatch(nextText, /Which restriction do you want to set first/i,
     'choosing a restriction must advance instead of reopening the first menu');
@@ -262,7 +262,7 @@ test('Can you set restrictions uses the same guided choices as set up restrictio
   assert.match(text, /Protect low stock/);
   assert.match(text, /Limit purchasing/);
   assert.match(text, /Limit transfers/);
-  assert.doesNotMatch(text, /What should Foundry restrict:/i);
+  assert.doesNotMatch(text, /What should StockChief restrict:/i);
   assert.match(answer.text, /name="workflow" value="restriction_setup"/);
   assert.match(answer.text, /name="workflowKind" value="stock_protection"/);
   env.db.close();
@@ -288,7 +288,7 @@ test('an already-open stock-protection form checks any product answer even if te
   assert.match(text, /I can’t find “candy” in this inventory/i);
   assert.match(text, /No restriction has been created/i);
   assert.match(text, /Create “candy”/i);
-  assert.doesNotMatch(text, /Which product should Foundry protect/i);
+  assert.doesNotMatch(text, /Which product should StockChief protect/i);
   env.db.close();
 });
 
@@ -310,7 +310,7 @@ test('an already-open stock-protection form accepts product, quantity and warnin
   const unknownText = plain((await agent.get(unknown.headers.location)).text);
   assert.match(unknownText, /I can’t find “Water” in this inventory/i);
   assert.match(unknownText, /No restriction has been created/i);
-  assert.doesNotMatch(unknownText, /Which product should Foundry protect/i);
+  assert.doesNotMatch(unknownText, /Which product should StockChief protect/i);
 
   const known = await agent.post('/foundry/tell').type('form').send({
     _csrf: csrfFrom((await agent.get('/')).text), original,
@@ -358,7 +358,7 @@ test('an incomplete restriction becomes one answerable human question instead of
   const answer = await agent.get('/actions');
   const text = plain(answer.text);
   assert.match(text, /Which supplier should this apply to/i);
-  assert.match(text, /what percentage change may Foundry accept/i);
+  assert.match(text, /what percentage change may StockChief accept/i);
   assert.match(answer.text, /name="answer"/);
   assert.match(answer.text, /action="\/foundry\/tell"/);
   assert.doesNotMatch(answer.text, /flash--(?:warn|error)[^>]*>/i);
@@ -414,15 +414,15 @@ test('a restriction clarification stays in setup and explains an unknown product
   });
 
   assert.match(unknown.headers.location, /^\/operating-instructions\/oin_/,
-    'the short product answer must remain in restriction setup, never escape to Ask Foundry');
+    'the short product answer must remain in restriction setup, never escape to Ask StockChief');
   const review = await agent.get(unknown.headers.location);
   const reviewText = plain(review.text);
   assert.match(reviewText, /I can’t find “Snacks” in this inventory/i);
   assert.match(reviewText, /No restriction has been created/i);
   assert.match(reviewText, /Create “Snacks”/i);
   assert.match(reviewText, /Try another product name/i);
-  assert.doesNotMatch(reviewText, /Foundry cannot set up stock protection/i);
-  assert.doesNotMatch(reviewText, /Exactly what Foundry understood/i);
+  assert.doesNotMatch(reviewText, /StockChief cannot set up stock protection/i);
+  assert.doesNotMatch(reviewText, /Exactly what StockChief understood/i);
   assert.doesNotMatch(reviewText, /this inventory: block outgoing/i);
 
   const createHref = review.text.match(/href="([^"]*\/inventory\/new\?name=Snacks[^\"]*)"/i)[1].replaceAll('&amp;', '&');
@@ -436,7 +436,7 @@ test('a restriction clarification stays in setup and explains an unknown product
   assert.match(created.headers.location, /^\/operating-instructions\/oin_/);
   const continued = await agent.get(created.headers.location);
   const continuedText = plain(continued.text);
-  assert.match(continuedText, /Should Foundry block outgoing stock at the limit, or only warn you/i);
+  assert.match(continuedText, /Should StockChief block outgoing stock at the limit, or only warn you/i);
   assert.doesNotMatch(continuedText, /I can’t find “Snacks”/i);
   assert.ok(db.prepare("SELECT id FROM items WHERE workspace_id = ? AND name = 'Snacks'").get(workspace.workspaceId));
   assert.equal(operatingGuards.list(db, workspace.workspaceId, { activeOnly: true }).length, 0,

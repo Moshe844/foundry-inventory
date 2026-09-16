@@ -5,7 +5,7 @@
  *
  * Sixty-one products that are fine do not need sixty-one rows; they need one
  * line saying they are fine. So the page leads with groups ordered by how much
- * thought each one needs, and every group carries what Foundry has already
+ * thought each one needs, and every group carries what StockChief has already
  * done about it — because the question somebody opens this page with is "is
  * this handled", not only "what is true".
  *
@@ -14,7 +14,7 @@
  *
  * Two honesty rules, both from the doctrine:
  *
- *   A product with no outbound history produces "Foundry cannot tell yet",
+ *   A product with no outbound history produces "StockChief cannot tell yet",
  *   never a judgement. That group is shown rather than hidden, because it is
  *   the reason the other groups can be believed.
  *
@@ -83,7 +83,7 @@ function build(db, workspaceId, { now = Date.now() } = {}) {
   }
 
   /*
-   * What Foundry did about the ones that are short. Counted from real purchase
+   * What StockChief did about the ones that are short. Counted from real purchase
    * orders rather than asserted, so "I've ordered three of them" is a fact
    * about the records and not a reassurance.
    */

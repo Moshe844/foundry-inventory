@@ -1,13 +1,13 @@
 'use strict';
 
 /**
- * How a business is getting its inventory into Foundry.
+ * How a business is getting its inventory into StockChief.
  *
  * The old first run asked everyone to describe their business, which is the
  * right question for exactly one kind of customer: the one starting from
  * nothing. Someone with 1,842 variants in a spreadsheet does not want to
  * describe them — they want to hand the file over. Asking them to type out what
- * the file already says is asking them to do Foundry's job.
+ * the file already says is asking them to do StockChief's job.
  *
  * So the first decision is which of those situations they are in, and the rest
  * of onboarding adapts. Nobody is asked to convert their data into a template.
@@ -20,7 +20,7 @@ const { ValidationError } = require('../domain/errors');
 const PATHS = [
   {
     id: 'fresh',
-    label: 'Enter it in Foundry',
+    label: 'Enter it in StockChief',
     blurb: 'I am starting fresh or want to add products myself.',
     detail: 'Describe the inventory structure, or add products and opening quantities manually.',
     icon: 'foundry',
@@ -29,14 +29,14 @@ const PATHS = [
     id: 'spreadsheet',
     label: 'Move from files',
     blurb: 'My real product or quantity details are in files.',
-    detail: 'Upload Excel, CSV or TSV exports. Foundry maps and reconciles them before cutover.',
+    detail: 'Upload Excel, CSV or TSV exports. StockChief maps and reconciles them before cutover.',
     icon: 'import',
   },
   {
     id: 'software',
     label: 'Connect another system',
     blurb: 'Connect Shopify, Square, Clover, WooCommerce, or your own system.',
-    detail: 'Foundry imports the catalogue, remembers mappings, and receives future sales automatically.',
+    detail: 'StockChief imports the catalogue, remembers mappings, and receives future sales automatically.',
     providers: ['Shopify', 'Square', 'Clover', 'WooCommerce', 'Custom API'],
     icon: 'inventory',
   },
@@ -44,7 +44,7 @@ const PATHS = [
     id: 'messy',
     label: 'Use several sources',
     blurb: 'My inventory is spread across files, email, or different systems.',
-    detail: 'Start with one source, then add the others. Foundry compares what agrees and what needs a decision.',
+    detail: 'Start with one source, then add the others. StockChief compares what agrees and what needs a decision.',
     icon: 'alert',
   },
 ];
@@ -60,7 +60,7 @@ const SOURCE_OPTIONS = [
     id: 'mailbox',
     label: 'Use email attachments',
     blurb: 'Suppliers or staff send the files to Gmail or Microsoft 365.',
-    detail: 'Connect the mailbox, choose the sender and file purpose, and Foundry checks automatically.',
+    detail: 'Connect the mailbox, choose the sender and file purpose, and StockChief checks automatically.',
     providers: ['Gmail', 'Microsoft 365'],
     icon: 'link',
     href: '/onboarding/mailbox',
@@ -83,9 +83,9 @@ const NEXT_STEP = {
 /**
  * Which system owns inventory truth for a workspace.
  *
- * This is never allowed to be ambiguous. Either Foundry's ledger is the record
- * and Mission 1 is authoritative, or an external system is and Foundry reads
- * from it. What must never exist is a Foundry balance that disagrees with the
+ * This is never allowed to be ambiguous. Either StockChief's ledger is the record
+ * and Mission 1 is authoritative, or an external system is and StockChief reads
+ * from it. What must never exist is a StockChief balance that disagrees with the
  * system a business actually runs on while both claim to be right.
  */
 const SOURCE_OF_TRUTH = {
@@ -169,7 +169,7 @@ function setStatus(db, workspaceId, status, options = {}) {
 }
 
 /**
- * A starting-fresh inventory has crossed the setup boundary once Foundry has
+ * A starting-fresh inventory has crossed the setup boundary once StockChief has
  * real ledger evidence. Continuing to ask how to add quantities after a
  * successful receipt or opening adjustment is stale workflow state, not a
  * meaningful customer decision.
@@ -225,7 +225,7 @@ function setSourceOfTruth(db, workspaceId, mode) {
 }
 
 /** True when Mission 1's ledger is the record for this workspace. */
-function isFoundryNative(db, workspaceId) {
+function isStockChiefNative(db, workspaceId) {
   return sourceOfTruth(db, workspaceId) === SOURCE_OF_TRUTH.FOUNDRY_NATIVE;
 }
 
@@ -306,6 +306,6 @@ module.exports = {
   setExternalSystem,
   sourceOfTruth,
   setSourceOfTruth,
-  isFoundryNative,
+  isStockChiefNative,
   recommendFromDescription,
 };

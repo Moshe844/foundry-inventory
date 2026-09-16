@@ -5,7 +5,7 @@ const { ValidationError } = require('../../domain/errors');
 const { jsonRequest } = require('./common');
 
 // Xero assigns granular Accounting API scopes to Web apps created from March 2026.
-// Foundry only reads the organisation, chart of accounts and trial balance during
+// StockChief only reads the organisation, chart of accounts and trial balance during
 // shadow reconciliation; posting authority only needs Manual Journals.
 const READ_SCOPES = ['openid','offline_access','accounting.settings.read','accounting.reports.trialbalance.read'];
 const WRITE_SCOPES = [...READ_SCOPES, 'accounting.manualjournals'];
@@ -14,7 +14,7 @@ const basic = () => Buffer.from(`${config.connections.xero.clientId}:${config.co
 function metadata() {
   return { type: 'xero', name: 'Xero', mark: 'X', category: 'accounting', authMode: 'oauth',
     integrationClass: 'accounting', available: config.connections.xero.configured,
-    description: 'Verify the organization and prove shadow parity before Foundry can request posting authority.',
+    description: 'Verify the organization and prove shadow parity before StockChief can request posting authority.',
     provides: ['organization identity', 'chart of accounts', 'trial-balance comparison', 'governed journal posting'],
     unavailableReason: config.connections.xero.configured ? null : 'Xero app credentials have not been configured on this installation.',
     minimumScopes: READ_SCOPES,
@@ -22,7 +22,7 @@ function metadata() {
 }
 
 function authorizationUrl({ state, input }) {
-  if (!config.connections.xero.configured) throw new ValidationError('Xero is not configured on this Foundry installation.');
+  if (!config.connections.xero.configured) throw new ValidationError('Xero is not configured on this StockChief installation.');
   const url = new URL('https://login.xero.com/identity/connect/authorize');
   url.searchParams.set('client_id', config.connections.xero.clientId); url.searchParams.set('response_type', 'code');
   const requestedPosting = input.requestedAuthority === 'POST';
@@ -90,7 +90,7 @@ async function postJournalEntry({ credentials, entry, idempotencyKey }) {
   const response = await jsonRequest('https://api.xero.com/api.xro/2.0/ManualJournals', { method: 'POST', headers: {
     authorization: `Bearer ${credentials.accessToken}`, 'xero-tenant-id': credentials.tenantId,
     accept: 'application/json', 'content-type': 'application/json', 'idempotency-key': idempotencyKey },
-    body: JSON.stringify({ ManualJournals: [{ Narration: `Foundry journal ${entry.entry_number}: ${entry.description}`,
+    body: JSON.stringify({ ManualJournals: [{ Narration: `StockChief journal ${entry.entry_number}: ${entry.description}`,
       Date: entry.posting_date, JournalLines: entry.lines.map((line) => ({ AccountCode: line.account_code,
         Description: line.memo || entry.description,
         LineAmount: Number(line.debit_minor ? line.debit_minor : -line.credit_minor) / 100 })) }] }) });

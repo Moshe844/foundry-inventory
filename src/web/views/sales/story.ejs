@@ -7,7 +7,7 @@
    * customer email, picking, shipping and the accounting consequence are all
    * lines of one story, in one column, with no tabs — because from the
    * owner's side they are one thing that is happening, and the fact that
-   * Foundry runs them in six services is Foundry's business rather than
+   * StockChief runs them in six services is StockChief's business rather than
    * theirs.
    *
    * The operational detail — the lines, the prices, the payment controls, the
@@ -20,7 +20,7 @@
   var paidInFull = Number(pay.totalMinor || 0) > 0 && Number(pay.remainingMinor || 0) === 0;
   var held = Number(order.totals && order.totals.allocated || 0);
   var next = locals.orderNext || {};
-  var nextSection = next.href === '#money' ? 'money' : 'fulfilment';
+  var nextSection = next.href && next.href.startsWith('#') ? next.href.slice(1) : 'fulfilment';
   var postedAccounting = locals.accounting && locals.accounting.status === 'POSTED'
     ? (locals.accounting.outcome || {}) : null;
 %>
@@ -35,7 +35,7 @@
   <div style="padding:18px 20px">
     <h3 style="margin:0 0 8px"><%= paidInFull && next.text === 'Ready to pick' ? 'Paid in full — ready to pick' : next.text %></h3>
     <% if (paidInFull) { %>
-      <p style="margin:0 0 8px">The customer paid <strong><%= helpers.money(pay.paidMinor, pay.currency) %></strong>. Foundry recorded the cash, and the customer now owes <strong><%= helpers.money(pay.remainingMinor, pay.currency) %></strong>.</p>
+      <p style="margin:0 0 8px">The customer paid <strong><%= helpers.money(pay.paidMinor, pay.currency) %></strong>. StockChief recorded the cash, and the customer now owes <strong><%= helpers.money(pay.remainingMinor, pay.currency) %></strong>.</p>
       <% if (order.status !== 'FULFILLED') { %>
         <p class="rm-sub" style="margin:0"><%= held %> <%= held === 1 ? 'unit is' : 'units are' %> held for this customer but the goods have not left yet. This is cash received, not earned revenue or profit yet.</p>
       <% } %>
@@ -60,6 +60,10 @@
     <% if (next.action) { %>
       <p style="margin:16px 0 0"><a class="rm-btn" href="/orders/<%= order.id %>/detail?open=<%= nextSection %>#<%= nextSection %>"><%= next.action %></a></p>
     <% } %>
+    <% if (Number(pay.remainingMinor || 0) > 0 && order.status !== 'CANCELLED') { %>
+      <p><a class="rm-btn rm-btn--wash" href="/orders/<%= order.id %>/detail?open=money#money">Payment options</a></p>
+      <p class="rm-sub">Request payment or record money actually received. Picking and packing do not reduce on-hand stock; dispatch does. Dispatch never marks the order paid.</p>
+    <% } %>
   </div>
 </section>
 
@@ -81,7 +85,7 @@
       <details class="disclose" style="margin-top:16px">
         <summary>Advanced evidence records</summary>
         <div class="disclose__body">
-          <p class="rm-sub">These are the immutable record links Foundry used. They are here for audit and troubleshooting, not for reading the order day to day.</p>
+          <p class="rm-sub">These are the immutable record links StockChief used. They are here for audit and troubleshooting, not for reading the order day to day.</p>
           <% evidenceTrace.details.forEach(function (link) { %>
             <p class="rm-sub">
               <% if (link.from.href) { %><a href="<%= link.from.href %>"><%= link.from.title %></a><% } else { %><%= link.from.title %><% } %>
@@ -97,7 +101,7 @@
 
 <%
   /*
-   * A shortage is a decision, not a dead end. If Foundry has already ordered
+   * A shortage is a decision, not a dead end. If StockChief has already ordered
    * the missing stock the spine says so; what belongs here is the case where
    * it cannot, and the decision it is waiting on.
    */

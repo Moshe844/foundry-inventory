@@ -3,7 +3,7 @@
 /**
  * Structured inventory-operation guards.
  *
- * This is deliberately below Tell Foundry and below the web routes. The same
+ * This is deliberately below Tell StockChief and below the web routes. The same
  * row is readable from Settings and is enforced by the inventory engine, so a
  * connector, manual issue, grouped action or autonomous action cannot bypass
  * it. Conversation supplies typed values; this module alone decides whether
@@ -71,7 +71,7 @@ function set(db, ctx, membership, input) {
   const comparator = input.comparator || COMPARATORS.BELOW;
   const releaseCondition = input.releaseCondition || RELEASES.STOCK_RECOVERED;
   if (!Object.values(ACTIONS).includes(actionType)) throw new ValidationError('That operation cannot currently be guarded.');
-  if (!Object.values(ENFORCEMENT_MODES).includes(enforcementMode)) throw new ValidationError('Choose whether Foundry should block outgoing stock or only warn you.');
+  if (!Object.values(ENFORCEMENT_MODES).includes(enforcementMode)) throw new ValidationError('Choose whether StockChief should block outgoing stock or only warn you.');
   if (!Object.values(METRICS).includes(metric)) throw new ValidationError('Choose a supported stock measurement.');
   if (!Object.values(COMPARATORS).includes(comparator)) throw new ValidationError('Choose whether the threshold means below or at-or-below.');
   if (!Object.values(RELEASES).includes(releaseCondition)) throw new ValidationError('Choose what releases the stock protection.');

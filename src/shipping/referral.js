@@ -5,11 +5,11 @@
  *
  * The account a shop ships on has always been able to be its own — that is
  * what accounts.js is for. What it could not be was *easy*: connecting one
- * meant leaving Foundry, creating an EasyPost account, setting up a wallet,
+ * meant leaving StockChief, creating an EasyPost account, setting up a wallet,
  * finding the keys page, copying a secret and coming back with it. Every one
  * of those steps is a place to stop, and most shop owners stop.
  *
- * So this is the same destination reached differently. Foundry, enrolled as an
+ * So this is the same destination reached differently. StockChief, enrolled as an
  * EasyPost partner, creates the account through the API; the merchant gives a
  * name and an email and adds a card to Stripe's own field, and never sees
  * EasyPost at all.
@@ -17,10 +17,10 @@
  *
  * What this is not.
  *
- * It is not Foundry shipping on the merchant's behalf. The account belongs to
+ * It is not StockChief shipping on the merchant's behalf. The account belongs to
  * them from the moment it exists — their negotiated rates, their labels, their
- * bill — and it outlives their Foundry subscription. Disconnecting here makes
- * Foundry forget a key. It does not close an account, and it must not: a
+ * bill — and it outlives their StockChief subscription. Disconnecting here makes
+ * StockChief forget a key. It does not close an account, and it must not: a
  * merchant's shipping history is not Keeper's to delete.
  *
  * It is also not the only way in. A shop that already has an EasyPost contract
@@ -32,7 +32,7 @@
  * The one rule that shapes everything here: a live key is not handed out until
  * the merchant can actually be billed. An account with no payment method can
  * quote nothing real and buy nothing at all, and quoting test rates as though
- * a carrier had said them would be Foundry inventing a price.
+ * a carrier had said them would be StockChief inventing a price.
  */
 
 const { ValidationError, NotFoundError } = require('../domain/errors');
@@ -47,7 +47,7 @@ function partnerApi(options = {}) {
   return options.partner || require('./providers/easypost-partner');
 }
 
-/** Whether Foundry can open accounts at all, which depends on Keeper's enrolment. */
+/** Whether StockChief can open accounts at all, which depends on Keeper's enrolment. */
 function available(options = {}) {
   return Boolean(partnerApi(options).isPartnerConfigured());
 }
@@ -100,13 +100,13 @@ async function enrol(db, ctx, membership, input = {}, options = {}) {
   permissions.assertCan(membership, permissions.ADMIN, 'open a shipping account');
   const partner = partnerApi(options);
   if (!partner.isPartnerConfigured()) {
-    throw new ValidationError('Foundry is not enrolled as an EasyPost partner, so it cannot open an '
+    throw new ValidationError('StockChief is not enrolled as an EasyPost partner, so it cannot open an '
       + 'account here. Connect an existing EasyPost account instead.');
   }
 
   const existing = rowFor(db, ctx.workspaceId);
   if (existing) {
-    throw new ValidationError('This inventory already has a shipping account Foundry opened. '
+    throw new ValidationError('This inventory already has a shipping account StockChief opened. '
       + 'Disconnect it first if you mean to start again.');
   }
 
@@ -166,7 +166,7 @@ async function enrol(db, ctx, membership, input = {}, options = {}) {
 /**
  * Begin collecting a payment method.
  *
- * Returns what Stripe's own card field needs and nothing else. Foundry does
+ * Returns what Stripe's own card field needs and nothing else. StockChief does
  * not receive, hold or forward a card number at any point in this — the number
  * goes from the merchant's keyboard to Stripe, and what comes back is a
  * reference that is useless to anybody who steals it.
@@ -176,7 +176,7 @@ async function beginPaymentSetup(db, ctx, membership, input = {}, options = {}) 
   const row = requireAccount(db, ctx.workspaceId);
   const held = heldFor(db, ctx.workspaceId, row.connector_id);
   const key = held.liveKey || held.apiKey;
-  if (!key) throw new ValidationError('Foundry has no key for that shipping account any more.');
+  if (!key) throw new ValidationError('StockChief has no key for that shipping account any more.');
 
   const partner = partnerApi(options);
   return input.kind === 'bank'
@@ -189,7 +189,7 @@ async function beginPaymentSetup(db, ctx, membership, input = {}, options = {}) 
  *
  * The two references arrive from the browser, having come from Stripe. Neither
  * is a card. `refreshBilling` then asks EasyPost rather than believing the
- * browser — a payment method Foundry was *told* about is not the same as one
+ * browser — a payment method StockChief was *told* about is not the same as one
  * EasyPost will actually bill, and only the second may unlock a live key.
  */
 async function recordPaymentMethod(db, ctx, membership, input = {}, options = {}) {
@@ -197,7 +197,7 @@ async function recordPaymentMethod(db, ctx, membership, input = {}, options = {}
   const row = requireAccount(db, ctx.workspaceId);
   const held = heldFor(db, ctx.workspaceId, row.connector_id);
   const key = held.liveKey || held.apiKey;
-  if (!key) throw new ValidationError('Foundry has no key for that shipping account any more.');
+  if (!key) throw new ValidationError('StockChief has no key for that shipping account any more.');
 
   await partnerApi(options).PAYMENT.attach(key, {
     paymentMethodReference: trimOrNull(input.paymentMethodReference),
@@ -257,7 +257,7 @@ async function sweep(db, options = {}) {
 /* --------------------------------------------------------------- forgetting */
 
 /**
- * Foundry forgets the account. EasyPost keeps it.
+ * StockChief forgets the account. EasyPost keeps it.
  *
  * Deliberately not a deletion. The merchant's labels, tracking history and
  * billing records live on that account and are theirs; the id is kept so they
@@ -276,14 +276,14 @@ function release(db, ctx, membership) {
   return {
     released: true,
     referralCustomerId: row.referral_customer_id,
-    because: 'Foundry has forgotten this account\'s keys. The EasyPost account itself, and '
+    because: 'StockChief has forgotten this account\'s keys. The EasyPost account itself, and '
       + 'everything shipped on it, still exists and still belongs to this business.',
   };
 }
 
 function requireAccount(db, workspaceId) {
   const row = rowFor(db, workspaceId);
-  if (!row) throw new NotFoundError('Foundry did not open a shipping account for this inventory.');
+  if (!row) throw new NotFoundError('StockChief did not open a shipping account for this inventory.');
   return row;
 }
 
@@ -303,8 +303,8 @@ function describe(db, workspaceId) {
       opened: false,
       available: available(),
       because: available()
-        ? 'Foundry can open a shipping account for this business, so nobody has to leave and make one.'
-        : 'Foundry is not enrolled as a shipping partner here, so an existing carrier account has to '
+        ? 'StockChief can open a shipping account for this business, so nobody has to leave and make one.'
+        : 'StockChief is not enrolled as a shipping partner here, so an existing carrier account has to '
           + 'be connected instead.',
     };
   }

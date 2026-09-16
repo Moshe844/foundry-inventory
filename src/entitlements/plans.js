@@ -7,7 +7,7 @@
  * enforces them — so when billing arrives it changes this table (or replaces it
  * with rows from a billing provider) and nothing else moves.
  *
- * `null` means unlimited. Absent means the limit is not one Foundry checks yet;
+ * `null` means unlimited. Absent means the limit is not one StockChief checks yet;
  * adding it here is enough to make it enforced everywhere it is asserted.
  */
 
@@ -16,7 +16,7 @@ const LIMITS = [
   { key: 'members', label: 'people', scope: 'workspace' },
   { key: 'locations', label: 'locations', scope: 'workspace' },
   { key: 'skus', label: 'items', scope: 'workspace' },
-  { key: 'aiRequestsPerDay', label: 'Foundry requests a day', scope: 'account' },
+  { key: 'aiRequestsPerDay', label: 'StockChief requests a day', scope: 'account' },
 ];
 
 const FEATURES = ['foundry_setup', 'foundry_assistant', 'attention_briefing', 'ask_foundry'];

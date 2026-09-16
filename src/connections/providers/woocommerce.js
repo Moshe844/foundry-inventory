@@ -2,11 +2,11 @@
 
 const crypto = require('node:crypto');
 const { ValidationError } = require('../../domain/errors');
-const { safeEqual, hmacBase64, requireVerified, normalizeStoreUrl, jsonRequest } = require('./common');
+const { safeEqual, hmacBase64, requireVerified, normalizeStoreUrl, jsonRequest, postalAddress } = require('./common');
 
 function metadata() {
   return { type: 'woocommerce', name: 'WooCommerce', mark: 'Woo', category: 'selling', authMode: 'application_auth', available: true,
-    description: 'Connect a WooCommerce store without scripts. Foundry discovers products and receives order webhooks automatically.',
+    description: 'Connect a WooCommerce store without scripts. StockChief discovers products and receives order webhooks automatically.',
     provides: ['customer orders', 'cancellations', 'fulfillment', 'products and store activity'],
   };
 }
@@ -14,7 +14,7 @@ function metadata() {
 function authorizationUrl({ state, input }) {
   const storeUrl = normalizeStoreUrl(input.storeUrl);
   const url = new URL(`${storeUrl}/wc-auth/v1/authorize`);
-  url.searchParams.set('app_name', 'Foundry Inventory');
+  url.searchParams.set('app_name', 'StockChief Inventory');
   url.searchParams.set('scope', 'read_write');
   url.searchParams.set('user_id', state);
   url.searchParams.set('return_url', input.returnUri);
@@ -86,7 +86,7 @@ async function registerWebhooks({ credentials, webhookUrl }) {
   const results = [];
   for (const topic of topics) {
     const current = existing.find((hook) => hook.topic === topic && hook.delivery_url === webhookUrl);
-    const payload = { name: `Foundry ${topic}`, topic, delivery_url: webhookUrl,
+    const payload = { name: `StockChief ${topic}`, topic, delivery_url: webhookUrl,
       secret: credentials.webhookSecret, status: 'active' };
     const { body } = current
       ? await api(credentials, `/webhooks/${current.id}`, { method: 'PUT', body: JSON.stringify(payload) })
@@ -121,6 +121,9 @@ function normalizeWebhook({ headers, body, connection }) {
   const orderData = { externalOrderId: String(body.id), orderNumber: body.number,
       customer: { externalId: body.customer_id ? String(body.customer_id) : undefined,
         name: [body.billing?.first_name, body.billing?.last_name].filter(Boolean).join(' ') || body.billing?.email || 'WooCommerce customer' },
+      shippingAddress: postalAddress({ line1: body.shipping?.address_1, line2: body.shipping?.address_2,
+        city: body.shipping?.city, region: body.shipping?.state, postalCode: body.shipping?.postcode, country: body.shipping?.country }),
+      customerEmail: body.billing?.email,
       externalLocationId: connection?.config?.storeUrl || undefined, currency: body.currency, lines: lines(body) };
   const event = (suffix, type, data = orderData) => ({ eventId: `${delivery}:${suffix}`, type, version, occurredAt,
     aggregateId: String(body.id), data });

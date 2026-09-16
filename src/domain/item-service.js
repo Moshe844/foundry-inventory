@@ -399,7 +399,7 @@ function correctTrackingModeForMigration(db, ctx, itemId, input = {}) {
     JOIN skus s ON s.id=su.sku_id WHERE su.workspace_id=? AND s.item_id=?`)
     .get(ctx.workspaceId,itemId).n;
   if (serialCount) {
-    throw new InvariantError('This item already has exact serial identities. Foundry will not discard them.',
+    throw new InvariantError('This item already has exact serial identities. StockChief will not discard them.',
       'migration_serial_identity_exists');
   }
   db.prepare('UPDATE items SET tracking_mode=?,updated_at=? WHERE id=? AND workspace_id=?')
@@ -439,7 +439,7 @@ function addExactVariants(db, ctx, itemId, variants) {
     for (const code of sourceCodes) {
       const key = code.toLowerCase();
       if (explicitCodes.has(key)) {
-        throw new ValidationError(`Source SKU code ${code} is duplicated. Foundry will not silently rename it.`);
+        throw new ValidationError(`Source SKU code ${code} is duplicated. StockChief will not silently rename it.`);
       }
       explicitCodes.add(key);
     }
@@ -456,7 +456,7 @@ function addExactVariants(db, ctx, itemId, variants) {
     const created = variants.map((variant, index) => {
       const explicit = trimOrNull(variant.code);
       if (explicit && existingCodes.has(explicit.toLowerCase())) {
-        throw new ValidationError(`Source SKU code ${explicit} already exists. Foundry will not silently rename it.`);
+        throw new ValidationError(`Source SKU code ${explicit} already exists. StockChief will not silently rename it.`);
       }
       const optionRows = [...optionByName.values()];
       const values = optionRows.map((option) => {

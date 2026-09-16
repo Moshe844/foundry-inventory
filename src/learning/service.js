@@ -354,7 +354,7 @@ function detectBias(db, workspaceId, options = {}) {
     const next = current + Math.ceil(Math.abs(Number(row.bias)));
     proposals.push(propose(db, workspaceId, { improvementKind:'SAFETY_STOCK', targetType:'SKU',
       targetId:sku.id, headline:`Keep ${next} safety units for ${sku.variant_label ? `${sku.name} / ${sku.variant_label}` : sku.name}`,
-      rationale:`Across ${row.samples} comparable forecasts, demand averaged ${round(Math.abs(row.bias))} units above Foundry's prediction.`,
+      rationale:`Across ${row.samples} comparable forecasts, demand averaged ${round(Math.abs(row.bias))} units above StockChief's prediction.`,
       currentValue:{ units:current }, proposedValue:{ units:next },
       evidence:{ samples:Number(row.samples), meanBiasUnits:round(Number(row.bias)), meanAbsoluteError:round(Number(row.mae)),
         observationIds:db.prepare(`SELECT o.id FROM learning_outcome_observations o JOIN learning_decisions d ON d.id=o.decision_id
@@ -477,7 +477,7 @@ function rollout(db, ctx, membership, proposalId, options = {}) {
   if (hash(before) !== hash(item.currentValue)) {
     db.prepare(`UPDATE learning_proposals SET status='SUPERSEDED',updated_at=? WHERE id=?`).run(nowIso(), item.id);
     event(db, item, 'SUPERSEDED', { expected:item.currentValue, found:before }, ctx.actorId);
-    throw new ValidationError('The underlying policy changed since Foundry measured it. A fresh proposal is required.');
+    throw new ValidationError('The underlying policy changed since StockChief measured it. A fresh proposal is required.');
   }
   const transaction = db.transaction(() => {
     adapter.apply(db, item, item.proposedValue, ctx, membership);

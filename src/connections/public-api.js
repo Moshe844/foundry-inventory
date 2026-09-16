@@ -9,7 +9,7 @@ const PREFIX = 'fnd_api_';
 const ALLOWED_SCOPES = Object.freeze([
   'inventory:read', 'inventory:write', 'events:read',
   // A source connector can stage and validate evidence. Approval, mutation and
-  // cutover remain owner actions in Foundry.
+  // cutover remain owner actions in StockChief.
   'migration:read', 'migration:write',
 ]);
 const hash = (value) => crypto.createHash('sha256').update(String(value)).digest('hex');
@@ -34,7 +34,7 @@ function create(db, ctx, input = {}) {
 
 function authenticate(db, authorization, requiredScope) {
   const match = /^Bearer\s+(.+)$/i.exec(String(authorization || ''));
-  if (!match || !match[1].startsWith(PREFIX)) throw new AuthenticationError('Use a valid Foundry API bearer token.');
+  if (!match || !match[1].startsWith(PREFIX)) throw new AuthenticationError('Use a valid StockChief API bearer token.');
   const row = db.prepare(`SELECT c.*, u.account_id FROM public_api_clients c
     JOIN users u ON u.id = c.created_by_user_id AND u.workspace_id = c.workspace_id
     WHERE c.token_hash = ? AND c.revoked_at IS NULL`).get(hash(match[1]));

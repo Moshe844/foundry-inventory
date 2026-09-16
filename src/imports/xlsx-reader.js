@@ -7,7 +7,7 @@
  * widely used library for this has unfixed prototype-pollution and ReDoS
  * advisories, and pointing it at untrusted uploads would be a poor trade for
  * saving a day's work. An .xlsx is a ZIP of XML, and reading cell values out of
- * one is a bounded problem, so Foundry does it itself.
+ * one is a bounded problem, so StockChief does it itself.
  *
  * Deliberately narrow: it reads sheets, rows and cell values. It does not
  * evaluate formulas (it reads their cached results), does not follow external
@@ -34,7 +34,7 @@ const LIMITS = {
 };
 
 /**
- * A spreadsheet Foundry cannot read.
+ * A spreadsheet StockChief cannot read.
  *
  * This extended plain Error, so the web layer — which decides between "your
  * problem, here is what is wrong" and "our problem, sorry" by asking whether
@@ -100,7 +100,7 @@ function readZip(buffer) {
 
     offset += 46 + nameLength + extraLength + commentLength;
   }
-  // Inflate only workbook parts Foundry actually reads. Large exports often
+  // Inflate only workbook parts StockChief actually reads. Large exports often
   // contain previews, images or cached objects unrelated to inventory; the old
   // eager map expanded all of them before reading a single cell.
   const cache = new Map();

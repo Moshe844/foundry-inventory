@@ -109,7 +109,7 @@ test('customer demand, fulfillment, invoice, payment, revenue and exact inventor
   purchaseAndReceive(env, 20);
   prices.setPrice(env.db, env.workspace.ctx, { skuId: env.item.skuId, amount: '25.00', currency: 'USD' });
   let order = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'John Smith', fulfillmentLocationId: env.workspace.main.id,
+    customerName: 'John Smith', deliveryMethod: 'PICKUP', fulfillmentLocationId: env.workspace.main.id,
     lines: [{ skuId: env.item.skuId, quantity: 10 }],
   });
   order = sales.confirm(env.db, env.workspace.ctx, order.id);
@@ -167,13 +167,13 @@ test('a shipped box is linked to its exact inventory movement and presented as a
   prices.setPrice(env.db, env.workspace.ctx, { skuId: env.item.skuId, amount: '25.00', currency: 'USD' });
   let order = sales.createOrder(env.db, env.workspace.ctx, {
     customerName: 'Human Reader', fulfillmentLocationId: env.workspace.main.id,
-    deliveryMethod: 'SHIP',
+    deliveryMethod: 'SHIP', shipToAddress: '7 Example Lane, Albany, NY 12207, US',
     lines: [{ skuId: env.item.skuId, quantity: 2 }],
   });
   order = sales.confirm(env.db, env.workspace.ctx, order.id);
   let shipment = shipments.startPicking(env.db, env.workspace.ctx, order.id);
   shipment = shipments.markPacked(env.db, env.workspace.ctx, shipment.id);
-  shipment = shipments.ship(env.db, env.workspace.ctx, shipment.id);
+  shipment = shipments.ship(env.db, env.workspace.ctx, shipment.id, { carrier: 'ups' });
   order = sales.getOrder(env.db, env.workspace.workspaceId, order.id);
 
   const trace = graph.trace(env.db, env.workspace.workspaceId, { type: 'sales_order', id: order.id });
@@ -201,12 +201,12 @@ test('a shipped box is linked to its exact inventory movement and presented as a
   assert.doesNotMatch(words, /has event|fulfilled by fulfilled|posted to accounting as/);
 });
 
-test('a real customer shortage connects through Foundry supply work to receipt and fulfillment', () => {
+test('a real customer shortage connects through StockChief supply work to receipt and fulfillment', () => {
   const env = setup();
   purchaseAndReceive(env, 12);
   prices.setPrice(env.db, env.workspace.ctx, { skuId: env.item.skuId, amount: '25.00', currency: 'USD' });
   let sale = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'Demand Customer', fulfillmentLocationId: env.workspace.main.id,
+    customerName: 'Demand Customer', deliveryMethod: 'PICKUP', fulfillmentLocationId: env.workspace.main.id,
     lines: [{ skuId: env.item.skuId, quantity: 20 }],
   });
   sale = sales.confirm(env.db, env.workspace.ctx, sale.id);
@@ -253,7 +253,7 @@ test('a real customer shortage connects through Foundry supply work to receipt a
     money: { currency: 'USD', paidMinor: 0, remainingMinor: 0 },
   }, { membership: env.membership });
   const linkedWords = linkedStory.ownerSteps.map((step) => `${step.label}: ${step.text}`).join(' ');
-  assert.match(linkedWords, /Stock reserved: Foundry reserved 12 units.*8 units were still waiting for stock/);
+  assert.match(linkedWords, /Stock reserved: StockChief reserved 12 units.*8 units were still waiting for stock/);
   assert.match(linkedWords, /Supply arranged: .*ordered 8 units of Black Shirt from ABC Apparel.*linked to the 8 units this customer was waiting for/);
   assert.match(linkedWords, /Stock arrived: 8 units were physically received/);
   assert.match(linkedWords, /Reservation rechecked: .*no longer short/);

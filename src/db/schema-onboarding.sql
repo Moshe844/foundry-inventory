@@ -1,24 +1,24 @@
--- Foundry Inventory : onboarding and takeover
+-- StockChief Inventory : onboarding and takeover
 --
--- Missions 1–6 assume an inventory that Foundry set up. Almost no real customer
+-- Missions 1–6 assume an inventory that StockChief set up. Almost no real customer
 -- arrives that way. They arrive with a spreadsheet, or another system, or four
 -- files that disagree with each other — and the job is to take the inventory
 -- over, not to hand them an import template and wish them luck.
 --
 -- Nothing here holds inventory. Balances still come from Mission 1 movements
 -- and catalog records still come from the Mission 5 import engine. These tables
--- record how a workspace was onboarded, what it was given, what Foundry made of
+-- record how a workspace was onboarded, what it was given, what StockChief made of
 -- it, which conflicts a person settled, and whether the result actually
 -- reconciles with the source.
 
--- How one workspace is being brought into Foundry. One row per workspace: the
+-- How one workspace is being brought into StockChief. One row per workspace: the
 -- path chosen at the start, and where it has got to.
 CREATE TABLE IF NOT EXISTS workspace_onboarding (
   workspace_id      TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
 
   -- What the customer said they have today.
   path              TEXT NOT NULL CHECK (path IN ('fresh', 'spreadsheet', 'software', 'messy', 'undecided')),
-  -- Set when Foundry picked the path from a description rather than a button.
+  -- Set when StockChief picked the path from a description rather than a button.
   path_chosen_by    TEXT NOT NULL DEFAULT 'customer' CHECK (path_chosen_by IN ('customer', 'foundry')),
   path_reason       TEXT,
   described_as      TEXT,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS workspace_onboarding (
                       ('choosing', 'collecting', 'understanding', 'reviewing', 'migrating', 'ready', 'abandoned')),
 
   -- Which system they are coming from, when they said. Free text on purpose:
-  -- claiming to recognise a system Foundry has no connector for would be a lie
+  -- claiming to recognise a system StockChief has no connector for would be a lie
   -- dressed as a dropdown.
   external_system   TEXT,
 
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS migration_sources (
   -- is evidence rather than an assurance.
   content           BLOB,
 
-  -- What Foundry made of it, deterministically: sheets, headers, samples,
+  -- What StockChief made of it, deterministically: sheets, headers, samples,
   -- row counts, and the totals it will later reconcile against.
   profile           TEXT NOT NULL DEFAULT '{}',
   -- What this file appears to be for: a catalog, a stock count, a supplier
@@ -75,7 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_migration_sources_workspace ON migration_sources(
 CREATE UNIQUE INDEX IF NOT EXISTS uq_migration_sources_hash
   ON migration_sources(workspace_id, content_hash);
 
--- What Foundry proposes to build out of one or more sources.
+-- What StockChief proposes to build out of one or more sources.
 CREATE TABLE IF NOT EXISTS consolidation_plans (
   id                 TEXT PRIMARY KEY,
   workspace_id       TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS consolidation_plans (
   source_ids         TEXT NOT NULL DEFAULT '[]',
   source_hashes      TEXT NOT NULL DEFAULT '[]',
 
-  -- The configuration Foundry would apply, in the Mission 2 plan shape, so the
+  -- The configuration StockChief would apply, in the Mission 2 plan shape, so the
   -- same applier configures the engine whichever path the customer came in on.
   proposed_configuration TEXT NOT NULL DEFAULT '{}',
   configuration_source   TEXT NOT NULL DEFAULT 'inferred'
@@ -116,7 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_consolidation_plans_workspace
 
 -- One thing worth a person's attention, and how it was settled.
 --
--- Foundry resolves what is unambiguous — the same SKU written two ways, a
+-- StockChief resolves what is unambiguous — the same SKU written two ways, a
 -- location spelled three ways — and brings the rest here. A conflict with no
 -- decision blocks the migration rather than being silently resolved: choosing
 -- between two quantities on a coin toss is how a migration quietly corrupts a
@@ -170,7 +170,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_migration_runs_key
   ON migration_runs(workspace_id, idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_migration_runs_workspace ON migration_runs(workspace_id, started_at DESC);
 
--- Source totals against Foundry totals, counted separately and compared.
+-- Source totals against StockChief totals, counted separately and compared.
 --
 -- Kept apart from the run on purpose: "the import finished" and "the numbers
 -- match" are different claims, and a migration that reports success because
@@ -193,7 +193,7 @@ CREATE INDEX IF NOT EXISTS idx_migration_reconciliations_run
 
 -- A connection to an external inventory system.
 --
--- The architecture exists so Foundry can operate on top of a system it does not
+-- The architecture exists so StockChief can operate on top of a system it does not
 -- own. No connector is registered against a real vendor until there are real
 -- credentials and real test access — a row here always describes something that
 -- genuinely connects, never a logo on a page.

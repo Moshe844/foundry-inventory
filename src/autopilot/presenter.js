@@ -1,19 +1,19 @@
 'use strict';
 
 /**
- * What Foundry tells you it has been doing.
+ * What StockChief tells you it has been doing.
  *
  * Every sentence here is assembled from a work record: what was planned, which
  * policy allowed it, what the balances were before and after, and whether the
  * result verified. Nothing is generated to make the product look busy, and a
- * quiet day says so — "Foundry handled 14 tasks" is a lie if it handled none,
+ * quiet day says so — "StockChief handled 14 tasks" is a lie if it handled none,
  * and it is the kind of lie that destroys trust in everything else on the page.
  *
  * Four questions, because that is what an operator actually wants to know:
  *
- *   is Foundry running        status
+ *   is StockChief running        status
  *   what needs me             the exceptions, highest first
- *   what did Foundry do       completed work
+ *   what did StockChief do       completed work
  *   what happens next         real dated events, not predictions
  */
 
@@ -166,7 +166,7 @@ function describeCompleted(item, ownedByPlan = new Set(), currentOrder = null) {
         `${done ? 'Prepared' : 'Wants to prepare'} ${outcome.poNumber || 'a purchase order'} ` +
         `for ${(item.affectedEntities || {}).supplierName || 'a supplier'}`,
       // No unit costs on file means no total, and a bare "0" reads as a
-      // zero-value order rather than as a price nobody has told Foundry.
+      // zero-value order rather than as a price nobody has told StockChief.
       // Whether it is waiting for you depends on who owns the decision. Once a
       // replenishment plan contains this order, approving it is that plan's
       // decision, and saying otherwise sends someone looking for a button that
@@ -210,14 +210,14 @@ function describeCompleted(item, ownedByPlan = new Set(), currentOrder = null) {
 }
 
 /**
- * "What Foundry did."
+ * "What StockChief did."
  *
  * Counted from completed work plus the routine evaluation it performs, and
  * deliberately honest about the difference: reviewing 86 positions is not the
  * same kind of claim as moving twelve pairs of tights, so they are counted
  * separately rather than added together into an impressive-looking total.
  */
-function whatFoundryDid(db, workspaceId, { since = null, now = Date.now(), readiness = null } = {}) {
+function whatStockChiefDid(db, workspaceId, { since = null, now = Date.now(), readiness = null } = {}) {
   const from = since || new Date(now - DAY_MS).toISOString();
   const completed = workItems.completedSince(db, workspaceId, from);
   const evaluations = recentEvaluations(db, workspaceId, { since: from, limit: 20, readiness });
@@ -267,14 +267,14 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now(), readi
     ORDER BY d.processed_at DESC LIMIT 8`).all(workspaceId, from).map((row) => ({
       id: row.id,
       headline: `${row.supplier_name || 'Supplier'} ${String(row.document_type).replaceAll('_', ' ')} matched${row.po_number ? ` ${row.po_number}` : ''}`,
-      detail: 'Foundry compared it with the purchase order. No action needed.',
+      detail: 'StockChief compared it with the purchase order. No action needed.',
       link: row.purchase_order_id ? `/purchasing/orders/${row.purchase_order_id}` : '/activity?stream=purchasing',
       verified: true,
     }));
   /*
-   * A provider-confirmed customer payment is routine work Foundry genuinely
+   * A provider-confirmed customer payment is routine work StockChief genuinely
    * completed without the owner. It used to appear only in Accounting while
-   * Home said "Handled 0", even though Foundry had verified Stripe, posted the
+   * Home said "Handled 0", even though StockChief had verified Stripe, posted the
    * receipt, and cleared the order balance. Count the evidence-backed receipt,
    * not the provider callback itself, so retries can never inflate this number.
    */
@@ -295,7 +295,7 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now(), readi
       return {
         id: row.id,
         headline: `Recorded ${amount} from ${row.customer_name}`,
-        detail: `${row.provider === 'stripe' ? 'Stripe' : row.provider} confirmed the payment and Foundry posted it to ${row.order_number} without you.`,
+        detail: `${row.provider === 'stripe' ? 'Stripe' : row.provider} confirmed the payment and StockChief posted it to ${row.order_number} without you.`,
         link: `/orders/${row.sales_order_id}`,
         verified: true,
       };
@@ -306,7 +306,7 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now(), readi
   const transfers = completed.filter((item) => item.category === 'balance_transfer');
   const purchases = completed.filter((item) => item.category === 'purchase_preparation');
 
-  // Work Foundry has prepared and is holding. It carried nothing out, but
+  // Work StockChief has prepared and is holding. It carried nothing out, but
   // "nothing needed doing" would be false while it is standing there with
   // something that does.
   const prepared = workItems.awaitingApproval(db, workspaceId)
@@ -342,7 +342,7 @@ function whatFoundryDid(db, workspaceId, { since = null, now = Date.now(), readi
       handledCount === 0
         ? prepared > 0
           ? `Checked ${plural(positionsWatched, 'stock position')}. ` +
-            'Prepared suggestions are available, but Foundry completed no automatic action.'
+            'Prepared suggestions are available, but StockChief completed no automatic action.'
           : evaluations.length > 0 || sweeps.n > 0
             ? `Checked ${plural(positionsWatched, 'stock position')}. Nothing needed doing.`
             : 'Nothing yet today.'
@@ -471,11 +471,11 @@ function pendingReplenishmentCopy(item, action, actions, breakdown, preparedOrde
   let approvalEffect;
   let approvalLimit;
   if (onlyDraft) {
-    approvalEffect = `Foundry will create a draft purchase order for ${purchaseQuantity}` +
+    approvalEffect = `StockChief will create a draft purchase order for ${purchaseQuantity}` +
       `${supplierName ? ` from ${supplierName}` : ''}.`;
     approvalLimit = 'It will not place the order, contact the supplier, or change on-hand stock.';
   } else if (onlyPlacement) {
-    approvalEffect = `Foundry will record ${preparedOrder ? preparedOrder.poNumber : 'the prepared order'} for ${preparedQuantity}` +
+    approvalEffect = `StockChief will record ${preparedOrder ? preparedOrder.poNumber : 'the prepared order'} for ${preparedQuantity}` +
       `${supplierName ? ` with ${supplierName}` : ''} as placed.`;
     approvalLimit = 'On-hand stock will not change until the delivery is received.';
   } else if (onlyTransfer) {
@@ -486,7 +486,7 @@ function pendingReplenishmentCopy(item, action, actions, breakdown, preparedOrde
     approvalEffect = now.map((entry) => entry.text).join(' Then ') + '.';
     approvalLimit = preparing.length
       ? 'Any newly prepared purchase order remains a draft until it is separately placed.'
-      : 'Foundry will carry out only the actions listed here.';
+      : 'StockChief will carry out only the actions listed here.';
   }
 
   const orderRule = orderedUnits
@@ -494,7 +494,7 @@ function pendingReplenishmentCopy(item, action, actions, breakdown, preparedOrde
       ? `${counted(breakdown.backordered, action.unitLabel)} are already promised to customers but waiting for stock. ` +
         `Covering those and leaving your target of ${action.target} available requires ${counted(shortfall, action.unitLabel)}. ` +
         `${supplierName || 'The supplier'} sells ${pluralUnit(purchase.purchaseUnit)} of ${purchase.unitsPerPurchaseUnit}, ` +
-        `so Foundry rounds up to ${counted(purchase.quantityPurchaseUnits, purchase.purchaseUnit)} ` +
+        `so StockChief rounds up to ${counted(purchase.quantityPurchaseUnits, purchase.purchaseUnit)} ` +
         `(${counted(purchase.quantityUnits, action.unitLabel)}). ` +
         `After current customer orders are covered, ${counted(breakdown.afterEveryOrderArrives, action.unitLabel)} will be available.`
       : onlyPlacement && preparedLine
@@ -508,7 +508,7 @@ function pendingReplenishmentCopy(item, action, actions, breakdown, preparedOrde
       : purchase && purchase.unitsPerPurchaseUnit > 1
         ? `Target ${action.target} − current position ${action.networkPosition} = ${shortfall} needed. ` +
           `${supplierName || 'The supplier'} sells ${pluralUnit(purchase.purchaseUnit)} of ${purchase.unitsPerPurchaseUnit}, ` +
-          `so Foundry rounds up to ${counted(purchase.quantityPurchaseUnits, purchase.purchaseUnit)} ` +
+          `so StockChief rounds up to ${counted(purchase.quantityPurchaseUnits, purchase.purchaseUnit)} ` +
           `(${counted(purchase.quantityUnits, action.unitLabel)}).`
         : `Target ${action.target} − current position ${action.networkPosition} = ${shortfall} needed. ` +
           `Supplier minimum or ordering-multiple rules increase the purchasable quantity to ${orderedUnits}.`
@@ -633,8 +633,8 @@ function ordersOwnedByAPlan(db, workspaceId) {
   return owned;
 }
 
-/** Work Foundry has worked out already and is holding for review. */
-function whatFoundryPrepared(db, workspaceId, { limit = 8 } = {}) {
+/** Work StockChief has worked out already and is holding for review. */
+function whatStockChiefPrepared(db, workspaceId, { limit = 8 } = {}) {
   const planOwned = ordersOwnedByAPlan(db, workspaceId);
   const waitingItems = workItems.awaitingApproval(db, workspaceId)
     .filter((item) => isCurrentlyActionable(db, workspaceId, item))
@@ -673,7 +673,7 @@ function whatFoundryPrepared(db, workspaceId, { limit = 8 } = {}) {
     evidence: item.sourceEvidence || [],
     priority: item.priority,
     // A delivery reminder should land on the order, where one button books the
-    // whole thing in — not on an explanation of why Foundry raised it.
+    // whole thing in — not on an explanation of why StockChief raised it.
     link:
       blockedSupplier && item.recommendedAction.skuId
         ? `/purchasing/supplier-for/${item.recommendedAction.skuId}`
@@ -700,7 +700,7 @@ function whatFoundryPrepared(db, workspaceId, { limit = 8 } = {}) {
       kind: 'purchase',
       id: row.id,
       title: `${row.po_number} for ${row.supplier} is ready to send`,
-      because: 'Foundry prepared it. Nothing has been ordered.',
+      because: 'StockChief prepared it. Nothing has been ordered.',
       evidence: [],
       priority: 55,
       link: `/purchasing/orders/${row.id}`,
@@ -770,7 +770,7 @@ function recentEvaluations(db, workspaceId, { since = null, limit = 20, readines
     });
 }
 
-/** "Foundry needs you." Genuine exceptions, most consequential first. */
+/** "StockChief needs you." Genuine exceptions, most consequential first. */
 function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
   const activeWork = workItems.list(db, workspaceId, { limit: 200 })
     .filter((item) => !item.isTerminal || item.category === 'purchase_preparation');
@@ -778,7 +778,7 @@ function whatNeedsYou(db, workspaceId, { limit = 8 } = {}) {
     item.affectedEntities && item.affectedEntities.skuId,
     ...((item.recommendedAction && item.recommendedAction.lines) || []).map((line) => line.skuId),
   ]).filter(Boolean));
-  // Once a plan has become a Foundry-prepared draft, the remaining human job
+  // Once a plan has become a StockChief-prepared draft, the remaining human job
   // is to review/place that PO. The older low-stock finding is evidence for
   // that decision, not another decision in the queue.
   for (const row of db.prepare(`SELECT DISTINCT pol.sku_id
@@ -923,7 +923,7 @@ function whatsNext(db, workspaceId, { now = Date.now(), days = 14 } = {}) {
 }
 
 /**
- * What Foundry has told this inventory lately.
+ * What StockChief has told this inventory lately.
  *
  * In-app only. Mission 7 asks for a notification boundary, not for email or
  * SMS, and a channel that silently drops messages is worse than one that was
@@ -960,9 +960,9 @@ function operatorHome(db, workspaceId, { now = Date.now(), preparedInbox = null 
   // manager services; building it on every landing-page request made a large
   // but otherwise healthy inventory wait behind two ledger-wide groupings.
   const readiness = managerReadiness.assess(db, workspaceId, { now, summaryOnly: true });
-  const did = whatFoundryDid(db, workspaceId, { now, readiness });
+  const did = whatStockChiefDid(db, workspaceId, { now, readiness });
 
-  // "Last checked" means the last time Foundry looked at this inventory, by any
+  // "Last checked" means the last time StockChief looked at this inventory, by any
   // route. Reading only the autopilot's own stamp said "never" on a workspace
   // that had just been swept, next to a count of the sweeps.
   const lastLooked = [state.lastEvaluatedAt, did.lastEvaluation]
@@ -988,8 +988,8 @@ function operatorHome(db, workspaceId, { now = Date.now(), preparedInbox = null 
   // but resolve and render only the highest-priority decisions here.
   const inbox = preparedInbox
     || require('../manager/needs-you-inbox').inbox(db, workspaceId, null, { limit: 6 });
-  if (!policies.length) readiness.notes.push('Foundry has no standing authority; it will prepare consequential work for approval.');
-  const prepared = whatFoundryPrepared(db, workspaceId);
+  if (!policies.length) readiness.notes.push('StockChief has no standing authority; it will prepare consequential work for approval.');
+  const prepared = whatStockChiefPrepared(db, workspaceId);
   const handling = operationOverview.inProgress(db, workspaceId, { limit: 25 });
 
   return {
@@ -999,14 +999,14 @@ function operatorHome(db, workspaceId, { now = Date.now(), preparedInbox = null 
       activePolicies: policies.length,
       policySummary: policies.map((policy) => policy.name),
       headline: state.paused
-        ? 'Foundry is paused'
+        ? 'StockChief is paused'
         : state.suspended
-          ? `Foundry paused automatic ${state.suspendedScope || 'work'}`
+          ? `StockChief paused automatic ${state.suspendedScope || 'work'}`
           : state.mode === 'OBSERVE'
-            ? 'Foundry is watching this inventory'
+            ? 'StockChief is watching this inventory'
             : state.mode === 'SUPERVISED'
-              ? 'Foundry is preparing your inventory work'
-              : 'Foundry is running this inventory',
+              ? 'StockChief is preparing your inventory work'
+              : 'StockChief is running this inventory',
     },
     did,
     needsYouTotal: Number.isInteger(inbox.totalCount) ? inbox.totalCount : inbox.length,
@@ -1214,7 +1214,7 @@ function explain(db, workspaceId, workItemId) {
         `${fromName} had ${evidence[`${fromName} on hand`]}.`
     );
     // Tense is not a style choice here. This page is read to find out what
-    // Foundry did, and describing a proposal in the past tense — or claiming an
+    // StockChief did, and describing a proposal in the past tense — or claiming an
     // approval nobody gave — is the one mistake that would make every other
     // sentence on it worthless.
     const done = item.executionStatus === workItems.STATUS.COMPLETED;
@@ -1372,7 +1372,7 @@ function explain(db, workspaceId, workItemId) {
           'it does not change your rule, so the next order over the limit will stop here too.'
       );
     } else if (!item.isTerminal) {
-      paragraphs.push('Approving places it with the supplier. Foundry does not contact anyone itself.');
+      paragraphs.push('Approving places it with the supplier. StockChief does not contact anyone itself.');
     }
     // The link is rendered as a link. Telling somebody to go and open the order
     // without giving them a way to is the loop this whole pass is about.
@@ -1418,7 +1418,7 @@ function explain(db, workspaceId, workItemId) {
 
 /** "What did you do today?" as a spoken answer. */
 function summariseDay(db, workspaceId, { now = Date.now() } = {}) {
-  const did = whatFoundryDid(db, workspaceId, { now });
+  const did = whatStockChiefDid(db, workspaceId, { now });
   const needs = whatNeedsYou(db, workspaceId);
   const lines = [];
 
@@ -1452,8 +1452,8 @@ module.exports = {
   timeAgo,
   recentEvaluations,
   describeCompleted,
-  whatFoundryDid,
-  whatFoundryPrepared,
+  whatStockChiefDid,
+  whatStockChiefPrepared,
   whatNeedsYou,
   whatsNext,
   operatorHome,

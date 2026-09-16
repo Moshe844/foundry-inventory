@@ -1,20 +1,20 @@
 'use strict';
 
 /**
- * A reply, written from what Foundry can prove.
+ * A reply, written from what StockChief can prove.
  *
  * This is the first place a model writes words that leave the building
  * addressed to somebody outside the business, so the split is stricter than
- * anywhere else in Foundry.
+ * anywhere else in StockChief.
  *
- * Foundry gathers the facts. Deterministically, from records: who this sender
+ * StockChief gathers the facts. Deterministically, from records: who this sender
  * is, what they have on order, what shipped and when, what is tracked where,
  * what is still owed. The model is handed those facts and the message being
  * answered, and may only arrange words around them.
  *
  * Then everything it returns is checked back against the facts. Every number
  * must already appear in them — the same guard the attention brief and Ask
- * Foundry use. Every date must too, and that check is here rather than there
+ * StockChief use. Every date must too, and that check is here rather than there
  * because a reply is where an invented date does real damage: "your order will
  * arrive Thursday" is a promise a customer will hold you to, and nobody at the
  * business ever made it.
@@ -46,7 +46,7 @@ Rules that are not style preferences:
 - Never promise anything the facts do not already show has happened or is
   scheduled.
 - No apologies for things you cannot verify happened, and no blame.
-- Do not mention Foundry, software, systems, or that this was drafted.
+- Do not mention StockChief, software, systems, or that this was drafted.
 - Three short paragraphs at most. Write the way a person types an email, not the
   way a company writes a letter.`;
 
@@ -85,7 +85,7 @@ const numbersOf = (text) => (String(text || '').match(/\d+(?:[.,]\d+)?/g) || [])
   .map((value) => value.replace(/,/g, ''));
 
 /**
- * Who this sender is, and everything Foundry holds about them.
+ * Who this sender is, and everything StockChief holds about them.
  *
  * Read only. No number below is calculated here — each is a column, so the
  * facts handed to the model are the same figures the owner can find on the
@@ -167,7 +167,7 @@ function factsFor(db, workspaceId, message) {
   }
 
   if (!customer && !supplier) {
-    facts.push('Foundry does not recognise this sender as a customer or a supplier, '
+    facts.push('StockChief does not recognise this sender as a customer or a supplier, '
       + 'so it holds no orders, shipments or invoices for them.');
   }
   return facts;
@@ -176,13 +176,13 @@ function factsFor(db, workspaceId, message) {
 /**
  * A reply built from the facts alone.
  *
- * Not a fallback in the apologetic sense — it is what Foundry can honestly say
+ * Not a fallback in the apologetic sense — it is what StockChief can honestly say
  * without a model, and it is the thing the model's version has to beat.
  */
 function withoutModel(message, facts) {
   const subject = String(message.subject || '').match(/^re:/i)
     ? message.subject : `Re: ${message.subject || 'your message'}`;
-  const known = facts.filter((fact) => !fact.startsWith('Foundry does not recognise'));
+  const known = facts.filter((fact) => !fact.startsWith('StockChief does not recognise'));
   const body = [
     'Hello,',
     '',
@@ -223,7 +223,7 @@ function datesAreGrounded(text, message, facts) {
  * Why a draft was rejected, or null if it stands.
  *
  * Returned rather than thrown: the owner is told which check failed, because
- * "Foundry wrote something and threw it away" is only trustworthy if it says
+ * "StockChief wrote something and threw it away" is only trustworthy if it says
  * what was wrong with it.
  */
 function faultIn(draft, message, facts) {
@@ -235,7 +235,7 @@ function faultIn(draft, message, facts) {
     return 'it named a date nobody has committed to';
   }
   if (interpretation.FORBIDDEN.some((pattern) => pattern.test(text))) {
-    return 'it claimed something had been done that Foundry cannot show was done';
+    return 'it claimed something had been done that StockChief cannot show was done';
   }
   if (OVERPROMISING.some((pattern) => pattern.test(text))) {
     return 'it promised something your records do not support';
@@ -338,7 +338,7 @@ async function send(db, ctx, messageId) {
   const communicationSuspended = state.suspended && (!state.suspendedScope
     || ['sales', 'customer', 'communications'].includes(state.suspendedScope));
   if (state.paused || communicationSuspended) {
-    throw new ValidationError('Foundry is paused. Nothing was sent.');
+    throw new ValidationError('StockChief is paused. Nothing was sent.');
   }
 
   const result = await require('./provider-service').sendMailboxMessage(db, ctx.workspaceId, message.connector_id, {

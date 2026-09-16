@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * The autopilot surface: what Foundry is doing, what it needs, and the controls
+ * The autopilot surface: what StockChief is doing, what it needs, and the controls
  * for taking that authority away again.
  *
  * The controls are deliberately close to the status. A customer who is unsure
@@ -33,14 +33,14 @@ const react = (req, payload, options = {}) => reactions.publishAndReact(
   req.db, req.ctx.workspaceId, managerEvents.TYPES.AUTHORITY_UPDATED, payload, options
 );
 
-/** How Foundry is set up, and everything it may do. */
+/** How StockChief is set up, and everything it may do. */
 router.get(
   '/autopilot',
   asyncRoute(async (req, res) => {
     const workspaceId = req.ctx.workspaceId;
     res.page('autopilot/settings', {
       backTo: { href: '/settings', label: 'Settings' },
-      title: 'What Foundry does',
+      title: 'What StockChief does',
       nav: 'autopilot',
       state: modes.get(req.db, workspaceId),
       capabilities: capabilities.list(req.db, workspaceId),
@@ -79,7 +79,7 @@ router.get(
 router.post(
   '/autopilot/policies/read',
   asyncRoute(async (req, res) => {
-    permissions.assertCan(req.user, permissions.ADMIN, 'decide what Foundry may do');
+    permissions.assertCan(req.user, permissions.ADMIN, 'decide what StockChief may do');
     try {
       const drafted = await policyAuthor.draft(req.db, req.ctx.workspaceId, req.body.instruction, {
         provider: req.app.locals.aiProvider || undefined,
@@ -94,7 +94,7 @@ router.post(
   })
 );
 
-/** What the customer wants Foundry to aim for. Never inferred, always stated. */
+/** What the customer wants StockChief to aim for. Never inferred, always stated. */
 router.post(
   '/autopilot/preferences',
   asyncRoute(async (req, res) => {
@@ -123,7 +123,7 @@ router.post(
   })
 );
 
-/** Foundry's work history, in words rather than movements. */
+/** StockChief's work history, in words rather than movements. */
 router.get(
   '/autopilot/history',
   asyncRoute(async (req, res) => {
@@ -131,7 +131,7 @@ router.get(
     res.page('autopilot/history', {
       backTo: { href: '/autopilot', label: 'Automatic work' },
 
-      title: 'What Foundry has done',
+      title: 'What StockChief has done',
       nav: 'history',
       groups: {
         automatic: items.filter((item) => item.executionStatus === 'COMPLETED' && item.isAutomatic),
@@ -161,7 +161,7 @@ router.get(
     const explanation = presenter.explain(req.db, req.ctx.workspaceId, req.params.id);
     if (explanation.item.category === 'replenishment_plan'
         && (explanation.item.recommendedAction || {}).blocked === 'no_supplier') {
-      req.flash('info', 'Add the supplier first. Foundry will then recalculate the exact replenishment plan; there is nothing to approve yet.');
+      req.flash('info', 'Add the supplier first. StockChief will then recalculate the exact replenishment plan; there is nothing to approve yet.');
       return res.redirect(303, `/purchasing/supplier-for/${explanation.item.recommendedAction.skuId}`);
     }
     res.page('autopilot/work', {
@@ -220,7 +220,7 @@ router.post(
 router.post(
   '/autopilot/run',
   asyncRoute(async (req, res) => {
-    permissions.assertCan(req.user, permissions.OPERATE, 'run Foundry');
+    permissions.assertCan(req.user, permissions.OPERATE, 'run StockChief');
     const result = runner.run(req.db, req.ctx, req.user, { trigger: 'manual' });
     reactions.drainWorkspace(req.db, req.ctx.workspaceId);
     const currentNeeds = require('../../manager/needs-you-inbox').inbox(req.db, req.ctx.workspaceId, req.user, {
@@ -274,7 +274,7 @@ router.post(
 /*
  * One job at a time.
  *
- * Separate from the mode on purpose: the mode says how much authority Foundry
+ * Separate from the mode on purpose: the mode says how much authority StockChief
  * has in general, and these say which jobs it may use it for. Changing one
  * must never move another, which was the whole complaint.
  */
@@ -287,8 +287,8 @@ router.post(
       const after = capabilities.set(req.db, req.ctx, req.user, capability, granted);
       const job = after.find((entry) => entry.capability === capability);
       req.flash('success', granted
-        ? `Foundry may now ${job.label.toLowerCase()} on its own. Nothing else changed.`
-        : `Foundry will ask before it ${job.label.toLowerCase().replace(/^move/, 'moves').replace(/^reorder/, 'reorders').replace(/^email/, 'emails').replace(/^answer/, 'answers').replace(/^ask/, 'asks').replace(/^tell/, 'tells')}. Nothing else changed.`);
+        ? `StockChief may now ${job.label.toLowerCase()} on its own. Nothing else changed.`
+        : `StockChief will ask before it ${job.label.toLowerCase().replace(/^move/, 'moves').replace(/^reorder/, 'reorders').replace(/^email/, 'emails').replace(/^answer/, 'answers').replace(/^ask/, 'asks').replace(/^tell/, 'tells')}. Nothing else changed.`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);
@@ -310,11 +310,11 @@ router.post(
         'success',
         firstAuthorityDecision
           ? state.mode === modes.MODES.SUPERVISED
-            ? 'You’re set up. Foundry will watch the operation and ask before carrying out consequential work.'
+            ? 'You’re set up. StockChief will watch the operation and ask before carrying out consequential work.'
             : state.mode === modes.MODES.POLICY_AUTOMATED
-              ? 'You’re set up. Foundry may handle routine work only inside limits you approve.'
-              : 'You’re set up. Foundry will watch and explain, without preparing or changing anything.'
-          : 'Changed what Foundry is allowed to do.'
+              ? 'You’re set up. StockChief may handle routine work only inside limits you approve.'
+              : 'You’re set up. StockChief will watch and explain, without preparing or changing anything.'
+          : 'Changed what StockChief is allowed to do.'
       );
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -336,7 +336,7 @@ router.post(
       /*
        * The guided setup is the grant.
        *
-       * These two switches already say "Foundry may automatically move stock"
+       * These two switches already say "StockChief may automatically move stock"
        * and "may automatically approve supplier orders" — which is exactly
        * what the job permissions mean. Keeping them apart would give the owner
        * two switches for one decision and a way to set them against each
@@ -359,8 +359,8 @@ router.post(
       req.flash(
         'success',
         allowed.length
-          ? `Routine work is ready. Foundry may automatically ${allowed.join(' and ')}. Everything outside these limits comes to you first.`
-          : 'Routine authority removed. Foundry will ask before carrying out consequential work.'
+          ? `Routine work is ready. StockChief may automatically ${allowed.join(' and ')}. Everything outside these limits comes to you first.`
+          : 'Routine authority removed. StockChief will ask before carrying out consequential work.'
       );
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -375,7 +375,7 @@ router.post(
   asyncRoute(async (req, res) => {
     modes.pause(req.db, req.ctx, req.user, trimOrNull(req.body.reason));
     react(req, { change: 'paused', paused: true });
-    req.flash('success', 'Foundry is paused. Nothing will happen automatically until you resume it.');
+    req.flash('success', 'StockChief is paused. Nothing will happen automatically until you resume it.');
     return res.redirect(303, req.body.back || '/');
   })
 );
@@ -392,7 +392,7 @@ router.post(
         { change: 'resumed', paused: false },
         { idempotencyKey: `${managerEvents.TYPES.FOUNDRY_RESUMED}:${Date.now()}` }
       );
-      req.flash('success', 'Foundry is running again.');
+      req.flash('success', 'StockChief is running again.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);
@@ -485,7 +485,7 @@ router.post(
         expectedHash: trimOrNull(req.body.integrityHash),
       });
       react(req, { change: 'policy_approved', policyId: approved.id, policyVersion: approved.version });
-      req.flash('success', 'Approved. Choose “Handle routine work” to let Foundry use this rule automatically.');
+      req.flash('success', 'Approved. Choose “Handle routine work” to let StockChief use this rule automatically.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('error', err.message);

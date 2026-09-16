@@ -141,7 +141,7 @@ test('a named missing supplier can be added once and the same purchase request c
   assert.equal(drafted.order.lines[0].skuId, item.skuId);
   assert.equal(drafted.order.lines[0].quantityUnits, 2);
   assert.equal(drafted.order.lines[0].unitCost, 10,
-    'Foundry must preserve the supplier price the owner stated');
+    'StockChief must preserve the supplier price the owner stated');
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM suppliers').get().n, 1);
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM purchase_orders').get().n, 1);
 
@@ -203,9 +203,9 @@ test('exact SKU records reconcile into products without generating extra variant
   const parsedIntent = {
     lines: [
       createRecord({ productName: 'Nitrile Disposable Gloves', productCode: 'GLV-NIT-BLK-M-100',
-        variantAxes: 'Size: Medium | Color: Black', unitLabel: 'Box' }),
+        variantAxes: 'Size: Medium | Color: Black | Material: Nitrile | Pack Quantity: 100', unitLabel: 'Box' }),
       createRecord({ productName: 'Nitrile Disposable Gloves', productCode: 'GLV-NIT-BLK-L-100',
-        variantAxes: 'Size: Large | Color: Black', unitLabel: 'Box' }),
+        variantAxes: 'Size: Large | Color: Black | Material: Nitrile | Pack Quantity: 100', unitLabel: 'Box' }),
       createRecord({ productName: 'Clear Machine Stretch Wrap', productCode: 'WRAP-CLR-18-1500',
         variantAxes: 'Size: 18 in × 1,500 ft', unitLabel: 'Roll' }),
     ],
@@ -224,11 +224,33 @@ test('exact SKU records reconcile into products without generating extra variant
     'GLV-NIT-BLK-M-100', 'GLV-NIT-BLK-L-100',
   ]);
   assert.deepEqual(gloves.settings.exactVariants.map((variant) => variant.options.Size), ['Medium', 'Large']);
+  assert.deepEqual(Object.keys(gloves.settings.exactVariants[0].options), ['Size'],
+    'only evidence that distinguishes supplied SKUs becomes an option axis');
   assert.equal(wrap.expectedAfterState.variants, 1);
   assert.equal(wrap.settings.exactVariants.length, 1);
   assert.equal(wrap.settings.exactVariants[0].code, 'WRAP-CLR-18-1500');
-  assert.equal(wrap.settings.exactVariants[0].options.Size, '18 in × 1,500 ft',
-    'a thousands separator inside one evidenced attribute must not create a second SKU');
+  assert.deepEqual(wrap.settings.exactVariants[0].options, {},
+    'attributes on a single supplied SKU remain catalogue facts rather than invented option axes');
+
+  const legacy = execution.executableCatalogueVariants([
+    { code: 'A', options: { Size: 'Medium', Color: 'Black', Material: 'Nitrile', 'Pack Quantity': '100' } },
+    { code: 'B', options: { Size: 'Large', Color: 'Black', Material: 'Nitrile', 'Pack Quantity': '100' } },
+  ]);
+  assert.deepEqual(legacy.map((variant) => variant.options), [
+    { Size: 'Medium' }, { Size: 'Large' },
+  ], 'an already-saved catalogue plan is normalized again at its execution boundary');
+
+  const ordered = execution.orderPlanLinesForExecution([
+    { proposalId: 'kit', settings: {
+      exactVariants: [{ code: 'KIT-1' }],
+      catalogueRecords: [{ components: [{ exactSku: 'PART-1' }] }],
+    } },
+    { proposalId: 'part', settings: {
+      exactVariants: [{ code: 'PART-1' }], catalogueRecords: [{}],
+    } },
+  ]);
+  assert.deepEqual(ordered.map((line) => line.proposalId), ['part', 'kit'],
+    'a component created by the same atomic plan executes before the kit that needs it');
 
   execution.approvePlan(env.db, env.ctx, env.membership, result.plan.planId);
   execution.executePlan(env.db, env.ctx, env.membership, result.plan.planId);
@@ -315,9 +337,19 @@ test('ordinary inventory-count questions use a grounded catalogue summary', asyn
   assert.equal(result.rows.length, 1);
   assert.equal(result.rows[0].product, 'Sample Badge');
   assert.equal(result.rows[0].href, `/inventory/${item.itemId}`);
+
+  let providerCalls = 0;
+  const immediate = await queryPlanner.ask(env.db, env.workspace.workspaceId,
+    "What's in my inventory now?", {
+      semantic: false, // Explicit offline integration; production chat interprets meaning first.
+      provider: { complete: async () => { providerCalls += 1; throw new Error('must not be called'); } },
+    });
+  assert.match(immediate.answer, /1 active product/);
+  assert.equal(providerCalls, 0,
+    'a local inventory summary must not wait for optional model phrasing');
 });
 
-test('Ask Foundry answers what is in a kit from the saved BOM', async () => {
+test('Ask StockChief answers what is in a kit from the saved BOM', async () => {
   const env = setup();
   const kit = makeQuantityItem(env.db, env.ctx, { name: 'Workshop Kit', baseCode: 'WK-1' });
   const component = makeQuantityItem(env.db, env.ctx, { name: 'Safety Glove', baseCode: 'SG-1' });
@@ -395,7 +427,7 @@ function completePreparedTransfer(env, result) {
   });
 }
 
-test('Foundry can configure an exact kit BOM through its normal approved action path', async () => {
+test('StockChief can configure an exact kit BOM through its normal approved action path', async () => {
   const env = setup();
   const kit = makeQuantityItem(env.db, env.ctx, { name: 'Maintenance Starter Kit', baseCode: 'KIT-100' });
   const gloves = makeQuantityItem(env.db, env.ctx, { name: 'Work Gloves', baseCode: 'GLOVE-10' });
@@ -430,7 +462,7 @@ test('Foundry can configure an exact kit BOM through its normal approved action 
   );
 
   const preview = presenter.present(env.db, env.workspace.workspaceId, interpreted.proposal);
-  assert.equal(preview.title, 'Foundry is ready to configure a kit');
+  assert.equal(preview.title, 'StockChief is ready to configure a kit');
   assert.match(preview.oneLine, /2 component SKUs/);
   assert.equal(preview.rows.length, 2);
   assert.deepEqual(preview.total, { before: 0, after: 0 });
@@ -615,7 +647,7 @@ test('an adjustment sets the counted balance and keeps its reason', () => {
   assert.equal(adjustment.reason_code, 'physical_count');
 });
 
-test('Foundry never invents a reason for a correction', () => {
+test('StockChief never invents a reason for a correction', () => {
   const env = clothing();
   const built = proposals.build(env.db, env.ctx, intent({
     actionType: 'adjust', sourceLocation: 'Main Warehouse', destinationLocation: '',
@@ -1240,7 +1272,7 @@ test('the whole story of an action is answerable afterwards', () => {
   const stored = events.find((e) => e.event === 'SUCCEEDED');
   assert.equal(stored.detail.after.sourceOnHand, 48);
 
-  // And the ledger says Foundry was involved.
+  // And the ledger says StockChief was involved.
   const transfer = transferService.get(env.db, env.workspace.workspaceId, result.transferId);
   assert.equal(transfer.status, 'APPROVED');
   assert.equal(transfer.totals.requested, 15);
@@ -1538,7 +1570,7 @@ test('case never matters, for products or locations', () => {
   }
 });
 
-test('a plain typo is understood, and Foundry says what it read', () => {
+test('a plain typo is understood, and StockChief says what it read', () => {
   const env = setup();
   const locationService = require('../../src/domain/location-service');
   locationService.createLocation(env.db, env.ctx, { name: 'Mornoe', kind: 'store' });
@@ -1553,8 +1585,8 @@ test('a plain typo is understood, and Foundry says what it read', () => {
   assert.equal(built.proposal.skuId, item.skuId);
 
   const assumptions = built.proposal.assumptions.join(' ');
-  assert.match(assumptions, /You wrote “bannana” — Foundry took that as banana/);
-  assert.match(assumptions, /You wrote “monroe” — Foundry took that as Mornoe/);
+  assert.match(assumptions, /You wrote “bannana” — StockChief took that as banana/);
+  assert.match(assumptions, /You wrote “monroe” — StockChief took that as Mornoe/);
 });
 
 test('a near-miss between two real names is asked about, never guessed', () => {
@@ -1733,12 +1765,12 @@ test('the batch question never offers expired stock as an equal choice', () => {
     quantity: 10,
   });
 
-  assert.equal(built.ok, false, 'which batch leaves is not for Foundry to assume');
+  assert.equal(built.ok, false, 'which batch leaves is not for StockChief to assume');
   assert.match(built.question, /B-GONE \(6, EXPIRED/, 'an expired batch has to say so where it is offered');
   assert.match(built.question, /B-SOON \(24, expires/);
   assert.match(built.question, /B-GONE has already expired/);
   // And the safe default is named, so there is a right answer to give.
-  assert.match(built.question, /Foundry would take B-SOON, the earliest to expire of the ones still good/);
+  assert.match(built.question, /StockChief would take B-SOON, the earliest to expire of the ones still good/);
   // Still a question: using up an expired batch on purpose is a real decision.
   assert.ok(built.question.includes('B-GONE'), 'the expired batch is not hidden either');
 });
@@ -1760,7 +1792,7 @@ test('when every batch has expired, the question says so rather than suggesting 
   assert.doesNotMatch(built.question, /the earliest to expire of the ones still good/);
 });
 
-test('a lot-tracked transfer Foundry proposed preserves the exact lot in a real transfer document', () => {
+test('a lot-tracked transfer StockChief proposed preserves the exact lot in a real transfer document', () => {
   const { db } = makeDatabase();
   const w = seedWorkspace(db);
   const membership = authService.getMembership(db, w.workspaceId, w.accountId);
@@ -1818,7 +1850,7 @@ test('with somewhere to move it to, it still asks which one', () => {
 test('the instruction reader is told the catalogue, so it need not ask which product', () => {
   // Walking a new account through setup: a workspace with exactly one product
   // was asked "what product are the white small variants of?" — a question with
-  // one possible answer, which Foundry already had.
+  // one possible answer, which StockChief already had.
   const env = clothing();
   const context = actionService.instructionContext(env.db, env.workspace.workspaceId);
 
@@ -1890,7 +1922,7 @@ test('a single letter does not claim a longer colour', () => {
 
 // --- questions an inventory has already answered -----------------------------
 //
-// The same fault kept surfacing from different directions: Foundry asking
+// The same fault kept surfacing from different directions: StockChief asking
 // something its own records settle, then failing over the unanswered question.
 // Three instances were fixed one at a time; this is the general case.
 
@@ -2053,10 +2085,10 @@ test('a plan that cannot be built whole is not quietly built in part', async () 
 
   assert.notEqual(result.kind, 'plan', 'an unresolvable line must stop the plan, not be dropped from it');
   assert.match(String(result.question || result.message), /Hooded Sweatshirt/,
-    'Foundry must name the part it could not resolve');
+    'StockChief must name the part it could not resolve');
 });
 
-test('lines beyond what Foundry will read at once are reported, never truncated', async () => {
+test('lines beyond what StockChief will read at once are reported, never truncated', async () => {
   const env = apparel();
   const many = [];
   for (let i = 0; i < intentService.MAX_LINES + 4; i += 1) many.push(countLines()[i % 12]);
@@ -2065,7 +2097,7 @@ test('lines beyond what Foundry will read at once are reported, never truncated'
     { provider: providerReturning({ lines: many, clarifyingQuestion: '', unsupportedReason: '' }) }
   );
 
-  assert.notEqual(result.kind, 'plan', 'more lines than Foundry reads at once must not silently become a short plan');
+  assert.notEqual(result.kind, 'plan', 'more lines than StockChief reads at once must not silently become a short plan');
   assert.match(String(result.question || result.message || ''), /\d+/,
     'the refusal has to say how much was asked for');
 });
@@ -2341,7 +2373,7 @@ test('only the genuinely ambiguous clause asks, without borrowing another clause
 
 test('a version that genuinely is ambiguous is still asked about', () => {
   const env = tees();
-  // "Small" alone really does leave two colours. Foundry must still ask, and
+  // "Small" alone really does leave two colours. StockChief must still ask, and
   // must not have invented an answer to look decisive.
   const built = proposals.build(env.db, env.ctx, intent({
     actionType: 'transfer', item: 'T-shirt', variant: 'Small', quantity: 5,

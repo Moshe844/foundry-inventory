@@ -35,7 +35,7 @@ function createConnectionsApi(db) {
     try {
       connections.authenticate(db, req.get('authorization'));
       return res.json({
-        name: 'Foundry normalized business event contract', version: '1.0',
+        name: 'StockChief normalized business event contract', version: '1.0',
         endpoint: '/api/v1/events', precheckoutEndpoint: '/api/v1/precheckout',
         authentication: 'Authorization: Bearer <connection token>',
         batching: { singleEvent: true, envelope: { events: 'array' }, maximumEvents: ingestion.MAX_BATCH },

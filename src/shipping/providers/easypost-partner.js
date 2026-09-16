@@ -5,7 +5,7 @@
  *
  * Every other file under src/shipping speaks about one shop's parcels using
  * one shop's key. This one speaks as Keeper — the partner account that owns
- * the referral customers — and it is the only file in Foundry that ever holds
+ * the referral customers — and it is the only file in StockChief that ever holds
  * the partner key. It is kept apart from providers/easypost.js on purpose:
  * that file must never be able to reach an endpoint that acts on somebody
  * else's account, and the cheapest way to guarantee that is for it not to know
@@ -28,8 +28,8 @@
  * care how the card got there.
  *
  * What is not negotiable, whichever shape it settles on: the card number never
- * passes through Foundry. The merchant types it into Stripe's own field and
- * Foundry learns only that a payment method exists.
+ * passes through StockChief. The merchant types it into Stripe's own field and
+ * StockChief learns only that a payment method exists.
  */
 
 const { ValidationError, AuthenticationError } = require('../../domain/errors');
@@ -41,13 +41,13 @@ const BETA = 'https://api.easypost.com/beta';
 function partnerKey(explicit) {
   const key = explicit || process.env.EASYPOST_PARTNER_KEY;
   if (!key) {
-    throw new ValidationError('Foundry is not enrolled as an EasyPost partner, so it cannot open a '
+    throw new ValidationError('StockChief is not enrolled as an EasyPost partner, so it cannot open a '
       + 'shipping account on a merchant\'s behalf. Connect an existing EasyPost account instead.');
   }
   return String(key);
 }
 
-/** Whether opening accounts from inside Foundry is available at all. */
+/** Whether opening accounts from inside StockChief is available at all. */
 function isPartnerConfigured() { return Boolean(process.env.EASYPOST_PARTNER_KEY); }
 
 async function call(key, path, options = {}) {
@@ -73,8 +73,8 @@ async function call(key, path, options = {}) {
      * shown to them as one. It means Keeper's own enrolment is wrong.
      */
     const error = response.status === 401
-      ? new AuthenticationError('EasyPost refused Foundry\'s partner credentials. '
-        + 'This is a problem with Foundry\'s enrolment, not with this inventory.')
+      ? new AuthenticationError('EasyPost refused StockChief\'s partner credentials. '
+        + 'This is a problem with StockChief\'s enrolment, not with this inventory.')
       : new ValidationError(message);
     error.status = response.status;
     throw error;
@@ -87,7 +87,7 @@ async function call(key, path, options = {}) {
 /*
  * A referral customer comes back with both of its keys.
  *
- * Which one Foundry then uses is decided elsewhere, by whether the merchant
+ * Which one StockChief then uses is decided elsewhere, by whether the merchant
  * has a way to be billed — a live key with no card behind it buys nothing and
  * fails at the counter.
  */
@@ -119,7 +119,7 @@ function readCustomer(user = {}) {
  * Open an EasyPost account belonging to this merchant.
  *
  * The account is theirs from the moment it exists: their labels, their rates,
- * their billing. Foundry is how it was created and is not who it belongs to,
+ * their billing. StockChief is how it was created and is not who it belongs to,
  * which is why nothing here takes or keeps a card.
  */
 async function createReferralCustomer(input = {}, options = {}) {
@@ -134,12 +134,12 @@ async function createReferralCustomer(input = {}, options = {}) {
   });
   const read = readCustomer(created);
   if (!read.referralCustomerId) {
-    throw new ValidationError('EasyPost created something Foundry could not read as an account.');
+    throw new ValidationError('EasyPost created something StockChief could not read as an account.');
   }
   return read;
 }
 
-/** Every merchant account Foundry has opened. Used to reconcile, not to browse. */
+/** Every merchant account StockChief has opened. Used to reconcile, not to browse. */
 async function listReferralCustomers(options = {}) {
   const key = partnerKey(options.partnerKey);
   const query = options.pageSize ? `?page_size=${Number(options.pageSize)}` : '';
@@ -147,7 +147,7 @@ async function listReferralCustomers(options = {}) {
   return (body?.referral_customers || body?.children || []).map(readCustomer);
 }
 
-/** Correct a name or address on an account Foundry opened. */
+/** Correct a name or address on an account StockChief opened. */
 async function updateReferralCustomer(referralCustomerId, input = {}, options = {}) {
   const key = partnerKey(options.partnerKey);
   const updated = await call(key, `/referral_customers/${encodeURIComponent(referralCustomerId)}`, {
@@ -164,11 +164,11 @@ async function updateReferralCustomer(referralCustomerId, input = {}, options = 
 /* ----------------------------------------------------------------- paying */
 
 /*
- * How a merchant's card gets onto their account, without touching Foundry.
+ * How a merchant's card gets onto their account, without touching StockChief.
  *
  * EasyPost bills a referral customer through Stripe, and hands out a client
  * secret so the card can be collected by Stripe's own field in the merchant's
- * browser. Foundry passes that secret to the page and learns nothing else. The
+ * browser. StockChief passes that secret to the page and learns nothing else. The
  * number never reaches this process, this database, or a log.
  *
  * These three calls are made with the *merchant's* key, not the partner's:
@@ -199,7 +199,7 @@ const PAYMENT = {
   /*
    * Tell EasyPost about the method Stripe has just stored.
    *
-   * The pm_ reference comes from Stripe through the browser. Foundry forwards
+   * The pm_ reference comes from Stripe through the browser. StockChief forwards
    * it to EasyPost's current credit-card endpoint and keeps no card data.
    */
   async attach(referralKey, input = {}) {
@@ -213,7 +213,7 @@ const PAYMENT = {
        * response is to stop rather than to forward it and log the failure.
        */
       throw new ValidationError('That looks like a card number rather than a Stripe reference. '
-        + 'Foundry does not handle card numbers.');
+        + 'StockChief does not handle card numbers.');
     }
     const body = await call(referralKey, '/credit_cards', {
       method: 'POST',

@@ -157,7 +157,7 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
       reason: 'no_usage_evidence',
       headline: 'Not enough history to recommend a quantity',
       explanation:
-        `Foundry has ${issued} issued in the last ${usageWindow} days, which is not enough to ` +
+        `StockChief has ${issued} issued in the last ${usageWindow} days, which is not enough to ` +
         'estimate usage. Set a reorder point for this line and it will watch that instead.',
       evidence: [
         fact('On hand', onHand),
@@ -319,7 +319,7 @@ function evaluateSku(db, workspaceId, sku, options = {}) {
       headline: `${shortfall} short, but no supplier on file`,
       explanation:
         `This line is below its reorder point and about ${shortfall} short of target, but no supplier ` +
-        'is linked to it, so Foundry cannot work out a pack size, a cost or a lead time. Add one and it will.',
+        'is linked to it, so StockChief cannot work out a pack size, a cost or a lead time. Add one and it will.',
       evidence: evidenceFor(base, { reorderPoint, target, safetyStock, usagePerDay }),
       calculation: steps,
     };
@@ -460,7 +460,7 @@ function evidenceFor(base, extra) {
  * Which supplier to buy this from.
  *
  * Only structured facts are compared: whether one is marked preferred, what it
- * costs, and how long it takes. There is no reliability score, because Foundry
+ * costs, and how long it takes. There is no reliability score, because StockChief
  * has no evidence for one — it has never measured whether a supplier delivers
  * on time across enough orders to say anything honest about it.
  *

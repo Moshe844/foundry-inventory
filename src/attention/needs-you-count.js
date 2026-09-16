@@ -11,7 +11,7 @@
  * The definition that matters is the page's, because that is where the badge
  * sends them: readiness decisions, open investigations, unmatched physical
  * events, work waiting for approval, and the findings severe enough to be
- * someone's decision rather than something Foundry is merely watching.
+ * someone's decision rather than something StockChief is merely watching.
  *
  * Requires are lazy so this can be used from both the request middleware and
  * the workspace list without either pulling a cycle through the other.

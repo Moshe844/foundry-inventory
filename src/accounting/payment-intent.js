@@ -3,7 +3,7 @@
 /**
  * "I paid ABC $400 toward invoice 8832 by ACH."
  *
- * A payment made outside Foundry is information Foundry cannot observe. Nothing
+ * A payment made outside StockChief is information StockChief cannot observe. Nothing
  * can change that — no bank feed is connected, so somebody has to say it
  * happened. What can change is the cost of saying it: opening payables, finding
  * the bill, entering a payment, checking the supplier balance, and trusting
@@ -19,7 +19,7 @@
  * settles when the sentence does not say and the records do not make it
  * obvious. A misapplied payment is a wrong balance for two counterparties, and
  * guessing it would be exactly the kind of invented financial fact the rest of
- * Foundry refuses to produce.
+ * StockChief refuses to produce.
  */
 
 const payments = require('./payments');
@@ -190,7 +190,7 @@ function matchReference(documents, reference) {
  * Turns extracted fields into something a person can approve, or a question.
  *
  * Returns either a proposal carrying the exact effect of the payment, or the
- * one thing Foundry needs before it can prepare one. It never returns a
+ * one thing StockChief needs before it can prepare one. It never returns a
  * proposal it had to guess at.
  */
 function propose(db, workspaceId, fields) {
@@ -211,13 +211,13 @@ function propose(db, workspaceId, fields) {
       ok: false,
       question: who.matches.length
         ? `Which ${party} was that? ${who.matches.map((row) => row.name).join(', ')}`
-        : `Foundry has no ${party} called “${fields.counterpartyName}”.`,
+        : `StockChief has no ${party} called “${fields.counterpartyName}”.`,
       candidates: who.matches,
     };
   }
 
   const documents = openDocuments(db, workspaceId, direction, who.counterparty.id);
-  // A document the owner picked when Foundry asked which one. Answering the
+  // A document the owner picked when StockChief asked which one. Answering the
   // question continues the same report rather than restarting it.
   const picked = fields.documentId
     ? documents.filter((doc) => doc.id === fields.documentId)

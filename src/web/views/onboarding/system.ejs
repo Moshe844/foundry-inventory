@@ -16,7 +16,7 @@
   <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 14 }) %> Inventory source · a connected system</p>
   <h1>Where do you sell or manage inventory today?</h1>
   <p>
-    Foundry authorises it, discovers the products and locations, and asks you only about the matches
+    StockChief authorises it, discovers the products and locations, and asks you only about the matches
     it is not sure of. After that, sales arrive on their own.
   </p>
 </div>
@@ -86,7 +86,7 @@
             <% if (provider.type === 'square' || provider.type === 'clover') { %>
               <%= provider.name %> opens so you can choose and approve the business account.
             <% } else { %>
-              You sign in and approve access. Foundry stores the credential encrypted.
+              You sign in and approve access. StockChief stores the credential encrypted.
             <% } %>
           </p>
         </form>
@@ -101,7 +101,7 @@
     <form method="post" action="/onboarding/system">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <p style="font-size:13.5px;color:var(--ink-2);margin:0 0 12px;max-width:70ch">
-        Export the catalogue and current inventory to CSV or Excel. Foundry reads and reconciles it
+        Export the catalogue and current inventory to CSV or Excel. StockChief reads and reconciles it
         without needing a template.
       </p>
       <label class="rm-field" style="max-width:420px">
@@ -117,8 +117,8 @@
   <%- helpers.icon('shield', { size: 16 }) %>
   <span>
     <strong>One source of inventory truth.</strong>
-    This inventory is currently <%= sourceOfTruth === 'FOUNDRY_NATIVE' ? 'owned by Foundry' : 'owned by an external system' %>.
-    Connecting a selling system brings its activity into Foundry's guarded engines — it does not start
+    This inventory is currently <%= sourceOfTruth === 'FOUNDRY_NATIVE' ? 'owned by StockChief' : 'owned by an external system' %>.
+    Connecting a selling system brings its activity into StockChief's guarded engines — it does not start
     a second competing balance, and it never silently rewrites stock.
   </span>
 </div>

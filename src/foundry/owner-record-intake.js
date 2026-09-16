@@ -41,7 +41,7 @@ function apply(db, ctx, plan, existingLocationNames, createdLocations) {
     const collision = db.prepare('SELECT id FROM items WHERE workspace_id = ? AND name = ? COLLATE NOCASE')
       .get(ctx.workspaceId, group.name);
     if (collision) {
-      throw new ValidationError(`${group.name} already exists. Foundry stopped rather than adding the opening quantity twice.`);
+      throw new ValidationError(`${group.name} already exists. StockChief stopped rather than adding the opening quantity twice.`);
     }
     const seenVariants = new Set();
     const variants = group.rows.map((row) => {
@@ -67,7 +67,7 @@ function apply(db, ctx, plan, existingLocationNames, createdLocations) {
         locationId: location.id,
         quantity: row.quantity,
         reference: `OWNER-OPENING-${plan.configurationVersion}-${products + 1}-${index + 1}`,
-        notes: 'Opening stock entered directly by the owner during Foundry setup.',
+        notes: 'Opening stock entered directly by the owner during StockChief setup.',
       });
       units += row.quantity;
     });

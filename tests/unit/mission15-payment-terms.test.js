@@ -3,7 +3,7 @@
 /*
  * Payment terms, and the holds they put on an order.
  *
- * Foundry could always record that money arrived. What it could not do was know
+ * StockChief could always record that money arrived. What it could not do was know
  * money was supposed to arrive first — so an order with nothing paid on it
  * shipped exactly like one paid in full. These tests are about the difference.
  *
@@ -42,7 +42,7 @@ function setup() {
 
 /** An order for $1,500: 100 shirts at $15, invoiced and open. */
 function orderWorth1500(env) {
-  const customer = sales.createCustomer(env.db, env.ctx, { name: 'ABC School', email: 'orders@abcschool.test' });
+  const customer = sales.createCustomer(env.db, env.ctx, { name: 'ABC School', email: 'orders@abcschool.test', shippingAddress: '7 Example Lane, Albany, NY 12207, US' });
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 200 });
   const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
     customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 100 }],
@@ -200,7 +200,7 @@ test('what holds an uninvoiced order is the terms, not the invoice', () => {
    * This used to assert that an order with no invoice is never held, on the
    * reasoning that refusing to work over a debt that does not exist is worse
    * than the risk. That was right about a customer with nothing agreed and
-   * wrong about everyone else: Foundry raises the invoice at shipment, so
+   * wrong about everyone else: StockChief raises the invoice at shipment, so
    * "pays in full before anything is picked" could never hold anything. The
    * term described a policy the product did not have.
    *
@@ -254,7 +254,7 @@ test('a deposit as a fixed amount works the same as a share', () => {
 
 test('a deposit can be taken before there is an invoice, and holds until it is', () => {
   /*
-   * Found by walking the flow: Foundry raises the customer invoice when the
+   * Found by walking the flow: StockChief raises the customer invoice when the
    * goods ship, which is right for revenue and wrong for everything else.
    * Before that moment an order had no money on it at all — no way to take a
    * deposit, and the deposit hold this file exists for could never fire,

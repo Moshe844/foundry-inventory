@@ -186,7 +186,7 @@ function createTask(db, ctx, input) {
       const lot = raw.lotId ? repo.requireLot(db, ctx.workspaceId, raw.lotId) : null;
       if (lot && lot.sku_id !== sku.id) throw new ValidationError('That lot belongs to a different item.');
       if (taskType === 'COUNT' && sku.tracking_mode === 'lot' && !lot) {
-        throw new ValidationError('A lot-tracked count must name the exact lot. Foundry will not combine or infer lots.');
+        throw new ValidationError('A lot-tracked count must name the exact lot. StockChief will not combine or infer lots.');
       }
       const quantity = requirePositiveInt(raw.quantity, 'Task quantity');
       db.prepare(`INSERT INTO warehouse_task_lines
@@ -422,7 +422,7 @@ function finishCount(db, ctx, taskId, input = {}) {
           .all(ctx.workspaceId, task.id, line.id)
           .map((row) => String(row.serial_barcode).toLowerCase()).sort();
         if (line.counted_quantity !== expected || JSON.stringify(scannedSerials) !== JSON.stringify(expectedSerials)) {
-          throw new ValidationError('Serial counts must identify the missing serials before Foundry can correct stock. The count remains open.');
+          throw new ValidationError('Serial counts must identify the missing serials before StockChief can correct stock. The count remains open.');
         }
       } else if (line.counted_quantity !== expected) {
         engine.adjust(db, ctx, { skuId: line.sku_id, locationId: line.from_location_id,

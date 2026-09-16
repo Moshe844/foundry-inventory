@@ -2,7 +2,7 @@
   <div class="titles">
     <h1>Your inventories</h1>
     <div class="page-sub">
-      Each one is completely separate — its own items, locations, history and Foundry setup.
+      Each one is completely separate — its own items, locations, history and StockChief setup.
     </div>
   </div>
   <div class="page-actions">
@@ -16,8 +16,8 @@
   <div class="card section">
     <div class="empty">
       <div class="icon-wrap"><%- helpers.icon('box', { size: 22 }) %></div>
-      <h3>Give Foundry an inventory to manage</h3>
-      <p>Start fresh, upload spreadsheets, or bring an existing inventory system. Foundry will work out the setup with you.</p>
+      <h3>Give StockChief an inventory to manage</h3>
+      <p>Start fresh, upload spreadsheets, or bring an existing inventory system. StockChief will work out the setup with you.</p>
       <a class="btn btn--primary" href="/inventories/new"><%- helpers.icon('plus', { size: 16 }) %> New Inventory</a>
     </div>
   </div>
@@ -43,8 +43,8 @@
         <div class="wsp-meta">
           <% if (workspace.dataMode === 'synthetic') { %><span class="badge badge--variant">Test environment</span><% } %>
           <span class="badge badge--muted"><%= helpers.roleLabel(workspace.role) %></span>
-          <% if (workspace.configuredByFoundry) { %>
-            <span class="badge badge--muted"><%- helpers.icon('foundry', { size: 11 }) %> Set up by Foundry</span>
+          <% if (workspace.configuredByStockChief) { %>
+            <span class="badge badge--muted"><%- helpers.icon('foundry', { size: 11 }) %> Set up by StockChief</span>
           <% } else if (!workspace.configured) { %>
             <span class="badge badge--warn">Not set up yet</span>
           <% } %>
@@ -58,7 +58,7 @@
 
         <div class="wsp-card-foot">
           <% if (workspace.deleting) { %>
-            <span class="muted" style="font-size:13px;">Foundry is removing this inventory. Other inventories remain available.</span>
+            <span class="muted" style="font-size:13px;">StockChief is removing this inventory. Other inventories remain available.</span>
           <% } else if (workspace.workspaceId === currentWorkspaceId) { %>
             <a class="btn btn--primary btn--sm" href="/">Go to it</a>
           <% } else { %>

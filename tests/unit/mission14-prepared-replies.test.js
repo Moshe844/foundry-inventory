@@ -1,13 +1,13 @@
 'use strict';
 
 /*
- * Replies Foundry drafts.
+ * Replies StockChief drafts.
  *
  * This is the first place a model writes words addressed to somebody outside
  * the business, so the tests are about what it is not allowed to say. A draft
  * that invents a figure, names a date nobody committed to, claims work was
  * done, or promises a refund is thrown away — and the owner is told which of
- * those it was, because "Foundry wrote something and binned it" is only
+ * those it was, because "StockChief wrote something and binned it" is only
  * trustworthy if it says what was wrong.
  */
 
@@ -51,7 +51,7 @@ function arrive(env, { sender = 'orders@abcschool.test', subject = 'Our order', 
 /** A shipped order for a customer whose email the message will come from. */
 function shippedOrderFor(env) {
   const customer = sales.createCustomer(env.db, env.ctx, {
-    name: 'ABC School', email: 'orders@abcschool.test',
+    name: 'ABC School', email: 'orders@abcschool.test', shippingAddress: '7 Example Lane, Albany, NY 12207, US',
   });
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 30 });
   const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
@@ -81,7 +81,7 @@ test('the facts handed to the model are records, not prose', () => {
   assert.match(joined, /expected 2026-09-08/);
 });
 
-test('a stranger gets facts that say Foundry knows nothing about them', () => {
+test('a stranger gets facts that say StockChief knows nothing about them', () => {
   const env = setup();
   const id = arrive(env, { sender: 'someone@nowhere.test' });
   const message = env.db.prepare('SELECT * FROM connection_email_messages WHERE id = ?').get(id);
@@ -122,7 +122,7 @@ test('a draft that claims work was done, or promises a refund, is refused', asyn
   const claimed = await drafting.draft(env.db, env.ctx, arrive(env), {
     provider: provider({ subject: 'Re', body: 'We have transferred the stock across for you.' }),
   });
-  assert.equal(claimed.rejected, 'it claimed something had been done that Foundry cannot show was done');
+  assert.equal(claimed.rejected, 'it claimed something had been done that StockChief cannot show was done');
 
   const promised = await drafting.draft(env.db, env.ctx, arrive(env), {
     provider: provider({ subject: 'Re', body: 'We will send a full refund and guarantee it arrives.' }),
@@ -174,7 +174,7 @@ test('an owner can rewrite the draft, and rewriting clears the machine authorshi
   });
   assert.equal(saved.source, 'person');
   assert.match(saved.body, /went out Monday/,
-    'a person may write what they like; the guard is on what Foundry writes');
+    'a person may write what they like; the guard is on what StockChief writes');
   assert.throws(() => drafting.saveDraft(env.db, env.ctx, id, { body: '   ' }), /needs something in it/);
 });
 

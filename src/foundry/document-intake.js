@@ -81,7 +81,7 @@ const DOCUMENT_SCHEMA = {
     /*
      * The purchase order this document is about, in the document's own words.
      * A supplier invoice almost always quotes it, and it is the difference
-     * between a bill Foundry can match and one somebody has to hunt down.
+     * between a bill StockChief can match and one somebody has to hunt down.
      */
     referencedOrderNumber: { type: 'string' },
     charges: { type: 'array', maxItems: 30, items: CHARGE_SCHEMA },
@@ -119,7 +119,7 @@ supplierName is the seller's actual company or trading name. When a branded head
 
 supplierCodeLabel is the exact heading this document uses for the supplier's identifier for a product, such as "Style #", "Item No.", "Vendor SKU", or "Supplier Code". Use an empty string only when no such heading is present. Regardless of its wording, put the identifier value in supplierSku.
 
-destinationName is the name of a PLACE the stock is kept — a warehouse, a store, a branch, a unit, a bay: "Main Warehouse", "Downtown Store", "Unit 4". It is not the buyer's company name. A supplier document is addressed to the business that is buying, so the ship-to is usually the reader's own company and their street address, and neither is the name of a place inside their business. When the document names no such place, leave it empty; Foundry has a sensible default and a company name used as a warehouse reads like a mistake to the person who owns it. For a stock report it is the row location only when one common location is explicit. Use a concise operational location name, preserving a real name from the document. Return ISO YYYY-MM-DD for an unambiguous date; otherwise empty.`;
+destinationName is the name of a PLACE the stock is kept — a warehouse, a store, a branch, a unit, a bay: "Main Warehouse", "Downtown Store", "Unit 4". It is not the buyer's company name. A supplier document is addressed to the business that is buying, so the ship-to is usually the reader's own company and their street address, and neither is the name of a place inside their business. When the document names no such place, leave it empty; StockChief has a sensible default and a company name used as a warehouse reads like a mistake to the person who owns it. For a stock report it is the row location only when one common location is explicit. Use a concise operational location name, preserving a real name from the document. Return ISO YYYY-MM-DD for an unambiguous date; otherwise empty.`;
 
 function clean(value) { return String(value || '').replace(/\u0000/g, '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim(); }
 
@@ -183,7 +183,7 @@ async function extractText(file) {
   } else text = buffer.toString('utf8');
 
   text = clean(text);
-  if (text.length < 20) throw new ValidationError('Foundry could not find readable inventory text in that document. Try a clearer scan or a higher-resolution copy.');
+  if (text.length < 20) throw new ValidationError('StockChief could not find readable inventory text in that document. Try a clearer scan or a higher-resolution copy.');
   return text.slice(0, MAX_TEXT);
 }
 
@@ -201,7 +201,7 @@ function normalise(raw) {
     })).filter((entry) => entry.locationName),
   })).filter((line) => line.styleName && line.quantity > 0);
   /*
-   * Charges keep the document's own wording and its own signs. Foundry does
+   * Charges keep the document's own wording and its own signs. StockChief does
    * not net them off, allocate them across products, or decide which of them
    * are "real" — that is the owner's call once they can see them, and they
    * could not see them at all while these were being discarded.
@@ -246,10 +246,10 @@ async function interpret(text, options = {}) {
     signal: options.signal,
   });
   const result = validate(toWireSchema(DOCUMENT_SCHEMA), response.data, { key: 'setup-document-wire' });
-  if (!result.ok) throw new ValidationError('Foundry could not reliably read the inventory lines in that document.');
+  if (!result.ok) throw new ValidationError('StockChief could not reliably read the inventory lines in that document.');
   const interpreted = normalise(result.data);
   if (!interpreted.businessDescription) throw new ValidationError('The document does not establish enough about the inventory to configure it safely.');
-  if (!interpreted.lines.length) throw new ValidationError('Foundry found no inventory quantities to add in that document.');
+  if (!interpreted.lines.length) throw new ValidationError('StockChief found no inventory quantities to add in that document.');
   Object.defineProperty(interpreted, '_usage', { value: response.usage || null, enumerable: false });
   return interpreted;
 }
@@ -327,7 +327,7 @@ function understandingFromDocument(interpretation, sourceName) {
     rationale: `Every configured product, variant, location, supplier and quantity comes directly from ${sourceName}; no additional operation was inferred.`,
   };
   const checked = validate(UNDERSTANDING_SCHEMA, result, { key: 'document-understanding' });
-  if (!checked.ok) throw new ValidationError('Foundry could not turn that document into a safe inventory configuration.', { errors: checked.errors });
+  if (!checked.ok) throw new ValidationError('StockChief could not turn that document into a safe inventory configuration.', { errors: checked.errors });
   return checked.data;
 }
 
@@ -495,7 +495,7 @@ const INTENTS = {
 
 /**
  * Opening stock: what the business already had, on the day it started using
- * Foundry.
+ * StockChief.
  *
  * This does not go through supplier receiving, and that is the whole point.
  * Receiving posts inventory against Received-Not-Invoiced — a debt to the
@@ -614,7 +614,7 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
         existingSkuForDocumentLine(db, ctx.workspaceId, supplier.id, group.name, line));
       const matchedCount = existingForLine.filter(Boolean).length;
       if (matchedCount && matchedCount !== group.lines.length) {
-        throw new ValidationError(`${group.name} partly matches existing inventory. Review its variants before importing; Foundry did not create a duplicate item.`);
+        throw new ValidationError(`${group.name} partly matches existing inventory. Review its variants before importing; StockChief did not create a duplicate item.`);
       }
       let skus;
       if (matchedCount === group.lines.length) {
@@ -633,7 +633,7 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
       }
       for (const [index, line] of group.lines.entries()) {
         const sku = skus[index];
-        if (!sku) throw new ValidationError(`Foundry could not match size ${line.size} for ${group.name}.`);
+        if (!sku) throw new ValidationError(`StockChief could not match size ${line.size} for ${group.name}.`);
         supplierService.linkItem(db, ctx, membership, {
           supplierId: supplier.id, skuId: sku.id, supplierSku: line.supplierSku,
           supplierDescription: line.description, purchaseUnit: interpretation.unitLabel, unitsPerPurchaseUnit: 1,
@@ -682,7 +682,7 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
       : null;
     /*
      * "Are these expected to arrive?" — the one question a bill with no order
-     * behind it needs answered. Foundry will record what is owed either way;
+     * behind it needs answered. StockChief will record what is owed either way;
      * what it will not do is invent a purchase nobody told it about.
      */
     const expectsGoods = options.documentIntent === 'Yes, they are coming';
@@ -723,7 +723,7 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
      */
     /*
      * The money. Recorded whether or not there was an order to match — a bill
-     * is owed regardless of how tidy Foundry's purchasing records are — and
+     * is owed regardless of how tidy StockChief's purchasing records are — and
      * compared against the order when there is one, so a supplier billing for
      * more than they were asked for is a fact somebody sees rather than a
      * silent adjustment.
@@ -827,7 +827,7 @@ function apply(db, ctx, membership, understandingId, planId, options = {}) {
       // The goods belong to the document, not to what was chosen to do with
       // it. Reading this from the opening value meant a proforma answered
       // with "Place the order" recorded its freight and forgot the goods the
-      // freight was on — and the reconciliation then blamed Foundry for a
+      // freight was on — and the reconciliation then blamed StockChief for a
       // misread that never happened.
       goodsMinor: require('../accounting/document-costs').goodsValueOf(interpretation)
         || result.openingValueMinor || 0,

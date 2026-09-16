@@ -36,12 +36,13 @@ const productNavigation = require('../../product-brain/navigation');
 const jobRunner = require('../../foundry/job-runner');
 const structuredCatalogue = require('../../actions/structured-catalogue');
 const catalogueIntelligence = require('../../actions/catalogue-intelligence');
+const queryPlanner = require('../../attention/query-planner');
 
 const router = express.Router();
 const MAX_PRODUCT_DESCRIPTION = 12_000;
 router.use(['/foundry/tell', '/foundry/navigate', '/inventory/describe', '/inventory/catalogue-review', '/needs-you', '/investigations', '/document-removals', '/import-removals', '/catalog-code-changes'], requireAuth);
 
-/** One validated gateway for every destination Foundry offers in conversation. */
+/** One validated gateway for every destination StockChief offers in conversation. */
 router.get('/foundry/navigate', (req, res) => {
   const href = String(req.query.to || '');
   const access = req.app.locals.productBrain.accessForHref(href, req.user);
@@ -78,7 +79,7 @@ function startCatalogueReview(req, description) {
   const jobId = jobRunner.createJob(ctx.workspaceId, 'catalogue_review', description, {
     track: 'catalogue',
     subject: catalogueSubject(description),
-    subjectDetail: 'the products you asked Foundry to add',
+    subjectDetail: 'the products you asked StockChief to add',
     db,
   });
 
@@ -117,12 +118,12 @@ function startCatalogueReview(req, description) {
     }
     return {
       errorMessage: result.message || result.unsupported
-        || 'Foundry could not make a safe product preview from that description. Nothing was added.',
+        || 'StockChief could not make a safe product preview from that description. Nothing was added.',
     };
   }, {
     db,
     deadlineMs: Number(req.app.locals.catalogueReviewDeadlineMs) || 30_000,
-    timeoutMessage: 'Foundry could not finish reviewing those products within 30 seconds. Nothing was created, and your description is still here.',
+    timeoutMessage: 'StockChief could not finish reviewing those products within 30 seconds. Nothing was created, and your description is still here.',
   });
 
   return jobId;
@@ -132,13 +133,13 @@ function startCatalogueReview(req, description) {
  * Describing products is an inventory action, not another pass through
  * business setup. Keep it on its own URL so an already-configured workspace
  * can turn ordinary words into the same reviewable catalogue proposals as
- * Ask Foundry without ever falling back into onboarding.
+ * Ask StockChief without ever falling back into onboarding.
  */
 router.get('/inventory/describe', (req, res) => {
   const priorJobId = String(req.query.review || '');
   const priorJob = priorJobId ? jobRunner.getJob(priorJobId, req.ctx.workspaceId, req.db) : null;
   res.page('inventory/describe', {
-    title: 'Tell Foundry what you sell',
+    title: 'Tell StockChief what you sell',
     nav: 'inventory',
     description: priorJob && priorJob.kind === 'catalogue_review' ? (priorJob.description || '') : '',
     error: null,
@@ -150,16 +151,16 @@ router.post('/inventory/describe', asyncRoute(async (req, res) => {
   const description = trimOrNull(req.body.description) || '';
   if (description.length < 3) {
     return res.status(400).page('inventory/describe', {
-      title: 'Tell Foundry what you sell',
+      title: 'Tell StockChief what you sell',
       nav: 'inventory',
       description,
-      error: 'Describe at least one product you want Foundry to add.',
+      error: 'Describe at least one product you want StockChief to add.',
       catalogueReview: null,
     });
   }
   if (description.length > MAX_PRODUCT_DESCRIPTION) {
     return res.status(400).page('inventory/describe', {
-      title: 'Tell Foundry what you sell',
+      title: 'Tell StockChief what you sell',
       nav: 'inventory',
       description,
       error: `Keep this description to ${MAX_PRODUCT_DESCRIPTION.toLocaleString()} characters or import a file for a larger catalogue.`,
@@ -181,7 +182,7 @@ function catalogueReviewJob(req) {
 function renderMissingDetails(req, res, job, options = {}) {
   const originalReview = job.result.catalogueReview;
   const reconciledRecords = structuredCatalogue.reconcileComponentSkus(originalReview.records || []);
-  const review = {
+  const review = options.review || {
     ...originalReview,
     records: reconciledRecords,
     issues: structuredCatalogue.issueList(reconciledRecords),
@@ -218,7 +219,17 @@ router.get('/inventory/catalogue-review/:jobId', (req, res) => {
     req.flash('warn', 'That catalogue review is no longer available. Start the review again.');
     return res.redirect(303, '/inventory/describe');
   }
-  return renderMissingDetails(req, res, job);
+  const originalReview = job.result.catalogueReview;
+  const records = structuredCatalogue.reconcileComponentSkus(originalReview.records || []);
+  const review = { ...originalReview, records, issues: structuredCatalogue.issueList(records) };
+  // Reviews completed by an older parser may already contain every answer in
+  // their literal fields. Re-read that evidence and continue instead of
+  // presenting an empty or repeated question screen.
+  if (!review.issues.length) {
+    const nextJobId = startCatalogueReview(req, structuredCatalogue.serialize(records));
+    return res.redirect(303, `/foundry/thinking/${nextJobId}`);
+  }
+  return renderMissingDetails(req, res, job, { review });
 });
 
 router.post('/inventory/catalogue-review/:jobId', asyncRoute(async (req, res) => {
@@ -243,7 +254,7 @@ router.post('/inventory/catalogue-review/:jobId', asyncRoute(async (req, res) =>
 /**
  * A capability question is not yet a policy change.
  *
- * "Can you set up restrictions?" asks what Foundry can do and where to begin.
+ * "Can you set up restrictions?" asks what StockChief can do and where to begin.
  * Sending that sentence straight into the rule compiler produces a technically
  * accurate but useless list of missing fields. Keep the product knowledge
  * deterministic, answer the question, and offer one bounded next choice.
@@ -261,7 +272,7 @@ function asksAboutRestrictions(message) {
 
 function restrictionHelp(message) {
   return {
-    question: 'Yes. Foundry can protect low stock, limit automatic purchasing or transfers, control supplier price and quantity changes, and decide when supplier emails may be sent. Which restriction do you want to set first?',
+    question: 'Yes. StockChief can protect low stock, limit automatic purchasing or transfers, control supplier price and quantity changes, and decide when supplier emails may be sent. Which restriction do you want to set first?',
     instruction: message,
     choices: [
       {
@@ -343,10 +354,10 @@ function productResolution(db, workspaceId, proposal) {
 function incompleteRestrictionQuestion(message) {
   const clean = String(message || '').toLowerCase();
   if (/price|quantity[- ]?change|tolerance/.test(clean)) {
-    return 'Which supplier should this apply to, and what percentage change may Foundry accept without asking you?';
+    return 'Which supplier should this apply to, and what percentage change may StockChief accept without asking you?';
   }
   if (/email|message|send/.test(clean)) {
-    return 'Which supplier is this for, and up to what order value may Foundry send without asking you?';
+    return 'Which supplier is this for, and up to what order value may StockChief send without asking you?';
   }
   if (/transfer|move/.test(clean)) {
     return 'What product or locations should the transfer restriction cover, and what maximum quantity should be allowed?';
@@ -355,9 +366,9 @@ function incompleteRestrictionQuestion(message) {
     return 'Which supplier or products should the purchasing restriction cover, and what approval or spending limit do you want?';
   }
   if (/stock|sale|outgoing|issue|low/.test(clean)) {
-    return 'Which product should Foundry protect, at what quantity, and should it block outgoing stock or only warn you?';
+    return 'Which product should StockChief protect, at what quantity, and should it block outgoing stock or only warn you?';
   }
-  return 'What should Foundry restrict: low-stock sales, purchasing, transfers, supplier changes, or supplier email sending?';
+  return 'What should StockChief restrict: low-stock sales, purchasing, transfers, supplier changes, or supplier email sending?';
 }
 
 router.post('/foundry/tell', asyncRoute(async (req, res) => {
@@ -372,9 +383,46 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   const workflow = trimOrNull(req.body.workflow) || '';
   const workflowStep = trimOrNull(req.body.workflowStep) || '';
   const workflowKind = trimOrNull(req.body.workflowKind) || '';
-  const message = answer
+  let message = answer
     ? `${original}${original ? ' — Clarification: ' : ''}${answer}`
     : trimOrNull(req.body.message) || (attached ? `Import ${attached.filename}` : '');
+  // The same semantic boundary handles every Ask submission. Reads remain
+  // reads; instructions continue directly into the registered manager handler
+  // in this POST, rather than displaying a second 'work out' button.
+  let chatAction = req.body.prepareOnly === '1';
+  if (!attached && req.body.queryConversation === '1' && message) {
+    const token = crypto.randomUUID();
+    const previous = req.session.askConversation?.workspaceId === req.ctx.workspaceId
+      ? req.session.askConversation : null;
+    // Snapshot the referent at submission time. Refresh/back must not reinterpret
+    // a follow-up against its own answer.
+    let result;
+    try {
+      result = await queryPlanner.ask(req.db, req.ctx.workspaceId, message, {
+        provider:req.app.locals.aiProvider || undefined,membership:req.user,
+        productBrain:req.app.locals.productBrain,actorId:req.ctx.actorId,
+        conversation:previous,timezone:'America/New_York',
+      });
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.session.askTurns=[...(req.session.askTurns||[]).slice(-7),{
+        token,workspaceId:req.ctx.workspaceId,question:message,conversation:previous,
+      }];
+      req.session.pendingAskResult={token,workspaceId:req.ctx.workspaceId,question:message,error:err.message,result:null};
+      return res.redirect(303, `/ask?q=${encodeURIComponent(message)}&followup=1&turn=${token}`);
+    }
+    if (!result.isAction) {
+      req.session.askTurns = [...(req.session.askTurns || []).slice(-7), {
+        token,workspaceId:req.ctx.workspaceId,question:message,conversation:previous,
+      }];
+      // One interpretation, not a second paid call after the redirect. Consume
+      // once; later refreshes perform fresh reads against the immutable turn.
+      req.session.pendingAskResult={token,workspaceId:req.ctx.workspaceId,question:message,result};
+      return res.redirect(303, `/ask?q=${encodeURIComponent(message)}&followup=1&turn=${token}`);
+    }
+    chatAction = true;
+    if (previous?.clarification) message=`${previous.question}\nFollow-up answer: ${message}`;
+  }
   const tabular = attached && /\.(csv|tsv|xlsx|xls|txt)$/i.test(attached.filename || '');
   const operationalDocument = attached && /\.(pdf|docx|xlsx|xls|csv|tsv|txt)$/i.test(attached.filename || '');
   const receivingHint = /arriv|deliver|shipment|packing|receive|received|supplier invoice/i.test(message);
@@ -410,7 +458,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         WHERE workspace_id = ? AND status = 'NEEDS_HUMAN'
           AND attachment_name = ? AND attachment_content = ?`)
         .run(req.ctx.workspaceId, attached.filename, attached.buffer);
-      req.flash('success', `Foundry read ${attached.filename}. Review every product, variant, quantity, supplier and destination before anything changes.`);
+      req.flash('success', `StockChief read ${attached.filename}. Review every product, variant, quantity, supplier and destination before anything changes.`);
       return res.redirect(303, `/foundry/proposal/${prepared.understandingId}`);
     }
     const event = physicalEvents.record(req.db, req.ctx, {
@@ -421,10 +469,10 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     if (event.status === 'ROUTED') {
       managerContext.remember(req.db, req.ctx, { purchaseOrderId: event.matchedEntities.purchaseOrderId,
         entities: { purchaseOrderId: event.matchedEntities.purchaseOrderId, physicalEventId: event.id } });
-      req.flash('success', `Foundry read ${attached.filename}, matched it to ${event.matchedEntities.poNumber}, and prepared the receipt. Review the physical quantities before stock changes.`);
+      req.flash('success', `StockChief read ${attached.filename}, matched it to ${event.matchedEntities.poNumber}, and prepared the receipt. Review the physical quantities before stock changes.`);
       return res.redirect(303, `/purchasing/orders/${event.matchedEntities.purchaseOrderId}/receive?event=${event.id}`);
     }
-    req.flash('info', `Foundry read ${attached.filename}, but could not safely match it to exactly one open purchase order.`);
+    req.flash('info', `StockChief read ${attached.filename}, but could not safely match it to exactly one open purchase order.`);
     return res.redirect(303, '/needs-you');
   }
   if (tabular) {
@@ -433,8 +481,8 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       operationScope: pricingUpdateHint ? 'selling_price_update' : null,
     });
     req.flash('success', pricingUpdateHint
-      ? `Foundry read ${attached.filename} as a pricing update. Review the exact existing variants and prices; this cannot create products or change stock.`
-      : `Foundry read ${attached.filename}. Review the exact changes before anything is applied.`);
+      ? `StockChief read ${attached.filename} as a pricing update. Review the exact existing variants and prices; this cannot create products or change stock.`
+      : `StockChief read ${attached.filename}. Review the exact changes before anything is applied.`);
     return res.redirect(303, `/imports/${plan.id}`);
   }
   if (attached) {
@@ -444,10 +492,10 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         : /count|counted/.test(lower) ? 'physical_count'
           : /return/.test(lower) ? 'return' : /found/.test(lower) ? 'found_stock' : 'reported_event';
     const event = physicalEvents.record(req.db, req.ctx, {
-      eventType, statedAs: trimOrNull(req.body.message) || `Attached ${attached.filename} for Foundry to review.`,
+      eventType, statedAs: trimOrNull(req.body.message) || `Attached ${attached.filename} for StockChief to review.`,
       attachmentName: attached.filename, attachmentMime: attached.mimeType, attachmentBuffer: attached.buffer,
     });
-    req.flash('info', 'Foundry saved the evidence. The unresolved physical fact is in Needs you.');
+    req.flash('info', 'StockChief saved the evidence. The unresolved physical fact is in Needs you.');
     return res.redirect(303, '/needs-you');
   }
 
@@ -458,7 +506,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     try {
       const prepared = inventoryCostInstructions.prepare(req.db, req.ctx, message);
       req.session.pendingPurchaseCostBatch = prepared.proposals.map((proposal) => proposal.id);
-      req.flash('success', `Foundry understood ${prepared.currency} ${(prepared.unitCostMinor / 100).toFixed(2)} as the current purchase cost for ${prepared.productCount} product${prepared.productCount === 1 ? '' : 's'}. Review what changes${prepared.belowCostCount ? ` — ${prepared.belowCostCount} would sell below cost` : ''}.`);
+      req.flash('success', `StockChief understood ${prepared.currency} ${(prepared.unitCostMinor / 100).toFixed(2)} as the current purchase cost for ${prepared.productCount} product${prepared.productCount === 1 ? '' : 's'}. Review what changes${prepared.belowCostCount ? ` — ${prepared.belowCostCount} would sell below cost` : ''}.`);
       return res.redirect(303, '/pricing/purchase-costs/batch');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -478,7 +526,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       if (priceChanges.matchesEveryProductInstruction(message)) {
         const batch = priceChanges.interpretEvery(req.db, req.ctx, message);
         req.session.pendingPriceBatch = batch.map((proposal) => proposal.id);
-        req.flash('success', `Foundry understood one selling price for every product — ${batch.length} in all. Review the complete list before anything changes.`);
+        req.flash('success', `StockChief understood one selling price for every product — ${batch.length} in all. Review the complete list before anything changes.`);
         return res.redirect(303, '/pricing/proposals/batch');
       }
       if (priceChanges.matchesBulkInstruction(message)) {
@@ -486,13 +534,13 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
           provider: req.app.locals.aiProvider || undefined,
         });
         req.session.pendingPriceBatch = batch.map((proposal) => proposal.id);
-        req.flash('success', `Foundry understood ${batch.length} selling-price changes. Review the complete list before anything changes.`);
+        req.flash('success', `StockChief understood ${batch.length} selling-price changes. Review the complete list before anything changes.`);
         return res.redirect(303, '/pricing/proposals/batch');
       }
       const proposal = await priceChanges.interpret(req.db, req.ctx, message, {
         provider: req.app.locals.aiProvider || undefined,
       });
-      req.flash('success', 'Foundry understood the selling-price change. Review it before anything changes.');
+      req.flash('success', 'StockChief understood the selling-price change. Review it before anything changes.');
       return res.redirect(303, `/pricing/proposals/${proposal.id}`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -518,7 +566,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   if (importRemovals.matchesInstruction(message)) {
     try {
       const proposal = importRemovals.create(req.db, req.ctx, req.user, message);
-      req.flash('warning', `Foundry traced the newly added products to ${proposal.snapshot.source.sourceName}. Choose any combination or remove all; nothing changes until you approve.`);
+      req.flash('warning', `StockChief traced the newly added products to ${proposal.snapshot.source.sourceName}. Choose any combination or remove all; nothing changes until you approve.`);
       return res.redirect(303, `/import-removals/${proposal.id}`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -624,7 +672,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   /*
    * A payment that already happened.
    *
-   * The sentence is the only way Foundry learns about money that moved outside
+   * The sentence is the only way StockChief learns about money that moved outside
    * it. The fields are read from the sentence, the proposal is built against
    * real records, and nothing is posted until the owner sees what it will do —
    * the same shape as every other consequential action here.
@@ -639,7 +687,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       fields = null;
     }
     if (!fields) {
-      req.flash('warn', 'Foundry could not read that payment. Try naming who was paid, how much, and which invoice.');
+      req.flash('warn', 'StockChief could not read that payment. Try naming who was paid, how much, and which invoice.');
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'payment_report', null, 'NEEDS_CLARIFICATION');
       return res.redirect(303, '/accounting');
     }
@@ -660,6 +708,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       } else permissions.assertCan(req.user, permissions.MANAGE_SALES, 'create or change sales orders');
       const result = salesIntent.apply(req.db, req.ctx, parsed, {
         idempotencyKey: `tell-sales:${intent.id}`,
+        previewOnly: chatAction,
       });
       if (result.kind === 'question') {
         req.session.pendingSalesContinuation = result.continuation;
@@ -702,7 +751,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     try {
       const proposal = documentRemovals.create(req.db, req.ctx, req.user, message);
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'document_removal', proposal.id);
-      req.flash('warning', `Foundry found the earlier file and prepared the exact products it created. Nothing has been removed yet.`);
+      req.flash('warning', `StockChief found the earlier file and prepared the exact products it created. Nothing has been removed yet.`);
       return res.redirect(303, `/document-removals/${proposal.id}`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -717,7 +766,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         operation: intent.parameters,
       });
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'catalog_code_change', proposal.id);
-      req.flash('info', `Foundry prepared every matching internal code from ${proposal.operation.from} to ${proposal.operation.to}. Nothing has changed yet.`);
+      req.flash('info', `StockChief prepared every matching internal code from ${proposal.operation.from} to ${proposal.operation.to}. Nothing has changed yet.`);
       return res.redirect(303, `/catalog-code-changes/${proposal.id}`);
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -728,7 +777,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   }
   if (intent.handler === 'attachment_required' || intent.intentClass === 'IMPORT') {
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'attachment_required', null, 'NEEDS_CLARIFICATION');
-    req.flash('info', 'Attach the spreadsheet, PDF or document you want Foundry to read.');
+    req.flash('info', 'Attach the spreadsheet, PDF or document you want StockChief to read.');
     return res.redirect(303, '/#tell-foundry');
   }
   if (intent.handler === 'purchasing' || intent.intentClass === 'PURCHASING_REQUEST') {
@@ -758,11 +807,12 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     // just had no caller.
     const specific = await actionService.interpret(req.db, req.ctx, req.user, message, {
       provider: req.app.locals.aiProvider || undefined,
+      previewOnly: chatAction,
     });
     if (specific.kind === 'purchase_order' && specific.order) {
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'purchase_order', specific.order.id);
       managerContext.remember(req.db, req.ctx, { purchaseOrderId: specific.order.id });
-      req.flash('success', `Foundry drafted ${specific.order.poNumber}. Nothing is ordered until you approve it.`);
+      req.flash('success', `StockChief drafted ${specific.order.poNumber}. Nothing is ordered until you approve it.`);
       return res.redirect(303, `/purchasing/orders/${specific.order.id}`);
     }
     if (specific.kind === 'question' && specific.question && (specific.purchaseSpecific || namesAProduct)) {
@@ -772,7 +822,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         question: specific.question,
         instruction: message,
         choices: specific.choices || null,
-        continuation: specific.continuation || null,
+        continuation: specific.continuation ? {...specific.continuation,previewOnly:chatAction} : null,
         continuationId,
         answerAction: '/actions/ask',
       };
@@ -788,7 +838,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     const result = managerRunner.run(req.db, req.ctx, req.user, { trigger: 'tell-foundry-purchasing' });
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'manager_purchasing');
     req.flash('success', result.nothingToDo
-      ? 'Foundry checked stock, incoming orders, usage, lead times and supplier rules. No purchase is currently supported.'
+      ? 'StockChief checked stock, incoming orders, usage, lead times and supplier rules. No purchase is currently supported.'
       : `${result.planned} piece${result.planned === 1 ? '' : 's'} of inventory work prepared; ${result.awaiting} need your decision.`);
     return res.redirect(303, '/');
   }
@@ -798,7 +848,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         const prepared = inventoryCostInstructions.prepare(req.db, req.ctx, message);
         req.session.pendingPurchaseCostBatch = prepared.proposals.map((proposal) => proposal.id);
         intentRouter.markRouted(req.db, req.ctx, intent.id, 'inventory_cost_update');
-        req.flash('success', `Foundry understood ${prepared.currency} ${(prepared.unitCostMinor / 100).toFixed(2)} as the current purchase cost for ${prepared.productCount} product${prepared.productCount === 1 ? '' : 's'}. Review what changes${prepared.belowCostCount ? ` — ${prepared.belowCostCount} would sell below cost` : ''}.`);
+        req.flash('success', `StockChief understood ${prepared.currency} ${(prepared.unitCostMinor / 100).toFixed(2)} as the current purchase cost for ${prepared.productCount} product${prepared.productCount === 1 ? '' : 's'}. Review what changes${prepared.belowCostCount ? ` — ${prepared.belowCostCount} would sell below cost` : ''}.`);
         return res.redirect(303, '/pricing/purchase-costs/batch');
       } catch (err) {
         if (!err.status || err.status >= 500) throw err;
@@ -815,7 +865,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         managerContext.remember(req.db, req.ctx, {
           entities: { supplierCodeMappingProposalId: result.proposal.id, supplierId: result.proposal.supplierId },
         });
-        req.flash('success', `Foundry prepared the exact change from ${result.proposal.vendorCode} to ${result.proposal.internalBaseCode}. Nothing changes until you approve it.`);
+        req.flash('success', `StockChief prepared the exact change from ${result.proposal.vendorCode} to ${result.proposal.internalBaseCode}. Nothing changes until you approve it.`);
         return res.redirect(303, `/supplier-code-mappings/${result.proposal.id}`);
       } catch (err) {
         if (!err.status || err.status >= 500) throw err;
@@ -844,7 +894,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       intentRouter.markRouted(req.db, req.ctx, intent.id, handed.routedTo, handed.related);
       return res.redirect(303, handed.target);
     }
-    // Deleting the whole inventory is done on its own page, by name. Foundry
+    // Deleting the whole inventory is done on its own page, by name. StockChief
     // says so and points at it, rather than asking "which item?" again.
     if (result.kind === 'delete_inventory') {
       req.session.pendingActionQuestion = {
@@ -865,7 +915,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       return res.redirect(303, '/actions/location-required');
     }
     // A question goes where it can be answered. Only a flat refusal — something
-    // Foundry cannot do at all — belongs in a message you dismiss.
+    // StockChief cannot do at all — belongs in a message you dismiss.
     if (result.kind === 'question' && result.question) {
       let continuationId = null;
       if (result.continuation) {
@@ -901,12 +951,12 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     }
     /*
      * Every kind the reader can return is handled above. If one is not, that
-     * is a fault in Foundry, and it is reported as one — not as a request for
+     * is a fault in StockChief, and it is reported as one — not as a request for
      * the person to explain a sentence that was already clear.
      */
     console.error('[tell] interpret returned a kind this route does not show', { kind: result.kind });
     req.flash('error', result.message
-      || 'Foundry understood that but has no screen for it yet. That is a fault on our side, not in what you wrote. Nothing was changed.');
+      || 'StockChief understood that but has no screen for it yet. That is a fault on our side, not in what you wrote. Nothing was changed.');
     return res.redirect(303, '/#tell-foundry');
   }
   if (intent.handler === 'physical_event' || intent.intentClass === 'PHYSICAL_EVENT') {
@@ -918,7 +968,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     //
     // Matching an arrival to an open order is the happy path, but plenty of
     // stock arrives without one — during setup there are no orders at all. That
-    // case used to stop dead: Foundry had read the product, location and
+    // case used to stop dead: StockChief had read the product, location and
     // quantity correctly and then parked the whole thing in Needs you as an
     // event it could not place, so "we received 12 bags into the Warehouse"
     // recorded nothing and offered nothing to do about it.
@@ -926,10 +976,10 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     // It goes to the ordinary controlled path instead — the same interpret,
     // preview and approve that typing it as an instruction would have used. No
     // stock moves here; a proposal is created and somebody still says yes.
-    // Any report Foundry could not place, not just a delivery.
+    // Any report StockChief could not place, not just a delivery.
     //
     // An event left needing a person with no investigation behind it is one
-    // Foundry failed to resolve — "sold 5 House Blend" when House Blend comes
+    // StockChief failed to resolve — "sold 5 House Blend" when House Blend comes
     // in two sizes. Parking it repeats the sentence back as though that were
     // the explanation. The ordinary controlled path knows how to ask "which
     // one?", so it gets asked. A count that genuinely produced an
@@ -944,7 +994,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         physicalEvents.complete(req.db, req.ctx.workspaceId, event.id);
         intentRouter.markRouted(req.db, req.ctx, intent.id, 'action', related);
         managerContext.remember(req.db, req.ctx, { entities: { actionId: related } });
-        req.flash('info', 'No open order matches that delivery, so Foundry prepared it as a receipt. Nothing changes until you approve it.');
+        req.flash('info', 'No open order matches that delivery, so StockChief prepared it as a receipt. Nothing changes until you approve it.');
         return res.redirect(303, actionTarget);
       }
       const handedOn = actionHandoff.handOff(req, asAction);
@@ -999,7 +1049,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     const created = investigations.create(req.db, req.ctx.workspaceId, {
       trigger: 'operator_request', affectedEntities: managerContext.get(req.db, req.ctx.workspaceId, req.ctx.actorId).lastEntities,
       observedDifference: { statedAs: message }, confidence: 'low',
-      recommendedNextStep: 'Name the product and location, or provide a physical count, so Foundry can compare it with the ledger.',
+      recommendedNextStep: 'Name the product and location, or provide a physical count, so StockChief can compare it with the ledger.',
       actorUserId: req.ctx.actorId,
     });
     const investigated = investigations.investigate(req.db, req.ctx.workspaceId, created.investigation.investigationId);
@@ -1007,16 +1057,16 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     managerContext.remember(req.db, req.ctx, { investigationId: investigated.investigationId });
     return res.redirect(303, `/investigations/${investigated.investigationId}`);
   }
-  // Somebody asking Foundry to stop gets Foundry stopped, now, not a form.
+  // Somebody asking StockChief to stop gets StockChief stopped, now, not a form.
   // Pausing takes no inventory action, is reversible in one click, and is the
   // only reading of "stop" that is safe to be wrong about.
   if (intent.handler === 'autopilot_pause' || intent.intentClass === 'STOP') {
     const state = autopilotModes.get(req.db, req.ctx.workspaceId);
     if (state.paused) {
-      req.flash('info', 'Foundry is already paused. Nothing runs automatically until you resume it.');
+      req.flash('info', 'StockChief is already paused. Nothing runs automatically until you resume it.');
     } else {
       autopilotModes.pause(req.db, req.ctx, req.user, message);
-      req.flash('success', 'Stopped. Foundry will not do anything automatically until you resume it. Work already waiting for you is still there.');
+      req.flash('success', 'Stopped. StockChief will not do anything automatically until you resume it. Work already waiting for you is still there.');
     }
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'autopilot_pause');
     return res.redirect(303, '/autopilot');
@@ -1027,20 +1077,20 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     // review; it can never be translated into broad authority or approved in
     // one step.
     /*
-     * A shipping rule is a policy change with a shape Foundry can read exactly.
+     * A shipping rule is a policy change with a shape StockChief can read exactly.
      *
      * Tried before the general path because the general path produces a
      * proposal for a person to approve, and this one does not need to: every
      * value in it came out of the owner's own characters by pattern, so there
      * is nothing for them to check that they did not just type. What it cannot
      * read cleanly falls through to the ordinary proposal, which is the right
-     * place for anything uncertain about what Foundry may do.
+     * place for anything uncertain about what StockChief may do.
      */
     const shippingRule = require('../../shipping/rule-intent').read(message);
     if (shippingRule.understood) {
       const saved = require('../../shipping/rule-intent').applySentence(req.db, req.ctx, message);
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'shipping_rule', saved.saved.id);
-      req.flash('success', `Saved: ${saved.because} Foundry still needs permission to buy labels `
+      req.flash('success', `Saved: ${saved.because} StockChief still needs permission to buy labels `
         + 'before it acts on this by itself.');
       return res.redirect(303, '/settings/shipping');
     }
@@ -1055,7 +1105,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     if (/handle\s+everything|everything\s+you\s+(?:safely\s+)?can/i.test(message)) {
       req.session.policyReviewAll = true;
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'policy_settings');
-      req.flash('info', 'Unlimited authority is never created. Foundry opened the bounded transfer and purchasing policies it can safely support.');
+      req.flash('info', 'Unlimited authority is never created. StockChief opened the bounded transfer and purchasing policies it can safely support.');
       return res.redirect(303, '/autopilot');
     }
     try {
@@ -1081,7 +1131,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       return res.redirect(303, '/actions');
     }
   }
-  req.flash('warn', 'Foundry could not safely route that yet. Say what happened or what outcome you want.');
+  req.flash('warn', 'StockChief could not safely route that yet. Say what happened or what outcome you want.');
   return res.redirect(303, '/#tell-foundry');
 }));
 
@@ -1117,7 +1167,7 @@ const autopilotModes = require('../../autopilot/modes');
 router.get('/operating-instructions/:id', asyncRoute(async (req, res) => {
   const proposal = operatingInstructions.get(req.db, req.ctx.workspaceId, req.params.id);
   return res.page('manager/operating-instruction', {
-    title: 'Review what Foundry should remember', nav: 'settings', proposal,
+    title: 'Review what StockChief should remember', nav: 'settings', proposal,
     clarification: operatingInstructions.clarificationFor(proposal),
     productResolution: productResolution(req.db, req.ctx.workspaceId, proposal),
     descriptions: proposal.resolvedChanges.map(operatingInstructions.describe),
@@ -1226,7 +1276,7 @@ router.post('/operating-instructions/:id/approve', asyncRoute(async (req, res) =
 
 router.post('/operating-instructions/:id/cancel', asyncRoute(async (req, res) => {
   operatingInstructions.cancel(req.db, req.ctx, req.params.id);
-  req.flash('success', 'Left unchanged. Foundry did not remember that instruction.');
+  req.flash('success', 'Left unchanged. StockChief did not remember that instruction.');
   return res.redirect(303, '/');
 }));
 
@@ -1259,7 +1309,7 @@ router.post('/operating-instructions/:id/select-product', asyncRoute(async (req,
 router.post('/operating-instructions/:id/remove', asyncRoute(async (req, res) => {
   try {
     operatingInstructions.remove(req.db, req.ctx, req.user, req.params.id);
-    req.flash('success', 'Rule removed. Foundry will no longer follow it.');
+    req.flash('success', 'Rule removed. StockChief will no longer follow it.');
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
     req.flash('error', err.message);
@@ -1268,9 +1318,9 @@ router.post('/operating-instructions/:id/remove', asyncRoute(async (req, res) =>
 }));
 
 /**
- * Finishing one thing Foundry could not record.
+ * Finishing one thing StockChief could not record.
  *
- * The card used to point at the general Tell Foundry box, where the only thing
+ * The card used to point at the general Tell StockChief box, where the only thing
  * a customer could do was retype the sentence that had already failed. This
  * takes the sentence they already gave, works it out again now, and lands them
  * on whatever actually resolves it:
@@ -1300,7 +1350,7 @@ router.get(
     const target = actionRedirect(result);
     if (target) {
       physicalEvents.complete(req.db, req.ctx.workspaceId, event.id);
-      req.flash('info', 'Foundry worked this out. Nothing changes until you approve it.');
+      req.flash('info', 'StockChief worked this out. Nothing changes until you approve it.');
       return res.redirect(303, target);
     }
 
@@ -1329,7 +1379,7 @@ router.get(
 
     // Nothing above fits. Say so plainly rather than bouncing them somewhere.
     req.session.pendingActionQuestion = {
-      question: 'What should Foundry record for this? Say the product, the place and how many.',
+      question: 'What should StockChief record for this? Say the product, the place and how many.',
       instruction: event.statedAs,
       physicalEventId: event.id,
     };
@@ -1351,7 +1401,7 @@ router.post('/needs-you/dismiss', asyncRoute(async (req, res) => {
   }
   needsYouDismissals.dismiss(req.db, req.ctx, entryId);
   require('../../attention/needs-you-count').invalidateNeedsYou(req.db,req.ctx.workspaceId);
-  req.flash('success', 'Dismissed completely. Foundry will not surface it again; the underlying record was not changed.');
+  req.flash('success', 'Dismissed completely. StockChief will not surface it again; the underlying record was not changed.');
   return res.redirect(303, '/needs-you');
 }));
 
@@ -1398,7 +1448,7 @@ router.get('/investigations/:id', asyncRoute(async (req, res) => {
  * Resolving an investigation deliberately does not touch stock, and it must
  * stay that way — a button that silently writes a balance is the thing this
  * whole layer exists to avoid. But closing the investigation and stopping there
- * left the opposite problem: Foundry had confirmed physical evidence that the
+ * left the opposite problem: StockChief had confirmed physical evidence that the
  * shelf held five, went on recording eight, and reported that nothing needed
  * anybody. Known-wrong inventory with an empty exceptions list is worse than an
  * open question.
@@ -1450,7 +1500,7 @@ router.post('/investigations/:id/resolve', asyncRoute(async (req, res) => {
       });
       req.flash(
         'success',
-        'Count confirmed. Foundry prepared the correction to the ledger — it still needs your approval, '
+        'Count confirmed. StockChief prepared the correction to the ledger — it still needs your approval, '
           + 'and nothing has changed yet.'
       );
       return res.redirect(303, `/actions/${stored.proposalId}`);
@@ -1459,7 +1509,7 @@ router.post('/investigations/:id/resolve', asyncRoute(async (req, res) => {
     // The ledger may already agree by the time this is confirmed. Say so rather
     // than pretending a correction is waiting.
     req.flash('info', built.unsupported || built.question
-      || 'Foundry could not prepare that correction. The investigation is closed and stock is unchanged.');
+      || 'StockChief could not prepare that correction. The investigation is closed and stock is unchanged.');
     return res.redirect(303, '/needs-you');
   }
 

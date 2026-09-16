@@ -2,7 +2,7 @@
 
 /**
  * The gate. Every autonomous action passes through here, and nothing else
- * decides whether Foundry may act.
+ * decides whether StockChief may act.
  *
  * It is deliberately dull code: measurements compared with numbers a person
  * approved. No model is consulted, no heuristic is applied, and the same inputs
@@ -11,7 +11,7 @@
  *
  * The verdict is one of:
  *
- *   authorized      every condition and limit passed; Foundry may proceed
+ *   authorized      every condition and limit passed; StockChief may proceed
  *   needs_approval  the work is sound but nothing authorises doing it silently
  *   refused         a limit or condition says no; the work must not happen
  *
@@ -30,7 +30,7 @@ const DAY_MS = 24 * HOUR_MS;
 const check = (name, passed, detail) => ({ name, passed, detail });
 
 /**
- * The value Foundry has already committed automatically today.
+ * The value StockChief has already committed automatically today.
  *
  * Only actions whose value was actually known are counted. An unpriced transfer
  * contributes nothing rather than a guessed figure — a budget spent against
@@ -48,11 +48,11 @@ function valueToday(db, workspaceId, { now = Date.now() } = {}) {
 }
 
 /**
- * How long a migrated inventory operates before Foundry may act on it, and how
+ * How long a migrated inventory operates before StockChief may act on it, and how
  * much real trading it must have done.
  *
  * Deliberately modest. This is a settling period, not a probation: it exists so
- * that the first automatic action rests on movements Foundry recorded itself
+ * that the first automatic action rests on movements StockChief recorded itself
  * rather than on a spreadsheet's opening figure.
  */
 const SETTLING_DAYS = 14;
@@ -73,11 +73,11 @@ function migrationSettled(db, workspaceId, { now = Date.now() } = {}) {
     .get(workspaceId);
 
   if (!opening || !opening.last) {
-    return { ok: true, detail: 'nothing was imported; every movement is Foundry’s own' };
+    return { ok: true, detail: 'nothing was imported; every movement is StockChief’s own' };
   }
 
   // Movements recorded after the opening balances, excluding the import itself
-  // and Foundry's own automatic work — a migration cannot vouch for itself, and
+  // and StockChief's own automatic work — a migration cannot vouch for itself, and
   // neither can the automation being judged.
   const since = db
     .prepare(
@@ -93,7 +93,7 @@ function migrationSettled(db, workspaceId, { now = Date.now() } = {}) {
       detail: `${since.n} movements over ${Math.floor(days)} days since the opening balances`,
       because:
         'This inventory was brought in from somewhere else and has not been operated here long enough ' +
-        'for Foundry to act on its own yet. It will keep preparing the work for you.',
+        'for StockChief to act on its own yet. It will keep preparing the work for you.',
     };
   }
   return { ok: true, detail: `${since.n} movements over ${Math.floor(days)} days since the opening balances` };
@@ -170,9 +170,9 @@ function evaluate(db, workspaceId, plan, options = {}) {
   const now = options.now || Date.now();
   const checks = [];
 
-  // 1. Is Foundry allowed to act at all in this workspace right now?
+  // 1. Is StockChief allowed to act at all in this workspace right now?
   const execution = modes.executionState(db, workspaceId, { scope: plan.actionType });
-  checks.push(check('Foundry is able to act', execution.allowed, execution.because || null));
+  checks.push(check('StockChief is able to act', execution.allowed, execution.because || null));
   if (!execution.allowed) {
     return { decision: 'refused', reason: execution.because, checks, policy: null };
   }
@@ -181,7 +181,7 @@ function evaluate(db, workspaceId, plan, options = {}) {
    * 1b. Has this particular job been authorised?
    *
    * The mode is a ceiling, not a grant. It used to be both, so authorising
-   * Foundry to do anything authorised it to do everything — a customer
+   * StockChief to do anything authorised it to do everything — a customer
    * payment request and a purchase order came out of the same switch.
    *
    * A job nobody has granted is prepared and waits for a person, which is the
@@ -190,11 +190,11 @@ function evaluate(db, workspaceId, plan, options = {}) {
   const job = CAPABILITY_FOR_ACTION[plan.actionType];
   const authorised = job && require('./capabilities').granted(db, workspaceId, job);
   const jobReason = job
-    ? `Nobody has authorised Foundry to ${require('./capabilities').CAPABILITIES[job].label.toLowerCase()} on its own.`
-    : `Nobody has authorised Foundry to do "${plan.actionType}" on its own.`;
+    ? `Nobody has authorised StockChief to ${require('./capabilities').CAPABILITIES[job].label.toLowerCase()} on its own.`
+    : `Nobody has authorised StockChief to do "${plan.actionType}" on its own.`;
   checks.push(check('This job has been authorised', Boolean(authorised), authorised ? null : jobReason));
   /*
-   * Only the job is judged here. Whether Foundry may act at all is the mode's
+   * Only the job is judged here. Whether StockChief may act at all is the mode's
    * question and it was answered above — reporting this reason when the mode
    * is the real blocker would tell somebody to grant a permission that would
    * change nothing.
@@ -206,7 +206,7 @@ function evaluate(db, workspaceId, plan, options = {}) {
   // 2. Are these records the ones that count?
   //
   // A workspace whose stock is really kept in another system can be read from
-  // and reconciled against, but Foundry writing to its own ledger there would
+  // and reconciled against, but StockChief writing to its own ledger there would
   // be writing to a copy — the movement would look successful and the business
   // would still be wrong. Until a connector can write and independently re-read
   // the result, that is prepared for a person, never executed. Fails closed:
@@ -218,7 +218,7 @@ function evaluate(db, workspaceId, plan, options = {}) {
     return {
       decision: 'needs_approval',
       reason:
-        'This inventory is kept in another system, so Foundry prepares the work rather than carrying it out here.',
+        'This inventory is kept in another system, so StockChief prepares the work rather than carrying it out here.',
       checks,
       policy: null,
     };
@@ -228,7 +228,7 @@ function evaluate(db, workspaceId, plan, options = {}) {
   //
   // A migration produces a workspace that looks fully stocked within minutes,
   // and every number in it is somebody else's — a spreadsheet's idea of what
-  // was on the shelf, not a movement Foundry watched happen. Acting on that
+  // was on the shelf, not a movement StockChief watched happen. Acting on that
   // immediately means acting on an unverified copy, and the first thing a
   // customer would see from their new system is stock moving on the strength of
   // a figure that was already wrong. Earning trust takes trading days.
@@ -249,7 +249,7 @@ function evaluate(db, workspaceId, plan, options = {}) {
     checks.push(check('An approved policy allows this', false, 'no policy covers this action'));
     return {
       decision: 'needs_approval',
-      reason: 'No policy authorises Foundry to do this on its own, so it is prepared for you instead.',
+      reason: 'No policy authorises StockChief to do this on its own, so it is prepared for you instead.',
       checks,
       policy: null,
     };
@@ -266,7 +266,7 @@ function evaluate(db, workspaceId, plan, options = {}) {
       if (!execution.automatic) {
         return {
           decision: 'needs_approval',
-          reason: 'This inventory is supervised, so Foundry prepares the work and waits for you.',
+          reason: 'This inventory is supervised, so StockChief prepares the work and waits for you.',
           checks: [...checks, ...result.checks],
           policy,
         };
@@ -369,7 +369,7 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
       if (spent + plan.value > limits.maxValuePerDay) {
         checks.push(check('Within the daily value budget', false, `${spent} already today`));
         return refuse(
-          `Foundry has committed ${spent} of its ${limits.maxValuePerDay} daily value budget, and this would go over it.`
+          `StockChief has committed ${spent} of its ${limits.maxValuePerDay} daily value budget, and this would go over it.`
         );
       }
       checks.push(check('Within the daily value budget', true, `${spent} of ${limits.maxValuePerDay} used`));
@@ -389,7 +389,7 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
   const today = actionsToday(db, workspaceId, { now });
   if (today >= limits.maxActionsPerDay) {
     checks.push(check('Within the daily budget', false, `${today} already today`));
-    return refuse(`Foundry has already taken its ${limits.maxActionsPerDay} automatic actions for today.`);
+    return refuse(`StockChief has already taken its ${limits.maxActionsPerDay} automatic actions for today.`);
   }
   if (policy.dailyLimit && today >= policy.dailyLimit) {
     checks.push(check('Within the policy daily limit', false, `${today} already today`));
@@ -405,7 +405,7 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
     if (hoursSince < limits.cooldownHours) {
       checks.push(check('Cooldown has elapsed', false, `${Math.round(hoursSince)}h of ${limits.cooldownHours}h`));
       return refuse(
-        `Foundry moved this product ${Math.round(hoursSince)} hours ago and waits ${limits.cooldownHours} hours before moving it again.`
+        `StockChief moved this product ${Math.round(hoursSince)} hours ago and waits ${limits.cooldownHours} hours before moving it again.`
       );
     }
   }
@@ -416,7 +416,7 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
   if (thisWeek >= limits.maxActionsPerItemPerWeek) {
     checks.push(check('Within the per-product weekly limit', false, `${thisWeek} this week`));
     return refuse(
-      `Foundry has already moved this product ${thisWeek} times this week, which is its limit. Something else is going on here.`
+      `StockChief has already moved this product ${thisWeek} times this week, which is its limit. Something else is going on here.`
     );
   }
   checks.push(check('Within the per-product weekly limit', true, `${thisWeek} of ${limits.maxActionsPerItemPerWeek}`));
@@ -433,7 +433,7 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
   if (reversal) {
     checks.push(check('Not a reversal of a recent move', false, `moved the other way on ${reversal.completedAt.slice(0, 10)}`));
     return refuse(
-      'This would move the stock straight back where it came from. Foundry stops rather than bouncing it between locations.'
+      'This would move the stock straight back where it came from. StockChief stops rather than bouncing it between locations.'
     );
   }
   checks.push(check('Not a reversal of a recent move', true, null));
@@ -443,7 +443,7 @@ function evaluateAgainstPolicy(db, workspaceId, plan, policy, limits, now) {
     const evidence = (plan.conditions || {})[condition];
     if (evidence === undefined) {
       checks.push(check(policyService.CONDITION_LABEL[condition] || condition, false, 'not measured'));
-      return refuse(`Foundry could not measure whether ${policyService.CONDITION_LABEL[condition]}.`);
+      return refuse(`StockChief could not measure whether ${policyService.CONDITION_LABEL[condition]}.`);
     }
     if (evidence !== true && !(evidence && evidence.passed)) {
       const detail = evidence && evidence.detail ? evidence.detail : null;
@@ -492,7 +492,7 @@ function detectConflicts(db, workspaceId, skuId, { totalOnHand }) {
     floors,
     message:
       `Your policies ask for ${required} units to be kept in reserve across locations, but there are only ` +
-      `${totalOnHand}. Foundry will not keep moving stock between them trying to satisfy both — decide which matters more.`,
+      `${totalOnHand}. StockChief will not keep moving stock between them trying to satisfy both — decide which matters more.`,
   };
 }
 

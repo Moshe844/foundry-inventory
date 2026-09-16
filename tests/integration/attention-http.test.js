@@ -2,7 +2,7 @@
 
 /**
  * Mission 3 over HTTP: the briefing, the evidence page, feedback, scoped
- * re-evaluation after a real operation, and Ask Foundry.
+ * re-evaluation after a real operation, and Ask StockChief.
  */
 
 const test = require('node:test');
@@ -85,7 +85,7 @@ test('the briefing lists findings, most urgent first, each with a reason', async
   assert.match(page, /Corduroy Cap/);
   assert.ok(page.indexOf('Navy Oxford') < page.indexOf('Corduroy Cap'), 'urgent first');
   assert.match(page, /were issued in the last/, 'the reason is on the card');
-  assert.match(page, /Foundry recommends|Worth reviewing/, 'and a suggestion');
+  assert.match(page, /StockChief recommends|Worth reviewing/, 'and a suggestion');
 });
 
 test('the detail page shows the evidence and separates estimates from measurements', async () => {
@@ -97,9 +97,9 @@ test('the detail page shows the evidence and separates estimates from measuremen
   const page = plain((await agent.get(`/attention/${item.attentionId}`)).text);
   assert.match(page, /The evidence/);
   assert.match(page, /Current stock/);
-  assert.match(page, /Foundry's working/);
+  assert.match(page, /StockChief's working/);
   assert.match(page, /calculated from the measured figures above, not counted/);
-  // A stockout has no operation Foundry can take, and it says so rather than
+  // A stockout has no operation StockChief can take, and it says so rather than
   // inventing a purchase action.
   assert.match(page, /draft the purchase order/);
   assert.match(page, /Detection rules/);
@@ -137,7 +137,7 @@ test('acknowledging and dismissing work from the briefing', async () => {
   assert.match(hidden, /Hidden until/);
 });
 
-test('rating an item records it without changing what Foundry checks', async () => {
+test('rating an item records it without changing what StockChief checks', async () => {
   const { app, workspace, db } = setup();
   const [item] = attention.listAttention(db, workspace.workspaceId);
   const agent = request.agent(app);
@@ -219,7 +219,7 @@ test('checking again re-runs detection on demand', async () => {
   assert.equal(attention.listAttention(db, workspace.workspaceId).length, 0);
 });
 
-test('Ask Foundry answers from the ledger and shows how it read the question', async () => {
+test('Ask StockChief answers from the ledger and shows how it read the question', async () => {
   const provider = fakeProvider({
     intent: 'stock_level',
     entityQuery: 'navy oxford',
@@ -239,7 +239,7 @@ test('Ask Foundry answers from the ledger and shows how it read the question', a
   assert.match(page, /changes are approved on the actions page/);
 });
 
-test('Ask Foundry reports completed sales orders without relabelling open-order zero', async () => {
+test('Ask StockChief reports completed sales orders without relabelling open-order zero', async () => {
   const provider = fakeProvider({
     intent: 'sales_summary',
     entityQuery: '',
@@ -257,6 +257,7 @@ test('Ask Foundry reports completed sales orders without relabelling open-order 
   });
   const order = sales.createOrder(db, workspace.ctx, {
     customerName: 'Completed Order Customer',
+    deliveryMethod: 'PICKUP',
     orderDate: '2026-09-09',
     lines: [{ skuId: scenario.skuId, quantity: 1 }],
   });
@@ -279,14 +280,14 @@ test('Ask Foundry reports completed sales orders without relabelling open-order 
   assert.doesNotMatch(page, /0 completed sales orders?/i);
 });
 
-test('Ask Foundry distinguishes no realized margin from a zero-profit claim', async () => {
+test('Ask StockChief distinguishes no realized margin from a zero-profit claim', async () => {
   const provider = fakeProvider({
     intent: 'unsupported',
     entityQuery: '',
     locationQuery: '',
     windowDays: 30,
     limit: 10,
-    unsupportedReason: 'Foundry does not know what you paid for stock.',
+    unsupportedReason: 'StockChief does not know what you paid for stock.',
   });
   const { app, workspace } = setup({ provider });
   const agent = request.agent(app);
@@ -315,7 +316,7 @@ test('every attention route needs a signed-in session', async () => {
   assert.equal(attention.getAttention(db, workspace.workspaceId, item.attentionId).status, 'OPEN');
 });
 
-test('the item page says what Foundry has noticed about that item', async () => {
+test('the item page says what StockChief has noticed about that item', async () => {
   const { app, workspace, db, scenario } = setup();
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
@@ -391,12 +392,12 @@ test('the briefing shows what the team has said about each check', async () => {
   await signIn(agent, workspace.account.email, workspace.account.password);
 
   // Nothing to show before anyone has said anything.
-  assert.ok(!plain((await agent.get('/attention')).text).includes('How Foundry is doing'));
+  assert.ok(!plain((await agent.get('/attention')).text).includes('How StockChief is doing'));
 
   await post(agent, `/attention/${item.attentionId}/rate`, { verdict: 'not_useful' }, `/attention/${item.attentionId}`);
 
   const page = plain((await agent.get('/attention')).text);
-  assert.match(page, /How Foundry is doing/);
+  assert.match(page, /How StockChief is doing/);
   assert.match(page, /Running low\s+1 not useful/);
   assert.match(page, /does not quietly re-tune/);
 });
@@ -426,7 +427,7 @@ test('a long briefing is paged, and the counts describe the whole of it', async 
   await signIn(agent, workspace.account.email, workspace.account.password);
 
   const first = plain((await agent.get('/attention')).text);
-  assert.match(first, /30 things Foundry thinks you should look at/, 'the count is the whole set');
+  assert.match(first, /30 things StockChief thinks you should look at/, 'the count is the whole set');
   assert.match(first, /1–25 of 30/);
   assert.match(first, /Next/);
   assert.ok(!first.includes('Previous'));
@@ -452,7 +453,7 @@ test('the nav shows a live count of what is open', async () => {
 
 /**
  * A page someone deliberately clicked must answer them. An empty inventory used
- * to be redirected to Foundry setup, which looked exactly like a broken link:
+ * to be redirected to StockChief setup, which looked exactly like a broken link:
  * you click "Needs attention" and end up somewhere you did not ask for.
  */
 test('an empty inventory gets an answer, not a silent redirect', async () => {
@@ -496,7 +497,7 @@ test('learning demand stays contextual and does not become a fake Needs you deci
      VALUES (?, datetime('now'), 1, '{}', '{}', '{"primaryArchetype":"quantity"}', datetime('now'))`
   ).run(workspace.workspaceId);
 
-  // Stock on hand, no outbound history: nothing is wrong, and Foundry is still
+  // Stock on hand, no outbound history: nothing is wrong, and StockChief is still
   // missing the operating signal it needs.
   const item = makeQuantityItem(store.db, workspace.ctx);
   engine.receive(store.db, workspace.ctx, { skuId: item.skuId, locationId: workspace.main.id, quantity: 20 });
@@ -510,7 +511,7 @@ test('learning demand stays contextual and does not become a fake Needs you deci
 
   assert.match(needsYou, /Nothing is waiting/);
   assert.match(overview, /All clear/);
-  assert.doesNotMatch(needsYou, /Tell Foundry when you sell something/,
+  assert.doesNotMatch(needsYou, /Tell StockChief when you sell something/,
     'normal learning guidance belongs on Home, not in the decision inbox');
 });
 
@@ -526,7 +527,7 @@ test('learning demand stays contextual and does not become a fake Needs you deci
  *
  * needs-you-count states the rule: the inbox is the customer-facing source of
  * truth, and the sidebar, the workspace switcher and the Needs you page all
- * count it. Home counts it too. Findings Foundry has spotted but cannot turn
+ * count it. Home counts it too. Findings StockChief has spotted but cannot turn
  * into a decision are still shown, named as what they are.
  */
 test('Home, the sidebar and Needs you agree on how much needs a person', async () => {

@@ -16,10 +16,10 @@
  *
  * Each check is an entry in CHECKS rather than a branch in a function, so a new
  * thing worth noticing is a new entry — and each one must answer the same four
- * questions Foundry asks of anything it puts in front of a person:
+ * questions StockChief asks of anything it puts in front of a person:
  *
  *   what      what happened, in the owner's words
- *   why       why it matters, or why Foundry stopped
+ *   why       why it matters, or why StockChief stopped
  *   proof     the records that establish it, and where to read them
  *   action    the one thing to do about it
  *
@@ -116,7 +116,7 @@ const CHECKS = [
     run: ({ unconfirmedCustomerPayments }, { money }) => (unconfirmedCustomerPayments.length ? {
       severity: SEVERITY.IMPORTANT,
       what: `${count(unconfirmedCustomerPayments.length, 'completed sale')} ${unconfirmedCustomerPayments.length === 1 ? 'has' : 'have'} no payment recorded at all.`,
-      why: 'Foundry does not know whether these were paid and never entered, or genuinely unpaid. '
+      why: 'StockChief does not know whether these were paid and never entered, or genuinely unpaid. '
         + 'It will not assume either.',
       proof: {
         label: 'the sales with no payment against them',
@@ -146,7 +146,7 @@ const CHECKS = [
     run: ({ inventory }) => (inventory.missingCostUnits > 0 ? {
       severity: SEVERITY.IMPORTANT,
       what: `${count(inventory.missingCostUnits, 'unit')} on your shelves ${inventory.missingCostUnits === 1 ? 'has' : 'have'} no proven cost.`,
-      why: 'Foundry will not guess what stock cost, so inventory value and profit are both '
+      why: 'StockChief will not guess what stock cost, so inventory value and profit are both '
         + 'incomplete until the evidence exists.',
       proof: { label: 'the positions with no cost evidence', href: '/accounting#inventory' },
       action: { label: 'Add the missing cost', href: '/accounting/migration?focus=inventory-cost#inventory-costs' },
@@ -243,7 +243,7 @@ const CHECKS = [
      *
      * The inventory engine already proves this on demand — balances against the
      * ledger, lots and serials against their balances, and anything negative.
-     * Nothing is recomputed here; a disagreement between what Foundry says it
+     * Nothing is recomputed here; a disagreement between what StockChief says it
      * holds and what its own records add up to is the most serious thing in
      * this list, because every value above it is built on those quantities.
      */
@@ -257,7 +257,7 @@ const CHECKS = [
         what: `${count(integrity.problems.length, 'stock record')} `
           + `${integrity.problems.length === 1 ? 'does' : 'do'} not match its own history.`,
         why: 'Every inventory value and every profit figure is built on these quantities. '
-          + 'Foundry recomputes this from the movement ledger, so a mismatch is real, not a display fault.',
+          + 'StockChief recomputes this from the movement ledger, so a mismatch is real, not a display fault.',
         proof: { label: kinds.join(', '), href: '/settings#inventory-integrity' },
         action: { label: 'Open inventory integrity', href: '/settings#inventory-integrity' },
         amountMinor: null,

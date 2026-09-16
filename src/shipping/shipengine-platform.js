@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * One ShipEngine seller per Foundry workspace.
+ * One ShipEngine seller per StockChief workspace.
  *
  * The platform credential can create sellers and mint short-lived Elements
  * tokens. It can never quote or buy a label. Each seller's own encrypted API
@@ -112,7 +112,7 @@ function splitName(value) {
 async function createSeller(input = {}, options = {}) {
   if (!isConfigured() && !options.configuration) {
     throw new ValidationError('Embedded multi-business shipping requires ShipStation API '
-      + 'Enterprise/Partner approval and the platform credentials they issue. Foundry does not '
+      + 'Enterprise/Partner approval and the platform credentials they issue. StockChief does not '
       + 'have those credentials yet.');
   }
   const person = splitName(input.ownerName);
@@ -131,7 +131,7 @@ async function createSeller(input = {}, options = {}) {
   const sellerApiKey = body?.api_key?.encrypted_api_key || body?.api_key?.api_key
     || body?.api_key?.key || body?.api_key;
   if (!sellerId || !sellerApiKey || typeof sellerApiKey !== 'string') {
-    throw new ValidationError('ShipEngine created a seller response Foundry could not use safely.');
+    throw new ValidationError('ShipEngine created a seller response StockChief could not use safely.');
   }
   return { sellerId: String(sellerId), sellerApiKey };
 }
@@ -222,9 +222,9 @@ function describe(db, workspaceId) {
     available: isConfigured(),
     missing: missingConfiguration(),
     because: isConfigured()
-      ? 'Foundry can open a separate ShipEngine seller for this business.'
+      ? 'StockChief can open a separate ShipEngine seller for this business.'
       : 'Embedded multi-business onboarding requires ShipStation API Enterprise/Partner approval '
-        + 'and the platform credentials they issue. Foundry does not have those credentials yet.',
+        + 'and the platform credentials they issue. StockChief does not have those credentials yet.',
   };
   return {
     opened: true,

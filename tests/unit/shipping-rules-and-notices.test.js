@@ -57,7 +57,7 @@ test('a shipping rule typed as a sentence becomes the same rule the form makes',
   assert.equal(said.saved.maxCostMinor, 2500);
   assert.equal(said.saved.requireByPromised, true);
   assert.ok(said.saved.statedText.startsWith('Use UPS Ground'),
-    'their own words are kept, so they can see Foundry understood them');
+    'their own words are kept, so they can see StockChief understood them');
 
   const rates = [
     { id: 'a', carrier: 'ups', carrierName: 'UPS', service: 'Ground', amountMinor: 1842,
@@ -102,7 +102,7 @@ test('a one-off instruction is not quietly turned into a standing rule', () => {
 
 /* ----------------------------------------------------- a second provider */
 
-test('Shippo answers the same five questions, in Foundry vocabulary', () => {
+test('Shippo answers the same five questions, in StockChief vocabulary', () => {
   /*
    * The only real test of whether the seam is an abstraction rather than a
    * wish: a provider that names almost nothing the way the first one does,
@@ -172,8 +172,8 @@ test('a late parcel has the message already written, and unsent', () => {
 
   // And Needs You says the words exist rather than asking for them.
   const card = needsYou.fromLateShipments(env.db, env.workspace.workspaceId)[0];
-  assert.match(card.recommendation, /Foundry has written/);
-  assert.equal(card.actionLabel, 'Read what Foundry wrote');
+  assert.match(card.recommendation, /StockChief has written/);
+  assert.equal(card.actionLabel, 'Read what StockChief wrote');
   env.db.close();
 });
 

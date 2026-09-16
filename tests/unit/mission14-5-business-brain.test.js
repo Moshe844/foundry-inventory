@@ -159,7 +159,7 @@ test('the business briefing uses Needs You work and cannot have separate facts c
     return { data: { sentence: 'Fixing the supplier bill will also fix every missing product cost.' } };
   } };
   const answer = await planner.ask(db, workspace.workspaceId,
-    'How are we doing? Is there anything I should worry about?', { provider });
+    'How are we doing? Is there anything I should worry about?', { provider, semantic: false });
   assert.equal(answer.plan.intent, 'business_health');
   assert.equal(answer.answerMode, 'verified');
   assert.equal(answer.spoken, null);
@@ -167,7 +167,7 @@ test('the business briefing uses Needs You work and cannot have separate facts c
   assert.match(answer.answer, /Main Warehouse stock difference/i);
 });
 
-test('why Foundry ordered a PO is answered from the linked purchasing story', async () => {
+test('why StockChief ordered a PO is answered from the linked purchasing story', async () => {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db);
   const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
@@ -180,7 +180,7 @@ test('why Foundry ordered a PO is answered from the linked purchasing story', as
   const order = purchaseOrders.createOrder(db, workspace.ctx, membership, {
     supplierId: supplier.id, lines: [{ skuId: item.skuId, quantityPurchaseUnits: 2 }],
   });
-  const question = `Why did Foundry order ${order.poNumber}?`;
+  const question = `Why did StockChief order ${order.poNumber}?`;
   const planned = await planner.plan(question);
   assert.equal(planned.intent, 'foundry_why');
   const result = queries.execute(db, workspace.workspaceId, planned);
@@ -188,7 +188,7 @@ test('why Foundry ordered a PO is answered from the linked purchasing story', as
   assert.match(result.answer, /24 units/);
   assert.equal(result.handoff.href, `/purchasing/orders/${order.id}`);
   assert.deepEqual(result.rows.map((row) => row.measure), [
-    'What happened', 'Why Foundry concluded this', 'Evidence used', 'What Foundry did', 'What happens next',
+    'What happened', 'Why StockChief concluded this', 'Evidence used', 'What StockChief did', 'What happens next',
   ]);
   assert.match(result.rows.find((row) => row.measure === 'Evidence used').value, new RegExp(order.poNumber));
   assert.doesNotMatch(result.rows.find((row) => row.measure === 'Evidence used').value, /linked business record/i);

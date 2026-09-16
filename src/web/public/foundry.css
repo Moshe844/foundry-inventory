@@ -1,12 +1,12 @@
 /* =========================================================================
-   Foundry design system
+   StockChief design system
 
    One vocabulary for the whole product. The application had grown a stylesheet
    per mission — 381 distinct block classes and a "product clarity" patch layer
    loaded on top to correct the layer beneath it — so the same idea looked
    different depending on which month the screen was built in.
 
-   This file is the single source of truth for how Foundry looks. It redefines
+   This file is the single source of truth for how StockChief looks. It redefines
    the tokens the older stylesheet already consumes, so every existing screen
    moves with it rather than splitting into an old half and a new half, and it
    adds the components the redesigned screens are built from.
@@ -99,8 +99,8 @@
  * Reduced motion means less decoration, not a frozen application.
  *
  * The blanket version of this rule stopped every animation on the page, which
- * included the one that says Foundry is still working. The spinner froze
- * mid-rotation into a static arc under a button, beneath the words "Foundry is
+ * included the one that says StockChief is still working. The spinner froze
+ * mid-rotation into a static arc under a button, beneath the words "StockChief is
  * looking through your records…", and stayed there for the length of a model
  * call. Someone reading that sees an application that has hung.
  *
@@ -201,7 +201,7 @@ tbody tr:hover td { background: var(--surface-2); }
 }
 .topbar-help:hover { background: var(--surface-3); color: var(--ink); text-decoration: none; }
 
-/* Tell Foundry on a phone is the raised centre of the bar — the one thing you
+/* Tell StockChief on a phone is the raised centre of the bar — the one thing you
    reach for rather than a place you navigate to. */
 .mobilenav-tell { color: var(--accent-ink); }
 .mobilenav-tell svg { color: var(--accent); }
@@ -255,7 +255,7 @@ tbody tr:hover td { background: var(--surface-2); }
 .briefing__pulse.is-paused { color: var(--warn); }
 .briefing__checked { font-size: var(--text-xs); color: var(--muted-soft); }
 
-/* Tell Foundry — one field, always in the same place, the width of the page.
+/* Tell StockChief — one field, always in the same place, the width of the page.
    It is the product's main verb, so it gets the room a main verb deserves. */
 .tell__form {
   display: flex;
@@ -560,7 +560,7 @@ tbody tr:hover td { background: var(--surface-2); }
 .dead-end__examples { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .dead-end__more { margin: var(--space-3) 0 0; font-size: var(--text-sm); color: var(--muted); }
 
-/* Suggestion chips — the one chip pattern, shared by Ask and Tell Foundry. */
+/* Suggestion chips — the one chip pattern, shared by Ask and Tell StockChief. */
 .chip {
   display: inline-flex;
   align-items: center;
@@ -1001,7 +1001,7 @@ a.list-row.panel { display: flex; margin-bottom: var(--space-4); }
 .kv dt { font-size: var(--text-sm); color: var(--muted); }
 .kv dd { margin: 0; font-size: var(--text-sm); color: var(--ink); }
 
-/* A question Foundry cannot answer, with the way forward attached. */
+/* A question StockChief cannot answer, with the way forward attached. */
 .act-create {
   display: flex;
   align-items: center;
@@ -1097,7 +1097,7 @@ a.list-row.panel { display: flex; margin-bottom: var(--space-4); }
  * A webhook address, an account id, an API endpoint. None of them contain a
  * space, so nothing in normal text wrapping will ever break one, and a
  * viewport narrower than the string is a line running out through the side of
- * the panel it belongs to. Foundry shows several of these on the connection
+ * the panel it belongs to. StockChief shows several of these on the connection
  * screens, which is exactly where somebody is reading carefully.
  */
 code,

@@ -1,16 +1,16 @@
 'use strict';
 
 /*
- * Foundry asking a customer for money without being told to.
+ * StockChief asking a customer for money without being told to.
  *
  * The complaint that produced this was one line: "IT ALL SEEMS MANUAL". It
  * was true. An order shipped and then a person had to remember to go and ask
  * for the money, find the button, press it, find the link, and send it.
  *
- * What is under test is not that Foundry does it, but that what it does
+ * What is under test is not that StockChief does it, but that what it does
  * follows the authority it was actually given. Customer terms, the workspace
  * mode, authority for this exact job, and a sending mailbox all have to agree.
- * When any one of them does not, Foundry still gets everything
+ * When any one of them does not, StockChief still gets everything
  * ready and says which one stopped it — because a prepared link with no
  * explanation looks like something the owner forgot to do.
  */
@@ -55,7 +55,7 @@ function setup() {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Riverside Supply' });
   const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
-  // The platform key is Foundry's identity, never this test business's till.
+  // The platform key is StockChief's identity, never this test business's till.
   // Give this business its own test account so the tests isolate automation
   // authority instead of relying on the unsafe platform fallback.
   paymentAccounts.connect(db, workspace.ctx, membership, { secretKey: 'sk_test_riverside_0000' });
@@ -66,7 +66,7 @@ function setup() {
 
   providers.register('stripe', fakeProvider());
   /*
-   * A real sending mailbox, because "can Foundry send" is one of the three
+   * A real sending mailbox, because "can StockChief send" is one of the three
    * permissions under test and a connector that could never send would make
    * every case here pass for the wrong reason.
    */
@@ -97,7 +97,7 @@ const allowed = (env, extra = {}) => terms.setTerms(env.db, env.ctx, {
   autoRequestEnabled: 1, autoRequestLimitMinor: 100000, ...extra,
 });
 
-test('with nothing agreed, Foundry gets it ready and says what it is waiting on', async () => {
+test('with nothing agreed, StockChief gets it ready and says what it is waiting on', async () => {
   const env = setup();
   terms.setTerms(env.db, env.ctx, { customerId: env.customer.id, kind: 'BEFORE_FULFILMENT' });
 
@@ -119,7 +119,7 @@ test('permission without a limit is not permission', async () => {
   assert.match(done.because, /no limit/i);
 });
 
-test('over the limit, Foundry stops and quotes both figures', async () => {
+test('over the limit, StockChief stops and quotes both figures', async () => {
   const env = setup();
   allowed(env, { autoRequestLimitMinor: 500 });
 
@@ -151,7 +151,7 @@ test('watching only means nothing is prepared at all', async () => {
   assert.equal(env.db.prepare('SELECT COUNT(*) AS n FROM payment_requests').get().n, 0);
 });
 
-test('when the customer terms, workspace mode, job authority, and mailbox agree, Foundry asks and sends', async () => {
+test('when the customer terms, workspace mode, job authority, and mailbox agree, StockChief asks and sends', async () => {
   const env = setup();
   allowed(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
@@ -165,7 +165,7 @@ test('when the customer terms, workspace mode, job authority, and mailbox agree,
   assert.equal(done.message.recipient, 'jo@abcschool.test');
 });
 
-test('a paused Foundry does nothing, however much authority it has', async () => {
+test('a paused StockChief does nothing, however much authority it has', async () => {
   const env = setup();
   allowed(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
@@ -221,7 +221,7 @@ test('a deposit is asked for at confirmation, long before anything ships', async
   assert.equal(done.asked, true);
   assert.equal(done.request.purpose, 'DEPOSIT');
   assert.equal(done.request.amountMinor, 1000, 'half of $20, from the terms');
-  assert.equal(done.request.invoiceId, null, 'and no Foundry invoice had to exist first');
+  assert.equal(done.request.invoiceId, null, 'and no StockChief invoice had to exist first');
 });
 
 test('a failure to collect never becomes a failure to ship', async () => {

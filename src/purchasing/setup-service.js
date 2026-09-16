@@ -3,13 +3,13 @@
 /**
  * Turning purchasing on for an inventory that already has one.
  *
- * Mission 6 gave Foundry suppliers, reorder policies and purchase orders, but
+ * Mission 6 gave StockChief suppliers, reorder policies and purchase orders, but
  * left every existing workspace to configure them line by line. On a shoe
  * wholesaler with 40 styles across 8 sizes that is 320 decisions, which is a
  * polite way of saying nobody will ever do it — and the replenishment engine
  * stays silent because no line has a supplier or a policy.
  *
- * So Foundry proposes the whole thing at once, from what it already knows:
+ * So StockChief proposes the whole thing at once, from what it already knows:
  *
  *   - reorder points derived from real outbound history, per SKU, with the
  *     arithmetic shown;

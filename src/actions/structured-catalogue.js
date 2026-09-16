@@ -80,7 +80,11 @@ function componentMatchesRecord(componentIdentity, recordName) {
  * here; ambiguous and absent products remain questions for the owner.
  */
 function reconcileComponentSkus(records) {
-  const updated = JSON.parse(JSON.stringify(records || []));
+  const updated = (records || []).map((record) => {
+    const reparsed = parseRecord(record.name, (record.fields || [])
+      .map((field) => `${field.label}: ${field.value}`).join('\n'), record.ordinal);
+    return reparsed || JSON.parse(JSON.stringify(record));
+  });
   for (const kit of [...updated]) {
     for (const component of kit.components || []) {
       if (component.exactSku) continue;
@@ -108,7 +112,15 @@ function roleFor(label) {
   if (/^(?:expiration|expiry)(?: date)?$/.test(normal)) return 'expirationDate';
   if (/^serial(?: number)?s?$/.test(normal)) return 'serials';
   if (/^(?:components?|bill of materials|bom)(?: per kit)?$/.test(normal)) return 'components';
+  if (/^kit stock basis$/.test(normal)) return 'kitStockBasis';
   return null;
+}
+
+function kitStockBasis(value) {
+  const normal = key(value);
+  if (/\b(?:preassembled|pre assembled|already packed|finished kit)\b/.test(normal)) return 'preassembled';
+  if (/\b(?:component|components|component availability|built to order)\b/.test(normal)) return 'components';
+  return '';
 }
 
 function parseRecord(name, body, ordinal) {
@@ -129,7 +141,7 @@ function parseRecord(name, body, ordinal) {
     ordinal, name: name.trim(), fields, code: '', category: '', unitLabel: '',
     supplier: '', supplierPart: '', unitCostMinor: null, sellingPriceMinor: null,
     reorderPoint: null, trackingMode: '', lotCode: '', expirationDate: '',
-    serials: [], serialsByLocation: {}, components: [], locations: [], attributes: {},
+    serials: [], serialsByLocation: {}, components: [], kitStockBasis: '', locations: [], attributes: {},
   };
   for (const field of fields) {
     const role = roleFor(field.label);
@@ -148,6 +160,7 @@ function parseRecord(name, body, ordinal) {
     else if (role === 'expirationDate') record.expirationDate = field.value;
     else if (role === 'serials') record.serials = splitSerials(field.value);
     else if (role === 'components') record.components = parseComponents(field.value);
+    else if (role === 'kitStockBasis') record.kitStockBasis = kitStockBasis(field.value);
     else if (locatedSerials && isLocationLabel(locatedSerials[1])) {
       record.serialsByLocation[locatedSerials[1].trim()] = splitSerials(field.value);
     }
@@ -175,7 +188,8 @@ function issueList(records) {
   });
   const unresolvedKits = records.filter((record) => record.components.length
     && record.components.some((component) => !component.quantity || !component.exactSku));
-  const stockedKits = records.filter((record) => record.components.length && record.locations.some((location) => location.quantity > 0));
+  const stockedKits = records.filter((record) => record.components.length && !record.kitStockBasis
+    && record.locations.some((location) => location.quantity > 0));
   return [
     ...missingSerials.map((record) => ({
       type: 'serials', recordOrdinal: record.ordinal, recordName: record.name, code: record.code,
@@ -201,7 +215,7 @@ function issueList(records) {
 function blockers(records, issues = issueList(records)) {
   if (!issues.length) return '';
 
-  const parts = [`Foundry read all ${records.length} structured product record${records.length === 1 ? '' : 's'} immediately, but cannot prepare a complete all-or-nothing preview yet.`];
+  const parts = [`StockChief read all ${records.length} structured product record${records.length === 1 ? '' : 's'} immediately, but cannot prepare a complete all-or-nothing preview yet.`];
   const missingSerials = issues.filter((issue) => issue.type === 'serials');
   const unresolvedKits = issues.filter((issue) => issue.type === 'kit_components');
   const stockedKits = issues.filter((issue) => issue.type === 'kit_stock');
@@ -310,13 +324,14 @@ function resolveIssues(records, issues, answers = {}, options = {}) {
       replaceLiteralField(record, 'Kit Stock Basis', basis === 'preassembled'
         ? 'Preassembled physical kits'
         : 'Calculated from component availability');
+      record.kitStockBasis = basis;
     }
   }
 
   // A component name came from the owner's catalogue and its SKU came from
   // the correction form. If that SKU does not already exist, carry those two
   // exact facts into a minimal, zero-stock product record for the final
-  // preview. This lets the owner finish here without Foundry inventing a code,
+  // preview. This lets the owner finish here without StockChief inventing a code,
   // price, quantity, category, or any other product fact.
   const availableCodes = new Set([
     ...updated.map((record) => record.code),

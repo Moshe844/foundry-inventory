@@ -139,7 +139,7 @@ function readiness(db, workspaceId, shipmentId) {
   if (!to.complete) blocked.push({ key: 'to', what: addresses.why(to), href: null });
   if (!from.complete) {
     blocked.push({ key: 'from',
-      what: `Foundry does not have a full address for ${locationName || 'the location this ships from'}, `
+      what: `StockChief does not have a full address for ${locationName || 'the location this ships from'}, `
         + 'and a carrier will not quote without one.',
       href: '/locations' });
   }
@@ -147,7 +147,7 @@ function readiness(db, workspaceId, shipmentId) {
   if (!boxes.some((box) => Number(box.weightGrams) > 0)) {
     blocked.push({ key: 'weight',
       what: unweighed
-        ? `${unweighed} of the items in this box have no weight recorded, so Foundry cannot say what `
+        ? `${unweighed} of the items in this box have no weight recorded, so StockChief cannot say what `
           + 'the parcel weighs. Weigh it and enter the figure, or set the product weights once.'
         : 'Nobody has said what this parcel weighs.',
       href: null });
@@ -156,7 +156,7 @@ function readiness(db, workspaceId, shipmentId) {
   const provider = account ? account.provider : null;
   if (!provider) {
     blocked.push({ key: 'provider',
-      what: 'No shipping account is connected, so Foundry cannot get live rates or buy a label. '
+      what: 'No shipping account is connected, so StockChief cannot get live rates or buy a label. '
         + 'You can still hand the parcel over and record it.', href: '/settings/connections' });
   }
 
@@ -223,7 +223,7 @@ function setPromise(db, ctx, shipmentId, input = {}) {
  * Ask the carriers what they would charge.
  *
  * Costs nothing and commits nobody, so it needs no authority. The rates are
- * written down with the time they were quoted, because "Foundry chose UPS
+ * written down with the time they were quoted, because "StockChief chose UPS
  * Ground" is only checkable next to what it was choosing between.
  */
 async function quote(db, ctx, shipmentId, options = {}) {
@@ -350,7 +350,7 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
   }
   const rate = db.prepare('SELECT * FROM shipment_rates WHERE id = ? AND workspace_id = ? AND shipment_id = ?')
     .get(rateId, ctx.workspaceId, shipmentId);
-  if (!rate) throw new ValidationError('That rate is not one Foundry quoted for this parcel. Get rates again.');
+  if (!rate) throw new ValidationError('That rate is not one StockChief quoted for this parcel. Get rates again.');
 
   const held = require('./accounts').contextFor(db, ctx);
   const provider = options.provider
@@ -359,7 +359,7 @@ async function buyLabel(db, ctx, shipmentId, rateId, options = {}) {
     AND shipment_id = ? AND operation = 'PURCHASE' AND status IN ('PENDING','REVIEW')
     ORDER BY requested_at DESC LIMIT 1`).get(ctx.workspaceId, shipmentId);
   if (pending) {
-    throw new ValidationError('A carrier purchase is still being verified. Foundry will not retry it and risk buying the label twice.');
+    throw new ValidationError('A carrier purchase is still being verified. StockChief will not retry it and risk buying the label twice.');
   }
   const operationKey = options.idempotencyKey
     || `shipment-label:${shipmentId}:${purchaseAttempt(db, ctx.workspaceId, shipmentId)}`;
@@ -593,17 +593,17 @@ function recordAdjustment(db, ctx, shipmentId, input = {}) {
 /* ------------------------------------------------------- doing it unasked */
 
 /**
- * A parcel is packed, a rule covers it, and Foundry may spend. So it goes.
+ * A parcel is packed, a rule covers it, and StockChief may spend. So it goes.
  *
  * Three separate permissions, and all three have to hold. The mode has to
- * allow Foundry to act at all; the owner has to have granted buying labels
+ * allow StockChief to act at all; the owner has to have granted buying labels
  * specifically; and a rule of theirs has to cover this particular parcel at
  * this particular price by this particular date. Any one of them missing and
  * this does nothing at all — the parcel simply waits on the screen where the
  * rates are, which is where it would have been anyway.
  *
  * Refusing is not failing, and it is not silent either. What comes back says
- * which of the three stopped it, because "Foundry did not ship this" is only
+ * which of the three stopped it, because "StockChief did not ship this" is only
  * useful next to the reason.
  */
 async function shipWithinAuthority(db, ctx, shipmentId, options = {}) {
@@ -613,8 +613,8 @@ async function shipWithinAuthority(db, ctx, shipmentId, options = {}) {
   const handling = require('./operation-policy').get(db, ctx.workspaceId);
   if (handling.mode !== 'AUTOMATIC') {
     return { bought: false, because: handling.mode === 'MANUAL'
-      ? 'Shipping is in Manual mode. Foundry will show the rates and leave the choice to you.'
-      : 'Shipping is in Recommend mode. Foundry will choose a rate for review but will not buy it.' };
+      ? 'Shipping is in Manual mode. StockChief will show the rates and leave the choice to you.'
+      : 'Shipping is in Recommend mode. StockChief will choose a rate for review but will not buy it.' };
   }
 
   const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
@@ -682,7 +682,7 @@ async function shipWithinAuthority(db, ctx, shipmentId, options = {}) {
 /**
  * Every packed parcel that a rule would cover, done.
  *
- * Runs on the same schedule as everything else Foundry does unattended. A
+ * Runs on the same schedule as everything else StockChief does unattended. A
  * parcel it cannot buy for is left exactly where it was, with the reason, and
  * the next sweep tries again — a carrier that was down at nine is not a parcel
  * that never ships.

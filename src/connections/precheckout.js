@@ -62,14 +62,14 @@ function unresolved(db, auth, type, externalId, label) {
     connectorId: auth.connectorId,
     issueType: `UNKNOWN_${type.toUpperCase()}`,
     fingerprint: `precheckout-unknown-${type}:${auth.connectorId}:${value}`,
-    title: `${label || value} needs a Foundry match`,
-    detail: `${auth.displayName} asked Foundry to check this ${type}, but it is not safely mapped yet.`,
+    title: `${label || value} needs a StockChief match`,
+    detail: `${auth.displayName} asked StockChief to check this ${type}, but it is not safely mapped yet.`,
     resolutionHint: 'Match this record in Connections before relying on checkout protection.',
   });
   return {
     decision: 'WARN',
     code: `UNKNOWN_${type.toUpperCase()}`,
-    message: `Foundry cannot verify ${label || value} until it is mapped.`,
+    message: `StockChief cannot verify ${label || value} until it is mapped.`,
   };
 }
 

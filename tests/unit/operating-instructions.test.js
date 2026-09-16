@@ -348,7 +348,7 @@ test('finite rule questions expose field-specific choices and apply the selected
   assert.equal(operating.get(env.db, env.workspace.workspaceId, proposal.id).status, 'SUPERSEDED');
 
   const openEnded = { ...proposal, resolvedChanges: [{ ...blank(), domain: 'transfer_authority' }],
-    questions: ['What is the most Foundry may transfer automatically in one action?'] };
+    questions: ['What is the most StockChief may transfer automatically in one action?'] };
   assert.equal(operating.clarificationFor(openEnded).kind, 'text');
   assert.deepEqual(operating.clarificationFor(openEnded).choices, []);
 });
@@ -406,7 +406,7 @@ test('approving a taught transfer boundary reconsiders evidence and prepares wor
   const beforeSource = balanceAt(env, env.source.id);
   const beforeDestination = balanceAt(env, env.destination.id);
   const proposal = await operating.interpret(db, env.ctx, env.membership,
-    'For routine site balancing, Foundry may move at most five units between Downtown and Main without asking.', {
+    'For routine site balancing, StockChief may move at most five units between Downtown and Main without asking.', {
       provider: provider(read([{ ...blank(), domain: 'transfer_authority', sourceLocationText: env.source.name, locationText: env.destination.name, maximumQuantity: 5 }], 'Five-unit transfer authority')),
     });
   operating.approve(db, env.ctx, env.membership, proposal.id, proposal.integrityHash);

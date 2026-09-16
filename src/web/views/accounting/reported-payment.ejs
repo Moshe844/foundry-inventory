@@ -2,12 +2,12 @@
   /*
    * What a reported payment will do, before it does it.
    *
-   * Foundry cannot see money that moved outside it, so this began as a sentence
+   * StockChief cannot see money that moved outside it, so this began as a sentence
    * somebody typed. That makes the preview the whole safeguard: the owner is
    * confirming an effect on a real bill, not trusting that a sentence was
    * parsed correctly.
    *
-   * Where Foundry could not place the payment it asks one question and offers
+   * Where StockChief could not place the payment it asks one question and offers
    * the real candidates, because choosing a bill on the owner's behalf would be
    * two wrong balances rather than one helpful guess.
    */
@@ -21,7 +21,7 @@
 <div class="page-head">
   <div>
     <h1><%= outcome.ok ? 'Record this payment' : 'One thing first' %></h1>
-    <p class="page-sub">You told Foundry: “<%= said %>”</p>
+    <p class="page-sub">You told StockChief: “<%= said %>”</p>
   </div>
 </div>
 
@@ -45,7 +45,7 @@
           </form>
         <% } %>
         <p class="hint">
-          Nothing has been recorded. Foundry does not choose which bill a payment settles —
+          Nothing has been recorded. StockChief does not choose which bill a payment settles —
           getting that wrong is two wrong balances, not one.
         </p>
       </div>

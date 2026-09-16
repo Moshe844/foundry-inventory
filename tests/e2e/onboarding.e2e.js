@@ -8,7 +8,7 @@
  *   the Excel customer — one messy export, migrated and reconciled;
  *   the messy customer — four overlapping files that disagree with each other.
  *
- * Both prove the same thing from different angles: Foundry takes the inventory
+ * Both prove the same thing from different angles: StockChief takes the inventory
  * over rather than handing back an import template, and it only says the
  * migration is verified when the totals actually agree.
  */
@@ -180,8 +180,8 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
     await register(page, ACCOUNT);
     const text = await page.locator('body').innerText();
 
-    assert.match(text, /Where should Foundry get your inventory from/);
-    for (const label of ['Enter it in Foundry', 'Move from files', 'Use email attachments', 'Connect another system', 'Use several sources']) {
+    assert.match(text, /Where should StockChief get your inventory from/);
+    for (const label of ['Enter it in StockChief', 'Move from files', 'Use email attachments', 'Connect another system', 'Use several sources']) {
       assert.ok(text.includes(label), `the chooser is missing "${label}"`);
     }
     assert.match(text, /Not sure/);
@@ -199,7 +199,7 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
     await shot(page, 'files');
   });
 
-  await t.test('3. Foundry reads the workbook and says what it found', async () => {
+  await t.test('3. StockChief reads the workbook and says what it found', async () => {
     // The original evidence-first importer remains a safe compatible URL for
     // bookmarks and in-flight onboarding sessions while new switches use the
     // canonical cutover workspace above.
@@ -216,7 +216,7 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
     await shot(page, 'file-understood');
   });
 
-  await t.test('4. Foundry proposes the structure, and normalises what is obvious', async () => {
+  await t.test('4. StockChief proposes the structure, and normalises what is obvious', async () => {
     await Promise.all([
       page.waitForURL(/\/onboarding\/review\//),
       page.click('button:has-text("Read these and show me what you found")'),
@@ -243,7 +243,7 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
     ]);
     const text = await page.locator('body').innerText();
 
-    assert.match(text, /Foundry is ready/);
+    assert.match(text, /StockChief is ready/);
     assert.match(text, /Inventory totals match the source/);
     assert.match(text, /Reconciliation/);
     await shot(page, 'takeover-report');
@@ -266,7 +266,7 @@ test('Onboarding end to end: the Excel customer', { timeout: 600000 }, async (t)
     assert.equal(totals.integrity, true);
   });
 
-  await t.test('6. the inventory is there, and Foundry does not invent a history', async () => {
+  await t.test('6. the inventory is there, and StockChief does not invent a history', async () => {
     await page.goto(`${BASE}/inventory/table`);
     const inventory = await page.locator('body').innerText();
     assert.match(inventory, /Navy Oxford/);
@@ -376,7 +376,7 @@ test('Onboarding end to end: the messy customer', { timeout: 600000 }, async (t)
     // Existing multi-source sessions keep the older reconciliation workflow
     // at its stable URL while new cutovers enter the canonical workspace.
     await page.goto(`${BASE}/onboarding/files?mode=messy`);
-    assert.match(await page.locator('body').innerText(), /Give Foundry everything you have/);
+    assert.match(await page.locator('body').innerText(), /Give StockChief everything you have/);
 
     await page.setInputFiles('input[name="files"]', [main, count, old, extra]);
     await Promise.all([page.waitForURL(/\/onboarding\/files/), page.click('button:has-text("Add")')]);
@@ -388,7 +388,7 @@ test('Onboarding end to end: the messy customer', { timeout: 600000 }, async (t)
     await shot(page, 'messy-files');
   });
 
-  await t.test('2. Foundry surfaces the real conflicts and settles the rest itself', async () => {
+  await t.test('2. StockChief surfaces the real conflicts and settles the rest itself', async () => {
     await Promise.all([
       page.waitForURL(/\/onboarding\/review\//),
       page.click('button:has-text("Read these and show me what you found")'),
@@ -405,8 +405,8 @@ test('Onboarding end to end: the messy customer', { timeout: 600000 }, async (t)
   });
 
   await t.test('3. the customer settles what only they can', async () => {
-    // Foundry recommends where the files establish an answer; the rest wait.
-    const accept = page.locator('button:has-text("Accept everything Foundry recommended")');
+    // StockChief recommends where the files establish an answer; the rest wait.
+    const accept = page.locator('button:has-text("Accept everything StockChief recommended")');
     if (await accept.count()) {
       await Promise.all([page.waitForURL(/\/onboarding\/review\//), accept.click()]);
     }

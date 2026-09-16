@@ -20,9 +20,9 @@
       ? `${needsCount} supplier email decision${needsCount === 1 ? '' : 's'} ${needsCount === 1 ? 'needs' : 'need'} you`
       : watchedRules.length ? 'Your supplier inbox is ready' : 'One more step: choose a supplier' %></h2>
     <p class="muted"><%= needsCount
-      ? 'The emails are saved. Foundry has not guessed or changed physical stock.'
+      ? 'The emails are saved. StockChief has not guessed or changed physical stock.'
       : watchedRules.length
-        ? `Nothing needs you. Foundry checks ${connection.provider_account_name || 'this mailbox'} automatically every ${connection.config.mailboxCheckMinutes || 5} minute${Number(connection.config.mailboxCheckMinutes || 5) === 1 ? '' : 's'}.`
+        ? `Nothing needs you. StockChief checks ${connection.provider_account_name || 'this mailbox'} automatically every ${connection.config.mailboxCheckMinutes || 5} minute${Number(connection.config.mailboxCheckMinutes || 5) === 1 ? '' : 's'}.`
         : 'Choose one supplier sender below. Emails from everyone else remain ignored.' %></p>
   </div></div>
   <div class="card-body">
@@ -30,11 +30,11 @@
       <dt>Connected mailbox</dt><dd><%= connection.provider_account_name || connection.display_name %></dd>
       <dt>Supplier senders watched</dt><dd><%= watchedRules.length %></dd>
       <dt>Last successful check</dt><dd><%= connection.last_synced_at ? helpers.timeAgo(connection.last_synced_at) : 'Not checked yet' %></dd>
-      <dt>Inventory receiving</dt><dd>Never automatic from an email. Foundry asks you to confirm what physically arrived.</dd>
+      <dt>Inventory receiving</dt><dd>Never automatic from an email. StockChief asks you to confirm what physically arrived.</dd>
     </dl>
     <% if (!needsCount && watchedRules.length) { %>
       <div class="notice notice--info" style="margin-top:16px">
-        <div style="width:100%"><strong>Test it now</strong><p>Send an email <strong>from <%= watchedRules[0].sender_pattern %></strong> <strong>to <%= connection.provider_account_name || connection.display_name %></strong>. It must arrive in that mailbox’s Inbox. Foundry checks automatically every <%= connection.config.mailboxCheckMinutes || 5 %> minutes.</p>
+        <div style="width:100%"><strong>Test it now</strong><p>Send an email <strong>from <%= watchedRules[0].sender_pattern %></strong> <strong>to <%= connection.provider_account_name || connection.display_name %></strong>. It must arrive in that mailbox’s Inbox. StockChief checks automatically every <%= connection.config.mailboxCheckMinutes || 5 %> minutes.</p>
           <% if (currentUser.role === 'owner' && ['gmail','microsoft365'].includes(connection.provider_type)) { %><form method="post" action="/settings/connections/<%= connection.id %>/sync-mailbox"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm" type="submit">Check <%= connection.provider_type === 'microsoft365' ? 'Microsoft' : 'Gmail' %> now</button></form><% } %>
         </div>
       </div>
@@ -47,7 +47,7 @@
     <div class="card-head"><div><h2>Do this next</h2><p class="muted">Resolve only the business question. The mailbox connection itself is working.</p></div></div>
     <div class="card-body grid">
       <% pendingFileChoices.forEach(function(message) { var choiceAttachments = messageAttachments.filter(function(attachment) { return attachment.message_id === message.id; }); %>
-        <article class="notice notice--warn"><div style="width:100%"><strong>Choose what Foundry should do with <%= choiceAttachments.length === 1 ? choiceAttachments[0].filename : choiceAttachments.length + ' attachments' %></strong><p>This sender is set to “Ask me for each attachment.” Nothing has been imported or changed.</p><a class="btn btn--primary btn--sm" href="#message-<%= message.id %>">Choose what this file is</a></div></article>
+        <article class="notice notice--warn"><div style="width:100%"><strong>Choose what StockChief should do with <%= choiceAttachments.length === 1 ? choiceAttachments[0].filename : choiceAttachments.length + ' attachments' %></strong><p>This sender is set to “Ask me for each attachment.” Nothing has been imported or changed.</p><a class="btn btn--primary btn--sm" href="#message-<%= message.id %>">Choose what this file is</a></div></article>
       <% }) %>
       <% openIssues.forEach(function(issue) {
            var decision = issue.issue_type === 'SUPPLIER_DOCUMENT_REVIEW'
@@ -61,9 +61,9 @@
         <article class="notice notice--warn">
           <div style="width:100%">
             <% if (issue.issue_type === 'SUPPLIER_DOCUMENT_REVIEW') { %>
-              <strong><%= missingOrder ? 'This document references an order Foundry cannot find' : uniqueSkuCandidates.length ? 'Foundry needs one-time product matches' : 'A supplier changed something on an order' %></strong>
+              <strong><%= missingOrder ? 'This document references an order StockChief cannot find' : uniqueSkuCandidates.length ? 'StockChief needs one-time product matches' : 'A supplier changed something on an order' %></strong>
               <p><%= missingOrder ? missingOrder.message : uniqueSkuCandidates.length
-                ? `Tell Foundry what ${uniqueSkuCandidates.map(function(candidate) { return candidate.supplierSku; }).join(', ')} mean. Future emails will use those matches automatically.`
+                ? `Tell StockChief what ${uniqueSkuCandidates.map(function(candidate) { return candidate.supplierSku; }).join(', ')} mean. Future emails will use those matches automatically.`
                 : 'Review the supplier differences below. Nothing has changed yet.' %></p>
 
               <% if (!missingOrder) { uniqueSkuCandidates.forEach(function(candidate) { %>
@@ -71,7 +71,7 @@
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <input type="hidden" name="issueId" value="<%= issue.id %>">
                   <input type="hidden" name="supplierSku" value="<%= candidate.supplierSku %>">
-                  <label class="field"><span class="field-label">What is <%= candidate.supplierSku %> in Foundry?</span><select class="select" name="skuId" required><option value="">Choose a Foundry product</option><% skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %><%= sku.variant_label ? ' / ' + sku.variant_label : '' %> · <%= sku.code %></option><% }) %></select></label>
+                  <label class="field"><span class="field-label">What is <%= candidate.supplierSku %> in StockChief?</span><select class="select" name="skuId" required><option value="">Choose a StockChief product</option><% skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %><%= sku.variant_label ? ' / ' + sku.variant_label : '' %> · <%= sku.code %></option><% }) %></select></label>
                   <button class="btn btn--primary btn--sm" type="submit">Save match for future emails</button>
                 </form>
               <% }) } %>
@@ -99,12 +99,12 @@
 <% } %>
 
 <section class="card section">
-  <div class="card-head"><div><h2>What Foundry does with supplier email</h2><p class="muted">Email updates purchasing expectations—not physical stock.</p></div></div>
+  <div class="card-head"><div><h2>What StockChief does with supplier email</h2><p class="muted">Email updates purchasing expectations—not physical stock.</p></div></div>
   <div class="card-body">
     <div class="setup-steps">
       <div class="setup-step setup-step--done"><span class="setup-step__number">1</span><div><strong>Reads approved suppliers only</strong><p>Other inbox messages are ignored as purchasing evidence.</p></div></div>
       <div class="setup-step setup-step--done"><span class="setup-step__number">2</span><div><strong>Matches the email to its purchase order</strong><p>Confirmations, prices, quantities, shipments and expected dates are compared with the PO.</p></div></div>
-      <div class="setup-step setup-step--done"><span class="setup-step__number">3</span><div><strong>Asks only when necessary</strong><p>On the expected date Foundry reminds you. Inventory changes only after you confirm what physically arrived.</p></div></div>
+      <div class="setup-step setup-step--done"><span class="setup-step__number">3</span><div><strong>Asks only when necessary</strong><p>On the expected date StockChief reminds you. Inventory changes only after you confirm what physically arrived.</p></div></div>
     </div>
   </div>
 </section>
@@ -114,15 +114,15 @@
   <div class="card-body grid">
     <% watchedRules.forEach(function(rule) { %><div class="list-row"><div><strong><%= rule.supplier_name %></strong><p>Supplier sends from <%= rule.sender_pattern %></p></div><div class="form-actions"><a class="btn btn--sm" href="/suppliers/<%= rule.supplier_id %>#communication">Supplier settings</a><span class="badge badge--ok">Watching</span></div></div><% }) %>
     <% if (currentUser.role === 'owner') { %>
-      <% if (watchedRules.length) { %><details><summary class="btn">Watch another supplier sender</summary><div style="margin-top:12px"><strong>Add another supplier Foundry should watch</strong><p class="muted">This does not connect another Gmail account. It adds an approved supplier address inside this mailbox.</p><% } %>
+      <% if (watchedRules.length) { %><details><summary class="btn">Watch another supplier sender</summary><div style="margin-top:12px"><strong>Add another supplier StockChief should watch</strong><p class="muted">This does not connect another Gmail account. It adds an approved supplier address inside this mailbox.</p><% } %>
       <form method="post" action="/settings/connections/<%= connection.id %>/email-rules" class="grid" style="margin-top:12px">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <label class="field"><span class="field-label">1. What address does the supplier send from?</span><input class="input" name="senderPattern" value="<%= pendingEmailRule ? pendingEmailRule.sender_pattern : '' %>" placeholder="orders@abcapparel.com" required><span class="field-help">Enter the supplier’s address—not <%= connection.provider_account_name || 'your connected mailbox' %>.</span></label>
         <div class="card" style="padding:16px">
           <strong>2. Which supplier is this?</strong>
-          <p class="muted">Foundry will not guess or create anything until you choose one of these actions.</p>
+          <p class="muted">StockChief will not guess or create anything until you choose one of these actions.</p>
           <% if (suppliers.length) { %>
-            <label class="field" style="margin-top:12px"><span class="field-label">Use an existing supplier</span><select class="select" name="supplierId"><option value="">Choose a supplier already in Foundry</option><% suppliers.forEach(function(s) { %><option value="<%= s.id %>" <%= pendingEmailRule && pendingEmailRule.supplier_id === s.id ? 'selected' : '' %>><%= s.name %></option><% }) %></select></label>
+            <label class="field" style="margin-top:12px"><span class="field-label">Use an existing supplier</span><select class="select" name="supplierId"><option value="">Choose a supplier already in StockChief</option><% suppliers.forEach(function(s) { %><option value="<%= s.id %>" <%= pendingEmailRule && pendingEmailRule.supplier_id === s.id ? 'selected' : '' %>><%= s.name %></option><% }) %></select></label>
             <button class="btn btn--primary" type="submit" name="supplierChoice" value="existing">Watch this address for the selected supplier</button>
           <% } else { %><p class="notice notice--info">There are no suppliers in this inventory yet. Create the first one below.</p><% } %>
           <div style="margin-top:18px;padding-top:18px;border-top:1px solid var(--line)">
@@ -175,7 +175,7 @@
           *
           * Suppliers send documents with the subject line empty, and the list
           * then showed five rows all reading "(no subject)" — unreadable, and
-          * unnecessary: Foundry already had the attachment filename, which is
+          * unnecessary: StockChief already had the attachment filename, which is
           * exactly how a person thinks of that message. Falls back to the
           * sender only when there is nothing attached either.
           */
@@ -192,7 +192,7 @@
         <div style="padding:12px 16px 18px">
           <% if (message.processing_status === 'INVENTORY_RESTORED') { %>
             <div class="notice notice--success"><strong>The removed import was restored.</strong>
-              <p>Foundry reused the original products and variants and recorded <%= message.restorationResult.unitsRestored || duplicateResult.restoredUnits || 0 %> <%= message.restorationResult.unitLabel || duplicateResult.unitLabel || 'unit' %><%= (message.restorationResult.unitsRestored || duplicateResult.restoredUnits) === 1 ? '' : 's' %> through the inventory ledger. No duplicate products were created.</p>
+              <p>StockChief reused the original products and variants and recorded <%= message.restorationResult.unitsRestored || duplicateResult.restoredUnits || 0 %> <%= message.restorationResult.unitLabel || duplicateResult.unitLabel || 'unit' %><%= (message.restorationResult.unitsRestored || duplicateResult.restoredUnits) === 1 ? '' : 's' %> through the inventory ledger. No duplicate products were created.</p>
               <div class="form-actions"><a class="btn btn--sm" href="/inventory">See restored inventory</a><% if (duplicateAttachment && duplicateAttachment.understanding_id) { %><a class="btn btn--sm" href="/foundry/proposal/<%= duplicateAttachment.understanding_id %>">View original import</a><% } %></div>
             </div>
           <% } else if (message.supplier_document_status === 'MATCHED') { %>
@@ -206,7 +206,7 @@
               var lineName = line.description || line.productName || line.supplierSku || 'Supplier item';
               var lineQuantity = line.confirmedQuantity ?? line.shippedQuantity ?? line.quantity ?? line.orderedQuantity;
             %><li><%= lineName %><%= lineQuantity != null ? ` — ${lineQuantity}` : '' %></li><% }) %></ul></div><% } %>
-            <p class="notice notice--info" style="margin-top:10px"><strong>Inventory was not increased.</strong> Foundry updated purchasing expectations only. When the goods physically arrive, confirm what you received.</p>
+            <p class="notice notice--info" style="margin-top:10px"><strong>Inventory was not increased.</strong> StockChief updated purchasing expectations only. When the goods physically arrive, confirm what you received.</p>
           <% } else if (message.processing_status === 'DUPLICATE_IGNORED') { %>
             <div class="notice notice--info"><div><strong><%= duplicateWasRemoved ? 'This file was imported before, but that import was later removed.' : 'This exact file was already imported.' %></strong>
               <dl class="kv" style="margin-top:10px">
@@ -217,19 +217,19 @@
                 <% if (duplicateWasRemoved) { %><dt>Removed</dt><dd><%= helpers.dateTime(duplicateResult.removedAt) %> · <%= (duplicateResult.removedItemIds || []).length %> products archived and their imported stock removed</dd><% } %>
               </dl>
               <% if (duplicateWasRemoved) { %><p><strong>What happens now:</strong> Choose whether to restore the exact original products and quantities or keep them removed. Nothing changes until you approve the review.</p><div class="form-actions"><a class="btn btn--primary btn--sm" href="/settings/connections/<%= connection.id %>/email-messages/<%= message.id %>/restore-import">Review and re-import</a><% if (duplicateAttachment.understanding_id) { %><a class="btn btn--sm" href="/foundry/proposal/<%= duplicateAttachment.understanding_id %>">View original import</a><% } %><% if (duplicateAttachment.document_id) { %><a class="btn btn--sm" href="/inventory?sourceDocument=<%= duplicateAttachment.document_id %>&amp;fromConnection=<%= connection.id %>&amp;fromMessage=<%= message.id %>">View these products</a><% } %></div>
-              <% } else { %><p>Foundry compared the file contents—not merely its name—and prevented the same stock from being added twice.</p><p><strong>Why it is not in Needs You:</strong> there is no unresolved choice. Importing identical contents again would duplicate inventory.</p><a class="btn btn--sm" href="/inventory">See current inventory</a><% } %>
+              <% } else { %><p>StockChief compared the file contents—not merely its name—and prevented the same stock from being added twice.</p><p><strong>Why it is not in Needs You:</strong> there is no unresolved choice. Importing identical contents again would duplicate inventory.</p><a class="btn btn--sm" href="/inventory">See current inventory</a><% } %>
             </div></div>
           <% } else if (message.drafted_order_number) { %>
             <p><strong>Message</strong></p><p style="white-space:pre-wrap"><%= message.body_text %></p>
             <div class="notice notice--info"><div>
-              <strong>Foundry read this as an order and drafted <%= message.drafted_order_number %>.</strong>
+              <strong>StockChief read this as an order and drafted <%= message.drafted_order_number %>.</strong>
               <p>Nothing is committed, no stock is held and the customer has not been answered until you approve it.</p>
               <a class="btn btn--primary btn--sm" href="/orders/<%= message.drafted_order_id %>">Review <%= message.drafted_order_number %></a>
             </div></div>
           <% } else if (message.classification === 'customer_order_request' && message.order_draft_reason) { %>
             <p><strong>Message</strong></p><p style="white-space:pre-wrap"><%= message.body_text %></p>
             <div class="notice notice--warn"><div>
-              <strong>Foundry read this as somebody trying to buy, and did not draft an order.</strong>
+              <strong>StockChief read this as somebody trying to buy, and did not draft an order.</strong>
               <p><%= message.order_draft_reason %></p>
               <a class="btn btn--sm" href="/mail/<%= message.id %>">Read and answer it</a>
             </div></div>
@@ -239,7 +239,7 @@
           <% } else { %><p class="muted">This email is saved as evidence. It did not change purchasing or inventory.</p><% } %>
         <% if (message.trust_status === 'TRUSTED' && message.processing_status === 'CAPTURED' && attachmentsForMessage.length) { %>
           <div class="mailbox-choice-panel">
-            <strong>What should Foundry do with <%= attachmentsForMessage.length === 1 ? 'this file' : 'these files' %>?</strong>
+            <strong>What should StockChief do with <%= attachmentsForMessage.length === 1 ? 'this file' : 'these files' %>?</strong>
             <p>Choose its business meaning. Nothing is imported or changed until the appropriate review is complete.</p>
             <div class="form-actions">
               <form method="post" action="/settings/connections/<%= connection.id %>/email-messages/<%= message.id %>/supplier-preview"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--primary btn--sm" type="submit">Use as supplier purchasing document</button></form>

@@ -196,7 +196,7 @@ test('a new Square location is imported and mapped without asking the owner', as
   const agent = request.agent(app); await signIn(agent, workspace.account.email, workspace.account.password);
   const detail = await agent.get(`/settings/connections/${connection.id}`); const text = plain(detail.text);
   assert.equal(detail.status, 200);
-  assert.doesNotMatch(text, /Choose the matching Foundry record/);
+  assert.doesNotMatch(text, /Choose the matching StockChief record/);
   const location = env.db.prepare('SELECT * FROM locations WHERE workspace_id = ? AND name = ?')
     .get(workspace.workspaceId, 'Default Test Account');
   assert.ok(location, 'the real Square location is created during discovery');
@@ -207,7 +207,7 @@ test('a new Square location is imported and mapped without asking the owner', as
   env.db.close();
 });
 
-test('first Square authorization imports an empty Foundry inventory instead of asking for pointless matches', async () => {
+test('first Square authorization imports an empty StockChief inventory instead of asking for pointless matches', async () => {
   const store = makeDatabase(); const workspace = seedWorkspace(store.db, { workspaceName: 'New Square Business' });
   store.db.prepare('DELETE FROM locations WHERE workspace_id = ?').run(workspace.workspaceId);
   const env = { ...store, workspace }; const connection = addProvider(env, 'square');
@@ -307,7 +307,7 @@ test('every commerce connector can bulk-add selected products while preserving v
       const detail = await agent.get(`/settings/connections/${connection.id}`); const text = plain(detail.text);
       assert.equal(detail.status, 200);
       assert.match(text, /Select all products/);
-      assert.match(text, /Add selected to Foundry/);
+      assert.match(text, /Add selected to StockChief/);
       const created = await agent.post(`/settings/connections/${connection.id}/create-products-map`).type('form').send({
         _csrf: csrfFrom(detail.text), externalIds: ['mug-red', 'cap'],
       });
@@ -439,7 +439,7 @@ test('Square Sandbox hands the owner an unpaid Square checkout and never records
     const text = plain(detail.text);
     assert.match(text, /Run the sale in Square/);
     assert.match(text, /unpaid Square Sandbox checkout/);
-    assert.match(text, /Foundry never presses the final payment button/);
+    assert.match(text, /StockChief never presses the final payment button/);
     assert.doesNotMatch(detail.text, /squareupsandbox\.com\/dashboard\/take-payment/);
     const response = await agent.post(`/settings/connections/${connection.id}/square-sandbox-checkout`).type('form').send({
       _csrf: csrfFrom(detail.text), externalSku: 'variation-1', externalLocationId: 'location-1', quantity: '1',
@@ -570,7 +570,8 @@ test('Shopify signed order and fulfillment use Mission 10 exactly once', async (
   connections.mapExternal(env.db, env.workspace.ctx, connection.id, { entityType: 'sku', externalId: 'gid://shopify/ProductVariant/481729', foundryRecordId: env.item.skuId });
   connections.mapExternal(env.db, env.workspace.ctx, connection.id, { entityType: 'location', externalId: 'gid://shopify/Location/123', foundryRecordId: env.workspace.store.id });
   const order = { id: 9001, name: '#1001', currency: 'USD', location_id: 123, created_at: '2026-08-27T10:00:00Z',
-    customer: { id: 77, first_name: 'Ari', last_name: 'Buyer' },
+    customer: { id: 77, first_name: 'Ari', last_name: 'Buyer', email: 'ari@example.test' },
+    shipping_address: { address1: '7 Example Lane', city: 'Albany', province: 'NY', zip: '12207', country_code: 'US' },
     line_items: [{ variant_id: 481729, sku: 'TS-BLK-S', quantity: 3, price: '12.00' }] };
   const raw = JSON.stringify(order); const endpoint = `/api/v1/connections/shopify/webhooks/${connection.id}`;
   const first = await request(env.app).post(endpoint).set('X-Shopify-Topic', 'orders/create')
@@ -580,6 +581,8 @@ test('Shopify signed order and fulfillment use Mission 10 exactly once', async (
   const mapped = connections.mapping(env.db, env.workspace.workspaceId, connection.id, 'sales_order', '9001');
   const foundryOrder = sales.getOrder(env.db, env.workspace.workspaceId, mapped.foundry_record_id);
   assert.equal(foundryOrder.totals.allocated, 3);
+  assert.equal(foundryOrder.ship_to_address, '7 Example Lane, Albany, NY, 12207, US');
+  assert.equal(foundryOrder.customer.email, 'ari@example.test');
   assert.equal(foundryOrder.lines[0].unit_price_minor, 1200, 'provider order price is snapshotted without changing the catalog price');
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 30);
   const replay = await request(env.app).post(endpoint).set('X-Shopify-Topic', 'orders/create')
@@ -814,7 +817,7 @@ test('Clover uses the current expiring OAuth token flow and refreshes before pro
   } finally { global.fetch = originalFetch; }
 });
 
-test('one batched Clover webhook routes each merchant only to its own Foundry workspace', async () => {
+test('one batched Clover webhook routes each merchant only to its own StockChief workspace', async () => {
   const store = makeDatabase();
   const first = seedWorkspace(store.db, { workspaceName: 'Clover Merchant One' });
   const second = seedWorkspace(store.db, { workspaceName: 'Clover Merchant Two', email: 'clover-two@example.test' });
@@ -897,7 +900,9 @@ test('WooCommerce signed order commits demand and completion fulfills through th
   connections.mapExternal(env.db, env.workspace.ctx, connection.id, { entityType: 'sku', externalId: '555', foundryRecordId: env.item.skuId });
   connections.mapExternal(env.db, env.workspace.ctx, connection.id, { entityType: 'location', externalId: storeUrl, foundryRecordId: env.workspace.store.id });
   const order = { id: 42, number: '42', status: 'processing', currency: 'USD', date_created_gmt: '2026-08-27T13:00:00Z',
-    billing: { first_name: 'Wendy', last_name: 'Woo' }, line_items: [{ product_id: 555, variation_id: 0, sku: 'TS-BLK-S', quantity: 4, price: 12 }] };
+    billing: { first_name: 'Wendy', last_name: 'Woo', email: 'wendy@example.test' },
+    shipping: { address_1: '7 Example Lane', city: 'Albany', state: 'NY', postcode: '12207', country: 'US' },
+    line_items: [{ product_id: 555, variation_id: 0, sku: 'TS-BLK-S', quantity: 4, price: 12 }] };
   const endpoint = `/api/v1/connections/woocommerce/webhooks/${connection.id}`; const raw = JSON.stringify(order);
   const created = await request(env.app).post(endpoint).set('X-WC-Webhook-Topic', 'order.created')
     .set('X-WC-Webhook-Delivery-ID', 'woo-1').set('X-WC-Webhook-Signature', hmac(secret, raw))

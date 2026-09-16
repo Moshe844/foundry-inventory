@@ -107,7 +107,7 @@ async function sendThroughMailbox(db, workspaceId, id, actorId = null) {
   const state = modes.get(db, workspaceId);
   if (state.paused || (state.suspended && (!state.suspendedScope
       || ['purchasing','supplier'].includes(state.suspendedScope)))) {
-    throw new Error('Foundry is paused. No supplier communication was sent.');
+    throw new Error('StockChief is paused. No supplier communication was sent.');
   }
   const now = nowIso();
   db.prepare(`UPDATE supplier_communications SET status = 'SENDING', transport = ?,
@@ -139,7 +139,7 @@ async function dispatchAutomaticForOrder(db, workspaceId, purchaseOrderId) {
   /*
    * Three separate permissions: this supplier's own switch, a mailbox to send
    * from, and the workspace having authorised supplier email as a job. The
-   * last one used to be "may Foundry act at all", which meant authorising any
+   * last one used to be "may StockChief act at all", which meant authorising any
    * automation authorised this one.
    */
   const mayEmailSuppliers = require('../autopilot/capabilities').may(db, workspaceId, 'supplier_emails');
@@ -151,7 +151,7 @@ async function dispatchAutomaticForOrder(db, workspaceId, purchaseOrderId) {
   if (!order.hasCosts) {
     require('../connections/service').issue(db, { workspaceId, connectorId: connection.id,
       issueType: 'SUPPLIER_ORDER_PRICE_MISSING', fingerprint: `supplier-price:${purchaseOrderId}`,
-      title: `${order.poNumber} needs a price before Foundry can send it automatically`,
+      title: `${order.poNumber} needs a price before StockChief can send it automatically`,
       detail: `At least one line for ${supplier.name} has no known unit cost. Nothing was sent.`,
       resolutionHint: 'Review the purchase order and supplier price, then approve the message yourself.' });
     return forOrder(db, workspaceId, purchaseOrderId);
@@ -225,7 +225,7 @@ require('../autonomous/service').registerAdapter('supplier.communicate', {
     const message = get(db, ctx.workspaceId, operation.decision.communicationId);
     const passed = message?.status === 'SENT';
     return { passed, reason:passed
-      ? 'The connected mailbox returned a sent message and Foundry reread it as sent.'
+      ? 'The connected mailbox returned a sent message and StockChief reread it as sent.'
       : (message?.errorMessage || 'The supplier message is not confirmed as sent.'),
     communicationId:message?.id || operation.decision.communicationId,
     externalMessageId:message?.externalMessageId || null };
@@ -277,8 +277,8 @@ function prepareDueFollowups(db, workspaceId, options = {}) {
         issueType: 'SUPPLIER_FOLLOW_UP_APPROVAL', fingerprint: `supplier-follow-up:${id}`,
         title: `${row.po_number} follow-up is ready for ${row.supplier_name}`,
         detail: lateDelivery
-          ? `${row.po_number} was expected ${row.expected_date}. Foundry prepared a concise status request but has no authority to send it.`
-          : `${row.po_number} has not been confirmed. Foundry prepared a concise status request but has no authority to send it.`,
+          ? `${row.po_number} was expected ${row.expected_date}. StockChief prepared a concise status request but has no authority to send it.`
+          : `${row.po_number} has not been confirmed. StockChief prepared a concise status request but has no authority to send it.`,
         resolutionHint: `Open ${row.po_number}, review the prepared message, then approve and send it.`,
         candidates: [{ kind: 'supplier_communication', communicationId: id, purchaseOrderId: row.id }],
       });

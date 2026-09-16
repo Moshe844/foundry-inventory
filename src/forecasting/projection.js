@@ -251,7 +251,7 @@ function explain({ onHand, dailyRate, stockoutDate, daysUntilStockout, nextArriv
   }
   if (!stockoutDate) {
     if (dailyRate === null) {
-      return `${onHand} in stock. Foundry cannot say how fast this sells yet, so it is not predicting a run-out date.`;
+      return `${onHand} in stock. StockChief cannot say how fast this sells yet, so it is not predicting a run-out date.`;
     }
     return `${onHand} in stock, selling about ${dailyRate} a day. Nothing runs out inside the period looked at.`;
   }

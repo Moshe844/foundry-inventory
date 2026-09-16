@@ -59,7 +59,7 @@
         </div>
         <div class="card-body">
           <p class="lede">
-            Foundry prepared <strong><%= preparedNumbers %></strong> for the <%= livePlan.prepared.units %>
+            StockChief prepared <strong><%= preparedNumbers %></strong> for the <%= livePlan.prepared.units %>
             <%= livePlan.unitLabel %>(s) needed. It is only a draft: the supplier has not received it,
             and these units are not on order yet.
           </p>
@@ -79,7 +79,7 @@
       </div>
     <% } else { %>
     <div class="card">
-      <div class="card-head"><h2>What Foundry found</h2></div>
+      <div class="card-head"><h2>What StockChief found</h2></div>
       <div class="card-body">
         <p class="lede"><%= item.explanation %></p>
 
@@ -147,20 +147,20 @@
                 <li>
                   <%= plan.prepared.units %> <%= helpers.plural(plan.prepared.units, plan.unitLabel) %> are on
                   <% plan.prepared.orders.forEach(function (order, i) { %><%= i ? ', ' : '' %><a href="/purchasing/orders/<%= order.poId %>"><%= order.poNumber %></a><% }); %>,
-                  waiting for approval. Foundry is not proposing another order for the same stock.
+                  waiting for approval. StockChief is not proposing another order for the same stock.
                 </li>
               </ul>
             <% } %>
 
             <% if (plan.blocked === 'no_supplier') { %>
               <p class="muted" style="margin-top:8px;">
-                No supplier is linked to this line, so Foundry cannot work out a pack size, a cost or a lead time.
+                No supplier is linked to this line, so StockChief cannot work out a pack size, a cost or a lead time.
                 <a href="/purchasing/supplier-for/<%= plan.skuId %>">Add one for this line</a> and it will.
               </p>
             <% } %>
 
             <details class="rep-plan-working">
-              <summary>How Foundry worked this out</summary>
+              <summary>How StockChief worked this out</summary>
               <ol class="plain-list">
                 <% plan.calculation.forEach(function (line) { %>
                   <li><%= line.detail %></li>
@@ -205,7 +205,7 @@
                 <% if (locals.plan && locals.plan.purchase) { %>
                   Each opens as a draft you approve. Nothing moves and nothing is ordered until you say so.
                 <% } else { %>
-                  Foundry will work out the exact movement and show it to you. Nothing moves until you approve it.
+                  StockChief will work out the exact movement and show it to you. Nothing moves until you approve it.
                 <% } %>
               </p>
             <% } else if (locals.plan && locals.plan.purchase) { %>
@@ -223,13 +223,13 @@
                 set replenishment, or change the protection rule in Settings.
               </p>
             <% } else { %>
-              <%# True as written: the one thing Foundry does unattended is balancing
+              <%# True as written: the one thing StockChief does unattended is balancing
                   its own locations under an approved policy, and that is never this
                   branch. Everything else waits for a person. %>
               <p class="muted" style="font-size:12px; margin-top:6px;">
                 <%= typeof actionMessage !== 'undefined' && actionMessage
                     ? actionMessage
-                    : 'There is nothing here Foundry acts on by itself. This is a suggestion for you to act on.' %>
+                    : 'There is nothing here StockChief acts on by itself. This is a suggestion for you to act on.' %>
               </p>
             <% } %>
           </div>
@@ -247,7 +247,7 @@
     <% if (preparedOnly) { %>
       <details class="card advanced-settings">
         <summary class="card-head">
-          <div><h2>Calculation and evidence</h2><p class="muted">Why Foundry prepared this quantity.</p></div>
+          <div><h2>Calculation and evidence</h2><p class="muted">Why StockChief prepared this quantity.</p></div>
         </summary>
     <% } else { %>
       <div class="card">
@@ -271,7 +271,7 @@
       </div>
       <% if (item.estimatedEvidence.length) { %>
         <div class="card-head" style="border-top:1px solid var(--line);">
-          <h3 style="font-size:13px;">Foundry's working</h3>
+          <h3 style="font-size:13px;">StockChief's working</h3>
           <span class="spacer"></span>
           <span class="badge badge--muted">estimated</span>
         </div>
@@ -327,7 +327,7 @@
       <div class="card-head"><h2>Was this useful?</h2></div>
       <div class="card-body">
         <p class="muted" style="font-size:13px; margin-bottom:10px;">
-          Foundry records your answer. It will not quietly change what it checks —
+          StockChief records your answer. It will not quietly change what it checks —
           if a rule is wrong, that is something to fix openly.
         </p>
         <div class="btn-row">
@@ -370,7 +370,7 @@
             <tr><td class="muted">Last checked</td><td class="right"><%= helpers.timeAgo(item.lastEvaluatedAt) %></td></tr>
             <tr><td class="muted">Confidence</td><td class="right"><%= item.confidence %></td></tr>
             <tr><td class="muted">Detection rules</td><td class="right mono"><%= item.detectionRuleVersion %></td></tr>
-            <tr><td class="muted">Wording</td><td class="right"><%= item.isReworded ? 'Foundry, from the figures above' : 'Foundry, deterministic' %></td></tr>
+            <tr><td class="muted">Wording</td><td class="right"><%= item.isReworded ? 'StockChief, from the figures above' : 'StockChief, deterministic' %></td></tr>
           </tbody>
         </table>
       </div>

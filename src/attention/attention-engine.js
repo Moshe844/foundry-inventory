@@ -191,8 +191,9 @@ function evaluate(db, workspaceId, options = {}) {
 
   candidates = group(candidates).map((c) => ({ ...c, priorityScore: score(c) }));
 
-  return inTransaction(db, () => {
+  const result = inTransaction(db, () => {
     const seen = new Set();
+    const emailOccurrences = [];
     let opened = 0;
     let updated = 0;
 
@@ -203,7 +204,8 @@ function evaluate(db, workspaceId, options = {}) {
         .get(workspaceId, candidate.fingerprint);
 
       if (!existing) {
-        insert(db, workspaceId, candidate, now);
+        const attentionId = insert(db, workspaceId, candidate, now);
+        emailOccurrences.push({ attentionId, occurrenceKey: new Date(now).toISOString() });
         opened += 1;
         continue;
       }
@@ -216,6 +218,10 @@ function evaluate(db, workspaceId, options = {}) {
         if (until && new Date(until).getTime() <= now) status = 'OPEN';
       } else if (status === 'RESOLVED') {
         status = 'OPEN';
+      }
+
+      if (status === 'OPEN' && !['OPEN', 'ACKNOWLEDGED'].includes(existing.status)) {
+        emailOccurrences.push({ attentionId: existing.id, occurrenceKey: new Date(now).toISOString() });
       }
 
       db.prepare(
@@ -272,8 +278,20 @@ function evaluate(db, workspaceId, options = {}) {
       nowIso()
     );
 
-    return { runId, opened, updated, resolved, evaluated: candidates.length };
+    return { runId, opened, updated, resolved, evaluated: candidates.length, emailOccurrences };
   });
+
+  // Delivery is best-effort and outside the detection transaction. Provider
+  // failure must never turn a successful stock movement into a failed one.
+  try {
+    require('../notifications/email-alerts').queueAttention(
+      db, workspaceId, result.emailOccurrences, { now }
+    );
+  } catch (error) {
+    console.error('[notifications] could not queue attention email: %s', error.message);
+  }
+  delete result.emailOccurrences;
+  return result;
 }
 
 /**
@@ -315,6 +333,7 @@ function close(db, item, reason, now) {
 
 function insert(db, workspaceId, candidate, now) {
   const timestamp = new Date(now).toISOString();
+  const id = newId('att');
   db.prepare(
     `INSERT INTO attention_items (
        id, workspace_id, fingerprint, category, severity, priority_score, title, concise_summary,
@@ -330,7 +349,7 @@ function insert(db, workspaceId, candidate, now) {
        @itemId, @skuId
      )`
   ).run({
-    id: newId('att'),
+    id,
     workspaceId,
     itemId: candidate.itemId || null,
     skuId: candidate.skuId || null,
@@ -353,6 +372,7 @@ function insert(db, workspaceId, candidate, now) {
     detectionRuleVersion: candidate.detectionRuleVersion || DETECTION_RULE_VERSION,
     now: timestamp,
   });
+  return id;
 }
 
 // --- reading -----------------------------------------------------------------
@@ -430,7 +450,7 @@ function countAttention(db, workspaceId, { statuses = ['OPEN', 'ACKNOWLEDGED'], 
 }
 
 /**
- * Open findings about one item, so the record itself can say what Foundry has
+ * Open findings about one item, so the record itself can say what StockChief has
  * noticed. Matches on the denormalised item_id, and falls back to the affected
  * entity list for the workspace-wide findings that have no single item.
  */

@@ -403,7 +403,7 @@ CREATE TABLE IF NOT EXISTS accounting_payments (
   --
   -- A deposit paid before the goods ship has no invoice to be allocated to, so
   -- without this the order could not see its own money: the customer had paid
-  -- and Foundry still held their goods against the full balance.
+  -- and StockChief still held their goods against the full balance.
   sales_order_id TEXT REFERENCES sales_orders(id) ON DELETE SET NULL,
   status TEXT NOT NULL DEFAULT 'POSTED' CHECK (status IN ('POSTED', 'VOID')),
   cash_account_id TEXT NOT NULL REFERENCES accounting_accounts(id),
@@ -564,8 +564,8 @@ CREATE TABLE IF NOT EXISTS accounting_inventory_openings (
 
 -- Collecting money online (Mission 15)
 --
--- A request is Foundry asking a customer to pay something, through somebody
--- else's payment surface. Foundry never sees a card number: it holds the
+-- A request is StockChief asking a customer to pay something, through somebody
+-- else's payment surface. StockChief never sees a card number: it holds the
 -- provider's identifiers and the hosted URL, and learns what happened from
 -- events the provider sends back.
 --
@@ -597,7 +597,7 @@ CREATE TABLE IF NOT EXISTS payment_requests (
   updated_at           TEXT NOT NULL,
   opened_at            TEXT,
   paid_at              TEXT,
-  -- When Foundry last asked the provider what happened to this request, so an
+  -- When StockChief last asked the provider what happened to this request, so an
   -- order can be right about money even when no webhook can reach it.
   checked_at           TEXT
 );
@@ -675,12 +675,12 @@ CREATE INDEX IF NOT EXISTS idx_document_charges_status
 -- else's Stripe — refunds, payouts, every customer record — and asking a
 -- merchant to paste one into another company's software is asking them to
 -- trust it with more than the job needs. Connect grants access instead: the
--- business signs in on Stripe's own page, and what Foundry keeps is an account
+-- business signs in on Stripe's own page, and what StockChief keeps is an account
 -- id, which is not a secret and cannot be used by anyone who is not the
 -- platform it was granted to.
 --
 -- So there is no credential row beside this one. The OAuth exchange returns an
--- access token as well; Foundry deliberately does not keep it, because acting
+-- access token as well; StockChief deliberately does not keep it, because acting
 -- through the platform key with this id does the same work and leaves nothing
 -- worth stealing. Revoking is one click on the merchant's side, which is a
 -- thing a pasted key never allowed.

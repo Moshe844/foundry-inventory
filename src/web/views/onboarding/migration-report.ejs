@@ -23,14 +23,14 @@
   var serialDecision = report.serialIdentityGap && report.serialIdentityGap.products.length
     ? report.serialIdentityGap : null;
   var title = pkg.status === 'CUTOVER_ACTIVE' ? 'This inventory is live and verified.'
-    : pkg.status === 'APPLYING' ? 'Foundry is switching this inventory.'
+    : pkg.status === 'APPLYING' ? 'StockChief is switching this inventory.'
     : pkg.status === 'VERIFIED' ? 'Every material check matches.'
     : remaining.length ? (remaining.length === 1 ? 'One source issue remains.' : remaining.length + ' source issues remain.')
     : pkg.status === 'STAGING' ? 'Everything is prepared. Run the final checks.'
     : pkg.status === 'READY' ? 'The source totals match. Approve the switch.'
     : pkg.status === 'FAILED' ? 'The switch stopped safely.'
-    : serialDecision ? 'One decision is needed before Foundry can continue.'
-    : 'Foundry is verifying this migration.';
+    : serialDecision ? 'One decision is needed before StockChief can continue.'
+    : 'StockChief is verifying this migration.';
 %>
 
 <div class="rm-head rm-migration-head">
@@ -50,9 +50,9 @@
     <h2>Keep <%= serialDecision.quantity.toLocaleString() %> proven units without inventing serial numbers?</h2>
     <p>The source marks <%= serialDecision.products.length.toLocaleString() %> product<%= serialDecision.products.length === 1 ? '' : 's' %> as serial-tracked across <%= serialDecision.positionCount.toLocaleString() %> stock position<%= serialDecision.positionCount === 1 ? '' : 's' %>, but supplies no serial identities.</p>
     <% if (serialDecision.canUseAggregateQuantity) { %>
-      <p><strong>Foundry recommends:</strong> preserve every proven quantity, import these products as quantity-tracked, and retain the original serial flags with the source evidence. Serial tracking can begin when exact identities are supplied.</p>
+      <p><strong>StockChief recommends:</strong> preserve every proven quantity, import these products as quantity-tracked, and retain the original serial flags with the source evidence. Serial tracking can begin when exact identities are supplied.</p>
     <% } else { %>
-      <p>Some exact serial identities are present. Upload the missing identities so Foundry does not discard or mix them.</p>
+      <p>Some exact serial identities are present. Upload the missing identities so StockChief does not discard or mix them.</p>
     <% } %>
   </div>
   <% if (serialDecision.canUseAggregateQuantity) { %>
@@ -67,14 +67,14 @@
 
 <section class="rm-migration-state" aria-label="Migration state">
   <div class="is-done"><span>Source rows prepared</span><strong><%= sourceRowsPrepared.toLocaleString() %></strong><small>From the reviewed workbook</small></div>
-  <div class="<%= allPrepared ? 'is-done' : 'is-now' %>"><span>Foundry records prepared</span><strong><%= pkg.stagedCount.toLocaleString() %></strong><small>Products, SKUs, prices, costs, rules and evidence</small></div>
+  <div class="<%= allPrepared ? 'is-done' : 'is-now' %>"><span>StockChief records prepared</span><strong><%= pkg.stagedCount.toLocaleString() %></strong><small>Products, SKUs, prices, costs, rules and evidence</small></div>
   <div class="<%= pkg.status === 'CUTOVER_ACTIVE' ? 'is-done' : '' %>"><span>Applied to this inventory</span><strong data-migration-progress-count><%= pkg.appliedCount.toLocaleString() %></strong><small><%= pkg.status === 'CUTOVER_ACTIVE' ? 'Verified and active' : pkg.appliedCount ? 'Saved here; final reconciliation is not complete' : 'No business records applied yet' %></small></div>
 </section>
 
 <div class="rm-migration-safety">
   <span class="rm-migration-safety__icon"><%- helpers.icon('shield',{ size:18 }) %></span>
   <% if (pkg.status === 'CUTOVER_ACTIVE') { %>
-    <span><strong>This inventory is live.</strong> Every material source total was reread from Foundry and matched before activation. The original files and reconciliation evidence remain saved.</span>
+    <span><strong>This inventory is live.</strong> Every material source total was reread from StockChief and matched before activation. The original files and reconciliation evidence remain saved.</span>
   <% } else if (pkg.appliedCount) { %>
     <span><strong>Your source and completed batches are saved.</strong> <%= pkg.appliedCount.toLocaleString() %> verified records are now in this separate inventory. The switch is not complete until the stopped record is resolved and final reconciliation passes. Your other inventories remain untouched.</span>
   <% } else { %>
@@ -84,12 +84,12 @@
 </div>
 
 <% if (sourceReview && sourceReview.inventoryPositions) { %>
-<section class="rm-panel rm-migration-summary" aria-label="What Foundry understood from the workbook">
-  <div class="rm-panel__head"><%- helpers.icon('check',{ size:15 }) %><h2>What Foundry understood</h2><span class="right"><%= sourceFiles.map(function(file) { return file.name; }).join(' · ') %></span></div>
+<section class="rm-panel rm-migration-summary" aria-label="What StockChief understood from the workbook">
+  <div class="rm-panel__head"><%- helpers.icon('check',{ size:15 }) %><h2>What StockChief understood</h2><span class="right"><%= sourceFiles.map(function(file) { return file.name; }).join(' · ') %></span></div>
   <div class="rm-migration-state rm-migration-state--facts">
     <div class="is-done"><span>Products and SKUs</span><strong><%= Number(counts.sku || 0).toLocaleString() %></strong><small><%= Number(counts.product || 0).toLocaleString() %> product records</small></div>
     <div class="is-done"><span>Physical stock</span><strong><%= Number(sourceReview.onHand || 0).toLocaleString() %> on hand</strong><small><%= Number(sourceReview.reserved || 0).toLocaleString() %> reserved · <%= Number(sourceReview.available || 0).toLocaleString() %> available</small></div>
-    <div class="is-done"><span>Inventory cost value</span><strong><%= Number(sourceReview.sourceInventoryValue || 0).toLocaleString(undefined,{ minimumFractionDigits:2,maximumFractionDigits:2 }) %></strong><small><%= inventoryValueCheck && inventoryValueCheck.status === 'MATCHED' ? 'Matches Foundry inventory cost layers' : sourceReview.inventoryValueMismatches ? sourceReview.inventoryValueMismatches.toLocaleString() + ' value differences' : Number(sourceReview.inventoryValueRecords || 0) && Number(sourceReview.calculatedInventoryValueRecords || 0) === Number(sourceReview.inventoryValueRecords || 0) ? 'Matches quantity × unit cost' : Number(sourceReview.inventoryValueRecords || 0) ? 'Value supplied by the source; verification pending' : 'No inventory value supplied' %></small></div>
+    <div class="is-done"><span>Inventory cost value</span><strong><%= Number(sourceReview.sourceInventoryValue || 0).toLocaleString(undefined,{ minimumFractionDigits:2,maximumFractionDigits:2 }) %></strong><small><%= inventoryValueCheck && inventoryValueCheck.status === 'MATCHED' ? 'Matches StockChief inventory cost layers' : sourceReview.inventoryValueMismatches ? sourceReview.inventoryValueMismatches.toLocaleString() + ' value differences' : Number(sourceReview.inventoryValueRecords || 0) && Number(sourceReview.calculatedInventoryValueRecords || 0) === Number(sourceReview.inventoryValueRecords || 0) ? 'Matches quantity × unit cost' : Number(sourceReview.inventoryValueRecords || 0) ? 'Value supplied by the source; verification pending' : 'No inventory value supplied' %></small></div>
     <div class="is-done"><span>Operating records</span><strong><%= Number(counts.supplier || 0).toLocaleString() %> suppliers</strong><small><%= Number(counts.selling_price || 0).toLocaleString() %> prices · <%= Number(counts.purchase_cost || 0).toLocaleString() %> costs · <%= Number(counts.reorder_policy || 0).toLocaleString() %> reorder rules</small></div>
   </div>
   <p class="rm-migration-summary__check"><strong>Availability check:</strong> <%= Number(sourceReview.onHand || 0).toLocaleString() %> on hand − <%= Number(sourceReview.reserved || 0).toLocaleString() %> reserved − <%= Number(sourceReview.damaged || 0).toLocaleString() %> damaged = <%= Number(sourceReview.available || 0).toLocaleString() %> available. <%= sourceReview.inventoryFormulaMismatches ? 'The workbook contains ' + sourceReview.inventoryFormulaMismatches.toLocaleString() + ' difference(s).' : 'Every row matches.' %></p>
@@ -99,30 +99,30 @@
 <% if (remaining.length) { %>
 <section class="rm-next-card">
   <div><span class="rm-stamp">Do this next</span><h2>Finish the remaining source review.</h2>
-    <p>Foundry has kept the uncertain dataset out of live inventory. Everything already prepared is saved.</p></div>
+    <p>StockChief has kept the uncertain dataset out of live inventory. Everything already prepared is saved.</p></div>
   <a class="rm-btn" href="/onboarding/migrations/<%= pkg.id %>/sources">Continue migration</a>
 </section>
 <% } else if (pkg.status === 'STAGING' && allPrepared) { %>
 <section class="rm-next-card rm-next-card--working">
-  <div class="rm-working-copy"><span class="rm-stamp">Working automatically</span><h2>Foundry is verifying the prepared records.</h2>
+  <div class="rm-working-copy"><span class="rm-stamp">Working automatically</span><h2>StockChief is verifying the prepared records.</h2>
     <p>It is checking identities, quantities and financial evidence against the saved source. Nothing is live.</p><progress max="100"></progress></div>
   <form method="post" action="/onboarding/migrations/<%= pkg.id %>/prepare-known-evidence" data-migration-auto-start data-no-busy><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button type="submit" hidden>Start</button></form>
 </section>
 <% } else if (pkg.status === 'READY') { %>
 <section class="rm-next-card rm-next-card--ready">
-  <div><span class="rm-stamp">Verification passed</span><h2>Approve the switch to Foundry.</h2>
-    <p>Foundry will apply the prepared records through the normal inventory, purchasing and accounting services, then reread and reconcile the result.</p></div>
+  <div><span class="rm-stamp">Verification passed</span><h2>Approve the switch to StockChief.</h2>
+    <p>StockChief will apply the prepared records through the normal inventory, purchasing and accounting services, then reread and reconcile the result.</p></div>
   <form method="post" action="/onboarding/migrations/<%= pkg.id %>/approve-and-activate" data-long-action><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn" data-busy-label="Starting the verified switch…">Approve and switch</button></form>
 </section>
 <% } else if (pkg.status === 'NEEDS_ATTENTION' && !serialDecision) { %>
 <section class="rm-next-card">
   <div><span class="rm-stamp">Stopped safely</span><h2>Check the corrected source links again.</h2>
-    <p>Nothing was applied. Foundry will rerun every identity and quantity check before a switch can be offered.</p></div>
+    <p>Nothing was applied. StockChief will rerun every identity and quantity check before a switch can be offered.</p></div>
   <form method="post" action="/onboarding/migrations/<%= pkg.id %>/validate"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn">Run verification again</button></form>
 </section>
 <% } else if (pkg.status === 'APPLYING') { %>
 <section class="rm-next-card rm-next-card--working" data-migration-progress="/onboarding/migrations/<%= pkg.id %>/progress">
-  <div class="rm-working-copy"><span class="rm-stamp">Switch running</span><h2>Foundry is applying the verified records.</h2><p data-migration-progress-copy><%= pkg.appliedCount.toLocaleString() %> of <%= pkg.stagedCount.toLocaleString() %> prepared records are safely applied through the inventory, purchasing and accounting engines. Nothing is called complete until the live totals reconcile.</p>
+  <div class="rm-working-copy"><span class="rm-stamp">Switch running</span><h2>StockChief is applying the verified records.</h2><p data-migration-progress-copy><%= pkg.appliedCount.toLocaleString() %> of <%= pkg.stagedCount.toLocaleString() %> prepared records are safely applied through the inventory, purchasing and accounting engines. Nothing is called complete until the live totals reconcile.</p>
     <div class="rm-live-progress"><span data-migration-progress-phase>Applying verified records</span><span data-migration-progress-fraction><%= pkg.appliedCount.toLocaleString() %> of <%= pkg.stagedCount.toLocaleString() %></span></div>
     <progress max="<%= Math.max(1,pkg.stagedCount) %>" value="<%= pkg.appliedCount %>" data-migration-job-bar></progress>
     <small>You can leave this page. Completed batches become visible in this separate inventory, are saved, and cannot be duplicated. The switch is not complete until final reconciliation passes.</small></div>
@@ -145,8 +145,8 @@
 
 <% if (report.checks.length) { %>
 <section class="rm-panel rm-migration-checks">
-  <div class="rm-panel__head"><%- helpers.icon('shield',{ size:15 }) %><h2>Workbook against Foundry</h2><span class="right"><%= matched %> matched<% if (blocked) { %> · <%= blocked %> blocked<% } %></span></div>
-  <div class="rm-table-scroll"><table class="rm-qty"><thead><tr><th>Check</th><th>Workbook</th><th>Foundry</th><th>Result</th></tr></thead><tbody>
+  <div class="rm-panel__head"><%- helpers.icon('shield',{ size:15 }) %><h2>Workbook against StockChief</h2><span class="right"><%= matched %> matched<% if (blocked) { %> · <%= blocked %> blocked<% } %></span></div>
+  <div class="rm-table-scroll"><table class="rm-qty"><thead><tr><th>Check</th><th>Workbook</th><th>StockChief</th><th>Result</th></tr></thead><tbody>
     <% report.checks.forEach(function(check) {
       var sourceValue = check.key === 'inventory.value_minor' && check.source != null
         ? (Number(check.source) / 100).toLocaleString(undefined,{ minimumFractionDigits:2,maximumFractionDigits:2 }) : check.source;
@@ -160,7 +160,7 @@
 <% if (report.issues.length) { %>
 <section class="rm-panel rm-panel--attention rm-migration-checks">
   <div class="rm-panel__head"><%- helpers.icon('alert',{ size:15 }) %><h2><%= issueGroups.every(function(group) { return group.retryable; }) ? 'The previous stop is resolved' : pkg.problemCount.toLocaleString() + ' record' + (pkg.problemCount === 1 ? ' needs' : 's need') + ' attention' %></h2><span class="right"><%= pkg.appliedCount ? pkg.appliedCount.toLocaleString() + ' applied and saved' : 'No business records applied' %></span></div>
-  <div class="rm-feed"><% issueGroups.forEach(function(group) { %><div class="rm-feed__row"><span class="rm-feed__ic <%= group.retryable ? 'is-ok' : 'is-warn' %>"><%- helpers.icon(group.retryable ? 'check' : 'alert',{ size:14 }) %></span><span class="rm-feed__t"><strong><%= group.retryable ? 'Ready to retry' : group.count.toLocaleString() + ' ' + group.entityType.replaceAll('_',' ') + ' record' + (group.count === 1 ? '' : 's') %></strong><small><%= group.retryable ? 'Foundry now understands this source value. A retry will continue after the last saved batch.' : 'Foundry stopped before applying this record. Earlier completed batches remain saved in this separate inventory.' %></small><details class="rm-issue-samples"><summary>Show technical detail</summary><% group.samples.forEach(function(sample) { %><code><%= sample %></code><% }) %></details></span></div><% }) %></div>
+  <div class="rm-feed"><% issueGroups.forEach(function(group) { %><div class="rm-feed__row"><span class="rm-feed__ic <%= group.retryable ? 'is-ok' : 'is-warn' %>"><%- helpers.icon(group.retryable ? 'check' : 'alert',{ size:14 }) %></span><span class="rm-feed__t"><strong><%= group.retryable ? 'Ready to retry' : group.count.toLocaleString() + ' ' + group.entityType.replaceAll('_',' ') + ' record' + (group.count === 1 ? '' : 's') %></strong><small><%= group.retryable ? 'StockChief now understands this source value. A retry will continue after the last saved batch.' : 'StockChief stopped before applying this record. Earlier completed batches remain saved in this separate inventory.' %></small><details class="rm-issue-samples"><summary>Show technical detail</summary><% group.samples.forEach(function(sample) { %><code><%= sample %></code><% }) %></details></span></div><% }) %></div>
 </section>
 <% } %>
 

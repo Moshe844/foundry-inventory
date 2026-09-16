@@ -336,7 +336,7 @@ function importGroup(db, ctx, plan, group, executionId) {
         throw new ValidationError(
           parsed.variants && parsed.variants.length
             ? `${item.name} has no ${parsed.variants.map((v) => v.value).join(' / ')} version. Add it first.`
-            : `Foundry could not tell which version of ${item.name} this row means.`
+            : `StockChief could not tell which version of ${item.name} this row means.`
         );
       }
 
@@ -347,7 +347,7 @@ function importGroup(db, ctx, plan, group, executionId) {
        * the axes, and their codes are generated from the product name —
        * CLASSIC-CREW-T-SHIRT-BLACK-S. But the file says TSH-BLK-S, and that is
        * the code on their labels, in their till, and in the next file they
-       * send. Replacing it with one of ours would be Foundry quietly renaming
+       * send. Replacing it with one of ours would be StockChief quietly renaming
        * the customer's own products.
        *
        * Only for versions this import created, and only when the code is free:
@@ -442,7 +442,7 @@ function importGroup(db, ctx, plan, group, executionId) {
        *
        * A supplier invoice imported 250 pairs of shoes and gave them no value
        * at all: the inventory was worth nothing in the books, and the first
-       * sale of any of it would have stopped on "Foundry has no recorded cost
+       * sale of any of it would have stopped on "StockChief has no recorded cost
        * for this product". The cost is the supplier's own figure off their own
        * invoice, so this is reading it rather than deciding it.
        *
@@ -501,10 +501,10 @@ function importGroup(db, ctx, plan, group, executionId) {
    * Versions the file never mentioned.
    *
    * Options multiply: black and white against small and medium is four
-   * versions, and a shop that stocks three of them has told Foundry about
+   * versions, and a shop that stocks three of them has told StockChief about
    * three. Creating the fourth because the grid allows it invents a product
    * nobody sells, gives it a code, and puts it in the catalogue at zero — and
-   * Foundry inventing inventory is the one thing it must never do.
+   * StockChief inventing inventory is the one thing it must never do.
    *
    * Only combinations this import created and no row claimed, so an item that
    * already existed keeps every version it had.
@@ -631,7 +631,7 @@ function execute(db, ctx, membership, importId, options = {}) {
    * And the books are told what that stock is worth.
    *
    * The costing engine records the value of each unit; without this the ledger
-   * never hears about it, and Foundry's own reconciliation reports inventory
+   * never hears about it, and StockChief's own reconciliation reports inventory
    * worth one figure on one screen and another on the next. Posted once per
    * run, against opening balance equity, because a file is not a purchase:
    * nothing is owed to anybody and no money moved.

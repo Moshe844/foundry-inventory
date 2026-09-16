@@ -36,9 +36,9 @@ function request(db, emailInput, options = {}) {
     const link = `${origin.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(token)}`;
     const sealed = credentials.encrypt({
       to: account.email,
-      subject: 'Reset your Foundry password',
-      text: `Use this link within 30 minutes to reset your Foundry password:\n\n${link}\n\nIf you did not request this, you can ignore this email.`,
-      html: `<p>Use the secure link below within 30 minutes to reset your Foundry password.</p>`
+      subject: 'Reset your StockChief password',
+      text: `Use this link within 30 minutes to reset your StockChief password:\n\n${link}\n\nIf you did not request this, you can ignore this email.`,
+      html: `<p>Use the secure link below within 30 minutes to reset your StockChief password.</p>`
         + `<p><a href="${link}">Reset my password</a></p>`
         + '<p>If you did not request this, you can ignore this email.</p>',
     });

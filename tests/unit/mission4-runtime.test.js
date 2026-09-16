@@ -156,7 +156,7 @@ test('password reset is account-neutral, encrypted in the outbox and one-time', 
   assert.throws(() => recovery.consume(db, token, 'another-password-123', { now: 50_002 }), /invalid or has expired/i);
 });
 
-test('Foundry progress survives memory loss and interrupted work becomes retryable', () => {
+test('StockChief progress survives memory loss and interrupted work becomes retryable', () => {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Durable progress' });
   const id = foundryJobs.createJob(workspace.workspaceId, 'understanding', 'My real business description', {

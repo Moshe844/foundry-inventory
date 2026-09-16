@@ -3,7 +3,7 @@
 /**
  * What a document proves, before anything is changed because of it.
  *
- * Foundry used to treat every uploaded file the same way: read the lines,
+ * StockChief used to treat every uploaded file the same way: read the lines,
  * create the products, receive the stock. A proforma invoice for shoes still
  * being made in a factory became 800 pairs on the shelf and $21,390 of
  * inventory asset, on somebody's first day using the product.
@@ -92,9 +92,9 @@ const KINDS = {
     because: 'a catalogue describes what can be bought, not what you have',
   },
   other: {
-    label: 'a document Foundry could not place',
+    label: 'a document StockChief could not place',
     establishes: { onHand: false, incoming: false, owed: false, paid: false },
-    because: 'Foundry will not change anything on the strength of a document it cannot identify',
+    because: 'StockChief will not change anything on the strength of a document it cannot identify',
   },
 };
 
@@ -117,11 +117,11 @@ function kindOf(interpretation) {
 }
 
 /**
- * Everything Foundry believes about this document, in the order a person asks:
+ * Everything StockChief believes about this document, in the order a person asks:
  * what did you find, what does it mean, what will you change, what will you
  * deliberately not change, and what do you need from me.
  *
- * `context` carries what Foundry already knows — whether this is a brand new
+ * `context` carries what StockChief already knows — whether this is a brand new
  * inventory being set up, and any purchase order the document appears to be
  * about — because the same invoice means something different when there is
  * already an order for it.
@@ -225,7 +225,7 @@ function meaningOf(interpretation, context = {}) {
     } else {
       needsYou.push({
         question: `Are these ${units} ${interpretation.unitLabel || 'unit'}s expected to arrive?`,
-        because: 'There is no purchase order for this, so Foundry does not know whether goods are coming.',
+        because: 'There is no purchase order for this, so StockChief does not know whether goods are coming.',
         options: [
         { label: 'Yes, they are coming',
           does: `Records what is owed and raises the order for the ${units} `
@@ -241,7 +241,7 @@ function meaningOf(interpretation, context = {}) {
   if (kind === 'other') {
     needsYou.push({
       question: 'What is this document?',
-      because: 'Foundry will not change anything on the strength of a document it cannot identify.',
+      because: 'StockChief will not change anything on the strength of a document it cannot identify.',
       options: Object.keys(KINDS).filter((name) => name !== 'other'),
     });
   }

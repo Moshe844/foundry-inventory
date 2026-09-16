@@ -58,7 +58,7 @@ router.get(
     const stats = inventoryQuery.overview(req.db, req.ctx.workspaceId);
     // Recover onboarding automatically once real ledger evidence exists. The
     // customer has already supplied inventory truth; asking them to confirm
-    // that Foundry may start using it is ceremony, not safety.
+    // that StockChief may start using it is ceremony, not safety.
     onboardingPaths.reconcileWithInventoryTruth(req.db, req.ctx.workspaceId);
     const { groups } = activityService.listActivity(req.db, req.ctx.workspaceId, { limit: 6 });
     const configuration = planApplier.getConfiguration(req.db, req.ctx.workspaceId);
@@ -72,7 +72,7 @@ router.get(
       briefService.currentBrief(req.db, req.ctx.workspaceId, items, briefService.purchasingSignature(purchasing)) ||
       { body: briefService.deterministicBrief(items, context), source: 'deterministic', createdAt: null };
 
-    // Once Foundry has an approved configuration, its home owns the first-run
+    // Once StockChief has an approved configuration, its home owns the first-run
     // journey too. An empty configured workspace is exactly where the customer
     // most needs a clear next step; sending it to the traditional overview made
     // the guided setup invisible until after products already existed.
@@ -80,7 +80,7 @@ router.get(
       const activeMigration = activeMigrationSummary(req.db,req.ctx.workspaceId);
       // One authoritative inbox read supplies both the briefing and the badge.
       // Rebuilding it independently for guidance used to double the cost of
-      // opening Foundry on a large inventory.
+      // opening StockChief on a large inventory.
       const homeInbox = needsYouInbox.inbox(req.db, req.ctx.workspaceId, req.user, {
         productBrain: req.app.locals.productBrain,
         limit: 6,
@@ -167,7 +167,7 @@ router.get(
       } catch { whatsNext = []; }
 
       /*
-       * What Foundry expects to go wrong.
+       * What StockChief expects to go wrong.
        *
        * Read from what the planning pass has already worked out, never
        * forecast here: Home is the page somebody lands on, and predicting four
@@ -190,7 +190,7 @@ router.get(
       // Reflect that fresh cached count in this same response's navigation.
       res.locals.attentionCount = needsYouCount.countNeedsYou(req.db,req.ctx.workspaceId);
       return res.page('foundry/brief', {
-        title: 'Foundry',
+        title: 'StockChief',
         nav: 'home',
         room: true,
         /*
@@ -241,7 +241,7 @@ router.get(
       attentionSummary: attention.summarise(items),
       attentionTotal: items.length,
       // Needs You counts more than stock findings — it also holds the operating
-      // inputs Foundry is missing. Reading only the findings here let this page
+      // inputs StockChief is missing. Reading only the findings here let this page
       // say "All clear" about the same inventory that Needs You said had a
       // thing waiting, which leaves a new customer with two screens
       // contradicting each other and no way to tell which is lying.
@@ -263,7 +263,7 @@ router.get(
   asyncRoute(async (req, res) => {
     const current = guidance.build(req.db, req.ctx.workspaceId);
     return res.page('guide', {
-      title: 'How to use Foundry',
+      title: 'How to use StockChief',
       nav: 'guide',
       guidance: current,
       topics: guidance.guideTopics(req.db, req.ctx.workspaceId),

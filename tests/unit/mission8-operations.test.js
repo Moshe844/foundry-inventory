@@ -35,7 +35,7 @@ function setup(name='Mission 8 Company') {
 function fulfilledOrder(env,item,quantity=2){
   prices.setPrice(env.db,env.ctx,{skuId:item.skuId,amount:'25.00',currency:'USD'});
   inventory.receive(env.db,env.ctx,{skuId:item.skuId,locationId:env.workspace.main.id,quantity:10});
-  let order=sales.createOrder(env.db,env.ctx,{customerName:'Return Customer',fulfillmentLocationId:env.workspace.main.id,
+  let order=sales.createOrder(env.db,env.ctx,{shipToAddress:'7 Example Lane, Albany, NY 12207, US',customerName:'Return Customer',fulfillmentLocationId:env.workspace.main.id,
     lines:[{skuId:item.skuId,quantity}]});
   order=sales.confirm(env.db,env.ctx,order.id);
   sales.fulfill(env.db,env.ctx,order.id,{}, {idempotencyKey:`fulfill-${order.id}`});
@@ -110,7 +110,7 @@ test('returning a kit receives and disposes its component stock, never fictional
   prices.setPrice(env.db,env.ctx,{skuId:kit.skuId,amount:'40.00',currency:'USD'});
   inventory.receive(env.db,env.ctx,{skuId:cleaner.skuId,locationId:env.workspace.main.id,quantity:10});
   inventory.receive(env.db,env.ctx,{skuId:cloth.skuId,locationId:env.workspace.main.id,quantity:10});
-  let order=sales.createOrder(env.db,env.ctx,{customerName:'Kit return customer',
+  let order=sales.createOrder(env.db,env.ctx,{shipToAddress:'7 Example Lane, Albany, NY 12207, US',customerName:'Kit return customer',
     fulfillmentLocationId:env.workspace.main.id,lines:[{skuId:kit.skuId,quantity:1}]});
   order=sales.confirm(env.db,env.ctx,order.id);
   order=sales.fulfill(env.db,env.ctx,order.id,{}, {idempotencyKey:`kit-return-sale:${order.id}`});
@@ -198,7 +198,7 @@ test('a wave shortage is durable, idempotent, and never pretends the order was p
   const item=makeQuantityItem(env.db,env.ctx,{name:'Short wave shoe',baseCode:'SHORT-M8'});
   prices.setPrice(env.db,env.ctx,{skuId:item.skuId,amount:'20.00',currency:'USD'});
   inventory.receive(env.db,env.ctx,{skuId:item.skuId,locationId:env.workspace.main.id,quantity:5});
-  let order=sales.createOrder(env.db,env.ctx,{customerName:'Short Customer',fulfillmentLocationId:env.workspace.main.id,lines:[{skuId:item.skuId,quantity:4}]});
+  let order=sales.createOrder(env.db,env.ctx,{shipToAddress:'7 Example Lane, Albany, NY 12207, US',customerName:'Short Customer',fulfillmentLocationId:env.workspace.main.id,lines:[{skuId:item.skuId,quantity:4}]});
   order=sales.confirm(env.db,env.ctx,order.id);
   const wave=waves.create(env.db,env.ctx,env.membership,{strategy:'WAVE',orderIds:[order.id]});
   waves.reportShortage(env.db,env.ctx,env.membership,wave.id,wave.lines[0].id,2,'Only two were on the shelf');
@@ -216,7 +216,7 @@ test('wave scans reject wrong identity, deduplicate offline replay, expose short
   const item=makeQuantityItem(env.db,env.ctx,{name:'Wave shoe',baseCode:'WAVE-M8'});
   const order=fulfilledOrder(env,item,3);
   // fulfilledOrder shipped this first order; create a second allocated order for the wave.
-  let ready=sales.createOrder(env.db,env.ctx,{customerName:'Wave Customer',fulfillmentLocationId:env.workspace.main.id,
+  let ready=sales.createOrder(env.db,env.ctx,{shipToAddress:'7 Example Lane, Albany, NY 12207, US',customerName:'Wave Customer',fulfillmentLocationId:env.workspace.main.id,
     lines:[{skuId:item.skuId,quantity:2}]});
   ready=sales.confirm(env.db,env.ctx,ready.id);
   const wave=waves.create(env.db,env.ctx,env.membership,{strategy:'CLUSTER',orderIds:[ready.id]});
@@ -241,7 +241,7 @@ test('wave shipping preserves exact lot and serial identity from scan through in
   serial.sku=repo.requireSku(env.db,env.workspace.workspaceId,serial.skuId);
   prices.setPrice(env.db,env.ctx,{skuId:serial.skuId,amount:'50.00',currency:'USD'});
   inventory.receive(env.db,env.ctx,{skuId:serial.skuId,locationId:env.workspace.main.id,serials:['SER-M8-001']});
-  let serialOrder=sales.createOrder(env.db,env.ctx,{customerName:'Serial customer',fulfillmentLocationId:env.workspace.main.id,lines:[{skuId:serial.skuId,quantity:1}]});
+  let serialOrder=sales.createOrder(env.db,env.ctx,{shipToAddress:'7 Example Lane, Albany, NY 12207, US',customerName:'Serial customer',fulfillmentLocationId:env.workspace.main.id,lines:[{skuId:serial.skuId,quantity:1}]});
   serialOrder=sales.confirm(env.db,env.ctx,serialOrder.id);
   let wave=waves.create(env.db,env.ctx,env.membership,{strategy:'CLUSTER',orderIds:[serialOrder.id]});
   let line=wave.lines[0];
@@ -257,7 +257,7 @@ test('wave shipping preserves exact lot and serial identity from scan through in
   lotItem.sku=repo.requireSku(env.db,env.workspace.workspaceId,lotItem.skuId);
   prices.setPrice(env.db,env.ctx,{skuId:lotItem.skuId,amount:'10.00',currency:'USD'});
   inventory.receive(env.db,env.ctx,{skuId:lotItem.skuId,locationId:env.workspace.main.id,quantity:4,lotCode:'LOT-M8-1'});
-  let lotOrder=sales.createOrder(env.db,env.ctx,{customerName:'Lot customer',fulfillmentLocationId:env.workspace.main.id,lines:[{skuId:lotItem.skuId,quantity:2}]});
+  let lotOrder=sales.createOrder(env.db,env.ctx,{shipToAddress:'7 Example Lane, Albany, NY 12207, US',customerName:'Lot customer',fulfillmentLocationId:env.workspace.main.id,lines:[{skuId:lotItem.skuId,quantity:2}]});
   lotOrder=sales.confirm(env.db,env.ctx,lotOrder.id);
   wave=waves.create(env.db,env.ctx,env.membership,{strategy:'BATCH',orderIds:[lotOrder.id]});line=wave.lines[0];
   const lotScan=waves.scan(env.db,env.ctx,env.membership,wave.id,{clientScanId:'lot-wave-1',locationBarcode:'MAIN-M8',
@@ -275,7 +275,7 @@ test('a serialized customer return reactivates only the exact unit proven on the
   prices.setPrice(env.db,env.ctx,{skuId:item.skuId,amount:'100.00',currency:'USD'});
   inventory.receive(env.db,env.ctx,{skuId:item.skuId,locationId:env.workspace.main.id,serials:['SOLD-SERIAL','OTHER-SERIAL']});
   const sold=env.db.prepare("SELECT id FROM serial_units WHERE workspace_id=? AND sku_id=? AND serial='SOLD-SERIAL'").get(env.workspace.workspaceId,item.skuId);
-  let order=sales.createOrder(env.db,env.ctx,{customerName:'Serial return customer',fulfillmentLocationId:env.workspace.main.id,lines:[{skuId:item.skuId,quantity:1}]});
+  let order=sales.createOrder(env.db,env.ctx,{shipToAddress:'7 Example Lane, Albany, NY 12207, US',customerName:'Serial return customer',fulfillmentLocationId:env.workspace.main.id,lines:[{skuId:item.skuId,quantity:1}]});
   order=sales.confirm(env.db,env.ctx,order.id);
   sales.fulfill(env.db,env.ctx,order.id,{lines:[{lineId:order.lines[0].id,locationId:env.workspace.main.id,quantity:1,serialUnitIds:[sold.id]}]},
     {idempotencyKey:'serial-rma-sale'});

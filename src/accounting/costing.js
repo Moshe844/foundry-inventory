@@ -138,7 +138,7 @@ function issue(db, ctx, input) {
          * the person reading it: which product, how many, and what should they
          * do about it? It appears on a shipment that has already happened, so
          * the reader is not deciding whether to ship — they are trying to find
-         * out what Foundry wants from them.
+         * out what StockChief wants from them.
          */
         const named = db.prepare(`SELECT s.code, i.name, l.name AS location
           FROM skus s JOIN items i ON i.id = s.item_id
@@ -147,11 +147,11 @@ function issue(db, ctx, input) {
         const product = named ? `${named.name}${named.code ? ` (${named.code})` : ''}` : 'this product';
         const place = named?.location ? ` at ${named.location}` : '';
         const have = Number(before.quantity_units);
-        throw new ValidationError(`Foundry has no recorded cost for ${product}${place}. `
+        throw new ValidationError(`StockChief has no recorded cost for ${product}${place}. `
           + `${quantity} unit${quantity === 1 ? '' : 's'} left stock and `
           + `${have === 0 ? (quantity === 1 ? 'it has no' : 'none of them have a') : `only ${have} have a`} cost on file, so product cost and `
           + `inventory value cannot be posted for this sale. Record what these units cost — their opening `
-          + `value, or the purchase they arrived on — and Foundry will finish the entry. No amount was guessed.`);
+          + `value, or the purchase they arrived on — and StockChief will finish the entry. No amount was guessed.`);
       }
       const cost = quantity === Number(before.quantity_units)
         ? Number(before.total_cost_minor)

@@ -40,7 +40,7 @@ function connectorFor(db, workspaceId) {
  * The account a workspace takes money into, and where it came from.
  *
  * Null when there is none, which is an ordinary state: a shop that takes cash
- * and cheques needs no payment provider, and every payment path in Foundry
+ * and cheques needs no payment provider, and every payment path in StockChief
  * works without one.
  */
 function forWorkspace(db, workspaceId) {
@@ -49,7 +49,7 @@ function forWorkspace(db, workspaceId) {
    *
    * Both are this workspace's own account and either is correct, but they are
    * reached differently: a granted account is acted on through the platform's
-   * key with the merchant's account id attached, and Foundry holds no secret
+   * key with the merchant's account id attached, and StockChief holds no secret
    * of theirs at all. That is the better arrangement, so it is the one checked
    * first.
    */
@@ -126,7 +126,7 @@ function contextFor(db, ctx, providerName = 'stripe') {
   const account = forWorkspace(db, ctx.workspaceId);
   if (!account) {
     /*
-     * In Connect mode the process key identifies Foundry itself. Returning the
+     * In Connect mode the process key identifies StockChief itself. Returning the
      * unchanged context here used to let the Stripe adapter fall back to that
      * key, which created a merchant's customer invoice on the developer's
      * account. Refuse the request before Stripe sees it. A single-tenant
@@ -135,7 +135,7 @@ function contextFor(db, ctx, providerName = 'stripe') {
      */
     if (require('./connect').platformModeEnabled()) {
       throw new ValidationError("Connect this business's Stripe account before taking a customer payment. "
-        + "Foundry will never put a business's customer payment through the developer account.");
+        + "StockChief will never put a business's customer payment through the developer account.");
     }
     return ctx;
   }
@@ -143,7 +143,7 @@ function contextFor(db, ctx, providerName = 'stripe') {
    * A granted account travels as an id beside the platform's key. The adapter
    * turns that into Stripe's own "act on behalf of" header, which is how the
    * invoice ends up on the merchant's account and the money in their bank
-   * without Foundry ever holding a credential of theirs.
+   * without StockChief ever holding a credential of theirs.
    */
   return account.accountId
     ? { ...ctx, stripeSecretKey: account.secretKey, stripeAccountId: account.accountId }
@@ -155,7 +155,7 @@ function connect(db, ctx, membership, input = {}) {
 
   /*
    * A granted account is not quietly written over by a pasted key. Doing so
-   * would leave Foundry holding a secret for an account it also still had a
+   * would leave StockChief holding a secret for an account it also still had a
    * live grant on, and the merchant with no way to tell which was in use.
    */
   const granted = require('./connect').rowFor(db, ctx.workspaceId);
@@ -230,8 +230,8 @@ function describe(db, workspaceId) {
       available: grant.available(),
       because: grant.available()
         ? 'No payment account is connected. This business can connect its own Stripe without '
-          + 'giving Foundry a key, and the money its customers pay then arrives in its own bank.'
-        : 'No payment account is connected, so Foundry cannot make a payment link. Payments '
+          + 'giving StockChief a key, and the money its customers pay then arrives in its own bank.'
+        : 'No payment account is connected, so StockChief cannot make a payment link. Payments '
           + 'reported by hand — cash, cheque, a card machine — are recorded exactly as they always were.' };
   }
   if (account.source === 'connect') {

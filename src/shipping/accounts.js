@@ -10,7 +10,7 @@
  * and one merchant's tracking webhook could be read against another's records.
  *
  * So a shipping account belongs to a workspace, exactly as a mailbox does. The
- * key is stored the way every other provider credential in Foundry is stored —
+ * key is stored the way every other provider credential in StockChief is stored —
  * encrypted, in the credential store, referenced by a connector row that holds
  * no secret itself.
  *
@@ -45,7 +45,7 @@ function isTestKey(provider, key) {
 function requireProvider(name) {
   const key = String(name || '').toLowerCase();
   if (!PROVIDERS.includes(key)) {
-    throw new ValidationError(`Foundry ships through ${PROVIDERS.join(' or ')}, not "${name}".`);
+    throw new ValidationError(`StockChief ships through ${PROVIDERS.join(' or ')}, not "${name}".`);
   }
   return key;
 }
@@ -74,7 +74,7 @@ function forWorkspace(db, workspaceId) {
       /*
        * The same key, reached two ways.
        *
-       * A merchant either pasted one they already had, or Foundry opened the
+       * A merchant either pasted one they already had, or StockChief opened the
        * account for them through the partner API. Nothing below this line
        * cares which — a key is a key — but the person looking at the settings
        * screen does, because only one of the two has a payment method they may
@@ -155,18 +155,18 @@ function connect(db, ctx, membership, input = {}) {
   const now = nowIso();
 
   /*
-   * An account Foundry opened is not quietly written over.
+   * An account StockChief opened is not quietly written over.
    *
    * A merchant who later negotiates their own carrier contract should be able
    * to switch to it — but pasting a key over a referral account would leave
-   * that account's keys gone from Foundry with nothing said, and the merchant
+   * that account's keys gone from StockChief with nothing said, and the merchant
    * still being billed by EasyPost for an account they can no longer see. So
    * it is refused, once, with the reason.
    */
   const opened = db.prepare(`SELECT id FROM shipping_referral_accounts
     WHERE workspace_id = ? AND partner = ?`).get(ctx.workspaceId, provider);
   if (opened) {
-    throw new ValidationError('Foundry opened a shipping account for this inventory, and pasting a '
+    throw new ValidationError('StockChief opened a shipping account for this inventory, and pasting a '
       + 'key over it would hide that account rather than replace it. Disconnect it first, then '
       + 'connect the account you want to ship on.');
   }
@@ -197,7 +197,7 @@ function connect(db, ctx, membership, input = {}) {
   return describe(db, ctx.workspaceId);
 }
 
-/** Proves a pasted credential can reach its account before Foundry stores it. */
+/** Proves a pasted credential can reach its account before StockChief stores it. */
 async function verifyInput(input = {}) {
   const provider = requireProvider(input.provider);
   const apiKey = requireText(input.apiKey, 'API key', { max: 400 });
@@ -218,7 +218,7 @@ function disconnect(db, ctx, membership) {
     'disconnect a shipping account');
 
   /*
-   * Disconnecting an account Foundry opened is a different act, and is done by
+   * Disconnecting an account StockChief opened is a different act, and is done by
    * the module that knows the difference: it forgets the keys and leaves the
    * merchant's EasyPost account, and everything shipped on it, standing.
    */
@@ -253,7 +253,7 @@ function describe(db, workspaceId) {
   const account = forWorkspace(db, workspaceId);
   if (!account) {
     return { connected: false, provider: null, source: null,
-      because: 'No shipping account is connected, so Foundry cannot get live rates or buy a label.' };
+      because: 'No shipping account is connected, so StockChief cannot get live rates or buy a label.' };
   }
   const key = String(account.apiKey);
   return {
@@ -271,7 +271,7 @@ function describe(db, workspaceId) {
       ? 'This inventory is using the key set on the server, which every inventory on it shares. '
         + 'Connect this inventory\'s own account and its parcels will be billed to it instead.'
       : ['referral', 'platform'].includes(account.source) && account.billingReady === false
-        ? 'Foundry opened this account, but no payment method has been added to it yet — so it '
+        ? 'StockChief opened this account, but no payment method has been added to it yet — so it '
           + 'cannot buy a label, and the rates it returns are test rates rather than a carrier\'s.'
         : null,
   };

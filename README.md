@@ -1,6 +1,6 @@
-# Foundry by Keeper
+# StockChief by Keeper
 
-**Foundry is a Keeper product.** It continuously manages the routine inventory,
+**StockChief is a Keeper product.** It continuously manages the routine inventory,
 purchasing, supplier communication, Sales Order, and accounting work of an
 inventory-based business, while the owner supervises genuine exceptions.
 
@@ -12,7 +12,7 @@ codebase per customer.
 
 One account can hold several completely separate inventories — a clothing
 business, an equipment company, a school's stockroom — each with its own items,
-locations, history, Foundry configuration and attention items. An **inventory
+locations, history, StockChief configuration and attention items. An **inventory
 workspace is not a location**: one workspace contains many.
 
 It is built in three layers, and each one only ever reads the layer below:
@@ -21,17 +21,17 @@ It is built in three layers, and each one only ever reads the layer below:
    invariant enforced centrally and an immutable movement ledger behind every
    number. No AI anywhere near it.
 2. **The architect.** A business owner describes their operation in ordinary
-   language; Foundry works out what they are tracking and configures the engine
+   language; StockChief works out what they are tracking and configures the engine
    above. The model proposes; the engine decides what is legal.
-3. **The operator.** Foundry watches the movement history and answers "what
+3. **The operator.** StockChief watches the movement history and answers "what
    needs my attention right now, and why?" — with the evidence attached.
-4. **The hands.** Foundry carries out inventory work only through the engine in
+4. **The hands.** StockChief carries out inventory work only through the engine in
    layer 1. A person approves exceptional work directly; routine transfers may
    run unattended only inside a separately approved policy with explicit limits,
    and every result is verified.
 
 
-**Start here:** [](docs/product-brief.md) — what Foundry
+**Start here:** [](docs/product-brief.md) — what StockChief
 is, the doctrine it is built on, the design principles new screens are held to,
 the fixed vocabulary, and the known gaps. Read it before changing behaviour.
 
@@ -58,7 +58,7 @@ privileged path into the database, and no example-specific logic in `src/`.
 
 To try bringing data in, `npm run seed:samples` writes two deliberately untidy
 files to `samples/`. Upload either at **Bring data in**; nothing is created
-until you approve what Foundry shows you.
+until you approve what StockChief shows you.
 
 | Command | What it does |
 | --- | --- |
@@ -68,7 +68,7 @@ until you approve what Foundry shows you.
 | `npm run test:e2e` | Full browser runs in Chromium, each from an empty database |
 | `npm run test:all` | All three |
 | `npm run seed:demo` | Adds the demo inventory |
-| `npm run seed:foundry` | Adds an inventory configured by a real Foundry run |
+| `npm run seed:foundry` | Adds an inventory configured by a real StockChief run |
 | `npm run seed:samples` | Writes messy sample spreadsheets to `samples/` to import |
 | `npm run db:reset` | Deletes the local database |
 
@@ -79,14 +79,14 @@ startup and is gitignored.
 
 ### Model tiers
 
-Foundry asks a model eight different questions, and they are not the same size
+StockChief asks a model eight different questions, and they are not the same size
 of question. Each call site names the *thinking it needs* rather than a model,
 so which model serves a tier is a deployment decision:
 
 | Tier | Used for | Default |
 | --- | --- | --- |
 | `deep` | Reading a business description and designing its inventory model | `claude-opus-5`, high effort |
-| `standard` | Reading instructions and questions, the Foundry assistant | `claude-sonnet-5`, medium effort |
+| `standard` | Reading instructions and questions, the StockChief assistant | `claude-sonnet-5`, medium effort |
 | `fast` | Column mapping, briefs, rewording findings | `claude-haiku-4-5`, no extended thinking |
 
 Override any of them with `FOUNDRY_AI_MODEL_DEEP`, `FOUNDRY_AI_MODEL_STANDARD`,
@@ -141,7 +141,7 @@ Leaving an inventory removes your membership; deleting one removes the
 inventory. Only an owner can, and only after typing its name on a screen that
 counts what will be destroyed first.
 
-It is the one operation in Foundry that removes a movement. Everywhere else the
+It is the one operation in StockChief that removes a movement. Everywhere else the
 ledger is immutable and a trigger enforces it — but refusing to delete a
 customer's records in the name of an audit trail would mean keeping data they
 asked to be rid of. So the trigger is lifted inside the deleting transaction and
@@ -244,14 +244,14 @@ than once per process.
 
 ## The architect
 
-A new workspace meets Foundry before it meets the console. Someone describes
-their business in their own words; Foundry returns a typed
+A new workspace meets StockChief before it meets the console. Someone describes
+their business in their own words; StockChief returns a typed
 `InventoryUnderstanding`, asks at most three questions that would actually
 change the configuration, and proposes a versioned
 `InventoryConfigurationPlan` carrying an integrity hash over its own bytes.
 
 The model's output is validated against a JSON Schema, repaired only where a
-repair cannot change meaning, and then checked against Foundry's stricter
+repair cannot change meaning, and then checked against StockChief's stricter
 contract. `plan-applier.js` imports the location service and nothing else — it
 is structurally incapable of creating a tracking mode the engine does not have,
 because it has no way to reach one. A plan whose hash no longer matches is
@@ -287,18 +287,18 @@ The model's only jobs here are wording and reading questions:
 - **Rewording.** Every number it writes must already appear in that finding's
   own evidence; it may not claim an action was taken or attribute a cause. What
   fails verification is discarded and the measured wording stands.
-- **Questions.** Ask Foundry turns a question into a *plan* — one intent from a
+- **Questions.** Ask StockChief turns a question into a *plan* — one intent from a
   fixed list plus a few bounded parameters. The model never sees SQL, never
   writes SQL, and never receives a database handle. Every query is hand-written
   and parameterised, and the answer is composed from the rows that came back.
-  A question outside what Foundry can look up is answered as such.
+  A question outside what StockChief can look up is answered as such.
 
 Feedback is recorded and never silently applied. If a rule is wrong, that is
 something to fix openly rather than have the briefing quietly re-tune itself.
 
 ## Controlled actions
 
-Foundry can be told "move 15 Navy 8 from New Jersey to Brooklyn", or asked to
+StockChief can be told "move 15 Navy 8 from New Jersey to Brooklyn", or asked to
 carry out something it recommended. The path is fixed and every step is
 separately auditable:
 
@@ -318,7 +318,7 @@ records with scoped SQL, and two matches is a question rather than a guess.
 action is comes from arithmetic, not judgement: `policy.js` classifies from the
 quantity against what is actually on hand. Corrections are always the sensitive
 case — they change what the records say without anything having moved — so they
-warn, need a second confirmation, and never get a reason Foundry made up.
+warn, need a second confirmation, and never get a reason StockChief made up.
 
 **Revalidation happens twice**: when a person approves, and again inside the
 write transaction. A proposal built against 48 units will not run against 31; it
@@ -340,15 +340,15 @@ Undo is a new, validated movement in the opposite direction. The ledger is
 append-only, so nothing is ever deleted; a correction can only be corrected
 again, with its own reason.
 
-Foundry will not invent operations it does not have. A stockout gets no action
+StockChief will not invent operations it does not have. A stockout gets no action
 because purchasing does not exist — it says so instead.
 
 ## Bringing data in
 
-A business that already keeps stock somewhere has to get it into Foundry before
+A business that already keeps stock somewhere has to get it into StockChief before
 anything else is worth doing, and the honest version of that job is data entry:
 someone else's spreadsheet, with someone else's headings, exported on a bad day.
-Foundry does that work rather than asking the customer to reformat a file first.
+StockChief does that work rather than asking the customer to reformat a file first.
 
 ```
 file or paste → rows (deterministic)      → column mapping (rules, then model)
@@ -365,23 +365,23 @@ first. No model is involved in reading bytes, and pasted data with no header at
 all is treated as data rather than losing its first record to an invented one.
 
 **Columns are named by rules first.** `fields.js` recognises the headings that
-real exports use — "QTY ON HAND", "Whse", "Item Code" — and the ones Foundry
+real exports use — "QTY ON HAND", "Whse", "Item Code" — and the ones StockChief
 deliberately does not import, so a preview can say "Unit Cost and Supplier were
-left out, Foundry does not track those" instead of silently dropping them or
+left out, StockChief does not track those" instead of silently dropping them or
 finding them a home nearby. The model is asked about two things only: columns
 nothing matched, and columns matched on a catch-all word that often means
 something else ("Ref A" holding SN-88213 is a serial, whatever the heading
 says). It answers with column-to-field pairs and never sees the database.
 
 **What the model says is checked before it is kept.** A column index that is not
-in the file, a field claimed twice, a heading Foundry matched exactly, a
+in the file, a field claimed twice, a heading StockChief matched exactly, a
 quantity mapped onto a column of words — each is dropped, with the reason shown
 on the preview. The file's *type* follows from the columns that survive, not
 from the model's claim about it.
 
 **Nothing is invented.** A row with no quantity creates the product with no
 opening stock and says so. `03/04/2025` is left blank unless something else in
-that column settles which number is the month. A location Foundry does not
+that column settles which number is the month. A location StockChief does not
 recognise stops that row rather than resolving to the nearest one — and when it
 does recognise a near-miss, the correction is shown before approval, never
 after. Serial numbers, lot codes and expiry dates are only ever copied.
@@ -408,12 +408,12 @@ the run reports itself as partial. Progress is read back from what has been
 written rather than held in memory, so an interrupted import can be resumed and
 resuming skips what already happened.
 
-**Afterwards, Foundry counts the result rather than reporting its own
+**Afterwards, StockChief counts the result rather than reporting its own
 intentions.** `verification.js` re-reads the items, the movements and the
 balances and compares them with the plan; "438 products created" and "there are
 438 products" are kept as separate claims, and a mismatch says so.
 
-A spreadsheet dropped into the Ask Foundry box goes to the same preview rather
+A spreadsheet dropped into the Ask StockChief box goes to the same preview rather
 than being refused for arriving at the wrong text box.
 
 ## Replenishment and purchasing
@@ -464,7 +464,7 @@ was upgraded to match: a stockout warning stands down when a delivery lands
 before the shelf empties, and an empty shelf with stock booked in says what is
 coming instead of asking for another order.
 
-**Purchase orders follow the Mission 4 philosophy.** Foundry drafts; a person
+**Purchase orders follow the Mission 4 philosophy.** StockChief drafts; a person
 with `APPROVE_PO` approves; the approval is recorded against a hash of exactly
 what was on screen. Approval is where quantities stop being editable, because
 the receiving screen checks deliveries against them.
@@ -482,22 +482,22 @@ incoming figure and never touches what has.
 **Suppliers are purchasing partners, not accounts.** A supplier belongs to one
 workspace — two inventories buying from "ABC Footwear" have two records, because
 they are two different relationships. The supplier-item link carries the part
-Foundry actually reasons about: what they call it, how they pack it, the minimum,
+StockChief actually reasons about: what they call it, how they pack it, the minimum,
 the multiple, the lead time and the last unit cost, stored per inventory unit so
 suppliers who pack differently can be compared at all.
 
 **Supplier choice compares facts only.** Preferred status, cost, lead time,
-minimum and multiple. There is no reliability score, because Foundry has never
+minimum and multiple. There is no reliability score, because StockChief has never
 measured delivery performance across enough orders to say anything honest about
 it. Speed outranks price only when stock would run out before the cheaper option
 could arrive, and the trade is then stated in money.
 
 **Prices and lateness are reported, never judged.** A price change shows both
 figures and suggests a look. An order is only ever called late when its expected
-date came from a stated lead time or a person — an order whose date Foundry
+date came from a stated lead time or a person — an order whose date StockChief
 assumed has no date worth measuring against, so it is never reported as late.
 
-Foundry does not contact suppliers. The printable purchase order is a document
+StockChief does not contact suppliers. The printable purchase order is a document
 someone prints, saves as a PDF or attaches to their own email, and it says so on
 its face.
 
@@ -513,16 +513,16 @@ manage inventory today, with four answers:
 | Path | For | What happens |
 | --- | --- | --- |
 | Starting fresh | No system yet | The Mission 2 experience, unchanged |
-| Excel / spreadsheets | It is already in a file | Upload it; Foundry configures itself from what it finds |
+| Excel / spreadsheets | It is already in a file | Upload it; StockChief configures itself from what it finds |
 | Inventory software | Another system today | A connector if one genuinely exists, otherwise an export |
 | It's a mess | Several files that disagree | Consolidation, with the real conflicts surfaced |
 
-There is also a "not sure" box: describe the situation and Foundry recommends a
+There is also a "not sure" box: describe the situation and StockChief recommends a
 path with the reason it picked it, which the customer can override.
 
 **The spreadsheet path does not ask for configuration first.** That ordering was
 the whole problem: a customer with 1,842 variants in a file was being asked to
-type out what the file already said. Foundry reads the workbook, works out the
+type out what the file already said. StockChief reads the workbook, works out the
 structure — products, variants, locations, quantities, how the file dates itself
 — and proposes the configuration *from the file*.
 
@@ -535,26 +535,26 @@ previewing and creating. Opening stock arrives as real Mission 1 receives.
 "Brooklyn Warehouse" and "brooklyn warehouse " are one place and nobody is
 consulted — abbreviations are matched as subsequences, so "Wrhs" folds into
 "Warehouse" too. Eighteen units in one file and fourteen in another is a
-disagreement about what the business physically owns; Foundry recommends only
+disagreement about what the business physically owns; StockChief recommends only
 when the files themselves establish which is newer (a dated export, a physical
 count), and otherwise blocks the migration until a person decides. It will not
 pick a stock figure by coin toss.
 
 **A migration is not finished when the import completes — it is finished when
 the totals agree.** Source totals are captured before anything is created,
-Foundry's are counted afterwards from Mission 1 truth, and the two are compared.
+StockChief's are counted afterwards from Mission 1 truth, and the two are compared.
 Disagreement is reported as MISMATCHED with the discrepancies listed. Nothing is
 called verified on the strength of commands having run.
 
 **No history is fabricated.** Only current balances arrive in a spreadsheet, so
-only opening balances are created. Foundry does not manufacture past movements
+only opening balances are created. StockChief does not manufacture past movements
 from them, and the attention layer says it has nothing to measure yet rather
 than inventing a demand trend.
 
 ### Source of truth
 
 Every inventory states which system owns it — `FOUNDRY_NATIVE` or
-`EXTERNAL_CONNECTED` — and there is no third, ambiguous state. Foundry never
+`EXTERNAL_CONNECTED` — and there is no third, ambiguous state. StockChief never
 keeps a shadow balance competing with the system a business actually runs on. A
 workspace cannot claim an external owner unless a connector is genuinely
 connected to it.
@@ -566,15 +566,15 @@ tells a customer their inventory is connected when nothing is reading it, which
 is worse than an empty list. A named vendor connector is registered only when
 there are real credentials and real test access.
 
-Foundry does ship a real generic operating-event feed at
+StockChief does ship a real generic operating-event feed at
 `POST /api/v1/feed/events`. An owner creates a workspace-scoped bearer token
 once; an existing sales or warehouse system can then push sales, receipts,
 returns, damage, physical counts and transfers as they happen. The token is
 stored only as a hash, can be rotated or revoked, and every external event id is
-idempotent. Events resolve Foundry SKU codes or remembered supplier codes, go
+idempotent. Events resolve StockChief SKU codes or remembered supplier codes, go
 through the same inventory engine as every human operation, and wake the durable
 manager loop immediately. A first sync may send up to 500 timestamped events so
-Foundry can establish genuine demand history without fabricating it.
+StockChief can establish genuine demand history without fabricating it.
 
 Capabilities are discovered from the connector, never assumed, and Mission 4
 asks before it proposes. A read-only system gets a recommendation and a plain
@@ -583,8 +583,8 @@ existing system" — never a success message for something that did not happen.
 
 ## Running the operation
 
-Foundry's home page is not a table of counts. It is four questions a person
-actually has: what needs you, what Foundry did, what is happening next, and
+StockChief's home page is not a table of counts. It is four questions a person
+actually has: what needs you, what StockChief did, what is happening next, and
 what would you like to ask. The classic overview is still there, at
 `/overview`.
 
@@ -594,11 +594,11 @@ that loop the product rather than a feature hidden behind inventory screens.
 
 **Three modes, and the customer picks.** *Just watch* raises findings and does
 nothing. *Prepare my work* — the default — works out what should happen and
-waits on every item. *Run it* lets Foundry carry out work that an approved
+waits on every item. *Run it* lets StockChief carry out work that an approved
 policy authorises. Nothing is automatic without **both** an approved policy and
 this mode: approving a policy on its own starts nothing, which is the point.
 
-**Automatic work is limited to bounded, verifiable operations.** Foundry may
+**Automatic work is limited to bounded, verifiable operations.** StockChief may
 move stock between the customer's own locations under an approved transfer
 policy. It may also approve a routine replenishment order under a separately
 approved purchasing policy with supplier scope, a maximum order value, and a
@@ -611,7 +611,7 @@ are wrong, and no automaton settles that without a person's decision.
 `authorized` / `needs_approval` / `refused` with the checks that produced the
 verdict, and nothing in it consults an AI provider — an unattended action has to
 reach the same verdict every time or it is a gamble. A policy without a quantity
-limit is rejected at authoring: *"Say the most Foundry may move in one go. A
+limit is rejected at authoring: *"Say the most StockChief may move in one go. A
 policy without a limit is not a limit."* On top of any policy sit workspace
 limits that always win: actions per day, units per action, a cooldown per
 product, and a weekly cap per item. A move that would reverse a recent one is
@@ -621,7 +621,7 @@ one SKU nothing is planned at all — the conflict becomes work for a person.
 **Policy is re-checked immediately before execution, not only at planning.** The
 world moves in between. If somebody else already moved the stock, the work is
 cancelled with the reason. If the result cannot be verified afterwards — source,
-destination and total all checked against the ledger — Foundry suspends itself
+destination and total all checked against the ledger — StockChief suspends itself
 rather than retrying. The dangerous failure of an automaton is not one wrong
 action; it is the same wrong action repeated while nobody is watching.
 
@@ -636,14 +636,14 @@ exempt from that minute-level bucketing — a button that silently does nothing 
 worse than a slow one — while the work item's own key still makes duplicate work
 impossible.
 
-**The loop runs on a clock**, every fifteen minutes, so Foundry is an employee
+**The loop runs on a clock**, every fifteen minutes, so StockChief is an employee
 rather than a button. The scheduler decides nothing: it calls the same runner
 *Check now* calls, so a scheduled action and a clicked one pass the identical
 policy gate. It acts under the authority of whoever approved the policy — that
 approval is the permission, and attributing an automatic transfer to whoever
 logged in last would put a movement in somebody's name who had nothing to do
 with it. If that person later leaves, their approval stops being authority and
-Foundry goes back to preparing. One process holds a lease at a time, one
+StockChief goes back to preparing. One process holds a lease at a time, one
 workspace's failure never stops the sweep, and a paused, suspended or watching
 inventory still gets its findings refreshed while nothing is planned or carried
 out. Set `FOUNDRY_AUTOPILOT_SCHEDULER=false` to turn the clock off; the tests
@@ -653,13 +653,13 @@ trusted if a timer might act in between.
 **A migrated inventory is prepared for, not acted on, until it has been
 operated.** A migration fills a workspace in minutes with figures that came from
 a spreadsheet. Automatic action waits for a fortnight of real trading recorded
-by Foundry itself, so the first thing it does rests on movements it watched
+by StockChief itself, so the first thing it does rests on movements it watched
 rather than on somebody else's opening balance.
 
-**Preferences are told to Foundry, never learned.** How many days of cover to
+**Preferences are told to StockChief, never learned.** How many days of cover to
 aim for, what counts as running out, whether serialised items may be moved at
 all — each is stored with the source that set it and the customer's own words,
-and a preference can only tune work Foundry was already allowed to do. Nothing
+and a preference can only tune work StockChief was already allowed to do. Nothing
 is inferred from watching approvals, because a system that quietly stops asking
 has changed what it may do without anyone agreeing to it.
 
@@ -668,21 +668,21 @@ date, or past it, becomes a durable piece of work. An uploaded PDF, Word file,
 spreadsheet, CSV, image or text document is read as an operational document,
 matched only when supplier, destination, reference and line evidence identify
 exactly one open order, and used to prefill a receipt for confirmation. Reading
-or matching a document never changes stock. If the match is ambiguous, Foundry
+or matching a document never changes stock. If the match is ambiguous, StockChief
 asks rather than guessing; a person still confirms what physically arrived.
 Each supplier also keeps its own product-code vocabulary: one may use “Style #”,
 another “Item No.”, and another “Vendor SKU”. The preferred wording is editable,
 old and newly observed labels remain recognized aliases, and that vendor-specific
-vocabulary is supplied whenever Foundry reads the next document.
+vocabulary is supplied whenever StockChief reads the next document.
 
-**Tell Foundry is universal operational input.** The same box accepts questions,
+**Tell StockChief is universal operational input.** The same box accepts questions,
 purchase requests, policy requests, natural-language counts, photographs and
 documents. Requests are routed to real inventory records and durable work, not
 answered as disposable chat. “Order what we need” runs the manager loop;
 “Handle everything” opens bounded authority review and never grants unlimited
 permission.
 
-**Foundry investigates instead of inventing corrections.** Natural counts and
+**StockChief investigates instead of inventing corrections.** Natural counts and
 integrity checks open durable investigations with ledger, adjustment, receipt,
 import and execution evidence. A concrete duplicate-reference lead can explain
 part of a discrepancy, but unresolved differences stay explicit and no stock is
@@ -694,11 +694,11 @@ that was only ever waiting on permission is taken on, and an item waiting for an
 other reason stays waiting. A plan made before a policy existed is re-sized to fit
 it rather than sitting in the way for the rest of the day.
 
-Afterwards Foundry can answer for itself. "What did you do today", "why did you
+Afterwards StockChief can answer for itself. "What did you do today", "why did you
 move those", and "stop doing that" are read from the work records — the same
 records the history page shows — never from a model's recollection. Asking it to
 stop names the policies and hands over to the page with the switch; a question
-never changes what Foundry is allowed to do.
+never changes what StockChief is allowed to do.
 
 The kill switch is on the home page. Pausing stops everything immediately;
 what already happened stays in the history, because hiding it would be worse.
@@ -714,7 +714,7 @@ exactly zero findings, and the tests that a model cannot introduce a number,
 an action or a finding of its own — and the import pipeline end to end, which
 runs entirely without an AI provider, and the whole replenishment engine —
 including the cases that must produce *no* purchase — and the autopilot gate,
-where almost every test is about Foundry *declining*: when it is paused, when
+where almost every test is about StockChief *declining*: when it is paused, when
 nothing authorises it, when the quantity is over the limit, when it touched the
 same stock yesterday, when the move would undo one it just made, and when two
 policies are arguing. None of those involve an AI provider, and none may ever:
@@ -739,7 +739,7 @@ Chromium through each mission's acceptance script. Screenshots are written to
 
 ## Product boundaries
 
-Foundry includes Sales Orders, supplier purchasing and communication, inventory
+StockChief includes Sales Orders, supplier purchasing and communication, inventory
 valuation, double-entry accounting, receivables, payables, payments, bank
 reconciliation, tax records, financial reporting, and policy-bounded autonomous
 work. Operational evidence remains the source: an invoice never pretends stock

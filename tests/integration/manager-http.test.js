@@ -22,6 +22,7 @@ const planService = require('../../src/imports/plan-service');
 const importRemovals = require('../../src/manager/import-removals');
 const priceService = require('../../src/pricing/price-service');
 const structuredCatalogue = require('../../src/actions/structured-catalogue');
+const jobRunner = require('../../src/foundry/job-runner');
 
 test.after(cleanupAll);
 
@@ -53,7 +54,7 @@ function operatingResult(changes, summary = 'Operating rule') {
 
 function catalogueUnderstanding(groups, findings = []) {
   return {
-    overview: `Foundry understood ${groups.length} product groups from every supplied SKU record.`,
+    overview: `StockChief understood ${groups.length} product groups from every supplied SKU record.`,
     productGroups: groups.map((recordOrdinals) => ({
       recordOrdinals,
       relationship: recordOrdinals.length > 1 ? 'one_product_multiple_variants' : 'one_product_one_sku',
@@ -71,15 +72,15 @@ async function waitForThinkingPage(agent, location, attempts = 100) {
     if (response.status !== 200 || !/class="rm-intake-thinking"[^>]*data-job=/.test(response.text)) return response;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error(`Foundry did not finish ${location} during the test.`);
+  throw new Error(`StockChief did not finish ${location} during the test.`);
 }
 
-test('Tell Foundry what you sell is a dedicated catalogue-creation flow', async () => {
+test('Tell StockChief what you sell is a dedicated catalogue-creation flow', async () => {
   const env = await setup({});
   const page = await env.agent.get('/inventory/describe');
   assert.equal(page.status, 200);
   const text = plain(page.text);
-  assert.match(text, /Tell Foundry what you sell/);
+  assert.match(text, /Tell StockChief what you sell/);
   assert.match(text, /Describe one product or your whole catalogue/);
   assert.match(text, /review the exact products first/i);
   assert.match(text, /Up to 12,000 characters/);
@@ -104,12 +105,12 @@ test('Tell Foundry what you sell is a dedicated catalogue-creation flow', async 
 
   const reviewPage = await env.agent.get(finished.headers.location);
   const review = plain(reviewPage.text);
-  assert.match(review, /Foundry is ready to make 12 changes/);
+  assert.match(review, /StockChief is ready to make 12 changes/);
   assert.match(review, /Industrial copper fitting type 01/);
   assert.match(review, /Industrial copper fitting type 12/);
   assert.match(review, /Approve all 12/);
-  assert.match(reviewPage.text, /<details class="rm-work"[^>]*>\s*<summary>What you told Foundry<\/summary>/);
-  assert.doesNotMatch(reviewPage.text, /<details class="rm-work"[^>]*open[^>]*>\s*<summary>What you told Foundry<\/summary>/);
+  assert.match(reviewPage.text, /<details class="rm-work"[^>]*>\s*<summary>What you told StockChief<\/summary>/);
+  assert.doesNotMatch(reviewPage.text, /<details class="rm-work"[^>]*open[^>]*>\s*<summary>What you told StockChief<\/summary>/);
   assert.equal(env.db.prepare(
     "SELECT COUNT(*) AS n FROM items WHERE workspace_id = ? AND base_code LIKE 'CF-%'"
   ).get(env.workspace.workspaceId).n, 0);
@@ -235,7 +236,7 @@ Main Warehouse: 1`;
   assert.equal(missingPage.status, 200);
   const answer = plain(missingPage.text);
   assert.match(answer, /2 SKU records were read/i);
-  assert.match(answer, /Foundry finished reading your catalogue/i);
+  assert.match(answer, /StockChief finished reading your catalogue/i);
   assert.match(answer, /Answer 3 questions, then review everything/i);
   assert.match(answer, /Do you give every Tracked Tool its own serial number/i);
   assert.match(answer, /No—just count how many I have/i);
@@ -268,7 +269,7 @@ Main Warehouse: 1`;
     serial_mode_1: 'quantity',
     component_qty_2_0: '1', component_sku_2_0: 'TOOL-001',
     component_qty_2_1: '2', component_sku_2_1: 'TOOL-001',
-    kit_stock_2: 'components',
+    kit_stock_2: 'preassembled',
   });
   assert.equal(continued.status, 303);
   assert.match(continued.headers.location, /^\/foundry\/thinking\/job_/);
@@ -276,7 +277,7 @@ Main Warehouse: 1`;
   assert.equal(previewRedirect.status, 303);
   assert.match(previewRedirect.headers.location, /^\/actions\/plan\//);
   const preview = plain((await agent.get(previewRedirect.headers.location)).text);
-  assert.match(preview, /Foundry is ready to make 2 changes/i);
+  assert.match(preview, /StockChief is ready to make 2 changes/i);
   assert.match(preview, /Approve all 2/i);
   assert.equal(provider.calls.length, 2, 'the corrected catalogue is understood again before preview');
   assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id=?')
@@ -327,6 +328,69 @@ Harbor Branch: 4`);
     'an unmatched component becomes a minimal preview record from the exact owner-supplied name and SKU');
 });
 
+test('an answered preassembled-kit question is remembered and is never asked again', () => {
+  const parsed = structuredCatalogue.parse(`1. Replacement Cartridge
+SKU: CART-1
+
+2. Ready-to-Ship Care Box
+SKU: CARE-BOX
+Components per kit: 2 × SKU: CART-1
+North Store: 6`);
+  assert.deepEqual(parsed.structuredIssues.map((issue) => issue.type), ['kit_stock']);
+
+  const resolved = structuredCatalogue.resolveIssues(parsed.structuredRecords, parsed.structuredIssues, {
+    kit_stock_2: 'preassembled',
+  });
+  assert.equal(resolved.ok, true);
+  assert.match(resolved.description, /Kit Stock Basis: Preassembled physical kits/);
+  assert.match(resolved.description, /North Store: 6/);
+
+  const reread = structuredCatalogue.parse(resolved.description);
+  assert.deepEqual(reread.structuredIssues || [], [], 'the saved answer must survive the next analysis');
+  assert.equal(reread.structuredRecords[1].kitStockBasis, 'preassembled');
+
+  const staleCachedRecords = JSON.parse(JSON.stringify(resolved.records));
+  staleCachedRecords[1].kitStockBasis = '';
+  const recovered = structuredCatalogue.reconcileComponentSkus(staleCachedRecords);
+  assert.equal(recovered[1].kitStockBasis, 'preassembled',
+    'an older cached review recovers the answer from its preserved literal field');
+  assert.deepEqual(structuredCatalogue.issueList(recovered), []);
+});
+
+test('a persisted review from the older parser recovers its saved answer and advances', async () => {
+  const env = await setup(catalogueUnderstanding([[1], [2]]));
+  const source = `1. Cartridge
+SKU: CART-OLD
+
+2. Packed Box
+SKU: BOX-OLD
+Components per kit: 1 × SKU: CART-OLD
+Main Warehouse: 2`;
+  const parsed = structuredCatalogue.parse(source);
+  const resolved = structuredCatalogue.resolveIssues(parsed.structuredRecords, parsed.structuredIssues, {
+    kit_stock_2: 'preassembled',
+  });
+  const staleRecords = JSON.parse(JSON.stringify(resolved.records));
+  staleRecords[1].kitStockBasis = '';
+  const oldJobId = jobRunner.createJob(env.workspace.workspaceId, 'catalogue_review', resolved.description, {
+    track: 'catalogue', subject: 'older saved review', db: env.db,
+  });
+  jobRunner.completeJob(oldJobId, { catalogueReview: {
+    recordCount: staleRecords.length,
+    records: staleRecords,
+    issues: [{ type: 'kit_stock', recordOrdinal: 2, recordName: 'Packed Box', code: 'BOX-OLD' }],
+    understanding: catalogueUnderstanding([[1], [2]]),
+  } }, env.db);
+
+  const recovered = await env.agent.get(`/inventory/catalogue-review/${oldJobId}`);
+  assert.equal(recovered.status, 303);
+  assert.match(recovered.headers.location, /^\/foundry\/thinking\/job_/);
+  const preview = await waitForThinkingPage(env.agent, recovered.headers.location);
+  assert.equal(preview.status, 303);
+  assert.match(preview.headers.location, /^\/actions\/plan\//);
+  env.db.close();
+});
+
 test('a stalled catalogue review has bounded progress and preserves everything the owner typed', async () => {
   const env = await setup((providerRequest) => new Promise((resolve, reject) => {
     providerRequest.signal.addEventListener('abort', () => reject(providerRequest.signal.reason), { once: true });
@@ -367,7 +431,7 @@ test('Needs you is one consolidated, authenticated exception queue', async () =>
   env.db.close();
 });
 
-test('Tell Foundry turns a missing transfer destination into a visible setup preview', async () => {
+test('Tell StockChief turns a missing transfer destination into a visible setup preview', async () => {
   const env = await setup({
       lines: [{
         actionType: 'transfer', item: 'Filter Cartridge', variant: '', lotCode: '', serials: [],
@@ -419,7 +483,7 @@ test('resolving an investigation clears the linked physical event from Needs you
   const detail = await env.agent.get(`/investigations/${event.investigationId}`);
   const detailText = plain(detail.text);
   assert.match(detailText, /The physical count does not match the inventory record/);
-  assert.match(detailText, /Recorded\s+20\s+in Foundry/);
+  assert.match(detailText, /Recorded\s+20\s+in StockChief/);
   assert.match(detailText, /Counted\s+17\s+reported physically/);
   assert.match(detailText, /Difference\s+3\s+3 fewer than recorded/);
   assert.match(detailText, /Neither button changes stock/);
@@ -463,7 +527,7 @@ test('the universal input routes a policy request without changing policy on a g
 
 test('"order what we need" runs the manager loop and prepares supported purchasing work', async () => {
   const env = await setup({ intentClass: 'PURCHASING_REQUEST', confidence: 'high',
-    reason: 'The operator asked Foundry to assess replenishment.', resolvedReference: '', clarifyingQuestion: '' });
+    reason: 'The operator asked StockChief to assess replenishment.', resolvedReference: '', clarifyingQuestion: '' });
   const membership = authService.getMembership(env.db, env.workspace.workspaceId, env.workspace.accountId);
   const item = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Packing Tape' });
   const supplier = supplierService.createSupplier(env.db, env.workspace.ctx, membership, { name: 'Packaging Supply' });
@@ -521,7 +585,7 @@ test('"handle everything" opens bounded authority review and never grants unlimi
   env.db.close();
 });
 
-test('Tell Foundry prepares a remembered vendor-code mapping without changing codes before approval', async () => {
+test('Tell StockChief prepares a remembered vendor-code mapping without changing codes before approval', async () => {
   const env = await setup({});
   const membership = authService.getMembership(env.db, env.workspace.workspaceId, env.workspace.accountId);
   const item = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Boys Dress Oxford', baseCode: 'SH-204-BRN' });
@@ -550,7 +614,7 @@ test('Tell Foundry prepares a remembered vendor-code mapping without changing co
   env.db.close();
 });
 
-test('universal Tell Foundry keeps the all-locations continuation through its redirect', async () => {
+test('universal Tell StockChief keeps the all-locations continuation through its redirect', async () => {
   const env = await setup({
     lines: [{
       actionType: 'receive', item: 'Display Hook', variant: '', sourceText: 'received 1 Display Hook',
@@ -584,7 +648,7 @@ test('universal Tell Foundry keeps the all-locations continuation through its re
   env.db.close();
 });
 
-test('Tell Foundry prepares and atomically applies a catalogue-wide code prefix change', async () => {
+test('Tell StockChief prepares and atomically applies a catalogue-wide code prefix change', async () => {
   const env = await setup({});
   const first = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Classic T-Shirt', baseCode: 'TS-BLK' });
   const second = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Straight Jeans', baseCode: 'TS-JEAN' });
@@ -627,7 +691,7 @@ test('manager pages cannot be read without signing in', async () => {
   store.db.close();
 });
 
-test('Home confirms a selected attachment and a file-only Tell Foundry request reaches its preview', async () => {
+test('Home confirms a selected attachment and a file-only Tell StockChief request reaches its preview', async () => {
   const env = await setup({});
   env.db.prepare(
     `INSERT INTO workspace_configuration
@@ -656,7 +720,7 @@ test('Home confirms a selected attachment and a file-only Tell Foundry request r
   env.db.close();
 });
 
-test('Tell Foundry treats an attached pricing sheet as updates to exact SKU codes and never creates products', async () => {
+test('Tell StockChief treats an attached pricing sheet as updates to exact SKU codes and never creates products', async () => {
   const env = await setup({});
   const existing = makeQuantityItem(env.db, env.workspace.ctx, {
     name: 'Black Jeans / Small', baseCode: 'JEANS-BLACK-S',
@@ -803,7 +867,7 @@ test('an unmatched supplier invoice becomes an exact review without pretending t
 
   const review = await env.agent.get(routed.headers.location);
   const reviewText = plain(review.text);
-  assert.match(reviewText, /what Foundry read from your file/i);
+  assert.match(reviewText, /what StockChief read from your file/i);
   assert.match(reviewText, /Kids Loafer/);
   assert.match(reviewText, /Black/);
   assert.match(reviewText, /23/);
@@ -849,7 +913,7 @@ test('an unmatched supplier invoice becomes an exact review without pretending t
   assert.match(removalRequest.headers.location, /^\/document-removals\/drp_/);
   const removalPage = await env.agent.get(removalRequest.headers.location);
   const removalText = plain(removalPage.text);
-  assert.match(removalText, /Foundry traced these products to new-shoes\.txt/i);
+  assert.match(removalText, /StockChief traced these products to new-shoes\.txt/i);
   assert.match(removalText, /Kids Loafer - Black/i);
   assert.match(removalText, /Current stock 0/i);
   assert.doesNotMatch(removalText, /Attach the spreadsheet, PDF or document/i);
@@ -930,7 +994,7 @@ test('an operational document is read, matched to one PO, and becomes a verified
 
   const preview = await env.agent.get(routed.headers.location);
   assert.equal(preview.status, 200);
-  assert.match(plain(preview.text), /Foundry prepared this from delivery-note.txt/);
+  assert.match(plain(preview.text), /StockChief prepared this from delivery-note.txt/);
   assert.match(preview.text, new RegExp(`name="qty_${order.lines[0].id}"[^>]*value="12"`));
   const event = env.db.prepare('SELECT * FROM physical_events WHERE workspace_id = ?').get(env.workspace.workspaceId);
   const received = await env.agent.post(`/purchasing/orders/${order.id}/receive`).type('form').send({
@@ -1027,7 +1091,7 @@ test('confirming a count prepares the correction, and Needs you stays actionable
   assert.match(activity, /8 to 5|Adjusted/i, 'the ledger entry is visible in Activity');
 
   // Only now is the correction gone from Needs you. (This fixture has never
-  // sold anything, so the "tell Foundry when you sell something" input is still
+  // sold anything, so the "tell StockChief when you sell something" input is still
   // legitimately waiting — asserting a globally empty queue would be asserting
   // an unrelated fact about the fixture.)
   const settled = plain((await env.agent.get('/needs-you')).text);
@@ -1043,7 +1107,7 @@ test('confirming a count prepares the correction, and Needs you stays actionable
  *
  * The four endings a sale can have are asserted together because the bug was
  * that two of them were the same ending: a refusal by an inventory rule was
- * filed as a report Foundry could not place, which is what "missing
+ * filed as a report StockChief could not place, which is what "missing
  * information" means everywhere else in the product.
  */
 const locationService = require('../../src/domain/location-service');
@@ -1107,7 +1171,7 @@ test('a sale within stock goes to the ordinary approval, and nothing moves until
   env.db.close();
 });
 
-test('an unclear Tell Foundry request becomes an orange answerable continuation, never a blue top message', async () => {
+test('an unclear Tell StockChief request becomes an orange answerable continuation, never a blue top message', async () => {
   let classifications = 0;
   const env = await setup((req) => {
     if (req.schemaName !== 'manager_intent') return {};
@@ -1144,7 +1208,7 @@ test('an unclear Tell Foundry request becomes an orange answerable continuation,
   env.db.close();
 });
 
-test('Tell Foundry treats an exact SKU code as the variant even when the reader calls it a lot', async () => {
+test('Tell StockChief treats an exact SKU code as the variant even when the reader calls it a lot', async () => {
   const store = makeDatabase();
   const workspace = seedWorkspace(store.db, { workspaceName: 'SKU identity QA' });
   const item = makeVariantItem(store.db, workspace.ctx, {
@@ -1209,7 +1273,7 @@ test('a complete past-tense sale bypasses an UNKNOWN manager answer and reaches 
     if (req.schemaName === 'manager_intent') {
       managerClassifierCalls += 1;
       return { intentClass: 'UNKNOWN', confidence: 'low', reason: 'Incorrect generic fallback.',
-        resolvedReference: '', clarifyingQuestion: 'What would you like Foundry to do with the inventory?' };
+        resolvedReference: '', clarifyingQuestion: 'What would you like StockChief to do with the inventory?' };
     }
     if (req.schemaName === 'inventory_action_intent') {
       return { lines: [{
@@ -1235,15 +1299,15 @@ test('a complete past-tense sale bypasses an UNKNOWN manager answer and reaches 
   const preview = plain((await agent.get(response.headers.location)).text).replace(/\s+/g, ' ');
   assert.match(preview, /Straight Jeans - Blue \/ 28/);
   assert.match(preview, /Main Warehouse/);
-  assert.doesNotMatch(preview, /What would you like Foundry to do/i);
+  assert.doesNotMatch(preview, /What would you like StockChief to do/i);
   assert.equal(repo.getBalance(store.db, workspace.workspaceId, size28.id, workspace.main.id), 10,
     'the sale remains a preview until approval');
   store.db.close();
 });
 
-test('Tell Foundry preserves a supplied split-catalogue attribute and asks only for the missing axis', async () => {
+test('Tell StockChief preserves a supplied split-catalogue attribute and asks only for the missing axis', async () => {
   const store = makeDatabase();
-  const workspace = seedWorkspace(store.db, { workspaceName: 'Split catalogue Tell Foundry QA' });
+  const workspace = seedWorkspace(store.db, { workspaceName: 'Split catalogue Tell StockChief QA' });
   for (const colour of ['Black', 'White']) {
     for (const size of ['Small', 'Medium', 'Large']) {
       makeVariantItem(store.db, workspace.ctx, {
@@ -1284,7 +1348,7 @@ test('Tell Foundry preserves a supplied split-catalogue attribute and asks only 
   store.db.close();
 });
 
-test('Tell Foundry previews reorder language in the same settings the UI saves', async () => {
+test('Tell StockChief previews reorder language in the same settings the UI saves', async () => {
   const env = await setup(operatingResult([
     operatingChange({ domain: 'replenishment', itemText: 'T-shirt', variantText: 'Black Small', reorderPoint: 60, targetStock: 80 }),
   ], 'Black Small replenishment'));
@@ -1321,7 +1385,7 @@ test('Tell Foundry previews reorder language in the same settings the UI saves',
   env.db.close();
 });
 
-test('Tell Foundry previews a variant-and-location minimum and the shared control enforces it', async () => {
+test('Tell StockChief previews a variant-and-location minimum and the shared control enforces it', async () => {
   const env = await setup(operatingResult([
     operatingChange({ domain: 'location_stock', itemText: 'T-shirt', variantText: 'Black Small', locationText: 'Downtown Store', locationMinimum: 20 }),
   ], 'Downtown keep-back'));
@@ -1376,7 +1440,7 @@ test('Tell Foundry previews a variant-and-location minimum and the shared contro
   env.db.close();
 });
 
-test('Tell Foundry routes a direct currency assignment to a selling-price preview', async () => {
+test('Tell StockChief routes a direct currency assignment to a selling-price preview', async () => {
   const env = await setup({});
   makeQuantityItem(env.db, env.workspace.ctx, { name: 'Black Jeans', baseCode: 'JEANS-BLACK-S' });
 
@@ -1397,7 +1461,7 @@ test('Tell Foundry routes a direct currency assignment to a selling-price previe
   env.db.close();
 });
 
-test('Tell Foundry asks once before adding a named missing supplier, then approves the exact PO', async () => {
+test('Tell StockChief asks once before adding a named missing supplier, then approves the exact PO', async () => {
   const actionIntent = {
     lines: [{
       actionType: 'purchase', item: 'Sol shoes', variant: '', lotCode: '', serials: [],
@@ -1526,7 +1590,7 @@ test('a specific PO request with a non-catalogue product description asks for th
   env.db.close();
 });
 
-test('Tell Foundry treats an owner-stated supplier price as purchase cost for the real inventory, never as a product name', async () => {
+test('Tell StockChief treats an owner-stated supplier price as purchase cost for the real inventory, never as a product name', async () => {
   const env = await setup({});
   const membership = authService.getMembership(env.db, env.workspace.workspaceId, env.workspace.accountId);
   const loafers = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Loafers', baseCode: 'LOAFER' });
@@ -1586,7 +1650,7 @@ test('Tell Foundry treats an owner-stated supplier price as purchase cost for th
   env.db.close();
 });
 
-test('Tell Foundry routes a profit question with dollar amounts to Ask, not selling-price changes', async () => {
+test('Tell StockChief routes a profit question with dollar amounts to Ask, not selling-price changes', async () => {
   const env = await setup({
     intentClass: 'QUESTION', confidence: 'high',
     reason: 'The owner is asking why profit differs from customer cash.',
@@ -1654,7 +1718,7 @@ test('an incomplete SKU price instruction asks which variant instead of becoming
   env.db.close();
 });
 
-test('Tell Foundry previews and approves one list of different selling prices', async () => {
+test('Tell StockChief previews and approves one list of different selling prices', async () => {
   const env = await setup({});
   const black = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Black Jeans', baseCode: 'JEANS-BLACK-S' });
   const navy = makeQuantityItem(env.db, env.workspace.ctx, { name: 'Navy Jeans', baseCode: 'JEANS-NAVY-M' });
@@ -1689,7 +1753,7 @@ test('Tell Foundry previews and approves one list of different selling prices', 
   env.db.close();
 });
 
-test('Tell Foundry carries each multi-sale clause into one correctly grouped preview', async () => {
+test('Tell StockChief carries each multi-sale clause into one correctly grouped preview', async () => {
   const provider = fakeProvider((req) => {
     if (req.schemaName === 'manager_intent') {
       return { intentClass: 'PHYSICAL_EVENT', confidence: 'high', reason: 'A sale happened.',
@@ -1736,7 +1800,7 @@ test('Tell Foundry carries each multi-sale clause into one correctly grouped pre
   });
   assert.equal(response.status, 303);
   assert.match(response.headers.location, /^\/actions\/plan\//,
-    'the universal Tell Foundry input must end on one grouped action preview');
+    'the universal Tell StockChief input must end on one grouped action preview');
 
   const preview = plain((await agent.get(response.headers.location)).text).replace(/\s+/g, ' ');
   assert.match(preview, /several changes/i);
@@ -1822,7 +1886,7 @@ test('a protected stock boundary appears as one orange Needs You warning and its
   env.db.close();
 });
 
-test('a sale Foundry genuinely cannot resolve still asks, and still records nothing', async () => {
+test('a sale StockChief genuinely cannot resolve still asks, and still records nothing', async () => {
   const env = await shopWithFourLarge(saleProvider({ quantity: 2, variant: '' }));
   const { res, landed } = await env.tell('We sold 2 Black T-shirt at Downtown Store');
   assert.equal(res.headers.location, '/actions');
@@ -1839,6 +1903,6 @@ test('an item allowed to go negative is not refused by a rule it does not have',
   env.db.prepare('UPDATE items SET allow_negative = 1 WHERE name = ?').run('Black T-shirt');
   const { res } = await env.tell('We sold 10 Black Large at Downtown Store');
   assert.match(res.headers.location, /^\/actions\//,
-    'the engine would accept this, so Foundry must not refuse it first');
+    'the engine would accept this, so StockChief must not refuse it first');
   env.db.close();
 });

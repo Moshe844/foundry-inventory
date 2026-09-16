@@ -46,7 +46,7 @@ router.post('/settings/operations/outbox/:id/retry', (req, res) => {
 router.post('/settings/operations/alerts/test', (req, res) => {
   const alert = monitoring.raise(req.db, {
     severity: 'WARNING', kind: 'certification.injected',
-    title: 'Foundry production alert test',
+    title: 'StockChief production alert test',
     detail: 'This is an intentional Mission 4 alert. A monitored responder must acknowledge it.',
     fingerprint: `certification.injected:${Date.now()}`,
   });

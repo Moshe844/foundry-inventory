@@ -4,8 +4,8 @@
  * Purchase orders: what we intend to buy, and what a person committed to.
  *
  * A PO follows the Mission 4 philosophy, because it is the same kind of thing:
- * something consequential that Foundry may prepare but never execute on its
- * own. Foundry drafts; a person with the right permission approves; the
+ * something consequential that StockChief may prepare but never execute on its
+ * own. StockChief drafts; a person with the right permission approves; the
  * approval is recorded against exactly what was on the screen, by hash.
  *
  * Approval is where a PO stops being editable in the ways that matter. The
@@ -262,7 +262,7 @@ function eventsFor(db, workspaceId, poId) {
 /**
  * Works out the expected arrival date, and where the date came from.
  *
- * Provenance matters as much as the date: Foundry will later call an order
+ * Provenance matters as much as the date: StockChief will later call an order
  * late, and doing that against a date it invented would be an accusation it
  * cannot support.
  */
@@ -461,7 +461,7 @@ function headerDestinationId(lines) {
  * Where replenishment for one product should actually land.
  *
  * Falling back to "whichever location is a warehouse" is fine when nobody has
- * said anything at all, but it is the wrong answer for a line Foundry raised
+ * said anything at all, but it is the wrong answer for a line StockChief raised
  * itself: the shortage was measured at a particular location, and sending the
  * stock somewhere else leaves that location short, the order looking filled,
  * and somebody transferring it by hand afterwards. A roastery that sells every

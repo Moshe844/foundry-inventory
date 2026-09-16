@@ -129,7 +129,7 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   const line = order.lines[0];
   const fulfilled = await agent.post(`${created.headers.location}/fulfill`).type('form').send({
     _csrf: csrfFrom(page.text), idempotencyKey: `browser-partial:${order.id}`,
-    lineId: line.id, locationId: env.workspace.main.id, quantity: 10, handover: 'CARRIER',
+    lineId: line.id, locationId: env.workspace.main.id, quantity: 10, handover: 'COLLECTED',
   });
   assert.equal(fulfilled.status, 303);
   page = await agent.get(created.headers.location);
@@ -137,8 +137,8 @@ test('Sales UI covers draft → confirm/commit → partial fulfillment → cance
   assert.match(text, /partly shipped|partly fulfilled|partly gone/i);
   assert.match(text, /20 committed/);
   // The stat is labelled 'shipped' now: the word an owner uses, without the
-  // 'fulfilled (shipped)' gloss that was explaining Foundry's vocabulary to them.
-  assert.match(text, /10 shipped/);
+  // 'fulfilled (shipped)' gloss that was explaining StockChief's vocabulary to them.
+  assert.match(text, /10 collected/);
 
   const itemPage = plain((await agent.get(`/inventory/${env.item.itemId}`)).text);
   assert.match(itemPage, /40\s+units on hand/i);
@@ -231,8 +231,9 @@ function conversationalProvider() {
   } };
 }
 
-test('Tell Foundry creates, changes, fulfills and cancels the same structured Sales Order', async () => {
+test('Tell StockChief creates, changes, fulfills and cancels the same structured Sales Order', async () => {
   const env = setup(conversationalProvider());
+  sales.createCustomer(env.db, env.workspace.ctx, { name: 'ABC School', shippingAddress: '123 Example Road, Albany, NY 12207, US' });
   inventory.receive(env.db, env.workspace.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 30 });
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
@@ -266,7 +267,7 @@ test('Tell Foundry creates, changes, fulfills and cancels the same structured Sa
   env.db.close();
 });
 
-test('Tell Foundry completes a named whole order immediately without AI routing or a false Sales redirect', async () => {
+test('Tell StockChief completes a named whole order immediately without AI routing or a false Sales redirect', async () => {
   const provider = { complete: async () => {
     throw new Error('The exact whole-order command must not wait for an AI provider.');
   } };
@@ -275,7 +276,7 @@ test('Tell Foundry completes a named whole order immediately without AI routing 
     skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20,
   });
   const draft = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'Hendel', lines: [{ skuId: env.item.skuId, quantity: 8 }], requirePrices: true,
+    customerName: 'Hendel', deliveryMethod: 'PICKUP', lines: [{ skuId: env.item.skuId, quantity: 8 }], requirePrices: true,
   });
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
@@ -302,10 +303,10 @@ test('Tell Foundry completes a named whole order immediately without AI routing 
   env.db.close();
 });
 
-test('Tell Foundry keeps an unfillable whole order on its exact page and ships nothing', async () => {
+test('Tell StockChief keeps an unfillable whole order on its exact page and ships nothing', async () => {
   const env = setup({ complete: async () => { throw new Error('AI should not be called.'); } });
   const draft = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'Hendel', lines: [{ skuId: env.item.skuId, quantity: 8 }], requirePrices: true,
+    customerName: 'Hendel', deliveryMethod: 'PICKUP', lines: [{ skuId: env.item.skuId, quantity: 8 }], requirePrices: true,
   });
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
@@ -327,7 +328,7 @@ test('Tell Foundry keeps an unfillable whole order on its exact page and ships n
   env.db.close();
 });
 
-test('Tell Foundry shows sales-order variant choices instead of flattening the question into a toast', async () => {
+test('Tell StockChief shows sales-order variant choices instead of flattening the question into a toast', async () => {
   const provider = { complete: async (request) => {
     if (request.schemaName === 'manager_intent') return { data: {
       capabilityId: 'sales.manage-orders', intentClass: 'SALES_ORDER', confidence: 'high',
@@ -366,7 +367,8 @@ test('Tell Foundry shows sales-order variant choices instead of flattening the q
   assert.equal(continued.status, 303);
   assert.match(continued.headers.location, /^\/sales\/orders\/so_/);
   const order = sales.listOrders(env.db, env.workspace.workspaceId)[0];
-  assert.equal(order.status, 'BACKORDERED');
+  assert.equal(order.status, 'DRAFT');
+  assert.equal(order.delivery_decision_required, 1, 'choosing a variant does not answer the missing delivery decision');
   assert.match(order.lines[0].displayName, /Small/);
   assert.equal(order.lines[0].unit_price_minor, 4200);
   env.db.close();
@@ -405,7 +407,8 @@ test('a missing selling price becomes an answerable step and cannot create an in
   });
   assert.match(priced.headers.location, /^\/sales\/orders\/so_/);
   const [order] = sales.listOrders(env.db, env.workspace.workspaceId);
-  assert.equal(order.status, 'BACKORDERED');
+  assert.equal(order.status, 'DRAFT');
+  assert.equal(order.delivery_decision_required, 1, 'a price answer is not a delivery address or pickup decision');
   assert.equal(order.lines[0].unit_price_minor, 3250);
   assert.equal(prices.currentForSku(env.db, env.workspace.workspaceId, cap.skuId).isSet, false,
     'an order-specific answer must not silently rewrite the inventory catalogue price');
@@ -501,7 +504,7 @@ test('manual orders reveal available stock before submission and shortage decisi
  * something moved.
  *
  * Found walking the customer-order scenario. The shortfall notice was written
- * for the moment an order is confirmed — "Foundry found only N units available
+ * for the moment an order is confirmed — "StockChief found only N units available
  * to reserve. No on-hand stock changed and nothing was shipped" — and then
  * re-rendered unchanged after a shipment. Shipping 34 of 50 left the page
  * saying "nothing was shipped" directly beneath "34 fulfilled (shipped)",
@@ -532,14 +535,14 @@ test('a partly shipped order does not claim nothing was shipped', async () => {
   const line = order.lines[0];
   await agent.post(`${created.headers.location}/fulfill`).type('form').send({
     _csrf: csrfFrom(page.text), idempotencyKey: `short-ship:${order.id}`,
-    lineId: line.id, locationId: env.workspace.main.id, quantity: 34, handover: 'CARRIER',
+    lineId: line.id, locationId: env.workspace.main.id, quantity: 34, handover: 'COLLECTED',
   });
 
   const after = plain((await agent.get(created.headers.location)).text);
   assert.match(after, /still short/i, 'the shortfall is still stated');
   assert.doesNotMatch(after, /nothing was shipped/i,
     'because something was shipped, and the same page says so');
-  assert.match(after, /34 units shipped/, 'it says how much actually went');
+  assert.match(after, /34 units collected/, 'it says how much actually went and matches the explicit pickup choice');
 });
 
 /**
@@ -551,7 +554,7 @@ test('a partly shipped order does not claim nothing was shipped', async () => {
  * only options on the page were to add more demand or cancel. Needs you sent
  * the reader there, which made it a loop into a dead end.
  *
- * Foundry still does not do it by itself: holding stock for one customer takes
+ * StockChief still does not do it by itself: holding stock for one customer takes
  * it from the next person who asks, so it is offered and not done.
  */
 test('stock arriving after confirmation can be committed, without moving any of it', async () => {
@@ -696,7 +699,7 @@ test('an order with an invoice shows what was invoiced, paid and still owed', as
  * Asking for an order is a conversation, not a form.
  *
  * "Can you create a customer order for Marlow?" names a customer and nothing
- * else. Foundry answers from its own records: it notices the customer is not
+ * else. StockChief answers from its own records: it notices the customer is not
  * on file and offers to create them, then offers what is actually available to
  * place, then asks how many — and only then creates and confirms the order.
  * The provider here throws, so every step is the deterministic path; the model
@@ -735,8 +738,10 @@ test('asking for a customer order walks through customer, product and quantity f
   assert.match(response.headers.location, /^\/sales\/orders\/so_/);
   const [order] = sales.listOrders(env.db, env.workspace.workspaceId);
   assert.equal(order.customer.name, 'Marlow');
-  assert.equal(order.status, 'CONFIRMED');
-  assert.deepEqual(order.totals, { ordered: 4, fulfilled: 0, allocated: 4, backordered: 0 });
+  assert.equal(order.status, 'DRAFT');
+  assert.equal(order.delivery_decision_required, 1, 'the next step collects a delivery address or explicit pickup choice');
+  assert.equal(order.totals.ordered, 4);
+  assert.equal(order.totals.allocated, 0);
   assert.equal(sales.listCustomers(env.db, env.workspace.workspaceId).length, 1, 'the customer was created once');
   env.db.close();
 });

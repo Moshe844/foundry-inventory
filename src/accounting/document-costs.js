@@ -4,7 +4,7 @@
  * What a supplier document cost, beyond the goods on it.
  *
  * A proforma for 800 pairs of shoes read: $21,390 of shoes, $5,411 of sea
- * freight, $83 of insurance, and $280 credited back for samples. Foundry read
+ * freight, $83 of insurance, and $280 credited back for samples. StockChief read
  * all four correctly, showed all four on the proposal screen, posted the
  * $21,390 — and dropped the other $5,214 on the floor, because the only place
  * it knew how to keep a charge was on a purchase order, and an owner saying
@@ -150,7 +150,7 @@ function forWorkspace(db, workspaceId) {
       unrecordedMinor,
       /*
        * The document's own total against the sum of its parts. A difference
-       * is not corrected here: it is shown, because it means Foundry read
+       * is not corrected here: it is shown, because it means StockChief read
        * something wrong and the owner is the one who can see which line.
        */
       addsUpMinor: adds,
@@ -220,7 +220,7 @@ function settle(db, ctx, membership, input = {}) {
       : account(EXPENSE_ACCOUNT[charge.kind] || 'OPERATING_EXPENSE');
     // A credit on the document — a discount, a sample allowance — reduces the
     // same account it would otherwise have added to, rather than becoming
-    // income Foundry invented.
+    // income StockChief invented.
     lines.push(charge.amountMinor >= 0
       ? { accountId: target.id, debitMinor: charge.amountMinor, creditMinor: 0, memo: charge.label }
       : { accountId: target.id, debitMinor: 0, creditMinor: -charge.amountMinor, memo: charge.label });
@@ -255,7 +255,7 @@ function settle(db, ctx, membership, input = {}) {
 }
 
 /**
- * Charges from documents applied before Foundry kept them.
+ * Charges from documents applied before StockChief kept them.
  *
  * The money was read at the time and written into the document's own record,
  * so this is recovery rather than invention: every figure below came off the

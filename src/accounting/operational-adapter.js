@@ -423,10 +423,10 @@ function postInventoryRemoval(db, event, postingDate) {
     WHERE m.workspace_id = ? AND m.group_id = ? ORDER BY m.seq`)
     .all(event.workspaceId, source.group_id);
   if (!movements.length || movements.some((row) => Number(row.quantity_delta) >= 0)) {
-    throw new Error('Inventory increased without a Purchase Order receipt or another verified cost source. Add the source cost so Foundry can value it; no amount was guessed.');
+    throw new Error('Inventory increased without a Purchase Order receipt or another verified cost source. Add the source cost so StockChief can value it; no amount was guessed.');
   }
   if (movements.some((row) => /sold|sale|customer/i.test(String(row.reason_code || '')))) {
-    throw new Error('Inventory was marked as sold without a customer order or selling-price record. Add the sale evidence so Foundry can record revenue and product cost together.');
+    throw new Error('Inventory was marked as sold without a customer order or selling-price record. Add the sale evidence so StockChief can record revenue and product cost together.');
   }
   return inTransaction(db, () => {
     const issued = costing.issue(db, { workspaceId: event.workspaceId }, {
@@ -523,7 +523,7 @@ function postConnectorSale(db, event, postingDate) {
 function postConnectorReturn(db, event, postingDate) {
   const payload = event.payload || {};
   if (!payload.originalSaleEventId) {
-    throw new Error('The physical return needs the original connector sale event id before Foundry can reverse revenue or COGS.');
+    throw new Error('The physical return needs the original connector sale event id before StockChief can reverse revenue or COGS.');
   }
   const original = db.prepare(`SELECT * FROM accounting_journal_entries
     WHERE workspace_id = ? AND source_key = ? AND status = 'POSTED'`)
@@ -591,7 +591,7 @@ function processEvent(db, event) {
   const ensured = automatic.ensure(db, event.workspaceId, { startDate: postingDate });
   const configured = ensured.configured;
   if (!configured.enabled || !configured.startDate) return { status: 'NEEDS_REVIEW',
-    outcome: { reason: 'accounting_owner_unavailable', message: 'Foundry could not identify an owner or accountant for this workspace.' } };
+    outcome: { reason: 'accounting_owner_unavailable', message: 'StockChief could not identify an owner or accountant for this workspace.' } };
   const prior = inbox(db, event.workspaceId, event.id);
   if (prior && ['POSTED', 'IGNORED'].includes(prior.status)) return prior;
   if (prior && prior.status === 'NEEDS_REVIEW') return prior;

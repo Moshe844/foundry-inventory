@@ -2,7 +2,7 @@
   <div class="titles">
     <h1>Set up purchasing</h1>
     <div class="page-sub">
-      Tell Foundry who you buy from, and it can work out what to order and draft the order for you.
+      Tell StockChief who you buy from, and it can work out what to order and draft the order for you.
       Nothing is set until you say so.
     </div>
   </div>
@@ -14,13 +14,13 @@
     <div class="act-ledger">
       <%# Four counters headed "Lines ..." told a first-time reader nothing they
           could act on. Same numbers, said as facts about their products. %>
-      <div class="act-row"><span class="act-place">Variants Foundry could suggest a reorder level for</span><span class="act-move"><span class="num"><%= assessment.summary.canPropose %></span></span></div>
+      <div class="act-row"><span class="act-place">Variants StockChief could suggest a reorder level for</span><span class="act-move"><span class="num"><%= assessment.summary.canPropose %></span></span></div>
       <div class="act-row"><span class="act-place">Variants it has not seen sell yet</span><span class="act-move"><span class="num"><%= assessment.summary.needHistory %></span></span></div>
       <div class="act-row"><span class="act-place">Variants already set up</span><span class="act-move"><span class="num"><%= assessment.summary.alreadySet %></span></span></div>
       <div class="act-row"><span class="act-place">Variants with nobody to buy them from</span><span class="act-move"><span class="num"><%= assessment.summary.withoutSupplier %></span></span></div>
     </div>
     <% if (!assessment.summary.lines) { %>
-      <p class="lede">There are no products here yet. Add them, or bring your data in, and Foundry can set purchasing up from what sells.</p>
+      <p class="lede">There are no products here yet. Add them, or bring your data in, and StockChief can set purchasing up from what sells.</p>
       <div class="btn-row"><a class="btn" href="/onboarding/files">Bring data in</a><a class="btn" href="/inventory/new">Add a product</a></div>
     <% } %>
   </div>
@@ -29,7 +29,7 @@
 <% if (assessment.proposals.length) { %>
   <form method="post" action="/purchasing/setup/policies" class="card section">
     <div class="card-head">
-      <h2>Reorder points Foundry would set</h2>
+      <h2>Reorder points StockChief would set</h2>
       <span class="spacer"></span>
       <span class="badge badge--muted">derived from real usage</span>
     </div>
@@ -80,7 +80,7 @@
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <p class="lede">
         A vendor usually sells a whole range on the same terms, so set them once and apply them to everything
-        they supply. Without a supplier Foundry knows a line is short but not who to buy it from.
+        they supply. Without a supplier StockChief knows a line is short but not who to buy it from.
       </p>
 
       <div class="grid grid--2">
@@ -142,7 +142,7 @@
     <div class="card-head"><h2>Waiting to see these sell</h2></div>
     <div class="card-body">
       <p class="lede">
-        Foundry could guess a reorder level from what is on the shelf today, but a guess turns into a real
+        StockChief could guess a reorder level from what is on the shelf today, but a guess turns into a real
         order for stock nobody asked for. So it waits. Each of these starts working on its own once it has
         sold a few times — you do not have to come back and do anything.
       </p>

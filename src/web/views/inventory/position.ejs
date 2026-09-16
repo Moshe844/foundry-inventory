@@ -8,7 +8,7 @@
    * fine do not need sixty-one rows.
    *
    * Groups are ordered by how much thought each one needs, and every one
-   * carries what Foundry has already done about it. The table is one link at
+   * carries what StockChief has already done about it. The table is one link at
    * the bottom, where somebody who actually wants a table will look for it.
    */
   var totals = position.totals || {};
@@ -40,7 +40,7 @@
   </h1>
   <p class="rm-sub">
     <% if (!position.groups.length) { %>
-      There is nothing here yet. Once Foundry knows what you hold, this is where it tells you
+      There is nothing here yet. Once StockChief knows what you hold, this is where it tells you
       whether it is all right.
     <% } else { %>
       <%= totals.committed ? totals.committed.toLocaleString('en-US') + ' units are promised to customers' : 'Nothing is promised to a customer' %><%
@@ -78,7 +78,7 @@
 
   <% if (!position.groups.length) { %>
     <div class="rm-choices" style="margin-top:16px">
-      <a class="rm-btn" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell Foundry what you sell</a>
+      <a class="rm-btn" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell StockChief what you sell</a>
       <a class="rm-btn rm-btn--ghost" href="/inventory/new"><%- helpers.icon('plus', { size: 15 }) %> Add one manually</a>
       <a class="rm-btn rm-btn--ghost" href="/onboarding/migrations/new">Import existing inventory</a>
       <a class="rm-btn rm-btn--ghost" href="/onboarding/system">Connect a business system</a>

@@ -3,10 +3,10 @@
 /**
  * Asking a customer to pay, and learning that they did.
  *
- * Two halves. Going out: Foundry works out what is due from the customer's
+ * Two halves. Going out: StockChief works out what is due from the customer's
  * terms, asks a provider for a hosted page, and keeps the link so it can be put
  * in front of the customer. Coming back: the provider sends an event, and
- * Foundry turns it into an ordinary receipt.
+ * StockChief turns it into an ordinary receipt.
  *
  * That second half is the whole point, and it is why nothing here posts its own
  * accounting. A card payment ends up in exactly the same place as "ABC School
@@ -89,11 +89,11 @@ function openLinkForOrder(db, workspaceId, orderId) {
  * Never a new opinion about the amount: the deposit and the balance both come
  * out of the payment position, which comes out of the order and its invoices.
  *
- * This used to refuse any order without an invoice — and Foundry only raises
+ * This used to refuse any order without an invoice — and StockChief only raises
  * an invoice at shipment, so a deposit before anything was picked was
  * impossible, which is the single most ordinary reason a shop asks for money
  * up front. The provider's own invoice is the document the customer pays
- * against; Foundry does not need to have written one first to ask.
+ * against; StockChief does not need to have written one first to ask.
  *
  * A receipt that arrives with no invoice to allocate against is already
  * handled: it becomes a customer deposit, a liability, until there is
@@ -185,7 +185,7 @@ async function request(db, ctx, orderId, input = {}) {
         ? `Deposit for ${order.order_number}`
         : `${order.order_number}`,
       /*
-       * An order paid before it ships has no Foundry invoice to name, so the
+       * An order paid before it ships has no StockChief invoice to name, so the
        * order number is the reference. It is what the customer recognises on
        * their statement either way.
        */
@@ -254,7 +254,7 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
   };
 
   if (read.kind === 'IGNORED') {
-    return { applied: false, outcome: record(read.reason || 'Nothing Foundry acts on.') };
+    return { applied: false, outcome: record(read.reason || 'Nothing StockChief acts on.') };
   }
   if (!matched) {
     return { applied: false, outcome: record('No payment request in this inventory matches that invoice.') };
@@ -269,18 +269,18 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
     // Recorded and surfaced, never posted here: a refund is money leaving, and
     // it goes through the same approval a payment out always has.
     return { applied: false, request: get(db, ctx.workspaceId, matched.id),
-      outcome: record('A refund was reported. Foundry recorded it and did not post it.', matched.id) };
+      outcome: record('A refund was reported. StockChief recorded it and did not post it.', matched.id) };
   }
 
   /*
    * What the provider says arrived, and nothing else.
    *
-   * This used to fall back to the amount Foundry had asked for whenever the
+   * This used to fall back to the amount StockChief had asked for whenever the
    * reported figure was missing or zero. Stripe then finalised an invoice for
-   * $0.00 — a separate bug, since fixed — reported amount_paid: 0, and Foundry
+   * $0.00 — a separate bug, since fixed — reported amount_paid: 0, and StockChief
    * wrote a $10.00 receipt into the books off the back of it. Twice.
    *
-   * Zero is an answer. It means no money arrived, and the one thing Foundry
+   * Zero is an answer. It means no money arrived, and the one thing StockChief
    * must never do is state a figure no one gave it. So an event that reports
    * nothing arriving records nothing, and says so where the owner will see it.
    */
@@ -288,7 +288,7 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
   if (reported === null || reported === undefined || Number.isNaN(Number(reported))) {
     return { applied: false, request: get(db, ctx.workspaceId, matched.id),
       outcome: record(`${providerName} reported a payment without an amount. `
-        + 'Nothing was recorded, because Foundry will not supply the figure itself.', matched.id) };
+        + 'Nothing was recorded, because StockChief will not supply the figure itself.', matched.id) };
   }
   const amountMinor = Number(reported);
   if (amountMinor <= 0) {
@@ -299,7 +299,7 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
   }
 
   /*
-   * Who Foundry is acting as when a provider tells it money arrived.
+   * Who StockChief is acting as when a provider tells it money arrived.
    *
    * Nobody is signed in — a webhook is a machine talking to a machine — so
    * there is no membership to carry. Attributing the receipt to the workspace
@@ -307,9 +307,9 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
    * signs in would mean a verified payment sits unrecorded until a person
    * notices, which is the entire thing this feature exists to stop.
    *
-   * So Foundry acts with exactly one permission: recording a payment. It is
+   * So StockChief acts with exactly one permission: recording a payment. It is
    * reachable only from here, only after the provider's signature verified, and
-   * only for an event matched to a request Foundry itself created. The receipt
+   * only for an event matched to a request StockChief itself created. The receipt
    * records no user, which is true: no user did this.
    */
   /*
@@ -318,11 +318,11 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
    *
    * Stripe sends two events for one payment — invoice.paid and
    * invoice.payment_succeeded — with different event ids and the same
-   * amount_paid. Foundry deduplicated on the event id, so both got through,
+   * amount_paid. StockChief deduplicated on the event id, so both got through,
    * and each added the full figure again: one $300.00 card payment became
    * $600.00 in the books and a request marked as paid twice over.
    *
-   * So the arithmetic changes rather than the guard. Foundry records the
+   * So the arithmetic changes rather than the guard. StockChief records the
    * difference between what the provider says has been paid and what it has
    * already recorded, which is the same number for a first report, zero for a
    * repeat of it, and exactly the instalment for a genuine second payment.
@@ -332,7 +332,7 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
   if (newlyPaidMinor <= 0) {
     return { applied: false, request: get(db, ctx.workspaceId, matched.id),
       outcome: record(`${providerName} reported ${(amountMinor / 100).toFixed(2)} paid, which `
-        + 'Foundry has already recorded. Nothing was added.', matched.id) };
+        + 'StockChief has already recorded. Nothing was added.', matched.id) };
   }
 
   const authority = options.membership || ctx.membership
@@ -367,7 +367,7 @@ function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
         ? [{ invoiceId: matched.invoice_id, amountMinor: newlyPaidMinor }] : [],
     });
 
-    // The provider's own total, not an accumulation of Foundry's arithmetic.
+    // The provider's own total, not an accumulation of StockChief's arithmetic.
     const paid = amountMinor;
     db.prepare(`UPDATE payment_requests SET paid_minor = ?, status = ?, paid_at = ?, updated_at = ?
       WHERE id = ?`)
@@ -418,7 +418,7 @@ function recordTransportEvidence(db, provider, transport, liveMode) {
 /**
  * Ask the provider what happened, and record whatever it says.
  *
- * Foundry knew about a payment only if a webhook arrived, and a webhook needs
+ * StockChief knew about a payment only if a webhook arrived, and a webhook needs
  * a public address the provider can reach. On a machine behind a company
  * network that address is a tunnel, and a tunnel that is not running is
  * silence that looks exactly like "nobody has paid". Meanwhile Stripe held a

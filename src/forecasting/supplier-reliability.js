@@ -15,7 +15,7 @@
  * sentence: cheaper by this much, late this often, and here is what that means
  * for the commitment in front of you.
  *
- * Foundry recommends. It does not switch suppliers on its own, however
+ * StockChief recommends. It does not switch suppliers on its own, however
  * convincing the numbers, because who you buy from is a relationship and not an
  * optimisation — there are terms, histories and favours that are not in any
  * table here.

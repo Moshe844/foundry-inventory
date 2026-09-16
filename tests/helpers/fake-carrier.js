@@ -4,7 +4,7 @@
  * A carrier that behaves like a carrier, without being one.
  *
  * The point of the shipping seam is that everything above it works from five
- * functions and Foundry's own vocabulary. So the tests exercise the whole
+ * functions and StockChief's own vocabulary. So the tests exercise the whole
  * operation — rates, choosing, buying, tracking, delivery, exceptions —
  * against a provider that answers the way EasyPost does, and never touch the
  * network. If the seam were leaky this file would be impossible to write.

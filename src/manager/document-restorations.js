@@ -50,7 +50,7 @@ function buildSnapshot(db, workspaceId, connectorId, messageId) {
   const source = sourceFor(db, workspaceId, connectorId, messageId);
   const itemIds = [...new Set((source.result.createdItemIds || []).map(String))];
   if (!itemIds.length) {
-    throw new ValidationError('The original import did not record the products it created, so Foundry cannot restore it safely.');
+    throw new ValidationError('The original import did not record the products it created, so StockChief cannot restore it safely.');
   }
   const allowed = new Set(itemIds);
   const defaultLocation = db.prepare('SELECT id, name FROM locations WHERE workspace_id = ? AND name = ? COLLATE NOCASE')

@@ -3,16 +3,16 @@
 /*
  * Two bugs found on the first live Stripe run, within a minute of each other.
  *
- * Foundry created an invoice, Stripe finalised it for $0.00, decided a $0.00
- * invoice was already settled, and sent invoice.paid. Foundry recorded $10.00
+ * StockChief created an invoice, Stripe finalised it for $0.00, decided a $0.00
+ * invoice was already settled, and sent invoice.paid. StockChief recorded $10.00
  * against the order. Nothing had been paid, nothing had even been billed — the
  * line item was sitting on the customer attached to no invoice at all — and
  * both the app and the Stripe dashboard reported success.
  *
  * The first bug made an empty invoice. The second turned it into money:
- * a fallback that used the amount Foundry had asked for whenever the provider
+ * a fallback that used the amount StockChief had asked for whenever the provider
  * reported none. That one is the serious one, because it applies to every
- * provider and every event, and it makes Foundry state a figure nobody gave it.
+ * provider and every event, and it makes StockChief state a figure nobody gave it.
  */
 
 const test = require('node:test');

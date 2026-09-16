@@ -37,7 +37,7 @@ try {
     }
     if (review && review.requiresDecision && !review.resolved) {
     update({ status:'WAITING',stage:'SOURCE_CONFLICT',completed:prepared.length,total:datasets.length,
-      detail:'One row-level source conflict needs evidence before Foundry can continue.' });
+      detail:'One row-level source conflict needs evidence before StockChief can continue.' });
     parentPort.postMessage({ type:'waiting',remaining:1 });
     } else {
     update({ status:'RUNNING',stage:'VERIFYING',completed:prepared.length,total:datasets.length,

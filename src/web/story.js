@@ -12,9 +12,9 @@
  *
  * So there is one shape, and it tells both an order and a purchase, because an
  * order and a purchase are the same kind of story: something started it,
- * Foundry did a series of things about it, and something is going to happen
+ * StockChief did a series of things about it, and something is going to happen
  * next. The spine runs through a bright line marking now. Solid marks are what
- * happened. Hollow marks are what Foundry intends to do, and that half is what
+ * happened. Hollow marks are what StockChief intends to do, and that half is what
  * makes this a manager rather than a ledger — a record tells you where you
  * have been.
  *
@@ -24,7 +24,7 @@
  *   record, and where nobody gave a date the line says so rather than
  *   estimating one.
  *
- *   Every judgement Foundry made carries its reason inline — why that
+ *   Every judgement StockChief made carries its reason inline — why that
  *   supplier, why that quantity, what authority covered sending it — because
  *   auditability written as prose beside the event is worth more than an audit
  *   screen nobody opens.
@@ -80,7 +80,7 @@ function mark(at, text, options = {}) {
  * Undated goes last rather than first because an undated mark is always the
  * weakest thing on the spine — nobody has said when it happens — and sorting
  * an empty string first put "no date" above a real Saturday, which reads as
- * Foundry not knowing what order its own work goes in.
+ * StockChief not knowing what order its own work goes in.
  */
 function chronological(marks) {
   return marks
@@ -101,7 +101,7 @@ function chronological(marks) {
  *
  * Read from the record rather than from the timeline: the spine says what
  * happened, and this says how far through the whole thing that leaves you. A
- * stage is `done`, `now`, or nothing at all — Foundry never marks a stage
+ * stage is `done`, `now`, or nothing at all — StockChief never marks a stage
  * reached on the strength of a stage after it.
  */
 function stagesFor(reached, labels) {
@@ -116,7 +116,7 @@ function stagesFor(reached, labels) {
 /**
  * Purchases that exist because this order was short.
  *
- * A shortage is a decision and not a dead end: if Foundry has already ordered
+ * A shortage is a decision and not a dead end: if StockChief has already ordered
  * the missing stock, the order says so and links to the purchase, so nobody
  * walks Inventory to Purchasing by hand to find out.
  */
@@ -207,7 +207,7 @@ function salesOrder(db, workspaceId, order, extras = {}) {
 
   /*
    * What the shipment did to the books, said in the owner's words and on the
-   * order rather than in an accounting screen. Foundry raises the invoice and
+   * order rather than in an accounting screen. StockChief raises the invoice and
    * the cost entry when the goods go, so this is a consequence of the story
    * and belongs in it — an owner should never have to open a journal to find
    * out whether a sale was accounted for.
@@ -417,7 +417,7 @@ function purchaseOrder(db, workspaceId, order, extras = {}) {
     past.push(mark(order.createdAt,
       because.explanation || because.reason
         || 'A replenishment plan found this below its reorder point.',
-      { now, sub: [{ text: 'Foundry prepared this rather than being asked for it.' }] }));
+      { now, sub: [{ text: 'StockChief prepared this rather than being asked for it.' }] }));
   }
 
   for (const event of order.eventsFor || extras.events || []) {
@@ -488,10 +488,10 @@ function purchaseOrder(db, workspaceId, order, extras = {}) {
   else if (order.status === 'PARTIALLY_RECEIVED') nowText = `Part of it arrived. ${plural(order.outstandingUnits, 'unit is', 'units are')} still to come.`;
   else if (order.status === 'ORDERED' && sentToSupplier) nowText = 'With the supplier.';
   else if (order.status === 'ORDERED' && missingSupplierRecipient) {
-    nowText = `Approved in Foundry, but not sent. ${order.supplierName} has no email on file.`;
+    nowText = `Approved in StockChief, but not sent. ${order.supplierName} has no email on file.`;
   } else if (order.status === 'ORDERED' && missingSendingMailbox) {
-    nowText = 'Approved in Foundry, but not sent. No supplier mailbox is connected.';
-  } else if (order.status === 'ORDERED') nowText = 'Approved in Foundry. The supplier message has not been sent.';
+    nowText = 'Approved in StockChief, but not sent. No supplier mailbox is connected.';
+  } else if (order.status === 'ORDERED') nowText = 'Approved in StockChief. The supplier message has not been sent.';
   else if (order.status === 'AWAITING_APPROVAL') nowText = 'Ready to send, and waiting on you.';
   else if (order.status === 'APPROVED') nowText = 'Approved and ready to go to the supplier.';
   else if (order.status === 'DRAFT') nowText = 'A draft. The supplier has not been told anything.';

@@ -1,4 +1,4 @@
-# Foundry — the product brief
+# StockChief — the product brief
 
 **Status.** This is reconstructed, not original. It was assembled from the code,
 its comments, the two readiness documents, and the working agreements of the
@@ -12,9 +12,9 @@ cheaper to fix than a wrong assumption repeated for a week.
 
 ---
 
-## 1. What Foundry is
+## 1. What StockChief is
 
-> Foundry continuously manages the routine inventory, purchasing, supplier
+> StockChief continuously manages the routine inventory, purchasing, supplier
 > communication, Sales Order and accounting work of an inventory-based business,
 > while the owner supervises genuine exceptions.
 
@@ -28,7 +28,7 @@ Every other inventory system is a ledger with forms: the operator observes what
 happened, types it in, and the software stores and totals it. The operating
 intelligence lives in the operator's head.
 
-Foundry holds the operating model itself. It reads the business, watches it,
+StockChief holds the operating model itself. It reads the business, watches it,
 prepares the routine work, and brings back only what it cannot settle. Its
 output is **decisions**, not records.
 
@@ -46,10 +46,10 @@ in at least these places:
   evidence, and the accounting engine refuses amounts it cannot support.
   (`src/imports/fields.js` — recognised as ignorable, with the reason beside it.)
 - **Demand is not guessed.** A product with no outbound history produces
-  "Foundry cannot tell yet", never a reorder quantity.
+  "StockChief cannot tell yet", never a reorder quantity.
   (`src/attention/query-service.js`, `src/purchasing/replenishment.js`.)
 - **Variant grids are not populated speculatively.** Two colours by two sizes is
-  four combinations; a shop that stocks three has told Foundry about three, and
+  four combinations; a shop that stocks three has told StockChief about three, and
   the fourth is deactivated. (`src/imports/executor.js`.)
 - **Stock is not committed to a customer automatically.** Holding stock for one
   customer takes it from the next, so it is offered and not done.
@@ -61,7 +61,7 @@ in at least these places:
   (`src/onboarding/migration-service.js`.)
 
 The consequence — and the reason it matters commercially — is that **silence is
-information**. When Foundry does not raise something, that is a fact. No system
+information**. When StockChief does not raise something, that is a fact. No system
 that fills gaps with defaults can offer this.
 
 ### The model may never produce a number
@@ -85,13 +85,13 @@ These governed the interface redesign and are the standard for new screens.
 They are numbered as they were referred to in working sessions.
 
 **§7 — A shortage is a decision, not a dead end.** When a customer order cannot
-be covered, Foundry states what it already checked (other locations, incoming
+be covered, StockChief states what it already checked (other locations, incoming
 orders, replenishment) and where the decision lives. The owner is never sent to
 walk Inventory → Transfers → Purchasing by hand.
 
 **§9 — Needs You is one inbox.** Everything requiring a person appears in one
 place, and an entry may only appear if it answers four questions: what happened,
-why Foundry stopped, what it recommends, and what it needs from you. An entry
+why StockChief stopped, what it recommends, and what it needs from you. An entry
 that cannot answer them is not ready to be shown. This bar now applies to money
 as well (`src/accounting/books-review.js`).
 
@@ -127,7 +127,7 @@ the underlying condition is satisfied.
 
 ## 4. What the owner sees
 
-Foundry is not an application. It is a colleague with a desk, and you do not
+StockChief is not an application. It is a colleague with a desk, and you do not
 navigate a colleague — you read what they left you, settle what they could not,
 and tell them things.
 
@@ -135,14 +135,14 @@ So the product is **three surfaces and one object**.
 
 | | |
 | --- | --- |
-| **The Brief** (`/`) | What Foundry knows this morning, written as prose. Not sections — sentences. Every clause is a door. |
+| **The Brief** (`/`) | What StockChief knows this morning, written as prose. Not sections — sentences. Every clause is a door. |
 | **The Desk** (`/needs-you`) | The stack of decisions only the owner can make. One at a time, at full size, with a counter, evidence as a disclosure inside the decision. Not a queue to triage — a stack to clear. |
-| **The Line** (`/ask`) | The running conversation: what happened, what you want, how you want this run. The primary way Foundry is taught. One box, posting to the intent router. |
+| **The Line** (`/ask`) | The running conversation: what happened, what you want, how you want this run. The primary way StockChief is taught. One box, posting to the intent router. |
 
 And the object, which is the whole design in one word: **the story**.
 
 A story has a subject, a spine of what has happened, a bright line marking now,
-a ghosted spine of what Foundry intends to do, and sometimes a decision. A
+a ghosted spine of what StockChief intends to do, and sometimes a decision. A
 customer order is a story. A purchase is a story. `src/web/story.js` builds
 both, and `views/partials/spine.ejs` renders both — one component, two
 subjects, which is also why this cost eight components rather than a hundred
@@ -158,7 +158,7 @@ The sidebar before this one had already been consolidated from seven
 departments to six, and it did not work, because only the doors were renamed.
 Six nav entries sat on top of 185 routes and 111 templates; forty routes under
 `/accounting` alone. One customer order still touched five addresses. The
-owner was still the router — Foundry knew what had happened and then asked
+owner was still the router — StockChief knew what had happened and then asked
 which room to walk into to find out.
 
 ### The three rules that hold it
@@ -176,7 +176,7 @@ which room to walk into to find out.
 
 ### Settings is a transcript
 
-Foundry is taught by talking to it, so `/what-you-told-me` is the standing
+StockChief is taught by talking to it, so `/what-you-told-me` is the standing
 rules in the words the owner said them, with what each has done since —
 "acted 11×" is the trust surface, because a rule that has never fired is a rule
 that is wrong or unnecessary, and nowhere else would show it. The forms are
@@ -188,7 +188,7 @@ still at `/settings` and behind it.
 sheets read, so the ninety demoted screens inherit the palette rather than
 looking foreign, and it provides the components the rewritten surfaces are
 built from. Newsreader for prose, IBM Plex Sans for the interface, IBM Plex
-Mono for labels and figures; the accent is Foundry's own teal, deepened, and
+Mono for labels and figures; the accent is StockChief's own teal, deepened, and
 one warm copper that means exactly one thing: this needs a person.
 
 Nothing in it draws a bordered, rounded, shadowed card by default. Border, fill
@@ -258,7 +258,7 @@ the comment what it broke.
 ### A note on the live suite
 
 `test:live` calls a real model, so a proportion of its assertions are about
-model behaviour rather than Foundry's. A run on 2026-09-01 failed three of 57 —
+model behaviour rather than StockChief's. A run on 2026-09-01 failed three of 57 —
 a transient provider `400 Invalid request data`, and two assertions about what
 the model said — and all three passed when re-run individually.
 
@@ -279,7 +279,7 @@ Honest, at the time of writing.
   Accepted stock-changing scans post through the canonical inventory engine.
   Duplicate offline scans are idempotent, wrong identities are rejected before
   movement, and interrupted tasks resume from stored progress. Existing stock
-  is intentionally left at its existing location during migration; Foundry
+  is intentionally left at its existing location during migration; StockChief
   does not invent a bin for it.
 - Stripe is written, not proven. The payment-provider seam is exercised end to
   end through a stub — request, hosted link, webhook, receipt, hold released —
@@ -288,15 +288,15 @@ Honest, at the time of writing.
   is not. Treat the first real call as the test it is.
 - No carrier account. Fulfilment records a shipment, holds a carrier, service
   and tracking number, and turns that number into a working tracking link — but
-  Foundry cannot buy a label, quote a real rate, or see a delivery scan. Marking
-  a shipment delivered is the owner telling Foundry what they know, and the page
+  StockChief cannot buy a label, quote a real rate, or see a delivery scan. Marking
+  a shipment delivered is the owner telling StockChief what they know, and the page
   says so. `src/sales/carriers.js` is the seam an integration would fill.
 - Customer-facing documents do not print. Purchase orders do.
 - Customers are told one thing: that their order shipped. A notice is written
   from the shipment's own record the moment a box goes out, and by default the
   owner sends it. There is no order confirmation and no delay notice.
 - Inbound mail is sorted into needs a reply / waiting / handled, and every
-  message says which words put it where. Foundry drafts the reply too, from
+  message says which words put it where. StockChief drafts the reply too, from
   facts it gathers first — the sender's orders, shipments, tracking and
   balances — and a draft that names a figure or a date those facts do not
   carry is thrown away before the owner sees it, with the reason shown. The

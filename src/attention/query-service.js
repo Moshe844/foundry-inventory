@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Ask Foundry — the deterministic half.
+ * Ask StockChief — the deterministic half.
  *
  * A question in ordinary language is turned into a *plan*: one intent from a
  * fixed list, plus a few bounded parameters. The model never sees SQL, never
@@ -32,8 +32,8 @@ const INTENTS = [
   'top_moving',
   'top_customers',
   'attention_summary',
-  // Not a question at all: they are asking Foundry to do something. Answering
-  // "I can't" would be false — Foundry can, on the actions page — so this
+  // Not a question at all: they are asking StockChief to do something. Answering
+  // "I can't" would be false — StockChief can, on the actions page — so this
   // hands over instead of refusing.
   'action',
   // Purchasing. Mission 6 made these answerable from real records, so they are
@@ -41,7 +41,7 @@ const INTENTS = [
   // late, what something cost, or who sells it now has an answer.
   'replenishment',
   // "Why is this low?" is a different question from "how many are there?" and
-  // from "what should I order?". It asks for the reasoning, and Foundry has it
+  // from "what should I order?". It asks for the reasoning, and StockChief has it
   // — the replenishment planner produces exactly that. Answering with the
   // on-hand figure told someone what they already knew.
   'why_low',
@@ -55,7 +55,7 @@ const INTENTS = [
   'selling_price',
   'sales_summary',
   // Customer delivery. These reads come from the canonical shipment,
-  // provider-event and postage records; Ask Foundry never asks a model to
+  // provider-event and postage records; Ask StockChief never asks a model to
   // infer where a parcel is or what it cost.
   'shipment_status',
   'shipping_exceptions',
@@ -76,6 +76,7 @@ const INTENTS = [
   'receivables_aging',
   'payables_aging',
   'inventory_valuation',
+  'inventory_selling_value',
   'sales_tax_summary',
   'bills_due',
   'customer_payments',
@@ -90,7 +91,7 @@ const INTENTS = [
   'connection_last_event',
   'connection_mapping_issues',
   'connection_diagnostics',
-  // Mission 7. Foundry now does work of its own, so "what have you been doing"
+  // Mission 7. StockChief now does work of its own, so "what have you been doing"
   // is a real question with a real answer — read from the work records, never
   // from a model's recollection.
   'foundry_activity',
@@ -243,11 +244,11 @@ const PURCHASING_EXECUTORS = {
       const covered = result.covered.length;
       // Short and stuck is a fact; no history at all is an absence of facts.
       // Reporting the second as "needs ordering" would invent the demand figure
-      // Foundry is deliberately refusing to guess.
+      // StockChief is deliberately refusing to guess.
       const stuck = result.blocked.filter((line) => line.reason === 'no_supplier');
       const unknown = result.blocked.filter((line) => line.reason !== 'no_supplier');
 
-      // A line below its reorder point that Foundry cannot act on still needs
+      // A line below its reorder point that StockChief cannot act on still needs
       // ordering. Answering "nothing needs ordering" and appending a bare count
       // of what "cannot be assessed" is the opposite of what was asked, and it
       // hides the only line the question was about.
@@ -262,10 +263,10 @@ const PURCHASING_EXECUTORS = {
           })),
           columns: ['label', 'onHand', 'onOrder', 'recommended', 'why'],
           answer:
-            `${stuck.length} line(s) need ordering, but Foundry cannot prepare an order for ` +
+            `${stuck.length} line(s) need ordering, but StockChief cannot prepare an order for ` +
             `${stuck.length === 1 ? 'it' : 'them'} yet. ${stuck[0].displayName}: ${stuck[0].headline}.` +
             (stuck.some((line) => line.reason === 'no_supplier')
-              ? ' Add a supplier for the product and Foundry can prepare the order.'
+              ? ' Add a supplier for the product and StockChief can prepare the order.'
               : ''),
         };
       }
@@ -280,7 +281,7 @@ const PURCHASING_EXECUTORS = {
           })),
           columns: ['label', 'onHand', 'onOrder', 'why'],
           answer:
-            `Foundry cannot tell yet. ${unknown.length} line(s) have no outbound history, so it has no ` +
+            `StockChief cannot tell yet. ${unknown.length} line(s) have no outbound history, so it has no ` +
             'basis for saying whether they need ordering, and it will not guess one. Record sales or ' +
             'usage, or set a reorder point yourself.',
         };
@@ -310,11 +311,11 @@ const PURCHASING_EXECUTORS = {
    * Why a product is low, rather than how much of it there is.
    *
    * Asking "why is this low?" and being told "48 units on hand" is being told
-   * the thing you already knew — and Foundry had the whole answer, worked out
+   * the thing you already knew — and StockChief had the whole answer, worked out
    * and sitting in Needs you. This reaches it.
    *
    * The plan is the answer: the level, the position against it, where the stock
-   * actually is, and what Foundry would do about it. Nothing is computed here.
+   * actually is, and what StockChief would do about it. Nothing is computed here.
    */
   why_low(db, workspaceId, plan) {
     const replenishmentPlan = require('../purchasing/replenishment-plan');
@@ -361,8 +362,8 @@ const PURCHASING_EXECUTORS = {
         rows,
         columns,
         answer:
-          `${first.displayName} has ${first.onHandTotal} on hand and no reorder point set, so Foundry ` +
-          'has nothing to call it low against. Set one on the product and Foundry will watch it, ' +
+          `${first.displayName} has ${first.onHandTotal} on hand and no reorder point set, so StockChief ` +
+          'has nothing to call it low against. Set one on the product and StockChief will watch it, ' +
           'and tell you when it is crossed.',
       };
     }
@@ -481,7 +482,7 @@ const PURCHASING_EXECUTORS = {
     const first = rows[0];
     if (rows.length === 1) {
       if (first.lastCost === null) {
-        return { rows, answer: `Foundry has no purchase history for ${first.label}.` };
+        return { rows, answer: `StockChief has no purchase history for ${first.label}.` };
       }
       const movement =
         first.previousCost !== null && first.previousCost !== first.lastCost
@@ -596,7 +597,7 @@ const EXECUTORS = {
       .filter((entry) => entry.definition.isKit);
     if (!definitions.length) {
       const named = candidates.length === 1 ? label(candidates[0]) : 'Those products';
-      return { rows: [], answer: `${named} does not have a kit/BOM definition in Foundry.` };
+      return { rows: [], answer: `${named} does not have a kit/BOM definition in StockChief.` };
     }
     const rows = definitions.flatMap(({ sku, definition }) => definition.components.map((component) => ({
       kit: label(sku), kitSku: sku.code,
@@ -735,7 +736,7 @@ const EXECUTORS = {
     const accounting = require('../accounting/ledger').settings(db, workspaceId);
     if (!accounting.enabled) return { supported: false, rows: [],
       handoff: { href: '/accounting', label: 'Set up accounting' },
-      answer: 'Accounting is not set up yet. Foundry does not know what you paid or which expenses belong in the period, so it will not guess at profit or cash.' };
+      answer: 'Accounting is not set up yet. StockChief does not know what you paid or which expenses belong in the period, so it will not guess at profit or cash.' };
     const reports = require('../accounting/reports');
     const to = new Date().toISOString().slice(0, 10);
     const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
@@ -758,7 +759,7 @@ const EXECUTORS = {
       { measure: 'Bills to pay', amountMinor: ap.totalMinor, display: money(ap.totalMinor) },
     ];
     return { rows, columns: ['measure', 'display'],
-      answer: `For ${from} through ${to}, revenue is ${money(pnl.revenueMinor)}, gross profit is ${money(pnl.grossProfitMinor)}, and recorded net income is ${money(pnl.netIncomeMinor)}. Cash is ${money(cash)}; customers still need to pay ${money(customerMoneyOutstandingMinor)} across confirmed orders and completed sales, and open supplier bills total ${money(ap.totalMinor)}. Net income includes only completed sales and expenses recorded in Foundry; confirmed unshipped orders are not called earned revenue.` };
+      answer: `For ${from} through ${to}, revenue is ${money(pnl.revenueMinor)}, gross profit is ${money(pnl.grossProfitMinor)}, and recorded net income is ${money(pnl.netIncomeMinor)}. Cash is ${money(cash)}; customers still need to pay ${money(customerMoneyOutstandingMinor)} across confirmed orders and completed sales, and open supplier bills total ${money(ap.totalMinor)}. Net income includes only completed sales and expenses recorded in StockChief; confirmed unshipped orders are not called earned revenue.` };
   },
 
   business_health(db, workspaceId) {
@@ -803,8 +804,8 @@ const EXECUTORS = {
       { measure: 'Supplier bills still owed', value: moneyForBrain(brain.acquisition.supplierOwedMinor, brain.currency) },
     ];
     return { rows, columns: ['measure', 'value'], handoff: { href: '/accounting#cash', label: 'See where cash went' },
-      answer: causes.length ? `The strongest evidence-based reasons are: ${causes.join('; ')}. Foundry does not infer bank money it has not received.`
-        : 'Foundry does not have evidence of a specific cash-pressure cause in the recorded customer payments, supplier payments, or inventory value.' };
+      answer: causes.length ? `The strongest evidence-based reasons are: ${causes.join('; ')}. StockChief does not infer bank money it has not received.`
+        : 'StockChief does not have evidence of a specific cash-pressure cause in the recorded customer payments, supplier payments, or inventory value.' };
   },
 
   customer_orders_at_risk(db, workspaceId) {
@@ -917,7 +918,7 @@ const EXECUTORS = {
         const who = p.customer || 'a customer';
         const day = p.payment_date;
         if (p.order_number && !['FULFILLED', 'PARTIALLY_FULFILLED'].includes(p.order_status)) {
-          parts.push(`${money(p.amount_minor)} came in from ${who} on ${day} against ${p.order_number}, which has not shipped yet — Foundry holds it as a deposit owed to the customer, and it becomes revenue the day the order ships.`);
+          parts.push(`${money(p.amount_minor)} came in from ${who} on ${day} against ${p.order_number}, which has not shipped yet — StockChief holds it as a deposit owed to the customer, and it becomes revenue the day the order ships.`);
         } else if (p.order_number) {
           parts.push(`${money(p.amount_minor)} came in from ${who} on ${day} for ${p.order_number}; that settles what was owed for the sale, it is not a second sale.`);
         } else {
@@ -928,7 +929,7 @@ const EXECUTORS = {
         summary: parts.length ? 'the books show no revenue for this period, but that is not because nothing happened.' : 'nothing has been sold or bought in this period yet.',
         answer: parts.length
           ? `${parts.join(' ')} No revenue, product cost or operating expense is recognised for ${from} through ${to}, so there is no realised margin to report yet.`
-          : `No revenue, product cost, or operating expense has been posted for ${from} through ${to}, so Foundry does not have a realized margin to report yet. The Accounting inventory view shows on-hand cost, selling value, and potential gross profit separately.`,
+          : `No revenue, product cost, or operating expense has been posted for ${from} through ${to}, so StockChief does not have a realized margin to report yet. The Accounting inventory view shows on-hand cost, selling value, and potential gross profit separately.`,
       };
     }
 
@@ -943,7 +944,7 @@ const EXECUTORS = {
             summary: `${money(Math.abs(pnl.netIncomeMinor))} ${pnl.netIncomeMinor > 0 ? 'so far' : pnl.netIncomeMinor < 0 ? 'lost so far' : 'exactly break-even'}, on ${money(pnl.revenueMinor)} of sales.` },
       answer: noActivity
         ? quiet.answer
-        : `This is ${money(pnl.netIncomeMinor)} net ${pnl.netIncomeMinor >= 0 ? 'profit' : 'loss'} based on the expenses recorded in Foundry for ${from} through ${to}: ${money(pnl.revenueMinor)} revenue minus ${money(pnl.cogsMinor)} cost of goods and ${money(pnl.operatingExpenseMinor)} operating expenses recorded in Foundry. Gross profit is ${money(pnl.grossProfitMinor)}; it is not the same as net profit. This net result is incomplete if business costs such as rent or payroll have not been recorded in Foundry.` };
+        : `This is ${money(pnl.netIncomeMinor)} net ${pnl.netIncomeMinor >= 0 ? 'profit' : 'loss'} based on the expenses recorded in StockChief for ${from} through ${to}: ${money(pnl.revenueMinor)} revenue minus ${money(pnl.cogsMinor)} cost of goods and ${money(pnl.operatingExpenseMinor)} operating expenses recorded in StockChief. Gross profit is ${money(pnl.grossProfitMinor)}; it is not the same as net profit. This net result is incomplete if business costs such as rent or payroll have not been recorded in StockChief.` };
   },
 
   /**
@@ -966,7 +967,7 @@ const EXECUTORS = {
       href: finding.action.href,
     }));
     const answer = review.clean
-      ? `Nothing is wrong that Foundry can see, across ${review.checksRun} checks: what customers owe, `
+      ? `Nothing is wrong that StockChief can see, across ${review.checksRun} checks: what customers owe, `
         + 'what you owe suppliers, stock received without a bill, payments that look duplicated, sales '
         + 'with no payment recorded, cash due out against cash in, stock with no proven cost, and stock '
         + 'that is not selling.'
@@ -1106,21 +1107,43 @@ const EXECUTORS = {
             : `you do not owe ${namedSupplier.name} anything right now.`,
         },
         answer: bills.length
-          ? `${namedSupplier.name} billed you ${money(totalMinor)} across ${bills.length} bill${bills.length === 1 ? '' : 's'}. Foundry has recorded ${money(paidMinor)} in supplier payments, and ${money(balanceMinor)} remains owed.`
-          : `Foundry has no supplier bill recorded for ${namedSupplier.name}, so it has no evidence of an amount owed or paid.`,
+          ? `${namedSupplier.name} billed you ${money(totalMinor)} across ${bills.length} bill${bills.length === 1 ? '' : 's'}. StockChief has recorded ${money(paidMinor)} in supplier payments, and ${money(balanceMinor)} remains owed.`
+          : `StockChief has no supplier bill recorded for ${namedSupplier.name}, so it has no evidence of an amount owed or paid.`,
       };
     }
     return { rows: report.rows.slice(0, 25), handoff: { href: '/accounting/payables', label: 'Open bills' },
       answer: `Open supplier bills total ${money(report.totalMinor)} across ${report.rows.length} bill${report.rows.length === 1 ? '' : 's'}. ${money(report.buckets.over90)} is more than 90 days past due.` };
   },
 
+  inventory_selling_value(db, workspaceId) {
+    return require('../accounting/inventory-selling-value').execute(db,workspaceId);
+  },
   inventory_valuation(db, workspaceId) {
     const accounting = require('../accounting/ledger').settings(db, workspaceId);
     if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, { windowDays: 30 });
     const valuation = require('../accounting/costing').valuation(db, workspaceId);
+    const coverage = db.prepare(`SELECT COALESCE(SUM(b.on_hand),0) physical_units,
+        COALESCE(SUM(CASE WHEN cb.quantity_units=b.on_hand AND cb.total_cost_minor IS NOT NULL
+          THEN b.on_hand ELSE 0 END),0) proven_units
+      FROM balances b JOIN skus s ON s.id=b.sku_id AND s.workspace_id=b.workspace_id
+      JOIN items i ON i.id=s.item_id AND i.workspace_id=b.workspace_id
+      LEFT JOIN accounting_inventory_cost_balances cb ON cb.workspace_id=b.workspace_id
+        AND cb.sku_id=b.sku_id AND cb.location_id=b.location_id
+      WHERE b.workspace_id=? AND b.on_hand>0 AND s.is_active=1 AND i.is_active=1`).get(workspaceId);
+    const missingUnits = Number(coverage.physical_units)-Number(coverage.proven_units);
     const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
-    return { rows: valuation.rows.slice(0, 25), handoff: { href: '/accounting/reports/inventory-valuation', label: 'Open inventory valuation' },
-      answer: `${valuation.totalUnits} units carry a total weighted-average value of ${money(valuation.totalCostMinor)}. This is cost value, not selling-price value.` };
+    const rows = valuation.rows.slice(0, 25).map((row) => ({
+      product: row.variant_label ? `${row.item_name} / ${row.variant_label}` : row.item_name,
+      sku: row.code,
+      location: row.location_name,
+      units: Number(row.quantity_units),
+      averageCost: money(Math.round(Number(row.averageUnitCostMinor || 0))),
+      totalValue: money(Number(row.total_cost_minor)),
+    }));
+    return { rows, columns: ['product', 'sku', 'location', 'units', 'averageCost', 'totalValue'], handoff: { href: '/accounting/reports/inventory-valuation', label: 'Open inventory valuation' },
+      answer: `${valuation.totalUnits} cost-ledger units carry a recorded weighted-average value of ${money(valuation.totalCostMinor)}. This is cost value, not selling-price value.`
+        + (missingUnits>0 ? ` This is not a complete valuation of your physical stock: ${missingUnits.toLocaleString('en-US')} of ${Number(coverage.physical_units).toLocaleString('en-US')} on-hand units lack fully reconciled cost evidence. Missing cost is not zero value.` : '')
+        + (valuation.inTransitUnits>0 ? ` The recorded value also includes ${valuation.inTransitUnits} units in transit.` : '') };
   },
 
   sales_tax_summary(db, workspaceId) {
@@ -1179,7 +1202,7 @@ const EXECUTORS = {
    * Whole-period version of the joined sale question below.
    *
    * “Why is profit $1,560 when customers paid $2,080?” is not asking which
-   * one sale happened to resemble those numbers. It is asking Foundry to
+   * one sale happened to resemble those numbers. It is asking StockChief to
    * reconcile two business totals. Keep every contributing order visible so
    * the owner can open the exact sale instead of accepting an aggregate on
    * trust.
@@ -1226,7 +1249,7 @@ const EXECUTORS = {
       columns: ['order', 'customer', 'sale', 'productCost', 'grossProfit', 'paid', 'stillOwed'],
       handoff: { href: `/accounting/reports/profit-and-loss?from=${from}&to=${to}`, label: 'Open the full profit breakdown' },
       answerMode: 'verified', progressiveDisclosure: true,
-      answer: `For ${from} through ${to}, customers paid ${money(paidMinor)}. That is cash received, not profit. Completed sales produced ${money(pnl.revenueMinor)} of revenue. ${costSentence} ${expenseSentence} If rent, payroll, shipping, fees, or other costs happened but are not recorded, actual profit is lower than Foundry can currently prove.`,
+      answer: `For ${from} through ${to}, customers paid ${money(paidMinor)}. That is cash received, not profit. Completed sales produced ${money(pnl.revenueMinor)} of revenue. ${costSentence} ${expenseSentence} If rent, payroll, shipping, fees, or other costs happened but are not recorded, actual profit is lower than StockChief can currently prove.`,
     };
   },
 
@@ -1401,7 +1424,7 @@ const EXECUTORS = {
     const supplier = !po && query ? db.prepare(`SELECT * FROM suppliers WHERE workspace_id = ? AND status = 'active'
       AND name LIKE ? ESCAPE '\\' ORDER BY CASE WHEN lower(name) = lower(?) THEN 0 ELSE 1 END, name LIMIT 1`)
       .get(workspaceId, like(query), query) : null;
-    if (query && !po && !supplier) return { rows: [], answer: `Foundry could not find a supplier or purchase order matching "${query}".` };
+    if (query && !po && !supplier) return { rows: [], answer: `StockChief could not find a supplier or purchase order matching "${query}".` };
 
     const clauses = ['po.workspace_id = ?'];
     const params = [workspaceId];
@@ -1425,11 +1448,11 @@ const EXECUTORS = {
       WHERE ${clauses.join(' AND ')} ORDER BY po.created_at DESC LIMIT ?`)
       .all(...params, plan.limit).map((row) => ({ ...row, confirmed: Boolean(row.confirmed) }));
     if (!rows.length) return { rows: [], answer: supplier
-      ? `Foundry has no purchase orders recorded for ${supplier.name}.`
-      : 'Foundry has no purchase orders recorded yet.' };
+      ? `StockChief has no purchase orders recorded for ${supplier.name}.`
+      : 'StockChief has no purchase orders recorded yet.' };
     const first = rows[0];
     const confirmation = first.confirmed ? `${first.supplier} has confirmed ${first.label}.`
-      : `Foundry has not recorded a confirmation for ${first.label}.`;
+      : `StockChief has not recorded a confirmation for ${first.label}.`;
     const timing = first.expected && first.expected < new Date().toISOString().slice(0, 10) && first.outstanding > 0
       ? ` It is past its expected date with ${first.outstanding} unit(s) outstanding${first.latestEvidence ? `; the latest supplier evidence is ${first.latestEvidence.replaceAll('_', ' ')}` : ' and no newer supplier update is recorded'}.`
       : ` ${first.outstanding} unit(s) remain outstanding${first.expected ? `, expected ${first.expected}` : ''}.`;
@@ -1456,8 +1479,8 @@ const EXECUTORS = {
       WHERE d.workspace_id = ?${filter} ORDER BY d.processed_at DESC, d.rowid DESC LIMIT ?`)
       .all(...params, plan.limit);
     if (!docs.length) return { rows: [], answer: query
-      ? `Foundry could not find a supplier document matching "${query}".`
-      : 'Foundry has not processed any supplier documents yet.' };
+      ? `StockChief could not find a supplier document matching "${query}".`
+      : 'StockChief has not processed any supplier documents yet.' };
     const rows = docs.map((doc) => {
       let differences = [];
       try { differences = JSON.parse(doc.discrepancies || '[]'); } catch { differences = []; }
@@ -1467,7 +1490,7 @@ const EXECUTORS = {
         received: doc.processed_at };
     });
     return { rows, answer: rows[0].differences === 'No consequential difference'
-      ? `${rows[0].label} matched the recorded order; Foundry found no consequential difference.`
+      ? `${rows[0].label} matched the recorded order; StockChief found no consequential difference.`
       : `${rows[0].supplier || 'The supplier'} changed: ${rows[0].differences}` };
   },
 
@@ -1483,7 +1506,7 @@ const EXECUTORS = {
       JOIN skus sk ON sk.id = h.sku_id JOIN items i ON i.id = sk.item_id
       WHERE h.workspace_id = ?${filter}
       ORDER BY h.supplier_id, h.sku_id, h.observed_at, h.rowid`).all(...params);
-    if (query && !history.length) return { rows: [], answer: `Foundry could not find supplier price evidence matching "${query}".` };
+    if (query && !history.length) return { rows: [], answer: `StockChief could not find supplier price evidence matching "${query}".` };
     const cutoff = Date.parse(since(plan.windowDays));
     const previous = new Map(); const changes = [];
     for (const row of history) {
@@ -1891,7 +1914,7 @@ const EXECUTORS = {
   action(db, workspaceId, plan) {
     return {
       rows: [],
-      answer: 'That is something Foundry can carry out rather than look up.',
+      answer: 'That is something StockChief can carry out rather than look up.',
       columns: [],
       supported: false,
       isAction: true,
@@ -1903,7 +1926,7 @@ const EXECUTORS = {
       rows: [],
       answer:
         plan.unsupportedReason ||
-        'Foundry can answer questions about stock levels, movements, corrections, expiry and what needs attention. That one is outside what it can look up.',
+        'StockChief can answer questions about stock levels, movements, corrections, expiry and what needs attention. That one is outside what it can look up.',
       columns: [],
       supported: false,
     };
@@ -2056,7 +2079,7 @@ function foundryWhy(db, workspaceId, plan, options = {}) {
         : inTransit
           ? `${transferNumber} is carrying ${selected.move.quantity} ${displayName} from ` +
             `${selected.move.fromLocationName} to ${selected.move.toLocationName}.`
-          : `Foundry prepared ${transferNumber} for ${selected.move.quantity} ${displayName} from ` +
+          : `StockChief prepared ${transferNumber} for ${selected.move.quantity} ${displayName} from ` +
             `${selected.move.fromLocationName} to ${selected.move.toLocationName}. No stock moved when it was approved.`;
       const destination = ((selected.item.recommendedAction || {}).byLocation || [])
         .find((location) => location.locationId === selected.move.toLocationId);
@@ -2240,7 +2263,7 @@ function foundryWhy(db, workspaceId, plan, options = {}) {
     const purchaseUnit = purchaseAction.purchaseUnit || 'purchase unit';
     const purchaseUnitPlural = purchaseUnits === 1 ? purchaseUnit : `${purchaseUnit}s`;
     const unitRule = purchaseUnits && unitsPerPurchaseUnit
-      ? `${purchase.supplier_name} packs this item in ${purchaseUnit}s of ${unitsPerPurchaseUnit}, so Foundry rounded ${shortfall} up to ${purchaseUnits} ${purchaseUnitPlural} (${quantity} units).`
+      ? `${purchase.supplier_name} packs this item in ${purchaseUnit}s of ${unitsPerPurchaseUnit}, so StockChief rounded ${shortfall} up to ${purchaseUnits} ${purchaseUnitPlural} (${quantity} units).`
       : null;
     const why = decisionItem
       ? [
@@ -2250,7 +2273,7 @@ function foundryWhy(db, workspaceId, plan, options = {}) {
             : null,
           unitRule,
         ].filter(Boolean).join(' ')
-      : 'Foundry has no linked purchase decision for this order and will not invent one.';
+      : 'StockChief has no linked purchase decision for this order and will not invent one.';
     const happened = `${purchase.po_number} ordered ${quantity} ${displayName} from ${purchase.supplier_name}.`;
     const authority = decisionItem?.approvedAt ? 'You approved this purchase.' : null;
     const outcome = purchase.status === 'RECEIVED'
@@ -2272,9 +2295,9 @@ function foundryWhy(db, workspaceId, plan, options = {}) {
       handoff: { href: `/purchasing/orders/${purchase.id}`, label: `Open ${purchase.po_number}` },
       rows: [
         { measure: 'What happened', value: happened },
-        { measure: 'Why Foundry concluded this', value: why },
+        { measure: 'Why StockChief concluded this', value: why },
         { measure: 'Evidence used', value: evidenceUsed },
-        { measure: 'What Foundry did', value: outcome },
+        { measure: 'What StockChief did', value: outcome },
         { measure: 'What happens next', value: explanation.next },
       ],
       columns: ['measure', 'value'],
@@ -2317,8 +2340,8 @@ function foundryWhy(db, workspaceId, plan, options = {}) {
   if (!match) {
     return {
       answer: wanted
-        ? `Foundry has not done anything to ${plan.entityQuery} that it has a record of.`
-        : 'Foundry has not done anything yet.',
+        ? `StockChief has not done anything to ${plan.entityQuery} that it has a record of.`
+        : 'StockChief has not done anything yet.',
       rows: [],
     };
   }
@@ -2344,16 +2367,16 @@ function stopAutomation(db, workspaceId, plan) {
 
   if (!active.length) {
     return {
-      answer: 'Foundry is not doing anything automatically — every action already waits for you.',
+      answer: 'StockChief is not doing anything automatically — every action already waits for you.',
       rows: [],
     };
   }
   return {
     // Not `isAction` — that hands over to the actions page, which changes stock.
     // Switching a policy off is a different decision, made in a different place.
-    handoff: { href: '/autopilot', label: 'Manage what Foundry does on its own' },
+    handoff: { href: '/autopilot', label: 'Manage what StockChief does on its own' },
     answer:
-      `Foundry has ${active.length} active polic${active.length === 1 ? 'y' : 'ies'}: ` +
+      `StockChief has ${active.length} active polic${active.length === 1 ? 'y' : 'ies'}: ` +
       `${active.map((policy) => policy.name).join(', ')}. Turn it off on the policy page — ` +
       'anything already done stays in the history.',
     rows: active.map((policy) => ({ policy: policy.name, allows: policyService.describe(policy)[0] })),
@@ -2362,7 +2385,7 @@ function stopAutomation(db, workspaceId, plan) {
 }
 
 function notFound(plan) {
-  return `Foundry could not find anything matching "${plan.entityQuery}".`;
+  return `StockChief could not find anything matching "${plan.entityQuery}".`;
 }
 
 /**
@@ -2384,7 +2407,7 @@ const LOSS_WORDS = ['loss', 'lose', 'losing', 'lost', 'in the red'];
  * time?" want opposite answers from the same row count.
  *
  * A question matching neither list gets no verdict at all. That is the whole
- * safety of this: Foundry only agrees or disagrees when it knows which
+ * safety of this: StockChief only agrees or disagrees when it knows which
  * proposition it is being asked about.
  */
 const LIST_VERDICTS = {
@@ -2571,10 +2594,10 @@ function leadWithTheMeasure(question, result) {
  * Answers the question that was actually asked, before stating the figures.
  *
  * Every answer here is assembled from real numbers rather than written by a
- * model, which is why Foundry cannot invent one. But a template states a fact
+ * model, which is why StockChief cannot invent one. But a template states a fact
  * regardless of what was asked, so "Have I made any profit yet?" — a yes or no
  * question — was answered "This is 9.92 net profit based on the expenses
- * recorded in Foundry for 2026-08-03 through 2026-09-01: ...". Every figure
+ * recorded in StockChief for 2026-08-03 through 2026-09-01: ...". Every figure
  * correct, and not an answer. An accountant asked that question says "Yes,
  * about a hundred dollars" and then tells you what it excludes.
  *
@@ -2591,7 +2614,7 @@ function leadWithTheAnswer(question, result) {
   /*
    * Which proposition the question actually makes.
    *
-   * A verdict is only safe when Foundry knows what it is agreeing with. The
+   * A verdict is only safe when StockChief knows what it is agreeing with. The
    * first version answered "Am I making a loss?" with "Yes — 4.50 so far"
    * about a profitable month, because it asserted its own proposition and
    * ignored the questioner's. Being confidently wrong is worse than the
@@ -2599,7 +2622,7 @@ function leadWithTheAnswer(question, result) {
    *
    * So the executor states what its verdict asserts, and unless the question
    * plainly asks about that or its opposite, no verdict is offered and the
-   * evidence stands alone — the same rule the rest of Foundry follows.
+   * evidence stands alone — the same rule the rest of StockChief follows.
    */
   const { yes, summary, asserts, opposite } = result.verdict;
   /*

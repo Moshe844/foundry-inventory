@@ -33,7 +33,7 @@
       <p class="rm-transfer-next__summary"><strong><%= transfer.totals.requested %> units</strong> will be held at <strong><%= transfer.source_name %></strong> for <strong><%= transfer.destination_name %></strong>. Nothing has physically moved.</p>
       <% if (canApprove) { %><form method="post" action="/transfers/<%= transfer.id %>/approve" class="rm-title__do"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn">Approve this move</button></form><% } %>
     <% } else if ((transfer.status === 'APPROVED' || transfer.status === 'PICKED') && canPick && canDispatch) { %>
-      <p class="rm-transfer-next__summary"><strong><%= transfer.totals.approved %> units</strong> are held at <strong><%= transfer.source_name %></strong> for <strong><%= transfer.destination_name %></strong>. Confirm once when they physically leave; Foundry records the internal pick, dispatch, and in-transit custody together.</p>
+      <p class="rm-transfer-next__summary"><strong><%= transfer.totals.approved %> units</strong> are held at <strong><%= transfer.source_name %></strong> for <strong><%= transfer.destination_name %></strong>. Confirm once when they physically leave; StockChief records the internal pick, dispatch, and in-transit custody together.</p>
       <form method="post" action="/transfers/<%= transfer.id %>/pick-and-dispatch" class="rm-title__do"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= dispatchToken %>"><button class="rm-btn">Confirm <%= transfer.totals.approved %> units left <%= transfer.source_name %></button></form>
     <% } else if (transfer.status === 'APPROVED' && canPick) { %>
       <p class="rm-sub">The picker can confirm that the units are ready. Dispatch remains a separate permission.</p>
@@ -42,7 +42,7 @@
       <p class="rm-sub">Confirm only when the units physically leave <strong><%= transfer.source_name %></strong>.</p>
       <form method="post" action="/transfers/<%= transfer.id %>/pick-and-dispatch" class="rm-title__do"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= dispatchToken %>"><button class="rm-btn">Confirm units left <%= transfer.source_name %></button></form>
     <% } else if (transfer.status === 'SHIPPED' && canDispatch) { %>
-      <p class="rm-sub">The dispatch is recorded. Confirm that it is travelling so Foundry can include it in destination availability and forecasting.</p>
+      <p class="rm-sub">The dispatch is recorded. Confirm that it is travelling so StockChief can include it in destination availability and forecasting.</p>
       <form method="post" action="/transfers/<%= transfer.id %>/in-transit" class="rm-title__do"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn">Confirm it is on the way</button></form>
     <% } else if (['IN_TRANSIT','PARTIALLY_RECEIVED'].includes(transfer.status) && canReceive) { %>
       <% transfer.lines.filter(function(line) { return line.in_transit_quantity > 0; }).forEach(function(line) { %>
@@ -50,7 +50,7 @@
           <strong><%= line.item_name %><%= line.variant_label ? ' / ' + line.variant_label : '' %></strong>
           <span><%= line.in_transit_quantity %> units in transit to <%= transfer.destination_name %></span>
           <% if (line.tracking_mode === 'serial') { %>
-            <p class="rm-note">Choose the outcome for each serial unit. Foundry never assumes a serial identity.</p>
+            <p class="rm-note">Choose the outcome for each serial unit. StockChief never assumes a serial identity.</p>
             <form method="post" action="/transfers/<%= transfer.id %>/receive" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="<%= receiptToken %>:<%= line.id %>"><input type="hidden" name="lineId" value="<%= line.id %>">
               <% line.serials.filter(function(serial) { return serial.state === 'IN_TRANSIT'; }).forEach(function(serial) { %><label><%= serial.serial %><select name="serialOutcome_<%= serial.serial_unit_id %>" required><option value="RECEIVED">Arrived in usable condition</option><% if (canAdjust) { %><option value="DAMAGED">Damaged / written off</option><option value="LOST">Lost in transit</option><% } %></select></label><% }) %>
               <div class="rm-span-2"><button class="rm-btn">Record serial outcomes</button></div>
@@ -68,7 +68,7 @@
 </section>
 
 <section class="rm-panel rm-transfer-custody">
-  <div class="rm-panel__head"><div><p class="rm-kicker">What Foundry is tracking</p><h2>Transfer contents</h2></div></div>
+  <div class="rm-panel__head"><div><p class="rm-kicker">What StockChief is tracking</p><h2>Transfer contents</h2></div></div>
   <div class="rm-panel__body rm-transfer-lines"><% transfer.lines.forEach(function(line) { var settled = []; if (line.received_quantity) settled.push(line.received_quantity + ' received at ' + transfer.destination_name); if (line.lost_quantity) settled.push(line.lost_quantity + ' lost'); if (line.damaged_quantity) settled.push(line.damaged_quantity + ' damaged'); %><div class="rm-transfer-line"><div><strong><%= line.item_name %><%= line.variant_label ? ' / ' + line.variant_label : '' %></strong><small><%= line.lot_code ? 'Lot ' + line.lot_code : '' %></small></div><div><strong><%= transfer.status === 'APPROVED' ? line.approved_quantity + ' held at ' + transfer.source_name : line.in_transit_quantity ? line.in_transit_quantity + ' in transit' : settled.join(' · ') %></strong><span><%= line.in_transit_quantity || transfer.status === 'APPROVED' ? 'Going to ' + transfer.destination_name : 'Settled' %></span></div></div><% }) %></div>
 </section>
 

@@ -38,15 +38,15 @@ const ACTION_PAST_LABEL = {
 };
 
 const ACTION_TITLE = {
-  receive: 'Foundry is ready to receive',
-  issue: 'Foundry is ready to issue',
-  transfer: 'Foundry is ready to transfer',
-  adjust: 'Foundry is ready to correct a count',
-  create_item: 'Foundry is ready to add a product',
-  configure_kit: 'Foundry is ready to configure a kit',
-  archive_item: 'Foundry is ready to archive a product',
-  add_location: 'Foundry is ready to add a location',
-  rename_terminology: 'Foundry is ready to change some wording',
+  receive: 'StockChief is ready to receive',
+  issue: 'StockChief is ready to issue',
+  transfer: 'StockChief is ready to transfer',
+  adjust: 'StockChief is ready to correct a count',
+  create_item: 'StockChief is ready to add a product',
+  configure_kit: 'StockChief is ready to configure a kit',
+  archive_item: 'StockChief is ready to archive a product',
+  add_location: 'StockChief is ready to add a location',
+  rename_terminology: 'StockChief is ready to change some wording',
 };
 
 const REASON_LABEL = {
@@ -109,7 +109,7 @@ function subjectOf(db, workspaceId, proposal) {
       return { name: proposal.settings.name, detail: 'new location' };
     }
     if (proposal.actionType === 'rename_terminology') {
-      return { name: proposal.settings.value, detail: `what Foundry calls a ${proposal.settings.key}` };
+      return { name: proposal.settings.value, detail: `what StockChief calls a ${proposal.settings.key}` };
     }
     if (proposal.actionType === 'create_item') {
       const axes = proposal.settings.axes || [];
@@ -337,12 +337,12 @@ function present(db, workspaceId, proposal, options = {}) {
     lotName,
     productTotal,
     title: subject.recordKind
-      ? `Foundry is ready to ${subject.deletable ? 'delete' : 'archive'} a ${subject.detail}`
+      ? `StockChief is ready to ${subject.deletable ? 'delete' : 'archive'} a ${subject.detail}`
       : proposal.actionType === 'transfer'
-      ? 'Foundry is ready to prepare a real transfer'
+      ? 'StockChief is ready to prepare a real transfer'
       : proposal.actionType === 'create_item' && proposal.settings.initialStock
-      ? 'Foundry is ready to add a product and receive its stock'
-      : ACTION_TITLE[proposal.actionType] || 'Foundry is ready',
+      ? 'StockChief is ready to add a product and receive its stock'
+      : ACTION_TITLE[proposal.actionType] || 'StockChief is ready',
     verb: subject.recordKind
       ? (subject.deletable ? 'delete' : 'archive')
       : proposal.actionType === 'create_item' && proposal.settings.initialStock

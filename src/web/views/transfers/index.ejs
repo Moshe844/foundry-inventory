@@ -3,7 +3,7 @@
   var activeTransfers = transfers.filter(function(t) { return activeStatuses.includes(t.status); });
   var completedTransfers = transfers.filter(function(t) { return !activeStatuses.includes(t.status); });
   function stateFor(transfer) {
-    if (transfer.status === 'REQUESTED') return { label: 'Needs approval', detail: 'Foundry is waiting for approval before it holds stock.', tone: 'open' };
+    if (transfer.status === 'REQUESTED') return { label: 'Needs approval', detail: 'StockChief is waiting for approval before it holds stock.', tone: 'open' };
     if (['APPROVED', 'PICKED'].includes(transfer.status)) return { label: 'Ready to move', detail: 'Confirm once the goods leave ' + transfer.source_name + '.', tone: 'ready' };
     if (transfer.status === 'PARTIALLY_RECEIVED') return { label: 'Arrival needs settling', detail: transfer.in_transit_units + ' units are still in transit.', tone: 'attention' };
     if (['SHIPPED', 'IN_TRANSIT'].includes(transfer.status)) return { label: 'On the way', detail: transfer.in_transit_units + ' units are travelling to ' + transfer.destination_name + '.', tone: 'transit' };
@@ -14,13 +14,13 @@
 <p class="rm-stamp">Inventory transfers</p>
 <div class="rm-titleline">
   <div><h1 class="rm-figure">Move stock between locations.</h1>
-    <p class="rm-sub">Foundry keeps each transfer accountable from the moment it is requested until it arrives.</p></div>
+    <p class="rm-sub">StockChief keeps each transfer accountable from the moment it is requested until it arrives.</p></div>
   <% if (canRequest) { %><a class="rm-btn" href="/transfers/new">Request a transfer</a><% } %>
 </div>
 
 <section class="rm-transfer-board">
   <div class="rm-transfer-board__head"><div><p class="rm-kicker">What needs attention</p><h2><%= activeTransfers.length ? activeTransfers.length + ' transfer' + (activeTransfers.length === 1 ? '' : 's') + ' in progress' : 'Nothing is moving right now' %></h2></div><% if (activeTransfers.length) { %><span class="rm-transfer-board__count"><%= activeTransfers.length %></span><% } %></div>
-  <% if (!activeTransfers.length) { %><div class="rm-empty"><strong>There are no open transfers.</strong><p>When stock needs to move, tell Foundry or request a transfer here.</p></div><% } else { %>
+  <% if (!activeTransfers.length) { %><div class="rm-empty"><strong>There are no open transfers.</strong><p>When stock needs to move, tell StockChief or request a transfer here.</p></div><% } else { %>
     <div class="rm-transfer-board__rows"><% activeTransfers.forEach(function(t) { var state = stateFor(t); %>
       <a class="rm-transfer-row" href="/transfers/<%= t.id %>"><span class="rm-transfer-row__route"><strong><%= t.source_name %></strong><i aria-hidden="true">→</i><strong><%= t.destination_name %></strong><small><%= t.transfer_number %> · <%= t.requested_units %> units</small></span><span class="rm-transfer-row__state"><b class="rm-transfer-row__badge is-<%= state.tone %>"><%= state.label %></b><small><%= state.detail %></small></span><span class="rm-transfer-row__go" aria-hidden="true">›</span></a>
     <% }) %></div>

@@ -6,7 +6,7 @@
  * The model is given exactly one job — reading English — and these tests are
  * about the fence around it. A stubbed provider stands in for the model and is
  * made to return the most dangerous answers it could plausibly produce: an
- * action Foundry must never automate, a missing limit, an invented limit, a
+ * action StockChief must never automate, a missing limit, an invented limit, a
  * location that does not exist. None of them may reach a live policy.
  *
  * No API key is involved. The point is not whether a model gets this right on a
@@ -63,7 +63,7 @@ test('a plain instruction becomes a readable draft with the limit they said', as
   assert.ok(drafted.preview.some((line) => /20 units in one go/.test(line)));
 });
 
-test('the model cannot authorise an action Foundry does not automate', async () => {
+test('the model cannot authorise an action StockChief does not automate', async () => {
   const env = setup();
   // Even if the model says "yes, automate adjustments", the draft only ever
   // carries transfer — and the policy service would refuse anything else anyway.
@@ -115,7 +115,7 @@ test('a bounded routine purchasing request becomes an inert policy draft', async
   assert.equal(policyService.list(env.db, env.workspace.workspaceId).length, 0, 'reading still writes nothing');
 });
 
-test('no limit given means a question, never a number Foundry chose', async () => {
+test('no limit given means a question, never a number StockChief chose', async () => {
   const env = setup();
   const drafted = await policyAuthor.draft(
     env.db,
@@ -125,7 +125,7 @@ test('no limit given means a question, never a number Foundry chose', async () =
   );
 
   assert.equal(drafted.draft.maximumQuantity, null);
-  assert.ok(drafted.questions.some((q) => /most Foundry may move/.test(q)));
+  assert.ok(drafted.questions.some((q) => /most StockChief may move/.test(q)));
   assert.deepEqual(drafted.preview, [], 'nothing is previewed as agreed while a limit is missing');
 
   // And it genuinely cannot be written in that state.

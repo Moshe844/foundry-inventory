@@ -1,7 +1,7 @@
 <div class="page-head">
   <div class="titles">
-    <div class="eyebrow">Tell Foundry · lasting instruction</div>
-    <h1>Review what Foundry should remember</h1>
+    <div class="eyebrow">Tell StockChief · lasting instruction</div>
+    <h1>Review what StockChief should remember</h1>
     <div class="page-sub">This writes to the same stock, supplier and automatic-work settings you can inspect later. Nothing changes until you approve.</div>
   </div>
   <span class="badge <%= proposal.status === 'APPROVED' ? 'badge--ok' : proposal.status === 'PENDING' ? 'badge--warn' : 'badge--muted' %>"><%= proposal.status === 'APPROVED' ? 'Active' : proposal.status.toLowerCase() %></span>
@@ -17,7 +17,7 @@
     <div class="card-head"><h2>What happens now</h2></div>
     <div class="card-body grid">
       <% if (proposal.status === 'PENDING' && proposal.questions.length === 0) { %>
-        <p class="muted" style="margin:0;">Approve once to teach Foundry. Future activity is reevaluated automatically; you do not need to repeat this instruction or press Check now.</p>
+        <p class="muted" style="margin:0;">Approve once to teach StockChief. Future activity is reevaluated automatically; you do not need to repeat this instruction or press Check now.</p>
         <form method="post" action="/operating-instructions/<%= proposal.id %>/approve" data-loading-text="Remembering rule…">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="integrityHash" value="<%= proposal.integrityHash %>">
@@ -73,7 +73,7 @@
           <button class="btn btn--ghost btn--block" type="submit">Cancel restriction setup</button>
         </form>
       <% } else if (proposal.questions.length) { %>
-        <p class="muted" style="margin:0;">Foundry did not guess. Your answer continues this same instruction:</p>
+        <p class="muted" style="margin:0;">StockChief did not guess. Your answer continues this same instruction:</p>
         <div>
           <div class="label"><%= clarification ? clarification.question : proposal.questions[0] %></div>
           <% if (clarification && clarification.choices.length) { %>
@@ -111,7 +111,7 @@
 <% if (!productResolution) { %>
 <section class="card">
   <div class="card-head">
-    <div><h2>Exactly what Foundry understood</h2><p class="muted"><%= proposal.summary %></p></div>
+    <div><h2>Exactly what StockChief understood</h2><p class="muted"><%= proposal.summary %></p></div>
   </div>
   <div class="card-body grid">
     <% if (proposal.questions.length) { %>

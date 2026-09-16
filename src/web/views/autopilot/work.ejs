@@ -1,6 +1,6 @@
 <div class="page-head">
   <div class="titles">
-    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> Foundry</a>
+    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> StockChief</a>
     <h1><%= locals.approvalCopy ? locals.approvalCopy.heading : (locals.title || item.categoryLabel) %></h1>
     <div class="page-sub">
       <%= locals.approvalCopy
@@ -261,7 +261,7 @@
       <% events.forEach(function (event) { %>
         <tr>
           <td><%= helpers.columnLabel(event.event.replace(/_/g, ' ')) %></td>
-          <td class="muted"><%= event.actorName || 'Foundry' %></td>
+          <td class="muted"><%= event.actorName || 'StockChief' %></td>
           <td class="muted"><%= helpers.dateTime(event.createdAt) %></td>
         </tr>
       <% }) %>

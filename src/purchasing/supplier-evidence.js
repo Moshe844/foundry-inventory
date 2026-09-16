@@ -228,7 +228,7 @@ function process(db, messageId, proposedFacts = {}) {
     const line = matchLine(lines, proposed);
     if (!line) {
       discrepancies.push({ type: 'unknown_sku', supplierSku: proposed.supplierSku || proposed.skuCode || proposed.sku || null,
-        message: `Supplier line ${proposed.supplierSku || proposed.skuCode || proposed.sku || '(unnamed)'} needs a Foundry match.` });
+        message: `Supplier line ${proposed.supplierSku || proposed.skuCode || proposed.sku || '(unnamed)'} needs a StockChief match.` });
       continue;
     }
     const unitPrice = number(proposed.unitPrice ?? (proposed.unitPriceMinor == null ? null : Number(proposed.unitPriceMinor) / 100));
@@ -338,7 +338,7 @@ function process(db, messageId, proposedFacts = {}) {
   } else if (documentType === 'delivery_confirmation' && !trustedReceipt) {
     issue(db, message, 'PHYSICAL_RECEIPT_CONFIRMATION', `supplier-delivery:${documentId}`,
       `${supplier.name} says ${order?.po_number || 'an order'} was delivered`,
-      'This is delivery evidence only. Foundry has not increased on-hand inventory.',
+      'This is delivery evidence only. StockChief has not increased on-hand inventory.',
       order ? `Open ${order.po_number} and confirm what physically arrived.` : 'Match the order, then confirm what physically arrived.');
   }
 

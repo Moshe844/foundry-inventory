@@ -478,8 +478,8 @@ test('mail that is not the business is not taken, and a stranger who is trading 
    *
    * Which was right about the customer and wrong about the inbox. Capturing
    * everything meant the owner's newsletters, bank alerts and personal mail
-   * became rows in Foundry, were triaged, listed and counted as work — and
-   * they said so: only mail about the business should reach Foundry.
+   * became rows in StockChief, were triaged, listed and counted as work — and
+   * they said so: only mail about the business should reach StockChief.
    *
    * So the question is no longer who the sender is. It is whether the message
    * is about the business, and both halves of that are asserted here.
@@ -495,7 +495,7 @@ test('mail that is not the business is not taken, and a stranger who is trading 
 
   assert.equal(env.db.prepare(`SELECT COUNT(*) AS n FROM connection_email_messages
     WHERE workspace_id = ? AND external_message_id = ?`).get(env.workspace.workspaceId, 'unrelated-1').n, 0,
-  'a newsletter does not become a record in Foundry');
+  'a newsletter does not become a record in StockChief');
 
   // But it is not silently dropped either: the envelope and the reason stay.
   const aside = setAside.list(env.db, env.workspace.workspaceId);
@@ -536,9 +536,9 @@ test('mail that is not the business is not taken, and a stranger who is trading 
   env.db.close();
 });
 
-test('the owner can overrule the gate, and Foundry fetches the message it did not keep', async () => {
+test('the owner can overrule the gate, and StockChief fetches the message it did not keep', async () => {
   /*
-   * A filter nobody can overrule is a filter nobody can trust. Foundry kept
+   * A filter nobody can overrule is a filter nobody can trust. StockChief kept
    * the envelope and the reason and nothing else, so bringing one in means
    * going back to Gmail for the message rather than to a copy it deliberately
    * did not make.
@@ -624,7 +624,7 @@ test('unknown supplier SKU offers one-step matching and future documents reuse i
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const page = await agent.get(`/settings/connections/${env.email.connection.id}`);
-  assert.match(plain(page.text), /What is ABC-NEW-S in Foundry/i);
+  assert.match(plain(page.text), /What is ABC-NEW-S in StockChief/i);
   assert.match(plain(page.text), /Save match for future emails/i);
   const saved = await agent.post(`/settings/connections/${env.email.connection.id}/supplier-sku-map`)
     .type('form').send({ _csrf: csrfFrom(page.text), issueId: issue.id,
@@ -860,7 +860,7 @@ test('mailbox timing is honored by the unattended scheduler and transient failur
   } finally { gmail.poll = originalPoll; env.db.close(); }
 });
 
-test('Tell Foundry proposes and applies supplier sending authority through the same supplier settings', async () => {
+test('Tell StockChief proposes and applies supplier sending authority through the same supplier settings', async () => {
   const env = setup();
   const change = {
     domain: 'supplier_communication', operation: 'set', itemText: '', variantText: '', locationText: '',
@@ -975,7 +975,7 @@ test('automatic supplier sending refuses missing prices and supplier minimum vio
   });
 });
 
-test('paused Foundry cannot send a prepared supplier message', async () => {
+test('paused StockChief cannot send a prepared supplier message', async () => {
   const env = setup();
   connectTestGmail(env);
   poService.approve(env.db, env.workspace.ctx, env.membership, env.order.id);
@@ -1082,7 +1082,7 @@ test('Mission 12 preserves a proposed substitution as evidence and never treats 
   const fact = env.db.prepare(`SELECT * FROM supplier_operational_facts
     WHERE workspace_id=? AND fact_kind='SUBSTITUTION'`).get(env.workspace.workspaceId);
   assert.ok(fact);
-  assert.equal(fact.related_sku_id, null, 'supplier words cannot establish a Foundry SKU identity');
+  assert.equal(fact.related_sku_id, null, 'supplier words cannot establish a StockChief SKU identity');
   const plan = supplierManager.forOrder(env.db, env.workspace.workspaceId, env.order.id)[0];
   assert.equal(plan.status, 'NEEDS_APPROVAL');
   assert.ok(supplierManager.draftsForPlan(env.db, env.workspace.workspaceId, plan.id)
@@ -1192,7 +1192,7 @@ test('Mission 12 decisions are replay-safe, explainable, scored, and visible on 
   const agent = request.agent(env.app);
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const html = (await agent.get(`/purchasing/orders/${env.order.id}`)).text;
-  assert.match(plain(html), /Foundry worked out the consequence/i);
+  assert.match(plain(html), /StockChief worked out the consequence/i);
   assert.match(plain(html), /No stock or money was changed/i);
   assert.equal(env.db.prepare('SELECT COUNT(*) n FROM supplier_response_plans WHERE workspace_id=?')
     .get(env.workspace.workspaceId).n, 1);

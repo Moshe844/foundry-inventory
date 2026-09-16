@@ -2,7 +2,7 @@
 
 /**
  * InventoryConfigurationPlan — the versioned contract describing exactly what
- * Foundry will configure, before it touches the Mission 1 engine.
+ * StockChief will configure, before it touches the Mission 1 engine.
  *
  * The customer reads a summary of this; the system reads the structure. It is
  * never reduced to prose. A plan is built deterministically from a validated

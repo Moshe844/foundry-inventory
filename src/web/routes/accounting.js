@@ -101,7 +101,7 @@ function setupPositions(db, workspaceId) {
 /**
  * What the freight on a supplier document actually was.
  *
- * Foundry will not choose between "part of what the stock cost" and "an
+ * StockChief will not choose between "part of what the stock cost" and "an
  * expense of its own": both are honest answers and the difference belongs to
  * the owner and their accountant. It records whichever they pick, in one
  * entry, against the same equity account the goods on that document went to.
@@ -293,7 +293,7 @@ router.get(['/accounting', '/accounting/books', '/money/books'],
     ORDER BY so.order_number`).all(req.ctx.workspaceId);
   /*
    * Costs read off supplier documents. Recovered first for documents applied
-   * before Foundry had anywhere to keep them, which is why this runs here:
+   * before StockChief had anywhere to keep them, which is why this runs here:
    * the figures already exist on the document's own record, so showing them
    * is recovery rather than a new claim about anybody's money.
    */
@@ -360,7 +360,7 @@ router.post('/accounting/setup/start', permit(permissions.MANAGE_ACCOUNTING, 'se
     actorId: req.ctx.actorId, startDate: req.body.startDate || today(), currency: req.body.currency || 'USD',
   });
   req.flash('success', automatic.seeded.length
-    ? `Foundry carried forward verified purchase cost for ${automatic.seeded.length} inventory position${automatic.seeded.length === 1 ? '' : 's'}.`
+    ? `StockChief carried forward verified purchase cost for ${automatic.seeded.length} inventory position${automatic.seeded.length === 1 ? '' : 's'}.`
     : 'Accounting is already working automatically. No activation is required.');
   return res.redirect(303, '/accounting');
 }));
@@ -418,7 +418,7 @@ router.post('/accounting/review/:id/use-verified-costs', permit(permissions.MANA
   const review = accountingReview(req.db, req.ctx.workspaceId, req.params.id);
   if (!review) throw new (require('../../domain/errors').NotFoundError)('That accounting review could not be found.');
   if (!review.order || !review.canUseVerifiedCosts) {
-    throw new ValidationError('Foundry cannot prove every affected product cost from prior purchase receipts. No amount was guessed.');
+    throw new ValidationError('StockChief cannot prove every affected product cost from prior purchase receipts. No amount was guessed.');
   }
   openingCostEvidence.apply(req.db, req.ctx, review.inference);
   const processed = operationalAccounting.retry(req.db, req.ctx.workspaceId, review.domain_event_id);
@@ -720,7 +720,7 @@ router.get('/accounting/tax', permit(permissions.VIEW_ACCOUNTING, 'view tax acco
 
 router.post('/accounting/tax/rates', permit(permissions.MANAGE_ACCOUNTING, 'configure tax rates'), asyncRoute(async (req, res) => {
   tax.create(req.db, req.ctx, req.user, req.body);
-  req.flash('success', 'Tax rate saved. It calculates tax only when you select it; Foundry does not claim to file taxes.');
+  req.flash('success', 'Tax rate saved. It calculates tax only when you select it; StockChief does not claim to file taxes.');
   res.redirect(303, '/accounting/tax');
 }));
 
@@ -807,7 +807,7 @@ router.post('/accounting/receivables/:id/confirm-unpaid', permit(permissions.REC
   }
   req.db.prepare(`UPDATE accounting_customer_invoices SET payment_status_confirmed_at = ?,
     updated_at = ? WHERE id = ? AND workspace_id = ?`).run(nowIso(), nowIso(), invoice.id, req.ctx.workspaceId);
-  req.flash('success', `${invoice.invoice_number} remains unpaid. Foundry will keep the balance open without asking you to confirm it again.`);
+  req.flash('success', `${invoice.invoice_number} remains unpaid. StockChief will keep the balance open without asking you to confirm it again.`);
   res.redirect(303, '/accounting#customers');
 }));
 
@@ -891,7 +891,7 @@ router.post('/accounting/payments/reported', requireAuth, asyncRoute(async (req,
   const reported = req.session.reportedPayment;
   if (!reported) return res.redirect(303, '/accounting');
 
-  // Answering a question Foundry asked continues the same report rather than
+  // Answering a question StockChief asked continues the same report rather than
   // making somebody retype the sentence.
   const chosen = trimOrNull(req.body.documentId);
   const fields = chosen ? { ...reported.fields, documentId: chosen } : reported.fields;

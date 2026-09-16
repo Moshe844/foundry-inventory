@@ -9,7 +9,7 @@
  * the only part of the import where the model earns its place.
  *
  * What is asserted is never "the model said the right thing" alone: it is that
- * the resulting import creates the right records, and that Foundry refuses the
+ * the resulting import creates the right records, and that StockChief refuses the
  * things it must refuse regardless of how confidently the model answers.
  */
 
@@ -46,7 +46,7 @@ const sheetFrom = (text) => {
 
 const columnNamed = (sheet, index) => (sheet.columns.find((c) => c.index === index) || {}).name;
 
-test('headers Foundry cannot read are named by the model', { skip: !LIVE, timeout: TIMEOUT }, async () => {
+test('headers StockChief cannot read are named by the model', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   // Nothing here matches a known heading: this is an ERP export with internal
   // abbreviations, which is what a real customer's file usually looks like.
   const sheet = sheetFrom(
@@ -65,7 +65,7 @@ test('headers Foundry cannot read are named by the model', { skip: !LIVE, timeou
   assert.equal(columnNamed(sheet, result.mappings.name), 'MAKTX');
   assert.equal(columnNamed(sheet, result.mappings.location), 'LGORT');
   assert.equal(columnNamed(sheet, result.mappings.quantity), 'LABST');
-  // Foundry now stores current selling prices, so the ERP price column should
+  // StockChief now stores current selling prices, so the ERP price column should
   // be recognised instead of silently discarded.
   assert.equal(columnNamed(sheet, result.mappings.sellingPrice), 'NETPR');
   assert.equal(result.detectedType, 'inventory');
@@ -115,7 +115,7 @@ test('an opaque file imports into exactly the right records', { skip: !LIVE, tim
   assert.equal(elbow.name, 'Copper Elbow');
 });
 
-test('a file about things Foundry does not track imports nothing', { skip: !LIVE, timeout: TIMEOUT }, async () => {
+test('a file about things StockChief does not track imports nothing', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const env = setup();
   // A purchase-order report. There is no product list in it to import.
   const { plan } = await planService.analyse(env.db, env.ctx, env.membership, {
@@ -127,7 +127,7 @@ test('a file about things Foundry does not track imports nothing', { skip: !LIVE
     filename: 'purchase-orders.csv',
   });
 
-  // Every column is something Foundry deliberately does not store, so there is
+  // Every column is something StockChief deliberately does not store, so there is
   // no product to create — and it says so rather than inventing two products
   // called PO-1001 and PO-1002.
   assert.equal(plan.fieldMappings.quantity, undefined);
@@ -138,7 +138,7 @@ test('a file about things Foundry does not track imports nothing', { skip: !LIVE
   );
 });
 
-test('the model cannot make Foundry overwrite a product that exists', { skip: !LIVE, timeout: TIMEOUT }, async () => {
+test('the model cannot make StockChief overwrite a product that exists', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const env = setup();
   itemService.createItem(env.db, env.ctx, {
     name: 'Copper Elbow',

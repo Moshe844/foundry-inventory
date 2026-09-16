@@ -1,17 +1,17 @@
--- Foundry Inventory : operational autopilot (Mission 7)
+-- StockChief Inventory : operational autopilot (Mission 7)
 --
--- Everything before this mission made Foundry able to do inventory work when a
+-- Everything before this mission made StockChief able to do inventory work when a
 -- person asked. This is where it starts doing the routine work itself and
 -- bringing only the exceptions back — which means the interesting tables here
 -- are not the ones that let it act, but the ones that constrain it.
 --
 -- Three ideas run through the whole schema:
 --
---   A policy is data, not a prompt. What Foundry may do automatically is a
+--   A policy is data, not a prompt. What StockChief may do automatically is a
 --   structured, versioned, customer-approved record. A model may help write
 --   one; nothing a model says at run time can authorise an action.
 --
---   Work is a durable record, not a screen. Every task Foundry plans has a row
+--   Work is a durable record, not a screen. Every task StockChief plans has a row
 --   with a lifecycle, so a restart mid-execution reconciles rather than repeats,
 --   and "what did you do today" is answered from what actually happened.
 --
@@ -21,7 +21,7 @@
 --   bad action — it is the same bad action a hundred times.
 
 -- ---------------------------------------------------------------------------
--- What Foundry is allowed to do, in this workspace, right now
+-- What StockChief is allowed to do, in this workspace, right now
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS workspace_autopilot (
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS workspace_autopilot (
   paused_by_user_id  TEXT REFERENCES users(id) ON DELETE SET NULL,
   paused_reason      TEXT,
 
-  -- Foundry stopping itself. Separate from a person's pause on purpose: the
+  -- StockChief stopping itself. Separate from a person's pause on purpose: the
   -- two have different causes, different messages, and different ways back.
   suspended          INTEGER NOT NULL DEFAULT 0 CHECK (suspended IN (0, 1)),
   suspended_at       TEXT,
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS workspace_autopilot (
 -- global: a business moving forty units a day and one moving four thousand do
 -- not share a sensible ceiling.
 /*
- * What Foundry may do on its own, one job at a time.
+ * What StockChief may do on its own, one job at a time.
  *
  * The mode is a ceiling; these are the grants underneath it. A row exists only
  * once somebody has had an opinion about that job, and its absence means no —
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS autopilot_limits (
 -- Policies
 -- ---------------------------------------------------------------------------
 
--- What Foundry may do without asking, expressed as data a person approved.
+-- What StockChief may do without asking, expressed as data a person approved.
 --
 -- Versioned and never edited in place: broadening what an automaton may do is
 -- exactly the change that must never happen quietly, so a change supersedes
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS automation_policies (
   description          TEXT,
   enabled              INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
 
-  -- Only ever a list Foundry's own code understands. A policy naming an action
+  -- Only ever a list StockChief's own code understands. A policy naming an action
   -- type that does not exist authorises nothing.
   allowed_action_types TEXT NOT NULL DEFAULT '[]',
 
@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS work_plans (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_work_plans_key ON work_plans(workspace_id, idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_work_plans_workspace ON work_plans(workspace_id, started_at DESC);
 
--- One piece of inventory work Foundry decided should happen.
+-- One piece of inventory work StockChief decided should happen.
 --
 -- The lifecycle lives here rather than in a screen, which is what makes a
 -- restart mid-flight recoverable: an item found in EXECUTING is reconciled
@@ -267,6 +267,20 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_workspace ON notifications(workspace_id, read_at, created_at DESC);
+
+-- Email is an optional delivery channel for actionable notifications.  The
+-- setting is workspace-scoped because one account can own several inventories
+-- with different operators.  Recipients are explicit rather than inferred on
+-- every send; an empty list falls back to the current workspace owners.
+CREATE TABLE IF NOT EXISTS notification_email_settings (
+  workspace_id      TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  enabled           INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+  minimum_severity  TEXT NOT NULL DEFAULT 'important'
+                     CHECK (minimum_severity IN ('critical', 'important', 'all')),
+  recipients        TEXT NOT NULL DEFAULT '[]',
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL
+);
 
 -- Durable operating preferences, stated explicitly and never inferred.
 --

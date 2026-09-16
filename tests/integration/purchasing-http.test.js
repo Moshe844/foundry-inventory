@@ -5,7 +5,7 @@
  *
  * These are the cases a browser causes by itself — a double-submitted approve,
  * a refreshed receiving form, someone opening a URL they have no permission
- * for — plus the one that matters most for money: asking Foundry what to order,
+ * for — plus the one that matters most for money: asking StockChief what to order,
  * acting on it, and asking again.
  */
 
@@ -143,11 +143,11 @@ test('a supplier created from scratch shows every setup step and advances from r
   let page = await agent.get(`/suppliers/${supplier.id}`);
   let text = plain(page.text);
   for (const step of [
-    'Add the supplier email', 'Link what you buy', 'Connect the mailbox Foundry watches',
-    "Approve this supplier's sender", 'Choose what Foundry may do', 'Create the first purchase order',
+    'Add the supplier email', 'Link what you buy', 'Connect the mailbox StockChief watches',
+    "Approve this supplier's sender", 'Choose what StockChief may do', 'Create the first purchase order',
   ]) assert.match(text, new RegExp(step.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(text, /Add the supplier email[\s\S]*Do this now/);
-  assert.doesNotMatch(text, /What may Foundry do\?/, 'future authority choices stay hidden until the sender is approved');
+  assert.doesNotMatch(text, /What may StockChief do\?/, 'future authority choices stay hidden until the sender is approved');
 
   const savedEmail = await agent.post(`/suppliers/${supplier.id}`).type('form').send({
     _csrf: csrfFrom(page.text), email: 'orders@mission13.test',
@@ -163,7 +163,7 @@ test('a supplier created from scratch shows every setup step and advances from r
   });
   page = await agent.get(`/suppliers/${supplier.id}`);
   text = plain(page.text);
-  assert.match(text, /Connect the mailbox Foundry watches[\s\S]*Do this now/);
+  assert.match(text, /Connect the mailbox StockChief watches[\s\S]*Do this now/);
   assert.doesNotMatch(text, /Approve Mission 13 Test Supplier's sender/, 'the sender action stays hidden until a mailbox exists');
 
   const mailbox = connections.create(env.db, env.workspace.ctx, env.membership, {
@@ -174,7 +174,7 @@ test('a supplier created from scratch shows every setup step and advances from r
   assert.match(text, /Approve this supplier's sender[\s\S]*Do this now/);
   assert.match(text, /Approve Mission 13 Test Supplier's sender/);
   assert.match(text, /orders@mission13\.test → Purchasing mailbox/);
-  assert.doesNotMatch(text, /What may Foundry do\?/, 'there is still one current task');
+  assert.doesNotMatch(text, /What may StockChief do\?/, 'there is still one current task');
 
   connections.addEmailRule(env.db, env.workspace.ctx, mailbox.id, {
     senderPattern: 'orders@mission13.test', supplierId: supplier.id, documentMode: 'supplier_documents',
@@ -185,7 +185,7 @@ test('a supplier created from scratch shows every setup step and advances from r
   const readyPage = await agent.get(`/suppliers/${supplier.id}`);
   text = plain(readyPage.text);
   assert.match(text, /Create the first purchase order[\s\S]*Do this now/);
-  assert.match(text, /What may Foundry do\?/);
+  assert.match(text, /What may StockChief do\?/);
   assert.match(readyPage.text, new RegExp(`/purchasing/orders/new\\?supplier=${supplier.id}`));
   env.db.close();
 });
@@ -298,7 +298,7 @@ test('preparing, approving and receiving an order, end to end', async () => {
   const env = setup();
   const { agent } = await owner(env);
 
-  // Foundry prepares the order from its own recommendation.
+  // StockChief prepares the order from its own recommendation.
   const plan = await agent.get('/purchasing');
   const prepared = await agent
     .post(`/purchasing/prepare/${env.supplier.id}`)
@@ -309,7 +309,7 @@ test('preparing, approving and receiving an order, end to end', async () => {
   assert.match(orderPath, /^\/purchasing\/orders\/po_/);
 
   const draft = await agent.get(orderPath);
-  assert.match(plain(draft.text), /prepared by Foundry/);
+  assert.match(plain(draft.text), /prepared by StockChief/);
   assert.match(plain(draft.text), /Nothing has been sent to ABC Footwear/);
   assert.equal(position.positionForSku(env.db, env.workspace.workspaceId, env.item.skuId).onOrder, 0);
 
@@ -396,7 +396,7 @@ test('a resubmitted receiving form does not receive the delivery twice', async (
   assert.match(plain((await agent.get(`/purchasing/orders/${order.id}`)).text), /already booked in|48 unit/);
 });
 
-test('receiving a purchase immediately allocates waiting customer demand before Foundry replans', async () => {
+test('receiving a purchase immediately allocates waiting customer demand before StockChief replans', async () => {
   const env = setup();
   const { agent } = await owner(env);
   const customer = sales.createCustomer(env.db, env.workspace.ctx, { name: 'Waiting Customer' });
@@ -573,7 +573,7 @@ test('the overview brief gives the correct purchasing next step and mentions an 
 });
 
 test('a delivery that matches the order is booked in with one click', async () => {
-  // "Receiving against a PO should be automatic." The labour is: Foundry knows
+  // "Receiving against a PO should be automatic." The labour is: StockChief knows
   // the products, the quantities and where they go, so retyping them is work it
   // should do. The assertion is not: nobody has told it the boxes arrived.
   const env = setup();
@@ -620,7 +620,7 @@ test('a delivery that matches the order is booked in with one click', async () =
 // --- being told what is missing, and being able to fix it --------------------
 
 /**
- * A line can be short and unorderable at the same time, and Foundry says so.
+ * A line can be short and unorderable at the same time, and StockChief says so.
  * The only link on it went to the reorder arithmetic — the one thing that was
  * not missing — so somebody new was told exactly what was wrong and left to
  * find suppliers on a screen they had no reason to know about.
@@ -652,7 +652,7 @@ test('a line blocked for want of a supplier leads to setting one up, and then be
   const env = shortWithNoSupplier();
   const { agent } = await owner(env);
 
-  // 1. Foundry sees the shortfall and says what is missing.
+  // 1. StockChief sees the shortfall and says what is missing.
   const plan = await agent.get('/purchasing');
   const planText = plain(plan.text);
   assert.match(planText, /no supplier on file/i);
@@ -679,7 +679,7 @@ test('a line blocked for want of a supplier leads to setting one up, and then be
 
   // Reaching it from the numbers page works too.
   const why = plain((await agent.get(`/purchasing/why/${env.item.skuId}`)).text);
-  assert.match(why, /Foundry cannot order this yet/i);
+  assert.match(why, /StockChief cannot order this yet/i);
   assert.match(why, /Black T-shirt.*Add the supplier/i,
     'the blocked product and its next action remain visible even when the numbers page returns to the plan');
 
@@ -712,7 +712,7 @@ test('a line blocked for want of a supplier leads to setting one up, and then be
   env.db.close();
 });
 
-// --- settings somebody typed in outrank what Foundry can infer ---------------
+// --- settings somebody typed in outrank what StockChief can infer ---------------
 
 /**
  * Reported as: reorder point 60 / up to 80 / safety 10 set by hand on one
@@ -904,7 +904,7 @@ test('supplier costs entered during setup automatically value untouched opening 
     .get(workspace.workspaceId);
   assert.match(entry.description, /supplier terms entered during setup/i);
   const accountingText = plain((await agent.get('/accounting')).text);
-  assert.match(accountingText, /started Foundry with \$360\.00 of inventory already on hand/i);
+  assert.match(accountingText, /started StockChief with \$360\.00 of inventory already on hand/i);
   assert.match(accountingText, /Total inventory cost recorded \$360\.00/i,
     'Accounting shows the automatically recovered opening inventory cost');
   env.db.close();

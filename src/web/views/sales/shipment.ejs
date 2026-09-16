@@ -8,7 +8,7 @@
    * asks for the carrier and the tracking number, and nothing else.
    *
    * The line that matters most is the one about stock: until this ships,
-   * everything in it is still on the shelf as far as Foundry is concerned,
+   * everything in it is still on the shelf as far as StockChief is concerned,
    * and saying so plainly is what stops somebody from believing a count is
    * wrong when it is simply not yet time.
    */
@@ -30,6 +30,19 @@
   <%- helpers.icon('chevron', { size: 13 }) %>
   <span><%= s.shipment_number %></span>
 </div>
+
+<section class="section" id="payment-status"><div class="panel">
+  <div class="panel-head"><div><h2>Payment for this order</h2></div></div>
+  <div class="card-body">
+    <p class="lede"><%= paymentPosition.status %> · <%= helpers.money(paymentPosition.remainingMinor, paymentPosition.currency) %> remaining</p>
+    <p class="hint"><%= paymentPosition.termsText %></p>
+    <% if (paymentPosition.terms.source === 'nothing agreed') { %><p class="notice notice--warn">No payment terms have been configured. The current default allows unpaid orders to leave. Agree customer terms before relying on a payment hold.</p><% } %>
+    <% if (paymentPosition.blocksShipping) { %><p class="notice notice--warn">This order cannot leave until its payment hold is resolved. <%= paymentPosition.heldReason.ship %></p>
+    <% } else if (paymentPosition.remainingMinor > 0) { %><p class="hint">The recorded terms allow fulfilment with this balance still owed. Shipping does not mark it paid.</p><% } %>
+    <a class="btn btn--primary" href="/orders/<%= s.sales_order_id %>/detail?open=money#money">Payment options: request payment or record money received</a>
+    <p class="field-hint">Online payment links require a connected payment provider. Recording a payment is only for money actually received.</p>
+  </div>
+</div></section>
 
 <div class="page-head">
   <div>
@@ -70,7 +83,7 @@
 <% } else if (!isOpen) { %>
   <%#
     A shipped parcel with no address on file.
-    
+
     Saying nothing here leaves the page unable to answer the first question
     anybody asks of a shipment — where did it go? — and looking like the
     address is simply missing from the screen rather than from the records.
@@ -79,9 +92,9 @@
     <div class="panel">
       <div class="panel-head"><div><h2>Where it went</h2></div></div>
       <div class="card-body">
-        <p class="lede">Foundry has no address for <%= s.customer_name || 'this customer' %>.</p>
+        <p class="lede">StockChief has no address for <%= s.customer_name || 'this customer' %>.</p>
         <p class="hint">
-          None was on file when this shipped, so Foundry does not claim one. Add one to the
+          None was on file when this shipped, so StockChief does not claim one. Add one to the
           customer and it will be on the next parcel.
           <% if (s.customer_id) { %>
             <a href="/sales/customers/<%= s.customer_id %>">Add their address</a>.
@@ -94,15 +107,25 @@
   <div class="notice notice--warn">
     <div>
       <strong>No address on file for <%= s.customer_name || 'this customer' %>.</strong><br>
-      Foundry has nowhere to say this is going. Correct the Sales Order destination before
-      buying a label; Foundry will not silently use another address.
+      StockChief has nowhere to say this is going. Correct the Sales Order destination before
+      shipping or buying a label. Enter the destination below, or explicitly choose customer pickup.
     </div>
   </div>
+  <form class="card section" method="post" action="/fulfilment/<%= s.id %>/destination" data-busy>
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="card-body">
+      <label class="field"><span class="field-label">How will the customer receive this order?</span>
+        <select name="deliveryMethod" class="input" required><option value="">Choose delivery or pickup</option><option value="SHIP">Send to a delivery address</option><option value="PICKUP">Customer pickup</option></select>
+      </label>
+      <label class="field"><span class="field-label">Full delivery address (required when sending)</span><textarea name="shippingAddress" class="input" placeholder="Street, city, state, postal code and country"></textarea></label>
+    </div>
+    <div class="card-foot"><button class="btn btn--primary" type="submit">Save delivery choice — no stock moves</button></div>
+  </form>
 <% } %>
 
 <% if (isOpen) { %>
   <p class="lede">
-    Nothing in this box has left stock yet. Foundry still counts every one of these
+    Nothing in this box has left stock yet. StockChief still counts every one of these
     <%= s.units %> as on the shelf, and will until you
     <%= s.delivery_method === 'PICKUP' ? 'confirm the customer collected it' : 'mark it shipped' %>.
   </p>
@@ -313,7 +336,7 @@
                 value="<%= ship.boxes[0] && ship.boxes[0].weightGrams ? ship.boxes[0].weightGrams : '' %>">
               <span class="field-hint">
                 <% if (ship.boxes[0] && ship.boxes[0].estimated) { %>
-                  Added up from the product weights Foundry has. Weigh the box and correct it if that is wrong —
+                  Added up from the product weights StockChief has. Weigh the box and correct it if that is wrong —
                   a rate quoted on a guess gets corrected at the counter.
                 <% } else { %>What you measured.<% } %>
               </span>
@@ -340,7 +363,7 @@
             </div></div>
           <% } else if (ship.recommended) { %>
             <p class="lede">
-              Foundry recommends <%= ship.recommended.rate.carrierName %> <%= ship.recommended.rate.service %>
+              StockChief recommends <%= ship.recommended.rate.carrierName %> <%= ship.recommended.rate.service %>
               — <%= helpers.money(ship.recommended.rate.amountMinor, ship.recommended.rate.currency) %>.
             </p>
             <p class="hint"><%= ship.recommended.because %>
@@ -472,7 +495,7 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <input type="hidden" name="handover" value="CARRIER">
         <div class="card-body">
-          <p class="lede">The label is ready, but Foundry still counts these goods in inventory.</p>
+          <p class="lede">The label is ready, but StockChief still counts these goods in inventory.</p>
           <p class="hint">Confirm only when the parcel is physically with the carrier. That moment moves stock, records the sale, and prepares the customer update.</p>
         </div>
         <div class="card-foot">
@@ -507,7 +530,7 @@
                   <option value="<%= carrier.code %>"><%= carrier.name %></option>
                 <% }) %>
               </select>
-              <span class="field-hint">Leave this alone and Foundry reads it off the number where it can.</span>
+              <span class="field-hint">Leave this alone and StockChief reads it off the number where it can.</span>
             </label>
             <label class="field">
               <span class="field-label">Tracking number <span class="t-muted">(optional)</span></span>
@@ -551,7 +574,7 @@
      * What the customer was told, or is about to be.
      *
      * The words are shown in full and editable, because a shipping notice
-     * leaves the building under the owner's name. Foundry writes the draft
+     * leaves the building under the owner's name. StockChief writes the draft
      * from records; the person who has to answer the reply gets the last read
      * of it.
      */
@@ -609,7 +632,7 @@
               <textarea class="input textarea message-edit" name="body" rows="14"><%= notice.body %></textarea>
               <span class="field-hint">
                 Written from this order handover's own record — the items and how the customer
-                received them. Foundry states nothing here it cannot show you elsewhere.
+                received them. StockChief states nothing here it cannot show you elsewhere.
               </span>
             </label>
             <% if (mailboxes && mailboxes.length) { %>
@@ -626,7 +649,7 @@
               </label>
             <% } else { %>
               <p class="hint">
-                No mailbox is connected, so Foundry cannot send this for you. Copy the words
+                No mailbox is connected, so StockChief cannot send this for you. Copy the words
                 above into your own email, or
                 <a href="/settings/connections">connect a mailbox</a>.
               </p>
@@ -683,7 +706,7 @@
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <button class="btn" type="submit">Mark delivered</button>
             <span class="hint">
-              Foundry has no carrier account, so it cannot see a delivery scan.
+              StockChief has no carrier account, so it cannot see a delivery scan.
               This is you telling it what you know.
             </span>
           </form>

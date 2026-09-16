@@ -93,7 +93,7 @@ test('a remembered mapping is enforced when another variant from that vendor is 
   env.db.close();
 });
 
-test('Foundry refuses a customer-code collision instead of silently suffixing it', () => {
+test('StockChief refuses a customer-code collision instead of silently suffixing it', () => {
   const env = setup();
   itemService.createItem(env.db, env.workspace.ctx, {
     name: 'Existing Oxford', baseCode: 'OXFORD-BROWN', trackingMode: 'quantity',

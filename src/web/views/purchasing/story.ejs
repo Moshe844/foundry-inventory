@@ -6,7 +6,7 @@
    * acknowledgement, the delivery, the invoice and the payment are one story.
    * That they are five services and four tables underneath is not something
    * the owner should have to know, and it was the whole reason purchasing felt
-   * like a department to operate rather than something Foundry runs.
+   * like a department to operate rather than something StockChief runs.
    *
    * One component, two subjects, is also the practical answer to a hundred and
    * eleven templates: build the spine once and every business event has a page.
@@ -17,7 +17,7 @@
   /*
    * The two balances, side by side.
    *
-   * Goods and money on a purchase move independently and Foundry never lets
+   * Goods and money on a purchase move independently and StockChief never lets
    * one imply the other: a partial delivery changes what is still expected, a
    * partial payment changes what is still owed, and neither ever touches the
    * other. That rule is enforced in the engine, and this is where the owner
@@ -38,20 +38,20 @@
 <% if (supplierPlan) { %>
   <section class="supplier-response" style="margin-top:20px">
     <div class="supplier-response__head">
-      <span class="rm-kicker">Foundry worked out the consequence</span>
+      <span class="rm-kicker">StockChief worked out the consequence</span>
       <span class="badge <%= supplierPlan.status === 'NEEDS_APPROVAL' ? 'badge--warning' : '' %>"><%= supplierPlan.status.replaceAll('_',' ').toLowerCase() %></span>
     </div>
     <h2><%= supplierPlan.summary %></h2>
     <% if (supplierPlan.consequences.atRiskUnits) { %>
-      <p><strong><%= supplierPlan.consequences.atRiskUnits %> committed units are at risk.</strong> Foundry compared stock already owned, alternate supply, waiting and purchasing before proposing a response.</p>
+      <p><strong><%= supplierPlan.consequences.atRiskUnits %> committed units are at risk.</strong> StockChief compared stock already owned, alternate supply, waiting and purchasing before proposing a response.</p>
     <% } else { %>
-      <p>No stock or money was changed by the supplier message. Foundry is watching the evidenced quantity, date and cost.</p>
+      <p>No stock or money was changed by the supplier message. StockChief is watching the evidenced quantity, date and cost.</p>
     <% } %>
     <% if (supplierPlan.status === 'NEEDS_APPROVAL') { %>
       <a class="rm-btn" href="/needs-you">Review the one decision</a>
     <% } %>
     <details class="disclose">
-      <summary>Why Foundry decided this · compare <%= supplierPlan.alternatives.length %> options</summary>
+      <summary>Why StockChief decided this · compare <%= supplierPlan.alternatives.length %> options</summary>
       <div class="disclose__body">
         <% supplierPlan.alternatives.forEach(function(option) { %>
           <p><strong><%= option.type.replaceAll('_',' ') %></strong> — <%= option.explanation || (option.feasible ? 'Possible' : 'Not currently possible') %></p>
@@ -79,12 +79,23 @@
   </div>
 <% } %>
 
+<% if (order.isEditable && !order.hasCosts) { %>
+  <section class="rm-panel" style="margin-top:20px">
+    <div class="rm-panel__head"><h2>Next: add the missing purchase prices</h2></div>
+    <div style="padding:18px 20px">
+      <p>No price was supplied for one or more lines. StockChief will not guess a price or send an incomplete order.</p>
+      <a class="rm-btn" href="/purchasing/orders/<%= order.id %>/detail">Add prices and review my PO</a>
+      <p class="rm-sub">The next screen shows the exact items, costs and total for your approval. This draft adds no stock; inventory changes only when goods are received.</p>
+    </div>
+  </section>
+<% } %>
+
 <% if (order.status === 'ORDERED' && !sentToSupplier && supplierMessage) { %>
   <div class="rm-decision" style="margin-top:20px">
     <span class="rm-decision__arrow" aria-hidden="true">→</span>
     <span class="rm-decision__txt">
       This order has not reached <%= order.supplierName %>.
-      <small><% if (!supplierMessage.recipient) { %>Foundry needs the supplier's email address; it will not pretend an internal approval was a sent order.<% } else if (!supplierMessage.connectorId) { %>Foundry needs the mailbox it should send from.<% } else { %>The message is prepared and needs permission to send.<% } %></small>
+      <small><% if (!supplierMessage.recipient) { %>StockChief needs the supplier's email address; it will not pretend an internal approval was a sent order.<% } else if (!supplierMessage.connectorId) { %>StockChief needs the mailbox it should send from.<% } else { %>The message is prepared and needs permission to send.<% } %></small>
     </span>
     <span class="rm-decision__go">
       <% if (!supplierMessage.recipient || !supplierMessage.connectorId) { %>
@@ -117,7 +128,7 @@
       <details class="disclose" style="margin-top:16px">
         <summary>Advanced evidence records</summary>
         <div class="disclose__body">
-          <p class="rm-sub">These are the immutable record links Foundry used. They are for audit and troubleshooting, not for reading the purchase day to day.</p>
+          <p class="rm-sub">These are the immutable record links StockChief used. They are for audit and troubleshooting, not for reading the purchase day to day.</p>
           <% evidenceTrace.details.forEach(function (link) { %>
             <p class="rm-sub">
               <% if (link.from.href) { %><a href="<%= link.from.href %>"><%= link.from.title %></a><% } else { %><%= link.from.title %><% } %>
@@ -164,7 +175,7 @@
   <div class="rm-decision" style="margin-top:20px">
     <span class="rm-decision__arrow" aria-hidden="true">→</span>
     <span class="rm-decision__txt">
-      Foundry prepared the documented landed-cost split.
+      StockChief prepared the documented landed-cost split.
       <small>It is based on the supplier bill and goods actually received. Review it before it changes inventory value.</small>
     </span>
     <span class="rm-decision__go"><a class="rm-btn" href="/purchasing/orders/<%= order.id %>/landed-costs/<%= awaitingLandedCostApproval.id %>">Review split</a></span>

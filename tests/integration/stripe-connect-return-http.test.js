@@ -10,7 +10,7 @@ const { makeDatabase, cleanupAll, seedWorkspace } = require('../helpers');
 
 test.after(cleanupAll);
 
-test('Stripe can return through the registered local hostname without a second Foundry login', async () => {
+test('Stripe can return through the registered local hostname without a second StockChief login', async () => {
   const heldClient = process.env.STRIPE_CONNECT_CLIENT_ID;
   const heldSecret = process.env.STRIPE_SECRET_KEY;
   process.env.STRIPE_CONNECT_CLIENT_ID = 'ca_test_return';
@@ -23,7 +23,7 @@ test('Stripe can return through the registered local hostname without a second F
     const app = createApp({ db, env: 'test', sessionSecret: 'stripe-return-host-test' });
 
     // Deliberately no request.agent and no signed-in cookie: this is what the
-    // registered 127.0.0.1 callback receives when Foundry was opened on localhost.
+    // registered 127.0.0.1 callback receives when StockChief was opened on localhost.
     const response = await request(app).get('/settings/connections/payments/return')
       .query({ state: begun.state, error: 'access_denied',
         error_description: 'Connection was cancelled for this test.' });

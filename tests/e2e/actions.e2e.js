@@ -4,7 +4,7 @@
  * Mission 4 acceptance run, in a real browser, from a clean database.
  *
  * A configured clothing wholesaler with Brooklyn at 4 and New Jersey at 48.
- * Mission 3 raises the imbalance; the person reviews the transfer Foundry
+ * Mission 3 raises the imbalance; the person reviews the transfer StockChief
  * proposes, changes the quantity, approves it, and watches it happen. Then the
  * things that must not happen: a retried execution moving stock twice, an
  * unapproved mutation, an invented purchase.
@@ -77,11 +77,11 @@ async function waitForServer(timeoutMs = 20000) {
 }
 
 /**
- * Submits an instruction and lands on the proposal it produced. If Foundry asks
+ * Submits an instruction and lands on the proposal it produced. If StockChief asks
  * a question or refuses instead, that is reported straight away rather than
  * waiting out a navigation that is never coming.
  */
-async function askFoundry(page, instruction) {
+async function askStockChief(page, instruction) {
   await page.goto(`${BASE}/actions`);
   await page.fill('#action-instruction', instruction);
   await Promise.all([
@@ -93,7 +93,7 @@ async function askFoundry(page, instruction) {
   await page.waitForLoadState('domcontentloaded');
   if (!/\/actions\/(act_|plan)/.test(page.url())) {
     const said = await page.locator('.act-question').first().innerText().catch(() => '(no answer shown)');
-    throw new Error(`Foundry did not propose an action for "${instruction}". It said: ${said}`);
+    throw new Error(`StockChief did not propose an action for "${instruction}". It said: ${said}`);
   }
 }
 
@@ -197,7 +197,7 @@ const balance = (databasePath, state, skuId, locationId) =>
   inspect(databasePath, (db) => repo.getBalance(db, state.workspaceId, skuId, locationId));
 
 test(
-  'Mission 4 end to end: Foundry carries out approved inventory work',
+  'Mission 4 end to end: StockChief carries out approved inventory work',
   { skip: !config.ai.configured, timeout: 1200000 },
   async (t) => {
     fs.rmSync(SHOTS, { recursive: true, force: true });
@@ -261,9 +261,9 @@ test(
       state.firstProposalUrl = page.url();
     });
 
-    await t.test('3. Foundry proposes a specific transfer, and nothing has moved', async () => {
+    await t.test('3. StockChief proposes a specific transfer, and nothing has moved', async () => {
       const body = await page.locator('body').innerText();
-      assert.match(body, /Foundry is ready to prepare a real transfer/);
+      assert.match(body, /StockChief is ready to prepare a real transfer/);
       assert.match(body, /Navy Oxford/);
       assert.match(body, /New Jersey Warehouse/);
       assert.match(body, /Brooklyn Warehouse/);
@@ -376,11 +376,11 @@ test(
     });
 
     await t.test('14. a written receive instruction is understood and carried out', async () => {
-      await askFoundry(page, 'Receive 50 more Navy Oxford size 8 into Brooklyn Warehouse');
+      await askStockChief(page, 'Receive 50 more Navy Oxford size 8 into Brooklyn Warehouse');
       await shot(page, 'receive-proposal');
 
       const preview = await page.locator('body').innerText();
-      assert.match(preview, /Foundry is ready to receive/);
+      assert.match(preview, /StockChief is ready to receive/);
       assert.match(preview, /Brooklyn Warehouse[\s\S]{0,60}16[\s\S]{0,20}66/);
       assert.equal(balance(databasePath, state, state.size8, state.brooklyn), 16, 'not yet');
 
@@ -392,7 +392,7 @@ test(
     });
 
     await t.test('15. a correction warns, records its reason, and verifies', async () => {
-      await askFoundry(page, 'Set Brooklyn Warehouse Navy Oxford size 8 to 60 after a physical count');
+      await askStockChief(page, 'Set Brooklyn Warehouse Navy Oxford size 8 to 60 after a physical count');
       await shot(page, 'adjust-proposal');
 
       const preview = await page.locator('body').innerText();
@@ -421,7 +421,7 @@ test(
       assert.equal(adjustment.reason_code, 'physical_count');
     });
 
-    await t.test('16. Foundry refuses to invent what it does not have', async () => {
+    await t.test('16. StockChief refuses to invent what it does not have', async () => {
       await page.goto(`${BASE}/actions`);
       await page.fill('#action-instruction', 'Order 500 more Navy Oxford size 8 from our supplier');
       await Promise.all([
@@ -435,7 +435,7 @@ test(
 
       const body = await page.locator('body').innerText();
       assert.match(body, /purchase|supplier|order/i);
-      assert.ok(!body.includes('Foundry is ready to'), 'no fabricated action');
+      assert.ok(!body.includes('StockChief is ready to'), 'no fabricated action');
       assert.equal(
         inspect(databasePath, (db) =>
           db.prepare("SELECT COUNT(*) AS n FROM action_proposals WHERE workspace_id = ? AND status = 'AWAITING_APPROVAL'")

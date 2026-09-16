@@ -3,7 +3,7 @@
 /**
  * One replenishment answer for one product, covering every location at once.
  *
- * Foundry used to answer this question twice, in two places that could not see
+ * StockChief used to answer this question twice, in two places that could not see
  * each other. The attention engine compared locations and suggested a transfer;
  * the purchasing engine compared the total against a reorder point and
  * suggested an order. Both were individually defensible and together they were
@@ -11,7 +11,7 @@
  * supplier" is not a plan, it is two opinions, and the person reading them has
  * to work out for themselves whether the second is still true after the first.
  *
- * That reconciliation is arithmetic, so Foundry does it.
+ * That reconciliation is arithmetic, so StockChief does it.
  *
  * The inputs are considered in a fixed order, because each one narrows what the
  * next may conclude:
@@ -499,7 +499,7 @@ function buildPlan(db, workspaceId, sku, options = {}) {
  * list rather than re-deriving the same decisions separately. A description and
  * a behaviour that are worked out twice are a description and a behaviour that
  * will eventually disagree; that is the failure this whole module exists to
- * remove, and it applies to Foundry's account of itself too.
+ * remove, and it applies to StockChief's account of itself too.
  *
  * `when: 'now'` is carried out by the approval. `when: 'after'` is a separate
  * decision that becomes available once the plan has run — placing an order is
@@ -538,7 +538,7 @@ function plannedActions(plan) {
       when: 'after',
       kind: 'place_order',
       text: `Place that order with ${plan.purchase.supplierName} when you are ready`,
-      detail: 'Foundry never tells a supplier anything by itself.',
+      detail: 'StockChief never tells a supplier anything by itself.',
     });
   }
 
@@ -636,7 +636,7 @@ function recommendationFor(plan) {
     : '';
 
   if (plan.blocked === 'no_supplier') {
-    return 'Add a supplier for this line and Foundry can work out the quantity.';
+    return 'Add a supplier for this line and StockChief can work out the quantity.';
   }
   if (plan.decision === 'transfer_and_purchase') {
     return `Move ${counted(moved, plan.unitLabel)} between locations and ${buying}. ` +
@@ -703,7 +703,7 @@ function planWorkspace(db, workspaceId, signals, options = {}) {
     // happening, beside an order sized as though the move is not, is two
     // opinions rather than a plan. A line needing only one of the two has
     // nothing to be fragmented against and keeps the ordinary single-action
-    // path, which is also where Foundry's own authority to act lives.
+    // path, which is also where StockChief's own authority to act lives.
     combined: governed.filter((plan) => plan.transfers.length > 0 && Boolean(plan.purchase || plan.prepared)),
     combinedSkuIds: new Set(
       governed

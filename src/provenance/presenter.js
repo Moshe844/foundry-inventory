@@ -21,7 +21,7 @@ function title(type, row) {
   if (type === 'purchase_receipt_line') return `${Number(row.quantity_units)} units received`;
   if (type === 'purchase_order_event') return String(row.event || 'purchase event').replaceAll('_', ' ');
   if (type === 'sales_order_event') return String(row.event_type || 'customer order event').replaceAll('_', ' ').toLowerCase();
-  if (type === 'work_item') return String(row.category || 'Foundry work item').replaceAll('_', ' ');
+  if (type === 'work_item') return String(row.category || 'StockChief work item').replaceAll('_', ' ');
   if (type === 'inventory_movement') return `${Math.abs(Number(row.quantity_delta || 0))} units ${row.operation || 'moved'}`;
   if (type === 'inventory_transfer') return row.transfer_number || 'inventory transfer';
   if (type === 'inventory_transfer_line') return `${Number(row.requested_quantity || 0)} units on transfer`;
@@ -172,7 +172,7 @@ function salesOrderStory(db, workspaceId, order, extras = {}, options = {}) {
       label: 'Stock reserved',
       text: confirmationLinked
         ? committed
-          ? `Foundry reserved ${committed} ${committed === 1 ? 'unit' : 'units'}${places.length ? ` from ${places.join(' and ')}` : ''} for this customer.${waiting ? ` ${waiting} ${waiting === 1 ? 'unit was' : 'units were'} still waiting for stock.` : ''}`
+          ? `StockChief reserved ${committed} ${committed === 1 ? 'unit' : 'units'}${places.length ? ` from ${places.join(' and ')}` : ''} for this customer.${waiting ? ` ${waiting} ${waiting === 1 ? 'unit was' : 'units were'} still waiting for stock.` : ''}`
           : `The order was confirmed, but no stock was reserved.${waiting ? ` ${waiting} ${waiting === 1 ? 'unit was' : 'units were'} waiting for stock.` : ''}`
         : 'The order is confirmed, but its confirmation is not linked in the evidence graph.',
       href: orderHref,
@@ -245,8 +245,8 @@ function salesOrderStory(db, workspaceId, order, extras = {}, options = {}) {
       label: 'Reservation rechecked',
       text: linked
         ? cleared
-          ? 'After stock changed, Foundry rechecked this order and recorded that it was no longer short.'
-          : 'After stock changed, Foundry rechecked this order; some units were still waiting for stock.'
+          ? 'After stock changed, StockChief rechecked this order and recorded that it was no longer short.'
+          : 'After stock changed, StockChief rechecked this order; some units were still waiting for stock.'
         : 'The reservation changed, but the update is not linked in the evidence graph.',
       href: orderHref,
       linkText: 'Show the order evidence',
@@ -271,7 +271,7 @@ function salesOrderStory(db, workspaceId, order, extras = {}, options = {}) {
         ? `${shipment.shipment_number} moved ${shipment.units} ${shipment.units === 1 ? 'unit' : 'units'}${from} out of on-hand stock.`
         : linked
           ? `${shipment.shipment_number} is linked to this order, but its inventory movement is not linked.`
-          : `${shipment.shipment_number} is recorded, but Foundry cannot prove its link to this order.`,
+          : `${shipment.shipment_number} is recorded, but StockChief cannot prove its link to this order.`,
       href: `/fulfilment/${shipment.id}`,
       linkText: `Open ${shipment.shipment_number}`,
       complete: linked && movementLinked,
@@ -381,7 +381,7 @@ function purchaseOrderStory(db, workspaceId, order, extras = {}, options = {}) {
       label: 'Why it was ordered',
       text: demandText
         ? `${demandText}.${planText}`
-        : reason || 'Recorded replenishment evidence showed the stock was below its reorder point, so Foundry prepared this purchase.',
+        : reason || 'Recorded replenishment evidence showed the stock was below its reorder point, so StockChief prepared this purchase.',
       href: decision?.to.href || null,
       linkText: 'Show the purchase decision',
       complete: Boolean(decision),
@@ -479,7 +479,7 @@ function explainWhy(db, workspaceId, start, options = {}) {
       .map((fact) => `${fact.label} ${fact.value}${fact.note ? ` (${fact.note})` : ''}`).join('; ')}.`
     : evidence.length
       ? evidence.map((entry) => `${entry.from.title} ${entry.phrase} ${entry.to.title}`).join('. ') + '.'
-    : 'Foundry has no linked cause or decision evidence for this record. It will not guess one.';
+    : 'StockChief has no linked cause or decision evidence for this record. It will not guess one.';
   const outcome = consequences.length
     ? consequences.map((entry) => `${entry.from.title} ${entry.phrase} ${entry.to.title}`).join('. ') + '.'
     : 'No linked consequence has been recorded yet.';

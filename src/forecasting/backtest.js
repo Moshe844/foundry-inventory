@@ -20,7 +20,7 @@
  * The second rule is the one with teeth. Elaborate models routinely lose to a
  * plain average on short, noisy, small-business series, and a system that
  * prefers the elaborate one because it is elaborate will order confidently and
- * wrongly. When nothing beats the baseline, the baseline wins and Foundry says
+ * wrongly. When nothing beats the baseline, the baseline wins and StockChief says
  * so — that is a successful backtest, not a failed one.
  *
  * Errors are reported in units per day, because that is the language of the

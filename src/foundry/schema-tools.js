@@ -7,7 +7,7 @@
  *
  * The same stripped schema is used to validate the reply, so the model is
  * judged against the contract it was actually given — being rejected for a rule
- * it was never shown is a bug in the caller, not a bad answer. Foundry then
+ * it was never shown is a bug in the caller, not a bad answer. StockChief then
  * repairs what is safely repairable and enforces the full, stricter contract.
  */
 

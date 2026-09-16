@@ -13,7 +13,7 @@
  *
  * The refusal that matters most is the last one. A sentence naming a carrier
  * and no limits — "just use UPS" — is unlimited permission to spend on
- * postage, and Foundry does not create that from a sentence any more than it
+ * postage, and StockChief does not create that from a sentence any more than it
  * creates unlimited authority from "handle everything". It says what it would
  * need and waits.
  */
@@ -89,7 +89,7 @@ function serviceIn(text, carrier) {
 /**
  * What the sentence means, or what is missing from it.
  *
- * Returns `{ understood, rule, because, needs }`. `needs` is what Foundry
+ * Returns `{ understood, rule, because, needs }`. `needs` is what StockChief
  * would have to be told before this could become a rule, phrased as the thing
  * to say rather than the field that is empty.
  */
@@ -123,7 +123,7 @@ function read(sentence) {
    * A rule with no ceiling and no deadline is not a rule.
    *
    * "Always use UPS" sounds like an instruction and is in fact permission to
-   * spend any amount on postage for ever. Foundry will not write that down
+   * spend any amount on postage for ever. StockChief will not write that down
    * from a sentence, for the same reason it will not turn "handle everything"
    * into unlimited authority. What it needs is one number.
    */
@@ -132,7 +132,7 @@ function read(sentence) {
       understood: false,
       needs: 'a limit',
       because: carrier
-        ? `Foundry can use ${carrier.name}${service ? ` ${service}` : ''} on its own, but not without a `
+        ? `StockChief can use ${carrier.name}${service ? ` ${service}` : ''} on its own, but not without a `
           + 'limit — that would be permission to spend anything on postage. Say what it may cost, or '
           + 'that it has to arrive by the date the customer was promised.'
         : 'A rule needs a limit: what postage may cost, or that it has to arrive by the date the '

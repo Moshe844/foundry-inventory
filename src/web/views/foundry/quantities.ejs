@@ -2,7 +2,7 @@
   /*
    * The last step: what is actually on the shelves.
    *
-   * Foundry has the structure but not the numbers, and it will never invent
+   * StockChief has the structure but not the numbers, and it will never invent
    * them — so this screen offers the three real ways of supplying them at equal
    * weight, and says plainly what is recorded so far.
    *
@@ -16,11 +16,11 @@
 
 <div class="rm-head">
   <p class="rm-head__eyebrow" style="color:var(--good)"><%- helpers.icon('check', { size: 14 }) %> Structure is live</p>
-  <h1>How should we get your current quantities into Foundry?</h1>
+  <h1>How should we get your current quantities into StockChief?</h1>
   <p>
     <strong><%= item.name %></strong> is live with <strong><%= skuCount %></strong>
     trackable <%= skuCount === 1 ? 'item' : 'variants' %> across <strong><%= locations.length %></strong>
-    <%= locations.length === 1 ? 'location' : 'locations' %>. Foundry will never invent what is on
+    <%= locations.length === 1 ? 'location' : 'locations' %>. StockChief will never invent what is on
     your shelves, so it needs the opening numbers from you.
   </p>
 </div>
@@ -82,13 +82,13 @@
   </section>
 <% } %>
 
-<p class="rm-stamp"><%- helpers.icon('layers', { size: 14 }) %> Or give Foundry the numbers another way</p>
+<p class="rm-stamp"><%- helpers.icon('layers', { size: 14 }) %> Or give StockChief the numbers another way</p>
 <div class="rm-opts">
   <div class="rm-choice" style="cursor:default">
     <span class="rm-choice__ic"><%- helpers.icon('spark', { size: 19 }) %></span>
-    <span class="rm-choice__t">Tell Foundry</span>
+    <span class="rm-choice__t">Tell StockChief</span>
     <span class="rm-choice__b">Describe what is on hand in ordinary language.</span>
-    <span class="rm-choice__d">Foundry translates it, previews the exact changes, and waits for your approval.</span>
+    <span class="rm-choice__d">StockChief translates it, previews the exact changes, and waits for your approval.</span>
     <form method="post" action="/actions/ask" data-busy data-ask-form style="margin-top:8px;display:grid;gap:8px">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <label class="rm-field" style="margin:0">
@@ -104,7 +104,7 @@
     <span class="rm-choice__ic"><%- helpers.icon('import', { size: 19 }) %></span>
     <span class="rm-choice__t">Upload Excel</span>
     <span class="rm-choice__b">The counts are already in a file.</span>
-    <span class="rm-choice__d">Give Foundry a spreadsheet or CSV and it works the quantities out, then shows you.</span>
+    <span class="rm-choice__d">Give StockChief a spreadsheet or CSV and it works the quantities out, then shows you.</span>
     <span class="rm-choice__go">Choose this <%- helpers.icon('arrowRight', { size: 14 }) %></span>
   </a>
 
@@ -121,7 +121,7 @@
 <div class="rm-spine-foot">
   <form method="post" action="/foundry/quantities/complete" style="margin:0">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <button class="rm-btn rm-btn--ghost" type="submit">Finish setup and let Foundry manage it</button>
+    <button class="rm-btn rm-btn--ghost" type="submit">Finish setup and let StockChief manage it</button>
   </form>
   <span class="rm-quiet" style="font-size:13px;align-self:center">
     Already entered everything, or starting with no stock?

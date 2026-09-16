@@ -3,14 +3,14 @@
 /*
  * An address, from the way people actually write one.
  *
- * Foundry stores a destination as the text somebody typed or a customer wrote,
+ * StockChief stores a destination as the text somebody typed or a customer wrote,
  * which is right: it is what was said, and a parcel is addressed in words.
  * A carrier, though, wants fields — street, city, state, postcode — and will
  * refuse or misdeliver anything else.
  *
  * So this reads the text and says what it found, including how sure it is. It
  * never fills a gap. An address with no postcode comes back as an address with
- * no postcode and `complete: false`, and Foundry asks once rather than shipping
+ * no postcode and `complete: false`, and StockChief asks once rather than shipping
  * to a guess. A parcel sent to an address software completed on somebody's
  * behalf is a parcel nobody can find, and the cost of asking is one question.
  */
@@ -107,7 +107,7 @@ function why(parsed) {
     ? parsed.missing[0]
     : `${parsed.missing.slice(0, -1).join(', ')} and ${parsed.missing[parsed.missing.length - 1]}`;
   return `The delivery address is missing the ${list}. A carrier will not quote without it, and `
-    + 'Foundry will not fill it in on the customer\'s behalf.';
+    + 'StockChief will not fill it in on the customer\'s behalf.';
 }
 
 /** One line, for a screen. */

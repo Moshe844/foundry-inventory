@@ -33,7 +33,7 @@ test.after(cleanupAll);
 const TODAY = new Date().toISOString().slice(0, 10);
 
 /**
- * A provider that behaves, so the tests are about Foundry rather than Stripe.
+ * A provider that behaves, so the tests are about StockChief rather than Stripe.
  */
 function fakeProvider() {
   const state = { customers: [], invoices: [] };
@@ -171,7 +171,7 @@ test('a webhook delivered five times charges the books once', async () => {
   } finally { undo(); }
 });
 
-test('an event about something Foundry never asked for is recorded and not acted on', async () => {
+test('an event about something StockChief never asked for is recorded and not acted on', async () => {
   const env = setup();
   const undo = registry.register('fake', fakeProvider());
   try {
@@ -205,7 +205,7 @@ test('a failed payment is reported on the request, and pays nothing', async () =
   } finally { undo(); }
 });
 
-test('Foundry will not ask for money it is not owed, or from somebody it cannot reach', async () => {
+test('StockChief will not ask for money it is not owed, or from somebody it cannot reach', async () => {
   const env = setup();
   const undo = registry.register('fake', fakeProvider());
   try {
@@ -228,7 +228,7 @@ test('Foundry will not ask for money it is not owed, or from somebody it cannot 
   } finally { undo(); }
 });
 
-test('Stripe events are translated into the four facts Foundry acts on', () => {
+test('Stripe events are translated into the four facts StockChief acts on', () => {
   const paid = stripe.readEvent({
     type: 'invoice.payment_succeeded',
     data: { object: { id: 'in_1', payment_intent: 'pi_1', amount_paid: 45000, amount_due: 150000,
@@ -289,7 +289,7 @@ test('a Stripe event is understood whether or not it carries a version prefix', 
   // The amount still comes off the event, not from the prefix being stripped.
   assert.equal(stripe.readEvent({ ...paid, type: 'v1.invoice.paid' }).amountMinor, 4000);
 
-  // And an event Foundry has no business acting on is still ignored.
+  // And an event StockChief has no business acting on is still ignored.
   const unrelated = stripe.readEvent({ type: 'v1.billing.meter.no_meter_found', data: { object: {} } });
   assert.equal(unrelated.kind, 'IGNORED');
   assert.match(unrelated.reason, /does not act on/);
@@ -298,12 +298,12 @@ test('a Stripe event is understood whether or not it carries a version prefix', 
 test('two events describing one payment record it once', async () => {
   /*
    * Stripe sends invoice.paid and invoice.payment_succeeded for the same card
-   * payment, with different event ids and the same amount_paid. Foundry
+   * payment, with different event ids and the same amount_paid. StockChief
    * deduplicated on the event id, so both got through and each added the full
    * figure again: one $300.00 payment became $600.00 in the books, and the
    * request said it had been paid twice over.
    *
-   * What the provider reports is the invoice's running total. Foundry records
+   * What the provider reports is the invoice's running total. StockChief records
    * the difference between that and what it has already recorded.
    */
   const env = setup();
@@ -516,11 +516,11 @@ test('money already applied to an invoice is not asked about again', async () =>
 test('a supplier paid before their bill arrived is a decision, not a silent debt', async () => {
   /*
    * Pay a supplier up front and the money sits as an advance. When their bill
-   * arrives it is raised unpaid, so Foundry shows a debt to a supplier who
+   * arrives it is raised unpaid, so StockChief shows a debt to a supplier who
    * already has the money — and says nothing about the money it is holding.
    *
    * Not applied automatically: a payment to a supplier names the supplier and
-   * not the order, so Foundry cannot tell an early settlement from a deposit
+   * not the order, so StockChief cannot tell an early settlement from a deposit
    * for something else. Guessing would be deciding where money went.
    */
   const env = setup();

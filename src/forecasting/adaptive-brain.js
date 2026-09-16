@@ -235,7 +235,7 @@ function optimize(raw = {}) {
         ...(needed !== null && available < needed ? ['enough substitute stock'] : [])],
       reasons:[substitute.verified
         ? `${available} spare units are recorded with an approved ${ratio}:1 conversion.`
-        : 'Foundry has no verified authority to treat another SKU as this product.'],
+        : 'StockChief has no verified authority to treat another SKU as this product.'],
       substitute });
   }
 

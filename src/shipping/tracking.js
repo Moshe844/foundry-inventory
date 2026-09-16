@@ -6,7 +6,7 @@
  * A shipment used to be finished the moment it was marked shipped. Everything
  * after that — in transit, out for delivery, delivered, or the one that
  * matters, "we tried and nobody was in" — happened on the carrier's website
- * and nowhere in Foundry. So an order said "Shipped" for three weeks and a
+ * and nowhere in StockChief. So an order said "Shipped" for three weeks and a
  * parcel that had been sitting at a depot since Tuesday looked exactly like
  * one that arrived on Wednesday.
  *
@@ -130,7 +130,7 @@ function apply(db, ctx, shipment, read = {}) {
  * A carrier message, from the door to the record.
  *
  * The raw message is written down before anything is made of it, in the same
- * discipline as payment events: a message Foundry could not understand should
+ * discipline as payment events: a message StockChief could not understand should
  * be visible rather than lost.
  */
 function receiveEvent(db, ctx, providerName, rawEvent, options = {}) {
@@ -192,7 +192,7 @@ async function sweep(db, ctx, options = {}) {
         idempotencyKey:`shipping-track:${shipment.id}:${shipment.tracked_at || 'never'}`,
         sourceKind:'sales_shipment', sourceId:shipment.id,
         title:`Check ${shipment.shipment_number} with the carrier`,
-        summary:'The shipment has gone quiet, so Foundry is using the polling fallback.',
+        summary:'The shipment has gone quiet, so StockChief is using the polling fallback.',
         link:`/orders/${shipment.sales_order_id}/detail?open=shipping#shipping`,
         evidence:[{ label:'Tracking number', value:shipment.tracking_number },
           { label:'Last carrier check', value:shipment.tracked_at || 'Never' }],
@@ -256,7 +256,7 @@ require('../autonomous/service').registerAdapter('shipping.track', {
 });
 
 /**
- * "Track 1Z999…" — a number somebody has, for a parcel Foundry did not buy.
+ * "Track 1Z999…" — a number somebody has, for a parcel StockChief did not buy.
  *
  * Attaches it to a shipment when one is obviously waiting for it, and
  * otherwise says so rather than creating a shipment out of a string. A parcel
@@ -286,7 +286,7 @@ async function trackNumber(db, ctx, trackingNumber, options = {}) {
 
   if (!shipment) {
     return { tracked: false, carrier: detected ? detected.name : null,
-      because: 'Foundry has no shipment with that tracking number. Open the shipment it belongs to '
+      because: 'StockChief has no shipment with that tracking number. Open the shipment it belongs to '
         + 'and add it there, so the number is attached to goods and a customer rather than to nothing.' };
   }
 
@@ -295,7 +295,7 @@ async function trackNumber(db, ctx, trackingNumber, options = {}) {
   if (!providerName) {
     return { tracked: true, shipmentId: shipment.id, live: false,
       carrier: detected ? detected.name : carriers.displayName(shipment.carrier),
-      because: 'The number is on the shipment and the tracking link works. Foundry cannot follow it '
+      because: 'The number is on the shipment and the tracking link works. StockChief cannot follow it '
         + 'automatically without a shipping account connected.' };
   }
   const provider = options.provider || providers.get(providerName);

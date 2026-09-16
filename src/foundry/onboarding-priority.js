@@ -25,9 +25,9 @@ function nextStep(db, workspaceId, options = {}) {
       operationalRisk: 100,
       question: ownerNeedsClarification
         ? 'Confirm only the inventory details that are still unclear.'
-        : 'Review the exact inventory records you gave Foundry.',
+        : 'Review the exact inventory records you gave StockChief.',
       reason: ownerNeedsClarification
-        ? 'What you typed is valid business evidence. Foundry will not ask you to upload it elsewhere or guess the unclear parts.'
+        ? 'What you typed is valid business evidence. StockChief will not ask you to upload it elsewhere or guess the unclear parts.'
         : 'What you typed is enough to create these products and opening quantities after your approval.',
       deferConfigurationQuestions: true,
     });
@@ -39,7 +39,7 @@ function nextStep(db, workspaceId, options = {}) {
       irreversibility: 90,
       operationalRisk: 90,
       question: 'Where are your real product and stock records today?',
-      reason: 'Those records can establish products, variants, locations and opening stock without Foundry inventing business facts.',
+      reason: 'Those records can establish products, variants, locations and opening stock without StockChief inventing business facts.',
       deferConfigurationQuestions: true,
     });
   }
@@ -48,7 +48,7 @@ function nextStep(db, workspaceId, options = {}) {
     informationValue: 30,
     irreversibility: 20,
     operationalRisk: 20,
-    question: 'Which reversible structural defaults should Foundry use?',
+    question: 'Which reversible structural defaults should StockChief use?',
     reason: 'These choices can usually wait until real records reveal the answer.',
     deferConfigurationQuestions: false,
   });

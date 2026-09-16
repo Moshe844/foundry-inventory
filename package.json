@@ -1,8 +1,8 @@
 {
-  "name": "foundry-inventory",
+  "name": "stockchief-inventory",
   "version": "1.0.0",
   "private": true,
-  "description": "Foundry Inventory - one configurable inventory engine for quantity, variant, serialized and lot-tracked inventory.",
+  "description": "StockChief Inventory - one configurable inventory engine for quantity, variant, serialized and lot-tracked inventory.",
   "type": "commonjs",
   "main": "src/server.js",
   "engines": {

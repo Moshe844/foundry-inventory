@@ -16,7 +16,7 @@
         <div><span>Already here<% if (scopeWarning.currentProductCount > scopeWarning.currentExamples.length) { %> — showing 4 of <%= scopeWarning.currentProductCount %><% } %></span><strong><%= scopeWarning.currentExamples.join(', ') %></strong></div>
         <div><span>In this file<% if (scopeWarning.incomingProductCount > scopeWarning.incomingExamples.length) { %> — showing 4 of <%= scopeWarning.incomingProductCount %><% } %></span><strong><%= scopeWarning.incomingExamples.join(', ') %></strong></div>
       </div>
-      <p class="muted">Foundry has read the file, but nothing has been imported. Continue only if these records belong in the inventory currently open.</p>
+      <p class="muted">StockChief has read the file, but nothing has been imported. Continue only if these records belong in the inventory currently open.</p>
     </div>
     <form method="post" action="/imports/<%= plan.id %>/confirm-scope" class="modal-foot" data-busy>
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -110,7 +110,7 @@
       <% } %>
 
       <% if (plan.assumptions.length) { %>
-        <h3 class="sub-head">What Foundry assumed</h3>
+        <h3 class="sub-head">What StockChief assumed</h3>
         <ul class="plain-list">
           <% plan.assumptions.forEach(function (assumption) { %><li><%= assumption %></li><% }) %>
         </ul>
@@ -154,21 +154,21 @@
   <%# ------------------------------------------------------------- the mapping %>
   <form method="post" action="/imports/<%= plan.id %>/mapping" class="card section">
     <div class="card-head">
-      <h2>How Foundry read the columns</h2>
+      <h2>How StockChief read the columns</h2>
       <span class="spacer"></span>
       <% if (plan.transformations.aiUsed) { %><span class="badge badge--muted">AI helped name some</span><% } %>
     </div>
     <div class="card-body">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <table class="table table--tight">
-        <thead><tr><th>Column in your file</th><th>Foundry read it as</th></tr></thead>
+        <thead><tr><th>Column in your file</th><th>StockChief read it as</th></tr></thead>
         <tbody>
           <% mappingRows.forEach(function (row) { %>
             <tr>
               <td>
                 <strong><%= row.column %></strong>
                 <% if (row.byAi) { %><span class="badge badge--muted">named by AI</span><% } %>
-                <% if (row.ignoredBecause) { %><div class="muted">left out — Foundry does not track <%= row.ignoredBecause %></div><% } %>
+                <% if (row.ignoredBecause) { %><div class="muted">left out — StockChief does not track <%= row.ignoredBecause %></div><% } %>
               </td>
               <td>
                 <select class="input input--sm" name="col_<%= row.index %>" data-column="<%= row.index %>">
@@ -196,7 +196,7 @@
       <% } %>
 
       <% if (plan.conflicts.length) { %>
-        <h3 class="sub-head">Locations Foundry does not recognise</h3>
+        <h3 class="sub-head">Locations StockChief does not recognise</h3>
         <% plan.conflicts.forEach(function (conflict) { %>
           <label class="field">
             <span class="field-label">“<%= conflict.text %>” (<%= conflict.count %> rows) is</span>
@@ -222,8 +222,8 @@
 <% if (problems.length) { %>
   <div class="card section">
     <%# Once the import has run these are notes about what it did — "read as
-        Warehouse" is not something Foundry could not do. %>
-    <div class="card-head"><h2><%= report ? 'What Foundry had to interpret' : 'What Foundry could not do' %></h2></div>
+        Warehouse" is not something StockChief could not do. %>
+    <div class="card-head"><h2><%= report ? 'What StockChief had to interpret' : 'What StockChief could not do' %></h2></div>
     <div class="card-body">
       <ul class="plain-list">
         <% problems.forEach(function (problem) { %>
@@ -259,7 +259,7 @@
         <tr>
           <th>Row</th><th>Product</th><th>Version</th>
           <% if (priceUpdate) { %><th class="num">Selling price</th><% } else { %><th class="num">Qty</th><th>Location</th><% } %>
-          <th>Foundry's reading</th>
+          <th>StockChief's reading</th>
         </tr>
       </thead>
       <tbody>

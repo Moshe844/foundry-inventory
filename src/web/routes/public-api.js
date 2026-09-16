@@ -23,7 +23,7 @@ function createPublicApi(db) {
       CROSS JOIN locations l LEFT JOIN balances b ON b.sku_id = s.id AND b.location_id = l.id
       WHERE s.workspace_id = ? AND l.workspace_id = ? AND i.is_active = 1 AND l.is_active = 1
       ORDER BY i.name, s.code, l.name`).all(auth.workspaceId, auth.workspaceId);
-    return res.json({ data: rows, sourceOfTruth: 'Foundry canonical inventory engine' });
+    return res.json({ data: rows, sourceOfTruth: 'StockChief canonical inventory engine' });
   }));
 
   router.get('/events', handle('events:read', (auth, req, res) => res.json({ data: events.list(db, auth.workspaceId,

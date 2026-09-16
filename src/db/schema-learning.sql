@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS learning_proposals (
 CREATE INDEX IF NOT EXISTS idx_learning_proposals_status
   ON learning_proposals(workspace_id, status, created_at DESC);
 
--- Explicit, versioned and narrow. No row means Foundry may propose only.
+-- Explicit, versioned and narrow. No row means StockChief may propose only.
 CREATE TABLE IF NOT EXISTS learning_authority (
   id                    TEXT PRIMARY KEY,
   workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

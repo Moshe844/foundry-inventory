@@ -148,7 +148,7 @@ test('a SKU code finds that exact variant', async () => {
 test('naming both dimensions returns that variant, not its siblings', async () => {
   // "Black Small" listed White / Small underneath the right answer. Ranking it
   // lower was not enough: somebody who has named both dimensions has said which
-  // one they mean, and offering the other reads as Foundry not being sure. It
+  // one they mean, and offering the other reads as StockChief not being sure. It
   // matched at all only because the product they share is called Black T-shirt,
   // so every variant of it contains the word "black".
   const env = await shop();

@@ -13,7 +13,7 @@ function record(db, ctx, input) {
   const statedAs = requireText(input.statedAs, 'What happened', { max: 1200 });
   const type = String(input.eventType || '').trim().toLowerCase();
   if (!['physical_count', 'shipment_arrived', 'damage', 'return', 'found_stock', 'reported_event'].includes(type)) {
-    throw new ValidationError('Foundry needs to know whether this was a count, delivery, damage, return, or found stock.');
+    throw new ValidationError('StockChief needs to know whether this was a count, delivery, damage, return, or found stock.');
   }
   const id = newId('phe');
   const now = nowIso();
@@ -84,7 +84,7 @@ function describeOutcome(db, workspaceId, event) {
 
   if (event.status === 'ROUTED' && entities.purchaseOrderId) {
     return {
-      message: 'Foundry matched that event. Check the receiving details before stock changes.',
+      message: 'StockChief matched that event. Check the receiving details before stock changes.',
       redirectTo: `/purchasing/orders/${entities.purchaseOrderId}`,
     };
   }
@@ -102,10 +102,10 @@ function describeOutcome(db, workspaceId, event) {
       counted = null;
     }
     const message = counted && Number.isFinite(Number(counted.expected))
-      ? `Count recorded. Foundry compared it with the recorded ${counted.expected} `
+      ? `Count recorded. StockChief compared it with the recorded ${counted.expected} `
         + `${counted.expected === 1 ? 'unit' : 'units'} of ${subject} and they match — `
         + 'no inventory change was needed.'
-      : 'Count recorded. It agrees with what Foundry already had, so nothing needed changing.';
+      : 'Count recorded. It agrees with what StockChief already had, so nothing needed changing.';
     return {
       message,
       redirectTo: entities.itemId ? `/inventory/${entities.itemId}` : '/',
@@ -114,14 +114,14 @@ function describeOutcome(db, workspaceId, event) {
 
   if (event.investigationId) {
     return {
-      message: `Count recorded. It does not match what Foundry has for ${subject}, `
+      message: `Count recorded. It does not match what StockChief has for ${subject}, `
         + 'so the difference is in Needs you with the evidence behind it.',
       redirectTo: '/needs-you',
     };
   }
 
   return {
-    message: 'Foundry recorded what you said but could not place it on its own. '
+    message: 'StockChief recorded what you said but could not place it on its own. '
       + 'It is in Needs you with what it still needs.',
     redirectTo: '/needs-you',
   };
@@ -243,11 +243,11 @@ async function recordNatural(db, ctx, statedAs, options = {}) {
         schema, schemaName: 'physical_inventory_event',
       });
       const result = validate(toWireSchema(schema), response.data, { key: 'physical-event-wire' });
-      if (!result.ok) throw new ValidationError('Foundry could not safely identify the physical inventory event.');
+      if (!result.ok) throw new ValidationError('StockChief could not safely identify the physical inventory event.');
       parsed = result.data;
     } catch {
       parsed = parsed || { eventType: 'reported_event', skuId: '', locationId: '', countedQuantity: -1,
-        reason: 'Foundry kept the report for review because the model provider was unavailable.' };
+        reason: 'StockChief kept the report for review because the model provider was unavailable.' };
     }
   }
   const sku = parsed.skuId ? skus.find((row) => row.id === parsed.skuId) : null;
@@ -270,7 +270,7 @@ async function recordNatural(db, ctx, statedAs, options = {}) {
         interpreted: parsed,
         interpretationReason:
           `This report names ${mentioned.skus} products across ${mentioned.locations} locations. ` +
-          'Foundry records one count at a time and will not record part of a report as if it were all of it. ' +
+          'StockChief records one count at a time and will not record part of a report as if it were all of it. ' +
           'Tell it one product and location at a time, or use a count sheet.',
         unresolvedMultiplePositions: true,
       },

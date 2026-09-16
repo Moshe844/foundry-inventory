@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Foundry over HTTP: the first-run experience, authorization, the approval
+ * StockChief over HTTP: the first-run experience, authorization, the approval
  * flow, refresh recovery, and change management.
  */
 
@@ -59,7 +59,7 @@ function setup({ provider, empty = true } = {}) {
   const store = makeDatabase();
   const workspace = seedWorkspace(store.db);
   if (empty) {
-    // A fresh Foundry workspace: drop the locations seedWorkspace creates.
+    // A fresh StockChief workspace: drop the locations seedWorkspace creates.
     store.db.prepare('DELETE FROM locations WHERE workspace_id = ?').run(workspace.workspaceId);
   }
   const app = createApp({
@@ -121,17 +121,17 @@ async function understand(agent, description = 'We wholesale shoes in colors Nav
   throw new Error('job never finished');
 }
 
-test('a new account is handed to Foundry, not an empty dashboard', async () => {
+test('a new account is handed to StockChief, not an empty dashboard', async () => {
   const { app, workspace } = setup();
   const agent = request.agent(app);
   await signIn(agent, workspace.account.email, workspace.account.password);
 
   // Overview answers for itself now — it says the inventory is empty and
-  // points at Foundry, rather than silently sending you there.
+  // points at StockChief, rather than silently sending you there.
   const home = await agent.get('/');
   assert.equal(home.status, 200);
   assert.match(plain(home.text), /This inventory is empty/);
-  assert.match(plain(home.text), /Set it up with Foundry/);
+  assert.match(plain(home.text), /Set it up with StockChief/);
 
   // The first decision is now how they manage inventory today. Sending someone
   // with a spreadsheet straight to "describe your business" was asking them to
@@ -141,8 +141,8 @@ test('a new account is handed to Foundry, not an empty dashboard', async () => {
   assert.equal(front.headers.location, '/onboarding');
 
   const chooser = plain((await agent.get('/onboarding')).text);
-  assert.match(chooser, /Where should Foundry get your inventory from/);
-  assert.match(chooser, /Enter it in Foundry/);
+  assert.match(chooser, /Where should StockChief get your inventory from/);
+  assert.match(chooser, /Enter it in StockChief/);
   assert.match(chooser, /Move from files/);
   assert.match(chooser, /maps and reconciles them before cutover/);
   assert.match(chooser, /Connect another system/);
@@ -151,7 +151,7 @@ test('a new account is handed to Foundry, not an empty dashboard', async () => {
   // Starting Fresh is the Mission 2 experience, reached deliberately and
   // otherwise unchanged.
   const describe = plain((await agent.get('/foundry/describe')).text);
-  assert.match(describe, /Give Foundry what you already have/);
+  assert.match(describe, /Give StockChief what you already have/);
   assert.match(describe, /Understand my inventory/);
   assert.match(describe, /Set it up manually/);
 });
@@ -175,15 +175,15 @@ test('the whole approval flow works end to end over HTTP', async () => {
   assert.match(proposal, /Brooklyn Warehouse/);
   assert.match(proposal, /New Jersey Warehouse/);
   assert.match(proposal, /Where are your real product and stock records today/);
-  assert.doesNotMatch(proposal, /One thing worth deciding|Let Foundry decide/);
-  assert.match(proposal, /What Foundry understood/);
-  assert.match(proposal, /What Foundry needs next/);
-  assert.match(proposal, /Enter records in Foundry/);
+  assert.doesNotMatch(proposal, /One thing worth deciding|Let StockChief decide/);
+  assert.match(proposal, /What StockChief understood/);
+  assert.match(proposal, /What StockChief needs next/);
+  assert.match(proposal, /Enter records in StockChief/);
   assert.match(proposal, /Upload inventory files/);
   assert.match(proposal, /Connect a business system/);
   assert.match(proposal, /Use email attachments/);
   assert.doesNotMatch(proposal, /Choose where my records are/);
-  assert.match(proposal, /What Foundry knows \/ Why Foundry decided this/);
+  assert.match(proposal, /What StockChief knows \/ Why StockChief decided this/);
   assert.doesNotMatch(proposal, /What starts working after this setup|Save the safe structure/);
 
   const understandingId = proposalPath.split('/').pop();
@@ -222,7 +222,7 @@ test('the whole approval flow works end to end over HTTP', async () => {
   const emptyText = plain(emptyInventory.text);
   assert.match(emptyText, /Your setup is ready\. Now add your products/);
   assert.match(emptyInventory.text, /href="\/inventory\/describe"/);
-  assert.match(emptyText, /Tell Foundry what you sell/);
+  assert.match(emptyText, /Tell StockChief what you sell/);
   assert.match(emptyInventory.text, /href="\/inventory\/new">Add one manually/);
 
   const configuredHome = plain((await agent.get('/foundry')).text);
@@ -277,7 +277,7 @@ test('proposal never silently drops a stated requirement that is outside configu
     ],
     recommendedConfiguration: {
       trackingMode: 'quantity', usesVariants: true, allowNegativeStock: false,
-      summary: 'Foundry can support Size, Color, Material variants.',
+      summary: 'StockChief can support Size, Color, Material variants.',
     },
     statedRequirements: [
       {
@@ -301,8 +301,8 @@ test('proposal never silently drops a stated requirement that is outside configu
   assert.match(proposal, /Every citation comes from your words/i);
   assert.match(proposal, /All \d+ explicit statements are preserved and sorted by purpose below/i);
   assert.match(proposal, /Ready to support|Needs information from your records/);
-  assert.match(response.text, /<summary>What you told Foundry<\/summary>/);
-  assert.doesNotMatch(response.text, /<details[^>]*open[^>]*>\s*<summary>What you told Foundry/i);
+  assert.match(response.text, /<summary>What you told StockChief<\/summary>/);
+  assert.doesNotMatch(response.text, /<details[^>]*open[^>]*>\s*<summary>What you told StockChief/i);
   assert.match(response.text, /<details class="rm-work" style="margin:0">\s*<summary>[\s\S]*?Needs information from your records/);
   assert.doesNotMatch(response.text, /<details[^>]*open[^>]*>\s*<summary>[\s\S]*?Needs information from your records/i);
   assert.match(proposal, /You do not confirm these in this list/);
@@ -369,7 +369,7 @@ test('a first stock report is read, previewed, and becomes configured inventory 
 
   const proposalPage = await agent.get(proposalPath);
   const proposal = plain(proposalPage.text);
-  assert.match(proposal, /What Foundry read from mock_shoe_inventory_invoice.csv/);
+  assert.match(proposal, /What StockChief read from mock_shoe_inventory_invoice.csv/);
   assert.match(proposal, /INV-2026-0816/);
   assert.match(proposal, /30 pairs · 2 styles · 3 variants/);
   assert.match(proposal, /SH-101-BLK/);
@@ -388,7 +388,7 @@ test('a first stock report is read, previewed, and becomes configured inventory 
   assert.match(ready, /mock_shoe_inventory_invoice.csv is now inventory truth/);
   assert.match(ready, /30 pairs received into Brooklyn Warehouse/);
   assert.match(ready, /This file called the vendor identifier Supplier Code/);
-  assert.match(ready, /Foundry will call it Style #/);
+  assert.match(ready, /StockChief will call it Style #/);
   assert.match(ready, /recognize alternate headings on future documents/);
   assert.match(ready, /Purchase order INV-2026-0816 recorded, approved, and fully received/);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(workspace.workspaceId).n, 2);
@@ -416,14 +416,14 @@ test('after configuring, the console uses the customer terminology', async () =>
   const locations = plain((await agent.get('/locations')).text);
   assert.match(locations, /Brooklyn Warehouse/);
 
-  // A configured workspace lands on Foundry's guided home, whether or not it has
+  // A configured workspace lands on StockChief's guided home, whether or not it has
   // products yet. Customer terminology belongs to the traditional overview, so
   // that is where it is checked.
   const home = plain((await agent.get('/')).text);
-  assert.match(home, /Getting Foundry ready/);
+  assert.match(home, /Getting StockChief ready/);
 
   const overview = plain((await agent.get('/overview')).text);
-  assert.match(overview, /Ask Foundry about your inventory/);
+  assert.match(overview, /Ask StockChief about your inventory/);
   assert.match(overview, /2 warehouses/i);
 });
 
@@ -456,7 +456,7 @@ test('staff cannot apply a configuration; owners can', async () => {
   assert.equal(planApplier.isConfigured(db, workspace.workspaceId), true);
 });
 
-test('one workspace cannot see or use another workspace Foundry work', async () => {
+test('one workspace cannot see or use another workspace StockChief work', async () => {
   const store = makeDatabase();
   const a = seedWorkspace(store.db, { workspaceName: 'Acme' });
   const b = seedWorkspace(store.db, { workspaceName: 'Beacon' });
@@ -629,7 +629,7 @@ test('a change is proposed, shown with its impact, and only applied on confirmat
 test('an unsupported change is explained, not faked', async () => {
   const unsupported = {
     kind: 'not_supported',
-    summary: 'Foundry cannot forecast demand or suggest reorder quantities yet.',
+    summary: 'StockChief cannot forecast demand or suggest reorder quantities yet.',
     whatWillChange: [],
     existingInventoryAffected: 'Nothing.',
     migrationRequired: false,
@@ -702,7 +702,7 @@ test('the progress page reports the real stage and works without JavaScript', as
   const page = await agent.get(started.headers.location);
   assert.equal(page.status, 200);
   const text = plain(page.text);
-  assert.match(text, /Foundry is reading your inventory/);
+  assert.match(text, /StockChief is reading your inventory/);
   assert.match(page.text, /class="rm-intake-thinking"/);
   assert.doesNotMatch(page.text, /class="rm-thinking"/);
   assert.match(text, /Reading your operation/);
@@ -795,7 +795,7 @@ test('the axes you described during setup are waiting on the new-item form', asy
   assert.match(html, /name="options\[1\]\[name\]"[^>]*value="Colour"/);
   assert.match(html, /value="White, Red, Blue, Purple, Green"/);
   assert.match(html, /name="hasVariants"[^>]*checked/);
-  assert.match(plain(html), /Filled in from what you told Foundry/);
+  assert.match(plain(html), /Filled in from what you told StockChief/);
 });
 
 test('any business gets its own axes back, whatever they are', async () => {
@@ -844,5 +844,5 @@ test('a workspace that described no options still gets a blank form', async () =
   const html = (await agent.get('/inventory/new')).text;
 
   assert.doesNotMatch(html, /name="hasVariants"[^>]*checked/, 'nothing was described, so nothing is suggested');
-  assert.doesNotMatch(plain(html), /Filled in from what you told Foundry/);
+  assert.doesNotMatch(plain(html), /Filled in from what you told StockChief/);
 });

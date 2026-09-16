@@ -13,7 +13,7 @@ function queue(db,databasePath,ctx,membership,packageId) {
   if (pkg.status === 'READY' || pkg.status === 'CUTOVER_ACTIVE') return false;
   migration.setPreparationProgress(db,ctx.workspaceId,packageId,{
     status:'RUNNING',stage:'UNDERSTANDING',completed:0,total:0,
-    detail:'Foundry is identifying each dataset and its exact source meaning.',
+    detail:'StockChief is identifying each dataset and its exact source meaning.',
   });
   const worker = new Worker(path.join(__dirname,'preparation-worker.js'),{
     workerData:{ databasePath,ctx:{ workspaceId:ctx.workspaceId,actorId:ctx.actorId,accountId:ctx.accountId },

@@ -31,7 +31,7 @@ function setup() {
 
 function shippedOrder(env, quantity = 6) {
   const customer = sales.createCustomer(env.db, env.workspace.ctx, {
-    name: 'ABC School', email: 'orders@abcschool.test',
+    name: 'ABC School', email: 'orders@abcschool.test', shippingAddress: '123 Example Road, Albany, NY 12207, US',
   });
   inventory.receive(env.db, env.workspace.ctx, {
     skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: quantity * 3,
@@ -86,7 +86,7 @@ test('the owner can rewrite the words, and what they save is what would go', asy
   const url = (await agent.post(`/sales/orders/${order.id}/pick`)
     .type('form').send({ _csrf: csrfFrom(page.text) })).headers.location;
   page = await agent.get(url);
-  await agent.post(`${url}/ship`).type('form').send({ _csrf: csrfFrom(page.text) });
+  await agent.post(`${url}/ship`).type('form').send({ _csrf: csrfFrom(page.text), carrier: 'ups' });
 
   page = await agent.get(url);
   const message = notices.forOrder(env.db, env.workspace.workspaceId, order.id)[0];
@@ -119,7 +119,7 @@ test('with no mailbox connected the page says so instead of offering a dead butt
   const url = (await agent.post(`/sales/orders/${order.id}/pick`)
     .type('form').send({ _csrf: csrfFrom(page.text) })).headers.location;
   page = await agent.get(url);
-  await agent.post(`${url}/ship`).type('form').send({ _csrf: csrfFrom(page.text) });
+  await agent.post(`${url}/ship`).type('form').send({ _csrf: csrfFrom(page.text), carrier: 'ups' });
 
   const text = plain((await agent.get(url)).text);
   assert.match(text, /No mailbox is connected/);
@@ -138,7 +138,7 @@ test('the fulfilment page lists customers not yet told, and holds the setting', 
   const url = (await agent.post(`/sales/orders/${order.id}/pick`)
     .type('form').send({ _csrf: csrfFrom(page.text) })).headers.location;
   page = await agent.get(url);
-  await agent.post(`${url}/ship`).type('form').send({ _csrf: csrfFrom(page.text) });
+  await agent.post(`${url}/ship`).type('form').send({ _csrf: csrfFrom(page.text), carrier: 'ups' });
 
   const queue = await agent.get('/fulfilment');
   const text = plain(queue.text);
@@ -147,7 +147,7 @@ test('the fulfilment page lists customers not yet told, and holds the setting', 
   assert.match(text, /ABC School/);
   assert.match(text, /What customers are told when an order ships/);
 
-  // Asking Foundry to send without naming a mailbox is refused in words.
+  // Asking StockChief to send without naming a mailbox is refused in words.
   const refused = await agent.post('/fulfilment/settings/notices')
     .type('form').send({ _csrf: csrfFrom(queue.text), shippingNotice: 'send' });
   assert.equal(refused.status, 303);
@@ -171,7 +171,7 @@ test('a cancelled note stops asking to be sent', async () => {
   const url = (await agent.post(`/sales/orders/${order.id}/pick`)
     .type('form').send({ _csrf: csrfFrom(page.text) })).headers.location;
   page = await agent.get(url);
-  await agent.post(`${url}/ship`).type('form').send({ _csrf: csrfFrom(page.text) });
+  await agent.post(`${url}/ship`).type('form').send({ _csrf: csrfFrom(page.text), carrier: 'ups' });
 
   const message = notices.forOrder(env.db, env.workspace.workspaceId, order.id)[0];
   page = await agent.get(url);

@@ -1,18 +1,18 @@
 'use strict';
 
 /*
- * Which mail is Foundry's business, and which is simply the owner's mail.
+ * Which mail is StockChief's business, and which is simply the owner's mail.
  *
- * Connecting the shop's mailbox used to mean handing Foundry the whole inbox.
+ * Connecting the shop's mailbox used to mean handing StockChief the whole inbox.
  * Every newsletter, every bank alert, every delivery-robot notice and every
- * message from the owner's accountant became a row in Foundry's records, was
+ * message from the owner's accountant became a row in StockChief's records, was
  * read by triage, and turned up on a screen the owner is supposed to trust.
  * The reasoning at the time was that a stranger might be a customer, and that
  * refusing unknown senders had already lost somebody's first order.
  *
  * Both things are true, and they are not in conflict. The question was simply
  * the wrong one. It is not "do we know this sender" — it is "is this about
- * the business Foundry runs". A stranger asking to buy fifty pairs is about
+ * the business StockChief runs". A stranger asking to buy fifty pairs is about
  * the business. A supplier's marketing blast is not, and the fact that we buy
  * from them does not make it so.
  *
@@ -21,7 +21,7 @@
  *
  *   1. It names something of ours   — an order, a PO, an invoice, a product
  *                                     code that exists in this workspace.
- *   2. It continues a conversation  — a reply on a thread Foundry already
+ *   2. It continues a conversation  — a reply on a thread StockChief already
  *                                     accepted.
  *   3. It is bulk or automated      — an unsubscribe link, a no-reply
  *                                     address, an out-of-office.
@@ -29,7 +29,7 @@
  *      with
  *   5. It is trying to trade        — buying, quoting, invoicing, delivery
  *                                     or stock language from anyone at all.
- *   6. Otherwise                    — not Foundry's.
+ *   6. Otherwise                    — not StockChief's.
  *
  * Rules 1 and 2 sit above rule 3 on purpose. A shipping notice legitimately
  * arrives from noreply@carrier, and a supplier's own system legitimately sends
@@ -78,7 +78,7 @@ const FLAT_SQL = (column) =>
   `REPLACE(REPLACE(REPLACE(REPLACE(UPPER(${column}),'-',''),' ',''),'_',''),'/','')`;
 
 /*
- * Reference numbers Foundry issued or recorded, and the words for them.
+ * Reference numbers StockChief issued or recorded, and the words for them.
  *
  * The kind is carried through to the reason the owner reads, because "it
  * quotes purchase order PO-4471" is a fact they can check and "it matched a
@@ -286,11 +286,11 @@ function bulkSignal(message) {
 /* ----------------------------------------------------------------- verdict */
 
 /**
- * Does this message belong in Foundry?
+ * Does this message belong in StockChief?
  *
  * Returns `{ keep, reason, evidence, relationship, counterparty }`. The reason
  * is written for the owner and is stored verbatim, whichever way it goes —
- * mail Foundry kept and mail Foundry set aside are equally owed an
+ * mail StockChief kept and mail StockChief set aside are equally owed an
  * explanation.
  */
 function judge(db, workspaceId, connectorId, message = {}) {
@@ -311,10 +311,10 @@ function judge(db, workspaceId, connectorId, message = {}) {
       reason: `This quotes ${ours.kind}, ${ours.ref}.` });
   }
 
-  // 2. It continues a conversation Foundry is already part of.
+  // 2. It continues a conversation StockChief is already part of.
   if (continuesOurThread(db, workspaceId, connectorId, message)) {
     return said({ keep: true, evidence: message.threadId || message.externalThreadId,
-      reason: 'This is a reply on a conversation Foundry is already keeping.' });
+      reason: 'This is a reply on a conversation StockChief is already keeping.' });
   }
 
   // 3. Bulk and automated mail, whoever it is from.
@@ -338,7 +338,7 @@ function judge(db, workspaceId, connectorId, message = {}) {
       reason: `A sender you do not have on record wrote "${trading}".` });
   }
 
-  // 6. Not Foundry's.
+  // 6. Not StockChief's.
   return said({ keep: false, evidence: null,
     reason: 'Set aside because nothing in it mentions an order, a product, a delivery, an invoice or a '
       + 'payment, and it is not from anyone on your customer or supplier records.' });
@@ -397,8 +397,8 @@ function sweepCaptured(db, workspaceId, connectorId, options = {}) {
   /*
    * And the mirror of the same mistake: an order request filed as handled.
    *
-   * Narrow on purpose. Only messages Foundry read as somebody asking to buy,
-   * only those Foundry itself filed, and only into the drawer that says
+   * Narrow on purpose. Only messages StockChief read as somebody asking to buy,
+   * only those StockChief itself filed, and only into the drawer that says
    * somebody is waiting. Re-triaging everything would drag mail the owner has
    * already settled back onto their desk, which is the opposite of the job.
    */

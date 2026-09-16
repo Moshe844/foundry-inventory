@@ -107,9 +107,9 @@
 }
 
 /*
- * The customer's own words, on the order Foundry read out of them.
+ * The customer's own words, on the order StockChief read out of them.
  *
- * Set apart from Foundry's prose deliberately: the owner is approving a
+ * Set apart from StockChief's prose deliberately: the owner is approving a
  * reading of this text, so the text has to be visibly the source rather than
  * more of the system talking.
  */
@@ -124,7 +124,7 @@
 }
 
 /*
- * How the goods left — asked before Foundry will say they went.
+ * How the goods left — asked before StockChief will say they went.
  *
  * Laid out as three equal choices rather than a dropdown with a default,
  * because a default is what let an order report itself shipped when nobody
@@ -176,7 +176,7 @@
 .pay-live-head { margin: 0 0 0.5rem; }
 
 /*
- * One row per job Foundry might do on its own.
+ * One row per job StockChief might do on its own.
  *
  * Deliberately a flat list rather than a nested disclosure: the owner's
  * objection was that one switch quietly carried six unrelated permissions, so
@@ -207,7 +207,7 @@
 }
 
 /*
- * What a document means, above what Foundry would build from it.
+ * What a document means, above what StockChief would build from it.
  *
  * Given its own block at the top of the proposal because the summary below it
  * looks identical whether the goods exist or not — which is how a proforma
@@ -267,7 +267,7 @@
 .fold-note { color: var(--muted, #6b7280); font-size: 12.5px; font-weight: 400; }
 
 /*
- * Paying without leaving Foundry.
+ * Paying without leaving StockChief.
  *
  * "Take payment now" was a link with target=_blank, so on the desktop app it
  * threw the merchant into a different browser — a fresh window, no session,
@@ -339,7 +339,7 @@ body.is-paying { overflow: hidden; }
 /* ---------------------------------------------------------------------------
    The document proposal, folded
 
-   This page has to carry a lot — what a file says, what Foundry would build
+   This page has to carry a lot — what a file says, what StockChief would build
    from it, and what it deliberately will not do — to somebody who has never
    seen it before and is deciding whether to trust it with their stock. The
    answer is not less information. It is one visible decision and everything

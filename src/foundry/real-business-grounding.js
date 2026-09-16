@@ -72,7 +72,7 @@ function ground(understanding, description) {
   const ownerAmbiguities = [...(ownerInput.ambiguities || [])];
   const ownerLines = (ownerInput.lines || []).filter((line) => {
     if (!tokensAreGrounded(description, line.productName)) {
-      ownerAmbiguities.push(`Foundry discarded an unsupported product name (${line.productName || 'blank'}) instead of inventing it.`);
+      ownerAmbiguities.push(`StockChief discarded an unsupported product name (${line.productName || 'blank'}) instead of inventing it.`);
       return false;
     }
     if (!tokensAreGrounded(description, line.variantLabel)) {
@@ -139,12 +139,12 @@ function ground(understanding, description) {
 
   const axes = understanding.variantDimensions.map((dimension) => dimension.name);
   understanding.recommendedConfiguration.summary = axes.length
-    ? `Foundry can support ${axes.join(', ')} variants. Their actual values will come from your records.`
-    : 'Foundry can safely start with quantity tracking. Real products and stock will come from your records.';
+    ? `StockChief can support ${axes.join(', ')} variants. Their actual values will come from your records.`
+    : 'StockChief can safely start with quantity tracking. Real products and stock will come from your records.';
   understanding.locationModel.summary = understanding.locationModel.multipleLocations
     ? 'Your description supports multiple-location tracking. Actual location names and the exact count will come from your records.'
-    : 'Foundry can track stock by location once the real location records are supplied.';
-  understanding.receivingWorkflow = 'Foundry will record receiving against real products, locations and source documents.';
+    : 'StockChief can track stock by location once the real location records are supplied.';
+  understanding.receivingWorkflow = 'StockChief will record receiving against real products, locations and source documents.';
   understanding.transferWorkflow = 'Transfers will be available between verified locations once their real names are supplied.';
   understanding.adjustmentWorkflow = 'Count corrections will require a reason and remain traceable.';
 

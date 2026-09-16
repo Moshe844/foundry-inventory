@@ -4,15 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light">
-  <title><%= title %> · Foundry</title>
-  <meta name="description" content="Foundry manages your inventory operation and brings you the exceptions that need your judgement.">
-  <meta property="og:title" content="Foundry">
-  <meta property="og:description" content="Foundry handles routine inventory work and brings you the exceptions that need your judgement.">
+  <title><%= title %> · StockChief</title>
+  <meta name="description" content="StockChief manages your inventory operation and brings you the exceptions that need your judgement.">
+  <meta property="og:title" content="StockChief">
+  <meta property="og:description" content="StockChief handles routine inventory work and brings you the exceptions that need your judgement.">
   <meta property="og:type" content="website">
   <meta property="og:image" content="<%= origin %>/og.png">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Foundry — Your inventory operation, managed.">
-  <meta name="twitter:description" content="Foundry handles routine inventory work and brings you the exceptions that need your judgement.">
+  <meta name="twitter:title" content="StockChief — Your inventory operation, managed.">
+  <meta name="twitter:description" content="StockChief handles routine inventory work and brings you the exceptions that need your judgement.">
   <meta name="twitter:image" content="<%= origin %>/og.png">
   <%# Keep the application shell self-contained. A remote font stylesheet used
       to block every navigation when Google Fonts was slow or unavailable. %>
@@ -32,7 +32,7 @@
   /*
    * Three states, not eight destinations.
    *
-   * The rail carries what a person actually does in a day: read what Foundry
+   * The rail carries what a person actually does in a day: read what StockChief
    * left them, settle what it could not, say something to it. Inventory,
    * Orders, Money and Activity are no longer places — they are lenses, and
    * they are reached from the brief, from a story, or by asking. Everything
@@ -50,18 +50,18 @@
 <div class="app">
 
   <header class="rm-rail">
-    <a class="rm-rail__brand" href="/" aria-label="Foundry">
+    <a class="rm-rail__brand" href="/" aria-label="StockChief">
       <span class="rm-rail__mark" aria-hidden="true">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M4 8.2 12 4.4l8 3.8v7.6L12 19.6l-8-3.8z"/><path d="m4 8.2 8 3.8 8-3.8M12 12v7.6"/></svg>
       </span>
-      <span class="rm-rail__name">Foundry</span>
+      <span class="rm-rail__name">StockChief</span>
     </a>
 
     <nav class="rm-rail__nav" aria-label="Primary navigation">
       <% if (workspace) { %>
         <a class="rm-tab <%= railTab === 'brief' ? 'is-on' : '' %>" href="/"<%- railTab === 'brief' ? ' aria-current="page"' : '' %>><span class="rm-tab__icon"><%- helpers.icon('overview', { size: 18 }) %></span><span>Brief</span></a>
         <a class="rm-tab <%= railTab === 'needs' ? 'is-on' : '' %>" href="/needs-you"<%- railTab === 'needs' ? ' aria-current="page"' : '' %>><span class="rm-tab__icon"><%- helpers.icon('attention', { size: 18 }) %></span><span>Needs you</span><% if (attentionCount > 0) { %><span aria-label="<%= attentionCount %> waiting" class="rm-tab__count nav-count"><%= attentionCount %></span><% } %></a>
-        <a class="rm-tab <%= railTab === 'ask' ? 'is-on' : '' %>" href="/ask"<%- railTab === 'ask' ? ' aria-current="page"' : '' %>><span class="rm-tab__icon"><%- helpers.icon('foundry', { size: 18 }) %></span><span>Ask Foundry</span></a>
+        <a class="rm-tab <%= railTab === 'ask' ? 'is-on' : '' %>" href="/ask"<%- railTab === 'ask' ? ' aria-current="page"' : '' %>><span class="rm-tab__icon"><%- helpers.icon('foundry', { size: 18 }) %></span><span>Ask StockChief</span></a>
       <% } else { %>
         <a class="rm-tab <%= nav === 'inventories' ? 'is-on' : '' %>" href="/inventories"><span class="rm-tab__icon"><%- helpers.icon('layers', { size: 18 }) %></span><span>Your inventories</span></a>
         <a class="rm-tab" href="/inventories/new"><span class="rm-tab__icon"><%- helpers.icon('plus', { size: 18 }) %></span><span>New inventory</span></a>

@@ -4,7 +4,7 @@
  * Telling a customer their parcel is late, before they ask.
  *
  * I argued against writing this on the grounds that what to say about a late
- * parcel depends on things Foundry cannot see — whether this customer is owed
+ * parcel depends on things StockChief cannot see — whether this customer is owed
  * an apology, a refund, or a replacement sent today. That reasoning was about
  * the wrong thing. Deciding what to *do* does need a person. Saying where the
  * parcel is does not, and it is the part the customer is actually waiting for.
@@ -132,7 +132,7 @@ function prepare(db, ctx, shipmentId) {
   const draft = compose(db, workspaceId, shipmentId);
   if (!draft) return null;
   if (!draft.recipient) {
-    return { prepared: false, because: 'Foundry has no email address for this customer.' };
+    return { prepared: false, because: 'StockChief has no email address for this customer.' };
   }
 
   const notices = require('../sales/customer-communications');

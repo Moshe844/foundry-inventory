@@ -1,6 +1,6 @@
 <div class="page-head">
   <div class="titles">
-    <a class="back-link" href="/autopilot"><%- helpers.icon('chevron', { size: 14 }) %> What Foundry does</a>
+    <a class="back-link" href="/autopilot"><%- helpers.icon('chevron', { size: 14 }) %> What StockChief does</a>
     <h1><%= policy.name %></h1>
     <div class="page-sub">
       Version <%= policy.version %> ·
@@ -10,7 +10,7 @@
 </div>
 
 <div class="card section">
-  <div class="card-head"><h2>What this lets Foundry do</h2></div>
+  <div class="card-head"><h2>What this lets StockChief do</h2></div>
   <div class="card-body">
     <ul class="plain-list">
       <% lines.forEach(function (line) { %><li><%= line %></li><% }) %>
@@ -18,7 +18,7 @@
     <% if (policy.description) { %><p class="muted"><%= policy.description %></p><% } %>
     <% if (!policy.isApproved) { %>
       <p class="muted">Nothing happens under this policy until you approve it — and even then, only when
-        Foundry is set to run your inventory rather than prepare it.</p>
+        StockChief is set to run your inventory rather than prepare it.</p>
     <% } %>
   </div>
   <div class="card-foot">

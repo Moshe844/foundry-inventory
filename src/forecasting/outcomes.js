@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Was Foundry right?
+ * Was StockChief right?
  *
  * A forecasting system that never checks itself is not a forecasting system,
  * it is a random number generator with a good vocabulary. Every stored
@@ -105,7 +105,7 @@ function daysBetween(from, to) {
 }
 
 /**
- * How Foundry's predictions have actually been doing.
+ * How StockChief's predictions have actually been doing.
  *
  * Reported as an accuracy record rather than a score out of ten. The lean is
  * the part worth reading: a forecaster that is consistently ten percent under
@@ -161,11 +161,11 @@ function summarise({ n, relative, bias }) {
   if (!n) return 'No comparable forecast has closed yet.';
   const accuracyWords = relative === null ? 'not measurable'
     : `out by about ${Math.round(relative * 100)}% of the units that actually sold`;
-  if (bias === null) return `Across ${n} closed forecasts, Foundry has been ${accuracyWords}.`;
+  if (bias === null) return `Across ${n} closed forecasts, StockChief has been ${accuracyWords}.`;
   const lean = Math.abs(bias) < 0.5 ? 'with no consistent lean either way'
     : bias > 0 ? `and leaning high by about ${bias} units a forecast`
       : `and leaning low by about ${Math.abs(bias)} units a forecast, which is the direction that causes stockouts`;
-  return `Across ${n} closed forecasts, Foundry has been ${accuracyWords}, ${lean}.`;
+  return `Across ${n} closed forecasts, StockChief has been ${accuracyWords}, ${lean}.`;
 }
 
 module.exports = { scoreDue, scoreOne, accuracy, MAX_CENSORED_SHARE };

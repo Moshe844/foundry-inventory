@@ -173,7 +173,7 @@ function open(db, ctx, membership, id) {
   }
   const journalLines = [];
   if (bill.purchase_order_id) {
-    // Older Foundry versions recognized supplier debt at receipt time. Keep
+    // Older StockChief versions recognized supplier debt at receipt time. Keep
     // those immutable journals intact, but do not create the same payable a
     // second time when the real supplier invoice is later matched.
     const legacyReceiptApMinor = Number(db.prepare(`SELECT COALESCE(SUM(jl.credit_minor - jl.debit_minor), 0) AS n
@@ -254,7 +254,7 @@ function open(db, ctx, membership, id) {
       else if (payableToRecognizeMinor < 0) journalLines.push({ accountKey: 'ACCOUNTS_PAYABLE',
         debitMinor: Math.abs(payableToRecognizeMinor), supplierId: bill.supplier_id,
         itemId: line.item_id, skuId: line.sku_id,
-        memo: 'Supplier invoice is lower than the payable recorded by an earlier Foundry version' });
+        memo: 'Supplier invoice is lower than the payable recorded by an earlier StockChief version' });
     }
     if (legacyApReusedMinor > 0 && journalLines.length === 0 && Number(bill.tax_minor) === 0) {
       db.prepare(`UPDATE accounting_supplier_bills SET status = 'OPEN', match_status = ?,

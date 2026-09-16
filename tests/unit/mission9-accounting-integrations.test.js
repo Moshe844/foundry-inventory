@@ -98,7 +98,7 @@ test('an approved exact mapping can resolve an uncertain account on the next sha
   assert.equal(sync.state(env.db, env.workspace.workspaceId, env.connection.id).conflicts.every((row) => row.status === 'RESOLVED'), true);
 });
 
-test('empty Foundry books can import provider opening books with exact identities and reconcile', async () => {
+test('empty StockChief books can import provider opening books with exact identities and reconcile', async () => {
   const env = fixture();
   const snapshot = { asOf: '2026-09-10', currency: 'USD', version: 'qb-opening-v1', accounts: [
     { externalId: '35', name: 'Checking', accountType: 'Bank', classification: 'Asset', balanceMinor: 12500 },

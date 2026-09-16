@@ -1,4 +1,4 @@
--- Foundry Inventory : attention layer (Mission 3)
+-- StockChief Inventory : attention layer (Mission 3)
 --
 -- Additive only. Mission 1 owns inventory truth and Mission 2 owns
 -- configuration; nothing here is an alternative source of either. Every row

@@ -3,7 +3,7 @@
 /*
  * Where parcels leave from.
  *
- * A carrier will not quote a rate without an origin, and Foundry will not
+ * A carrier will not quote a rate without an origin, and StockChief will not
  * invent one — so the address has to be somewhere a person can type it. It is
  * optional, because most locations never post anything and a stockroom does
  * not need a postal address to hold stock.
@@ -60,7 +60,7 @@ test('renaming a location does not quietly erase where its parcels leave from', 
 test('the address a person types is the one a carrier is asked to collect from', () => {
   /*
    * The point of the field. Until this existed, readiness reported that
-   * Foundry had no address for the location and no rate could be asked for.
+   * StockChief had no address for the location and no rate could be asked for.
    */
   const env = setup();
   const made = locations.createLocation(env.db, env.ctx, {

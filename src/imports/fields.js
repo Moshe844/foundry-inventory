@@ -13,10 +13,10 @@
  */
 
 /**
- * The fields Foundry can actually import into. Deliberately short: every entry
+ * The fields StockChief can actually import into. Deliberately short: every entry
  * corresponds to something Mission 1 stores. A file's "Unit Cost" or "Supplier"
  * column is recognised below as *ignorable* rather than mapped somewhere close,
- * because inventing a home for it would be pretending Foundry does purchasing.
+ * because inventing a home for it would be pretending StockChief does purchasing.
  */
 const FIELDS = [
   { id: 'name', label: 'Product name' },
@@ -32,12 +32,12 @@ const FIELDS = [
   /*
    * What the stock cost, as opposed to what it sells for.
    *
-   * This was deliberately ignored — "Foundry does not track supplier cost" —
+   * This was deliberately ignored — "StockChief does not track supplier cost" —
    * and the consequence was a supplier invoice importing 250 pairs of shoes
    * that were worth nothing at all. The books showed stock with no value, and
-   * the first sale of any of it would stop dead on "Foundry has no recorded
+   * the first sale of any of it would stop dead on "StockChief has no recorded
    * cost for this product". A cost the supplier wrote on their own invoice is
-   * not a figure Foundry is guessing at; it is the one number that makes the
+   * not a figure StockChief is guessing at; it is the one number that makes the
    * inventory it just created mean anything.
    */
   { id: 'unitCost', label: 'Unit cost' },
@@ -81,7 +81,7 @@ const PATTERNS = {
    *
    * These wordings used to sit inside `code`, so a file carrying both an SKU
    * and a Barcode column had two columns competing for one field. SKU won, and
-   * forty real GTINs were dropped as a column Foundry could find no home for.
+   * forty real GTINs were dropped as a column StockChief could find no home for.
    *
    * They are different facts: one is what the business calls the product, the
    * other is what is printed on the box. Anything that ever scans needs the
@@ -150,10 +150,10 @@ PATTERNS.variant2 = PATTERNS.variant1;
 PATTERNS.variant3 = PATTERNS.variant1;
 
 /**
- * Columns Foundry understands but does not import.
+ * Columns StockChief understands but does not import.
  *
  * Naming them is the point: a preview that says "Unit Cost and Supplier were
- * left out — Foundry does not track those" is honest, where silently dropping
+ * left out — StockChief does not track those" is honest, where silently dropping
  * them looks like a bug and mapping them somewhere would be a lie.
  */
 /*
@@ -276,7 +276,7 @@ function looksLikeCodes(samples = []) {
 /**
  * Every row must be able to say which product it is about.
  *
- * Foundry refused a whole spreadsheet — 65 rows, every one of them — for
+ * StockChief refused a whole spreadsheet — 65 rows, every one of them — for
  * having "no product name or code", while every row carried SH-1001 and a
  * description of the shoe. The columns were there; they had been filed under
  * headings that do not identify a product, and nothing looked again.
@@ -295,7 +295,7 @@ function ensureIdentity(mappings, { columns, profilesByIndex }) {
 
   // Very common shape: one "Description" column and no name at all. That column
   // *is* the product name, and refusing to import until someone renames a
-  // header would be Foundry making its own problem the customer's.
+  // header would be StockChief making its own problem the customer's.
   if (mappings.name === undefined && mappings.description !== undefined) {
     mappings.name = mappings.description;
     delete mappings.description;

@@ -98,7 +98,7 @@ function activeGrant(db, workspaceId, operationType) {
 }
 
 function grant(db, ctx, membership, operationType, bounds = {}) {
-  permissions.assertCan(membership, permissions.ADMIN, 'grant Foundry autonomous authority');
+  permissions.assertCan(membership, permissions.ADMIN, 'grant StockChief autonomous authority');
   catalog.requireType(operationType);
   for (const key of ['maximumQuantity','maximumValueMinor','maximumDailyCount','maximumDailyValueMinor']) {
     if (bounds[key] !== undefined && bounds[key] !== null
@@ -211,7 +211,7 @@ function authorityFor(db, ctx, membership, operation, adapter) {
         { name:'ownerApproval', passed:permissions.can(membership, definition.permission),
           reason:`A permitted person approved this operation (${definition.permission}).` },
         { name:'executionState', passed:execution.allowed,
-          reason:execution.because || 'Foundry may execute approved work.' },
+          reason:execution.because || 'StockChief may execute approved work.' },
       ] } };
   }
   if (typeof adapter.authorize === 'function') {

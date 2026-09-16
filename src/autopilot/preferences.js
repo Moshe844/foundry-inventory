@@ -3,7 +3,7 @@
 /**
  * How this business likes its inventory run.
  *
- * The whole design is in one sentence: Foundry never learns a preference, it is
+ * The whole design is in one sentence: StockChief never learns a preference, it is
  * only ever told one. Every row here comes from something a person did on
  * purpose — typed an instruction, approved a policy, filled in configuration —
  * and every row records which of those it was, in their own words.
@@ -14,7 +14,7 @@
  * it. That is indistinguishable from a bug until the day it matters. So there
  * is no inference here, no counting of past approvals, and no model.
  *
- * A preference tunes work Foundry was already allowed to do. It can never widen
+ * A preference tunes work StockChief was already allowed to do. It can never widen
  * authority — only a policy does that, and only when approved.
  */
 
@@ -167,12 +167,12 @@ function parse(def, raw) {
  * Records a preference.
  *
  * `statedAs` is what the person actually said, kept verbatim so the settings
- * page can show their words back rather than Foundry's paraphrase of them.
+ * page can show their words back rather than StockChief's paraphrase of them.
  */
 function set(db, ctx, membership, { key, value, source, statedAs = null }) {
   permissions.assertCan(membership, permissions.OPERATE, 'change how this inventory is run');
   const def = BY_KEY.get(key);
-  if (!def) throw new ValidationError('Foundry does not have a setting for that.');
+  if (!def) throw new ValidationError('StockChief does not have a setting for that.');
   if (!SOURCES.includes(source)) {
     // Every preference has to be traceable to a deliberate act. An unattributed
     // one is exactly the silent learning this module exists to prevent.

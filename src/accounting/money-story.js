@@ -25,7 +25,7 @@
  * Two rules hold throughout.
  *
  * Nothing here originates a number. Every figure is read from a posted entry, a
- * bill, a payment or a document, and anything Foundry cannot support it simply
+ * bill, a payment or a document, and anything StockChief cannot support it simply
  * does not say — a briefing that guesses is worse than no briefing, because the
  * owner cannot tell which half to trust.
  *
@@ -127,7 +127,7 @@ function status(attention, db, workspaceId, { today }) {
     return {
       caughtUp: true,
       headline: 'Your books are caught up.',
-      detail: 'Every sale, delivery, bill and payment Foundry has been told about is in the books, '
+      detail: 'Every sale, delivery, bill and payment StockChief has been told about is in the books, '
         + 'and nothing is waiting on you.',
       count: 0,
     };
@@ -337,7 +337,7 @@ function needsAttention(db, workspaceId, owner, options) {
       kind: 'mismatched_bill', amountMinor: number(row.balance_minor),
       title: `${row.supplier || 'A supplier'}'s invoice does not match what you ordered`,
       why: `${row.supplier_invoice_number || row.bill_number} is ${String(row.match_status).toLowerCase()}. `
-        + 'Foundry will not pay a difference nobody has agreed to.',
+        + 'StockChief will not pay a difference nobody has agreed to.',
       actionLabel: 'Compare them', href: '/accounting/payables',
     });
   }

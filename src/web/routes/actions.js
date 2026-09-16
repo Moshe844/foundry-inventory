@@ -35,7 +35,16 @@ function membershipOf(req) {
   return req.user;
 }
 
-/** The pending work: what Foundry has proposed and is waiting on. */
+function purchaseProductPage(req, res, continuation, continuationId, values = {}) {
+  return res.page('actions/purchase-product', { title: 'New product for your purchase order', nav: 'purchasing',
+    continuationId, instruction: continuation.originalInstruction,
+    product: { ...continuation.product, ...values },
+    locations: repo.listLocations(req.db, req.ctx.workspaceId),
+    canCreate: permissions.can(req.user, permissions.CREATE_PO) && permissions.can(req.user, permissions.OPERATE),
+  });
+}
+
+/** The pending work: what StockChief has proposed and is waiting on. */
 
 /**
  * Example instructions, written with this inventory's own products and places.
@@ -67,6 +76,10 @@ router.get(
       };
     }
 
+    const purchasePending = req.session.pendingActionContinuation;
+    if (purchasePending?.value?.kind === 'purchase_new_product') {
+      return purchaseProductPage(req, res, purchasePending.value, purchasePending.id, purchasePending.formValues);
+    }
     const open = proposals.listOpen(req.db, req.ctx.workspaceId, { limit: 25 });
     const recent = req.db
       .prepare(
@@ -78,13 +91,13 @@ router.get(
       .map(proposals.hydrate);
 
     res.page('actions/list', {
-      title: 'Foundry actions',
+      title: 'StockChief actions',
       nav: 'actions',
       pending: open.map((p) => presenter.present(req.db, req.ctx.workspaceId, p)),
       recent: recent.map((p) => ({ ...p, oneLine: presenter.oneLine(req.db, req.ctx.workspaceId, p) })),
       canOperate: permissions.can(membershipOf(req), permissions.OPERATE),
       aiConfigured: config.ai.configured,
-      // A question raised somewhere else — the Tell Foundry box on the home
+      // A question raised somewhere else — the Tell StockChief box on the home
       // page — is handed over rather than flashed. A toast disappears and
       // cannot be replied to, which leaves the person holding a question and
       // no way to answer it.
@@ -118,7 +131,7 @@ router.post(
   '/actions/ask',
   asyncRoute(async (req, res) => {
     // A file handed to the ask box is data, not an instruction. Refusing it
-    // because it arrived at the wrong text box would be Foundry making its own
+    // because it arrived at the wrong text box would be StockChief making its own
     // layout the customer's problem, so it goes straight to the import preview
     // — which creates nothing until they approve it, exactly as if they had
     // uploaded it there.
@@ -128,7 +141,7 @@ router.post(
         buffer: attached.buffer,
         filename: attached.filename,
       });
-      req.flash('success', `Foundry read ${attached.filename}. Nothing has been created yet.`);
+      req.flash('success', `StockChief read ${attached.filename}. Nothing has been created yet.`);
       return res.redirect(303, `/imports/${plan.id}`);
     }
 
@@ -147,17 +160,22 @@ router.post(
         || (handedQuestion && handedQuestion.continuationId === continuationId && handedQuestion.continuation
           ? { id: handedQuestion.continuationId, value: handedQuestion.continuation }
           : null);
+      if (answer === 'add_and_draft' && (!pendingContinuation || pendingContinuation.id !== continuationId)) {
+        throw new (require('../../domain/errors').ValidationError)('This product review has expired or was already completed. No duplicate product or PO was created. Start a new request to continue.');
+      }
       if (answer && continuationId && pendingContinuation && pendingContinuation.id === continuationId) {
-        delete req.session.pendingActionContinuation;
-        delete req.session.pendingActionQuestion;
+        const newProductAnswer = pendingContinuation.value.kind === 'purchase_new_product' && answer === 'add_and_draft';
+        if (newProductAnswer) pendingContinuation.formValues = { ...req.body };
         result = await actionService.continueInterpretation(
           req.db,
           req.ctx,
           membershipOf(req),
           pendingContinuation.value,
-          answer,
+          newProductAnswer ? { ...req.body, confirm: answer } : answer,
           { provider: req.app.locals.aiProvider || undefined }
         );
+        delete req.session.pendingActionContinuation;
+        delete req.session.pendingActionQuestion;
       } else if (answer === '__all_locations__' && original) {
         // Session stores are allowed to rotate or lose an intermediate key
         // across the manager -> actions redirect. Never feed the internal
@@ -179,7 +197,7 @@ router.post(
         } else {
           result = {
             kind: 'question',
-            question: 'The available locations changed. Please send the instruction again so Foundry can show the current choices.',
+            question: 'The available locations changed. Please send the instruction again so StockChief can show the current choices.',
           };
         }
       } else {
@@ -239,7 +257,7 @@ router.post(
             : `${order.poNumber} was approved. Its supplier message is prepared but has not been sent.`);
         return res.redirect(303, `/purchasing/orders/${order.id}`);
       }
-      req.flash('success', `Foundry drafted ${result.order.poNumber}. Nothing is ordered and nobody is contacted until you approve it.`);
+      req.flash('success', `StockChief drafted ${result.order.poNumber}. Nothing is ordered and nobody is contacted until you approve it.`);
       return res.redirect(303, `/purchasing/orders/${result.order.id}`);
     }
     const handedOn = actionHandoff.handOff(req, result);
@@ -253,9 +271,12 @@ router.post(
       continuationId = crypto.randomUUID();
       req.session.pendingActionContinuation = { id: continuationId, value: result.continuation };
     }
+    if (result.continuation?.kind === 'purchase_new_product') {
+      return purchaseProductPage(req, res, result.continuation, continuationId);
+    }
     const open = proposals.listOpen(req.db, req.ctx.workspaceId, { limit: 25 });
     return res.page('actions/list', {
-      title: 'Foundry actions',
+      title: 'StockChief actions',
       nav: 'actions',
       pending: open.map((p) => presenter.present(req.db, req.ctx.workspaceId, p)),
       recent: [],
@@ -264,12 +285,12 @@ router.post(
       instruction,
       examples: exampleInstructions(req.db, req.ctx.workspaceId),
       question: result.kind === 'question' ? result.question : null,
-      // The product name Foundry could not place, so the page can offer to
+      // The product name StockChief could not place, so the page can offer to
       // create it rather than only offering a box to type an answer into.
       notFound: result.kind === 'question' ? (result.notFound || null) : null,
       where: result.where || null,
       /*
-       * A request Foundry understood and does not carry out from here. Shown
+       * A request StockChief understood and does not carry out from here. Shown
        * as an answer with a way onward, not as a failure.
        */
       unsupported: ['unsupported', 'delete_inventory'].includes(result.kind) ? result.message : null,
@@ -372,12 +393,12 @@ router.post(
           assumptions: [],
         });
         if (!builtLocation.ok) {
-          req.flash('info', builtLocation.question || builtLocation.unsupported || 'Foundry could not prepare that location.');
+          req.flash('info', builtLocation.question || builtLocation.unsupported || 'StockChief could not prepare that location.');
           return res.redirect(303, '/actions/location-required');
         }
         const locationProposal = proposals.persist(req.db, req.ctx, builtLocation.proposal, {
           sourceType: 'USER_REQUEST',
-          instruction: `Create ${pending.locationName} so Foundry can continue: ${pending.instruction}`,
+          instruction: `Create ${pending.locationName} so StockChief can continue: ${pending.instruction}`,
         });
         execution.approve(req.db, req.ctx, membershipOf(req), locationProposal.proposalId);
         execution.execute(req.db, req.ctx, membershipOf(req), locationProposal.proposalId, {
@@ -504,7 +525,7 @@ router.post(
       req.flash('error', err.message);
       return res.redirect(303, `/actions/${req.params.id}`);
     }
-    req.flash('info', 'Foundry worked it out again against your stock as it is now. Check the figures before approving.');
+    req.flash('info', 'StockChief worked it out again against your stock as it is now. Check the figures before approving.');
     return res.redirect(303, `/actions/${fresh.proposalId}`);
   })
 );
@@ -520,7 +541,7 @@ router.post(
       req.flash('error', err.message);
       return res.redirect(303, `/actions/${req.params.id}`);
     }
-    req.flash('info', 'Foundry recalculated it. Have a look before approving.');
+    req.flash('info', 'StockChief recalculated it. Have a look before approving.');
     return res.redirect(303, `/actions/${revised.proposalId}`);
   })
 );
@@ -550,7 +571,7 @@ router.post(
       req.flash('info', result.message || result.question);
       return res.redirect(303, `/actions/${req.params.id}`);
     }
-    req.flash('info', 'Foundry worked out the reverse. Approve it if that is what you want.');
+    req.flash('info', 'StockChief worked out the reverse. Approve it if that is what you want.');
     return res.redirect(303, `/actions/${result.proposal.proposalId}`);
   })
 );
@@ -567,7 +588,7 @@ router.get(
     }
     const executionRow = execution.findExecution(req.db, req.ctx.workspaceId, `plan:${plan.planId}`);
     return res.page('actions/plan', {
-      title: 'Foundry is ready to make several changes',
+      title: 'StockChief is ready to make several changes',
       nav: 'actions',
       plan,
       lines: plan.lines.map((line) => presenter.present(req.db, req.ctx.workspaceId, line)),
@@ -607,6 +628,22 @@ router.get(
       }
     }
     return res.redirect(303, `/actions/plan/${plan.planId}`);
+  })
+);
+
+router.post(
+  '/actions/plan/:planId/retry',
+  asyncRoute(async (req, res) => {
+    try {
+      const plan = execution.retryPlan(req.db, req.ctx, membershipOf(req), req.params.planId);
+      execution.executePlan(req.db, req.ctx, membershipOf(req), plan.planId, {
+        idempotencyKey: `plan:${plan.planId}`,
+      });
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.flash('error', err.message);
+    }
+    return res.redirect(303, `/actions/plan/${req.params.planId}`);
   })
 );
 

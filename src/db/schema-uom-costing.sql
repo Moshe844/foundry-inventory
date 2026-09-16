@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS sku_uom_profiles (
   family_id TEXT NOT NULL REFERENCES uom_families(id) ON DELETE RESTRICT,
   stocking_uom_id TEXT NOT NULL REFERENCES units_of_measure(id) ON DELETE RESTRICT,
   selling_uom_id TEXT NOT NULL REFERENCES units_of_measure(id) ON DELETE RESTRICT,
-  -- Required only for allocation by weight.  Null means Foundry must ask; it
+  -- Required only for allocation by weight.  Null means StockChief must ask; it
   -- may not estimate a carton, product, or variant weight.
   unit_weight_grams INTEGER CHECK (unit_weight_grams > 0),
   source TEXT NOT NULL DEFAULT 'owner' CHECK (source IN ('owner','import','supplier_document','connector')),

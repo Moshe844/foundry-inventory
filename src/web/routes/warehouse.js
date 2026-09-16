@@ -139,7 +139,7 @@ router.post('/warehouse/returns/customer/:id/return-label',asyncRoute(async(req,
 }));
 router.post('/warehouse/returns/customer/:id/return-label/refresh',asyncRoute(async(req,res)=>{
   permissions.assertCan(req.user,permissions.INSPECT_CUSTOMER_RETURN,'check customer return tracking');
-  try{const result=await shipping.returns.refresh(req.db,req.ctx,req.params.id);req.flash('success',result.needsPhysicalReceipt?'The carrier reports arrival. Foundry still needs the physical receipt recorded before stock changes.':'Return tracking refreshed.');}
+  try{const result=await shipping.returns.refresh(req.db,req.ctx,req.params.id);req.flash('success',result.needsPhysicalReceipt?'The carrier reports arrival. StockChief still needs the physical receipt recorded before stock changes.':'Return tracking refreshed.');}
   catch(error){if(!error.status||error.status>=500)throw error;req.flash('warn',error.message);}
   res.redirect(303,`/warehouse/returns/customer/${req.params.id}#return-shipping`);
 }));

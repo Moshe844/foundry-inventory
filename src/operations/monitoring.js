@@ -27,7 +27,7 @@ function raise(db, input = {}, options = {}) {
        first_seen_at, last_seen_at)
       VALUES (?, ?, ?, ?, ?, ?, 'OPEN', 1, ?, ?)`)
       .run(id, input.severity || 'ERROR', input.kind || 'runtime',
-        String(input.title || 'Foundry operational alert'), String(input.detail || ''), fp, now, now);
+        String(input.title || 'StockChief operational alert'), String(input.detail || ''), fp, now, now);
     row = db.prepare('SELECT * FROM operational_alerts WHERE id = ?').get(id);
   }
   row = db.prepare('SELECT * FROM operational_alerts WHERE id = ?').get(row.id);

@@ -1,7 +1,7 @@
 <main class="rm-canvas rm-landed-cost">
   <p class="rm-stamp"><a href="/purchasing/orders/<%= order.id %>">Purchase order <%= order.poNumber %></a> <span>›</span> Landed cost</p>
   <h1 class="rm-verdict">Put the cost of getting these goods here into inventory.</h1>
-  <p class="rm-prose">Use this only for an already-recorded supplier-bill expense such as freight, duty, insurance or handling. Foundry will show the exact split and wait for approval. It never creates another payable.</p>
+  <p class="rm-prose">Use this only for an already-recorded supplier-bill expense such as freight, duty, insurance or handling. StockChief will show the exact split and wait for approval. It never creates another payable.</p>
 
   <% if (!receipts.length) { %>
     <section class="rm-panel rm-landed-cost__empty">
@@ -9,7 +9,7 @@
     </section>
   <% } else if (!sourceLines.length) { %>
     <section class="rm-panel rm-landed-cost__empty">
-      <div class="rm-panel__body"><h2 class="rm-h">Foundry needs the source bill first.</h2><p class="rm-sub">Record and open the supplier bill containing the freight, duty, insurance or handling charge. That is the evidence Foundry uses to reclassify the cost without duplicating what you owe.</p></div>
+      <div class="rm-panel__body"><h2 class="rm-h">StockChief needs the source bill first.</h2><p class="rm-sub">Record and open the supplier bill containing the freight, duty, insurance or handling charge. That is the evidence StockChief uses to reclassify the cost without duplicating what you owe.</p></div>
     </section>
   <% } else if (permissions.landedCosts) { %>
     <section class="rm-panel rm-landed-cost__form">
@@ -23,7 +23,7 @@
           <label>Amount (before the allocation)
             <input name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00">
           </label>
-          <label>How should Foundry split it?
+          <label>How should StockChief split it?
             <select name="allocationMethod" required><option value="quantity">By received quantity</option><option value="value">By goods value</option><option value="weight">By recorded weight</option></select>
           </label>
           <label>Source supplier-bill expense

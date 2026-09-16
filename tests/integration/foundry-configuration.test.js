@@ -125,7 +125,7 @@ test('applying a plan configures structure and nothing else', async () => {
   assert.ok(locations.includes('Brooklyn Warehouse'));
   assert.ok(locations.includes('New Jersey Warehouse'));
 
-  // Real inventory records must come from the customer, never from Foundry.
+  // Real inventory records must come from the customer, never from StockChief.
   const after = {
     items: db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(workspace.workspaceId).n,
     skus: db.prepare('SELECT COUNT(*) AS n FROM skus WHERE workspace_id = ?').get(workspace.workspaceId).n,
@@ -300,7 +300,7 @@ test('terminology is applied to presentation only', async () => {
   assert.equal(vocabulary.term('location'), 'Warehouse');
   assert.equal(vocabulary.term('location', { plural: true }), 'Warehouses');
   assert.equal(vocabulary.term('item'), 'Product');
-  assert.equal(vocabulary.term('lot'), 'Lot', 'unset terms keep Foundry defaults');
+  assert.equal(vocabulary.term('lot'), 'Lot', 'unset terms keep StockChief defaults');
   assert.equal(vocabulary.isCustomised, true);
 
   // The engine's own vocabulary is untouched: the tables and columns are the same.

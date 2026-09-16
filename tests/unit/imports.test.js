@@ -5,7 +5,7 @@
  * product into a real catalogue record.
  *
  * The parser tests use files written by a *different* XLSX implementation, so
- * Foundry's own reader is not marking its own homework.
+ * StockChief's own reader is not marking its own homework.
  */
 
 const test = require('node:test');
@@ -139,7 +139,7 @@ test('a file that is not a spreadsheet is refused, not misread', () => {
 
 test('a CSV somebody renamed .xlsx is read rather than refused', () => {
   // The bytes decide what a file is, not its name. Refusing a perfectly
-  // readable CSV over its extension would be Foundry making its own filing
+  // readable CSV over its extension would be StockChief making its own filing
   // rules the customer's problem.
   const parsed = parser.parse({
     buffer: Buffer.from('Item,Qty\nCopper Elbow,12'),
@@ -158,13 +158,13 @@ test('the reader refuses a file claiming to be enormous', () => {
     'XLSX and delimited imports share the same million-row local certification gate');
   assert.throws(
     () => parser.parse({ buffer: { length:parser.LIMITS.maxBytes + 1 }, filename: 'big.xlsx' }),
-    /larger than Foundry can read/
+    /larger than StockChief can read/
   );
 });
 
 // --- describing a product ----------------------------------------------------
 
-test('ranges are expanded by Foundry, never by the model', () => {
+test('ranges are expanded by StockChief, never by the model', () => {
   assert.deepEqual(catalog.expandValues('6 through 12'), ['6', '7', '8', '9', '10', '11', '12']);
   assert.deepEqual(catalog.expandValues('6-9'), ['6', '7', '8', '9']);
   assert.deepEqual(catalog.expandValues('S, M, L and XL'), ['S', 'M', 'L', 'XL']);
@@ -290,7 +290,7 @@ test('adding a received product preserves its stated variant, quantity and locat
   );
 
   const view = presenter.present(env.db, env.workspace.workspaceId, proposal);
-  assert.equal(view.title, 'Foundry is ready to add a product and receive its stock');
+  assert.equal(view.title, 'StockChief is ready to add a product and receive its stock');
   assert.match(view.subjectName, /white_socks \/ Size: 6 · AE_345/);
   assert.deepEqual(view.rows.map((row) => [row.label, row.before, row.after]), [['Main Warehouse', 0, 35]]);
   assert.deepEqual(view.total, { before: 0, after: 35 });
@@ -572,7 +572,7 @@ test('an unreadable spreadsheet is the uploader’s problem, not a server fault'
  * "barcode", "upc", "ean" and "gtin" used to be wordings for the `code` field,
  * and a field can be claimed by one column. So a file carrying both an SKU
  * column and a Barcode column had them competing: SKU won, and the barcodes
- * were reported as a column Foundry could find no home for — forty real GTINs
+ * were reported as a column StockChief could find no home for — forty real GTINs
  * dropped on the way in, unrecoverable once the file was gone.
  *
  * One is what the business calls the product. The other is what is printed on

@@ -38,7 +38,7 @@ async function describeBusiness(db, ctx, description, options = {}) {
   const clean = requireText(description, 'Description', { max: MAX_DESCRIPTION });
   if (clean.length < MIN_DESCRIPTION) {
     throw new ValidationError(
-      'Tell Foundry a little more about what you keep track of — a sentence or two is enough.'
+      'Tell StockChief a little more about what you keep track of — a sentence or two is enough.'
     );
   }
 
@@ -61,7 +61,7 @@ async function describeBusiness(db, ctx, description, options = {}) {
   const coreResult = validate(toWireSchema(CORE_SCHEMA), core.data, { key: 'understanding-core-wire' });
   if (!coreResult.ok) {
     throw new ValidationError(
-      'Foundry could not make sense of that description. Try describing your inventory again.',
+      'StockChief could not make sense of that description. Try describing your inventory again.',
       { errors: coreResult.errors.slice(0, 10) }
     );
   }
@@ -72,7 +72,7 @@ async function describeBusiness(db, ctx, description, options = {}) {
    * A separate call because the schema for them is an array of objects, and
    * asking for those alongside the structural contract produced a grammar the
    * provider refuses to compile — the whole understanding then failed, and the
-   * owner was told "Foundry could not finish reading that."
+   * owner was told "StockChief could not finish reading that."
    *
    * Defensive on purpose: somebody describing the shape of their business and
    * listing no products at all is the normal case, so a failure to extract
@@ -109,13 +109,13 @@ async function describeBusiness(db, ctx, description, options = {}) {
   const adviceResult = validate(toWireSchema(ADVICE_SCHEMA), advice.data, { key: 'understanding-advice-wire' });
   if (!adviceResult.ok) {
     throw new ValidationError(
-      'Foundry could not put together reliable advice for that description. Try again.',
+      'StockChief could not put together reliable advice for that description. Try again.',
       { errors: adviceResult.errors.slice(0, 10) }
     );
   }
 
   // Repair what is safely repairable (identifier shapes, over-long lists), then
-  // enforce Foundry's own stricter contract on the result.
+  // enforce StockChief's own stricter contract on the result.
   const merged = normalise(
     { ...coreResult.data, ownerProvidedInventory: records, ...adviceResult.data },
     clean,
@@ -124,7 +124,7 @@ async function describeBusiness(db, ctx, description, options = {}) {
   const whole = validate(UNDERSTANDING_SCHEMA, merged, { key: 'understanding' });
   if (!whole.ok) {
     throw new ValidationError(
-      'Foundry could not make sense of that description. Try describing your inventory again.',
+      'StockChief could not make sense of that description. Try describing your inventory again.',
       { errors: whole.errors.slice(0, 10) }
     );
   }
@@ -155,7 +155,7 @@ function normalise(raw, description, executionContext = {}) {
     recommended.trackingMode = 'quantity';
     understanding.assumptions = [
       ...(understanding.assumptions || []),
-      'Foundry defaulted to quantity tracking because the suggested tracking type was not one it supports.',
+      'StockChief defaulted to quantity tracking because the suggested tracking type was not one it supports.',
     ];
   }
 

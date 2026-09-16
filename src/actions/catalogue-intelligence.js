@@ -49,7 +49,7 @@ const REVIEW_SCHEMA = {
   },
 };
 
-const SYSTEM = `You are Foundry's senior inventory catalogue analyst.
+const SYSTEM = `You are StockChief's senior inventory catalogue analyst.
 
 Read the complete submitted catalogue and explain what it means operationally.
 This is an analysis for the business owner to review before anything is created.
@@ -82,11 +82,11 @@ function assertCompleteCoverage(data, records) {
     .flatMap((group) => group.recordOrdinals)
     .sort((a, b) => a - b);
   if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
-    throw new ProviderOutputError('Foundry did not account for every submitted product record. Nothing was created.');
+    throw new ProviderOutputError('StockChief did not account for every submitted product record. Nothing was created.');
   }
   const allowed = new Set(expected);
   if (data.operationalFindings.some((finding) => !allowed.has(finding.recordOrdinal))) {
-    throw new ProviderOutputError('Foundry referred to a product record that was not supplied. Nothing was created.');
+    throw new ProviderOutputError('StockChief referred to a product record that was not supplied. Nothing was created.');
   }
 }
 
@@ -104,7 +104,7 @@ async function analyze(description, records, options = {}) {
   });
   const checked = validate(toWireSchema(REVIEW_SCHEMA), response.data, { key: 'catalogue-understanding-wire' });
   if (!checked.ok) {
-    throw new ProviderOutputError('Foundry could not produce a complete catalogue understanding. Nothing was created.', checked.errors);
+    throw new ProviderOutputError('StockChief could not produce a complete catalogue understanding. Nothing was created.', checked.errors);
   }
   assertCompleteCoverage(checked.data, records);
   return {

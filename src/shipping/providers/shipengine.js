@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * ShipEngine / ShipStation API behind Foundry's shipping-provider seam.
+ * ShipEngine / ShipStation API behind StockChief's shipping-provider seam.
  *
  * A workspace API key belongs to that business's ShipEngine seller account.
  * The platform key may create seller accounts, but is deliberately never read
@@ -18,7 +18,7 @@ const JWKS_URL = 'https://api.shipengine.com/jwks';
 function apiKey(ctx = {}) {
   const key = ctx.shipengineApiKey || process.env.SHIPENGINE_API_KEY;
   if (!key) {
-    throw new ValidationError('No ShipEngine seller account is connected, so Foundry cannot ask '
+    throw new ValidationError('No ShipEngine seller account is connected, so StockChief cannot ask '
       + 'carriers for rates or buy a label. Finish the one-time shipping setup first.');
   }
   return String(key);
@@ -159,7 +159,7 @@ async function buy(ctx, input = {}) {
 
 async function voidLabel(ctx, input = {}) {
   const ids = (input.providerReferences || input.providerLabelIds || []).filter(Boolean);
-  if (!ids.length) throw new ValidationError('Foundry has no ShipEngine label reference to void.');
+  if (!ids.length) throw new ValidationError('StockChief has no ShipEngine label reference to void.');
   const answers = [];
   for (const id of ids) {
     answers.push(await call(ctx, `/labels/${encodeURIComponent(id)}/void`, { method: 'PUT' }));

@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * Activity is the business's history, not Foundry's working notes.
+ * Activity is the business's history, not StockChief's working notes.
  *
- * Two faults met on this page. The sidebar link went to Foundry's own work log,
+ * Two faults met on this page. The sidebar link went to StockChief's own work log,
  * so somebody looking for their trading history landed on fifty near-identical
  * "Scheduled inventory check" lines. And the ledger underneath held movements
  * only, so an order placed, a delivery booked in, or a difference opened and
@@ -116,7 +116,7 @@ test('Activity leads with what happened to the business, not with routine checks
   assert.match(page, /50 routine checks found nothing/,
     'but the page says how many there were, and where they are');
   assert.doesNotMatch(page, /Scheduled inventory check/,
-    "Foundry's own trigger names are not the business's history");
+    "StockChief's own trigger names are not the business's history");
   env.db.close();
 });
 

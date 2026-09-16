@@ -3,12 +3,12 @@
 Date: 2026-09-14
 
 This audit treats named products and record counts as examples, not as a vendor
-allow-list or a hard-coded size tier. The standard is one canonical Foundry
+allow-list or a hard-coded size tier. The standard is one canonical StockChief
 domain that accepts small and large businesses through the same contracts.
 
 ## Executive result before remediation
 
-Foundry has a strong inventory core and a real evidence-first opening-stock
+StockChief has a strong inventory core and a real evidence-first opening-stock
 migration. It does **not** yet meet the stated launch gate for a full switch
 from an established inventory/ERP system, nor has it proved operation at
 250,000 active SKUs and millions of movements.
@@ -31,7 +31,7 @@ enterprise-scale certification.
 The repository-level gaps identified above are now implemented behind one
 provider-neutral contract. This is not a list of named ERP vendors and there is
 no runtime branch for a catalogue size. A file reader or provider connector
-translates its source records into the same typed package; Foundry validates,
+translates its source records into the same typed package; StockChief validates,
 orders, applies and reconciles that package through its own domain services.
 
 ### Already supported after remediation
@@ -56,7 +56,7 @@ orders, applies and reconciles that package through its own domain services.
   reconcile and activate. A scoped API may stage and validate evidence but has
   no approve/apply/activate endpoint.
 - The owner can now start that canonical cutover directly in the browser at
-  `Move to Foundry`: upload or paste immutable exports, review each real sheet,
+  `Move to StockChief`: upload or paste immutable exports, review each real sheet,
   confirm uncertain meanings once, stage the exact stored bytes, and continue
   to validation. No connector-created package, developer fixture or command
   line is required for file-based switching.
@@ -112,10 +112,10 @@ with **250,000 SKUs, 12 locations and 1,000,001 immutable movements**:
 
 Three real-browser cutover tests completed without page errors. The static path
 completed stage → validate → approve → apply → reconcile → activate and showed
-`Source 15 / Foundry 15`. The live custom-source path reviewed an unfamiliar
+`Source 15 / StockChief 15`. The live custom-source path reviewed an unfamiliar
 mapping, captured a changed source record, froze the final cursor, reconciled
 that cursor and activated. The owner path began at the browser’s `Move to
-Foundry` screen, uploaded catalogue, open-PO and open-sales-order CSVs together,
+StockChief` screen, uploaded catalogue, open-PO and open-sales-order CSVs together,
 confirmed proposed meanings, and proved stock, selling price, purchase cost,
 supplier and exact open-order truth after activation.
 
@@ -128,7 +128,7 @@ supplier and exact open-order truth after activation.
   in-product; genuinely hierarchical source formats use the same canonical
   structured contract. Unsupported lifecycle states stop with their real state
   intact rather than being silently downgraded.
-- Historical facts can be retained exactly as evidence, but Foundry does not
+- Historical facts can be retained exactly as evidence, but StockChief does not
   turn an unprovable old snapshot into invented movements, allocations or
   accounting postings.
 - The local certification proves application/query behavior on SQLite. It does
@@ -152,14 +152,14 @@ These are launch gates, not reasons to hard-code a vendor or product tier:
 ## Universal complexity and automation boundary
 
 There is no honest finite allow-list of inventory shapes that can promise every
-future business is already modelled. Foundry therefore uses one canonical core
+future business is already modelled. StockChief therefore uses one canonical core
 plus exact variants, arbitrary attributes, explicit units/conversions,
 locations, lots/serials, policies and provider adapters. A genuinely new fact
 or lifecycle is registered as a typed extension; it is never squeezed into the
 nearest existing field or maintained as a customer-specific fork.
 
 The 90–95% automation target is measured over eligible routine operations:
-completed, verified operations divided by all operations Foundry had sufficient
+completed, verified operations divided by all operations StockChief had sufficient
 evidence and authority to handle. Physical work, statutory approvals and facts
 that only a human can know stay explicit. They are not hidden from the metric,
 and the model cannot manufacture them to improve the percentage.
@@ -250,7 +250,7 @@ count matches while leaving live commitments, suppliers or policies behind.
 P0 launch blockers:
 
 1. Add an extensible canonical migration contract whose entity adapters call
-   Foundry domain services, never write balances or accounting totals directly.
+   StockChief domain services, never write balances or accounting totals directly.
 2. Stage and validate all datasets before mutation; block unresolved identity,
    quantity, lot/serial, document-state and money conflicts.
 3. Reconcile every migrated record family and refuse cutover while a material

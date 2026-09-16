@@ -52,7 +52,7 @@ test('a price instruction is previewed and explicitly approved', () => {
   assert.equal(prices.currentForSku(env.db, env.workspace.workspaceId, env.item.skuId).amount_minor, 1200);
 });
 
-test('Tell Foundry understands an ordinary selling-price sentence without hard-coded products or amounts', async () => {
+test('Tell StockChief understands an ordinary selling-price sentence without hard-coded products or amounts', async () => {
   const env = setup();
   const proposal = await changes.interpret(env.db, env.ctx,
     'Can you add price for JEANS-BLACK-S in inventory, price is $27.45 each',
@@ -61,7 +61,7 @@ test('Tell Foundry understands an ordinary selling-price sentence without hard-c
   assert.equal(proposal.sku_id, env.item.skuId);
 });
 
-test('Tell Foundry recognises direct monetary assignments without requiring the word price', async () => {
+test('Tell StockChief recognises direct monetary assignments without requiring the word price', async () => {
   const examples = [
     ['Can you set JEANS-BLACK-S to $12 each', 1200],
     ['Update JEANS-BLACK-S to $19.95 per unit', 1995],

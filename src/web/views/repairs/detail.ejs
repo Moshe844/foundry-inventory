@@ -6,15 +6,15 @@
 <section class="page-head">
   <div><p class="eyebrow">Repair case · <%= repairCase.status.replaceAll('_', ' ') %></p>
     <h1><%= repairCase.symptom %></h1>
-    <p><%= resolved ? 'Foundry repaired the source records through their owning domains and verified that they now agree.'
-      : inconclusive ? 'Foundry stopped because the evidence does not prove a safe correction.'
-      : failed ? 'Foundry did not call this fixed because one or more post-repair checks did not pass.'
+    <p><%= resolved ? 'StockChief repaired the source records through their owning domains and verified that they now agree.'
+      : inconclusive ? 'StockChief stopped because the evidence does not prove a safe correction.'
+      : failed ? 'StockChief did not call this fixed because one or more post-repair checks did not pass.'
       : authorized ? 'The simulated correction is approved. No business record has changed yet.'
-      : 'Foundry has diagnosed the problem and will not change anything until the simulated consequences are accepted.' %></p>
+      : 'StockChief has diagnosed the problem and will not change anything until the simulated consequences are accepted.' %></p>
   </div>
 </section>
 
-<section class="section"><h2>What Foundry found</h2>
+<section class="section"><h2>What StockChief found</h2>
   <dl class="detail-list">
     <div><dt>Failed rule</dt><dd><%= repairCase.failedInvariant %></dd></div>
     <div><dt>Confidence</dt><dd><%= repairCase.confidence %></dd></div>
@@ -22,7 +22,7 @@
   </dl>
 </section>
 
-<section class="section"><h2><%= resolved ? 'What Foundry verified' : 'What the repair would do' %></h2>
+<section class="section"><h2><%= resolved ? 'What StockChief verified' : 'What the repair would do' %></h2>
   <p><%= repairCase.simulation.summary || 'The case is still being diagnosed.' %></p>
   <% if ((repairCase.simulation.consequences || []).length) { %><ul>
     <% repairCase.simulation.consequences.forEach(function (line) { %><li><%= line %></li><% }) %>

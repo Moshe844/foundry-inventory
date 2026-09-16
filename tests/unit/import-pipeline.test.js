@@ -3,7 +3,7 @@
 /**
  * Mission 5: a file becoming inventory.
  *
- * The tests that matter most here are the ones about what Foundry refuses to
+ * The tests that matter most here are the ones about what StockChief refuses to
  * do — invent a quantity, guess a date, merge two products that look alike,
  * import the same file twice, or touch another workspace. Getting an easy file
  * in is table stakes; those are the properties that make it safe on real data.
@@ -124,7 +124,7 @@ test('the file type follows from the columns, not from a claim', () => {
   assert.equal(fields.detectType({}), 'unknown');
 });
 
-test("the model cannot overrule a column Foundry matched confidently", () => {
+test("the model cannot overrule a column StockChief matched confidently", () => {
   const sheet = sheetFrom(CSV);
   const guess = fields.guessMappings(sheet.columns, sheet.rows);
   const profilesByIndex = Object.fromEntries(guess.profiles.map((p) => [p.index, p]));
@@ -478,7 +478,7 @@ test('a serial file creates one numbered unit per row, never more', async () => 
       'Item,Serial,Location,Qty',
       'Laptop,SN-1,Main Warehouse,1',
       // A quantity of 3 against one serial does not become three units: there
-      // are no other serial numbers, and Foundry does not make them up.
+      // are no other serial numbers, and StockChief does not make them up.
       'Laptop,SN-2,Main Warehouse,3',
     ].join('\n')
   );
@@ -619,7 +619,7 @@ test('multipart rejects excess files instead of silently dropping part of a migr
 test('a one-location inventory does not reject every row for having no location', () => {
   // Found pasting a spreadsheet into a new account: three good rows with
   // quantities were all marked INVALID with "no location for this stock, and no
-  // default chosen" — in a business that has exactly one location. Foundry knew
+  // default chosen" — in a business that has exactly one location. StockChief knew
   // the answer and asked anyway, then failed the import over it.
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db);
@@ -653,10 +653,10 @@ test('a one-location inventory does not reject every row for having no location'
 });
 
 /*
- * A real supplier invoice, and the shape that made Foundry refuse all of it.
+ * A real supplier invoice, and the shape that made StockChief refuse all of it.
  *
  * Style #, Shoe / Description, Brand, Color, Size, Qty, costs, Selling Price.
- * Foundry read "Style #" as a third variation because the word "style" also
+ * StockChief read "Style #" as a third variation because the word "style" also
  * names an axis, filed "Shoe / Description" as a description, and then
  * reported 65 rows of "No product name or code in this row" — with SH-1001
  * sitting in every one of them, under its own note saying that column was the
@@ -703,7 +703,7 @@ test('a file whose only identifier is a code-shaped column still imports', () =>
   /*
    * The deepest form of the same failure: no name column at all and nothing
    * headed like a code. The values are still codes and every row still says
-   * which product it is about, so Foundry uses them and says that it did
+   * which product it is about, so StockChief uses them and says that it did
    * rather than refusing the file.
    */
   const sheet = sheetFrom(['Style,Color,Qty', 'SH-1001,Black,4', 'SH-1002,Brown,5'].join('\n'));
@@ -715,7 +715,7 @@ test('a file whose only identifier is a code-shaped column still imports', () =>
 test('a size column is never mistaken for a product code', () => {
   /*
    * The recovery above must not fire on numbers. A file of sizes and colours
-   * with no product in it is a file Foundry cannot import, and saying so is
+   * with no product in it is a file StockChief cannot import, and saying so is
    * better than turning 10.5 into a product.
    */
   const sheet = sheetFrom(['Size,Color,Qty', '10.5,Black,4', '11,Brown,5'].join('\n'));
@@ -771,7 +771,7 @@ test('the scope warning names four products, not one product four times', () => 
  * An invoice does not end with its last line item.
  *
  * Under the products come the subtotal, the freight, the tax, the payment
- * terms, the return policy and the invoice total. Foundry imported every one
+ * terms, the return policy and the invoice total. StockChief imported every one
  * of them as a product: a real upload put "INVOICE TOTAL", "Sales/Use Tax",
  * "ACH / Business Check / Wire" and "Defects reported within 7 days…" in the
  * catalogue beside twelve genuine shoes.
@@ -845,15 +845,15 @@ test('a catalogue with no quantities at all has no trailer to find', () => {
 });
 
 /*
- * The repair Foundry has to be able to do for itself.
+ * The repair StockChief has to be able to do for itself.
  *
  * The fix that mattered least here was the one made by hand: a script run
  * against one database, which is a fix that only exists while somebody is
- * standing over it. Stock imported before Foundry read cost columns is worth
- * nothing in the books, and Foundry has to notice that on its own — from the
+ * standing over it. Stock imported before StockChief read cost columns is worth
+ * nothing in the books, and StockChief has to notice that on its own — from the
  * figure still sitting on the row it was read from.
  */
-test('Foundry values stock an older import left worth nothing, by itself', async () => {
+test('StockChief values stock an older import left worth nothing, by itself', async () => {
   const env = setup();
   const costing = require('../../src/accounting/costing');
   const backfill = require('../../src/imports/backfill-costs');
@@ -926,9 +926,9 @@ test('a supplier invoice gives its stock a value, instead of stock worth nothing
   /*
    * A real upload imported 250 pairs of shoes worth $0.00 in the books, next
    * to an invoice that said they cost $11,087. Unit Cost was thrown away —
-   * "Foundry does not track supplier cost" — so every pair was inventory the
+   * "StockChief does not track supplier cost" — so every pair was inventory the
    * books could not value, and the first sale of any of them would have
-   * stopped on "Foundry has no recorded cost for this product".
+   * stopped on "StockChief has no recorded cost for this product".
    */
   const env = setup();
   const costing = require('../../src/accounting/costing');
@@ -955,7 +955,7 @@ test('a supplier invoice gives its stock a value, instead of stock worth nothing
 
 test('a file with no cost column still imports, and the stock has no invented value', async () => {
   // Plenty of files legitimately carry no cost. That is not an error, and
-  // Foundry must not make a number up to fill the gap.
+  // StockChief must not make a number up to fill the gap.
   const env = setup();
   const costing = require('../../src/accounting/costing');
   await approveAndRun(env, ['Item Name,SKU,Qty On Hand', 'Copper Elbow,CE-050,140'].join('\n'),
@@ -973,7 +973,7 @@ test('a file with no cost column still imports, and the stock has no invented va
  *
  * A supplier invoice arrived as an .xlsx with $702.50 of shipping, handling,
  * insurance, duty, a fuel surcharge and a warehouse fee — charged partly per
- * line and partly on rows under the products. Foundry imported the shoes and
+ * line and partly on rows under the products. StockChief imported the shoes and
  * none of the money, and the Money page showed an empty Expenses section
  * beside an invoice that reconciles to the cent.
  */

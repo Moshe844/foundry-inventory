@@ -202,7 +202,7 @@ test('paying in words: "I paid ABC $100 toward invoice #9281"', () => {
 test('"I paid the remaining $140" finishes it without naming anything', () => {
   /*
    * No supplier, no invoice number, and still unambiguous when one bill is
-   * outstanding. Reading "the remaining" off that bill is not Foundry
+   * outstanding. Reading "the remaining" off that bill is not StockChief
    * inventing a figure — it is the only figure the sentence could mean.
    */
   const env = setup();
@@ -253,7 +253,7 @@ test('two outstanding bills is a question, not a guess', () => {
   assert.equal(planned.choices.length, 2, 'and it lists them rather than picking one');
 });
 
-test('a supplier Foundry has never heard of is said plainly', () => {
+test('a supplier StockChief has never heard of is said plainly', () => {
   const env = setup();
   orderedAndInvoiced(env);
   const planned = supplierPayment.plan(env.db, env.ctx,
@@ -264,7 +264,7 @@ test('a supplier Foundry has never heard of is said plainly', () => {
 
 test('a disputed bill is not reported as nothing owed', () => {
   /*
-   * Found while testing this: a bill Foundry had flagged as disagreeing with
+   * Found while testing this: a bill StockChief had flagged as disagreeing with
    * its order was excluded from "what is outstanding", so asking to pay it
    * answered "nothing is outstanding" — for $240 that was very much owed.
    */
@@ -275,6 +275,6 @@ test('a disputed bill is not reported as nothing owed', () => {
   const planned = supplierPayment.plan(env.db, env.ctx,
     { supplierText: 'ABC', amountMinor: 10000, reference: '9281' });
   assert.equal(planned.kind, 'question');
-  assert.match(planned.question, /240\.00 outstanding/, 'the money is still owed and Foundry says so');
+  assert.match(planned.question, /240\.00 outstanding/, 'the money is still owed and StockChief says so');
   assert.match(planned.question, /found a difference/);
 });

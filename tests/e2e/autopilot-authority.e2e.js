@@ -173,7 +173,7 @@ test('authority browser E2E: real policy boundaries, audit wording, Pause and Re
 
   await t.test('Pause blocks the run and Resume lets the same eligible work continue', async () => {
     await withBrowserScenario({ requiredQuantity: 5, paused: true }, async ({ page, state, databasePath }) => {
-      assert.match(await page.locator('body').innerText(), /Foundry is paused/);
+      assert.match(await page.locator('body').innerText(), /StockChief is paused/);
       await runSchedulerTurn(page);
       assert.equal(inspect(databasePath, (db) =>
         db.prepare('SELECT on_hand FROM balances WHERE workspace_id = ? AND sku_id = ? AND location_id = ?')

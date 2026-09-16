@@ -113,20 +113,20 @@
         The rest is not in stock yet.
       <% } %></p>
   <% } else { %>
-    <p>The customer order is confirmed, but Foundry found only <%= order.totals.allocated %> unit<%= order.totals.allocated === 1 ? '' : 's' %> available to hold. <strong>No on-hand stock changed and nothing was shipped.</strong></p>
+    <p>The customer order is confirmed, but StockChief found only <%= order.totals.allocated %> unit<%= order.totals.allocated === 1 ? '' : 's' %> available to hold. <strong>No on-hand stock changed and nothing was shipped.</strong></p>
   <% } %>
-  <p>Foundry checked stock at every location. Use the exact action below to cover what is missing.</p>
+  <p>StockChief checked stock at every location. Use the exact action below to cover what is missing.</p>
 </div><% } %>
 
 <%#
-  An order Foundry prepared has to show its source before it shows its
-  contents. Approving a draft is a decision about whether Foundry read the
+  An order StockChief prepared has to show its source before it shows its
+  contents. Approving a draft is a decision about whether StockChief read the
   customer correctly, and that decision cannot be made against a form — it is
   made against what the customer actually wrote, which is therefore here.
 %>
 <% if (locals.cameFromEmail && (order.status === 'DRAFT' || setupRequired)) { %>
   <div class="card sales-action-card">
-    <p class="eyebrow">Foundry prepared this</p>
+    <p class="eyebrow">StockChief prepared this</p>
     <h2>Read from an email from <%= cameFromEmail.sender %></h2>
     <% if (cameFromEmail.subject) { %><p><strong>Subject:</strong> <%= cameFromEmail.subject %></p><% } %>
     <% if (cameFromEmail.body_text) { %>
@@ -153,7 +153,7 @@
   <div class="card sales-action-card sales-primary-action" id="customer-decision">
     <p class="eyebrow">Do this next — 1 of <%= order.delivery_decision_required ? '2' : '1' %></p>
     <h2>Is this a new customer?</h2>
-    <p><strong><%= cameFromEmail.sender %></strong> does not match any confirmed customer in Foundry. Foundry kept the order, but did not silently trust or merge the sender.</p>
+    <p><strong><%= cameFromEmail.sender %></strong> does not match any confirmed customer in StockChief. StockChief kept the order, but did not silently trust or merge the sender.</p>
     <div class="form-actions">
       <form method="post" action="/sales/orders/<%= order.id %>/resolve-customer">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -179,9 +179,9 @@
     <p class="eyebrow">Do this next</p>
     <h2>Where should this order go?</h2>
     <% if (cameFromEmail && cameFromEmail.reply_sent_at) { %>
-      <p><strong>Foundry already emailed <%= cameFromEmail.sender %></strong> asking for a full shipping address or pickup. The order is waiting for their answer; you can also enter it here if they tell you another way.</p>
+      <p><strong>StockChief already emailed <%= cameFromEmail.sender %></strong> asking for a full shipping address or pickup. The order is waiting for their answer; you can also enter it here if they tell you another way.</p>
     <% } else if (cameFromEmail && cameFromEmail.draft_at) { %>
-      <p>Foundry wrote the exact question to ask, but the mailbox could not send it automatically. <a href="/mail/<%= cameFromEmail.id %>">Open the email and send it</a>, or enter the answer here.</p>
+      <p>StockChief wrote the exact question to ask, but the mailbox could not send it automatically. <a href="/mail/<%= cameFromEmail.id %>">Open the email and send it</a>, or enter the answer here.</p>
     <% } else { %>
       <p><%= cameFromEmail ? 'The email did not provide a usable destination.' : 'Choose how the customer will receive this order.' %> Nothing can ship until this is answered.</p>
     <% } %>
@@ -207,7 +207,7 @@
   <form class="card sales-action-card sales-primary-action" id="approve-order" method="post" action="/sales/orders/<%= order.id %>/confirm">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <p class="eyebrow">Do this next</p><h2>Confirm this order and reserve stock</h2>
-    <p>This is the only action needed now. Foundry will hold available stock for <%= order.customer.name %>; physical on-hand and Accounting remain unchanged until shipment.</p>
+    <p>This is the only action needed now. StockChief will hold available stock for <%= order.customer.name %>; physical on-hand and Accounting remain unchanged until shipment.</p>
     <button class="btn btn--primary" type="submit">Confirm order and reserve stock</button>
   </form>
 <% } else if (order.status === 'DRAFT') { %>
@@ -216,14 +216,14 @@
 
     A draft whose product has no selling price used to show a warning and no
     button, with the price link far down the page — and the owner, sent here
-    by Needs you to approve an order, found nothing to press. Foundry will not
+    by Needs you to approve an order, found nothing to press. StockChief will not
     invent a price; it asks for it here, where the decision is being made, and
     confirms in the same step.
   %>
   <form class="card sales-action-card sales-primary-action" id="approve-order" method="post" action="/sales/orders/<%= order.id %>/confirm">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <p class="eyebrow">Do this next</p><h2>Give the selling price, then confirm this order</h2>
-    <p>Foundry has no selling price on file for <%= order.pricing.missingPriceLines === 1 ? 'this product' : 'these products' %>, and it will not treat a blank as zero. Enter what you charge and the order is confirmed in the same step — the price is kept for next time.</p>
+    <p>StockChief has no selling price on file for <%= order.pricing.missingPriceLines === 1 ? 'this product' : 'these products' %>, and it will not treat a blank as zero. Enter what you charge and the order is confirmed in the same step — the price is kept for next time.</p>
     <% order.lines.filter(function (line) { return line.unit_price_minor === null; }).forEach(function (line) { %>
       <label class="field">
         <span class="field-label">Selling price for <%= line.displayName %> (<%= order.currency %>, per <%= line.unit_label || 'unit' %>)</span>
@@ -319,7 +319,7 @@
   <form method="post" action="/sales/orders/<%= order.id %>/fulfill" class="card-body">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="idempotencyKey" value="web-fulfill:<%= order.id %>:<%= order.version %>">
-    <p>Only use this when the items physically leave. Foundry will reduce on-hand once and update Accounting automatically.</p>
+    <p>Only use this when the items physically leave. StockChief will reduce on-hand once and update Accounting automatically.</p>
     <% order.lines.forEach(function(line){ line.allocations.forEach(function(a){ %><div class="form-row"><input type="hidden" name="lineId" value="<%= line.id %>"><input type="hidden" name="locationId" value="<%= a.location_id %>"><input type="hidden" name="kitComponentId" value="<%= a.kit_component_id || '' %>"><label class="field"><span><%= line.isKit ? line.displayName + ' → ' + a.component_name : line.displayName %> from <%= a.location_name %> (maximum <%= a.quantity %>)</span><input type="number" name="quantity" min="0" max="<%= a.quantity %>" value="<%= a.quantity %>"></label></div><% }) }) %>
     <%#
       Where it is going, and how.
@@ -370,7 +370,7 @@
     </div>
     <% if (order.delivery_method !== 'PICKUP' && !order.ship_to_address) { %>
       <p class="hint">
-        This Sales Order has no delivery address, so Foundry cannot prepare a carrier label.
+        This Sales Order has no delivery address, so StockChief cannot prepare a carrier label.
         The customer's profile is only a default; the order needs its own confirmed destination.
       </p>
     <% } %>
@@ -477,7 +477,7 @@
             "Where" is the first thing anybody asks of a shipment, and the
             order page could not answer it: a row saying "Shipped" and a dash
             for tracking, with the destination nowhere on the page. When
-            Foundry has no address it says so here rather than leaving the
+            StockChief has no address it says so here rather than leaving the
             question hanging.
           %>
           <tr><th>Shipment</th><th class="num">Units</th><th>State</th><th>How it went</th><th>Tracking</th><th>Customer told</th></tr>
@@ -491,7 +491,7 @@
                 <%#
                   The state, and then how it actually left.
 
-                  "Shipped" alone was a claim Foundry could not back: a box the
+                  "Shipped" alone was a claim StockChief could not back: a box the
                   customer carried out themselves said "Shipped" and offered an
                   address nobody had entered.
                 %>
@@ -628,7 +628,7 @@
           <span class="stat-value"><%= helpers.money(money.totalMinor, money.currency) %></span>
           <%#
             Before the invoice exists this is what the order is worth, not what
-            anybody has been billed. Calling it "invoiced" would be Foundry
+            anybody has been billed. Calling it "invoiced" would be StockChief
             stating a document that does not exist.
           %>
           <span class="stat-label"><%= money.hasInvoice ? 'invoiced' : 'order value' %></span>
@@ -705,7 +705,7 @@
         var live = requests.filter(function (rq) { return rq.status === 'OPEN' && rq.hostedUrl; })[0];
         var owed = money.outstandingMinor;
         var registeredPaymentProviders = locals.paymentProviders || [];
-        // A registered adapter says Foundry knows how to speak to Stripe. It
+        // A registered adapter says StockChief knows how to speak to Stripe. It
         // does not say this particular business has connected the account
         // where its money should arrive. Non-Stripe adapters used by private
         // deployments own their own account model; Stripe is workspace-bound.
@@ -716,7 +716,7 @@
         var askFor = dueNow && dueNow < owed ? dueNow : owed;
         var askPurpose = dueNow && dueNow < owed ? 'DEPOSIT' : 'BALANCE';
         /*
-         * The email Foundry wrote to carry the link, when it was not allowed
+         * The email StockChief wrote to carry the link, when it was not allowed
          * to send it. The page said "wrote the email — it is on the order,
          * ready to send" and then showed a button to write it, which left the
          * owner asking where the email was. It is here: read it, then send it.
@@ -735,7 +735,7 @@
             <%#
               An attempt that did not go through.
 
-              Foundry knew a card had been declined and said nothing, so the order read
+              StockChief knew a card had been declined and said nothing, so the order read
               "waiting to be paid" while the customer had already tried and failed. The
               provider's own words, because "the payment failed" is not something anybody
               can act on.
@@ -749,10 +749,10 @@
             <p class="pay-live-head">
               <strong><%= helpers.money(live.amountMinor, live.currency) %> asked for<%= live.purpose === 'DEPOSIT' ? ' as a deposit' : '' %>.</strong>
               <%= linkSent
-                ? 'Foundry emailed it to ' + order.customer.name + ' on ' + helpers.shortDate(linkSent.sentAt) + '.'
+                ? 'StockChief emailed it to ' + order.customer.name + ' on ' + helpers.shortDate(linkSent.sentAt) + '.'
                 : waitingLink
-                  ? 'Foundry wrote the email to ' + order.customer.name + '. It has not been sent.'
-                  : 'Foundry updates this order by itself when they pay; nobody has to check.' %>
+                  ? 'StockChief wrote the email to ' + order.customer.name + '. It has not been sent.'
+                  : 'StockChief updates this order by itself when they pay; nobody has to check.' %>
             </p>
             <div class="pay-buttons">
               <% if (waitingLink) { %>
@@ -775,7 +775,7 @@
             </div>
             <p class="hint t-muted">
               Take payment now opens the page the customer pays on, here on this order, so you
-              can charge a card with them in front of you. Foundry never sees the card number.
+              can charge a card with them in front of you. StockChief never sees the card number.
             </p>
             <form method="post" action="/sales/orders/<%= order.id %>/payment-request" class="inline-form">
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -801,7 +801,7 @@
               <%= helpers.money(dueNow, money.currency) %> is what the terms say is due now, out of
               <%= helpers.money(owed, money.currency) %> owed. Nothing has to have shipped.
             <% } else { %>
-              Foundry creates the page they pay on. It never sees a card number, and it learns
+              StockChief creates the page they pay on. It never sees a card number, and it learns
               they paid without anybody checking.
             <% } %>
           </p>
@@ -823,7 +823,7 @@
           Money that arrived in the room.
 
           The panel offered one route — a payment link — and a sentence
-          suggesting you tell Foundry about anything else. But most of the
+          suggesting you tell StockChief about anything else. But most of the
           money a small business takes arrives as cash, a cheque, a transfer,
           or a card machine on the counter, and none of that has a link. So the
           ordinary case gets an ordinary form, on the page where the balance
@@ -922,18 +922,18 @@
 
 <% if (!['FULFILLED','CANCELLED'].includes(order.status)) { %>
   <details class="card advanced-settings sales-secondary-actions"><summary><strong>Change or cancel this order</strong><span class="hint">Optional</span></summary><div class="card-body grid grid--2">
-    <form class="sales-action-card" method="post" action="/sales/orders/<%= order.id %>/lines"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="web-line:<%= order.id %>:<%= order.version %>"><h2>Add another product</h2><p>Foundry will recalculate what can be held.</p><label class="field"><span>Product</span><select name="skuId" required><option value="">Choose a product</option><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %></option><% }) %></select></label><label class="field"><span>Quantity</span><input type="number" name="quantity" min="1" required></label><label class="field"><span>Selling price <small>only if not set in Inventory</small></span><input name="unitPrice" inputmode="decimal" placeholder="0.00"></label><button class="btn" type="submit">Add product</button></form>
+    <form class="sales-action-card" method="post" action="/sales/orders/<%= order.id %>/lines"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="idempotencyKey" value="web-line:<%= order.id %>:<%= order.version %>"><h2>Add another product</h2><p>StockChief will recalculate what can be held.</p><label class="field"><span>Product</span><select name="skuId" required><option value="">Choose a product</option><% skus.forEach(function(s){ %><option value="<%= s.id %>"><%= s.display_name %> · <%= s.code %> · <%= s.price.isSet ? s.price.formatted : 'Price not set' %></option><% }) %></select></label><label class="field"><span>Quantity</span><input type="number" name="quantity" min="1" required></label><label class="field"><span>Selling price <small>only if not set in Inventory</small></span><input name="unitPrice" inputmode="decimal" placeholder="0.00"></label><button class="btn" type="submit">Add product</button></form>
     <form class="sales-action-card" method="post" action="/sales/orders/<%= order.id %>/cancel"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><h2>Cancel what has not shipped</h2><p>Held stock is released. Anything already shipped remains in history.</p><label class="field"><span>Reason <small>optional</small></span><input name="reason"></label><button class="btn btn--danger" type="submit">Cancel unshipped remainder</button></form>
   </div></details>
 <% } %>
 
 <% var eventLabels = { CREATED: 'Order created', CONFIRMED: 'Customer order confirmed and stock checked', CHANGED: 'Order changed and reservations recalculated', ALLOCATION_CHANGED: 'Stock reservation updated automatically', PARTIALLY_FULFILLED: 'Part of the order left', FULFILLED: 'The whole order left', ALLOCATED_FROM_STOCK: 'Stock that arrived was committed to this customer', CANCELLED: 'Remaining order cancelled' }; %>
-<details class="card order-activity fold"><summary class="card-head"><h2>Order activity</h2><span class="spacer"></span><span class="fold-note"><%= order.events.length %> <%= order.events.length === 1 ? 'entry' : 'entries' %></span></summary><div class="list-rows"><% order.events.slice().reverse().forEach(function(event){ %><div class="list-row"><span><strong><%= eventLabels[event.event_type] || event.event_type.replace(/_/g,' ').toLowerCase() %></strong><small><%= event.actor_name || 'Foundry' %> · <%= helpers.dateTime(event.created_at) %></small></span></div><% }) %></div></details>
+<details class="card order-activity fold"><summary class="card-head"><h2>Order activity</h2><span class="spacer"></span><span class="fold-note"><%= order.events.length %> <%= order.events.length === 1 ? 'entry' : 'entries' %></span></summary><div class="list-rows"><% order.events.slice().reverse().forEach(function(event){ %><div class="list-row"><span><strong><%= eventLabels[event.event_type] || event.event_type.replace(/_/g,' ').toLowerCase() %></strong><small><%= event.actor_name || 'StockChief' %> · <%= helpers.dateTime(event.created_at) %></small></span></div><% }) %></div></details>
 
 <%#
   Taking a payment without losing the order.
 
-  Stripe owns the page and takes the card; Foundry never sees a number. What
+  Stripe owns the page and takes the card; StockChief never sees a number. What
   this adds is somewhere to stand while that happens — the order itself,
   saying what is being paid and what it is waiting for, instead of an empty
   browser window and no way back.
@@ -950,7 +950,7 @@
        * attribute arrived unquoted with literal quote characters inside its
        * value. The browser read the value as a string beginning with a quote
        * mark, which is not an absolute URL, so it resolved it as a path
-       * relative to Foundry and opened /orders/%22https://... — a Foundry
+       * relative to StockChief and opened /orders/%22https://... — a StockChief
        * page that does not exist.
        *
        * A merchant standing at the counter with a customer got a window
@@ -968,22 +968,22 @@
         <div class="pay-modal__head">
           <div>
             <strong>Taking payment from <%= order.customer.name %></strong>
-            <span class="fold-note">Stripe's own window. Foundry never sees the card number.</span>
+            <span class="fold-note">Stripe's own window. StockChief never sees the card number.</span>
           </div>
         </div>
         <div class="pay-modal__body">
           <p class="pay-modal__amount"><%= helpers.money(payable.amountMinor, payable.currency) %></p>
           <p id="pay-window-watching" hidden>
-            The payment window is open in front of this one. Take the card there, and Foundry
+            The payment window is open in front of this one. Take the card there, and StockChief
             records it on <%= order.order_number %> by itself the moment Stripe confirms it —
             nobody has to come back and tell it.
           </p>
           <p id="pay-window-done" hidden>
             <strong id="pay-window-done-amount"></strong>
-            Foundry recorded it on <%= order.order_number %>.
+            StockChief recorded it on <%= order.order_number %>.
           </p>
           <p class="pay-modal__blocked" id="pay-window-blocked" hidden>
-            This browser keeps new windows to itself, so open the payment page from here. Foundry
+            This browser keeps new windows to itself, so open the payment page from here. StockChief
             still records the payment on <%= order.order_number %> by itself the moment Stripe
             confirms it.
           </p>

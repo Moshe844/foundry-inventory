@@ -4,7 +4,7 @@
  * The autopilot pages over HTTP.
  *
  * These cover the screens where authority is handed over, which is the one part
- * of Foundry where a rendering mistake has consequences beyond a bad-looking
+ * of StockChief where a rendering mistake has consequences beyond a bad-looking
  * page: someone reading "12 units" and getting 20, or a settings form that
  * appears to save a preference and does not.
  *
@@ -67,15 +67,15 @@ test('Home treats recorded opening stock as operational while leading with the n
 
   // The inventory is operational once real products, locations and opening
   // stock exist. Supplier and replenishment setup remain useful, but optional;
-  // they must not make the owner think Foundry is still unusable.
+  // they must not make the owner think StockChief is still unusable.
   assert.match(page, /Good (morning|afternoon|evening), /, 'a briefing, addressed to somebody');
   assert.match(page, /Everything is under control/);
   assert.match(page, /Do this next/);
   assert.match(page, /Add who supplies/);
   assert.match(page, /Optional setup · 2 of 5 complete/);
-  assert.doesNotMatch(page, /Getting Foundry ready/);
+  assert.doesNotMatch(page, /Getting StockChief ready/);
   assert.doesNotMatch(page, /Inventory pulse/, 'setup guidance replaces the ordinary dashboard until setup is complete');
-  assert.doesNotMatch(page, /Tell Foundry when you sell something/, 'missing history is taught in context, not made into work');
+  assert.doesNotMatch(page, /Tell StockChief when you sell something/, 'missing history is taught in context, not made into work');
 });
 
 test('missing demand history stays contextual guidance and does not become a fake Needs you decision', async () => {
@@ -91,7 +91,7 @@ test('missing demand history stays contextual guidance and does not become a fak
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/needs-you')).text);
   assert.match(page, /Nothing is waiting/);
-  assert.doesNotMatch(page, /Tell Foundry when you sell something/);
+  assert.doesNotMatch(page, /Tell StockChief when you sell something/);
   assert.doesNotMatch(page, /missing operating input/i);
 });
 
@@ -104,13 +104,13 @@ test('completed manager checks appear in durable history even when no action was
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/autopilot/history')).text);
   // The checks are kept and counted, but folded away at the foot of the page.
-  // This page is called "What Foundry has done", and it used to open with fifty
+  // This page is called "What StockChief has done", and it used to open with fifty
   // identical lines of a check that did nothing, above the work itself.
   assert.match(page, /1 inventory check/i, 'counted');
   assert.match(page, /completed evaluations, including the ones that correctly produced no action/i);
   assert.match(page, /Checked inventory after stock arrived/);
   assert.match(page, /1 position lacked enough outbound history for safe demand action/);
-  assert.doesNotMatch(page, /Foundry has not had anything to do yet/);
+  assert.doesNotMatch(page, /StockChief has not had anything to do yet/);
 });
 
 test('an active product reaching zero is watched without inventing a Needs You decision', async () => {
@@ -134,11 +134,11 @@ test('an active product reaching zero is watched without inventing a Needs You d
   // a measured condition, not a decision disguised as work for the owner.
   assert.match(page, /Needs you 0 nothing is waiting/i);
   assert.match(page, /being monitored; it is not waiting for your decision/i);
-  assert.doesNotMatch(page, /Tell Foundry when you sell something/i);
-  assert.doesNotMatch(page, /tracked variant/i, 'not in Foundry\'s own vocabulary');
+  assert.doesNotMatch(page, /Tell StockChief when you sell something/i);
+  assert.doesNotMatch(page, /tracked variant/i, 'not in StockChief\'s own vocabulary');
 });
 
-test('the settings page shows what Foundry may do and how you want it run', async () => {
+test('the settings page shows what StockChief may do and how you want it run', async () => {
   const env = setup();
   const agent = await ownerAgent(env);
 
@@ -148,8 +148,8 @@ test('the settings page shows what Foundry may do and how you want it run', asyn
   assert.match(page, /Ask me first/, 'the safe default is stated on the page itself');
   assert.match(page, /Handle routine work/, 'bounded automatic work is stated on the page itself');
   assert.match(page, /Custom.*Advanced policies, preferences and hard limits/, 'power controls remain available');
-  assert.match(page, /Nothing\. Foundry prepares work and waits for you on all of it\./);
-  assert.match(page, /Tell Foundry what it may handle/, 'the plain-language route in');
+  assert.match(page, /Nothing\. StockChief prepares work and waits for you on all of it\./);
+  assert.match(page, /Tell StockChief what it may handle/, 'the plain-language route in');
   assert.match(page, /How you want this inventory run/);
   assert.match(page, /never works these out from watching you/);
   assert.match(page, /Days of stock to aim for/);
@@ -173,7 +173,7 @@ test('Handle routine work authorises a bounded transfer without opening Custom',
   assert.equal((await post(agent, '/autopilot/mode', { mode: 'POLICY_AUTOMATED' })).status, 303);
   const setupPage = await agent.get('/autopilot');
   const setupText = plain(setupPage.text);
-  assert.match(setupText, /Foundry may automatically:/);
+  assert.match(setupText, /StockChief may automatically:/);
   assert.match(setupText, /Move stock between my locations/);
   assert.match(setupText, /Automatic transfers: never more than/);
   assert.match(setupText, /Start handling routine work/);
@@ -286,7 +286,7 @@ test('guided purchasing requires an explicit limit and selected supplier in the 
   ]));
 
   const saved = plain((await agent.get('/autopilot')).text);
-  assert.match(saved, /purchase orders of no more than \$500 may be approved and recorded as ordered in Foundry for 1 selected supplier/);
+  assert.match(saved, /purchase orders of no more than \$500 may be approved and recorded as ordered in StockChief for 1 selected supplier/);
   assert.match(saved, /Everything outside these limits comes to you first/);
 });
 
@@ -315,7 +315,7 @@ test('a preference set on the page is stored, attributed and applied', async () 
   assert.match(page, /Keep about 45 days of stock on hand/);
 });
 
-test('clearing a preference hands the decision back to Foundry', async () => {
+test('clearing a preference hands the decision back to StockChief', async () => {
   const env = setup();
   const agent = await ownerAgent(env);
   preferences.set(env.db, env.ctx, env.membership, {
@@ -369,7 +369,7 @@ test('a policy with no limit is refused rather than written', async () => {
   assert.match(page, /A policy without a limit is not a limit/);
 });
 
-test('someone who cannot change what Foundry does is stopped at the URL', async () => {
+test('someone who cannot change what StockChief does is stopped at the URL', async () => {
   const env = setup();
   authService.createTeamMember(env.db, env.ctx, env.membership, {
     name: 'Sam Reyes',
@@ -380,7 +380,7 @@ test('someone who cannot change what Foundry does is stopped at the URL', async 
 
   const agent = request.agent(env.app);
   await signIn(agent, 'sam@autopilot.test', 'autopilot-co-2026');
-  // Staff may not hand Foundry more authority, whatever the page rendered.
+  // Staff may not hand StockChief more authority, whatever the page rendered.
   await post(agent, '/autopilot/mode', { mode: 'POLICY_AUTOMATED' });
   assert.equal(modes.get(env.db, env.workspace.workspaceId).mode, 'SUPERVISED');
 
@@ -409,7 +409,7 @@ test('taking authority away is available to anyone who can operate the inventory
 test('a one-location inventory is not offered a policy that cannot fire', async () => {
   // Balancing moves stock between locations. Offering the form to somebody with
   // one location invites them to write a policy that can never do anything, and
-  // then wonder why Foundry never acts.
+  // then wonder why StockChief never acts.
   const env = setup();
   env.db
     .prepare('UPDATE locations SET is_active = 0 WHERE workspace_id = ? AND id != ?')

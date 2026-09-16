@@ -9,9 +9,9 @@
  * ninety-nine times out of a hundred is wrong about one parcel a week — which,
  * for a rule that spends money, is not a rounding error.
  *
- * So the sentence is read once, by a person or by Tell Foundry, and what is
+ * So the sentence is read once, by a person or by Tell StockChief, and what is
  * kept is what it meant. The original words are kept beside it so the owner
- * can see that Foundry understood them, and change it if it did not.
+ * can see that StockChief understood them, and change it if it did not.
  *
  * Every rule is a permission to spend within limits. It can only ever choose
  * between rates a carrier has actually quoted, it can never pick one that
@@ -115,7 +115,7 @@ const matchesService = (rule, rate) => {
 };
 
 /**
- * Which rate a rule allows Foundry to buy, and why — or why none of them.
+ * Which rate a rule allows StockChief to buy, and why — or why none of them.
  *
  * Returns `{ rate, rule, because }` when a rule covers this parcel, and
  * `{ rate: null, because }` when none does. The second is not an error and is
@@ -133,7 +133,7 @@ function decide(db, workspaceId, rates, options = {}) {
   const rules = options.rules || list(db, workspaceId);
   if (!rules.length) {
     return { rate: null, rule: null,
-      because: 'You have not told Foundry which service to use on its own, so it is asking.' };
+      because: 'You have not told StockChief which service to use on its own, so it is asking.' };
   }
 
   const failures = [];
@@ -149,7 +149,7 @@ function decide(db, workspaceId, rates, options = {}) {
         && rate.deliveryDays > rule.maxDeliveryDays) return false;
       /*
        * The promised date is a promise. A rate with no date at all cannot be
-       * shown to keep it, so it does not qualify — Foundry does not get to
+       * shown to keep it, so it does not qualify — StockChief does not get to
        * assume a carrier will be on time because it declined to say.
        */
       if (rule.requireByPromised && promised) {
@@ -182,7 +182,7 @@ function decide(db, workspaceId, rates, options = {}) {
 }
 
 /**
- * What Foundry would suggest when no rule applies.
+ * What StockChief would suggest when no rule applies.
  *
  * A recommendation, never an action. The cheapest rate that still keeps the
  * promise, or simply the cheapest when nothing was promised — which is what a
@@ -238,7 +238,7 @@ function recommend(rates, promisedDate, options = {}) {
   if (history.reliability !== null) {
     reasons.push(`${Math.round(history.reliability * 100)}% on time across ${history.measured} comparable delivered parcels.`);
   } else {
-    reasons.push('Foundry has no comparable delivery history yet, so it did not invent a reliability score.');
+    reasons.push('StockChief has no comparable delivery history yet, so it did not invent a reliability score.');
   }
   return {
     rate: best,

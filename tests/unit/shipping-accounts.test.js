@@ -164,7 +164,7 @@ test('disconnecting takes the key with it', () => withoutServerKey(() => {
   env.db.close();
 }));
 
-test('only a provider Foundry actually has an adapter for can be connected', () => withoutServerKey(() => {
+test('only a provider StockChief actually has an adapter for can be connected', () => withoutServerKey(() => {
   const env = setup();
   assert.throws(() => accounts.connect(env.db, env.ctx, env.membership,
     { provider: 'someone-else', apiKey: 'x' }), /shipstation.*easypost.*shippo/);

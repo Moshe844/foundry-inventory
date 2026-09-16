@@ -38,7 +38,7 @@ function setup() {
 }
 
 function invoicedOrder(env, quantity = 100) {
-  const customer = sales.createCustomer(env.db, env.ctx, { name: 'ABC School', email: 'orders@abcschool.test' });
+  const customer = sales.createCustomer(env.db, env.ctx, { name: 'ABC School', email: 'orders@abcschool.test', shippingAddress: '7 Example Lane, Albany, NY 12207, US' });
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: quantity * 2 });
   const order = sales.confirm(env.db, env.ctx, sales.createOrder(env.db, env.ctx, {
     customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity }],
@@ -431,7 +431,7 @@ test('a deposit is set in money, and stored in minor units', async () => {
 
 test('a till sale says why it has no total, rather than showing a bare dash', async () => {
   /*
-   * Foundry values a sale at the price on file when it happened, so a sale
+   * StockChief values a sale at the price on file when it happened, so a sale
    * from before a price was recorded genuinely has no value it can support.
    * Showing "—" was the refusal without the reason, which is half the rule and
    * reads like a broken column.
@@ -524,7 +524,7 @@ test('the fast ship path leaves a shipment, an address and a notice', async () =
 test('a payment taken in the room is recorded on the order, through the same engine', async () => {
   /*
    * The money panel offered a payment link and a sentence suggesting you tell
-   * Foundry about anything else. Most of what a small business takes is cash,
+   * StockChief about anything else. Most of what a small business takes is cash,
    * a cheque, a transfer or the card machine on the counter, and none of that
    * has a link.
    */
@@ -616,10 +616,14 @@ test('orders that shipped before shipments existed get their record rebuilt', as
     customerId: customer.id, lines: [{ skuId: env.item.skuId, quantity: 7 }],
   }).id);
 
-  // Exactly what the old fast path did: fulfil, and record nothing else.
+  // Construct a historical missing-address record without bypassing today's
+  // dispatch gate: the destination existed when this fixture was fulfilled.
+  env.db.prepare('UPDATE sales_orders SET ship_to_address=? WHERE id=?')
+    .run('7 Example Lane, Albany, NY 12207, US', order.id);
   sales.fulfill(env.db, env.ctx, order.id, {
     lines: [{ lineId: order.lines[0].id, locationId: env.workspace.main.id, quantity: 7 }],
   }, { idempotencyKey: 'old-world' });
+  env.db.prepare('UPDATE sales_orders SET ship_to_address=NULL WHERE id=?').run(order.id);
 
   const shipments = require('../../src/sales/shipment-service');
   assert.equal(shipments.listForOrder(env.db, env.workspace.workspaceId, order.id).length, 0,
@@ -647,7 +651,7 @@ test('orders that shipped before shipments existed get their record rebuilt', as
   assert.match(orderText, /SHP-1001/);
 
   const boxText = plain((await agent.get(`/fulfilment/${rebuilt[0].id}`)).text);
-  assert.match(boxText, /Foundry has no address for Hendel/,
+  assert.match(boxText, /StockChief has no address for Hendel/,
     'and the page answers "where did it go" instead of showing a blank');
 });
 
@@ -742,7 +746,7 @@ test('an email typed for a customer already on file is kept, not thrown away', a
    * customer from the list, type their email, create the order — and the email
    * vanished, because the first version of this only filled in a customer
    * being created. The order then refused a payment link because "there is no
-   * email address for Chavy". The form asked, the person answered, and Foundry
+   * email address for Chavy". The form asked, the person answered, and StockChief
    * dropped it.
    */
   const env = setup();

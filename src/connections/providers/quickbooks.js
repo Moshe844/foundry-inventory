@@ -22,7 +22,7 @@ function metadata() {
 }
 
 function authorizationUrl({ state, input }) {
-  if (!config.connections.quickbooks.configured) throw new ValidationError('QuickBooks is not configured on this Foundry installation.');
+  if (!config.connections.quickbooks.configured) throw new ValidationError('QuickBooks is not configured on this StockChief installation.');
   const url = new URL('https://appcenter.intuit.com/connect/oauth2');
   url.searchParams.set('client_id', config.connections.quickbooks.clientId);
   url.searchParams.set('response_type', 'code'); url.searchParams.set('scope', SCOPES.join(' '));
@@ -106,7 +106,7 @@ async function readAccountingSnapshot({ credentials, asOf }) {
   walk(response.body.Rows?.Row || []);
   // QuickBooks omits zero-balance accounts from an empty or sparse Trial
   // Balance report. Keep the chart identities in the snapshot with a proven
-  // zero balance so Foundry can distinguish "the sandbox is empty" from
+  // zero balance so StockChief can distinguish "the sandbox is empty" from
   // "QuickBooks returned no accounts" and can map an account before posting.
   for (const account of chart.values()) {
     if (!account?.Id || reportedAccountIds.has(String(account.Id)) || account.Active === false) continue;
@@ -121,12 +121,12 @@ async function readAccountingSnapshot({ credentials, asOf }) {
 }
 
 async function postJournalEntry({ credentials, entry, idempotencyKey }) {
-  const body = { TxnDate: entry.posting_date, PrivateNote: `Foundry journal ${entry.entry_number}: ${entry.description}`,
+  const body = { TxnDate: entry.posting_date, PrivateNote: `StockChief journal ${entry.entry_number}: ${entry.description}`,
     Line: entry.lines.map((line) => ({ Amount: Number(line.debit_minor || line.credit_minor) / 100,
       Description: line.memo || entry.description, DetailType: 'JournalEntryLineDetail',
       JournalEntryLineDetail: { PostingType: line.debit_minor ? 'Debit' : 'Credit',
         AccountRef: { value: line.external_account_id } } })) };
-  // Intuit limits requestid to 50 characters. Foundry's canonical idempotency
+  // Intuit limits requestid to 50 characters. StockChief's canonical idempotency
   // key includes workspace and journal IDs and is intentionally longer, so use
   // a stable digest rather than truncating (which could create collisions).
   const requestId = `foundry-${crypto.createHash('sha256').update(String(idempotencyKey)).digest('hex').slice(0, 32)}`;

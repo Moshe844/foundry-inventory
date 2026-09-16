@@ -8,6 +8,6 @@
   </span></div><% }) %></div>
   <% if(session.status==='OPEN'){ %><form method="post" action="/warehouse/counts/<%= session.id %>/submit"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button rm-button--primary">Submit this count</button></form><% } %>
   <% if(session.status==='RECOUNT_REQUIRED'){ %><p class="rm-note">The first blind pass disagreed. The next counter will see only the affected products, not the previous answer.</p><form method="post" action="/warehouse/counts/<%= session.id %>/recount"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button rm-button--primary">Start blind recount</button></form><% } %>
-  <% if(session.status==='AWAITING_APPROVAL'){ %><p class="rm-note">Approving will post the exact variances through the canonical inventory engine. If stock changed since counting began, Foundry will stop.</p><form method="post" action="/warehouse/counts/<%= session.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button rm-button--primary">Approve and post variance</button></form><% } %>
+  <% if(session.status==='AWAITING_APPROVAL'){ %><p class="rm-note">Approving will post the exact variances through the canonical inventory engine. If stock changed since counting began, StockChief will stop.</p><form method="post" action="/warehouse/counts/<%= session.id %>/approve"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-button rm-button--primary">Approve and post variance</button></form><% } %>
 </section>
 </div>

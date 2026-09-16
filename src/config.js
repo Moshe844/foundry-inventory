@@ -8,7 +8,7 @@ const rootDir = path.resolve(__dirname, '..');
 
 // Local development keeps provider credentials in a gitignored .env file.
 // Anything already in the real environment wins, so deployments do not need one.
-// `process.loadEnvFile` is only present on newer Node releases. Foundry still
+// `process.loadEnvFile` is only present on newer Node releases. StockChief still
 // runs on the Node 18 installation used by the local desktop, so keep a small
 // parser here instead of silently ignoring every credential on that runtime.
 function loadLocalEnvironment(envFile) {
@@ -95,7 +95,7 @@ const config = {
     return resolveConnectionEncryptionKey();
   },
 
-  // Capacity is deployment policy, never a Foundry product tier. Operators
+  // Capacity is deployment policy, never a StockChief product tier. Operators
   // can size these to their reverse proxy/object-storage limits without a code
   // change; defaults comfortably cover multi-export catalogue migrations.
   uploads: {
@@ -161,7 +161,7 @@ const config = {
   },
 
   /**
-   * When Foundry looks at the inventory by itself.
+   * When StockChief looks at the inventory by itself.
    *
    * Off under test, always: a suite that starts a real server and then asserts
    * "nothing happened yet" cannot be trusted if a timer might act in between.
@@ -291,7 +291,7 @@ const config = {
     /**
      * What each kind of thinking costs.
      *
-     * Foundry asks a model eight different questions, and they are not the same
+     * StockChief asks a model eight different questions, and they are not the same
      * size of question. Reading a paragraph about a business and designing an
      * inventory model for it is genuinely hard. Deciding whether a spreadsheet
      * column headed "LABST" holds quantities is not, and paying frontier-model

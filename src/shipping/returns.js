@@ -50,7 +50,7 @@ function outboundFor(db, workspaceId, salesOrderId, shipmentId = null) {
         AND id = ? AND status IN ('SHIPPED','DELIVERED')`).get(workspaceId, salesOrderId, shipmentId)
     : db.prepare(`SELECT * FROM sales_shipments WHERE workspace_id = ? AND sales_order_id = ?
         AND status IN ('SHIPPED','DELIVERED') ORDER BY shipped_at DESC LIMIT 1`).get(workspaceId, salesOrderId);
-  if (!row) throw new ValidationError('Foundry needs the original fulfilled shipment before it can prove the return addresses and parcel.');
+  if (!row) throw new ValidationError('StockChief needs the original fulfilled shipment before it can prove the return addresses and parcel.');
   return row;
 }
 
@@ -63,11 +63,11 @@ async function quote(db, ctx, returnId, options = {}) {
   const provider = options.provider || providers.get(providerName);
   const points = shipping.endpoints(db, ctx.workspaceId, outbound);
   if (!points.to.complete || !points.from.complete) {
-    throw new ValidationError('The original customer and warehouse addresses must both be complete before Foundry can reverse the route.');
+    throw new ValidationError('The original customer and warehouse addresses must both be complete before StockChief can reverse the route.');
   }
   const packages = shipping.packagesFor(db, ctx.workspaceId, outbound.id);
   if (!packages.some((box) => Number(box.weightGrams) > 0)) {
-    throw new ValidationError('The return parcel needs an evidenced weight before Foundry can request rates.');
+    throw new ValidationError('The return parcel needs an evidenced weight before StockChief can request rates.');
   }
   const result = await provider.quote(held.ctx, {
     from: points.to, to: points.from,
@@ -95,7 +95,7 @@ async function buy(db, ctx, returnId, options = {}) {
   if (existing) {
     if (['PURCHASED','IN_TRANSIT','DELIVERED'].includes(existing.status)) return { label: existing, replayed: true };
     if (['PENDING','REVIEW'].includes(existing.status)) {
-      throw new ValidationError('This return-label purchase is still being verified. Foundry will not retry it and risk buying twice.');
+      throw new ValidationError('This return-label purchase is still being verified. StockChief will not retry it and risk buying twice.');
     }
   }
   const rma = requireReturn(db, ctx.workspaceId, returnId);

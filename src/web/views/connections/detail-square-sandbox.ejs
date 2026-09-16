@@ -7,7 +7,7 @@
   <div class="titles">
     <div class="breadcrumbs"><a href="/settings/connections">Connections</a><span>›</span><span>Square Sandbox</span></div>
     <h1>Square</h1>
-    <p class="page-sub">Test completed Square sales flowing automatically into Foundry.</p>
+    <p class="page-sub">Test completed Square sales flowing automatically into StockChief.</p>
   </div>
   <span class="badge <%= connection.status === 'connected' ? 'badge--ok' : 'badge--muted' %>"><%= connection.status === 'connected' ? 'Connected' : 'Disconnected' %></span>
 </header>
@@ -19,7 +19,7 @@
     </section>
   <% } else if (unmapped.length) { %>
     <section class="card" data-selection-group>
-      <div class="card-head"><div><span class="eyebrow">One-time setup</span><h2>Match <%= unmapped.length %> Square record<%= unmapped.length === 1 ? '' : 's' %></h2><p class="muted">Do this once. Foundry remembers every match for future sales.</p></div></div>
+      <div class="card-head"><div><span class="eyebrow">One-time setup</span><h2>Match <%= unmapped.length %> Square record<%= unmapped.length === 1 ? '' : 's' %></h2><p class="muted">Do this once. StockChief remembers every match for future sales.</p></div></div>
       <div class="card-body grid">
         <% if (unmappedProducts.length > 1) { %>
           <form id="bulk-product-import" method="post" action="/settings/connections/<%= connection.id %>/create-products-map" class="form-actions">
@@ -27,16 +27,16 @@
             <button class="btn btn--sm" type="button" data-select-all>Select all products</button>
             <button class="btn btn--sm" type="button" data-clear-selection>Clear</button>
             <span class="muted" data-selection-count>0 selected</span>
-            <button class="btn btn--primary btn--sm" type="submit" data-remove-selected disabled>Add selected to Foundry</button>
+            <button class="btn btn--primary btn--sm" type="submit" data-remove-selected disabled>Add selected to StockChief</button>
           </form>
         <% } %>
         <% unmapped.forEach(function(record) { var choices = record.entity_type === 'sku' ? skus : locations; %>
           <div class="list-row" id="mapping-<%= record.entity_type %>-<%= record.external_id %>" style="align-items:flex-start; scroll-margin-top:24px">
             <% if (record.entity_type === 'sku' && unmappedProducts.length > 1) { %><input type="checkbox" name="externalIds" value="<%= record.external_id %>" form="bulk-product-import" data-selection-item aria-label="Select <%= record.display_name %>"><% } %>
             <div style="flex:1"><strong><%= record.display_name %></strong><p class="muted"><%= record.entity_type === 'sku' ? 'Square product · ' + (record.code || record.external_id) : 'Square location' %></p>
-              <% if (choices.length) { %><form method="post" action="/settings/connections/<%= connection.id %>/map" class="form-actions" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="entityType" value="<%= record.entity_type %>"><input type="hidden" name="externalId" value="<%= record.external_id %>"><select class="select" name="foundryRecordId" required><option value="">Choose its Foundry match</option><% if (record.entity_type === 'sku') { skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %><%= sku.variant_label ? ' / ' + sku.variant_label : '' %> · <%= sku.code %></option><% }) } else { locations.forEach(function(location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) } %></select><button class="btn btn--primary btn--sm" type="submit">Save match</button></form><% } %>
-              <% if (record.entity_type === 'sku') { %><form method="post" action="/settings/connections/<%= connection.id %>/create-product-map" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="externalId" value="<%= record.external_id %>"><button class="btn btn--sm" type="submit">Create it in Foundry from Square</button></form><% } %>
-              <% if (record.entity_type === 'location' && !choices.length) { %><form method="post" action="/settings/connections/<%= connection.id %>/create-location-map" class="form-actions" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="externalId" value="<%= record.external_id %>"><input type="hidden" name="name" value="<%= record.display_name %>"><input type="hidden" name="kind" value="store"><button class="btn btn--primary btn--sm" type="submit">Create this location in Foundry</button></form><% } %>
+              <% if (choices.length) { %><form method="post" action="/settings/connections/<%= connection.id %>/map" class="form-actions" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="entityType" value="<%= record.entity_type %>"><input type="hidden" name="externalId" value="<%= record.external_id %>"><select class="select" name="foundryRecordId" required><option value="">Choose its StockChief match</option><% if (record.entity_type === 'sku') { skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %><%= sku.variant_label ? ' / ' + sku.variant_label : '' %> · <%= sku.code %></option><% }) } else { locations.forEach(function(location) { %><option value="<%= location.id %>"><%= location.name %></option><% }) } %></select><button class="btn btn--primary btn--sm" type="submit">Save match</button></form><% } %>
+              <% if (record.entity_type === 'sku') { %><form method="post" action="/settings/connections/<%= connection.id %>/create-product-map" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="externalId" value="<%= record.external_id %>"><button class="btn btn--sm" type="submit">Create it in StockChief from Square</button></form><% } %>
+              <% if (record.entity_type === 'location' && !choices.length) { %><form method="post" action="/settings/connections/<%= connection.id %>/create-location-map" class="form-actions" style="margin-top:10px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="externalId" value="<%= record.external_id %>"><input type="hidden" name="name" value="<%= record.display_name %>"><input type="hidden" name="kind" value="store"><button class="btn btn--primary btn--sm" type="submit">Create this location in StockChief</button></form><% } %>
             </div>
           </div>
         <% }) %>
@@ -44,12 +44,12 @@
     </section>
   <% } else { %>
     <section class="notice notice--success connection-ready">
-      <div><strong>Square is ready.</strong><p><%= products.length %> product<%= products.length === 1 ? '' : 's' %> and <%= mappedLocations.length %> location<%= mappedLocations.length === 1 ? '' : 's' %> are matched. Future completed Square sales can update Foundry automatically.</p></div>
+      <div><strong>Square is ready.</strong><p><%= products.length %> product<%= products.length === 1 ? '' : 's' %> and <%= mappedLocations.length %> location<%= mappedLocations.length === 1 ? '' : 's' %> are matched. Future completed Square sales can update StockChief automatically.</p></div>
     </section>
 
     <section class="card connection-real-sale">
       <div class="card-body grid">
-        <div><span class="eyebrow">Sandbox test</span><h2>Run the sale in Square</h2><p>Foundry prepares an unpaid Square Sandbox checkout. You complete the payment on Square’s testing panel. Inventory does not change until Square reports that payment as successful.</p></div>
+        <div><span class="eyebrow">Sandbox test</span><h2>Run the sale in Square</h2><p>StockChief prepares an unpaid Square Sandbox checkout. You complete the payment on Square’s testing panel. Inventory does not change until Square reports that payment as successful.</p></div>
         <% if (products.length && mappedLocations.length) { %>
           <form method="post" action="/settings/connections/<%= connection.id %>/square-sandbox-checkout" class="grid grid--2">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -58,7 +58,7 @@
             <label class="field"><span class="label">Quantity</span><input class="input" type="number" name="quantity" value="1" min="1" max="100" required></label>
             <div class="form-actions" style="align-self:end"><button class="btn btn--primary" type="submit">Open unpaid Square test checkout</button></div>
           </form>
-          <p class="hint">The next page belongs to Square. Use its Test Payment step and complete the sale there. Foundry never presses the final payment button.</p>
+          <p class="hint">The next page belongs to Square. Use its Test Payment step and complete the sale there. StockChief never presses the final payment button.</p>
         <% } else { %>
           <div class="notice notice--warn"><div><strong>Finish matching first</strong><p>A matched Square product and selected location are required before an itemized test sale can be prepared.</p></div></div>
         <% } %>

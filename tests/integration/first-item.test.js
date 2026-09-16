@@ -5,9 +5,9 @@
  *
  * Somebody who described their product and listed its option values has already
  * done the data entry; asking them to repeat it is the setup failing to finish
- * its own sentence. So Foundry offers to create what they described.
+ * its own sentence. So StockChief offers to create what they described.
  *
- * The line these tests defend is quantity. Foundry may create the *shape* of
+ * The line these tests defend is quantity. StockChief may create the *shape* of
  * what a customer described, because they described it. It must never write a
  * balance — what is physically on a shelf is a fact nobody has told it, and the
  * whole product rests on never guessing at those.
@@ -154,8 +154,8 @@ test('accepting the offer creates the combinations and no stock whatsoever', asy
 
   const quantities = await agent.get(res.headers.location);
   assert.equal(quantities.status, 200);
-  assert.match(plain(quantities.text), /How should we get your current quantities into Foundry\?/);
-  assert.match(plain(quantities.text), /Tell Foundry/);
+  assert.match(plain(quantities.text), /How should we get your current quantities into StockChief\?/);
+  assert.match(plain(quantities.text), /Tell StockChief/);
   assert.match(plain(quantities.text), /Upload Excel/);
   assert.match(plain(quantities.text), /Type quantities yourself/);
   assert.match(plain(quantities.text), /Save opening inventory/);
@@ -172,7 +172,7 @@ test('accepting the offer creates the combinations and no stock whatsoever', asy
   assert.equal(
     env.db.prepare('SELECT COUNT(*) AS n FROM movements WHERE workspace_id = ?').get(env.workspace.workspaceId).n,
     0,
-    'Foundry has not been told what is on the shelf and must not invent it'
+    'StockChief has not been told what is on the shelf and must not invent it'
   );
   const balances = env.db
     .prepare('SELECT COALESCE(SUM(on_hand), 0) AS total FROM balances WHERE workspace_id = ?')
@@ -198,7 +198,7 @@ test('current quantities remain an explicit setup step until the customer finish
   assert.equal(onboarding.status, 'collecting');
 
   const homeBefore = plain((await agent.get('/')).text);
-  assert.match(homeBefore, /Getting Foundry ready/);
+  assert.match(homeBefore, /Getting StockChief ready/);
   assert.match(homeBefore, /Confirm current stock/);
 
   const completed = await agent

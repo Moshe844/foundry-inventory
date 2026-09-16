@@ -43,7 +43,7 @@ function linkedItem(db, workspaceId, supplierId, vendorCode) {
       WHERE si.workspace_id = ? AND si.supplier_id = ? AND si.is_active = 1
         AND si.supplier_sku = ? COLLATE NOCASE AND i.is_active = 1`
   ).all(workspaceId, supplierId, vendorCode);
-  if (!rows.length) throw new ValidationError(`Foundry could not find vendor code ${vendorCode} for this supplier.`);
+  if (!rows.length) throw new ValidationError(`StockChief could not find vendor code ${vendorCode} for this supplier.`);
   if (rows.length > 1) {
     throw new ValidationError(
       `${vendorCode} is linked to more than one product. Resolve that supplier-catalogue conflict before changing your code.`
@@ -170,7 +170,7 @@ function apply(db, ctx, membership, proposalId) {
     const state = previewState(db, ctx.workspaceId, proposal.supplierId, proposal.vendorCode, proposal.internalBaseCode);
     if (state.integrityHash !== proposal.integrityHash) {
       db.prepare("UPDATE supplier_code_mapping_proposals SET status = 'INVALIDATED' WHERE id = ?").run(proposal.id);
-      throw new InvariantError('The product codes changed after this preview. Ask Foundry to prepare it again.', 'mapping_changed');
+      throw new InvariantError('The product codes changed after this preview. Ask StockChief to prepare it again.', 'mapping_changed');
     }
     applyState(db, ctx, state);
     saveMapping(db, ctx, proposal);
@@ -237,7 +237,7 @@ function previewFromInstruction(db, ctx, membership, message) {
       WHERE si.workspace_id = ? AND si.is_active = 1 AND si.supplier_sku = ? COLLATE NOCASE`
   ).all(ctx.workspaceId, parsed.vendorCode);
   if (!candidates.length) {
-    throw new ValidationError(`Foundry could not find vendor code ${parsed.vendorCode} in this inventory.`);
+    throw new ValidationError(`StockChief could not find vendor code ${parsed.vendorCode} in this inventory.`);
   }
   const named = candidates.filter((supplier) => message.toLowerCase().includes(supplier.name.toLowerCase()));
   const choices = named.length ? named : candidates;

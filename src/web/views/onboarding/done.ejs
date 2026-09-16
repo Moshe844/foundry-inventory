@@ -16,12 +16,12 @@
     <%- helpers.icon(run.verified ? 'check' : 'alert', { size: 14 }) %>
     <%= run.verified ? 'Inventory totals match the source' : 'Totals do not match' %>
   </p>
-  <h1><%= run.verified ? 'Foundry is ready.' : 'This migration needs checking.' %></h1>
+  <h1><%= run.verified ? 'StockChief is ready.' : 'This migration needs checking.' %></h1>
   <p>
     <% if (run.verified) { %>
-      Your inventory is in Foundry and every total agrees with your files.
+      Your inventory is in StockChief and every total agrees with your files.
     <% } else { %>
-      The migration ran, but Foundry could not confirm the totals match. Check these before you rely
+      The migration ran, but StockChief could not confirm the totals match. Check these before you rely
       on them — it will not tell you everything is fine when it cannot prove it.
     <% } %>
   </p>
@@ -61,11 +61,11 @@
     <div class="rm-panel__head">
       <%- helpers.icon('shield', { size: 15, className: 'rm-quiet' }) %>
       <h2>Reconciliation</h2>
-      <span class="right">Your files against what Foundry holds</span>
+      <span class="right">Your files against what StockChief holds</span>
     </div>
     <div style="padding:4px 16px 12px;overflow-x:auto">
       <table class="rm-qty">
-        <thead><tr><th>Check</th><th>Your files</th><th>Foundry</th></tr></thead>
+        <thead><tr><th>Check</th><th>Your files</th><th>StockChief</th></tr></thead>
         <tbody>
           <% checks.forEach(function (check) { %>
             <tr>
@@ -103,13 +103,13 @@
   <%- helpers.icon('eye', { size: 16 }) %>
   <span>
     <strong>No trading history yet, so no guesses about demand.</strong>
-    Foundry starts learning from activity from today. Until it has seen things leave, it will say it
+    StockChief starts learning from activity from today. Until it has seen things leave, it will say it
     cannot judge rather than invent a forecast.
   </span>
 </div>
 
 <div class="rm-spine-foot">
-  <a class="rm-btn" href="/"><%- helpers.icon('foundry', { size: 15 }) %> Open Foundry</a>
+  <a class="rm-btn" href="/"><%- helpers.icon('foundry', { size: 15 }) %> Open StockChief</a>
   <a class="rm-btn rm-btn--ghost" href="/inventory">See the inventory</a>
   <a class="rm-btn rm-btn--ghost" href="/activity">See the movements</a>
 </div>

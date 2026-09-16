@@ -4,10 +4,10 @@
  * Turning "handle ordinary transfers yourself" into a policy someone can read.
  *
  * The division of labour is the whole point, and it is the same one used
- * everywhere else in Foundry: the model reads English, and nothing else.
+ * everywhere else in StockChief: the model reads English, and nothing else.
  *
  * It may propose a name, pick locations by the names the customer used, and
- * suggest a ceiling. It cannot invent an action type Foundry does not automate,
+ * suggest a ceiling. It cannot invent an action type StockChief does not automate,
  * cannot drop a safety condition, cannot approve anything, and cannot produce a
  * policy without a limit — every one of those is re-decided here in ordinary
  * code after the model has spoken, against the workspace's real locations.
@@ -46,7 +46,7 @@ const POLICY_SCHEMA = {
     name: { type: 'string', description: 'A short name they would recognise on a list.' },
     maximumQuantity: {
       type: 'integer',
-      description: 'The most Foundry may move in one go. Use the number they said. 0 if they gave none.',
+      description: 'The most StockChief may move in one go. Use the number they said. 0 if they gave none.',
     },
     dailyLimit: {
       type: 'integer',
@@ -62,7 +62,7 @@ const POLICY_SCHEMA = {
     supplierNames: { type: 'array', items: { type: 'string' }, description: 'Suppliers named verbatim.' },
     unsupportedReason: {
       type: 'string',
-      description: 'If understood is false, one plain sentence saying what Foundry cannot automate.',
+      description: 'If understood is false, one plain sentence saying what StockChief cannot automate.',
     },
   },
 };
@@ -72,7 +72,7 @@ You read one sentence from a business owner about what their inventory system
 may do without asking, and turn it into structured fields. You are not deciding
 whether anything is safe; other code does that and will overrule you.
 
-Foundry can automate bounded transfers between the customer's own locations and
+StockChief can automate bounded transfers between the customer's own locations and
 approve routine replenishment purchase orders inside an explicit supplier,
 value and price-change policy. It never contacts suppliers or sends orders. It
 cannot automatically sell, adjust counts, settle discrepancies, merge catalogues
@@ -119,9 +119,9 @@ function resolveNamed(records, names) {
 
 async function draft(db, workspaceId, instruction, options = {}) {
   const clean = String(instruction || '').trim().slice(0, MAX_INSTRUCTION);
-  if (!clean) throw new ValidationError('Say what you would like Foundry to handle by itself.');
+  if (!clean) throw new ValidationError('Say what you would like StockChief to handle by itself.');
   if (!options.provider && !config.ai.configured) {
-    throw new ValidationError('Foundry needs an AI provider configured to read that.');
+    throw new ValidationError('StockChief needs an AI provider configured to read that.');
   }
 
   const locations = repo.listLocations(db, workspaceId).filter((l) => !l.archived_at);
@@ -137,7 +137,7 @@ async function draft(db, workspaceId, instruction, options = {}) {
 
   const result = validateSchema(toWireSchema(POLICY_SCHEMA), response.data, { key: 'policy-draft-wire' });
   if (!result.ok) {
-    return { understood: false, unsupportedReason: 'Foundry could not work out what that meant.', questions: [] };
+    return { understood: false, unsupportedReason: 'StockChief could not work out what that meant.', questions: [] };
   }
   const read = result.data;
 
@@ -146,7 +146,7 @@ async function draft(db, workspaceId, instruction, options = {}) {
       understood: false,
       unsupportedReason:
         read.unsupportedReason ||
-        'Foundry only automates moving stock between your own locations. Everything else it prepares for you.',
+        'StockChief only automates moving stock between your own locations. Everything else it prepares for you.',
       questions: [],
     };
   }
@@ -159,11 +159,11 @@ async function draft(db, workspaceId, instruction, options = {}) {
       supplierScope = suppliers.map((entry) => entry.id);
       questions.push(suppliers.length
         ? `This would cover all ${suppliers.length} configured suppliers. Narrow it if that is too wide.`
-        : 'Add an approved supplier before Foundry can prepare this policy.');
+        : 'Add an approved supplier before StockChief can prepare this policy.');
     }
     const maximumValue = Number(read.maximumValue) > 0 ? Number(read.maximumValue) : null;
     const priceLimit = Number(read.maxUnitPriceChangePercent) >= 0 ? Number(read.maxUnitPriceChangePercent) : null;
-    if (!maximumValue) questions.push('What is the most Foundry may commit on one purchase order?');
+    if (!maximumValue) questions.push('What is the most StockChief may commit on one purchase order?');
     if (priceLimit === null) questions.push('What unit-price increase should always come back to you?');
     const policy = {
       name: String(read.name || '').trim().slice(0, 120) || 'Routine replenishment purchasing',
@@ -190,7 +190,7 @@ async function draft(db, workspaceId, instruction, options = {}) {
   let locationScope = scoped.map((l) => l.id);
   if (scoped.length === 1) {
     questions.push(
-      `You named ${scoped[0].name}. Which other location should Foundry be allowed to move stock to and from?`
+      `You named ${scoped[0].name}. Which other location should StockChief be allowed to move stock to and from?`
     );
     locationScope = [];
   } else if (!scoped.length) {
@@ -205,7 +205,7 @@ async function draft(db, workspaceId, instruction, options = {}) {
     ? Math.trunc(read.maximumQuantity)
     : null;
   if (!maximumQuantity) {
-    questions.push('What is the most Foundry may move in one go without asking you first?');
+    questions.push('What is the most StockChief may move in one go without asking you first?');
   }
 
   return {

@@ -81,8 +81,8 @@ test('registration creates an account, then the customer creates an inventory', 
 
   const chooser = await agent.get('/onboarding');
   assert.equal(chooser.status, 200);
-  assert.match(chooser.text, /Where should Foundry get your inventory from/);
-  assert.match(chooser.text, /Enter it in Foundry/);
+  assert.match(chooser.text, /Where should StockChief get your inventory from/);
+  assert.match(chooser.text, /Enter it in StockChief/);
 
   // The Mission 1 console is still there underneath, and still empty.
   const locations = await agent.get('/locations');
@@ -249,9 +249,9 @@ test('an unknown item id is a plain 404, not a leak', async () => {
 /**
  * Clicking a nav item must land on that nav item.
  *
- * An empty inventory used to be redirected from Overview to Foundry setup,
- * which made the console feel broken: you click Overview, land on Foundry, and
- * the highlighted tab is not the one you pressed. The hand-off to Foundry
+ * An empty inventory used to be redirected from Overview to StockChief setup,
+ * which made the console feel broken: you click Overview, land on StockChief, and
+ * the highlighted tab is not the one you pressed. The hand-off to StockChief
  * belongs at the moment an inventory is created, not on every later visit.
  */
 test('every main nav destination renders where it says, even when empty', async () => {
@@ -271,11 +271,11 @@ test('every main nav destination renders where it says, even when empty', async 
   // And Overview says what is actually true about this inventory.
   const overview = plain((await agent.get('/')).text);
   assert.match(overview, /This inventory is empty/);
-  assert.match(overview, /Set it up with Foundry/);
+  assert.match(overview, /Set it up with StockChief/);
   assert.ok(!overview.includes("Today's briefing"), 'no briefing about nothing');
 });
 
-test('the entry screens say what Foundry is to somebody who has never seen it', async () => {
+test('the entry screens say what StockChief is to somebody who has never seen it', async () => {
   // Both pages spoke only to people already using it — "your inventory, exactly
   // as your team left it" — leaving a stranger no way to tell what kind of
   // product this is before handing over an email address.
@@ -283,7 +283,7 @@ test('the entry screens say what Foundry is to somebody who has never seen it', 
 
   for (const path of ['/login', '/register']) {
     const page = plain((await request(app).get(path)).text);
-    assert.match(page, /Foundry runs your inventory/, `${path} says what it does`);
+    assert.match(page, /StockChief runs your inventory/, `${path} says what it does`);
     assert.match(page, /handle the exceptions/, `${path} says what is left to you`);
     assert.match(page, /reorder|receiving|transfers/i, `${path} names real work`);
   }

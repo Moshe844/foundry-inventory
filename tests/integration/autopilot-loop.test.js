@@ -5,7 +5,7 @@
  *
  * The scenario is the one from the brief — kids tights, Black / Size 5, eight
  * left in Brooklyn against sixty-one in New Jersey, with Brooklyn doing all the
- * selling. Foundry should notice, check the policy, move twelve, verify the
+ * selling. StockChief should notice, check the policy, move twelve, verify the
  * result, and be able to explain itself afterwards.
  *
  * The rest of the file is the part that matters more: what happens when the
@@ -148,7 +148,7 @@ test('a product nobody is buying is left alone', () => {
 
 // --- the scenario ------------------------------------------------------------
 
-test('supervised: Foundry prepares the transfer and waits', () => {
+test('supervised: StockChief prepares the transfer and waits', () => {
   const env = tights();
   balancing(env);   // approved policy, but the workspace stays supervised
 
@@ -170,7 +170,7 @@ test('supervised: Foundry prepares the transfer and waits', () => {
   assert.match(note.title, /Move 12 Kids Tights \/ Black \/ 5/);
 });
 
-test('on autopilot: Foundry prepares the governed transfer, verifies it, and records why', () => {
+test('on autopilot: StockChief prepares the governed transfer, verifies it, and records why', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
@@ -261,7 +261,7 @@ test('approving prepared work creates the transfer and leaves execution to the w
 
 // --- item 36: the world changes between planning and execution ---------------
 
-test('if somebody else moves the stock first, Foundry does not go ahead', () => {
+test('if somebody else moves the stock first, StockChief does not go ahead', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
@@ -387,7 +387,7 @@ test('work that did complete before the restart is finished, not repeated', () =
 
 // --- purchasing --------------------------------------------------------------
 
-test('Foundry prepares purchase orders but never sends them', () => {
+test('StockChief prepares purchase orders but never sends them', () => {
   const env = tights({ allStockAtBrooklyn: true });
   const suppliers = require('../../src/purchasing/supplier-service');
   const policies = require('../../src/purchasing/policy-service');
@@ -406,7 +406,7 @@ test('Foundry prepares purchase orders but never sends them', () => {
 
   // A configured line's replenishment is now one decision, so the order is a
   // component of a plan rather than work standing on its own. What this test
-  // protects is unchanged and still asserted below: Foundry prepares, and never
+  // protects is unchanged and still asserted below: StockChief prepares, and never
   // places, an order by itself.
   const plan = workItems.list(env.db, env.workspace.workspaceId, { category: 'replenishment_plan' })[0];
   assert.ok(plan, 'the reorder condition is a replenishment decision');
@@ -423,7 +423,7 @@ test('Foundry prepares purchase orders but never sends them', () => {
   runner.approveWorkItem(env.db, env.ctx, env.membership, plan.id);
   const carried = runner.executeWorkItem(env.db, env.ctx, env.membership, plan.id);
   const order = poService.get(env.db, env.workspace.workspaceId, carried.purchaseOrderId);
-  assert.equal(order.status, 'DRAFT', 'Foundry must never place an order by itself');
+  assert.equal(order.status, 'DRAFT', 'StockChief must never place an order by itself');
   assert.equal(order.source, 'foundry_recommendation');
   assert.ok(order.lines.length >= 1);
 
@@ -433,7 +433,7 @@ test('Foundry prepares purchase orders but never sends them', () => {
   assert.match(note.body, /Nothing has been sent/);
 });
 
-test('an approved routine-purchasing policy lets Foundry approve a supported replenishment', () => {
+test('an approved routine-purchasing policy lets StockChief approve a supported replenishment', () => {
   const env = tights({ allStockAtBrooklyn: true });
   const suppliers = require('../../src/purchasing/supplier-service');
   const policies = require('../../src/purchasing/policy-service');
@@ -550,7 +550,7 @@ test('granting authority takes on work that was only ever waiting for it', () =>
   const env = tights();
   balancing(env);
 
-  // Supervised: Foundry prepares and asks.
+  // Supervised: StockChief prepares and asks.
   runner.planWork(env.db, env.ctx, env.membership, { trigger: 'supervised' });
   const [prepared] = workItems.list(env.db, env.workspace.workspaceId, { category: 'balance_transfer' });
   assert.equal(prepared.executionStatus, 'WAITING_FOR_APPROVAL');
@@ -607,7 +607,7 @@ test('a person pressing "check now" is never answered with a stale plan', () => 
 
 // --- deliveries (item 14) ----------------------------------------------------
 
-test('a delivery due today becomes work, and Foundry never books it in itself', () => {
+test('a delivery due today becomes work, and StockChief never books it in itself', () => {
   const env = tights();
   const supplierService = require('../../src/purchasing/supplier-service');
   const poService = require('../../src/purchasing/po-service');

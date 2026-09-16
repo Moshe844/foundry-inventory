@@ -11,7 +11,7 @@
  *
  * What is decided here is only which bill was meant. Whether to pay it was
  * decided by the person before they typed anything; they are reporting a fact
- * about their bank account, not asking Foundry's permission.
+ * about their bank account, not asking StockChief's permission.
  */
 
 const { nowIso } = require('../lib/util');
@@ -50,14 +50,14 @@ function plan(db, ctx, { supplierText, amountMinor, reference, instruction }) {
   const supplier = findSupplier(db, ctx.workspaceId, supplierText);
   if (supplierText && !supplier) {
     return { kind: 'question',
-      question: `Foundry has no supplier called “${supplierText}”. Which supplier was paid?` };
+      question: `StockChief has no supplier called “${supplierText}”. Which supplier was paid?` };
   }
 
   const candidates = owing(db, ctx.workspaceId, supplier ? supplier.id : null);
   if (!candidates.length) {
     /*
      * A disputed bill is still money owed. Saying "nothing is outstanding"
-     * because Foundry found a discrepancy on it would be telling somebody
+     * because StockChief found a discrepancy on it would be telling somebody
      * their account is clear when it is not — and they came here to pay it.
      */
     const disputed = db.prepare(`SELECT b.bill_number, b.balance_minor, b.currency, s.name AS supplier_name
@@ -69,7 +69,7 @@ function plan(db, ctx, { supplierText, amountMinor, reference, instruction }) {
       const one = disputed[0];
       return { kind: 'question',
         question: `${one.bill_number} for ${one.supplier_name} still has `
-          + `${money(one.balance_minor, one.currency)} outstanding, but Foundry found a difference `
+          + `${money(one.balance_minor, one.currency)} outstanding, but StockChief found a difference `
           + 'between it and the order it is against. Settle that first, then record the payment.' };
     }
     return { kind: 'question',
@@ -98,7 +98,7 @@ function plan(db, ctx, { supplierText, amountMinor, reference, instruction }) {
 
   /*
    * "The remaining" is a real amount when there is one bill in front of you.
-   * Reading it off the bill is not Foundry inventing a figure; it is the only
+   * Reading it off the bill is not StockChief inventing a figure; it is the only
    * figure the sentence could mean.
    */
   const paying = amountMinor === null ? Number(bill.balance_minor) : amountMinor;
@@ -108,7 +108,7 @@ function plan(db, ctx, { supplierText, amountMinor, reference, instruction }) {
   if (paying > Number(bill.balance_minor)) {
     return { kind: 'question',
       question: `${bill.bill_number} only has ${money(bill.balance_minor, bill.currency)} outstanding, `
-        + `and this says ${money(paying, bill.currency)}. Foundry has not recorded anything — `
+        + `and this says ${money(paying, bill.currency)}. StockChief has not recorded anything — `
         + 'check the figure, or record it against the right bill.' };
   }
 

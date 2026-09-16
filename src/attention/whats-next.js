@@ -3,14 +3,14 @@
 /*
  * The half of a briefing that faces forwards.
  *
- * Home already answers "is anything wrong" and "what did Foundry handle". What
+ * Home already answers "is anything wrong" and "what did StockChief handle". What
  * an owner also wants at eight in the morning is what is about to happen —
  * what is going out, what is coming in, who is waiting on a word. An employee
  * asked how things stand does not only report the past.
  *
  * Every line here is counted from records and says a date it read rather than
  * one it worked out. Nothing is predicted: "expected Thursday" is a date a
- * supplier gave, not a guess Foundry made, and if nobody gave one the line
+ * supplier gave, not a guess StockChief made, and if nobody gave one the line
  * says so instead.
  *
  * Deliberately few lines and deliberately short. A briefing that lists

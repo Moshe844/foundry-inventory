@@ -90,7 +90,7 @@ function validateChargeEvidence(db, workspaceId, charges) {
       JOIN accounting_accounts a ON a.id = bl.debit_account_id WHERE bl.id = ?`).get(sourceBillLineId);
     if (!evidence || evidence.bill_workspace_id !== workspaceId) throw new ValidationError(`Charge ${index + 1} needs a supplier-bill line from this business as evidence.`);
     if (!['OPEN', 'PARTIALLY_PAID', 'PAID'].includes(evidence.bill_status) || !evidence.journal_entry_id) {
-      throw new ValidationError(`Open the source supplier bill before capitalising charge ${index + 1}; Foundry will not create a second payable.`);
+      throw new ValidationError(`Open the source supplier bill before capitalising charge ${index + 1}; StockChief will not create a second payable.`);
     }
     if (evidence.system_key === 'INVENTORY_ASSET') {
       throw new ValidationError(`Charge ${index + 1} is already posted to Inventory Asset. It cannot be capitalised a second time.`);
@@ -144,12 +144,12 @@ function basisFor(lines, method) {
   if (method === 'quantity') return lines.map((line) => ({ ...line, basisValue: line.quantity_units }));
   if (method === 'value') {
     const missing = lines.filter((line) => !Number.isFinite(line.unit_cost) || line.unit_cost <= 0);
-    if (missing.length) throw new ValidationError(`Foundry needs the product cost for ${missing[0].item_name} (${missing[0].sku_code}) before it can allocate by value. No cost was guessed.`);
+    if (missing.length) throw new ValidationError(`StockChief needs the product cost for ${missing[0].item_name} (${missing[0].sku_code}) before it can allocate by value. No cost was guessed.`);
     return lines.map((line) => ({ ...line, basisValue: Math.round(line.quantity_units * line.unit_cost * 100) }));
   }
   if (method === 'weight') {
     const missing = lines.filter((line) => !Number.isSafeInteger(Number(line.unit_weight_grams)) || Number(line.unit_weight_grams) <= 0);
-    if (missing.length) throw new ValidationError(`Foundry needs the unit weight for ${missing[0].item_name} (${missing[0].sku_code}) before it can allocate by weight. No weight was guessed.`);
+    if (missing.length) throw new ValidationError(`StockChief needs the unit weight for ${missing[0].item_name} (${missing[0].sku_code}) before it can allocate by weight. No weight was guessed.`);
     return lines.map((line) => ({ ...line, basisValue: line.quantity_units * Number(line.unit_weight_grams) }));
   }
   return lines.map((line) => ({ ...line, basisValue: 0 }));
@@ -225,7 +225,7 @@ function assertStillOnHand(db, ctx, allocations) {
   for (const allocation of allocations) {
     const balance = costing.state(db, ctx.workspaceId, allocation.skuId, allocation.locationId);
     if (Number(balance.quantity_units) <= 0) {
-      throw new ValidationError(`Foundry cannot capitalise ${allocation.itemName} (${allocation.skuCode}) automatically because none of the received stock remains at that location. The historical COGS correction needs accountant approval; no amount was guessed.`);
+      throw new ValidationError(`StockChief cannot capitalise ${allocation.itemName} (${allocation.skuCode}) automatically because none of the received stock remains at that location. The historical COGS correction needs accountant approval; no amount was guessed.`);
     }
   }
 }
@@ -306,7 +306,7 @@ function reverse(db, ctx, membership, documentId, input = {}) {
     for (const allocation of doc.allocations) {
       const balance = costing.state(db, ctx.workspaceId, allocation.sku_id, allocation.location_id);
       if (Number(balance.total_cost_minor) < Number(allocation.amount_minor)) {
-        throw new ValidationError('This landed-cost correction reaches stock that has already been sold or revalued. An accountant must make the historical COGS correction; Foundry left the original evidence unchanged.');
+        throw new ValidationError('This landed-cost correction reaches stock that has already been sold or revalued. An accountant must make the historical COGS correction; StockChief left the original evidence unchanged.');
       }
     }
     const reversed = ledger.reverse(db, ctx, membership, journalId, {

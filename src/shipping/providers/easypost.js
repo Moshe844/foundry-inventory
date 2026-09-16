@@ -12,7 +12,7 @@
  * When volume justifies a direct contract with one carrier, that carrier
  * becomes a second adapter behind the same seam and nothing above changes.
  *
- * The key is read from the environment and never from the database. Foundry
+ * The key is read from the environment and never from the database. StockChief
  * does not ask anybody to paste a secret into a form it stores, and a key in a
  * table is a key in a backup.
  */
@@ -25,7 +25,7 @@ const BASE = 'https://api.easypost.com/v2';
 function apiKey(ctx = {}) {
   const key = ctx.easypostApiKey || process.env.EASYPOST_API_KEY;
   if (!key) {
-    throw new ValidationError('No EasyPost API key is configured, so Foundry cannot ask a carrier '
+    throw new ValidationError('No EasyPost API key is configured, so StockChief cannot ask a carrier '
       + 'for rates. Set EASYPOST_API_KEY and restart, or hand the parcel over yourself and record it.');
   }
   return String(key);
@@ -59,10 +59,10 @@ async function call(ctx, path, options = {}) {
 /* ------------------------------------------------------------- addresses */
 
 /**
- * Foundry's address shape, in EasyPost's.
+ * StockChief's address shape, in EasyPost's.
  *
  * Nothing is invented. A missing line stays missing and EasyPost says so,
- * because a parcel sent to an address Foundry completed on somebody's behalf
+ * because a parcel sent to an address StockChief completed on somebody's behalf
  * is a parcel nobody can find.
  */
 function address(input = {}) {
@@ -83,7 +83,7 @@ function address(input = {}) {
 const GRAMS_PER_OUNCE = 28.349523125;
 const MM_PER_INCH = 25.4;
 
-/** EasyPost prices in ounces and inches; Foundry stores grams and millimetres. */
+/** EasyPost prices in ounces and inches; StockChief stores grams and millimetres. */
 function parcel(box = {}) {
   const out = { weight: Math.max(0.1, Number(box.weightGrams || 0) / GRAMS_PER_OUNCE) };
   if (box.lengthMm && box.widthMm && box.heightMm) {
@@ -172,7 +172,7 @@ async function quote(ctx, input = {}) {
  * Buy the label. This spends money, and it is the only call here that does.
  *
  * The tracking number and the label file come straight back from the carrier;
- * neither is constructed by Foundry. A label URL that Foundry assembled would
+ * neither is constructed by StockChief. A label URL that StockChief assembled would
  * eventually point at nothing.
  */
 async function buy(ctx, input = {}) {
@@ -210,7 +210,7 @@ async function buy(ctx, input = {}) {
  * not called refunded: the carrier may still reject it after this response. */
 async function voidLabel(ctx, input = {}) {
   const ids = (input.providerReferences || input.providerShipmentIds || []).filter(Boolean);
-  if (!ids.length) throw new ValidationError('Foundry has no EasyPost shipment reference to refund.');
+  if (!ids.length) throw new ValidationError('StockChief has no EasyPost shipment reference to refund.');
   const answers = [];
   for (let index = 0; index < ids.length; index += 1) {
     answers.push(await call(ctx, `/shipments/${encodeURIComponent(ids[index])}/refund`, {
@@ -234,7 +234,7 @@ async function voidLabel(ctx, input = {}) {
  * Every carrier's word for the same seven places a parcel can be.
  *
  * Anything unrecognised becomes UNKNOWN rather than being guessed at. A parcel
- * whose status Foundry cannot read is a parcel it should say nothing about.
+ * whose status StockChief cannot read is a parcel it should say nothing about.
  */
 const STATUS = {
   pre_transit: 'PRE_TRANSIT',
@@ -318,7 +318,7 @@ function verifyEvent(raw, headers = {}, options = {}) {
   }
 }
 
-/** The few facts Foundry acts on, out of whatever EasyPost sent. */
+/** The few facts StockChief acts on, out of whatever EasyPost sent. */
 function readEvent(event = {}) {
   const tracker = event.result || {};
   return {

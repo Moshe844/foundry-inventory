@@ -117,7 +117,7 @@ test('external Sales Order uses Mission 10 commitments and fulfillment uses its 
   const env = setup();
   const created = await postEvent(env, { eventId: 'order-created-20', type: 'sales_order.created',
     aggregateId: 'web-order-20', version: 1, data: { externalOrderId: 'web-order-20',
-      customer: { externalId: 'cust-20', name: 'ABC School' }, fulfillmentLocationName: 'Downtown Store',
+      customer: { externalId: 'cust-20', name: 'ABC School' }, shippingAddress: '7 Example Lane, Albany, NY 12207, US', fulfillmentLocationName: 'Downtown Store',
       lines: [{ skuCode: 'TS-BLK-S', quantity: 5 }] } });
   assert.equal(created.body.accepted, 1);
   const mapped = connections.mapping(env.db, env.workspace.workspaceId, env.connection.id, 'sales_order', 'web-order-20');
@@ -155,7 +155,7 @@ test('external cancellation releases commitments and wakes Mission 9 reaction ha
   env.db.close();
 });
 
-test('older external state is recorded as stale and cannot rewrite newer Foundry truth', async () => {
+test('older external state is recorded as stale and cannot rewrite newer StockChief truth', async () => {
   const env = setup();
   await postEvent(env, { eventId: 'order-new', type: 'sales_order.created', aggregateId: 'ordered-stream', version: 3,
     data: { externalOrderId: 'ordered-stream', customerName: 'Versioned Buyer', fulfillmentLocationName: 'Downtown Store',
@@ -176,7 +176,7 @@ test('fulfillment arriving before its order waits safely, then completes when th
   assert.equal(early.body.needsMapping, 1);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.item.skuId, env.workspace.store.id), 40);
   const order = await postEvent(env, { eventId: 'late-order-created', type: 'sales_order.created',
-    aggregateId: 'late-order', version: 1, data: { externalOrderId: 'late-order', customerName: 'Late Stream',
+    aggregateId: 'late-order', version: 1, data: { externalOrderId: 'late-order', customerName: 'Late Stream', shippingAddress: '7 Example Lane, Albany, NY 12207, US',
       fulfillmentLocationName: 'Downtown Store', lines: [{ skuCode: 'TS-BLK-S', quantity: 4 }] } });
   assert.equal(order.body.accepted, 1);
   assert.equal(order.body.retried, 1);
@@ -655,11 +655,11 @@ test('Connections UI is simple by default and advanced diagnostics are opt-in', 
   assert.match(text, /Connected/);
   const detail = await agent.get(`/settings/connections/${env.connection.id}`);
   assert.match(detail.text, /Advanced diagnostics/);
-  assert.match(plain(detail.text), /Replaying one external event ID never repeats its Foundry action/);
+  assert.match(plain(detail.text), /Replaying one external event ID never repeats its StockChief action/);
   env.db.close();
 });
 
-test('Ask Foundry answers connection health and last-event questions from connection records', async () => {
+test('Ask StockChief answers connection health and last-event questions from connection records', async () => {
   const env = setup();
   await postEvent(env, { eventId: 'latest-pos-event', type: 'sale.completed', data: {
     skuCode: 'TS-BLK-S', locationName: 'Downtown Store', quantity: 1 } });

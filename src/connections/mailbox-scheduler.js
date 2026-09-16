@@ -15,7 +15,7 @@ function failureDetails(row, error, now) {
     issueType: 'MAILBOX_AUTH_REQUIRED',
     title: `${row.display_name} needs to be reconnected`,
     detail: `${row.display_name} no longer accepts the saved authorization. No email was processed after access failed.`,
-    resolutionHint: `Reconnect ${row.display_name}; sender rules and message history will stay in Foundry.`,
+    resolutionHint: `Reconnect ${row.display_name}; sender rules and message history will stay in StockChief.`,
   };
 
   const baseline = Date.parse(row.last_synced_at || row.created_at || 0);
@@ -23,9 +23,9 @@ function failureDetails(row, error, now) {
   return {
     surface: Number.isFinite(baseline) && baseline + graceMinutes * 60_000 <= now,
     issueType: 'MAILBOX_SYNC_FAILED',
-    title: `Foundry cannot currently reach ${row.display_name}`,
-    detail: `The mailbox authorization is still saved, but this Foundry server could not reach ${row.display_name}. No message was lost or partly applied.`,
-    resolutionHint: 'Foundry will keep retrying. If this continues, allow this computer to reach the email provider through its network or security software.',
+    title: `StockChief cannot currently reach ${row.display_name}`,
+    detail: `The mailbox authorization is still saved, but this StockChief server could not reach ${row.display_name}. No message was lost or partly applied.`,
+    resolutionHint: 'StockChief will keep retrying. If this continues, allow this computer to reach the email provider through its network or security software.',
   };
 }
 
@@ -39,7 +39,7 @@ async function runDue(db, options = {}) {
      * Mail captured before the relevance gate existed is judged again by the
      * same rule, and this happens before anything is asked of the network.
      *
-     * Deliberately not inside syncMailbox. Reviewing records Foundry already
+     * Deliberately not inside syncMailbox. Reviewing records StockChief already
      * holds needs no provider at all, and on the mailbox that prompted this
      * work the provider is exactly what is unreliable — so tying the tidy-up
      * to a successful poll would mean the owner's screen stayed wrong for
@@ -50,7 +50,7 @@ async function runDue(db, options = {}) {
     /*
      * And the same for order conversations, for the same reason.
      *
-     * A customer's answer to Foundry's question is already captured by the
+     * A customer's answer to StockChief's question is already captured by the
      * time this matters; turning it into an order needs the catalogue and the
      * reader, not the mailbox. Tying it to a successful poll would leave an
      * order unmade because a connection was down, which is the one moment it
@@ -168,11 +168,11 @@ async function runDue(db, options = {}) {
     }
 
     /*
-     * And accounts Foundry opened that still cannot be billed.
+     * And accounts StockChief opened that still cannot be billed.
      *
      * A merchant may add their card on the carrier's own page, on a phone, or
      * by finishing the form tomorrow — none of which comes back through
-     * Foundry. Without this the account sits in test mode for ever with
+     * StockChief. Without this the account sits in test mode for ever with
      * nothing saying why. Only unfinished ones are asked about.
      */
     try { await shipping.referral.sweep(db); }

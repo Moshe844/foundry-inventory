@@ -17,7 +17,7 @@
   <p class="rm-head__eyebrow"><%- helpers.icon('sales', { size: 15 }) %> Customer order</p>
   <h1>What did the customer order?</h1>
   <p>
-    Enter the customer, product, and quantity once. Foundry records customer demand before stock
+    Enter the customer, product, and quantity once. StockChief records customer demand before stock
     leaves, then you choose whether to reserve it or record that the customer already received it.
   </p>
 </div>
@@ -52,7 +52,7 @@
         </label>
       </div>
       <%#
-        The two things Foundry cannot work without, asked for once.
+        The two things StockChief cannot work without, asked for once.
 
         A new customer created here got a name and nothing else, so the parcel
         had nowhere to go and the shipping notice had nobody to reach. Both
@@ -63,7 +63,7 @@
       <label class="rm-field">
         <span>Their email <small>where order and shipping updates go</small></span>
         <input id="order-customer-email" type="email" name="customerEmail" value="<%= form.customerEmail || '' %>" placeholder="name@example.com">
-        <small>Foundry cannot tell them anything without this. Filled in for an existing customer who has none.</small>
+        <small>StockChief cannot tell them anything without this. Filled in for an existing customer who has none.</small>
       </label>
     </div>
   </section>
@@ -77,7 +77,7 @@
           <input type="radio" name="deliveryMethod" value="SHIP" <%= form.deliveryMethod !== 'PICKUP' ? 'checked' : '' %>>
           <span class="rm-pick__box" aria-hidden="true"></span>
           <span><span class="rm-pick__t">Send by carrier</span>
-            <span class="rm-pick__d">This records the delivery plan. Nothing is shipped yet; Foundry asks for a destination and can buy the label later.</span></span>
+            <span class="rm-pick__d">This records the delivery plan. Nothing is shipped yet; StockChief asks for a destination and can buy the label later.</span></span>
         </label>
         <label class="rm-pick">
           <input type="radio" name="deliveryMethod" value="PICKUP" <%= form.deliveryMethod === 'PICKUP' ? 'checked' : '' %>>
@@ -122,7 +122,7 @@
       </div>
 
       <div id="order-stock-check" class="notice notice--info" aria-live="polite">
-        <div><strong>Choose a product and quantity.</strong><br>Foundry will show what can be reserved before you create the order.</div>
+        <div><strong>Choose a product and quantity.</strong><br>StockChief will show what can be reserved before you create the order.</div>
       </div>
 
       <label class="rm-field">
@@ -137,13 +137,13 @@
     <summary>Optional order details — dates, location, tax, discount, reference, and notes</summary>
     <div class="rm-work__body">
       <div class="form-grid" style="margin-top:12px">
-        <label class="rm-field"><span>Order number <small>optional</small></span><input name="orderNumber" value="<%= form.orderNumber || '' %>" placeholder="Foundry will assign one"></label>
+        <label class="rm-field"><span>Order number <small>optional</small></span><input name="orderNumber" value="<%= form.orderNumber || '' %>" placeholder="StockChief will assign one"></label>
         <label class="rm-field"><span>Order date</span><input type="date" name="orderDate" value="<%= form.orderDate || new Date().toISOString().slice(0,10) %>"></label>
         <label class="rm-field"><span>Needed by <small>optional</small></span><input type="date" name="neededBy" value="<%= form.neededBy || '' %>"></label>
         <label class="rm-field">
           <span>Ship from <small>optional</small></span>
           <select id="order-location" name="fulfillmentLocationId">
-            <option value="">Let Foundry use available stock at any location</option>
+            <option value="">Let StockChief use available stock at any location</option>
             <% locations.forEach(function (l) { %>
               <option value="<%= l.id %>" <%= form.fulfillmentLocationId === l.id ? 'selected' : '' %>><%= l.name %></option>
             <% }) %>
@@ -160,7 +160,7 @@
   <div class="rm-note<%= locals.unpricedCount ? ' rm-note--warn' : '' %>">
     <%- helpers.icon('shield', { size: 16 }) %>
     <div>
-      <strong>Every customer order needs a price. Foundry will never invent one.</strong>
+      <strong>Every customer order needs a price. StockChief will never invent one.</strong>
       It uses the product’s selling price or the order price above. Accounting updates only after
       items physically leave.
     </div>
@@ -216,7 +216,7 @@
     var requested = quantity ? Number(quantity.value) : 0;
     if (!selected || !Number.isFinite(requested) || requested < 1) {
       stockCheck.className = 'notice notice--info';
-      stockCheck.innerHTML = '<div><strong>Choose a product and quantity.</strong><br>Foundry will show what can be reserved before you create the order.</div>';
+      stockCheck.innerHTML = '<div><strong>Choose a product and quantity.</strong><br>StockChief will show what can be reserved before you create the order.</div>';
       if (confirmButton) confirmButton.textContent = 'Create order and continue';
       return;
     }
@@ -233,7 +233,7 @@
       stockCheck.className = 'notice notice--warn';
       stockCheck.innerHTML = '<div><strong>This order is ' + short + ' unit' + (short === 1 ? '' : 's') + ' over the available stock.</strong><br>'
         + requested + ' requested · ' + available + ' available now at ' + locationName + ' · ' + reserved + ' can be reserved · '
-        + short + ' will wait for stock. You may continue, but Foundry cannot promise the full order immediately.</div>';
+        + short + ' will wait for stock. You may continue, but StockChief cannot promise the full order immediately.</div>';
       if (confirmButton) confirmButton.textContent = 'Create order — ' + short + ' will wait for stock';
       return;
     }

@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const ledger = require('../../src/accounting/ledger');
+const costing = require('../../src/accounting/costing');
 const payables = require('../../src/accounting/payables');
 const payments = require('../../src/accounting/payments');
 const planner = require('../../src/attention/query-planner');
@@ -69,6 +70,58 @@ test('financial questions work immediately because accounting is automatic', () 
   assert.equal(result.handoff, null);
 });
 
+test('inventory valuation supplies named, readable evidence columns', () => {
+  const { db } = makeDatabase();
+  const workspace = seedWorkspace(db);
+  const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
+  ledger.configure(db, workspace.ctx, membership, {
+    startDate: '2026-01-01', currency: 'USD', costingMethod: 'WEIGHTED_AVERAGE',
+  });
+  const item = makeQuantityItem(db, workspace.ctx, { name: 'Felt Pad', baseCode: 'FELT-8' });
+  const received = engine.receive(db, workspace.ctx, {
+    skuId: item.skuId, locationId: workspace.main.id, quantity: 8,
+  });
+  costing.receive(db, workspace.ctx, {
+    movementIds: received.movementIds,
+    unitCostMinor: 275,
+    sourceType: 'purchase_receipt',
+    sourceRecordId: 'valuation-evidence-receipt',
+  });
+
+  const result = queries.execute(db, workspace.workspaceId, { intent: 'inventory_valuation' });
+  assert.deepEqual(result.columns,
+    ['product', 'sku', 'location', 'units', 'averageCost', 'totalValue']);
+  assert.deepEqual(result.rows[0], {
+    product: 'Felt Pad', sku: 'FELT-8', location: 'Main Warehouse', units: 8,
+    averageCost: '$2.75', totalValue: '$22.00',
+  });
+  const unknown = makeQuantityItem(db, workspace.ctx, { name: 'Uncosted Stock', baseCode: 'UNCOSTED' });
+  engine.receive(db,workspace.ctx,{skuId:unknown.skuId,locationId:workspace.main.id,quantity:5});
+  const partial=queries.execute(db,workspace.workspaceId,{intent:'inventory_valuation'});
+  assert.match(partial.answer,/not a complete valuation/);
+  assert.match(partial.answer,/5 of 13 on-hand units/);
+  db.close();
+});
+
+test('inventory selling value uses latest real prices, separates currencies and discloses missing evidence',()=>{
+ const {db}=makeDatabase();const w=seedWorkspace(db);
+ const first=makeQuantityItem(db,w.ctx,{name:'Polymer Spacer',baseCode:'PS'});
+ const second=makeQuantityItem(db,w.ctx,{name:'Metal Spacer',baseCode:'MS'});
+ const third=makeQuantityItem(db,w.ctx,{name:'Unpriced Spacer',baseCode:'US'});
+ for(const [item,quantity] of [[first,7],[second,3],[third,2]])engine.receive(db,w.ctx,{skuId:item.skuId,locationId:w.main.id,quantity});
+ const price=db.prepare(`INSERT INTO sku_prices(id,workspace_id,sku_id,amount_minor,currency,source,created_at) VALUES (?,?,?,?,?,'manual',?)`);
+ price.run('older-price',w.workspaceId,first.skuId,100,'USD','2026-01-01T00:00:00Z');
+ price.run('latest-price',w.workspaceId,first.skuId,250,'USD','2026-01-02T00:00:00Z');
+ price.run('zero-price',w.workspaceId,second.skuId,0,'CAD','2026-01-02T00:00:00Z');
+ const result=queries.execute(db,w.workspaceId,{intent:'inventory_selling_value'});
+ assert.match(result.answer,/\$17\.50/);assert.match(result.answer,/USD, 7 priced units/);assert.match(result.answer,/CAD, 3 priced units/);
+ assert.match(result.answer,/2 of 12 on-hand units/);assert.match(result.answer,/Currencies are reported separately/);
+ assert.equal(result.rows.find(r=>r.sku==='US').sellingValue,'Not recorded');
+ assert.equal(result.rows.find(r=>r.sku==='MS').sellingValue,'CA$0.00');
+ const other=seedWorkspace(db,{email:'selling-other@example.com'});
+ assert.match(queries.execute(db,other.workspaceId,{intent:'inventory_selling_value'}).answer,/no positive on-hand units/);
+});
+
 test('a named supplier balance preserves paid-bill evidence and opens its exact proof', () => {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db);
@@ -108,14 +161,14 @@ test('a named supplier balance preserves paid-bill evidence and opens its exact 
  * A yes-or-no question gets a yes or a no.
  *
  * Answers here are assembled from real figures rather than written by a model,
- * which is why Foundry cannot invent one — but a template states its fact
+ * which is why StockChief cannot invent one — but a template states its fact
  * regardless of what was asked. "Have I made any profit yet?" was answered
- * "This is $99.92 net profit based on the expenses recorded in Foundry for
+ * "This is $99.92 net profit based on the expenses recorded in StockChief for
  * 2026-08-03 through 2026-09-01: ...". Every figure correct, and not an answer.
  *
  * The first attempt at fixing it was worse: it asserted its own proposition and
  * answered "Am I making a loss?" with "Yes — $99.92 so far" about a profitable
- * month. A verdict is only safe when Foundry knows which proposition the
+ * month. A verdict is only safe when StockChief knows which proposition the
  * question makes, so where it cannot tell, it offers none.
  */
 test('profit questions are answered in the form they were asked', () => {
@@ -267,7 +320,7 @@ test('a finding names the record, the reason, and the way to fix it', () => {
   assert.ok(finding, 'unproven stock cost is found');
 
   assert.match(finding.what, /12 units/, 'what happened, with the real number');
-  assert.match(finding.why, /will not guess/, 'why Foundry stopped rather than estimating');
+  assert.match(finding.why, /will not guess/, 'why StockChief stopped rather than estimating');
   assert.ok(finding.proof.href, 'what proves it, and where to read it');
   assert.ok(finding.action.href, 'and one thing to do about it');
 
@@ -418,7 +471,7 @@ test('an answer leads with the measure the question named', () => {
   const prices = require('../../src/pricing/price-service');
   prices.setPrice(db, workspace.ctx, { skuId: item.skuId, amount: '10.00', currency: 'USD' });
   const order = sales.createOrder(db, workspace.ctx, {
-    customerName: 'Harbour Boutique', orderDate: '2026-09-01',
+    customerName: 'Harbour Boutique', deliveryMethod: 'PICKUP', orderDate: '2026-09-01',
     lines: [{ skuId: item.skuId, quantity: 8 }],
   });
   sales.confirm(db, workspace.ctx, order.id, { idempotencyKey: `t:${order.id}` });

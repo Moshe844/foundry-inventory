@@ -14,7 +14,7 @@
  *
  *   1. The account is the merchant's, and Keeper is never billed for it.
  *   2. A live key is not handed out before there is anything to bill.
- *   3. No card number passes through Foundry, ever.
+ *   3. No card number passes through StockChief, ever.
  *   4. Disconnecting forgets a key. It does not close an account.
  */
 
@@ -32,7 +32,7 @@ test.after(cleanupAll);
  *
  * The partner API is the only thing under src/shipping that spends real money
  * on a real account, so no test may reach it. This answers in the shapes the
- * adapter reads and remembers what it was asked, which is how "Foundry never
+ * adapter reads and remembers what it was asked, which is how "StockChief never
  * sent a card number" becomes something a test can actually check rather than
  * something a comment asserts.
  */
@@ -92,7 +92,7 @@ function setup(name) {
   return { db, workspace, ctx: workspace.ctx, membership };
 }
 
-test('Foundry opens the account, and the merchant never sees the carrier', () => asPartner(async () => {
+test('StockChief opens the account, and the merchant never sees the carrier', () => asPartner(async () => {
   const env = setup();
   const partner = fakePartner();
 
@@ -127,7 +127,7 @@ test('no live key until there is something to bill', () => asPartner(async () =>
   /*
    * The claim the rest of it rests on. An account with no payment method can
    * buy nothing, so holding its live key would only mean failing at the
-   * counter — and quoting its test rates as real prices would be Foundry
+   * counter — and quoting its test rates as real prices would be StockChief
    * inventing a number, which is the one thing it must never do.
    */
   const env = setup();
@@ -195,7 +195,7 @@ test('a card number is refused rather than forwarded', () => asPartner(async () 
 test('a card added on the carrier own site is noticed by the sweep', () => asPartner(async () => {
   /*
    * A merchant may finish the form tomorrow, on a phone, or on EasyPost's own
-   * page. None of those come back through Foundry, and without the sweep the
+   * page. None of those come back through StockChief, and without the sweep the
    * account would sit in test mode for ever with nothing saying why.
    */
   const env = setup();
@@ -206,7 +206,7 @@ test('a card added on the carrier own site is noticed by the sweep', () => asPar
   assert.deepEqual(await referral.sweep(env.db, { partner }),
     [{ workspaceId: env.workspace.workspaceId, billingReady: false }]);
 
-  partner.state.hasCard = true;   // added somewhere Foundry cannot see
+  partner.state.hasCard = true;   // added somewhere StockChief cannot see
   const checked = await referral.sweep(env.db, { partner });
   assert.equal(checked[0].billingReady, true);
   assert.match(accounts.forWorkspace(env.db, env.workspace.workspaceId).apiKey, /^EZAK/);
@@ -255,12 +255,12 @@ test('disconnecting forgets the keys and leaves the account standing', () => asP
   assert.equal(accounts.forWorkspace(env.db, env.workspace.workspaceId), null);
   assert.equal(referral.describe(env.db, env.workspace.workspaceId).opened, false);
 
-  // Nothing was asked of the carrier. Foundry does not close a merchant's account.
+  // Nothing was asked of the carrier. StockChief does not close a merchant's account.
   assert.equal(partner.state.created.length, 1);
   env.db.close();
 }));
 
-test('an account Foundry opened is not quietly written over', () => asPartner(async () => {
+test('an account StockChief opened is not quietly written over', () => asPartner(async () => {
   /*
    * A merchant who later negotiates their own carrier contract should be able
    * to switch. Pasting a key over the referral account would do it silently —
@@ -308,7 +308,7 @@ test('an unreachable email is refused before an account exists', () => asPartner
   env.db.close();
 }));
 
-test('without an enrolment, Foundry says to connect an account instead', () => asPartner(async () => {
+test('without an enrolment, StockChief says to connect an account instead', () => asPartner(async () => {
   /*
    * Opening accounts depends on Keeper's own partner agreement, which is a
    * business arrangement rather than a setting. Where there is none, the

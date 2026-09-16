@@ -71,7 +71,7 @@ test('the planning page shows what is coming and offers the two answers', async 
   assert.match(page.text, /Use \d+/, 'the recommendation carries its own figure');
   assert.match(page.text, /Keep 20/, 'and the setting it would replace');
   assert.match(page.text, /Money asleep on a shelf/);
-  assert.match(page.text, /Has Foundry been right\?/);
+  assert.match(page.text, /Has StockChief been right\?/);
   assert.match(page.text, /What matters to you/);
   assert.match(page.text, /Watching first/);
   assert.match(page.text, /Why this plan · compare \d+ options/);
@@ -149,7 +149,7 @@ test('purchasing says what is coming short and the supplier page says whether th
   const supplier = await env.agent.get(`/suppliers/${env.supplier.id}`);
   assert.equal(supplier.status, 200);
   assert.doesNotMatch(supplier.text, /undefined|NaN/);
-  // No delivered orders yet, so Foundry must not be claiming a record.
+  // No delivered orders yet, so StockChief must not be claiming a record.
   assert.doesNotMatch(supplier.text, /Do they turn up\?/,
     'a supplier with no deliveries gets no reliability panel at all');
   env.db.close();
@@ -167,7 +167,7 @@ test('a brand new inventory renders every planning surface without inventing any
 
   const planningPage = await agent.get('/planning');
   assert.equal(planningPage.status, 200);
-  assert.match(planningPage.text, /Nothing Foundry can measure a sales rate for/);
+  assert.match(planningPage.text, /Nothing StockChief can measure a sales rate for/);
   assert.match(planningPage.text, /No forecast has reached the end of its horizon yet/);
   assert.doesNotMatch(planningPage.text, /undefined|NaN/);
 

@@ -305,7 +305,7 @@ function capture(db, message, document, matched = [], discrepancies = []) {
         db.prepare(`UPDATE connection_issues SET title=?,detail=?,resolution_hint=?,candidate_matches=?,updated_at=?
           WHERE id=?`).run(
           `Supplier change affects ${atRiskUnits ? `${atRiskUnits} committed unit${atRiskUnits === 1 ? '' : 's'}` : 'the purchasing plan'}`,
-          `${review.detail || ''} ${summary} Foundry compared ${alternatives.length} response options and changed neither stock nor money.`.trim(),
+          `${review.detail || ''} ${summary} StockChief compared ${alternatives.length} response options and changed neither stock nor money.`.trim(),
           'Review the consequence and approve communication and purchasing separately.',
           encode(candidates), nowIso(), review.id);
       } else {
@@ -313,7 +313,7 @@ function capture(db, message, document, matched = [], discrepancies = []) {
           externalEventId:message.external_message_id, issueType:'SUPPLIER_RESPONSE_DECISION',
           fingerprint:`supplier-response:${id}`,
           title:`Supplier change affects ${atRiskUnits ? `${atRiskUnits} committed unit${atRiskUnits === 1 ? '' : 's'}` : 'the purchasing plan'}`,
-          detail:`${summary} Foundry compared ${alternatives.length} response options and changed neither stock nor money.`,
+          detail:`${summary} StockChief compared ${alternatives.length} response options and changed neither stock nor money.`,
           resolutionHint:'Review the consequence and approve communication and purchasing separately.',
           candidates:[responseCandidate] });
       }

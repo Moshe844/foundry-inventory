@@ -18,7 +18,7 @@ durable `runtime_checkpoints` and displayed on the owner-only Operations page.
 
 ## Live-provider evidence
 
-OAuth popup return must preserve the signed-in Foundry session. Token refresh,
+OAuth popup return must preserve the signed-in StockChief session. Token refresh,
 webhook delivery plus polling fallback, settled/reconciled customer payment and
 customer-funded shipping onboarding each have their own checkpoint. Sandbox or
 mock assertions do not certify a live checkpoint. Evidence must also match the
@@ -28,7 +28,7 @@ exact immutable release currently deployed.
 
 An independent person completes a zero-training walkthrough of Inventory,
 Purchasing, supplier email, Sales Orders, Needs You and Accounting. Support,
-password recovery and alerting require actual receipt/acknowledgement. Foundry
+password recovery and alerting require actual receipt/acknowledgement. StockChief
 must explain any blocked gate and the exact prerequisite rather than presenting
 the deployment as production-ready.
 

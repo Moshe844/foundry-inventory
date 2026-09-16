@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Stripe connection · Foundry</title>
-  <%# A hand-off screen is still Foundry, so it loads what Foundry loads. %>
+  <title>Stripe connection · StockChief</title>
+  <%# A hand-off screen is still StockChief, so it loads what StockChief loads. %>
   <link rel="stylesheet" href="/app.css">
   <link rel="stylesheet" href="/product-clarity.css">
   <link rel="stylesheet" href="/foundry.css">
@@ -24,9 +24,9 @@
       <h1><%= outcome.chargesEnabled ? 'Stripe is connected' : outcome.connected ? 'Stripe needs one more step' : 'Stripe was not connected' %></h1>
       <p><%= outcome.message %></p>
       <% if (outcome.inventoryName) { %>
-        <p><strong>Foundry inventory:</strong> <%= outcome.inventoryName %></p>
+        <p><strong>StockChief inventory:</strong> <%= outcome.inventoryName %></p>
       <% } %>
-      <a class="btn btn--primary" href="/settings/connections#payments">Return to Foundry</a>
+      <a class="btn btn--primary" href="/settings/connections#payments">Return to StockChief</a>
     </div>
   </main>
   <script>
@@ -38,9 +38,9 @@
         workspaceId: <%- JSON.stringify(outcome.workspaceId || null) %>
       };
       if (!window.opener || window.opener.closed) return;
-      // The owner may have opened Foundry on localhost while Stripe had to
+      // The owner may have opened StockChief on localhost while Stripe had to
       // return through the configured public/ngrok address. The opener still
-      // validates this page's origin against those exact Foundry origins.
+      // validates this page's origin against those exact StockChief origins.
       window.opener.postMessage(message, '*');
       // Let the success/error explanation paint before closing. If the browser
       // refuses window.close(), the owner still sees a useful page and link.

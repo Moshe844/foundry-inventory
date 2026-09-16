@@ -42,7 +42,7 @@ test('a fresh inventory asks for the real source instead of assuming manual entr
 
   assert.match(page, /Do this next/);
   assert.match(page, /Do this next/);
-  assert.match(page, /Choose where Foundry should get your inventory/);
+  assert.match(page, /Choose where StockChief should get your inventory/);
   assert.match(page, /manual entry, file upload, approved email attachments, a connected POS\/ERP, or several sources/);
   assert.match(response.text, /href="\/onboarding"/);
   assert.match(page, /Setup progress/);
@@ -68,7 +68,7 @@ test('an operating inventory is not called getting ready while optional setup re
 
   const agent = await ownerAgent(env);
   const page = plain((await agent.get('/')).text);
-  assert.doesNotMatch(page, /Getting Foundry ready/i);
+  assert.doesNotMatch(page, /Getting StockChief ready/i);
   assert.match(page, /Everything is under control/i);
   assert.match(page, /Optional setup · 2 of 5 complete/i);
   env.db.close();
@@ -105,7 +105,7 @@ test('a completed source review outranks generic manual setup on Home', () => {
   assert.equal(state.next.kind, 'import');
   assert.match(state.next.title, /inventory\.pdf is ready for inventory review/);
   assert.equal(state.next.href, '/foundry/proposal/under_source');
-  assert.doesNotMatch(state.next.title, /Add your first product|Choose where Foundry/);
+  assert.doesNotMatch(state.next.title, /Add your first product|Choose where StockChief/);
 });
 
 test('the operating checklist completes from real records and becomes a next-best action', async () => {
@@ -130,9 +130,9 @@ test('the operating checklist completes from real records and becomes a next-bes
   assert.equal(state.steps.find((step) => step.id === 'opening').complete, true);
   assert.equal(state.steps.find((step) => step.id === 'supplier').complete, false);
   // "ABC Apparel supplies Black T-shirt in cases of 12" was suggested here, and
-  // Foundry answers that sentence with "Foundry cannot store supplier catalogue
+  // StockChief answers that sentence with "StockChief cannot store supplier catalogue
   // details like pricing, pack size or lead time". Suggesting a sentence the
-  // product refuses teaches somebody that Tell Foundry does not work.
+  // product refuses teaches somebody that Tell StockChief does not work.
   assert.match(state.examples[0], /Help me add a supplier for Black T-shirt/);
   for (const example of state.examples) {
     assert.doesNotMatch(example, /supplies .* in cases of/,
@@ -162,7 +162,7 @@ test('the operating checklist completes from real records and becomes a next-bes
     reorderPoint: 5, targetStock: 20, safetyStock: 2,
   });
   state = guidance.build(env.db, env.workspace.workspaceId);
-  assert.match(state.next.title, /Choose what Foundry may handle without asking you/);
+  assert.match(state.next.title, /Choose what StockChief may handle without asking you/);
   assert.equal(state.next.href, '/autopilot');
 
   // Background checks update the autopilot timestamp. That is not a human
@@ -171,17 +171,17 @@ test('the operating checklist completes from real records and becomes a next-bes
     'UPDATE workspace_autopilot SET updated_at = ?, last_evaluated_at = ? WHERE workspace_id = ?'
   ).run(new Date().toISOString(), new Date().toISOString(), env.workspace.workspaceId);
   state = guidance.build(env.db, env.workspace.workspaceId);
-  assert.match(state.next.title, /Choose what Foundry may handle without asking you/);
+  assert.match(state.next.title, /Choose what StockChief may handle without asking you/);
 
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
   state = guidance.build(env.db, env.workspace.workspaceId);
   assert.equal(state.next.kind, 'clear');
-  assert.match(state.next.title, /Foundry is managing inventory/);
+  assert.match(state.next.title, /StockChief is managing inventory/);
 
   const agent = await ownerAgent(env);
   const home = plain((await agent.get('/')).text);
   assert.match(home, /Do this next/);
-  assert.match(home, /Foundry is managing inventory/);
+  assert.match(home, /StockChief is managing inventory/);
 });
 
 test('the permanent task guide uses this inventory in examples and points to real task screens', async () => {
@@ -197,17 +197,17 @@ test('the permanent task guide uses this inventory in examples and points to rea
   for (const topic of [
     'Set up inventory', 'Record a sale', 'Receive stock', 'Move stock', 'Fix a count',
     'Set low-stock/reorder rules', 'Set up suppliers and purchase orders',
-    'Receive a purchase order', 'Control what Foundry may do automatically',
+    'Receive a purchase order', 'Control what StockChief may do automatically',
     'Find what needs my attention',
   ]) assert.match(page, new RegExp(topic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
   assert.match(page, /We sold 1 Canvas Tote/);
   assert.match(response.text, /href="\/autopilot"/);
   assert.match(response.text, /href="\/needs-you"/);
-  assert.match(page, /How do I use Foundry\?/);
+  assert.match(page, /How do I use StockChief\?/);
 });
 
-test('Tell Foundry examples change with the actual operating state', async () => {
+test('Tell StockChief examples change with the actual operating state', async () => {
   const env = setup();
   configure(env.db, env.workspace.workspaceId);
   itemService.createItem(env.db, env.ctx, {
@@ -276,12 +276,12 @@ test('the next action reuses the real Needs you decision and links to the exact 
   assert.match((await agent.get('/')).text, new RegExp(`/investigations/${event.investigationId}`));
 
   // The full contract is on Needs you, where the decision is actually made:
-  // what happened, why Foundry stopped, what it suggests, and what is being
+  // what happened, why StockChief stopped, what it suggests, and what is being
   // asked of the reader — each answered once, beside one specific action.
   const needsYou = plain((await agent.get('/needs-you')).text);
   assert.match(needsYou, /Canvas Tote/);
   // The desk speaks in the first person — "Why I stopped" — because it is
-  // Foundry answering, not a report about it. The four questions are unchanged.
+  // StockChief answering, not a report about it. The four questions are unchanged.
   assert.match(needsYou, /Why I stopped/i);
   assert.match(needsYou, /What I need/i);
   assert.match(needsYou, /Resolve the difference/, 'the action names the decision, not "Review"');
@@ -314,7 +314,7 @@ test('Needs you guidance names the real waiting decision even while setup is inc
   // done by the list itself now.
   assert.match(page, /Canvas Tote does not match the records/i);
   assert.doesNotMatch(page, /Do now:/i, 'the page is the list; it needs no band telling it so');
-  assert.doesNotMatch(page, /Choose where Foundry should get your inventory|Add the first thing you sell/i,
+  assert.doesNotMatch(page, /Choose where StockChief should get your inventory|Add the first thing you sell/i,
     'and setup guidance does not displace a real waiting decision here');
   assert.match((await agent.get('/needs-you')).text, new RegExp(`/investigations/${event.investigationId}`));
   env.db.close();
@@ -323,10 +323,10 @@ test('Needs you guidance names the real waiting decision even while setup is inc
 /**
  * Setup must not send somebody back through the door they just came out of.
  *
- * Found by walking the new-owner scenario. Foundry read the business, agreed
+ * Found by walking the new-owner scenario. StockChief read the business, agreed
  * the tracking model, created both locations and said "Your inventory is ready
  * — everything below is live now". Home then said "Do this next: choose where
- * Foundry should get your inventory", pointing at the screen just left, over a
+ * StockChief should get your inventory", pointing at the screen just left, over a
  * progress bar reading 0 of 5.
  *
  * The step was genuinely incomplete — there were no products yet — but the one
@@ -340,7 +340,7 @@ test('a configured inventory is asked for its first product, not for a source ag
 
   assert.match(page, /Add the first thing you sell/,
     'the missing thing is a product, and it says so');
-  assert.doesNotMatch(page, /Choose where Foundry should get your inventory/,
+  assert.doesNotMatch(page, /Choose where StockChief should get your inventory/,
     'that question was answered by configuring the inventory');
   assert.match((await agent.get('/')).text, /href="\/inventory\/new"/,
     'and it goes where products are added');

@@ -3,7 +3,7 @@
 /**
  * The layers above detection: rewording, the daily brief, and constrained
  * question answering. Everything here uses a scripted provider — the point is
- * what Foundry does with what a model returns, including when it returns
+ * what StockChief does with what a model returns, including when it returns
  * something it should not have.
  */
 
@@ -172,7 +172,7 @@ test('the brief names the most urgent finding first', async () => {
 test('the Home watchlist never presents inventory observations as a second Needs You queue', () => {
   const { items } = withStockout();
   const body = briefService.deterministicObservationBrief(items, { stockNoun: 'inventory' });
-  assert.match(body, /Foundry is watching 1 inventory condition/i);
+  assert.match(body, /StockChief is watching 1 inventory condition/i);
   assert.match(body, /navy oxford/i);
   assert.match(body, /not waiting for your decision/i);
   assert.doesNotMatch(body, /needs your attention/i);
@@ -263,7 +263,7 @@ test('a whole-inventory stock question gives the total and the lowest position',
   assert.match(result.answer, /Lowest is Valve at 3 units/);
 });
 
-test('a question Foundry cannot answer is answered honestly', async () => {
+test('a question StockChief cannot answer is answered honestly', async () => {
   const { db, workspace } = withStockout();
   const provider = fakeProvider({
     intent: 'unsupported',
@@ -271,7 +271,7 @@ test('a question Foundry cannot answer is answered honestly', async () => {
     locationQuery: '',
     windowDays: 30,
     limit: 10,
-    unsupportedReason: 'Foundry does not track supplier pricing.',
+    unsupportedReason: 'StockChief does not track supplier pricing.',
   });
 
   const result = await queryPlanner.ask(db, workspace.workspaceId, 'What did we pay for these?', { provider });

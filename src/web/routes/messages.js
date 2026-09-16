@@ -4,7 +4,7 @@
  * One message, written by the owner, read before it goes.
  *
  * "Please email motty@… that we received the order" is typed into the Tell
- * Foundry box and lands here: the words as they were typed, who they go to,
+ * StockChief box and lands here: the words as they were typed, who they go to,
  * which mailbox they leave from, and a Send button. The shipping notice and
  * the payment link already work this way; this is the same page for a message
  * a person started themselves.

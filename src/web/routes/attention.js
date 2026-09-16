@@ -155,7 +155,7 @@ router.get(
       req.flash('error', 'That item is no longer on your briefing.');
       return res.redirect(303, '/attention');
     }
-    // Only a finding an operation Foundry actually has can address is offered
+    // Only a finding an operation StockChief actually has can address is offered
     // an action. Inventing one for a stockout would be worse than offering none.
     const isReplenishment =
       item.category === 'replenishment_needed' || item.relatedCategories.includes('replenishment_needed');
@@ -188,7 +188,7 @@ router.get(
       // was first detected (for example, still offering an order that is now
       // already drafted).
       screenGuide: {
-        description: 'Understand this decision, why Foundry stopped, and the one safe action available now.',
+        description: 'Understand this decision, why StockChief stopped, and the one safe action available now.',
         next: {
           title: presented.title,
           action: null,
@@ -256,7 +256,7 @@ router.post(
       note: trimOrNull(req.body.note),
       days: req.body.days || undefined,
     });
-    req.flash('info', `Hidden until ${result.dismissedUntil.slice(0, 10)}. Foundry keeps measuring it.`);
+    req.flash('info', `Hidden until ${result.dismissedUntil.slice(0, 10)}. StockChief keeps measuring it.`);
     res.redirect(303, req.body.returnTo || '/attention');
   })
 );
@@ -278,14 +278,14 @@ router.post(
       'info',
       req.body.verdict === 'useful'
         ? 'Noted — thanks.'
-        : 'Noted. Foundry records this; it will not quietly change what it checks.'
+        : 'Noted. StockChief records this; it will not quietly change what it checks.'
     );
     res.redirect(303, req.body.returnTo || `/attention/${req.params.id}`);
   })
 );
 
 /**
- * Ask Foundry. A GET because it only reads: the answer is shareable, the back
+ * Ask StockChief. A GET because it only reads: the answer is shareable, the back
  * button behaves, and nothing is resubmitted by refreshing.
  */
 
@@ -313,34 +313,50 @@ router.get(
     const question = trimOrNull(req.query.q);
     let result = null;
     let error = null;
+    const submittedTurn = (req.session.askTurns || []).find(turn => turn.token === req.query.turn
+      && turn.workspaceId === req.ctx.workspaceId && turn.question === question);
+    const conversation = req.query.followup === '1' && submittedTurn
+      ? submittedTurn.conversation : null;
 
     if (question) {
       try {
-        result = await queryPlanner.ask(req.db, req.ctx.workspaceId, question, {
+        const pending = req.session.pendingAskResult;
+        const reusable = pending && pending.token === req.query.turn && pending.workspaceId === req.ctx.workspaceId && pending.question === question;
+        if (reusable) delete req.session.pendingAskResult;
+        if (reusable && pending.error) error=pending.error;
+        result = reusable ? pending.result : await queryPlanner.ask(req.db, req.ctx.workspaceId, question, {
           provider: req.app.locals.aiProvider || undefined,
           context: briefingContext(req.db, req.ctx.workspaceId),
           membership: req.user,
           productBrain: req.app.locals.productBrain,
           actorId: req.ctx.actorId,
           currentHref: req.get('referer') || '',
+          conversation,
+          timezone: 'America/New_York',
         });
         /*
          * An instruction typed into the question box.
          *
-         * Foundry has one understanding of what somebody said; which box they
+         * StockChief has one understanding of what somebody said; which box they
          * typed it in should not change whether it understands them. So this
          * hands the sentence to the part that carries instructions out rather
-         * than explaining, from here, what Foundry supposedly cannot do —
+         * than explaining, from here, what StockChief supposedly cannot do —
          * which is how "please delete my entire inventory" got answered with
-         * "Foundry cannot delete or wipe an entire inventory". It can.
+         * "StockChief cannot delete or wipe an entire inventory". It can.
          */
-        if (result && result.plan && result.plan.intent === 'action') {
+        if (result && result.plan && result.plan.intent === 'action' && !result.semanticPlan) {
           req.session.pendingActionQuestion = {
             instruction: question,
             question: 'That is something to do rather than something to look up, '
-              + 'so Foundry brought it here. Press Continue and it will work out what changes.',
+              + 'so StockChief brought it here. Press Continue and it will work out what changes.',
           };
           return res.redirect(303, '/actions');
+        }
+        if (result && !result.isAction) {
+          req.session.askConversation = {workspaceId:req.ctx.workspaceId,
+            question: conversation?.clarification ? `${conversation.question}\nFollow-up answer: ${question}` : question,
+            semanticPlan:result.semanticPlan || null,
+            clarification:result.needsClarification ? result.answer : null};
         }
       } catch (err) {
         if (err.status && err.status < 500) error = err.message;
@@ -364,7 +380,7 @@ router.get(
     }
 
     res.page('attention/ask', {
-      title: 'Ask Foundry',
+      title: 'Ask StockChief',
       nav: 'ask',
       room: true,
       recentRules,
@@ -373,12 +389,13 @@ router.get(
       question: question || '',
       result,
       error,
+      conversation,
       aiConfigured: config.ai.configured,
       // Written with this inventory's own product and place where there is one.
       // "How many navy oxfords do we have?" in a business that sells t-shirts
       // teaches nothing except that the screen was written for somebody else,
       // and a new customer cannot tell whether the answer would be empty
-      // because Foundry is broken or because the product does not exist.
+      // because StockChief is broken or because the product does not exist.
       examples: askExamples(req.db, req.ctx.workspaceId),
     });
   })

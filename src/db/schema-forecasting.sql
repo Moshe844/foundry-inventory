@@ -12,7 +12,7 @@
 --
 --   demand_forecasts          what was predicted, from what, how sure
 --   forecast_outcomes         what actually happened, scored against it
---   planning_recommendations  what Foundry proposed, who decided, what followed
+--   planning_recommendations  what StockChief proposed, who decided, what followed
 --
 -- Nothing here is operational truth. A forecast is an opinion about the future
 -- and cannot move stock, change a balance or post to the ledger; if every row
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS demand_forecasts (
   horizon_days      INTEGER NOT NULL,
   horizon_end       TEXT NOT NULL,           -- the last day it claims to cover
 
-  -- The claim itself. daily_rate is null when Foundry declined to estimate,
+  -- The claim itself. daily_rate is null when StockChief declined to estimate,
   -- which is a real forecast outcome and must be storable.
   daily_rate        REAL,
   horizon_units     REAL,
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS forecast_outcomes (
 CREATE INDEX IF NOT EXISTS ix_forecast_outcomes_sku
   ON forecast_outcomes(workspace_id, sku_id, scored_at);
 
--- What Foundry proposed, and everything that happened to the proposal.
+-- What StockChief proposed, and everything that happened to the proposal.
 --
 -- One row covers the whole life of a recommendation: raised, shown, decided,
 -- acted on, verified. Keeping it in one row rather than a stream of events is a

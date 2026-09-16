@@ -44,7 +44,7 @@ function start(db, options = {}) {
     catch (error) {
       checkpoints.record(db, 'retention.policy', 'FAIL', { error: error.message });
       monitoring.raise(db, { severity: 'ERROR', kind: 'retention.failed',
-        title: 'Foundry retention cleanup failed', detail: error.message, fingerprint: 'retention.failed' });
+        title: 'StockChief retention cleanup failed', detail: error.message, fingerprint: 'retention.failed' });
     }
   };
   const timer = setInterval(run, intervalMs);

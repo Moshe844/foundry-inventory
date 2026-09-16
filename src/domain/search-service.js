@@ -471,7 +471,7 @@ function search(db, workspaceId, rawTerm, { limit = 8 } = {}) {
   // Ranking them lower was not enough. Searching "Black Small" still listed
   // White / Small underneath the right answer, and a person who has named both
   // dimensions has said which one they mean; offering the other reads as
-  // Foundry not being sure. The sibling only matched at all because the product
+  // StockChief not being sure. The sibling only matched at all because the product
   // they share is called "Black T-shirt".
   //
   // Deliberately per kind. A supplier's orders are worth seeing under the

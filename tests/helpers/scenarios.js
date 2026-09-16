@@ -48,7 +48,7 @@ function at(db, ctx, daysAgo, operation, input) {
   return result;
 }
 
-/** Marks the workspace as Foundry-configured, without a model call. */
+/** Marks the workspace as StockChief-configured, without a model call. */
 function configure(db, workspaceId, overrides = {}) {
   const now = nowIso();
   db.prepare(

@@ -3,7 +3,7 @@
 /*
  * Telling the customer their order shipped.
  *
- * Foundry already knew everything this message says — what was in the box,
+ * StockChief already knew everything this message says — what was in the box,
  * which carrier took it, the tracking number and the link that resolves it —
  * and told nobody. The person actually waiting for the parcel was the one
  * party the system could not reach.
@@ -13,10 +13,10 @@
  * The body is built from records, never from a model. A shipping notice is
  * read by somebody who is owed goods: an invented tracking number or a
  * cheerfully guessed delivery date is worse than no notice at all. So every
- * line here is a field read out, and a field Foundry does not have simply
+ * line here is a field read out, and a field StockChief does not have simply
  * produces no line rather than a hedge.
  *
- * Preparing is not sending. The default is that Foundry writes the message
+ * Preparing is not sending. The default is that StockChief writes the message
  * and the owner presses send, exactly as supplier communication works. A
  * workspace can say "send these for me", and that is a setting somebody chose
  * rather than a default they inherited.
@@ -84,13 +84,13 @@ function policy(db, workspaceId) {
 function setPolicy(db, ctx, input = {}) {
   const mode = trimOrNull(input.shippingNotice) || 'prepare';
   if (!['off', 'prepare', 'send'].includes(mode)) {
-    throw new ValidationError('Choose whether Foundry writes shipping notices, sends them, or leaves them alone.');
+    throw new ValidationError('Choose whether StockChief writes shipping notices, sends them, or leaves them alone.');
   }
   const connectorId = trimOrNull(input.connectorId);
   const statusMode = (value, fallback, label) => {
     const selected = trimOrNull(value) || fallback;
     if (!['off', 'prepare', 'send'].includes(selected)) {
-      throw new ValidationError(`Choose whether Foundry prepares, sends, or turns off ${label}.`);
+      throw new ValidationError(`Choose whether StockChief prepares, sends, or turns off ${label}.`);
     }
     return selected;
   };
@@ -98,7 +98,7 @@ function setPolicy(db, ctx, input = {}) {
   const delivered = statusMode(input.deliveredNotice, 'prepare', 'delivery notices');
   const exception = statusMode(input.exceptionNotice, 'prepare', 'shipping exception notices');
   if ([mode, outForDelivery, delivered, exception].includes('send') && !connectorId) {
-    throw new ValidationError('Choose which mailbox these are sent from before asking Foundry to send them for you.');
+    throw new ValidationError('Choose which mailbox these are sent from before asking StockChief to send them for you.');
   }
   const now = nowIso();
   db.prepare(`INSERT INTO customer_communication_policy
@@ -119,11 +119,11 @@ function setPolicy(db, ctx, input = {}) {
 }
 
 /**
- * Which mailbox Foundry sends from.
+ * Which mailbox StockChief sends from.
  *
  * There is a setting for this, and almost nobody sets it — there is no reason
  * to choose between mailboxes when you only have one. Reading the setting
- * alone meant Foundry told an owner "no mailbox is connected for sending"
+ * alone meant StockChief told an owner "no mailbox is connected for sending"
  * while their Gmail sat on the Connections page marked Connected.
  *
  * So the setting is honoured when it is set, and otherwise the connected
@@ -166,7 +166,7 @@ function forOrder(db, workspaceId, orderId) {
 }
 
 /**
- * Everything Foundry has written to customers and not yet sent.
+ * Everything StockChief has written to customers and not yet sent.
  */
 function waiting(db, workspaceId) {
   return db.prepare(`SELECT cc.*, c.name AS customer_name, so.order_number, sh.shipment_number
@@ -185,7 +185,7 @@ const LINE = (label, value) => (value ? `${label}: ${value}` : null);
 /**
  * The words, built entirely from fields.
  *
- * Every paragraph below is a record read out. A field Foundry does not hold
+ * Every paragraph below is a record read out. A field StockChief does not hold
  * produces no line at all — there is no sentence here that survives its own
  * data being missing, because that is exactly how a system ends up promising
  * a delivery date nobody committed to.
@@ -480,10 +480,10 @@ function preparePaymentLink(db, ctx, requestId) {
  * A message the owner asked for, in their own words.
  *
  * The shipping notice and the payment link are written from records; this
- * one was written by a person, through the Tell Foundry box. It lands in the
+ * one was written by a person, through the Tell StockChief box. It lands in the
  * same table under the same statuses and leaves through the same mailbox,
  * because a message going out over the owner's name has one path out of the
- * building — not one for the messages Foundry thought of and another for the
+ * building — not one for the messages StockChief thought of and another for the
  * ones they did.
  */
 function prepareOwnerMessage(db, ctx, input = {}) {
@@ -562,7 +562,7 @@ async function sendThroughMailbox(db, workspaceId, id, actorId = null) {
   const state = require('../autopilot/modes').get(db, workspaceId);
   if (state.paused || (state.suspended && (!state.suspendedScope
       || ['sales','customer'].includes(state.suspendedScope)))) {
-    throw new ValidationError('Foundry is paused. Nothing was sent to the customer.');
+    throw new ValidationError('StockChief is paused. Nothing was sent to the customer.');
   }
 
   const now = nowIso();
@@ -610,7 +610,7 @@ function onShipped(db, ctx, shipmentId) {
 }
 
 /**
- * Send it now if the workspace has said Foundry may. Returns what happened in
+ * Send it now if the workspace has said StockChief may. Returns what happened in
  * words, because "we told them" and "we could not" must not look alike.
  */
 async function autoSend(db, ctx, message) {
@@ -699,7 +699,7 @@ require('../autonomous/service').registerAdapter('customer.communicate', {
     const message = get(db, ctx.workspaceId, operation.decision.communicationId);
     const passed = message?.status === 'SENT';
     return { passed, reason:passed
-      ? 'Foundry reread the customer message as sent and retained its provider identity.'
+      ? 'StockChief reread the customer message as sent and retained its provider identity.'
       : (message?.errorMessage || 'The customer message is not confirmed as sent.'),
     communicationId:message?.id || operation.decision.communicationId,
     externalMessageId:message?.externalMessageId || null };

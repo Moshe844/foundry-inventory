@@ -19,12 +19,12 @@ function metadata() {
     description: 'Connect a Clover merchant to receive completed sales, refunds, and inventory catalog changes.',
     provides: ['completed POS sales', 'refund evidence', 'catalog SKUs and merchant location'],
     unavailableReason: config.connections.clover.configured ? null
-      : 'Foundry’s Clover app ID, app secret, and webhook auth code have not been configured on this installation.',
+      : 'StockChief’s Clover app ID, app secret, and webhook auth code have not been configured on this installation.',
   };
 }
 
 function authorizationUrl({ state, input }) {
-  if (!config.connections.clover.configured) throw new ValidationError('Clover is not configured on this Foundry installation.');
+  if (!config.connections.clover.configured) throw new ValidationError('Clover is not configured on this StockChief installation.');
   const url = new URL(`${oauthBase()}/oauth/v2/authorize`);
   url.searchParams.set('client_id', config.connections.clover.clientId);
   url.searchParams.set('redirect_uri', input.redirectUri);
@@ -84,7 +84,7 @@ async function refreshCredentials(credentials) {
 async function api(credentials, path, options = {}) {
   return jsonRequest(`${apiBase(credentials.environment)}${path}`, { ...options,
     headers: { authorization: `Bearer ${credentials.accessToken}`, accept: 'application/json',
-      'content-type': 'application/json', 'user-agent': 'Foundry-Inventory/1.0', ...(options.headers || {}) } });
+      'content-type': 'application/json', 'user-agent': 'StockChief-Inventory/1.0', ...(options.headers || {}) } });
 }
 
 function elements(body) {

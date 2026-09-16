@@ -84,7 +84,8 @@ if (config.operations.workerEnabled && process.env.FOUNDRY_STARTUP_CATCHUP === '
 const stopRetention = config.operations.workerEnabled ? retention.start(db) : () => {};
 
 const server = config.operations.webEnabled ? app.listen(config.port, () => {
-  console.log(`Foundry Inventory listening on http://localhost:${config.port}  (${config.env})`);
+  if (process.send) process.send({ type: 'stockchief.web.ready' });
+  console.log(`StockChief Inventory listening on http://localhost:${config.port}  (${config.env})`);
   console.log(`Database: ${config.databasePath}`);
   console.log(
     config.operations.workerEnabled && config.autopilot.enabled
@@ -102,7 +103,7 @@ const server = config.operations.webEnabled ? app.listen(config.port, () => {
   }
 }) : null;
 if (!config.operations.webEnabled) {
-  console.log(`Foundry worker running without an HTTP listener  (${config.env})`);
+  console.log(`StockChief worker running without an HTTP listener  (${config.env})`);
   console.log(`Database: ${config.databasePath}`);
   cutoverRunner.resumeInterrupted(db,config.databasePath);
   preparationRunner.resumeInterrupted(db,config.databasePath);
@@ -144,7 +145,7 @@ function fatal(kind, error) {
   try {
     monitoring.raise(db, {
       severity: 'CRITICAL', kind,
-      title: 'A Foundry process stopped unexpectedly',
+      title: 'A StockChief process stopped unexpectedly',
       detail: String(error && (error.code || error.name || error.message) || 'Unknown process failure'),
       fingerprint: `${kind}:${config.operations.releaseRef}`,
     });

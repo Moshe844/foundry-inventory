@@ -21,7 +21,7 @@ function matchingRule(db, auth, sender) {
 /*
  * Somebody asking to buy something, in the words people actually use.
  *
- * Deliberately narrow. A phrase here causes Foundry to draft a Sales Order,
+ * Deliberately narrow. A phrase here causes StockChief to draft a Sales Order,
  * so the cost of a false positive is a phantom order in the owner's list,
  * while the cost of a miss is a message that still arrives, still shows as
  * needing an answer, and can be turned into an order by hand. Under-matching
@@ -69,10 +69,10 @@ function classify(subject, body, attachments, options = {}) {
 /*
  * Is this the customer answering a question about their own order?
  *
- * Foundry asked which of four shoes somebody meant, they replied "the moc toe
+ * StockChief asked which of four shoes somebody meant, they replied "the moc toe
  * slip in 36 please", and that reply arrived as an unrelated message: no
  * buying words in it, so nothing connected it to the order it completes. The
- * customer had answered and Foundry did not notice.
+ * customer had answered and StockChief did not notice.
  *
  * A reply from the same person on the same thread as an order request that
  * never became an order is part of that request. Narrow deliberately — same

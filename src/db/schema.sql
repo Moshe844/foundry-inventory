@@ -1,4 +1,4 @@
--- Foundry Inventory : core schema
+-- StockChief Inventory : core schema
 --
 -- One engine, four archetypes. A SKU is the unit of stock-keeping:
 --   * quantity items have exactly one (default) SKU

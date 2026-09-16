@@ -7,11 +7,11 @@
 
 <div class="page-head">
   <div>
-    <p class="eyebrow">Foundry</p>
+    <p class="eyebrow">StockChief</p>
     <h1>What happens next</h1>
     <p class="lede">
       Everything here is a prediction from your own trading history, and every one of them says how
-      sure Foundry is. You should not need this page — what matters turns up on Home, in Needs you,
+      sure StockChief is. You should not need this page — what matters turns up on Home, in Needs you,
       and on the product itself. It is here for when you want the whole picture at once.
     </p>
   </div>
@@ -22,8 +22,8 @@
   <div class="card-head">
     <div>
       <p class="eyebrow">Measured outcomes</p>
-      <h2>What Foundry learned</h2>
-      <p class="hint">Foundry measures its decisions. It proposes policy changes; it cannot rewrite its own rules.</p>
+      <h2>What StockChief learned</h2>
+      <p class="hint">StockChief measures its decisions. It proposes policy changes; it cannot rewrite its own rules.</p>
     </div>
     <span class="badge"><%= learning.metrics.observations || 0 %> measured outcomes</span>
   </div>
@@ -31,7 +31,7 @@
     <div class="card-body">
       <p class="planning-item"><%= learning.metrics.observations
         ? 'No recurring bias currently justifies changing a policy.'
-        : 'No decision has reached a measurable outcome yet. Foundry will keep watching without guessing.' %></p>
+        : 'No decision has reached a measurable outcome yet. StockChief will keep watching without guessing.' %></p>
     </div>
   <% } %>
   <% learningProposals.forEach(function(change) { %>
@@ -44,12 +44,12 @@
         <h3><%= change.headline %></h3>
         <p><%= change.rationale %></p>
         <details>
-          <summary>Why Foundry recommends this</summary>
+          <summary>Why StockChief recommends this</summary>
           <div class="learning-evidence">
             <% if (change.evidence.samples) { %><p><strong><%= change.evidence.samples %></strong> measured outcomes support this.</p><% } %>
             <% if (change.evidence.meanDays) { %><p>Observed average: <strong><%= change.evidence.meanDays %> days</strong>.</p><% } %>
             <% if (change.evidence.meanBiasUnits) { %><p>Average forecast bias: <strong><%= change.evidence.meanBiasUnits %> units</strong>.</p><% } %>
-            <p><%= change.expectedImpact.description || 'Foundry will measure the result after rollout.' %></p>
+            <p><%= change.expectedImpact.description || 'StockChief will measure the result after rollout.' %></p>
             <p class="t-xs t-muted">The evidence, rule version, approval and previous value are retained for audit and rollback.</p>
           </div>
         </details>
@@ -93,7 +93,7 @@
   <div class="card-body stack">
     <% if (!sweep.shortages.length) { %>
       <p class="planning-item">
-        Nothing Foundry can measure a sales rate for runs out inside the period it can see.
+        Nothing StockChief can measure a sales rate for runs out inside the period it can see.
         Products with too little history to forecast are not counted here, and never guessed at.
       </p>
     <% } %>
@@ -162,7 +162,7 @@
     <div>
       <h2>Rules that no longer match the trade</h2>
       <p class="hint">
-        Foundry never changes a level you configured without being told to. Each of these is a
+        StockChief never changes a level you configured without being told to. Each of these is a
         question with two answers.
       </p>
     </div>
@@ -172,7 +172,7 @@
          return ['reorder_point', 'target_stock', 'safety_stock'].indexOf(row.kind) !== -1;
        }); %>
     <% if (!changes.length) { %>
-      <p class="planning-item">Your reorder settings still match the demand and delivery times Foundry measures.</p>
+      <p class="planning-item">Your reorder settings still match the demand and delivery times StockChief measures.</p>
     <% } %>
     <% changes.forEach(function (row) { %>
       <article class="planning-item">
@@ -180,7 +180,7 @@
         <p class="t-muted"><%= row.why %></p>
         <% if (row.confidence && row.confidence !== 'high') { %>
           <p class="t-xs t-muted">
-            <%= row.confidence === 'learning' ? 'Foundry is still learning this product.'
+            <%= row.confidence === 'learning' ? 'StockChief is still learning this product.'
               : 'Moderate confidence — the history behind this is short or uneven.' %>
           </p>
         <% } %>
@@ -257,7 +257,7 @@
   </div>
   <% } %>
   <div class="card-foot">
-    Foundry recommends operational answers — stop ordering, move it, lower the target. What to charge
+    StockChief recommends operational answers — stop ordering, move it, lower the target. What to charge
     for it is a merchandising decision it cannot see enough to have an opinion about.
   </div>
 </section>
@@ -299,7 +299,7 @@
     <div>
       <h2>What matters to you</h2>
       <p class="hint">
-        These choose between answers Foundry was already allowed to give. None of them grants it
+        These choose between answers StockChief was already allowed to give. None of them grants it
         permission to do anything new — that stays with the jobs you authorise.
       </p>
     </div>
@@ -349,7 +349,7 @@
           <%= money(inventoryPosition.heldMinor) %> is currently tied up in stock, against your
           limit of <%= money(inventoryPosition.capMinor) %>.
           <% if (!inventoryPosition.within) { %>
-            That is <%= money(inventoryPosition.overBy) %> over. Foundry reports this rather than
+            That is <%= money(inventoryPosition.overBy) %> over. StockChief reports this rather than
             refusing to reorder — a limit is a preference between reasonable plans, not a reason to
             let a customer down.
           <% } %>
@@ -374,7 +374,7 @@
 <section class="card" id="accuracy">
   <div class="card-head">
     <div>
-      <h2>Has Foundry been right?</h2>
+      <h2>Has StockChief been right?</h2>
       <p class="hint"><%= accuracy.summary %></p>
     </div>
   </div>
@@ -391,7 +391,7 @@
     <% } %>
     <p class="t-xs t-muted">
       Forecasts made over a period that was spent out of stock are not scored. Demand had nowhere to
-      happen, so marking against it would teach Foundry that running short was accurate.
+      happen, so marking against it would teach StockChief that running short was accurate.
     </p>
   </div>
 </section>

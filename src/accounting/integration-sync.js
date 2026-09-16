@@ -57,7 +57,7 @@ function chooseAuthority(db, ctx, connectorId, input = {}) {
   const accountingSource = String(input.accountingSource || 'FOUNDRY').toUpperCase();
   if (!['FOUNDRY', 'EXTERNAL'].includes(accountingSource)) throw new ValidationError('Choose which system owns accounting truth.');
   if (requested === 'POST' && accountingSource !== 'FOUNDRY') {
-    throw new ValidationError('Foundry cannot post outward while the external system is declared the accounting source of truth.');
+    throw new ValidationError('StockChief cannot post outward while the external system is declared the accounting source of truth.');
   }
   const direction = requested === 'POST' ? 'FOUNDRY_TO_EXTERNAL'
     : accountingSource === 'EXTERNAL' ? 'EXTERNAL_TO_FOUNDRY' : 'READ_ONLY';
@@ -101,8 +101,8 @@ function conflict(db, workspaceId, connectorId, input) {
     WHERE workspace_id = ? AND id = ?`).run(now, workspaceId, connectorId);
   connections.issue(db, { workspaceId, connectorId, issueType: 'ACCOUNTING_SYNC_CONFLICT',
     fingerprint: `accounting-sync:${connectorId}:${input.key}`,
-    title: 'Accounting systems disagree and Foundry stopped',
-    detail: input.detail || 'The same accounting identity changed differently in Foundry and the external books.',
+    title: 'Accounting systems disagree and StockChief stopped',
+    detail: input.detail || 'The same accounting identity changed differently in StockChief and the external books.',
     resolutionHint: 'Review the exact versions and choose which recorded fact is authoritative. No balance was overwritten.' });
   return db.prepare(`SELECT * FROM accounting_sync_conflicts WHERE workspace_id = ? AND connector_id = ? AND conflict_key = ?`)
     .get(workspaceId, connectorId, input.key);
@@ -217,8 +217,8 @@ function importOpeningBooks(db, ctx, membership, connectorId) {
   }
   if (!preview.canImport) {
     throw new ValidationError(preview.balanced
-      ? 'This inventory already has posted accounting activity. Starting books can only initialize empty Foundry books.'
-      : 'The provider trial balance is not balanced, so Foundry stopped before importing it.');
+      ? 'This inventory already has posted accounting activity. Starting books can only initialize empty StockChief books.'
+      : 'The provider trial balance is not balanced, so StockChief stopped before importing it.');
   }
   const accounts = snapshot.accounts.filter((row) => row.externalId);
   const byExternal = new Map();
@@ -276,7 +276,7 @@ async function shadow(db, ctx, connectorId, adapter, credentials, input = {}) {
     if (checkpoint?.watermark_at && external.asOf && external.asOf < checkpoint.watermark_at) {
       conflict(db, ctx.workspaceId, connectorId, { key: `out-of-order:${external.asOf}`, type: 'OUT_OF_ORDER_SNAPSHOT',
         externalVersion: external.version || null, externalPayload: external,
-        detail: `The provider returned an accounting snapshot from ${external.asOf}, older than the accepted checkpoint ${checkpoint.watermark_at}. Foundry ignored it.` });
+        detail: `The provider returned an accounting snapshot from ${external.asOf}, older than the accepted checkpoint ${checkpoint.watermark_at}. StockChief ignored it.` });
       throw new ValidationError('The provider returned an out-of-order accounting snapshot. Nothing was changed.');
     }
     const approved = db.prepare(`SELECT x.external_id, a.code FROM accounting_external_identities x
@@ -338,7 +338,7 @@ function mapAccount(db, ctx, connectorId, input = {}) {
   if (!externalId) throw new ValidationError('Choose the external account to map.');
   const account = db.prepare(`SELECT * FROM accounting_accounts WHERE workspace_id = ? AND id = ? AND active = 1`)
     .get(ctx.workspaceId, input.accountId);
-  if (!account) throw new ValidationError('Choose an active Foundry account.');
+  if (!account) throw new ValidationError('Choose an active StockChief account.');
   const current = state(db, ctx.workspaceId, connectorId);
   const external = current?.latestShadow?.externalSnapshot?.accounts?.find((row) => String(row.externalId) === externalId);
   if (!external) throw new ValidationError('That external account is not present in the latest verified snapshot.');
@@ -346,7 +346,7 @@ function mapAccount(db, ctx, connectorId, input = {}) {
     WHERE workspace_id = ? AND connector_id = ? AND entity_type = 'account' AND external_id = ?`)
     .get(ctx.workspaceId, connectorId, externalId);
   if (occupied && occupied.foundry_record_id !== account.id) {
-    throw new ValidationError('That external account is already mapped to a different Foundry account.');
+    throw new ValidationError('That external account is already mapped to a different StockChief account.');
   }
   const now = nowIso();
   db.prepare(`INSERT INTO accounting_external_identities
@@ -365,7 +365,7 @@ function enableWrites(db, ctx, connectorId) {
   const current = policy(db, ctx.workspaceId, connectorId);
   const connection = connections.get(db, ctx.workspaceId, connectorId);
   if (current.posting_direction !== 'FOUNDRY_TO_EXTERNAL' || current.requested_authority !== 'POST') {
-    throw new ValidationError('Choose Foundry as accounting source and request posting authority first.');
+    throw new ValidationError('Choose StockChief as accounting source and request posting authority first.');
   }
   const run = current.last_shadow_run_id && db.prepare(`SELECT status FROM accounting_shadow_runs
     WHERE id = ? AND workspace_id = ? AND connector_id = ?`).get(current.last_shadow_run_id, ctx.workspaceId, connectorId);
@@ -410,7 +410,7 @@ async function syncPending(db, ctx, connectorId, adapter, credentials, options =
       conflict(db, ctx.workspaceId, connectorId, { key: `entry-account:${entry.id}`, type: 'UNCERTAIN_ACCOUNT_IDENTITY',
         entityType: 'journal_entry', foundryRecordId: entry.id, foundryVersion: String(entry.entry_number),
         foundryPayload: { entry, missingAccounts: missing.map((line) => ({ code: line.account_code, name: line.account_name })) },
-        detail: `Journal ${entry.entry_number} uses ${missing.length} account${missing.length === 1 ? '' : 's'} without an exact external identity. Foundry did not post it.` });
+        detail: `Journal ${entry.entry_number} uses ${missing.length} account${missing.length === 1 ? '' : 's'} without an exact external identity. StockChief did not post it.` });
       break;
     }
     const result = await adapter.postJournalEntry({ credentials, entry: { ...entry, lines },
@@ -453,22 +453,22 @@ function createSandboxProof(db, ctx, connectorId) {
   if (!cash || !expense) throw new ValidationError('The sandbox proof needs one exactly linked cash account and one expense account.');
   const date = new Date().toISOString().slice(0, 10);
   const charge = ledger.post(db, ctx, { postingDate: date,
-    description: 'Foundry sandbox integration proof — $1 test',
+    description: 'StockChief sandbox integration proof — $1 test',
     sourceType: 'accounting_connection_test', sourceRecordType: 'accounting_connection_test',
     sourceRecordId: connectorId, sourceKey: `accounting-sandbox-proof:${connectorId}:charge`,
     createdByType: 'USER', approvedByUserId: ctx.actorId,
     metadata: { connectorId, automaticallyReversed: true }, lines: [
-      { accountId: expense.id, debitMinor: 100, memo: 'Foundry sandbox proof' },
-      { accountId: cash.id, creditMinor: 100, memo: 'Foundry sandbox proof' },
+      { accountId: expense.id, debitMinor: 100, memo: 'StockChief sandbox proof' },
+      { accountId: cash.id, creditMinor: 100, memo: 'StockChief sandbox proof' },
     ] });
   const reversal = ledger.post(db, ctx, { postingDate: date,
-    description: 'Reverse Foundry sandbox integration proof',
+    description: 'Reverse StockChief sandbox integration proof',
     sourceType: 'accounting_connection_test', sourceRecordType: 'accounting_connection_test',
     sourceRecordId: connectorId, sourceKey: `accounting-sandbox-proof:${connectorId}:reversal`,
     createdByType: 'USER', approvedByUserId: ctx.actorId,
     metadata: { connectorId, reversesProofEntryId: charge.entry.id }, lines: [
-      { accountId: cash.id, debitMinor: 100, memo: 'Reverse Foundry sandbox proof' },
-      { accountId: expense.id, creditMinor: 100, memo: 'Reverse Foundry sandbox proof' },
+      { accountId: cash.id, debitMinor: 100, memo: 'Reverse StockChief sandbox proof' },
+      { accountId: expense.id, creditMinor: 100, memo: 'Reverse StockChief sandbox proof' },
     ] });
   return { entries: [charge.entry, reversal.entry], cash, expense };
 }

@@ -77,7 +77,7 @@ class ProductBrain {
         authorityRequirement: capability ? capability.authorityCapability || null : null,
         destinationId: capability ? capability.destination || null : null,
         sideEffects: readOnly || !capability ? [] : capability.sideEffects || [
-          'Writes an audited change through Foundry\'s deterministic domain services.',
+          'Writes an audited change through StockChief\'s deterministic domain services.',
         ] });
     }
     return router;
@@ -94,7 +94,7 @@ class ProductBrain {
       authorityRequirement: capability ? capability.authorityCapability || null : null,
       destinationId: capability ? capability.destination || null : null,
       sideEffects: method === 'GET' || method === 'HEAD' || !capability ? [] : capability.sideEffects || [
-        'Writes an audited change through Foundry\'s deterministic domain services.',
+        'Writes an audited change through StockChief\'s deterministic domain services.',
       ] });
   }
 
@@ -150,7 +150,7 @@ class ProductBrain {
 
   accessForCapability(id, membership) {
     const capability = this.capability(id);
-    if (!capability) return { exists: false, available: false, allowed: false, reason: 'Foundry has no registered capability with that name.' };
+    if (!capability) return { exists: false, available: false, allowed: false, reason: 'StockChief has no registered capability with that name.' };
     if (capability.status !== 'available') return { exists: true, available: false, allowed: false,
       capability, reason: capability.unavailableReason, prerequisites: capability.prerequisites || [] };
     const allowed = !capability.permission || permissions.can(membership, capability.permission);
@@ -177,16 +177,16 @@ class ProductBrain {
   accessForHref(href, membership) {
     const raw = String(href || '');
     if (!raw.startsWith('/') || raw.startsWith('//')) {
-      return { exists: false, available: false, allowed: false, reason: 'That is not a safe Foundry destination.' };
+      return { exists: false, available: false, allowed: false, reason: 'That is not a safe StockChief destination.' };
     }
     let pathname;
     try { pathname = new URL(raw, 'http://foundry.local').pathname; } catch { return { exists: false, available: false, allowed: false, reason: 'The destination is invalid.' }; }
     const family = this.classify(pathname);
-    if (!family || family.internal) return { exists: false, available: false, allowed: false, reason: 'That is not a user-facing Foundry destination.' };
+    if (!family || family.internal) return { exists: false, available: false, allowed: false, reason: 'That is not a user-facing StockChief destination.' };
     const access = this.accessForCapability(family.capability, membership);
     if (!access.exists || !access.available) return access;
     const route = this.routes.length ? this.routeForHref(href) : null;
-    if (this.routes.length && !route) return { ...access, exists: false, allowed: false, reason: 'That Foundry destination is not registered.' };
+    if (this.routes.length && !route) return { ...access, exists: false, allowed: false, reason: 'That StockChief destination is not registered.' };
     const permission = route && route.permission ? route.permission : access.capability.permission;
     const allowed = !permission || permissions.can(membership, permission);
     return { ...access, route, permission, allowed,

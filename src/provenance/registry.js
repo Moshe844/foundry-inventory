@@ -29,7 +29,7 @@ const NODES = Object.freeze({
   journal_entry: { table: 'accounting_journal_entries', label: 'accounting entry' },
   attention_item: { table: 'attention_items', label: 'owner decision' },
   planning_recommendation: { table: 'planning_recommendations', label: 'supply recommendation' },
-  work_item: { table: 'work_items', label: 'Foundry work item' },
+  work_item: { table: 'work_items', label: 'StockChief work item' },
   action_proposal: { table: 'action_proposals', label: 'proposed action' },
   action_execution: { table: 'action_executions', label: 'executed action' },
   action_verification: { table: 'action_verifications', label: 'verified outcome' },

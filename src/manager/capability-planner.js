@@ -133,7 +133,7 @@ async function plan(db, ctx, message, options = {}) {
   if (result.ok) data = result.data;
   else {
     const legacy = validate(toWireSchema(LEGACY_PLAN_SCHEMA), response.data, { key: 'manager-capability-legacy-wire' });
-    if (!legacy.ok) throw new Error('Foundry could not reliably plan that request.');
+    if (!legacy.ok) throw new Error('StockChief could not reliably plan that request.');
     data = legacy.data;
   }
   const capabilityId = data.capabilityId || capabilities.defaultForIntent(data.intentClass);

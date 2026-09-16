@@ -3,8 +3,8 @@
 /**
  * "I paid ABC $400 toward invoice 8832 by ACH."
  *
- * A payment made outside Foundry cannot be observed by Foundry, so somebody has
- * to report it — there is no way around that. What was in Foundry's control was
+ * A payment made outside StockChief cannot be observed by StockChief, so somebody has
+ * to report it — there is no way around that. What was in StockChief's control was
  * the cost of reporting it: open payables, find the bill, enter a payment,
  * check the supplier balance, trust that the accounting followed. Seven steps
  * for one fact.
@@ -101,7 +101,7 @@ test('several reported payments settle one bill exactly', () => {
   env.db.close();
 });
 
-test('Foundry asks which bill rather than choosing one', () => {
+test('StockChief asks which bill rather than choosing one', () => {
   const env = setup();
   openBill(env, { number: '7001', totalMinor: 50_000, sourceKey: 'bill:7001' });
   openBill(env, { number: '7002', totalMinor: 50_000, sourceKey: 'bill:7002' });

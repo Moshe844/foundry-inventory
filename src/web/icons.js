@@ -10,7 +10,7 @@ const PATHS = {
   activity: '<path d="M3.5 12h4l2.5 6 4-13 2.5 7h4"/>',
   // Sales shared Activity's icon, so two different destinations in the sidebar
   // were the same picture. A receipt reads as customer demand; a chain link
-  // reads as a connection to somewhere outside Foundry.
+  // reads as a connection to somewhere outside StockChief.
   sales:
     '<path d="M6 3.5h12v17l-2.5-1.6-2.5 1.6-2.5-1.6L8 20.5 6 19z"/><path d="M9.5 8.5h5M9.5 12h5"/>',
   link:

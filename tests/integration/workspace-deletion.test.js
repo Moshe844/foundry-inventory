@@ -29,7 +29,7 @@ const {
 
 test.after(cleanupAll);
 
-/** An inventory with something in every layer Foundry has built so far. */
+/** An inventory with something in every layer StockChief has built so far. */
 function furnish(db, workspace) {
   const membership = authService.getMembership(db, workspace.workspaceId, workspace.accountId);
   const item = makeQuantityItem(db, workspace.ctx);
@@ -230,7 +230,7 @@ test('the confirmation screen says exactly what will be lost', async () => {
   assert.match(text, /What will be destroyed/);
   assert.match(text, /Movements in the ledger/);
   assert.match(text, /Type Doomed Trading to confirm/);
-  // An open purchase order is called out, because it is not Foundry's to cancel.
+  // An open purchase order is called out, because it is not StockChief's to cancel.
   assert.match(text, /does not cancel anything with your suppliers/);
 });
 

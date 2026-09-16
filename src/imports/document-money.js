@@ -8,7 +8,7 @@
  * $30.00 insurance, $105.00 import duty, a $125.00 fuel surcharge, an $85.00
  * warehouse fee and $0.00 tax, totalling $11,087.00 at the bottom of the sheet.
  *
- * Foundry imported the shoes and none of the money. The charge columns were
+ * StockChief imported the shoes and none of the money. The charge columns were
  * read as "supplier cost or calculated pricing" and dropped, and the footer
  * became eight products called things like "INVOICE TOTAL". The Money page
  * showed an empty Expenses section beside an invoice that reconciles to the
@@ -118,7 +118,7 @@ function read(sheet, mappings, { productRows = [], trailerRows = [] } = {}) {
   /*
    * What the goods came to, from the cost the file recorded for each line.
    * Not read off a "total" column: that column is the supplier's arithmetic,
-   * and Foundry values stock from the rows it actually created.
+   * and StockChief values stock from the rows it actually created.
    */
   let goodsMinor = 0;
   if (mappings && mappings.unitCost !== undefined) {
@@ -132,7 +132,7 @@ function read(sheet, mappings, { productRows = [], trailerRows = [] } = {}) {
 
   /*
    * The total the document states about itself, when it states one. Kept so
-   * the page can show the supplier's own figure beside Foundry's arithmetic —
+   * the page can show the supplier's own figure beside StockChief's arithmetic —
    * a difference there means something was read wrong, and saying so is worth
    * more than quietly agreeing with itself.
    */
@@ -156,7 +156,7 @@ module.exports = { read, chargeColumns, toMinor };
 /**
  * The money on a plan that has already been stored.
  *
- * Rebuilt from what Foundry kept — the plan's own headings and each row's own
+ * Rebuilt from what StockChief kept — the plan's own headings and each row's own
  * cells — so this reads the file exactly as it was, long after the upload.
  */
 function fromPlan(db, planId) {
@@ -188,7 +188,7 @@ function fromPlan(db, planId) {
    * Where the products stop and the invoice's own totals begin.
    *
    * Normally the validator has already marked them, and that marking is used.
-   * A file imported before Foundry could tell the difference has its footer
+   * A file imported before StockChief could tell the difference has its footer
    * stored as products, so the shape of the sheet is read again rather than
    * trusting a status written before the rule existed — otherwise the very
    * imports that need repairing are the ones that get none.
@@ -223,7 +223,7 @@ function recordForPlan(db, planId) {
   /*
    * What the goods came to, when the plan's own mapping cannot say.
    *
-   * A file imported before Foundry read cost columns has no unit cost in its
+   * A file imported before StockChief read cost columns has no unit cost in its
    * mapping, so the arithmetic above makes the goods nothing — and the page
    * would then report the document as disagreeing with itself by the entire
    * value of the stock. The stock was valued from that same file, so its

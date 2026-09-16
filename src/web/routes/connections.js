@@ -24,7 +24,7 @@ const router = express.Router();
 
 /*
  * Stripe can return to a different registered local hostname than the one the
- * owner used to open Foundry (`127.0.0.1` versus `localhost`). Browser cookies
+ * owner used to open StockChief (`127.0.0.1` versus `localhost`). Browser cookies
  * cannot cross that boundary. The OAuth return is still authenticated by its
  * random, single-use, fifteen-minute state; let that one endpoint reach the
  * state verifier without first demanding an unrelated browser cookie.
@@ -58,7 +58,7 @@ function oauthReturnPage(res, input) {
     ? `/settings/connections/${encodeURIComponent(connectionId)}`
     : '/settings/connections';
   return res.status(input.connected ? 200 : 400).page('connections/oauth-return', {
-    title: `${input.providerName || 'Connection'} · Foundry`,
+    title: `${input.providerName || 'Connection'} · StockChief`,
     layout: false,
     outcome: {
       connected: Boolean(input.connected),
@@ -93,7 +93,7 @@ function stripeConnectOrigin(req) {
   // Stripe explicitly permits localhost callbacks for a Sandbox client ID.
   // Keeping development on the origin already open in the browser removes a
   // tunnel from the interactive sign-in path. Production still returns only
-  // through Foundry's configured public HTTPS origin.
+  // through StockChief's configured public HTTPS origin.
   if ((process.env.NODE_ENV || 'development') !== 'production') return requested;
   return configuredPublicOrigin() || requested;
 }
@@ -160,7 +160,7 @@ router.get('/settings/connections', (req, res, next) => {
 router.post('/settings/connections/api-clients', requireOwner, asyncRoute(async (req, res) => {
   const created = publicApi.create(req.db, req.ctx, { name: req.body.name, scopes: req.body.scopes });
   req.session.newPublicApiToken = created;
-  req.flash('success', 'API client created. Copy its token now; Foundry will not show it again.');
+  req.flash('success', 'API client created. Copy its token now; StockChief will not show it again.');
   res.redirect(303, '/settings/connections#developer-api');
 }));
 
@@ -173,7 +173,7 @@ router.post('/settings/connections/api-clients/:id/revoke', requireOwner, asyncR
 router.post('/settings/connections/outbound-webhooks', requireOwner, asyncRoute(async (req, res) => {
   const created = outboundWebhooks.create(req.db, req.ctx, req.body);
   req.session.newWebhookSecret = created;
-  req.flash('success', 'Signed webhook created. Copy its signing secret now; Foundry will not show it again.');
+  req.flash('success', 'Signed webhook created. Copy its signing secret now; StockChief will not show it again.');
   res.redirect(303, '/settings/connections#developer-api');
 }));
 
@@ -208,7 +208,7 @@ router.post('/settings/connections/payments', requireOwner, asyncRoute(async (re
  * Give the browser something useful to paint before any Stripe API call.
  *
  * The old form posted into a newly-created popup. That window stayed white
- * while Foundry created/read the connected account and asked Stripe for the
+ * while StockChief created/read the connected account and asked Stripe for the
  * next URL. Worse, Stripe's Google login then had to open a popup from inside
  * our popup. A normal top-level tab avoids that nested-window failure and this
  * tiny interstitial makes the wait explicit rather than looking frozen.
@@ -227,7 +227,7 @@ router.get('/settings/connections/payments/start', requireOwner, (req, res) => {
  * Connecting without handing over a key.
  *
  * Sends the merchant to Stripe's own page, where they sign in or sign up and
- * approve. Nothing of theirs is typed into Foundry, and what comes back is an
+ * approve. Nothing of theirs is typed into StockChief, and what comes back is an
  * account id rather than a credential.
  */
 router.post('/settings/connections/payments/connect', requireOwner, asyncRoute(async (req, res) => {
@@ -242,12 +242,12 @@ router.post('/settings/connections/payments/connect', requireOwner, asyncRoute(a
     };
     /*
      * This button means exactly one thing: sign in to an existing Stripe
-     * account and grant it to Foundry. Hosted onboarding creates/completes a
+     * account and grant it to StockChief. Hosted onboarding creates/completes a
      * platform-controlled account and must never be substituted here.
      */
     if (grant.preferredFlow() !== 'oauth') {
       throw new ValidationError('Stripe existing-account sign-in is not configured. Add the '
-        + 'Stripe Connect OAuth client ID for this Foundry installation, then try again.');
+        + 'Stripe Connect OAuth client ID for this StockChief installation, then try again.');
     }
     const begun = grant.authorizeUrl(req.db, req.ctx, membership,
       { ...where, returnUri: where.returnUrl });
@@ -306,7 +306,7 @@ router.get('/settings/connections/payments/return', (req, res, next) => (
         message: `${done.displayName || 'Stripe'} is connected and ready to take payments.` };
       req.flash('success', `Connected. Money from this inventory arrives in `
         + `${done.displayName || 'this business'}'s own Stripe account`
-        + `${done.liveMode ? '' : ', in test mode'}. Foundry holds no key for it.`);
+        + `${done.liveMode ? '' : ', in test mode'}. StockChief holds no key for it.`);
       if (req.account) {
         require('../../operations/checkpoints').record(req.db, 'integration.oauth_popup', 'PASS', {
           popupReturned: true, sessionPreserved: true, provider: 'stripe',
@@ -328,7 +328,7 @@ router.get('/settings/connections/payments/return', (req, res, next) => (
 /*
  * The popup message is a convenience, not the source of truth. Google and
  * Stripe can change popup relationships while authenticating, so the opener
- * also asks Foundry directly whether the grant has landed. This makes the
+ * also asks StockChief directly whether the grant has landed. This makes the
  * Connections page update without a manual refresh even when a browser drops
  * window.opener somewhere inside the third-party sign-in chain.
  */
@@ -405,7 +405,7 @@ router.post('/settings/connections/payments/remove', requireOwner, asyncRoute(as
     req.flash('success', granted
       ? 'Disconnected, and the grant handed back to Stripe — the account itself, and every payment '
         + 'taken on it, still belongs to this business.'
-      : 'Disconnected. Foundry will not make payment links for this inventory; '
+      : 'Disconnected. StockChief will not make payment links for this inventory; '
         + 'payments reported by hand are recorded exactly as they always were.');
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
@@ -429,12 +429,12 @@ router.post('/settings/connections', requireOwner, asyncRoute(async (req, res) =
 router.post('/settings/connections/connect', requireOwner, asyncRoute(async (req, res) => {
   const started = await providerService.beginAuthorization(req.db, req.ctx, req.body, `${req.protocol}://${req.get('host')}`);
   if (started.connected) {
-    req.flash('success', `${started.connection.display_name} is connected. Foundry discovered its products and locations.`);
+    req.flash('success', `${started.connection.display_name} is connected. StockChief discovered its products and locations.`);
     if (String(req.body.popup || '') === '1') {
       return oauthReturnPage(res, {
         connected: true,
         providerName: started.connection.display_name,
-        message: `${started.connection.display_name} is connected. Foundry is ready to continue setup.`,
+        message: `${started.connection.display_name} is connected. StockChief is ready to continue setup.`,
         connection: started.connection,
         returnOrigin: `${req.protocol}://${req.get('host')}`,
       });
@@ -456,10 +456,10 @@ router.get('/settings/connections/:provider/callback', asyncRoute(async (req, re
       `${req.protocol}://${req.get('host')}`);
     if (req.session) req.session.workspaceId = connection.workspace_id;
     const message = ['gmail', 'microsoft365'].includes(req.params.provider)
-      ? `${connection.display_name} is connected. Choose the supplier senders Foundry should watch.`
+      ? `${connection.display_name} is connected. Choose the supplier senders StockChief should watch.`
       : ['quickbooks', 'xero'].includes(req.params.provider)
-        ? `${connection.display_name} is connected read-only. Foundry verified the company; choose what authority it may have.`
-        : `${connection.display_name} is connected. Foundry discovered its products and locations.`;
+        ? `${connection.display_name} is connected read-only. StockChief verified the company; choose what authority it may have.`
+        : `${connection.display_name} is connected. StockChief discovered its products and locations.`;
     if (req.session) req.flash('success', message);
     if (context.popup) return oauthReturnPage(res, {
       connected: true, providerName, message, connection, returnOrigin: context.returnOrigin,
@@ -484,7 +484,7 @@ router.get('/settings/connections/woocommerce/return', requireOwner, asyncRoute(
   }
   const connection = providerService.stateConnection(req.db, req.query.state || req.query.user_id, 'woocommerce');
   req.session.workspaceId = connection.workspace_id;
-  req.flash('success', 'WooCommerce authorized the connection. Foundry is finishing catalog discovery.');
+  req.flash('success', 'WooCommerce authorized the connection. StockChief is finishing catalog discovery.');
   return res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 
@@ -579,14 +579,14 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
   const completedEvent = events.some((event) => event.status === 'COMPLETED');
   const matchedHistory = reconciliations.some((row) => row.status === 'MATCHED');
   const testInstruction = connection.provider_type === 'reference_webhook'
-    ? 'Send one test event from the business system, then replay that exact event ID. Foundry must show one completed activity, never two.'
+    ? 'Send one test event from the business system, then replay that exact event ID. StockChief must show one completed activity, never two.'
     : connection.provider_type === 'shopify'
-      ? 'Place one controlled test order, then fulfill or cancel it. Foundry should show each provider event once and keep the exact SKU and location.'
+      ? 'Place one controlled test order, then fulfill or cancel it. StockChief should show each provider event once and keep the exact SKU and location.'
       : ['square', 'clover'].includes(connection.provider_type)
-        ? 'Run one sandbox or low-value test sale, then a refund. Foundry should record both once against the selected merchant location.'
+        ? 'Run one sandbox or low-value test sale, then a refund. StockChief should record both once against the selected merchant location.'
         : connection.provider_type === 'woocommerce'
-          ? 'Place one controlled test order, then change its state. Foundry should show the resulting order activity once.'
-          : 'Send one controlled provider event and confirm Foundry records it once in this workspace.';
+          ? 'Place one controlled test order, then change its state. StockChief should show the resulting order activity once.'
+          : 'Send one controlled provider event and confirm StockChief records it once in this workspace.';
   const certification = !isMailbox && !accounting ? {
     connected: Boolean(connection.provider_account_id || connection.credential_ref),
     catalog: Boolean(finishedSync),
@@ -612,7 +612,7 @@ router.get('/settings/connections/:id', asyncRoute(async (req, res) => {
 router.post('/settings/connections/:id/accounting-authority', requireOwner, asyncRoute(async (req, res) => {
   accountingSync.chooseAuthority(req.db, req.ctx, req.params.id, req.body);
   req.flash('success', req.body.authority === 'OBSERVE'
-    ? 'Read-only authority saved. Foundry cannot post or change the external books.'
+    ? 'Read-only authority saved. StockChief cannot post or change the external books.'
     : 'Authority saved. Run the shadow comparison before any posting can be enabled.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
@@ -625,7 +625,7 @@ router.post('/settings/connections/:id/accounting-shadow', requireOwner, asyncRo
   const result = await accountingSync.shadow(req.db, req.ctx, connection.id, adapter, credentials, { asOf: req.body.asOf });
   req.flash(result.status === 'MATCHED' ? 'success' : 'warn', result.status === 'MATCHED'
     ? 'Shadow comparison matched exactly. No external record was changed.'
-    : `Foundry found ${result.differences.length} difference${result.differences.length === 1 ? '' : 's'} and stopped. Nothing was posted.`);
+    : `StockChief found ${result.differences.length} difference${result.differences.length === 1 ? '' : 's'} and stopped. Nothing was posted.`);
   res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 
@@ -654,14 +654,14 @@ router.post('/settings/connections/:id/accounting-import-opening', requireOwner,
   const result = await accountingSync.shadow(req.db, req.ctx, connection.id, adapter, credentials,
     { asOf: imported.preview.asOf });
   req.flash(result.status === 'MATCHED' ? 'success' : 'warn', result.status === 'MATCHED'
-    ? `${connection.provider_account_name || connection.display_name} is now related to this Foundry inventory. The imported opening books reconcile exactly. Nothing was posted back.`
-    : `The opening books were saved in Foundry, but the fresh provider reread found ${result.differences.length} difference${result.differences.length === 1 ? '' : 's'}. Posting remains blocked.`);
+    ? `${connection.provider_account_name || connection.display_name} is now related to this StockChief inventory. The imported opening books reconcile exactly. Nothing was posted back.`
+    : `The opening books were saved in StockChief, but the fresh provider reread found ${result.differences.length} difference${result.differences.length === 1 ? '' : 's'}. Posting remains blocked.`);
   res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 
 router.post('/settings/connections/:id/accounting-enable', requireOwner, asyncRoute(async (req, res) => {
   accountingSync.enableWrites(req.db, req.ctx, req.params.id);
-  req.flash('success', 'Posting authority is enabled. Foundry remains the source of truth and every external post is idempotent and auditable.');
+  req.flash('success', 'Posting authority is enabled. StockChief remains the source of truth and every external post is idempotent and auditable.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 
@@ -714,7 +714,7 @@ router.post('/settings/connections/:id/sync', requireOwner, asyncRoute(async (re
 router.post('/settings/connections/:id/sync-mailbox', requireOwner, asyncRoute(async (req, res) => {
   const result = await providerService.syncMailbox(req.db, req.ctx.workspaceId, req.params.id);
   req.flash('success', result.messages
-    ? `Mailbox checked. Foundry processed ${result.messages} message${result.messages === 1 ? '' : 's'} safely.`
+    ? `Mailbox checked. StockChief processed ${result.messages} message${result.messages === 1 ? '' : 's'} safely.`
     : 'Mailbox checked. No new supplier messages needed processing.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
@@ -727,18 +727,18 @@ router.post('/settings/connections/:id/mailbox-cadence', requireOwner, asyncRout
   req.db.prepare(`UPDATE workspace_connectors SET config = ?, expected_interval_minutes = ?, updated_at = ?
     WHERE workspace_id = ? AND id = ?`).run(JSON.stringify(next), Math.max(15, minutes * 3),
       new Date().toISOString(), req.ctx.workspaceId, connection.id);
-  req.flash('success', `Foundry will check this mailbox automatically every ${minutes} minute${minutes === 1 ? '' : 's'}.`);
+  req.flash('success', `StockChief will check this mailbox automatically every ${minutes} minute${minutes === 1 ? '' : 's'}.`);
   res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 
 /*
- * Whether Foundry reads mail from people the owner has not approved.
+ * Whether StockChief reads mail from people the owner has not approved.
  *
  * On, a stranger's message is captured UNTRUSTED: it can be read and
  * answered, and an order in it becomes a draft. Nothing is extracted from it
  * and no purchasing record comes out of it — that still needs a rule.
  *
- * Off, Foundry sees only approved senders, which is what it used to do. That
+ * Off, StockChief sees only approved senders, which is what it used to do. That
  * is the more private setting and it is also why a customer writing for the
  * first time did not exist, so the choice is the owner's and it is here
  * rather than buried in a config file.
@@ -752,8 +752,8 @@ router.post('/settings/connections/:id/unknown-senders', requireOwner, asyncRout
     WHERE workspace_id = ? AND id = ?`)
     .run(JSON.stringify(next), new Date().toISOString(), req.ctx.workspaceId, connection.id);
   req.flash('success', capture
-    ? 'Foundry will read mail from senders you have not approved, and file them as untrusted.'
-    : 'Foundry will only read mail from senders you have approved. A new customer writing in will not be seen.');
+    ? 'StockChief will read mail from senders you have not approved, and file them as untrusted.'
+    : 'StockChief will only read mail from senders you have approved. A new customer writing in will not be seen.');
   res.redirect(303, `/settings/connections/${connection.id}`);
 }));
 
@@ -769,13 +769,13 @@ router.post('/settings/connections/:id/email-attachments/:attachmentId/inventory
     }
     if (result.alreadyApplied) {
       req.flash('warning', result.duplicate
-        ? 'Duplicate ignored: this exact file was already imported. Foundry added no products or quantities.'
-        : 'This file was already imported. Foundry added nothing again.');
+        ? 'Duplicate ignored: this exact file was already imported. StockChief added no products or quantities.'
+        : 'This file was already imported. StockChief added nothing again.');
       return res.redirect(303, `/settings/connections/${req.params.id}`);
     }
     req.flash('success', result.replayed
-      ? 'This file is already waiting for review. Foundry did not create another copy.'
-      : 'Foundry read the attachment as inventory. Review every match, new item, quantity, cost, and location before approving.');
+      ? 'This file is already waiting for review. StockChief did not create another copy.'
+      : 'StockChief read the attachment as inventory. Review every match, new item, quantity, cost, and location before approving.');
     return res.redirect(303, `/foundry/proposal/${result.understandingId}`);
   }));
 
@@ -796,11 +796,11 @@ router.post('/settings/connections/:id/email-messages/:messageId/supplier-previe
     const current = req.db.prepare('SELECT processing_status FROM connection_email_messages WHERE id = ?')
       .get(message.id);
     if (!result && current?.processing_status === 'DUPLICATE_IGNORED') {
-      req.flash('warning', 'Exact duplicate: this file was already imported earlier. Foundry did not add the same stock twice.');
+      req.flash('warning', 'Exact duplicate: this file was already imported earlier. StockChief did not add the same stock twice.');
     } else if (result?.status === 'NEEDS_REVIEW') {
-      req.flash('warning', 'Foundry read the purchasing document and needs your decision on the unmatched or changed details.');
+      req.flash('warning', 'StockChief read the purchasing document and needs your decision on the unmatched or changed details.');
     } else {
-      req.flash('success', 'Foundry processed the supplier document. Purchasing expectations may be updated; physical inventory was not received.');
+      req.flash('success', 'StockChief processed the supplier document. Purchasing expectations may be updated; physical inventory was not received.');
     }
     return res.redirect(303, `/settings/connections/${connection.id}${result?.status === 'NEEDS_REVIEW' ? '#needs-you' : `#message-${message.id}`}`);
   }));
@@ -864,8 +864,8 @@ router.post('/settings/connections/:id/bootstrap-shopify', requireOwner, asyncRo
 router.post('/settings/connections/:id/reconcile', requireOwner, asyncRoute(async (req, res) => {
   const result = await providerService.reviewHistory(req.db, req.ctx.workspaceId, req.params.id);
   req.flash(result.status === 'MATCHED' ? 'success' : 'warning', result.status === 'MATCHED'
-    ? `Provider history matches the ${result.observed} operational records Foundry safely processed.`
-    : `History mismatch: provider ${result.expected}, Foundry ${result.observed}. No inventory balance was overwritten.`);
+    ? `Provider history matches the ${result.observed} operational records StockChief safely processed.`
+    : `History mismatch: provider ${result.expected}, StockChief ${result.observed}. No inventory balance was overwritten.`);
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 
@@ -876,13 +876,13 @@ router.post('/settings/connections/:id/square-sandbox-checkout', requireOwner, a
 
 router.post('/settings/connections/:id/locations', requireOwner, asyncRoute(async (req, res) => {
   providerService.setSelectedLocations(req.db, req.ctx.workspaceId, req.params.id, req.body.externalLocationIds || []);
-  req.flash('success', 'Locations saved. Foundry will accept activity only for the selected provider locations.');
+  req.flash('success', 'Locations saved. StockChief will accept activity only for the selected provider locations.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 
 router.post('/settings/connections/:id/ignore', requireOwner, asyncRoute(async (req, res) => {
   providerService.ignoreExternal(req.db, req.ctx.workspaceId, req.params.id, req.body.entityType, req.body.externalId);
-  req.flash('success', 'That external record will be ignored. It will not change Foundry.');
+  req.flash('success', 'That external record will be ignored. It will not change StockChief.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 
@@ -898,8 +898,8 @@ router.post('/settings/connections/:id/map', requireOwner, asyncRoute(async (req
     accountId: req.ctx.accountId, providerType: connection.provider_type, displayName: connection.display_name };
   const retried = ingestion.retryPending(req.db, auth);
   const completed = retried.filter((row) => row.accepted).length;
-  req.flash('success', completed ? `Mapping saved. Foundry safely completed ${completed} waiting event${completed === 1 ? '' : 's'}.`
-    : 'Mapping saved. Foundry will remember it for future events.');
+  req.flash('success', completed ? `Mapping saved. StockChief safely completed ${completed} waiting event${completed === 1 ? '' : 's'}.`
+    : 'Mapping saved. StockChief will remember it for future events.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 
@@ -994,7 +994,7 @@ router.post('/settings/connections/:id/create-products-map', requireOwner, async
   const connection = connections.get(req.db, req.ctx.workspaceId, req.params.id);
   const result = catalogImport.importProducts(req.db, req.ctx, connection, req.body.externalIds);
   if (!result.mapped) {
-    req.flash('success', 'Those products are already in Foundry. Nothing was added twice.');
+    req.flash('success', 'Those products are already in StockChief. Nothing was added twice.');
     return res.redirect(303, `/settings/connections/${connection.id}`);
   }
   const auth = { connectorId: connection.id, workspaceId: req.ctx.workspaceId, actorId: req.ctx.actorId,
@@ -1062,20 +1062,20 @@ router.post('/settings/connections/:id/email-rules', requireOwner, asyncRoute(as
     req.flash('error', `The sender rule was saved, but the mailbox check could not finish: ${error.message}`);
   }
   req.flash('success', found
-    ? `Foundry is watching ${senderPattern} and checked the mailbox now. Open Home to review what it found.`
-    : `Foundry is watching ${senderPattern}. It will check automatically and put any required review on Home.`);
+    ? `StockChief is watching ${senderPattern} and checked the mailbox now. Open Home to review what it found.`
+    : `StockChief is watching ${senderPattern}. It will check automatically and put any required review on Home.`);
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 
 router.post('/settings/connections/:id/pause', requireOwner, asyncRoute(async (req, res) => {
   connections.pause(req.db, req.ctx.workspaceId, req.params.id);
-  req.flash('success', 'Foundry has stopped trusting new events from this connection.');
+  req.flash('success', 'StockChief has stopped trusting new events from this connection.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 
 router.post('/settings/connections/:id/resume', requireOwner, asyncRoute(async (req, res) => {
   connections.resume(req.db, req.ctx.workspaceId, req.params.id);
-  req.flash('success', 'Foundry is accepting trusted events from this connection again.');
+  req.flash('success', 'StockChief is accepting trusted events from this connection again.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 
@@ -1097,7 +1097,7 @@ router.post('/settings/connections/:id/checkout-token', requireOwner, asyncRoute
   const membership = authService.getMembership(req.db, req.ctx.workspaceId, req.ctx.accountId);
   const issued = connections.issueCheckoutToken(req.db, req.ctx, membership, req.params.id);
   req.session.newConnectionToken = { connectorId: req.params.id, token: issued.token };
-  req.flash('success', 'Checkout key created. Copy it now; Foundry will not show it again.');
+  req.flash('success', 'Checkout key created. Copy it now; StockChief will not show it again.');
   res.redirect(303, `/settings/connections/${req.params.id}`);
 }));
 

@@ -1,9 +1,9 @@
 'use strict';
 
 /*
- * ShipStation V2 behind Foundry's provider-independent shipping contract.
+ * ShipStation V2 behind StockChief's provider-independent shipping contract.
  * ShipStation is not treated as a carrier: the merchant connects UPS, FedEx,
- * USPS, DHL, or another carrier inside ShipStation and Foundry compares the
+ * USPS, DHL, or another carrier inside ShipStation and StockChief compares the
  * resulting carrier rates. ShipStation platform keys are live-only; TEST_
  * keys are available only to ShipStation API customers (formerly ShipEngine).
  */
@@ -84,7 +84,7 @@ async function buy(ctx, input = {}) {
     labels.push(await call(ctx, `/labels/rates/${encodeURIComponent(rateId)}`, {
       method: 'POST',
       body: { label_format: 'pdf', label_layout: '4x6', label_download_type: 'url' },
-      // Foundry also records a durable PENDING transaction before this call;
+      // StockChief also records a durable PENDING transaction before this call;
       // an ambiguous response is reviewed rather than retried and duplicated.
       headers: input.idempotencyKey ? { 'Idempotency-Key': `${input.idempotencyKey}:${labels.length}` } : {},
     }));
@@ -113,7 +113,7 @@ async function buy(ctx, input = {}) {
 
 async function voidLabel(ctx, input = {}) {
   const ids = (input.providerReferences || input.providerLabelIds || []).filter(Boolean);
-  if (!ids.length) throw new ValidationError('Foundry has no ShipStation label reference to void.');
+  if (!ids.length) throw new ValidationError('StockChief has no ShipStation label reference to void.');
   const answers = [];
   for (const id of ids) answers.push(await call(ctx, `/labels/${encodeURIComponent(id)}/void`, { method: 'PUT' }));
   const failed = answers.some((row) => row.approved === false || row.status === 'error');

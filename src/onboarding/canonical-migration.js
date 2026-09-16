@@ -491,7 +491,7 @@ function resolveMissingSerialEvidence(db,ctx,membership,packageId,choice) {
   if (!evidence.products.length) throw new InvariantError('No unresolved serial-tracking source records were found.',
     'migration_tracking_resolution_not_found');
   if (!evidence.canUseAggregateQuantity) {
-    throw new InvariantError('This source also contains exact serial identities. Supply the missing identities instead; Foundry will not discard the existing ones.',
+    throw new InvariantError('This source also contains exact serial identities. Supply the missing identities instead; StockChief will not discard the existing ones.',
       'migration_mixed_serial_evidence');
   }
   const decidedAt = nowIso();
@@ -834,7 +834,7 @@ function defaultAdapters() {
     inventory_position({ db, ctx, payload, pkg, record }) {
       const quantity = payload.quantity === undefined || payload.quantity === null
         ? (Array.isArray(payload.serials) ? payload.serials.length : 0) : Number(payload.quantity);
-      if (quantity < 0) throw new ValidationError('A negative opening position must be resolved before migration; Foundry will not invent offsetting stock.');
+      if (quantity < 0) throw new ValidationError('A negative opening position must be resolved before migration; StockChief will not invent offsetting stock.');
       // A zero balance is still useful source evidence (and may carry incoming
       // or reorder context), but it is not a physical receipt. Preserve the
       // mapped record without fabricating a zero-quantity stock movement.
@@ -1224,7 +1224,7 @@ function reconcile(db, ctx, membership, packageId) {
   for (const [key, source] of Object.entries(manifestTotals)) {
     if (checks.some((check) => check.key === key)) continue;
     checks.push({ key, label: key.replaceAll('.', ' '), source, foundry: null, status: 'UNKNOWN', material: true,
-      evidence: { reason: 'No deterministic Foundry query is registered for this source total.' } });
+      evidence: { reason: 'No deterministic StockChief query is registered for this source total.' } });
   }
   const now = nowIso();
   inTransaction(db, () => {
@@ -1378,9 +1378,9 @@ function report(db, workspaceId, packageId) {
         resolvedDetail:serialDetail || (normalizedLocationKind
           ? `The source value “${payload.kind}” is now understood as “${normalizedLocationKind}”. No source edit is needed.`
           : reorderedParent
-            ? `Foundry will now apply parent location “${payload.parentLocationKey}” before this sublocation. No source edit is needed.`
+            ? `StockChief will now apply parent location “${payload.parentLocationKey}” before this sublocation. No source edit is needed.`
           : zeroOpeningPosition
-            ? 'This is a valid zero-on-hand source position. Foundry will preserve it as evidence without inventing a stock receipt.'
+            ? 'This is a valid zero-on-hand source position. StockChief will preserve it as evidence without inventing a stock receipt.'
           : null) };
     });
   const checkpoints = db.prepare(`SELECT checkpoint_kind AS kind,source_cursor AS cursor,evidence_json AS evidence,

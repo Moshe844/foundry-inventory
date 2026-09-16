@@ -3,10 +3,10 @@
 /*
  * The three drawers, and moving mail between them.
  *
- * Foundry's first guess put every captured message somewhere. This is how a
+ * StockChief's first guess put every captured message somewhere. This is how a
  * person overrules it, and how the rest of the app asks what is still open.
  *
- * An owner's choice always wins and is always attributed. When Foundry sorted
+ * An owner's choice always wins and is always attributed. When StockChief sorted
  * a message the reason reads as an observation ("they wrote can you"); when a
  * person moved it, the record says who. That distinction matters the day
  * somebody asks why a customer never got an answer.
@@ -84,7 +84,7 @@ function setState(db, ctx, messageId, state, reason = null) {
 }
 
 /**
- * Ask Foundry to look again.
+ * Ask StockChief to look again.
  *
  * Only offered for a message a person has not already ruled on, because
  * re-deciding somebody's decision for them is how software loses an argument

@@ -32,7 +32,7 @@ test('the owner sees staged source truth, reconciliation and the gated cutover i
   assert.equal(response.status, 200);
   const text = plain(response.text);
   assert.match(text, /The source totals match. Approve the switch/);
-  assert.match(text, /Foundry records prepared 1/);
+  assert.match(text, /StockChief records prepared 1/);
   assert.match(text, /Approve and switch/);
   const needsYou = plain((await agent.get('/needs-you')).text);
   assert.match(needsYou,/Previous system is verified and ready to become live/);
@@ -61,7 +61,7 @@ test('a completed source analysis redirects to one visible serial-evidence decis
   assert.equal(oldSourcesPage.headers.location,`/onboarding/migrations/${pkg.id}`);
 
   const report = plain((await agent.get(`/onboarding/migrations/${pkg.id}`)).text);
-  assert.match(report,/One decision is needed before Foundry can continue/);
+  assert.match(report,/One decision is needed before StockChief can continue/);
   assert.match(report,/Accept recommendation and continue/);
   assert.doesNotMatch(report,/Run verification again/);
   assert.ok(report.indexOf('Accept recommendation and continue') < report.indexOf('Source rows prepared'));

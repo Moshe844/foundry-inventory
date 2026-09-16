@@ -52,7 +52,7 @@ test('a refund reverses revenue/tax once and restores COGS only with physical-re
   seedValuedStock(env);
   prices.setPrice(env.db, env.workspace.ctx, { skuId: env.product.skuId, amount: '20.00', currency: 'USD' });
   let order = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'Refund Customer', fulfillmentLocationId: env.workspace.main.id,
+    customerName: 'Refund Customer', deliveryMethod: 'PICKUP', fulfillmentLocationId: env.workspace.main.id,
     tax: '2.00', lines: [{ skuId: env.product.skuId, quantity: 2 }],
   });
   order = sales.confirm(env.db, env.workspace.ctx, order.id);
@@ -96,7 +96,7 @@ test('a financial refund alone never invents a physical return or reverses COGS'
   seedValuedStock(env, 2, 500);
   prices.setPrice(env.db, env.workspace.ctx, { skuId: env.product.skuId, amount: '15.00', currency: 'USD' });
   let order = sales.createOrder(env.db, env.workspace.ctx, {
-    customerName: 'Financial Refund Customer', fulfillmentLocationId: env.workspace.main.id,
+    customerName: 'Financial Refund Customer', deliveryMethod: 'PICKUP', fulfillmentLocationId: env.workspace.main.id,
     lines: [{ skuId: env.product.skuId, quantity: 1 }],
   });
   order = sales.confirm(env.db, env.workspace.ctx, order.id);

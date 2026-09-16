@@ -4,8 +4,8 @@
  * A customer who has never written before.
  *
  * The claim under test is that an ordinary email — no account, no portal, no
- * approved-sender rule — reaches Foundry, is understood as an order, and
- * comes back as a draft the owner approves. And that everything Foundry says
+ * approved-sender rule — reaches StockChief, is understood as an order, and
+ * comes back as a draft the owner approves. And that everything StockChief says
  * about it came out of the email rather than out of the model.
  */
 
@@ -136,7 +136,7 @@ test('a product nobody wrote down cannot get onto the order', async () => {
   assert.equal(env.db.prepare('SELECT COUNT(*) n FROM sales_orders').get().n, 0);
 });
 
-test('what Foundry could not identify is written down, not dropped', async () => {
+test('what StockChief could not identify is written down, not dropped', async () => {
   const env = setup();
   const message = arrive(env, { sender: 'hendel@example.test', subject: 'Order supplies',
     body: 'I would like to order 10 COTTON-TEE-B-SMALL and 4 gross of the brass eyelets' });
@@ -298,7 +298,7 @@ test('the same request sent twice is one draft order, and the second email says 
   assert.equal(decisions.length, 1, 'one decision, not two');
 });
 
-test('an order Foundry could not read is handed to the owner with the reason, not dropped', async () => {
+test('an order StockChief could not read is handed to the owner with the reason, not dropped', async () => {
   const env = setup();
   const message = arrive(env, { sender: 'arye@example.test', subject: 'order',
     body: 'I would like to order some of the usual' });

@@ -50,6 +50,11 @@ function nextStep(db, workspaceId, order, options = {}) {
   if (order.status === 'CANCELLED') {
     return { text: 'Cancelled', detail: null, tone: 'muted', rank: RANK.CANCELLED };
   }
+  if (order.customer_decision_required || order.delivery_decision_required) return {
+    text: order.customer_decision_required ? 'Customer needs a decision' : 'Delivery details needed',
+    detail: order.delivery_decision_required ? 'Enter the delivery address or explicitly choose customer pickup. No stock can leave yet.' : 'Confirm the customer record before continuing.',
+    tone: 'warn', rank: RANK.BLOCKED, action: 'Complete order details', href: '#delivery-decision',
+  };
   if (order.status === 'DRAFT') {
     return {
       text: 'Not confirmed yet',

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Background jobs for the slow part of Foundry.
+ * Background jobs for the slow part of StockChief.
  *
  * Reading a business takes two model calls and a minute or more. Doing that
  * inside a form POST leaves the browser spinning with nothing to show for it,
@@ -35,7 +35,7 @@ const CUSTOMER_JOB_DEADLINE_MS = 3 * 60 * 1000;
  * which made the longest part of the wait look like nothing was happening.
  */
 const STAGES = {
-  queued: { label: 'Getting ready', detail: 'Foundry is about to read what you provided.' },
+  queued: { label: 'Getting ready', detail: 'StockChief is about to read what you provided.' },
   extracting: {
     label: 'Opening the file',
     detail: 'Pulling out the text and tables, before any of it is interpreted.',
@@ -64,8 +64,8 @@ const STAGES = {
     label: 'Building the exact preview',
     detail: 'Grouping only matching product records and checking every proposed change before showing it to you.',
   },
-  done: { label: 'Ready', detail: 'Foundry has a proposal for you.' },
-  failed: { label: 'Something went wrong', detail: 'Foundry could not finish reading that.' },
+  done: { label: 'Ready', detail: 'StockChief has a proposal for you.' },
+  failed: { label: 'Something went wrong', detail: 'StockChief could not finish reading that.' },
 };
 
 /*
@@ -153,7 +153,7 @@ function failJob(jobId, error, db) {
     message:
       error && error.message && ((error.status && error.status < 500) || retryable)
         ? error.message
-        : 'Foundry could not finish reading that. Please try again.',
+        : 'StockChief could not finish reading that. Please try again.',
     code: (error && error.code) || 'unknown',
   };
   job.finishedAt = Date.now();
@@ -166,7 +166,7 @@ function getJob(jobId, workspaceId, db) {
   if (!job || job.workspaceId !== workspaceId) return null;
   if ((job.status === 'queued' || job.status === 'running') && Date.now() >= job.deadlineAt) {
     failJob(jobId, Object.assign(
-      new Error('Foundry was interrupted before it finished. Nothing was changed. Please try again.'),
+      new Error('StockChief was interrupted before it finished. Nothing was changed. Please try again.'),
       { code: 'job_interrupted', status: 503, retryable: true }
     ), db);
   }
@@ -204,7 +204,7 @@ function run(jobId, work, options = {}) {
     const controller = new AbortController();
     const timeoutError = Object.assign(
       new Error(options.timeoutMessage
-        || 'Foundry could not finish within three minutes. Nothing was changed. Please try again.'),
+        || 'StockChief could not finish within three minutes. Nothing was changed. Please try again.'),
       { code: 'job_deadline_exceeded', status: 503, retryable: true }
     );
     const timer = setTimeout(() => controller.abort(timeoutError), deadlineMs);

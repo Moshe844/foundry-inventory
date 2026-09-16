@@ -138,7 +138,11 @@ function createApp(options = {}) {
       };
     }
     const state = readinessCache.state;
-    res.set('X-Foundry-Readiness-Age-Ms', String(Math.max(0, now - readinessCache.createdAt)));
+    const readinessAge = String(Math.max(0, now - readinessCache.createdAt));
+    // Keep the original machine-facing header for deployed monitors while
+    // exposing the current product name to new integrations.
+    res.set('X-Foundry-Readiness-Age-Ms', readinessAge);
+    res.set('X-StockChief-Readiness-Age-Ms', readinessAge);
     return res.status(state.ok ? 200 : 503).json({
       ok: state.ok, environment: state.environment,
       checks: state.checks.map((row) => ({ key: row.key, status: row.status, message: row.message })),
@@ -189,7 +193,7 @@ function createApp(options = {}) {
   app.use((req, res, next) => {
     req.db = db;
     res.locals.helpers = helpers;
-    res.locals.appName = 'Foundry';
+    res.locals.appName = 'StockChief';
     res.locals.origin = `${req.protocol}://${req.get('host')}`;
     res.locals.currentPath = req.path;
     res.locals.query = req.query || {};

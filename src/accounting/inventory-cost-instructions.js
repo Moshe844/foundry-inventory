@@ -22,7 +22,7 @@ function moneyFrom(message) {
   const symbol = text.match(/([$£€¥])\s*([\d,]+(?:\.\d{1,2})?)/);
   const coded = text.match(/\b(USD|EUR|GBP|CAD|AUD|JPY)\s*([\d,]+(?:\.\d{1,2})?)/i);
   const amount = Number(String((symbol && symbol[2]) || (coded && coded[2]) || '').replace(/,/g, ''));
-  if (!Number.isFinite(amount) || amount <= 0) throw new ValidationError('What purchase cost per inventory unit should Foundry use?');
+  if (!Number.isFinite(amount) || amount <= 0) throw new ValidationError('What purchase cost per inventory unit should StockChief use?');
   const currency = coded ? coded[1].toUpperCase()
     : ({ '$': 'USD', '£': 'GBP', '€': 'EUR', '¥': 'JPY' }[(symbol && symbol[1]) || '$'] || 'USD');
   return { amount, amountMinor: prices.toMinor(String(amount), 'Purchase cost'), currency };

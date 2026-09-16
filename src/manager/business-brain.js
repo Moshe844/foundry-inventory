@@ -1,11 +1,11 @@
 'use strict';
 
 /**
- * Foundry's read-only, workspace-scoped business state.
+ * StockChief's read-only, workspace-scoped business state.
  *
  * This module does not mutate inventory, accounting, purchasing, authority, or
  * communication. It joins evidence already written by those deterministic
- * engines so Home, Ask Foundry, and consistency checks tell the same story.
+ * engines so Home, Ask StockChief, and consistency checks tell the same story.
  */
 
 const ownerAccounting = require('../accounting/owner-dashboard');
@@ -207,7 +207,7 @@ function consistencyChecks(db, workspaceId, finance, options = {}) {
       title: 'Every unit on hand has purchase-cost evidence',
       detail: finance.inventory.missingCostUnits === 0
         ? 'Every physical unit is included in the recorded inventory value.'
-        : `${plural(finance.inventory.missingCostUnits, 'unit')} ${finance.inventory.missingCostUnits === 1 ? 'is' : 'are'} physically on hand without a proven purchase or opening cost, so Foundry cannot state the full inventory value.`,
+        : `${plural(finance.inventory.missingCostUnits, 'unit')} ${finance.inventory.missingCostUnits === 1 ? 'is' : 'are'} physically on hand without a proven purchase or opening cost, so StockChief cannot state the full inventory value.`,
       evidence: finance.inventory.rows.filter((row) => row.missingCostUnits > 0),
       href: '/accounting/migration?focus=inventory-cost#inventory-costs' });
   }
@@ -227,7 +227,7 @@ function consistencyChecks(db, workspaceId, finance, options = {}) {
       AND cr.created_at = (SELECT MAX(newer.created_at) FROM connection_reconciliations newer
         WHERE newer.workspace_id = cr.workspace_id AND newer.connector_id = cr.connector_id)`).all(workspaceId);
   checks.push({ key: 'connections', passed: connectorMismatch.length === 0,
-    title: 'Connected-system history agrees with Foundry', detail: connectorMismatch.length
+    title: 'Connected-system history agrees with StockChief', detail: connectorMismatch.length
       ? `${connectorMismatch.length} connection comparison(s) disagree.` : 'No current connector reconciliation mismatch was found.',
     evidence: connectorMismatch, href: '/settings/connections' });
   return checks;
@@ -244,14 +244,14 @@ function prioritizedAttention({ sales, purchasing, connections, finance, checks,
     because: `${plural(po.outstanding, 'unit')} is still expected; the latest recorded arrival was ${po.current_eta}.`,
     href: `/purchasing/orders/${po.id}` });
   for (const connector of connections.unhealthy) entries.push({ priority: 86, kind: 'connection',
-    title: `${connector.name} may make Foundry's view incomplete`,
+    title: `${connector.name} may make StockChief's view incomplete`,
     because: connector.openIssues ? `${plural(connector.openIssues, 'connection issue')} is open.` : `Connection status is ${connector.status}.`,
     href: `/settings/connections/${connector.id}` });
   if (finance) {
     for (const missing of finance.missingBills) entries.push({ priority: 72, kind: 'missing-bill',
       id: missing.id,
       title: `${missing.po_number} was received but has no supplier bill`,
-      because: `${plural(missing.receivedUnits, 'unit')} costing ${money(missing.receivedCostMinor, missing.currency)} arrived. Foundry cannot know what is owed until the bill is recorded.`,
+      because: `${plural(missing.receivedUnits, 'unit')} costing ${money(missing.receivedCostMinor, missing.currency)} arrived. StockChief cannot know what is owed until the bill is recorded.`,
       href: `/accounting/payables/new?purchaseOrderId=${missing.id}` });
   }
   for (const check of checks.filter((entry) => !entry.passed && entry.needsOwner !== false)) entries.push({ priority: 96,
@@ -287,13 +287,13 @@ function briefing(state) {
     businessLines.push(`Customers have paid ${money(finance.cashActivity.customerReceivedMinor, currency)} during this period and still need to pay ${money(finance.customerMoneyOutstandingMinor, currency)} across confirmed orders and completed sales.`);
     if (acquisition.receivedCostMinor > 0) businessLines.push(acquisition.valuationComplete
       ? `You received ${money(acquisition.receivedCostMinor, currency)} of inventory: ${money(acquisition.stillOwnedMinor, currency)} remains in stock and ${money(acquisition.becameProductCostMinor, currency)} became product cost when items sold.`
-      : `You received inventory with ${money(acquisition.receivedCostMinor, currency)} of documented purchase cost. You now own ${plural(acquisition.currentUnits, 'unit')}, but cost evidence is missing for ${plural(acquisition.missingCostUnits, 'unit')}, so Foundry cannot yet state the full value still in stock or the product cost used.`
+      : `You received inventory with ${money(acquisition.receivedCostMinor, currency)} of documented purchase cost. You now own ${plural(acquisition.currentUnits, 'unit')}, but cost evidence is missing for ${plural(acquisition.missingCostUnits, 'unit')}, so StockChief cannot yet state the full value still in stock or the product cost used.`
     );
     if (acquisition.supplierBilledMinor > 0) businessLines.push(
       `Suppliers billed ${money(acquisition.supplierBilledMinor, currency)}; ${money(acquisition.supplierPaidMinor, currency)} is recorded paid and ${money(acquisition.supplierOwedMinor, currency)} remains owed.`
     );
     if (acquisition.receivedWithoutBillMinor > 0) businessLines.push(
-      `${money(acquisition.receivedWithoutBillMinor, currency)} of received inventory still has no supplier bill, so Foundry does not call that amount owed yet.`
+      `${money(acquisition.receivedWithoutBillMinor, currency)} of received inventory still has no supplier bill, so StockChief does not call that amount owed yet.`
     );
   }
   if (sales.open) businessLines.push(`${plural(sales.open, 'customer order')} remains open; ${plural(sales.backorderedUnits, 'unit')} is not yet protected by committed stock.`);
@@ -301,7 +301,7 @@ function briefing(state) {
   const failed = consistency.filter((entry) => !entry.passed && entry.needsOwner !== false).length;
   const headline = failed ? `${failed} record ${failed === 1 ? 'inconsistency needs' : 'inconsistencies need'} review.`
     : attention.length ? `${attention.length} ${attention.length === 1 ? 'thing needs' : 'things need'} your attention.`
-      : 'Everything Foundry can prove is internally consistent.';
+      : 'Everything StockChief can prove is internally consistent.';
   return { headline, lines: [...attentionLines, ...businessLines].slice(0, 5),
     businessLines, needsYou: attention.slice(0, 3) };
 }
@@ -381,7 +381,7 @@ function purchaseOrderStory(db, workspaceId, purchaseOrderId) {
       keeperAction: `${plural(received, 'unit')} received; ${plural(Math.max(0, ordered - received), 'unit')} still expected.`,
       whatHappensNext: billed
         ? `${money(bills.reduce((sum, bill) => sum + number(bill.balance_minor), 0), order.currency)} remains owed on recorded supplier bills.`
-        : 'Foundry is waiting for supplier-bill evidence before saying what is owed.',
+        : 'StockChief is waiting for supplier-bill evidence before saying what is owed.',
     },
   };
 }

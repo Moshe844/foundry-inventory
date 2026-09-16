@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Make outbound HTTPS work on the machine Foundry is actually installed on.
+ * Make outbound HTTPS work on the machine StockChief is actually installed on.
  *
  * This host inspects TLS. The certificate served for api.anthropic.com is not
  * Anthropic's: it is reissued by a root called "Meshimer CA" that is installed
@@ -67,7 +67,7 @@ function installSystemCertificates() {
   try {
     // Added to what Node already trusts, never substituted for it. Replacing
     // the list would mean this machine's administrator silently deciding which
-    // public authorities Foundry accepts, which is a much larger thing than
+    // public authorities StockChief accepts, which is a much larger thing than
     // fixing an interception proxy.
     tls.setDefaultCACertificates([...current, ...missing]);
   } catch (err) {

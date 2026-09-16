@@ -46,7 +46,7 @@ test('owner sees one learned change, approves it, and can restore the previous p
   await signIn(agent, env.workspace.account.email, env.workspace.account.password);
   const page = await agent.get('/planning');
   assert.equal(page.status, 200);
-  assert.match(plain(page.text), /What Foundry learned/i);
+  assert.match(plain(page.text), /What StockChief learned/i);
   assert.match(plain(page.text), /Northstar Footwear is configured at 10 days.*averaged 15 days/i);
   assert.match(plain(page.text), /Approve change/i);
   const item = learning.listProposals(env.db, env.workspace.workspaceId)[0];

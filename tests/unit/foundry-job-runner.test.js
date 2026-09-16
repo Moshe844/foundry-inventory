@@ -6,7 +6,7 @@ const jobs = require('../../src/foundry/job-runner');
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-test('a customer-started Foundry job has one deadline and cancels its work', async () => {
+test('a customer-started StockChief job has one deadline and cancels its work', async () => {
   jobs.reset();
   const id = jobs.createJob('ws_deadline');
   let sawAbort = false;
@@ -28,7 +28,7 @@ test('a customer-started Foundry job has one deadline and cancels its work', asy
   assert.match(job.error.message, /nothing was changed/i);
 });
 
-test('late completion cannot overwrite a terminal failed Foundry job', async () => {
+test('late completion cannot overwrite a terminal failed StockChief job', async () => {
   jobs.reset();
   const id = jobs.createJob('ws_race');
   jobs.failJob(id, Object.assign(new Error('Stopped safely.'), { code: 'stopped', retryable: true }));

@@ -3,8 +3,8 @@
 /*
  * Which mail still owes somebody an answer.
  *
- * The claim under test is that "Foundry processed this" and "a person is
- * waiting on you" are different facts, and that Foundry's guess about the
+ * The claim under test is that "StockChief processed this" and "a person is
+ * waiting on you" are different facts, and that StockChief's guess about the
  * second one is always explainable and always overrulable.
  */
 
@@ -106,7 +106,7 @@ test('captured mail is sorted on arrival and the drawers add up', () => {
   assert.equal(asking.reply_state, 'NEEDS_REPLY');
   assert.equal(filed.reply_state, 'HANDLED');
   assert.equal(robot.reply_state, 'HANDLED');
-  assert.equal(asking.decidedByPerson, false, 'Foundry decided this one, not a person');
+  assert.equal(asking.decidedByPerson, false, 'StockChief decided this one, not a person');
 
   assert.deepEqual(inbox.counts(env.db, env.workspace.workspaceId),
     { NEEDS_REPLY: 1, WAITING: 0, HANDLED: 2 });
@@ -114,7 +114,7 @@ test('captured mail is sorted on arrival and the drawers add up', () => {
   assert.throws(() => inbox.list(env.db, env.workspace.workspaceId, 'SOMEDAY'), /three drawers/);
 });
 
-test('a person can overrule Foundry, and their decision is attributed and kept', () => {
+test('a person can overrule StockChief, and their decision is attributed and kept', () => {
   const env = setup();
   const message = arrive(env, { subject: 'Packing slip', body: 'Attached.',
     attachments: [{ filename: 'slip.pdf', extractedText: 'x' }] });
@@ -126,7 +126,7 @@ test('a person can overrule Foundry, and their decision is attributed and kept',
   assert.equal(moved.decidedByPerson, true);
   assert.match(moved.reply_reason, /shorted us two cartons/);
 
-  // Foundry does not get to re-decide what a person decided.
+  // StockChief does not get to re-decide what a person decided.
   assert.throws(() => inbox.rejudge(env.db, env.ctx, message.id), /You already decided/);
 
   const waiting = inbox.setState(env.db, env.ctx, message.id, 'WAITING');
@@ -136,7 +136,7 @@ test('a person can overrule Foundry, and their decision is attributed and kept',
     { NEEDS_REPLY: 0, WAITING: 1, HANDLED: 0 });
 });
 
-test('Foundry can look again at a message nobody has ruled on', () => {
+test('StockChief can look again at a message nobody has ruled on', () => {
   const env = setup();
   const message = arrive(env, { subject: 'Packing slip', body: 'Attached.',
     attachments: [{ filename: 'slip.pdf', extractedText: 'x' }] });
@@ -270,7 +270,7 @@ test('a phrase has to be a word, not a run of letters inside another one', () =>
 
 test('bulk mail does not become work, however it is addressed', () => {
   /*
-   * Once Foundry started capturing senders the owner had not approved, this
+   * Once StockChief started capturing senders the owner had not approved, this
    * stopped being a nicety. The first real run over their mailbox marked
    * eight of ten captured messages "needs a reply": four bank alerts, two
    * marketing blasts, two newsletters. Needs You only works if being in it

@@ -15,8 +15,8 @@
  *   against what is being billed, and record the bill. Nothing needs anybody
  *   unless the numbers disagree.
  *
- *   There is no order. Businesses buy things outside Foundry all the time, so
- *   this is not an error and the invoice is not thrown away. But Foundry does
+ *   There is no order. Businesses buy things outside StockChief all the time, so
+ *   this is not an error and the invoice is not thrown away. But StockChief does
  *   not know whether goods are coming, and it will not invent a purchase to
  *   make its own records tidy. It asks one question and waits.
  */
@@ -47,7 +47,7 @@ function findOrder(db, workspaceId, interpretation, supplierId) {
  * How the bill compares to the order, line by line.
  *
  * Reported rather than acted on. A supplier billing more than was ordered is a
- * conversation, not something for Foundry to resolve by adjusting one side to
+ * conversation, not something for StockChief to resolve by adjusting one side to
  * match the other.
  */
 function compare(db, workspaceId, order, interpretation) {

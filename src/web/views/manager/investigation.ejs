@@ -43,7 +43,7 @@
     <section class="card investigation-summary">
       <div class="card-head">
         <div>
-          <span class="investigation-kicker">What Foundry found</span>
+          <span class="investigation-kicker">What StockChief found</span>
           <h2><%= openingBalance
             ? 'This is the first time anything has been counted here'
             : 'The physical count does not match the inventory record' %></h2>
@@ -69,7 +69,7 @@
           <div class="count-equation__value">
             <span>Recorded</span>
             <strong><%= expected ?? '—' %></strong>
-            <small>in Foundry</small>
+            <small>in StockChief</small>
           </div>
           <div class="count-equation__operator" aria-hidden="true">→</div>
           <div class="count-equation__value">
@@ -91,12 +91,12 @@
           <div>
             <% if (openingBalance) { %>
               <strong>There is no difference to explain.</strong>
-              <p>Foundry has never recorded a sale, transfer, receipt or adjustment for this product at this location, so the recorded 0 is not a measurement — it is the absence of one. Your count is the opening quantity, and receiving it is what puts it on the ledger.</p>
+              <p>StockChief has never recorded a sale, transfer, receipt or adjustment for this product at this location, so the recorded 0 is not a measurement — it is the absence of one. Your count is the opening quantity, and receiving it is what puts it on the ledger.</p>
             <% } else if (!investigation.hypotheses.length) { %>
               <strong>No recorded event explains the difference yet.</strong>
-              <p>Foundry checked the ledger and found no sale, transfer, receipt or adjustment that accounts for these <%= differenceSize ?? 'missing' %> units. It will not invent a cause.</p>
+              <p>StockChief checked the ledger and found no sale, transfer, receipt or adjustment that accounts for these <%= differenceSize ?? 'missing' %> units. It will not invent a cause.</p>
             <% } else { %>
-              <strong>Foundry found evidence worth reviewing.</strong>
+              <strong>StockChief found evidence worth reviewing.</strong>
               <% investigation.hypotheses.forEach(function (hypothesis) { %>
                 <p><%= hypothesis.statement %> <span class="muted">Confidence: <%= hypothesis.confidence %>.</span></p>
               <% }) %>
@@ -143,7 +143,7 @@
         </p>
         <div class="investigation-safety">
           <%- helpers.icon('alert', { size: 16 }) %>
-          <span>Foundry will not write this balance by itself. Receiving is the step that makes it real, and it stays in Activity with your name on it.</span>
+          <span>StockChief will not write this balance by itself. Receiving is the step that makes it real, and it stays in Activity with your name on it.</span>
         </div>
         <% if (investigation.affectedEntities.itemId) { %>
           <a class="btn btn--primary btn--block" href="/inventory/<%= investigation.affectedEntities.itemId %>?action=receive&skuId=<%= encodeURIComponent(investigation.affectedEntities.skuId || '') %>&locationId=<%= encodeURIComponent(investigation.affectedEntities.locationId || '') %>&quantity=<%= observed %>">

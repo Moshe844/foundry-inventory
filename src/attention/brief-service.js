@@ -55,7 +55,7 @@ function deterministicBrief(items, context = {}) {
 
   if (items.length === 0) {
     const clear =
-      `Nothing in your ${noun} needs attention right now. Foundry checked it against ` +
+      `Nothing in your ${noun} needs attention right now. StockChief checked it against ` +
       'its movement history and found no shortages, imbalances, unusual corrections or idle inventory.';
     return purchasing.length ? `${clear} ${purchasing.join(' ')}` : clear;
   }
@@ -98,7 +98,7 @@ function deterministicBrief(items, context = {}) {
 function deterministicObservationBrief(items, context = {}) {
   const noun = context.stockNoun || 'stock';
   if (!items.length) {
-    return `Foundry is monitoring your ${noun}. Nothing unusual is developing right now.`;
+    return `StockChief is monitoring your ${noun}. Nothing unusual is developing right now.`;
   }
   const counts = attention.summarise(items);
   const watched = [
@@ -107,7 +107,7 @@ function deterministicObservationBrief(items, context = {}) {
     counts.watch ? `${counts.watch} early signal${counts.watch === 1 ? '' : 's'}` : null,
   ].filter(Boolean).join(', ');
   const lead = items[0];
-  return `Foundry is watching ${items.length === 1 ? '1 inventory condition' : `${items.length} inventory conditions`}: ${watched}. `
+  return `StockChief is watching ${items.length === 1 ? '1 inventory condition' : `${items.length} inventory conditions`}: ${watched}. `
     + `Most important: ${lead.title} — ${lead.conciseSummary}. `
     + 'This is being monitored; it is not waiting for your decision.';
 }

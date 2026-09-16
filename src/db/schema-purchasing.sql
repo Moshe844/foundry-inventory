@@ -1,6 +1,6 @@
--- Foundry Inventory : suppliers, purchasing and replenishment (Mission 6)
+-- StockChief Inventory : suppliers, purchasing and replenishment (Mission 6)
 --
--- This is the first part of Foundry that reaches outside the warehouse. It
+-- This is the first part of StockChief that reaches outside the warehouse. It
 -- exists for one reason: an inventory manager cannot answer "what should I
 -- buy?" without knowing who sells it, how it is packed, how long it takes to
 -- arrive, and what is already on its way.
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS suppliers (
   default_lead_time_days INTEGER,
   minimum_order_amount   REAL,
   currency               TEXT NOT NULL DEFAULT 'USD',
-  -- Informational only. Foundry does not calculate due dates or balances.
+  -- Informational only. StockChief does not calculate due dates or balances.
   payment_terms          TEXT,
 
   -- Vendor-specific vocabulary. One supplier may call this "Style #", another
@@ -63,7 +63,7 @@ CREATE INDEX IF NOT EXISTS idx_suppliers_workspace ON suppliers(workspace_id, st
 -- What one supplier calls one of our SKUs, and how they sell it.
 --
 -- The purchase unit is the point of this table. We count shoes; ABC Footwear
--- sells cases of twelve with a minimum of two cases. Every quantity Foundry
+-- sells cases of twelve with a minimum of two cases. Every quantity StockChief
 -- recommends has to survive that conversion, and the conversion has to be
 -- visible rather than folded into a number.
 CREATE TABLE IF NOT EXISTS supplier_items (
@@ -116,7 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_supplier_code_mappings_supplier
   ON supplier_code_mappings(workspace_id, supplier_id, vendor_code);
 
 -- Renaming catalogue codes is consequential even though it moves no stock.
--- Foundry therefore stores the exact before/after set and waits for one clear
+-- StockChief therefore stores the exact before/after set and waits for one clear
 -- approval. Replays return the applied result instead of renaming twice.
 CREATE TABLE IF NOT EXISTS supplier_code_mapping_proposals (
   id                  TEXT PRIMARY KEY,
@@ -137,7 +137,7 @@ CREATE INDEX IF NOT EXISTS idx_supplier_code_mapping_proposals_workspace
   ON supplier_code_mapping_proposals(workspace_id, status, created_at DESC);
 
 -- Optional per-SKU replenishment settings. Deliberately optional: requiring a
--- policy on every line before Foundry will help would mean it helps nobody on
+-- policy on every line before StockChief will help would mean it helps nobody on
 -- day one. Where there is no policy, the engine derives one from history and
 -- says that it did.
 CREATE TABLE IF NOT EXISTS reorder_policies (
@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS reorder_policies (
   default_order_quantity INTEGER,
   lead_time_days         INTEGER,
 
-  -- Who decided this: a person, or Foundry proposing from history.
+  -- Who decided this: a person, or StockChief proposing from history.
   source                 TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'foundry')),
   notes                  TEXT,
   created_at             TEXT NOT NULL,
@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   currency                TEXT NOT NULL DEFAULT 'USD',
   notes                   TEXT,
 
-  -- Where this came from, so "Foundry prepared this" is auditable.
+  -- Where this came from, so "StockChief prepared this" is auditable.
   source                  TEXT NOT NULL DEFAULT 'manual'
                             CHECK (source IN ('manual', 'foundry_recommendation', 'instruction')),
   source_detail           TEXT NOT NULL DEFAULT '{}',
@@ -222,7 +222,7 @@ CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier ON purchase_orders(works
  * discounts, fees, totals" — so the difference simply vanished.
  *
  * Held as the document stated them, in the document's own wording and signs.
- * Foundry does not spread them across the products: allocating freight is a
+ * StockChief does not spread them across the products: allocating freight is a
  * decision with several defensible answers, and picking one silently would be
  * inventing a unit cost nobody agreed to.
  */

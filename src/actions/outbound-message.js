@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * Somebody asks Foundry to write to a customer or a supplier.
+ * Somebody asks StockChief to write to a customer or a supplier.
  *
- * Foundry has sent mail for a while — shipping notices, payment links,
+ * StockChief has sent mail for a while — shipping notices, payment links,
  * purchase orders, replies to customers — but only ever as a consequence of
  * something else happening. Asked outright to email somebody, it said it could
  * not: the operation simply was not in the list of things it could choose to
@@ -47,18 +47,18 @@ function findRecipient(db, workspaceId, text) {
 /**
  * Write it down and show it.
  *
- * The words are the owner's. Foundry does not compose, improve or expand
+ * The words are the owner's. StockChief does not compose, improve or expand
  * them: a message that says more than the person asked it to say is a message
  * they did not write, going out over their name.
  */
 function prepare(db, ctx, { recipientText, body, instruction }) {
   const recipient = findRecipient(db, ctx.workspaceId, recipientText);
   if (!recipientText) {
-    return { kind: 'question', question: 'Who should Foundry send that to?' };
+    return { kind: 'question', question: 'Who should StockChief send that to?' };
   }
   if (!recipient) {
     return { kind: 'question',
-      question: `Foundry has no customer or supplier called “${recipientText}”, `
+      question: `StockChief has no customer or supplier called “${recipientText}”, `
         + 'and that is not an email address. Who should this go to?' };
   }
   if (!recipient.email) {
@@ -66,7 +66,7 @@ function prepare(db, ctx, { recipientText, body, instruction }) {
       question: `There is no email address on file for ${recipient.name}, so there is nowhere to send this.` };
   }
   if (!String(body || '').trim()) {
-    return { kind: 'question', question: `What should Foundry say to ${recipient.name}?` };
+    return { kind: 'question', question: `What should StockChief say to ${recipient.name}?` };
   }
 
   /*
@@ -78,8 +78,8 @@ function prepare(db, ctx, { recipientText, body, instruction }) {
     return { kind: 'question',
       question: sending.options.length
         ? 'More than one mailbox is connected and none is set for customer messages. '
-          + 'Choose which one Foundry should send from in Settings.'
-        : 'No mailbox is connected, so Foundry has nothing to send this from. '
+          + 'Choose which one StockChief should send from in Settings.'
+        : 'No mailbox is connected, so StockChief has nothing to send this from. '
           + 'Connect one in Settings and this will go out from your own address.' };
   }
 
@@ -89,7 +89,7 @@ function prepare(db, ctx, { recipientText, body, instruction }) {
     body: String(body).trim(),
     instruction,
     /*
-     * Deliberately not a subject Foundry invented. The owner said what they
+     * Deliberately not a subject StockChief invented. The owner said what they
      * wanted said; inventing a heading for it is the first step towards
      * inventing the rest.
      */

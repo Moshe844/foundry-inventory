@@ -9,7 +9,7 @@
  * engine as a real movement — there are no written balances.
  *
  * Nothing is automated by the seed. The workspace starts supervised with no
- * policy, so the demo begins where a customer would: Foundry has noticed
+ * policy, so the demo begins where a customer would: StockChief has noticed
  * something and is waiting to be told what it may do about it.
  *
  *   DATABASE_PATH=data/autopilot-demo.db node scripts/seed-autopilot-demo.js

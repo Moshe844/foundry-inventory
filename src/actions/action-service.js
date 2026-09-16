@@ -6,7 +6,7 @@
  *   instruction → intent (model) → resolution (deterministic) → proposal
  *
  * Nothing here executes. The result is always one of three honest outcomes: a
- * proposal to look at, a question, or "Foundry cannot do that" — and the third
+ * proposal to look at, a question, or "StockChief cannot do that" — and the third
  * is a real answer, not a failure. Refusing to invent a purchase order is the
  * behaviour that keeps the rest trustworthy.
  */
@@ -155,7 +155,7 @@ function instructionSlices(instruction, lines) {
  */
 async function interpret(db, ctx, membership, instruction, options = {}) {
   const text = String(instruction || '').trim();
-  if (!text) return { kind: 'question', question: 'What would you like Foundry to do?' };
+  if (!text) return { kind: 'question', question: 'What would you like StockChief to do?' };
 
   // "Do it" refers to something already on the table. Resolving that here, in
   // code, means the model is never the thing deciding which action was meant.
@@ -168,12 +168,12 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     if (open.length === 0) {
       return {
         kind: 'question',
-        question: 'There is nothing waiting for approval. What would you like Foundry to do?',
+        question: 'There is nothing waiting for approval. What would you like StockChief to do?',
       };
     }
     return {
       kind: 'question',
-      question: 'Which one would you like Foundry to carry out?',
+      question: 'Which one would you like StockChief to carry out?',
       choices: open.map((p) => ({ proposalId: p.proposalId, summary: presenter.oneLine(db, ctx.workspaceId, p) })),
     };
   }
@@ -282,16 +282,16 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     return {
       kind: 'question',
       question:
-        `Foundry understood ${usable.length} of the ${intent.lines.length} changes you asked for, `
+        `StockChief understood ${usable.length} of the ${intent.lines.length} changes you asked for, `
         + `but not this: ${named.join(', ')}. `
         + `${detail} `.trim()
-        + ' Nothing has been prepared — say that part another way and Foundry will do the whole instruction together.',
+        + ' Nothing has been prepared — say that part another way and StockChief will do the whole instruction together.',
     };
   }
 
   if (usable.length === 0) {
     if (blocked && blocked.actionType === 'unsupported') {
-      return { kind: 'unsupported', message: intent.unsupportedReason || 'Foundry cannot do that yet.' };
+      return { kind: 'unsupported', message: intent.unsupportedReason || 'StockChief cannot do that yet.' };
     }
     const modelQuestion = intent.clarifyingQuestion || '';
     if (/\b(product|item|variant|version|which|colour|color|size|grade|material)\b/i.test(modelQuestion)) {
@@ -331,14 +331,14 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
         kind: 'delete_inventory',
         workspaceName: workspace ? workspace.name : 'this inventory',
         message: `Deleting ${workspace ? workspace.name : 'this inventory'} removes its products, stock, `
-          + 'orders and books. It cannot be undone, and Foundry will ask you to type the name first.',
+          + 'orders and books. It cannot be undone, and StockChief will ask you to type the name first.',
         where: { label: 'Delete this inventory', href: `/inventories/${ctx.workspaceId}/delete` },
       };
     }
 
     return {
       kind: 'question',
-      question: modelQuestion || 'Could you say a little more about what you want Foundry to do?',
+      question: modelQuestion || 'Could you say a little more about what you want StockChief to do?',
     };
   }
 
@@ -363,7 +363,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     if (missingComponentCodes.length) {
       return {
         kind: 'catalogue_question',
-        question: `Foundry read every structured product record, but these kit component SKUs are not in this inventory or this submission: ${missingComponentCodes.join(', ')}. Add those product records or correct the component SKUs. Nothing was created and none of the supplied fields were discarded.`,
+        question: `StockChief read every structured product record, but these kit component SKUs are not in this inventory or this submission: ${missingComponentCodes.join(', ')}. Add those product records or correct the component SKUs. Nothing was created and none of the supplied fields were discarded.`,
       };
     }
   }
@@ -397,11 +397,19 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
       ? options.selectedPurchaseSkuId
       : null;
     const result = purchaseIntent.build(db, ctx, membership, purchase, {
+      previewOnly:Boolean(options.previewOnly),
       instruction: text,
       selectedSkuId,
+      purchaseDetails: options.purchaseDetails || null,
       confirmedSupplierCreationName: options.confirmedSupplierCreationName || null,
     });
     if (!result.ok) {
+      if (result.newProduct) return {
+        kind: 'question', purchaseSpecific: true, question: result.question,
+        continuation: { kind: 'purchase_new_product', previewOnly: true, workspaceId: ctx.workspaceId,
+          originalInstruction: text, parsedIntent: intent, lineIndex: purchaseLineIndex,
+          product: result.newProduct, purchaseDetails: options.purchaseDetails || null },
+      };
       if (result.missingProduct) {
         return {
           kind: 'question',
@@ -431,6 +439,8 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
             lineIndex: intent.lines.indexOf(purchase),
             supplierName: result.missingSupplier.name,
             skuId: result.missingSupplier.skuId,
+            previewOnly: Boolean(options.previewOnly),
+            purchaseDetails: options.purchaseDetails || null,
           },
         };
       }
@@ -463,13 +473,13 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
    * anything below builds one — a sentence about paying an invoice must not
    * be able to produce a proposal that moves goods.
    *
-   * What Foundry works out here is which bill was meant, not whether to pay
-   * it. The person already did that; they are telling Foundry it happened.
+   * What StockChief works out here is which bill was meant, not whether to pay
+   * it. The person already did that; they are telling StockChief it happened.
    */
   /*
    * The whole inventory, going.
    *
-   * Foundry does not carry this out from here: it needs the person to type
+   * StockChief does not carry this out from here: it needs the person to type
    * the inventory's name, and that guard belongs on the page that owns it.
    * What matters is that the request is understood and answered — being asked
    * "which item did you mean?" after saying "the entire inventory" is what
@@ -482,7 +492,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
       kind: 'delete_inventory',
       workspaceName: workspace ? workspace.name : 'this inventory',
       message: `Deleting ${workspace ? workspace.name : 'this inventory'} removes its products, stock, `
-        + 'orders and books. It cannot be undone, and Foundry will ask you to type the name first.',
+        + 'orders and books. It cannot be undone, and StockChief will ask you to type the name first.',
       where: { label: 'Delete this inventory', href: `/inventories/${ctx.workspaceId}/delete` },
     };
   }
@@ -492,7 +502,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
    *
    * Nothing is sent from here. A message leaving in the owner's name is the
    * kind of thing that has to be read first, and the same rule applies
-   * whether Foundry wrote it because somebody asked or because a parcel
+   * whether StockChief wrote it because somebody asked or because a parcel
    * shipped.
    */
   const message = usable.find((line) => line.actionType === 'send_message');
@@ -607,7 +617,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
         ? allOpening
           ? `You're setting starting inventory from zero across ${missingReasons.length} stock positions. What is the reason for these opening balances?`
           : `You're correcting counts across ${missingReasons.length} stock positions. What is the reason for these changes?`
-        : `Why is the count changing from ${missingReasons[0].context.current} to ${missingReasons[0].context.target}? Foundry needs the reason on record.`;
+        : `Why is the count changing from ${missingReasons[0].context.current} to ${missingReasons[0].context.target}? StockChief needs the reason on record.`;
       return {
         kind: 'question',
         question,
@@ -625,7 +635,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     // Two counts for the same shelf in one instruction contradict each other.
     //
     // A plan applies its lines in order, so the second would quietly win and
-    // the first would vanish without ever being wrong out loud. Foundry says
+    // the first would vanish without ever being wrong out loud. StockChief says
     // which position was named twice and lets the person pick the number.
     const seen = new Map();
     for (const draft of built) {
@@ -639,7 +649,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
           kind: 'question',
           question:
             `That gives ${name} at ${where} two different counts — ${seen.get(key)} and ${draft.adjustmentTarget}. `
-            + 'Foundry will not pick one. Which is right?',
+            + 'StockChief will not pick one. Which is right?',
         };
       }
       seen.set(key, draft.adjustmentTarget);
@@ -680,8 +690,51 @@ function adjustmentReasonFromAnswer(answer) {
 
 /** Resume a stored clarification without reinterpreting or losing its lines. */
 async function continueInterpretation(db, ctx, membership, continuation, answer, options = {}) {
+  options={...options,previewOnly:Boolean(options.previewOnly||continuation?.previewOnly)};
   if (!continuation || !continuation.parsedIntent || !Array.isArray(continuation.parsedIntent.lines)) {
     throw new ValidationError('That clarification is no longer available. Please send the instruction again.');
+  }
+  if (continuation.kind === 'purchase_new_product') {
+    if (continuation.workspaceId !== ctx.workspaceId) throw new ValidationError('This product review belongs to a different inventory. Return to that inventory or start a new PO request here.');
+    permissions.assertCan(membership, permissions.CREATE_PO, 'prepare purchase orders');
+    permissions.assertCan(membership, permissions.OPERATE, 'add products');
+    if (!answer || typeof answer !== 'object' || answer.confirm !== 'add_and_draft') {
+      return { kind: 'question', purchaseSpecific: true, question: 'Review the new product details before adding it and preparing a draft.', continuation };
+    }
+    const name = String(answer.name || '').trim();
+    const code = String(answer.code || '').trim();
+    const unitLabel = String(answer.unitLabel || '').trim();
+    const trackingMode = String(answer.trackingMode || '').trim();
+    const supplier = String(answer.supplier || '').trim();
+    const quantity = Number(answer.quantity);
+    if (!name || !code || !unitLabel || !supplier || !['quantity', 'lot', 'serial'].includes(trackingMode)
+        || !Number.isSafeInteger(quantity) || quantity <= 0) {
+      throw new ValidationError('Enter the product name, SKU, inventory unit, tracking method, supplier and a positive whole-number quantity.');
+    }
+    if (db.prepare('SELECT 1 FROM skus WHERE workspace_id = ? AND code = ? COLLATE NOCASE').get(ctx.workspaceId, code)) {
+      throw new ValidationError(`SKU ${code} now exists. No duplicate was created. Choose the existing record or a different new SKU.`);
+    }
+    const unitCost = answer.unitCost === '' || answer.unitCost == null ? undefined : Number(answer.unitCost);
+    if (unitCost !== undefined && (!Number.isFinite(unitCost) || unitCost < 0)) throw new ValidationError('Enter a non-negative unit cost, or leave it unknown.');
+    const expectedDate = String(answer.expectedDate || '').trim() || null;
+    if (expectedDate && (!/^\d{4}-\d{2}-\d{2}$/.test(expectedDate)
+        || !Number.isFinite(Date.parse(expectedDate)) || new Date(expectedDate).toISOString().slice(0, 10) !== expectedDate)) {
+      throw new ValidationError('Enter a valid expected delivery date.');
+    }
+    const purchaseDetails = { unitCost, expectedDate,
+      destinationLocationId: String(answer.destinationLocationId || '').trim() || null,
+      notes: String(answer.notes || '').trim() || null };
+    if (purchaseDetails.destinationLocationId) repo.requireLocation(db, ctx.workspaceId, purchaseDetails.destinationLocationId);
+    const item = require('../domain/item-service').createItem(db, ctx, {
+      name, baseCode: code, unitLabel, trackingMode, hasVariants: false,
+      description: continuation.originalInstruction,
+    });
+    const parsedIntent = { ...continuation.parsedIntent,
+      lines: continuation.parsedIntent.lines.map((line, index) => index === continuation.lineIndex
+        ? { ...line, item: name, variant: '', supplier, quantity, purchaseUnit: 'unit' } : { ...line }) };
+    return interpret(db, ctx, membership, continuation.originalInstruction, { ...options, previewOnly: true,
+      parsedIntent, selectedPurchaseSkuId: item.skuIds[0], selectedPurchaseLineIndex: continuation.lineIndex,
+      purchaseDetails, approveAfterCreation: false });
   }
   if (continuation.kind === 'create_item_receiving_location') {
     const locationName = String(answer || '').trim();
@@ -709,7 +762,7 @@ async function continueInterpretation(db, ctx, membership, continuation, answer,
     if (!selected || (selected !== ALL_LOCATIONS && !allowed.includes(selected))) {
       return {
         kind: 'question',
-        question: 'Which location should Foundry use?',
+        question: 'Which location should StockChief use?',
         choices: [
           ...allowed.map((location) => ({ label: location, value: location })),
           ...(allowed.length > 1 ? [{ label: allowed.length === 2 ? 'Both locations' : 'All locations', value: ALL_LOCATIONS }] : []),
@@ -739,9 +792,9 @@ async function continueInterpretation(db, ctx, membership, continuation, answer,
     if (String(answer || '').trim() !== '__create_purchase_supplier__') {
       return {
         kind: 'question',
-        question: `Add ${continuation.supplierName} as a supplier and approve this purchase order?`,
+        question: options.previewOnly ? `Add ${continuation.supplierName} to prepare a draft for review?` : `Add ${continuation.supplierName} as a supplier and approve this purchase order?`,
         choices: [{
-          label: `Add ${continuation.supplierName} and approve order`,
+          label: options.previewOnly ? `Add ${continuation.supplierName} and prepare draft` : `Add ${continuation.supplierName} and approve order`,
           value: '__create_purchase_supplier__',
         }],
         continuation,
@@ -789,7 +842,10 @@ async function continueInterpretation(db, ctx, membership, continuation, answer,
       ...options,
       parsedIntent,
       confirmedSupplierCreationName: supplier.name,
-      approveAfterCreation: true,
+      selectedPurchaseSkuId: continuation.skuId,
+      selectedPurchaseLineIndex: continuation.lineIndex,
+      purchaseDetails: continuation.purchaseDetails || null,
+      approveAfterCreation: !options.previewOnly && !continuation.previewOnly,
     });
     if (resumed.kind === 'purchase_order') {
       resumed.assumptions = [
@@ -824,7 +880,7 @@ async function continueInterpretation(db, ctx, membership, continuation, answer,
       selectedPurchaseSkuId: selected.skuId,
       selectedPurchaseLineIndex: continuation.lineIndex,
       confirmedSupplierCreationName: continuation.supplierCreationName || null,
-      approveAfterCreation: Boolean(continuation.supplierCreationName),
+      approveAfterCreation: Boolean(continuation.supplierCreationName) && !options.previewOnly,
     });
   }
   if (continuation.kind !== 'adjustment_reason') {
@@ -927,7 +983,7 @@ function setPlanStatus(db, workspaceId, planId, status, extra = {}) {
 /**
  * Turns a Mission 3 finding into something reviewable.
  *
- * Only where an operation Foundry actually has can address the condition. A
+ * Only where an operation StockChief actually has can address the condition. A
  * stockout needs replenishment, which does not exist yet, so it gets no action
  * — inventing one would be worse than offering none.
  */
@@ -1012,21 +1068,21 @@ function proposeFromAttention(db, ctx, membership, attentionId) {
 
 function actionabilityMessage(item) {
   const messages = {
-    // Mission 6 gave Foundry replenishment and purchase orders, so telling
+    // Mission 6 gave StockChief replenishment and purchase orders, so telling
     // someone to go and order it themselves is now false. It drafts the order;
     // sending it to the supplier stays a person's decision.
     stockout_risk:
-      'Foundry can work out what to order and draft the purchase order for you on the purchasing page. ' +
+      'StockChief can work out what to order and draft the purchase order for you on the purchasing page. ' +
       'It will not send anything to the supplier.',
     low_stock:
-      'Foundry can work out what to order and draft the purchase order for you on the purchasing page.',
-    expiring_inventory: 'Foundry can move this lot somewhere it will be used, but deciding what to do with it is yours. Ask Foundry to transfer it if that helps.',
+      'StockChief can work out what to order and draft the purchase order for you on the purchasing page.',
+    expiring_inventory: 'StockChief can move this lot somewhere it will be used, but deciding what to do with it is yours. Ask StockChief to transfer it if that helps.',
     unusual_adjustment: 'This is something to check with the person who recorded it. There is no inventory action to take.',
-    stale_inventory: 'Foundry can move this stock if you tell it where. There is no action it should take on its own.',
-    serialized_inactivity: 'Foundry can move these units if you tell it where they should be.',
+    stale_inventory: 'StockChief can move this stock if you tell it where. There is no action it should take on its own.',
+    serialized_inactivity: 'StockChief can move these units if you tell it where they should be.',
     data_integrity: 'This needs investigating rather than an inventory movement.',
   };
-  return messages[item.category] || 'There is no inventory action Foundry can take for this.';
+  return messages[item.category] || 'There is no inventory action StockChief can take for this.';
 }
 
 /**
@@ -1062,7 +1118,7 @@ function recalculate(db, ctx, membership, proposalId) {
     if (!built.ok) {
       throw new ValidationError(
         built.question || built.unsupported ||
-        'Foundry cannot work this out against your stock as it stands now.'
+        'StockChief cannot work this out against your stock as it stands now.'
       );
     }
     built.proposal.proposalVersion = existing.proposalVersion + 1;
@@ -1163,7 +1219,7 @@ function proposeCompensation(db, ctx, membership, proposalId) {
       message:
         original.actionType === 'adjust'
           ? 'A correction is undone by recording another correction, with its own reason.'
-          : 'Foundry can only reverse a transfer automatically. Anything else needs a new action.',
+          : 'StockChief can only reverse a transfer automatically. Anything else needs a new action.',
     };
   }
 

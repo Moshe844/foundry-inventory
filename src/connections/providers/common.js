@@ -31,7 +31,7 @@ async function jsonRequest(url, options = {}) {
   try {
     response = await fetch(url, { ...options, signal: options.signal || AbortSignal.timeout(20_000) });
   } catch (cause) {
-    const error = new Error('Foundry could not reach the external service from this computer. Check its internet or security-software access; Foundry will retry safely.');
+    const error = new Error('StockChief could not reach the external service from this computer. Check its internet or security-software access; StockChief will retry safely.');
     error.code = 'PROVIDER_UNREACHABLE';
     error.transient = true;
     error.cause = cause;
@@ -50,4 +50,11 @@ async function jsonRequest(url, options = {}) {
   return { body, headers: response.headers, status: response.status };
 }
 
-module.exports = { safeEqual, hmacBase64, requireVerified, normalizeStoreUrl, jsonRequest };
+/** Preserve a provider's destination without supplying absent address parts. */
+function postalAddress(parts = {}) {
+  const fields = [parts.line1, parts.line2, parts.city, parts.region, parts.postalCode, parts.country];
+  const values = fields.map(value => String(value || '').trim()).filter(Boolean);
+  return values.length ? values.join(', ') : null;
+}
+
+module.exports = { safeEqual, hmacBase64, requireVerified, normalizeStoreUrl, jsonRequest, postalAddress };

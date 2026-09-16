@@ -4,7 +4,7 @@
  * The answer a customer is owed when their order does not simply go through.
  *
  * Two situations, and until now both ended the same way: silence. A customer
- * wrote "I want to order size 36, 2 pieces", Foundry could not tell which of
+ * wrote "I want to order size 36, 2 pieces", StockChief could not tell which of
  * four shoes they meant, and the whole thing became a line in the owner's
  * Needs You saying read it yourself. The customer heard nothing. The same
  * happened when the order was perfectly clear and there was not enough stock
@@ -43,8 +43,8 @@ function series(parts) {
 /**
  * Put a draft on the message, unless one is already there.
  *
- * A draft somebody has written, edited or sent is never replaced. Foundry
- * offering to help must not mean Foundry overwriting the owner's own words on
+ * A draft somebody has written, edited or sent is never replaced. StockChief
+ * offering to help must not mean StockChief overwriting the owner's own words on
  * the next sweep of the mailbox.
  */
 function put(db, workspaceId, messageId, subject, body) {
@@ -66,7 +66,7 @@ const replyTo = (message) => {
 /**
  * "Which of these did you mean?" — with the choices named.
  *
- * `questions` are the lines Foundry could not pin down, each carrying the
+ * `questions` are the lines StockChief could not pin down, each carrying the
  * customer's own wording and the candidates the catalogue offered.
  */
 function askWhichProduct(db, workspaceId, messageId, message, questions) {

@@ -1,15 +1,15 @@
-# Foundry competitive and architectural audit
+# StockChief competitive and architectural audit
 
 **Audit date:** September 7, 2026  
 **Decision gate:** Audit and roadmap only. Do not begin the broad implementation until the owner approves the priorities.
 
 ## Executive verdict
 
-Foundry is not a conventional inventory application with a chat box bolted onto it. The repository already contains a meaningful operational core: an immutable inventory movement ledger, variants, multiple locations, lot and serial enforcement, purchase and sales lifecycles, supplier-document and email understanding, internal accounting, evidence-backed forecasting, a business-state reconciler, an exception inbox, and bounded autonomous execution with post-action verification.
+StockChief is not a conventional inventory application with a chat box bolted onto it. The repository already contains a meaningful operational core: an immutable inventory movement ledger, variants, multiple locations, lot and serial enforcement, purchase and sales lifecycles, supplier-document and email understanding, internal accounting, evidence-backed forecasting, a business-state reconciler, an exception inbox, and bounded autonomous execution with post-action verification.
 
 That is a better architectural starting point for an autonomous inventory manager than many established products have.
 
-Foundry is **not yet the #1 inventory platform and is not yet private-beta certified**. It is currently strongest in evidence, explanations, connected business reasoning, and safe action execution. It is materially behind mature platforms in warehouse execution and operational breadth: bins, mobile/barcode workflows, stateful transfers and in-transit stock, landed costs, full returns/RMA flows, physical inventory programs, advanced fulfillment, manufacturing/kits/BOMs, EDI/ASN/3PL depth, external accounting synchronization, and production-scale infrastructure.
+StockChief is **not yet the #1 inventory platform and is not yet private-beta certified**. It is currently strongest in evidence, explanations, connected business reasoning, and safe action execution. It is materially behind mature platforms in warehouse execution and operational breadth: bins, mobile/barcode workflows, stateful transfers and in-transit stock, landed costs, full returns/RMA flows, physical inventory programs, advanced fulfillment, manufacturing/kits/BOMs, EDI/ASN/3PL depth, external accounting synchronization, and production-scale infrastructure.
 
 The website assistant is also not complete. It can answer many business questions, search records, and deep-link into important records, but it does not possess a single authoritative, permission-aware map of all 345 HTTP routes, all page actions, and all troubleshooting playbooks. Its help layer currently covers only a small set of high-level tasks. Therefore the promise “the user never has to hunt for a screen or figure out how to fix a mess” is **Partial**, not complete.
 
@@ -134,7 +134,7 @@ These are meaningful controls. They are not the same as production certification
 
 ### Observe — Strong but not universal
 
-Foundry observes native inventory, sales, purchasing, accounting, provider events, email, supplier documents, connection health, forecasts, and scheduled checks. Gaps include physical warehouse telemetry, broad marketplace/accounting/3PL coverage, bank feeds, and complete external-event parity.
+StockChief observes native inventory, sales, purchasing, accounting, provider events, email, supplier documents, connection health, forecasts, and scheduled checks. Gaps include physical warehouse telemetry, broad marketplace/accounting/3PL coverage, bank feeds, and complete external-event parity.
 
 ### Understand — Strong architecture, uneven product coverage
 
@@ -146,13 +146,13 @@ Deterministic calculations own quantities and money. Forecasting, supplier relia
 
 ### Decide — Strong bounded policy foundation
 
-Foundry can choose between acting, drafting, or escalating based on mode, capability grants, policy scope, quantity/value limits, supplier/location boundaries, evidence, and permissions. The policy vocabulary is narrower than the full future product and does not yet cover every business lifecycle.
+StockChief can choose between acting, drafting, or escalating based on mode, capability grants, policy scope, quantity/value limits, supplier/location boundaries, evidence, and permissions. The policy vocabulary is narrower than the full future product and does not yet cover every business lifecycle.
 
 ### Execute — Real, but domain-limited
 
-Foundry can execute inventory moves, prepare/approve purchasing under policy, send certain supplier/customer messages, request payments, and buy labels when explicitly authorized. It cannot yet autonomously run missing workflows such as stateful transfers, RMAs, landed-cost allocation, warehouse waves, or manufacturing.
+StockChief can execute inventory moves, prepare/approve purchasing under policy, send certain supplier/customer messages, request payments, and buy labels when explicitly authorized. It cannot yet autonomously run missing workflows such as stateful transfers, RMAs, landed-cost allocation, warehouse waves, or manufacturing.
 
-### Verify — One of Foundry's strongest differentiators
+### Verify — One of StockChief's strongest differentiators
 
 Action execution rereads state and verifies the outcome. Reconciliation checks inventory movements, PO receipts/status, work outcomes, imports, duplicate invoices, connector mismatches, AR/AP, and accounting-versus-inventory consistency. Material discrepancies are surfaced instead of silently “fixed.”
 
@@ -177,11 +177,11 @@ Forecast outcomes, backtests, demand behavior, and supplier lead-time outcomes a
 
 ### What is missing
 
-Foundry does **not** yet have one authoritative website knowledge graph containing every page, entity, action, prerequisite, permission, side effect, route parameter, return path, and troubleshooting playbook. Guidance currently names a limited set of tasks and screen descriptions. The AI therefore cannot truthfully be said to know the entire website “by heart.”
+StockChief does **not** yet have one authoritative website knowledge graph containing every page, entity, action, prerequisite, permission, side effect, route parameter, return path, and troubleshooting playbook. Guidance currently names a limited set of tasks and screen descriptions. The AI therefore cannot truthfully be said to know the entire website “by heart.”
 
 It also lacks a complete navigation action contract. A request such as “take me to the place where I add a supplier bill for this receipt” should resolve deterministically to exactly one permitted route, explain why, navigate in-app, and confirm arrival. Today, the system often returns links, but universal coverage and arrival verification are missing.
 
-Troubleshooting is also narrower than the goal. Foundry can detect mismatches and recover interrupted/idempotent work. It needs a governed repair loop:
+Troubleshooting is also narrower than the goal. StockChief can detect mismatches and recover interrupted/idempotent work. It needs a governed repair loop:
 
 1. identify the symptom;
 2. reconstruct the cross-domain timeline;
@@ -198,30 +198,30 @@ Troubleshooting is also narrower than the goal. Foundry can detect mismatches an
 
 ## Competitive benchmark
 
-### Mature operational depth Foundry must match
+### Mature operational depth StockChief must match
 
-- **Odoo** documents bins, putaway, batch/wave/cluster picking, barcode operations, UOM conversion, returns, FEFO/FIFO removal, cycle counts, manufacturing routes, perpetual valuation, and landed costs. Foundry is much simpler but currently much shallower in warehouse execution. [Official Odoo inventory features](https://www.odoo.com/app/inventory-features)
-- **NetSuite** has future-supply allocation, required-by-date matching, advanced lot/serial/bin management, and landed-cost allocation by weight, quantity, or value. Foundry's connected explanations are simpler, but its allocation and costing depth is behind. [Official NetSuite supply allocation](https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_156424975823.html) and [landed-cost documentation](https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_N2418831.html)
-- **Finale** documents bin-directed receiving/putaway, in-transit/dock/zone tracking, mobile barcode receiving/picking/counting/transfers, wave picking, label printing, and lot/serial/expiry scanning. These are direct warehouse gaps in Foundry. [Official Finale WMS](https://www.finaleinventory.com/features/warehouse-management-system/)
-- **Fishbowl** documents scan-first receiving, bin putaway, RMA, landed-cost reconciliation, accounting synchronization, manufacturing/BOM/MRP, and advanced warehouse/EDI offerings. Foundry has a stronger explainable-autonomy architecture, but not this breadth. [Official Fishbowl receiving](https://www.fishbowlinventory.com/features/receive-goods) and [product capabilities](https://www.fishbowlinventory.com/fishbowl-inventory)
-- **Unleashed** documents real-time inventory, bins, batch/serial tracking, barcode scanning, and pick/pack/receive/transfer warehouse workflows. Foundry is behind in daily warehouse ergonomics. [Official Unleashed inventory features](https://www.unleashedsoftware.com/en-us/product/inventory-management-software/)
-- **Zoho Inventory** now documents AI agents that can manage catalog, warehouse, orders, shipment, returns, procurement, and workflows, plus Ask Zia answers with direct action links. Foundry cannot assume competitors stop at recommendations. [Official Zoho AI inventory features](https://www.zoho.com/us/inventory/features/ai-in-inventory/)
+- **Odoo** documents bins, putaway, batch/wave/cluster picking, barcode operations, UOM conversion, returns, FEFO/FIFO removal, cycle counts, manufacturing routes, perpetual valuation, and landed costs. StockChief is much simpler but currently much shallower in warehouse execution. [Official Odoo inventory features](https://www.odoo.com/app/inventory-features)
+- **NetSuite** has future-supply allocation, required-by-date matching, advanced lot/serial/bin management, and landed-cost allocation by weight, quantity, or value. StockChief's connected explanations are simpler, but its allocation and costing depth is behind. [Official NetSuite supply allocation](https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_156424975823.html) and [landed-cost documentation](https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_N2418831.html)
+- **Finale** documents bin-directed receiving/putaway, in-transit/dock/zone tracking, mobile barcode receiving/picking/counting/transfers, wave picking, label printing, and lot/serial/expiry scanning. These are direct warehouse gaps in StockChief. [Official Finale WMS](https://www.finaleinventory.com/features/warehouse-management-system/)
+- **Fishbowl** documents scan-first receiving, bin putaway, RMA, landed-cost reconciliation, accounting synchronization, manufacturing/BOM/MRP, and advanced warehouse/EDI offerings. StockChief has a stronger explainable-autonomy architecture, but not this breadth. [Official Fishbowl receiving](https://www.fishbowlinventory.com/features/receive-goods) and [product capabilities](https://www.fishbowlinventory.com/fishbowl-inventory)
+- **Unleashed** documents real-time inventory, bins, batch/serial tracking, barcode scanning, and pick/pack/receive/transfer warehouse workflows. StockChief is behind in daily warehouse ergonomics. [Official Unleashed inventory features](https://www.unleashedsoftware.com/en-us/product/inventory-management-software/)
+- **Zoho Inventory** now documents AI agents that can manage catalog, warehouse, orders, shipment, returns, procurement, and workflows, plus Ask Zia answers with direct action links. StockChief cannot assume competitors stop at recommendations. [Official Zoho AI inventory features](https://www.zoho.com/us/inventory/features/ai-in-inventory/)
 
-### Planning and AI Foundry must match or exceed
+### Planning and AI StockChief must match or exceed
 
 - **Cin7 Smart Reorder/ForesightAI** recommends purchases, transfers, and assemblies using demand, lead time, MOQ, pack size, stock position, product segments, and six-month forecasts, then creates supply orders. [Official Cin7 Smart Reorder](https://help.core.cin7.com/hc/en-us/articles/10955759303055-Smart-reorder)
 - **Katana AI Replenishment** publishes its safety-stock logic and can update the safety-stock value, while its operational core connects stock, commitments, expected supply, manufacturing, and purchasing. [Official Katana AI replenishment](https://support.katanamrp.com/en/articles/15552497-ai-replenishment-s-safety-stock-formula-and-recommendations)
 - **Inventory Planner** specializes in explainable SKU-level forecasts, stockout timing, replenishment, purchasing, open-to-buy, aging, and warehouse comparison. It is a planning layer rather than a full IMS, but its planning UX is mature. [Official Inventory Planner guide](https://help.inventory-planner.com/en/articles/3456738-inventory-planner-101)
 - **Prediko** advertises 12-month plans, daily stockout/late-PO updates, one-click PO and transfer actions, raw materials, and a conversational inventory coworker. [Official Prediko workflow](https://www.prediko.io/how-it-works)
-- **Cin7, Katana, Unleashed, Inventory Planner, and Prediko** generally lead with recommendations and user-triggered actions. Foundry's opportunity is to close the operational-depth gap while preserving its stronger authority → execution → verification → audit loop.
+- **Cin7, Katana, Unleashed, Inventory Planner, and Prediko** generally lead with recommendations and user-triggered actions. StockChief's opportunity is to close the operational-depth gap while preserving its stronger authority → execution → verification → audit loop.
 
 ### Other positioning
 
 - **Extensiv** is strongest where multichannel order management, 3PL/WMS execution, allocations, routing, returns, and high-volume fulfillment meet.
-- **Sortly** is intentionally simpler and mobile-first, emphasizing QR/barcode identification, counts, alerts, reports, and straightforward POs. Foundry should beat its ease without inheriting its limited business brain.
-- **NetSuite and Odoo** provide the broadest ERP-style depth, but impose substantial configuration and workflow complexity. Foundry should match the correctness that matters without reproducing their operator burden.
+- **Sortly** is intentionally simpler and mobile-first, emphasizing QR/barcode identification, counts, alerts, reports, and straightforward POs. StockChief should beat its ease without inheriting its limited business brain.
+- **NetSuite and Odoo** provide the broadest ERP-style depth, but impose substantial configuration and workflow complexity. StockChief should match the correctness that matters without reproducing their operator burden.
 
-## A. What Foundry already does exceptionally well
+## A. What StockChief already does exceptionally well
 
 1. **Physical inventory has one ledger authority.** It is not recomputed from UI state or external payloads.
 2. **Money and quantity are separated.** Receiving, supplier billing, supplier payment, sale completion, and customer payment are distinct business facts.
@@ -249,7 +249,7 @@ Troubleshooting is also narrower than the goal. Foundry can detect mismatches an
 - Permission depth and enterprise identity controls.
 - Background processing durability beyond a single SQLite-hosted deployment.
 
-## C. Critical capabilities mature competitors have that Foundry lacks
+## C. Critical capabilities mature competitors have that StockChief lacks
 
 - Bins, zones, aisles, shelves, docks, putaway, and directed warehouse work.
 - Mobile scanning and label printing across receiving, picking, packing, counts, transfers, lots, and serials.
@@ -266,7 +266,7 @@ Troubleshooting is also narrower than the goal. Foundry can detect mismatches an
 - Advanced allocation strategy and future-supply pegging.
 - High-availability database/queue architecture and proven scale.
 
-## D. AI capabilities competitors already have that Foundry must meet or exceed
+## D. AI capabilities competitors already have that StockChief must meet or exceed
 
 - Plain-language, page-aware answers with direct action links.
 - Demand forecasting, stockout dates, forecast explanations, and safety-stock recommendations.
@@ -277,17 +277,17 @@ Troubleshooting is also narrower than the goal. Foundry can detect mismatches an
 - Aging, dead stock, margin, and inventory-investment analysis.
 - Agent-driven creation and update across core inventory entities.
 
-Foundry must exceed these by executing routine work inside explicit authority, verifying the business result, explaining alternatives and evidence, and escalating only when the evidence or authority is insufficient.
+StockChief must exceed these by executing routine work inside explicit authority, verifying the business result, explaining alternatives and evidence, and escalating only when the evidence or authority is insufficient.
 
-## E. Capabilities that can genuinely differentiate Foundry
+## E. Capabilities that can genuinely differentiate StockChief
 
 1. **One traceable business story.** A customer commitment can be followed through shortage, transfer/PO, supplier response, receipt, fulfillment, revenue, COGS, cash, and profit.
 2. **Verified autonomy rather than action-flavored chat.** Every mutation has authority evidence, idempotency, second-read verification, and a durable outcome.
-3. **Exception compression.** Hundreds of routine operations become a few owner decisions, with the metric: “Foundry handled X; you were needed for Y.”
+3. **Exception compression.** Hundreds of routine operations become a few owner decisions, with the metric: “StockChief handled X; you were needed for Y.”
 4. **Universal “Why?” contract.** What happened, evidence, alternatives, chosen action, authority, result, and next expected event use one model everywhere.
-5. **Owner-language accounting joined to physical inventory.** Foundry explains what the owner owns, owes, is owed, spent, collected, earned, and still cannot prove.
-6. **A website operator, not a help center.** The owner can ask where anything is, ask Foundry to take them there, or ask it to complete the safe work.
-7. **Governed repair.** Foundry can reconstruct and repair real cross-module messes without hiding discrepancies or duplicating effects.
+5. **Owner-language accounting joined to physical inventory.** StockChief explains what the owner owns, owes, is owed, spent, collected, earned, and still cannot prove.
+6. **A website operator, not a help center.** The owner can ask where anything is, ask StockChief to take them there, or ask it to complete the safe work.
+7. **Governed repair.** StockChief can reconstruct and repair real cross-module messes without hiding discrepancies or duplicating effects.
 8. **Business-memory onboarding.** Verified facts, safe structural inference, provisional defaults, missing facts, and authority decisions remain distinct without exposing an audit report to the owner.
 
 ## F. Architectural weaknesses that block scale or autonomy
@@ -359,7 +359,7 @@ The following packages satisfy the requested design dimensions without pretendin
 ### WP0.1 — canonical website and capability brain
 
 - **Business problem:** users hunt, receive stale answers, or land on the wrong page.
-- **Competitor bar:** Zoho Ask Zia provides direct action links; Foundry must navigate and verify arrival.
+- **Competitor bar:** Zoho Ask Zia provides direct action links; StockChief must navigate and verify arrival.
 - **Current state:** partial registries, record search, high-level guidance, and 345 route handlers with no canonical map.
 - **Proposed behavior:** generate one typed registry for every page/entity/action/prerequisite/permission/side effect/troubleshooting path; the assistant answers, links, or navigates to the exact permitted destination and confirms it.
 - **Data model:** versioned `product_capabilities`, `ui_destinations`, `resolution_playbooks`, and optional navigation outcome events.
@@ -374,12 +374,12 @@ The following packages satisfy the requested design dimensions without pretendin
 ### WP0.2 — universal lifecycle/provenance graph
 
 - **Business problem:** records are connected in code but the owner cannot always follow one story.
-- **Competitor bar:** NetSuite/Odoo trace supply and demand; Foundry should make it understandable.
+- **Competitor bar:** NetSuite/Odoo trace supply and demand; StockChief should make it understandable.
 - **Current state:** source IDs, domain events, documents, movements, invoices, and payments exist but relations are domain-specific.
 - **Proposed behavior:** every important record exposes upstream cause, downstream consequences, documents, decisions, and verified outcome.
 - **Data model:** typed immutable `business_relations` edges with source, target, relation kind, evidence, creator, and timestamp.
 - **Backend/domain:** emit/validate edges in the same transaction as each event; reconcile missing or contradictory edges.
-- **UI/UX:** simple story first; “See how Foundry worked this out” opens the trace.
+- **UI/UX:** simple story first; “See how StockChief worked this out” opens the trace.
 - **AI:** explanations query graph evidence instead of composing a story from loose snapshots.
 - **Accounting:** tie every posting to the exact operational edge and source document.
 - **Permissions:** redact inaccessible records while preserving an honest explanation.
@@ -389,7 +389,7 @@ The following packages satisfy the requested design dimensions without pretendin
 ### WP0.3 — governed troubleshooting and repair
 
 - **Business problem:** detection without resolution still costs the owner time.
-- **Competitor bar:** mature systems reconcile transactions; Foundry should diagnose and safely resolve across modules.
+- **Competitor bar:** mature systems reconcile transactions; StockChief should diagnose and safely resolve across modules.
 - **Current state:** reconciliation/investigation is substantial; universal repair simulation and compensation are not.
 - **Proposed behavior:** reconstruct, diagnose, simulate, classify risk, request authority when material, execute one idempotent correction, and verify all affected domains.
 - **Data model:** repair cases, proposed compensations, before/after invariants, approvals, and verification evidence.
@@ -494,12 +494,12 @@ The following packages satisfy the requested design dimensions without pretendin
 ### WP2.1 — universal autonomous operator
 
 - **Business problem:** automation is powerful only in selected domains.
-- **Competitor bar:** Zoho agents can act broadly; Foundry must be safer and more verifiable.
+- **Competitor bar:** Zoho agents can act broadly; StockChief must be safer and more verifiable.
 - **Current state:** common modes/capabilities plus domain-specific policies and runner.
 - **Proposed behavior:** every mature operation implements observe, propose, decide, authorize, execute, verify, compensate, learn, and escalate contracts.
 - **Data model:** typed operation catalog, authority constraints, alternatives, expected outcomes, actual outcomes, and owner interventions.
 - **Backend/domain:** shared orchestration; domain services retain all mutation ownership.
-- **UI/UX:** “Foundry handled X; you were needed for Y,” with exception drilldown.
+- **UI/UX:** “StockChief handled X; you were needed for Y,” with exception drilldown.
 - **AI:** chooses among registered operations and explains; cannot create new operation types or bypass policy.
 - **Accounting:** spending, collection, write-off, credit, and financial communication remain separately grantable.
 - **Permissions:** quantity, value, supplier, customer, location, confidence, risk, role, time, and daily aggregate limits.
@@ -509,7 +509,7 @@ The following packages satisfy the requested design dimensions without pretendin
 ### WP2.2 — adaptive planning and cash-aware optimization
 
 - **Business problem:** reorder suggestions that ignore cash, margin, transfers, and uncertainty can hurt the business.
-- **Competitor bar:** Cin7/Katana/Inventory Planner/Prediko forecast and recommend; Foundry must optimize and safely act.
+- **Competitor bar:** Cin7/Katana/Inventory Planner/Prediko forecast and recommend; StockChief must optimize and safely act.
 - **Current state:** forecasting, backtests, stock projections, excess, rebalance, supplier reliability, and outcome scoring exist.
 - **Proposed behavior:** simulate buy/transfer/wait/expedite/substitute scenarios under service, cash, storage, MOQ, lead-time, margin, and authority constraints.
 - **Data model:** scenario inputs, objectives, constraints, chosen alternative, expected/actual outcome, model/version evidence.
@@ -524,7 +524,7 @@ The following packages satisfy the requested design dimensions without pretendin
 ### WP2.3 — supplier intelligence
 
 - **Business problem:** supplier changes create inventory and customer consequences that humans manually chase.
-- **Competitor bar:** serious planning systems use lead times and supply rules; Foundry should understand communications and act on consequences.
+- **Competitor bar:** serious planning systems use lead times and supply rules; StockChief should understand communications and act on consequences.
 - **Current state:** email/doc extraction, supplier mapping, tolerances, partial shipment/ETA updates, follow-ups, and consequence detection.
 - **Proposed behavior:** evaluate alternatives, compare supplier reliability/cost/lead time, draft negotiation or alternate PO, update promises only from evidence, and escalate material tradeoffs.
 - **Data model:** supplier offers, capacity, constraints, substitutions, acknowledgements, ASN facts, disputes, and scorecards.
@@ -597,7 +597,7 @@ These are the principal code locations behind the ratings. They are included so 
 
 ## Release and acceptance gates
 
-Foundry should not claim this mission complete until all of the following are true:
+StockChief should not claim this mission complete until all of the following are true:
 
 1. Every route and important action is represented in the canonical website registry.
 2. Any “where/how” question returns the exact permitted destination, can navigate there, and verifies arrival.
@@ -612,11 +612,11 @@ Foundry should not claim this mission complete until all of the following are tr
 11. A deployment migration and rollback rehearsal succeeds against production-like data.
 12. Inventory/accounting/external reconciliation reports no unexplained material difference.
 13. A sustained realistic-scale workload establishes response-time and worker-throughput budgets.
-14. Only after P0 passes should Foundry widen autonomous authority; new authority remains off by default.
+14. Only after P0 passes should StockChief widen autonomous authority; new authority remains off by default.
 
 ## Product standard
 
-Foundry should not win by displaying more fields than competitors. It should win because:
+StockChief should not win by displaying more fields than competitors. It should win because:
 
 - its underlying inventory facts are at least as rigorous;
 - its AI understands the connected business rather than one screen;
@@ -627,4 +627,4 @@ Foundry should not win by displaying more fields than competitors. It should win
 - the owner never has to learn where a feature lives;
 - operational complexity stays in the system instead of being pushed onto the user.
 
-The honest current position is: **Foundry has a differentiated autonomous core, but it still needs P0 certification and P1 warehouse depth before it can credibly overpower mature inventory platforms.**
+The honest current position is: **StockChief has a differentiated autonomous core, but it still needs P0 certification and P1 warehouse depth before it can credibly overpower mature inventory platforms.**

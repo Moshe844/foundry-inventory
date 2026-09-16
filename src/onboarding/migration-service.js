@@ -3,13 +3,13 @@
 /**
  * Taking the inventory over: the plan, the migration, and the reconciliation.
  *
- * The shape is the one every consequential thing in Foundry uses — propose,
+ * The shape is the one every consequential thing in StockChief uses — propose,
  * show, approve, execute, verify — with one addition that matters more here
  * than anywhere else.
  *
  * A migration is not finished when the import commands complete. It is finished
  * when the totals agree. Source totals are captured *before* anything is
- * created, Foundry's totals are counted afterwards from Mission 1 truth, and
+ * created, StockChief's totals are counted afterwards from Mission 1 truth, and
  * the two are compared. A migration whose numbers disagree is reported as
  * MISMATCHED with the discrepancies listed, never as verified. A business that
  * is told its migration succeeded and finds out three months later that its
@@ -114,12 +114,12 @@ function hydrateConflict(row) {
 }
 
 /**
- * Analyses the sources and stores what Foundry proposes to do with them.
+ * Analyses the sources and stores what StockChief proposes to do with them.
  */
 function buildPlan(db, ctx, membership, options = {}) {
   permissions.assertCan(membership, permissions.OPERATE, 'bring data in');
   const sources = sourceService.list(db, ctx.workspaceId);
-  if (sources.length === 0) throw new ValidationError('Give Foundry at least one file to work from.');
+  if (sources.length === 0) throw new ValidationError('Give StockChief at least one file to work from.');
 
   const analysis = consolidation.analyse(db, ctx.workspaceId, sources);
   const now = nowIso();
@@ -246,7 +246,7 @@ function decide(db, ctx, membership, conflictId, decision) {
   );
 }
 
-/** Accepts every conflict Foundry recommended an answer for, in one go. */
+/** Accepts every conflict StockChief recommended an answer for, in one go. */
 function acceptRecommendations(db, ctx, membership, planId) {
   permissions.assertCan(membership, permissions.OPERATE, 'bring data in');
   const conflicts = conflictsFor(db, ctx.workspaceId, planId, { onlyOpen: true });
@@ -285,7 +285,7 @@ async function migrate(db, ctx, membership, planId, options = {}) {
   const blocking = open.filter((conflict) => conflict.severity === 'blocking');
   if (blocking.length) {
     throw new ValidationError(
-      `${blocking.length} thing(s) still need a decision before Foundry can take this inventory over.`
+      `${blocking.length} thing(s) still need a decision before StockChief can take this inventory over.`
     );
   }
 
@@ -348,7 +348,7 @@ async function migrate(db, ctx, membership, planId, options = {}) {
       .run(nowIso(), planId);
     paths.setStatus(db, ctx.workspaceId, 'ready');
 
-    // 4. Look at the inventory Foundry now holds. Conservatively — there is no
+    // 4. Look at the inventory StockChief now holds. Conservatively — there is no
     // trading history yet, so most of Mission 3 has nothing honest to say.
     try {
       reevaluate.refresh(db, ctx.workspaceId, 'migration');
@@ -493,7 +493,7 @@ async function runImport(db, ctx, membership, source, plan, suppressedRowNumbers
    * A file with no location column produced no mappings, so nothing was handed
    * to the import and every row failed with "No location for this stock, and
    * no default chosen". Forty good rows, nothing created, and the migration
-   * reporting "There is nothing in that file Foundry can import" about a file
+   * reporting "There is nothing in that file StockChief can import" about a file
    * it had just read forty products and 751 units out of.
    *
    * The plan proposes a location in that case and the migration has created it
@@ -544,7 +544,7 @@ async function runImport(db, ctx, membership, source, plan, suppressedRowNumbers
 // ---------------------------------------------------------------------------
 
 /**
- * Compares what the sources said with what Foundry now holds.
+ * Compares what the sources said with what StockChief now holds.
  *
  * Counted independently on both sides. A check that cannot be made honestly is
  * reported as unmeasured rather than quietly passing.
@@ -589,7 +589,7 @@ function reconcile(db, workspaceId, runId, plan, imports, decisions = new Map())
 
   const discrepancies = checks
     .filter((entry) => entry.measured && !entry.ok)
-    .map((entry) => `${entry.name}: the files say ${entry.expected}, Foundry holds ${entry.observed}.`);
+    .map((entry) => `${entry.name}: the files say ${entry.expected}, StockChief holds ${entry.observed}.`);
 
   // Rows that never made it in are a discrepancy even when the arithmetic
   // happens to line up — they are records the customer handed over and does

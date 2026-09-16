@@ -108,7 +108,7 @@ test('the plan shown for approval carries the reason, the working and the after-
   assert.match(text, /3 cases/);
   assert.match(text, /36 units from ABC Supply/);
   // The working.
-  assert.match(text, /How Foundry worked this out/i);
+  assert.match(text, /How StockChief worked this out/i);
   assert.match(text, /Position across every location is 48 on hand \+ 0 on order = 48/);
   assert.match(text, /Order up to 84 − position 48 = 36 needed/);
   // What the inventory will look like afterwards.
@@ -518,7 +518,7 @@ test('approving the one plan prepares both halves and verifies each', async () =
   const env = await blackSmall();
   runner.run(env.db, env.workspace.ctx, env.membership, { trigger: 'test' });
   const plan = workItems.list(env.db, env.workspace.workspaceId, { category: 'replenishment_plan' })[0];
-  assert.equal(plan.approvalRequirement, 'REQUIRED', 'a plan that spends money is never Foundry alone');
+  assert.equal(plan.approvalRequirement, 'REQUIRED', 'a plan that spends money is never StockChief alone');
 
   const balance = (locationId) => repo.getBalance(env.db, env.workspace.workspaceId, env.small.id, locationId);
   const before = { warehouse: balance(env.workspace.main.id), shop: balance(env.workspace.store.id) };
@@ -744,7 +744,7 @@ async function planWithAnExistingDraft() {
 
 test('an order the plan contains is not offered for approval on its own', async () => {
   const env = await planWithAnExistingDraft();
-  const prepared = autopilotPresenter.whatFoundryPrepared(env.db, env.workspace.workspaceId);
+  const prepared = autopilotPresenter.whatStockChiefPrepared(env.db, env.workspace.workspaceId);
 
   assert.deepEqual(
     prepared.filter((entry) => entry.kind === 'purchase'), [],
@@ -838,11 +838,11 @@ test('once the plan is done, the order is an ordinary draft again', async () => 
   runner.approveWorkItem(env.db, env.workspace.ctx, env.membership, planItem.id);
   runner.executeWorkItem(env.db, env.workspace.ctx, env.membership, planItem.id);
 
-  // Placing the order is the act Foundry never does by itself, so once the plan
+  // Placing the order is the act StockChief never does by itself, so once the plan
   // has finished it is the remaining decision and belongs back on its own.
   const owned = autopilotPresenter.ordersOwnedByAPlan(env.db, env.workspace.workspaceId);
   assert.equal(owned.size, 0, 'a finished plan owns nothing');
-  const prepared = autopilotPresenter.whatFoundryPrepared(env.db, env.workspace.workspaceId);
+  const prepared = autopilotPresenter.whatStockChiefPrepared(env.db, env.workspace.workspaceId);
   assert.ok(
     prepared.some((entry) => entry.kind === 'purchase'),
     'the draft is offered again once nothing else speaks for it'
@@ -989,7 +989,7 @@ test('a fresh workspace reaches exactly one replenishment decision, and it expla
   const purchasing = await agent.get('/purchasing').expect(200);
   const purchasingWords = plain(purchasing.text).replace(/\s+/g, ' ');
   assert.match(purchasing.text, new RegExp(`/autopilot/work/${activePlan.id}`));
-  assert.match(purchasingWords, /Review Foundry's decision/);
+  assert.match(purchasingWords, /Review StockChief's decision/);
   assert.doesNotMatch(purchasingWords, /Do now:.*Add who supplies/i,
     'the Needs You count is not paired with an unrelated setup instruction');
   assert.doesNotMatch(purchasing.text, new RegExp(`/purchasing/prepare/${supplier.id}`),

@@ -1,6 +1,6 @@
 <div class="page-head">
   <div class="titles">
-    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> Foundry</a>
+    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> StockChief</a>
     <h1><%= proposal.status === 'COMPLETED' ? 'Products removed from active inventory' : 'Remove products added by this file?' %></h1>
     <div class="page-sub"><%= proposal.snapshot.document.sourceName %></div>
   </div>
@@ -28,7 +28,7 @@
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="integrityHash" value="<%= proposal.integrityHash %>">
     <div class="card-head">
-      <h2>Foundry traced these products to <%= proposal.snapshot.document.sourceName %></h2>
+      <h2>StockChief traced these products to <%= proposal.snapshot.document.sourceName %></h2>
       <span class="badge badge--danger"><%= proposal.snapshot.productCount %> product<%= proposal.snapshot.productCount === 1 ? '' : 's' %></span>
     </div>
     <div class="card-body">
@@ -62,7 +62,7 @@
       <h3 class="sub-head">What approval will do</h3>
       <ul class="plain-list">
         <li>Correct the current stock on these products to zero through the inventory ledger.</li>
-        <li>Archive these products so they disappear from active inventory and future Foundry work.</li>
+        <li>Archive these products so they disappear from active inventory and future StockChief work.</li>
         <li>Clear or supersede Needs You work that only concerns these products.</li>
         <li>Keep the original upload, purchase order and all movements as audit history.</li>
       </ul>

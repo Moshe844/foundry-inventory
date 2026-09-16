@@ -21,28 +21,28 @@
   <p class="rm-head__eyebrow"><%- helpers.icon('settings', { size: 14 }) %> Settings</p>
   <h1>The technical side of this inventory.</h1>
   <p>
-    What Foundry may do, where stock lives, who can see it, and the record behind its decisions.
-    What you have <em>told</em> Foundry — the standing rules in your own words — lives on its own page.
+    What StockChief may do, where stock lives, who can see it, and the record behind its decisions.
+    What you have <em>told</em> StockChief — the standing rules in your own words — lives on its own page.
   </p>
 </div>
 
 <div class="rm-next">
   <p class="rm-stamp"><%- helpers.icon('chat', { size: 13 }) %> Most things are set by saying them</p>
-  <p class="rm-next__t">Foundry is taught by talking to it, not by filling in this page.</p>
+  <p class="rm-next__t">StockChief is taught by talking to it, not by filling in this page.</p>
   <p class="rm-next__d">Tell it a rule and it writes the rule down for you to check, change or take away.</p>
   <p class="rm-choices" style="margin-top:11px">
     <a class="rm-btn rm-btn--sm" href="/what-you-told-me">What you've told me</a>
-    <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask">Tell Foundry something</a>
+    <a class="rm-btn rm-btn--ghost rm-btn--sm" href="/ask">Tell StockChief something</a>
   </p>
 </div>
 
 <%# ------------------------------------------------------------ destinations %>
-<p class="rm-stamp"><%- helpers.icon('bolt', { size: 14 }) %> How Foundry runs this inventory</p>
+<p class="rm-stamp"><%- helpers.icon('bolt', { size: 14 }) %> How StockChief runs this inventory</p>
 <div class="rm-choices-grid" style="margin-bottom:18px">
   <a class="rm-choice" href="/autopilot">
     <span class="rm-choice__ic"><%- helpers.icon('shield', { size: 19 }) %></span>
     <span class="rm-choice__t">Standing authority</span>
-    <span class="rm-choice__b">Whether Foundry asks first, or handles routine work inside limits you set.</span>
+    <span class="rm-choice__b">Whether StockChief asks first, or handles routine work inside limits you set.</span>
     <span class="rm-choice__go">Open <%- helpers.icon('arrowRight', { size: 14 }) %></span>
   </a>
   <a class="rm-choice" href="/purchasing/setup">
@@ -76,13 +76,13 @@
   <a class="rm-choice" href="/settings/connections">
     <span class="rm-choice__ic"><%- helpers.icon('link', { size: 19 }) %></span>
     <span class="rm-choice__t">Connections</span>
-    <span class="rm-choice__b">Mailbox, shop, payments and carrier — what keeps Foundry informed.</span>
+    <span class="rm-choice__b">Mailbox, shop, payments and carrier — what keeps StockChief informed.</span>
     <span class="rm-choice__go">Manage <%- helpers.icon('arrowRight', { size: 14 }) %></span>
   </a>
   <a class="rm-choice" href="/settings/shipping">
     <span class="rm-choice__ic"><%- helpers.icon('ship', { size: 19 }) %></span>
     <span class="rm-choice__t">Shipping</span>
-    <span class="rm-choice__b">Which carrier and service Foundry may buy on its own, and up to what.</span>
+    <span class="rm-choice__b">Which carrier and service StockChief may buy on its own, and up to what.</span>
     <span class="rm-choice__go">Open <%- helpers.icon('arrowRight', { size: 14 }) %></span>
   </a>
   <a class="rm-choice" href="/imports">
@@ -100,6 +100,53 @@
 </div>
 
 <%# ------------------------------------------------------- stock protection %>
+<section class="rm-panel" style="margin-bottom:16px" id="email-alerts">
+  <div class="rm-panel__head">
+    <%- helpers.icon('mail', { size: 15, className: 'rm-quiet' }) %>
+    <h2>Automatic email alerts</h2>
+    <span class="right"><span class="rm-pillbadge <%= emailAlerts.enabled && emailAlerts.deliveryConfigured ? 'is-ok' : emailAlerts.enabled ? 'is-warn' : '' %>">
+      <%= emailAlerts.enabled && emailAlerts.deliveryConfigured ? 'on'
+        : emailAlerts.enabled ? 'waiting for sender' : 'off' %>
+    </span></span>
+  </div>
+  <form method="post" action="/settings/email-alerts" style="padding:16px">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="rm-field">
+      <span><input type="checkbox" name="enabled" value="1" <%= emailAlerts.enabled ? 'checked' : '' %> <%= isOwner ? '' : 'disabled' %>> Email me when something newly needs attention</span>
+      <small>StockChief sends one email when the item opens. Rechecking the same condition does not send another.</small>
+    </label>
+    <label class="rm-field">
+      <span>Which items</span>
+      <select name="minimumSeverity" <%= isOwner ? '' : 'disabled' %>>
+        <option value="critical" <%= emailAlerts.minimumSeverity === 'critical' ? 'selected' : '' %>>Critical only</option>
+        <option value="important" <%= emailAlerts.minimumSeverity === 'important' ? 'selected' : '' %>>Important and critical</option>
+        <option value="all" <%= emailAlerts.minimumSeverity === 'all' ? 'selected' : '' %>>Everything, including watch items</option>
+      </select>
+    </label>
+    <label class="rm-field">
+      <span>Recipients</span>
+      <textarea name="recipients" rows="2" <%= isOwner ? '' : 'disabled' %>><%= emailAlerts.recipients.join('\n') %></textarea>
+      <small>One or more email addresses, separated by a new line or comma. Each email contains a direct link to the decision.</small>
+    </label>
+    <% if (!emailAlerts.deliveryConfigured) { %>
+      <div class="rm-note rm-note--warn" style="margin-bottom:12px">
+        <%- helpers.icon('alert', { size: 16 }) %>
+        <span><strong>Delivery is not configured on this server yet.</strong><br>
+          Add a verified sender in <code>FOUNDRY_FROM_EMAIL</code> and a Resend key in <code>RESEND_API_KEY</code>. The preferences above can be saved now; emails begin with future events after delivery is configured.</span>
+      </div>
+    <% } %>
+    <% if (isOwner) { %><div class="rm-choices">
+      <button class="rm-btn rm-btn--sm" type="submit">Save email alerts</button>
+    </div><% } %>
+  </form>
+  <% if (isOwner && emailAlerts.enabled) { %>
+    <form method="post" action="/settings/email-alerts/test" style="padding:0 16px 16px">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Send a test email</button>
+    </form>
+  <% } %>
+</section>
+
 <% if (stockGuards.length) { %>
   <section class="rm-panel" style="margin-bottom:16px" id="stock-protection">
     <div class="rm-panel__head">
@@ -268,7 +315,7 @@
 <%# Everything below is for auditing and integrating. It is real and it is
     kept, but it is not what somebody opens Settings to change, so it is closed
     until they want it. %>
-<p class="rm-stamp"><%- helpers.icon('serial', { size: 14 }) %> Advanced — the record behind Foundry's decisions, and the ways in</p>
+<p class="rm-stamp"><%- helpers.icon('serial', { size: 14 }) %> Advanced — the record behind StockChief's decisions, and the ways in</p>
 
 <% if (learnedInstructions.length) { %>
   <details class="card advanced-settings" id="learned-instructions">
@@ -297,7 +344,7 @@
   </summary>
   <div class="rm-work__body">
     <p style="font-size:13.5px;color:var(--ink-2);margin:0 0 14px;max-width:70ch">
-      Sales and warehouse systems can push real movements to Foundry as they happen. Event IDs are
+      Sales and warehouse systems can push real movements to StockChief as they happen. Event IDs are
       idempotent: retrying one never moves stock twice.
     </p>
 
@@ -332,7 +379,7 @@
       <p class="rm-quiet" style="font-size:12.5px">
         Also supported: receive, customer_return, damage, count, adjustment and transfer. Use
         <code style="font-family:var(--f-num)">supplierCode</code> when an external system knows the
-        vendor's code rather than Foundry's SKU.
+        vendor's code rather than StockChief's SKU.
       </p>
     </details>
 
@@ -377,7 +424,7 @@
 </details>
 
 <p class="rm-disclose">
-  <a href="/autopilot/history">System &amp; audit — what Foundry checked, decided and carried out</a>
+  <a href="/autopilot/history">System &amp; audit — what StockChief checked, decided and carried out</a>
   <% if (isOwner) { %><a href="/settings/export">Export this inventory</a><% } %>
   <a href="/what-you-told-me">What you've told me</a>
   <a href="/everything">Everything else</a>

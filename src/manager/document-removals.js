@@ -121,7 +121,7 @@ function get(db, workspaceId, id) {
 function create(db, ctx, membership, instruction) {
   const document = referencedDocument(db, ctx.workspaceId, instruction);
   if (!document) {
-    throw new ValidationError('Foundry could not find an earlier applied document in this inventory. Nothing was removed.');
+    throw new ValidationError('StockChief could not find an earlier applied document in this inventory. Nothing was removed.');
   }
   const snapshot = snapshotFor(db, ctx.workspaceId, document);
   const activeItems = snapshot.items.filter((item) => item.active);
@@ -130,7 +130,7 @@ function create(db, ctx, membership, instruction) {
   snapshot.variantCount = activeItems.reduce((sum, item) => sum + item.variants.length, 0);
   snapshot.onHand = activeItems.reduce((sum, item) => sum + item.onHand, 0);
   if (!snapshot.items.length) {
-    throw new ValidationError(`${document.source_name} did not create any products Foundry can safely remove. Nothing was removed.`);
+    throw new ValidationError(`${document.source_name} did not create any products StockChief can safely remove. Nothing was removed.`);
   }
   const integrityHash = hash(snapshot);
   const existing = db.prepare(`SELECT * FROM document_removal_proposals
@@ -183,7 +183,7 @@ function approve(db, ctx, membership, id, expectedHash, requestedItemIds = null)
     .get(ctx.workspaceId, proposal.setupDocumentId);
   const current = snapshotFor(db, ctx.workspaceId, document, proposal.snapshot.items.map((item) => item.id));
   if (hash(current) !== proposal.integrityHash) {
-    throw new ValidationError('Stock changed after this preview was prepared. Ask Foundry to remove the uploaded items again so you can review the current quantities.');
+    throw new ValidationError('Stock changed after this preview was prepared. Ask StockChief to remove the uploaded items again so you can review the current quantities.');
   }
 
   const selected = current.items.filter((item) => itemIdsToRemove.includes(item.id));

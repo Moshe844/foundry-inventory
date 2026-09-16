@@ -24,7 +24,7 @@ test('public API reads and changes inventory only through scoped canonical comma
   const read = publicApi.create(f.db, f.workspace.ctx, { name: 'Reporting', scopes: ['inventory:read'] });
   const operate = publicApi.create(f.db, f.workspace.ctx, { name: 'Warehouse', scopes: ['inventory:read', 'inventory:write'] });
   let response = await request(f.app).get('/api/v1/public/inventory').set('Authorization', `Bearer ${read.token}`);
-  assert.equal(response.status, 200); assert.equal(response.body.sourceOfTruth, 'Foundry canonical inventory engine');
+  assert.equal(response.status, 200); assert.equal(response.body.sourceOfTruth, 'StockChief canonical inventory engine');
   response = await request(f.app).post('/api/v1/public/commands/inventory/receive')
     .set('Authorization', `Bearer ${read.token}`).set('Idempotency-Key', 'receive-1')
     .send({ skuId: f.item.skuId, locationId: f.workspace.main.id, quantity: 4 });

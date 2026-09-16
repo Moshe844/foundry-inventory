@@ -132,7 +132,7 @@ function openPhysicalCount(db, ctx, input) {
   // A count is a discrepancy only when it disagrees with a ledger. On a sku and
   // location with no movements at all, a zero balance is not a measurement that
   // says "empty" — it is the absence of any measurement, and the count is the
-  // customer telling Foundry its opening stock for the first time. Treating it
+  // customer telling StockChief its opening stock for the first time. Treating it
   // as an unexplained surplus was a dead end: the investigation reported units
   // it refused to explain, resolving it deliberately does not write a balance,
   // and somebody entering their opening quantities on the setup path ended up
@@ -148,7 +148,7 @@ function openPhysicalCount(db, ctx, input) {
       observedDifference: { expected, observed, difference },
       confidence: 'high',
       recommendedNextStep:
-        `Foundry has never recorded a movement of ${entities.displayName || 'this item'} at ${location.name}, ` +
+        `StockChief has never recorded a movement of ${entities.displayName || 'this item'} at ${location.name}, ` +
         `so there is nothing for this count to disagree with. If these ${observed} are your opening stock, ` +
         `receive them — that writes the balance with you on record as the source.`,
       actorUserId: ctx.actorId,
@@ -221,7 +221,7 @@ function investigate(db, workspaceId, id) {
 
   if (!entities.skuId || !hasMeasuredDifference) {
     const next = investigation.recommendedNextStep ||
-      'Name the product, location and physical count so Foundry can compare it with the ledger.';
+      'Name the product, location and physical count so StockChief can compare it with the ledger.';
     db.prepare(
       `UPDATE inventory_investigations
           SET evidence_reviewed = ?, hypotheses = '[]', evidence_for = '[]', evidence_against = '[]',
@@ -271,7 +271,7 @@ function investigate(db, workspaceId, id) {
 
   // Two separately recorded movements with the same non-empty external
   // reference, operation, quantity and location are concrete duplicate
-  // evidence.  Foundry still calls this a likely explanation, never a cause.
+  // evidence.  StockChief still calls this a likely explanation, never a cause.
   const duplicateIds = new Set();
   for (let a = 0; a < movements.length; a += 1) {
     const first = movements[a];

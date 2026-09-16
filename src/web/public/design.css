@@ -1,5 +1,5 @@
 /* =============================================================================
- * Foundry — the design system.
+ * StockChief — the design system.
  *
  * One file owns the look of the product: the tokens every colour, size and
  * distance is derived from, and the components every screen is assembled out
@@ -7,12 +7,12 @@
  * to a single screen, and they read these tokens, so a change here moves the
  * whole product at once.
  *
- * The idea is an instrument panel. Foundry runs an operation and reports on
+ * The idea is an instrument panel. StockChief runs an operation and reports on
  * it, so the screen should read like something that is measuring — dense,
  * quiet, hairline-ruled, every number in figures that line up — rather than
  * like a brochure or an admin template. Depth comes from borders, not from
  * shadow; shadow is reserved for things that genuinely float. Colour is a
- * signal and never a decoration: indigo means interaction or Foundry acting,
+ * signal and never a decoration: indigo means interaction or StockChief acting,
  * amber means a person is needed, and nothing else is coloured at all.
  *
  * Two vocabularies are in the views — the older `card`/`btn`/`page-head` set
@@ -57,7 +57,7 @@
   --line-2: var(--n-150);
   --line-3: var(--n-300);
 
-  /* Foundry. Indigo is the mark; it means interaction, or Foundry working. */
+  /* StockChief. Indigo is the mark; it means interaction, or StockChief working. */
   --brand:      #5B4BE8;
   --brand-2:    #4A3ACB;
   --brand-3:    #3226A0;
@@ -262,7 +262,7 @@ input[type="number"], .rm-ledger__v, .rm-told__m, .rm-spine__d {
 /*
  * Reduced motion is handled in foundry.css, which draws a careful distinction
  * this file would have flattened: decoration stops dead, but the spinner that
- * says Foundry is still working keeps moving, because a frozen spinner reads
+ * says StockChief is still working keeps moving, because a frozen spinner reads
  * as an application that has hung.
  */
 
@@ -280,7 +280,7 @@ input[type="number"], .rm-ledger__v, .rm-told__m, .rm-spine__d {
 /*
  * The frame every screen is hung on: a fixed command bar, and a canvas under
  * it. The bar carries what a person does in a day — read the brief, settle
- * what Foundry could not, ask it something — plus the search that reaches
+ * what StockChief could not, ask it something — plus the search that reaches
  * every record, the inventory being worked on, and who is signed in.
  */
 
@@ -671,7 +671,7 @@ div.page-actions, .rm-title__do {
 /* A line that explains the title directly under it, rather than a label. */
 .rm-stamp--lede { margin: 2px 0 var(--s5); max-width: 78ch; }
 
-/* A page whose title is a sentence Foundry is telling you. Kept, because that
+/* A page whose title is a sentence StockChief is telling you. Kept, because that
    is genuinely what the brief and the desk are — but sized so it belongs to
    the same product as the table on the next screen. */
 .rm-figure, .rm-verdict, .rm-h {
@@ -692,7 +692,7 @@ div.page-actions, .rm-title__do {
  *
  * Money's headline, the ledger's figures and a panel's heading are all wrapped
  * in anchors so they open their source. Left to the link colour, that made a
- * page of indigo numbers — and indigo is supposed to mean "this is Foundry
+ * page of indigo numbers — and indigo is supposed to mean "this is StockChief
  * acting", not "this is money".
  */
 h1 a, h2 a, h3 a,
@@ -918,7 +918,7 @@ h1 a:hover, h2 a:hover, h3 a:hover,
   background: var(--surface); border-color: var(--line-3); color: var(--ink); box-shadow: var(--sh-1);
 }
 
-/* Foundry's own colour, for an action that is Foundry acting. */
+/* StockChief's own colour, for an action that is StockChief acting. */
 .btn--wash, .rm-btn--wash, .rm-button--quiet, .rm-btn--quiet {
   background: var(--brand-wash); color: var(--brand-3);
   border-color: var(--brand-line); box-shadow: none; font-weight: 550;
@@ -1527,7 +1527,7 @@ details.card > summary.card-head:hover::after { color: var(--brand-2); }
 /* ---------------------------------------------------------------- 9. tables */
 
 /*
- * The table is the product's main surface, not its afterthought. Foundry is
+ * The table is the product's main surface, not its afterthought. StockChief is
  * read in columns: what it is, what state it is in, how many, how many are
  * free, how many are coming. So the rules are strict — a fixed row height so
  * scanning has a rhythm, hairlines instead of stripes, numbers right-aligned
@@ -1792,7 +1792,7 @@ details.card > summary.card-head:hover::after { color: var(--brand-2); }
 .dot--info { background: var(--info); }
 .dot--zero { background: var(--line-3); }
 
-/* Foundry is running right now, and the frame says so without a sentence. */
+/* StockChief is running right now, and the frame says so without a sentence. */
 .rm-live {
   display: inline-flex; align-items: center; gap: 7px;
   font-size: var(--t-sm); font-weight: 600;
@@ -1822,7 +1822,7 @@ details.card > summary.card-head:hover::after { color: var(--brand-2); }
   100% { transform: scale(1.5); opacity: 0; }
 }
 
-/* Something Foundry is in the middle of. */
+/* Something StockChief is in the middle of. */
 .rm-working { position: relative; overflow: hidden; }
 .rm-working::after {
   content: "";
@@ -1991,7 +1991,7 @@ details.card > summary.card-head:hover::after { color: var(--brand-2); }
 .empty .btn, .empty-state .btn, .rm-empty .btn, .rm-empty .rm-btn { margin-top: var(--s2); }
 .empty .hint { margin-top: var(--s1); }
 
-/* The page somebody lands on when Foundry could not do what they asked. */
+/* The page somebody lands on when StockChief could not do what they asked. */
 .errorpage { max-width: 720px; margin: var(--s8) auto; }
 .errorpage__detail { margin: 0; border: 0; border-top: 1px solid var(--line-2); border-radius: 0; box-shadow: none; }
 .errorpage__trace {
@@ -2415,10 +2415,10 @@ dialog.modal:focus, dialog.modal:focus-visible { outline: none; }
 /* -------------------------------------------------------- 17. what happens */
 
 /*
- * The three things Foundry puts in front of a person: a decision only they can
+ * The three things StockChief puts in front of a person: a decision only they can
  * make, the next thing worth doing, and the work it has been getting on with.
  * These carry the amber/indigo rule literally — amber is the one that needs a
- * person, indigo is Foundry.
+ * person, indigo is StockChief.
  */
 
 .rm-decision {
@@ -2459,7 +2459,7 @@ dialog.modal:focus, dialog.modal:focus-visible { outline: none; }
 .rm-next__t { font-size: var(--t-lg); font-weight: 600; line-height: 1.4; margin: 0; letter-spacing: -0.014em; }
 .rm-next__d { font-size: var(--t-md); color: var(--muted); margin: 3px 0 0; }
 
-/* What Foundry did, and is doing, as a feed. */
+/* What StockChief did, and is doing, as a feed. */
 .rm-feed { display: grid; }
 .rm-feed__row {
   display: grid; grid-template-columns: 24px minmax(0, 1fr) auto;
@@ -2591,7 +2591,7 @@ a.rm-group:hover { background: var(--surface-2); color: inherit; }
 }
 .rm-vault__links a:hover { background: var(--surface-3); color: var(--brand-3); }
 
-/* Telling Foundry something. */
+/* Telling StockChief something. */
 .rm-composer, .tell__form, .ask-form, .operator-command__form {
   display: grid; gap: var(--s2);
   padding: var(--s3);
@@ -2642,7 +2642,7 @@ a.rm-group:hover { background: var(--surface-2); color: inherit; }
   color: var(--brand-3); border-color: var(--brand-line); background: var(--brand-wash);
 }
 
-/* A back-and-forth with Foundry. */
+/* A back-and-forth with StockChief. */
 .rm-turn, .turn {
   padding: var(--s3) 0; border-top: 1px solid var(--line-2);
 }
@@ -2656,7 +2656,7 @@ a.rm-group:hover { background: var(--surface-2); color: inherit; }
 .rm-turn__said + .rm-turn__said { margin-top: var(--s2); }
 
 /*
- * Foundry, mid-thought. The turn is drawn where the answer will land, so the
+ * StockChief, mid-thought. The turn is drawn where the answer will land, so the
  * page does not change shape when it arrives; the dots are the only thing
  * moving on the screen, which is what makes them read as "working" rather than
  * "decorated".
@@ -2862,7 +2862,7 @@ a.rm-group:hover { background: var(--surface-2); color: inherit; }
 /* ------------------------------------------------------- 19. modern workspace */
 
 /*
- * Foundry is an operating application, not a spreadsheet wrapped in hairlines.
+ * StockChief is an operating application, not a spreadsheet wrapped in hairlines.
  * The desktop shell, primary states and integration cards use real hierarchy,
  * depth and breathing room. Dense tables remain dense where density is useful;
  * the frame and decision surfaces no longer inherit that visual language.

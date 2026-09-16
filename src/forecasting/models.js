@@ -113,7 +113,7 @@ function dampedTrend({ damping = 0.85, window = 56 } = {}) {
  * Nearly every retail series looks seasonal to the eye, and most of that is
  * noise. The gate is a variance-ratio test in plain arithmetic: the spread
  * between weekday averages has to be large relative to the spread within each
- * weekday before Foundry will believe Saturdays are different from Tuesdays.
+ * weekday before StockChief will believe Saturdays are different from Tuesdays.
  * Without the gate this model wins the backtest occasionally and by luck, and
  * then confidently orders for a Saturday that never comes.
  */

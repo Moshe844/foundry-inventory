@@ -1,8 +1,8 @@
-# Foundry Events API
+# StockChief Events API
 
-Foundry's reference connector accepts authenticated, workspace-scoped evidence
+StockChief's reference connector accepts authenticated, workspace-scoped evidence
 from external systems. Provider payloads must be translated to this normalized
-contract before they are sent. Foundry then uses its existing inventory and
+contract before they are sent. StockChief then uses its existing inventory and
 Sales Order services; this API never writes a balance directly.
 
 ## Authentication
@@ -17,7 +17,7 @@ Content-Type: application/json
 
 `POST /api/v1/events` accepts one event or `{ "events": [...] }` with at most
 500 events. `eventId` is the provider's immutable idempotency key within that
-connection. Repeating it cannot repeat the Foundry action. A replay with
+connection. Repeating it cannot repeat the StockChief action. A replay with
 different content is flagged and the first completed action remains
 authoritative.
 
@@ -39,7 +39,7 @@ called with the same connection token.
 
 - `version` and `aggregateId` allow deterministic stale-event protection.
 - Preserve the provider's event and occurrence timestamps.
-- Use external identifiers after their mappings are approved. An exact Foundry
+- Use external identifiers after their mappings are approved. An exact StockChief
   SKU code or location name can establish a high-certainty mapping once.
 - Unknown records return `NEEDS_MAPPING`, appear in **Needs You**, and can be
   retried safely after mapping.
@@ -103,7 +103,7 @@ Reconciliation evidence:
 }
 ```
 
-Foundry reports discrepancies but does not overwrite stock.
+StockChief reports discrepancies but does not overwrite stock.
 
 ## Supplier email foundation
 

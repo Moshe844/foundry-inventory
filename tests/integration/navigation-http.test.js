@@ -12,15 +12,15 @@ const supplierService = require('../../src/purchasing/supplier-service');
 test.after(cleanupAll);
 
 /*
- * Telling Foundry something is one box, and the link to it always works.
+ * Telling StockChief something is one box, and the link to it always works.
  *
- * There used to be two: "Ask Foundry" answered questions on one page and
- * "Tell Foundry" carried instructions from somewhere else, and the shell had
+ * There used to be two: "Ask StockChief" answered questions on one page and
+ * "Tell StockChief" carried instructions from somewhere else, and the shell had
  * to guess which of them a given workspace could use — which is how a global
  * button came to point at a fragment that did not exist on the page it opened.
  *
  * There is one line now, at one address, and it is the same for every
- * workspace whether or not Foundry has been configured.
+ * workspace whether or not StockChief has been configured.
  */
 test('the line is one address, and the box it promises is on it', async () => {
   const { db, app } = makeApp();
@@ -31,7 +31,7 @@ test('the line is one address, and the box it promises is on it', async () => {
   const manualHome = (await agent.get('/')).text;
   assert.match(manualHome, /href="\/ask"/, 'the chrome offers the line');
 
-  // Once Foundry is configured, the same link goes to the same place.
+  // Once StockChief is configured, the same link goes to the same place.
   configure(db, workspace.workspaceId);
   assert.match((await agent.get('/')).text, /href="\/ask"/);
 
@@ -42,9 +42,9 @@ test('the line is one address, and the box it promises is on it', async () => {
   assert.match(line, /class="rm-chat__intro"/, 'the conversation has a deliberate chat header');
 
   const guide = (await agent.get('/guide')).text;
-  assert.match(guide, /How do I use Foundry\?/);
+  assert.match(guide, /How do I use StockChief\?/);
   assert.match(guide, /Record a sale/);
-  assert.match(guide, /Control what Foundry may do automatically/);
+  assert.match(guide, /Control what StockChief may do automatically/);
 
   const support = (await agent.get('/support')).text;
   assert.match(support, /Help and support/);
@@ -89,7 +89,7 @@ test('the rail marks the state you are in, and only that one', async () => {
   assert.deepEqual(await activeOn('/'), ['Brief']);
 
   assert.deepEqual(await activeOn('/needs-you'), ['Needs you']);
-  assert.deepEqual(await activeOn('/ask'), ['Ask Foundry']);
+  assert.deepEqual(await activeOn('/ask'), ['Ask StockChief']);
 
   /*
    * Everything that used to be a department marks nothing, and that is the
@@ -116,7 +116,7 @@ test('the chrome offers three states, not a directory of departments', async () 
     .map((anchor) => anchor.replace(/<[^>]*>/g, '').replace(/\d+/g, '').trim())
     .filter(Boolean);
 
-  assert.deepEqual(labels, ['Brief', 'Needs you', 'Ask Foundry']);
+  assert.deepEqual(labels, ['Brief', 'Needs you', 'Ask StockChief']);
 
   /*
    * Consolidating is not removing. Every department that came off the rail is
@@ -250,7 +250,7 @@ test('saving on a page opened from Settings keeps the way back', async () => {
   server.close();
 });
 
-test('every Foundry destination returns to its exact same-origin origin without route hard-coding', async () => {
+test('every StockChief destination returns to its exact same-origin origin without route hard-coding', async () => {
   const { db, app } = makeApp();
   const workspace = seedWorkspace(db);
   const server = app.listen(0);

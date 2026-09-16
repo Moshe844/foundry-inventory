@@ -42,7 +42,7 @@
 .rm-composer__pending { font-size: 12.5px; color: var(--muted); margin: 8px 0 0; }
 @keyframes rm-in { from { opacity: .45; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 
-/* Ask Foundry is a conversation, not a collection of raw form blocks. */
+/* Ask StockChief is a conversation, not a collection of raw form blocks. */
 .rm-chat {
   width: min(100%, 1040px);
   max-width: 1040px;
@@ -283,7 +283,7 @@
 /* An empty inventory is not a briefing with nothing in it. It is its own
    screen, and the only thing on it is the one decision that starts everything:
    where the inventory comes from. No setup checklist, no command box, no
-   "what Foundry handled" — none of those mean anything yet, and offering them
+   "what StockChief handled" — none of those mean anything yet, and offering them
    is how a first morning turns into four competing instructions. */
 
 .rm-hero {
@@ -391,7 +391,7 @@
 .rm-upload-error { margin:0; padding:12px 14px; border:1px solid var(--bad-line); border-radius:var(--r-md); background:var(--bad-wash); color:var(--bad); font-size:13px; }
 .rm-upload-options { display:grid; gap:14px; padding-top:14px; }
 
-/* A system Foundry can connect to. */
+/* A system StockChief can connect to. */
 .rm-provider {
   display: flex; flex-direction: column; gap: 10px;
   padding: 18px;
@@ -418,7 +418,7 @@
 
 /* ========================================================= reading, review */
 
-/* Foundry taking a minute to read something is the one place in the product
+/* StockChief taking a minute to read something is the one place in the product
    where waiting is the whole screen, so it has to look like work happening and
    not like a page that failed to load. */
 .rm-intake-thinking { width: 100%; max-width: 620px; margin: 40px auto 0; text-align: center; }
@@ -461,7 +461,7 @@
 .rm-track span.d { display: block; font-size: 12.5px; color: var(--muted); margin-top: 2px; }
 .rm-thinking__foot { display: flex; align-items: center; justify-content: center; gap: 14px; font-size: 12.5px; color: var(--muted); }
 
-/* What Foundry found, before anything is created. Figures, not a paragraph. */
+/* What StockChief found, before anything is created. Figures, not a paragraph. */
 .rm-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .rm-fact {
   padding: 15px 16px; background: var(--surface);
@@ -632,7 +632,7 @@
 .rm-answer.is-primary { border-color: var(--brand); background: linear-gradient(180deg, var(--brand-wash), #fff 70%); }
 .rm-answer.is-primary strong { color: var(--brand-3); }
 
-/* Three-up explanation grid, for the panels that lay out what Foundry found,
+/* Three-up explanation grid, for the panels that lay out what StockChief found,
    what it will do, and what it deliberately will not. */
 .rm-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .rm-col {
@@ -785,7 +785,7 @@
 .rm-where__v { font-family: var(--f-num); font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .rm-where .rm-meter { grid-column: 1 / -1; margin-top: 3px; }
 
-/* Foundry's read on one variant: prose, because a forecast is an argument. */
+/* StockChief's read on one variant: prose, because a forecast is an argument. */
 .rm-outlook { padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line-2); }
 .rm-outlook:last-child { padding-bottom: 0; margin-bottom: 0; border-bottom: 0; }
 .rm-outlook__k { display: block; font-size: 13.5px; font-weight: 700; letter-spacing: -0.018em; margin-bottom: 6px; }

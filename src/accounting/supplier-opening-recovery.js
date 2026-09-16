@@ -8,7 +8,7 @@
  * proof for arbitrary old stock, so a position qualifies only when its entire
  * movement history is one positive physical count labelled "Opening
  * inventory" and nothing has left or arrived since. In that exact lifecycle,
- * the owner has just supplied the missing "what I last paid" fact and Foundry
+ * the owner has just supplied the missing "what I last paid" fact and StockChief
  * can finish the accounting record without asking them to type it twice.
  */
 
@@ -79,7 +79,7 @@ function recover(db, ctx, input = {}) {
           skuId: row.skuId, locationId: row.locationId,
           memo: `${row.quantityUnits} opening units at the supplier cost entered during setup` })),
         { accountKey: 'OPENING_BALANCE_EQUITY', creditMinor: total,
-          memo: 'Cost of inventory already owned when Foundry setup was completed' },
+          memo: 'Cost of inventory already owned when StockChief setup was completed' },
       ],
     });
     const now = nowIso();

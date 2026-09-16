@@ -1,4 +1,4 @@
-/* Foundry Inventory — client behaviour.
+/* StockChief Inventory — client behaviour.
 
    Every page renders, navigates and validates on the server. This file adds
    the conveniences: search suggestions, the action dialogs, live "on hand"
@@ -7,9 +7,9 @@
 (function () {
   'use strict';
 
-  // Foundry has a long home page and many links return to a specific section
+  // StockChief has a long home page and many links return to a specific section
   // on it. Browser scroll restoration can win the race against a fragment and
-  // leave the person at an unrelated position from a previous visit. Foundry
+  // leave the person at an unrelated position from a previous visit. StockChief
   // owns that landing behaviour instead: full pages start at the top, while a
   // fragment reveals the named section.
   if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
@@ -156,7 +156,7 @@
     // Any remaining parameter fills the field of the same name inside that
     // modal, so a link that says "receive these 40" can arrive with the
     // product, location and quantity already in it. Somebody sent here from an
-    // investigation has already told Foundry all three; asking again is how a
+    // investigation has already told StockChief all three; asking again is how a
     // one-click fix turns back into a form. Only fields the form already has
     // are touched, and nothing is submitted — the person still presses the
     // button.
@@ -332,7 +332,7 @@
             const help = target.querySelector('details');
             if (help) help.open = true;
           }
-          // A response to Tell Foundry belongs beside the request box. The
+          // A response to Tell StockChief belongs beside the request box. The
           // global message area is above a long home page; scrolling to the
           // input used to hide the answer that had just arrived. Move that
           // one rendered message stack into the command body before landing.
@@ -344,7 +344,7 @@
           }
           target.scrollIntoView({ block: 'start', inline: 'nearest' });
 
-          // "Tell Foundry" is an input destination, not merely a heading. Put
+          // "Tell StockChief" is an input destination, not merely a heading. Put
           // the cursor where the person can immediately type, without letting
           // focus undo the carefully offset scroll position.
           const input = target.matches('input:not([type="hidden"]), textarea, select')
@@ -384,14 +384,14 @@
 
   /* ------------------------------------------------------- saying something
 
-     Foundry's own voice, in Foundry's own window.
+     StockChief's own voice, in StockChief's own window.
 
      The browser's alert, confirm and prompt open a grey box headed
      "localhost:4000 says" — the operating system's typography, the operating
      system's buttons, and a title naming the port. It is the one place in the
-     product where the thing talking to somebody is visibly not Foundry, and it
+     product where the thing talking to somebody is visibly not StockChief, and it
      turns up on exactly the actions that matter most: archiving a product,
-     disconnecting a mailbox, pausing Foundry itself.
+     disconnecting a mailbox, pausing StockChief itself.
 
      Two shapes replace them, because they are two different acts. A statement
      is a toast: it appears, it is read, it goes. A question is a dialog: it
@@ -492,7 +492,7 @@
    *
    * One dialog, built once and reused, because there is only ever one question
    * on screen at a time. The confirming button carries the words off the button
-   * that was pressed — "Archive", "Disconnect", "Pause Foundry" — so the answer
+   * that was pressed — "Archive", "Disconnect", "Pause StockChief" — so the answer
    * names the act rather than saying "OK" and leaving somebody to remember what
    * they clicked.
    */
@@ -560,9 +560,9 @@
   }
 
   /* Inline scripts on a handful of pages want to say something too. */
-  window.Foundry = window.Foundry || {};
-  window.Foundry.toast = toast;
-  window.Foundry.ask = ask;
+  window.StockChief = window.StockChief || {};
+  window.StockChief.toast = toast;
+  window.StockChief.ask = ask;
 
   function initConfirms() {
     document.addEventListener('submit', (event) => {
@@ -604,8 +604,8 @@
     });
   }
 
-  /** The example prompts on Foundry's screens fill the box rather than submit. */
-  function initFoundry() {
+  /** The example prompts on StockChief's screens fill the box rather than submit. */
+  function initStockChief() {
     document.addEventListener('click', (event) => {
       const filler = event.target.closest('[data-fill]');
       if (filler) {
@@ -628,7 +628,7 @@
   }
 
   /**
-   * The progress page for a long Foundry job. Polls the real stage the server
+   * The progress page for a long StockChief job. Polls the real stage the server
    * is in, so the steps reflect actual work rather than a timer.
    */
   function initThinking() {
@@ -767,7 +767,7 @@
     paint();
   }
 
-  /** Short Foundry calls (seconds) just need the button to look busy. */
+  /** Short StockChief calls (seconds) just need the button to look busy. */
   function initBusyButtons() {
     document.addEventListener('submit', (event) => {
       if (event.defaultPrevented) return;
@@ -884,7 +884,7 @@
         detail.textContent = `${percent}% · ${bytes(upload.loaded)} of ${bytes(upload.total)}`;
         if (percent === 100) {
           title.textContent = 'Reading and reconciling your records…';
-          detail.textContent = `Upload complete. Foundry is identifying the worksheets in ${input.files.length} file${input.files.length === 1 ? '' : 's'}.`;
+          detail.textContent = `Upload complete. StockChief is identifying the worksheets in ${input.files.length} file${input.files.length === 1 ? '' : 's'}.`;
           submit.textContent = 'Reading worksheets…';
         }
       });
@@ -902,7 +902,7 @@
         submit.removeAttribute('aria-busy');
         errorBox.textContent = result && result.message
           ? result.message
-          : 'Foundry could not read that upload. The selected filenames remain above so you can correct the exact file.';
+          : 'StockChief could not read that upload. The selected filenames remain above so you can correct the exact file.';
         errorBox.hidden = false;
       });
       request.addEventListener('error',() => {
@@ -932,8 +932,9 @@
   }
 
   /**
-   * Ask Foundry runs a real model call before the page can answer. Saying so is
-   * the difference between "thinking" and "broken".
+   * Ask StockChief may need interpretation, but many questions resolve directly
+   * from local records. Show honest progress without implying every question
+   * must wait for an external model.
    */
   function initAskPending() {
     const forms = [...document.querySelectorAll('[data-ask-form]')];
@@ -968,7 +969,7 @@
          * sign anything was happening was a 12px line under the box. For the
          * seconds a model call takes, the page looked broken.
          *
-         * Now the sentence somebody typed appears as their turn, and Foundry's
+         * Now the sentence somebody typed appears as their turn, and StockChief's
          * turn appears beneath it with a live indicator, in the same place the
          * answer will land. The button keeps its words. Nothing here is a
          * request; the form still posts and the page still arrives — this is
@@ -986,7 +987,7 @@
           foundry.className = 'rm-turn rm-turn--foundry rm-turn--pending rm-turn--thinking';
           foundry.setAttribute('role', 'status');
           foundry.setAttribute('aria-live', 'polite');
-          foundry.innerHTML = '<p class="rm-turn__who">Foundry</p>'
+          foundry.innerHTML = '<p class="rm-turn__who">StockChief</p>'
             + '<p class="rm-turn__said rm-chat-thinking"><span class="rm-thinking__dots" aria-hidden="true"><i></i><i></i><i></i></span>'
             + '<span data-thinking-text>Reading your records…</span></p>';
 
@@ -1046,7 +1047,7 @@
          * A wait with no end and no exit.
          *
          * A model call is seconds, usually. When it is not, the page says
-         * "Foundry is working out what that means…" and offers nothing — no
+         * "StockChief is working out what that means…" and offers nothing — no
          * way to tell whether to keep waiting or to leave. After ten seconds
          * it says both: that it is still going, and that leaving costs
          * nothing, which is true because nothing is written until it is
@@ -1135,7 +1136,7 @@
 
   // Home follows the manager rather than requiring a refresh. It deliberately
   // waits while somebody is typing, so a new automatic result never steals a
-  // half-written Tell Foundry instruction.
+  // half-written Tell StockChief instruction.
   function initLiveHome() {
     const marker = document.querySelector('[data-live-home]');
     if (!marker) return;
@@ -1157,7 +1158,7 @@
     window.setInterval(tick, 3000);
     // Browsers heavily throttle timers in background tabs. Check immediately
     // when the owner comes back from Gmail so a message already captured by
-    // Foundry appears now, not on the browser's delayed timer schedule.
+    // StockChief appears now, not on the browser's delayed timer schedule.
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) tick();
     });
@@ -1268,7 +1269,7 @@
    * Taking a payment without losing the order.
    *
    * The page the customer pays on is Stripe's, and it has to stay Stripe's:
-   * Foundry never sees a card number and never will. The question is only
+   * StockChief never sees a card number and never will. The question is only
    * where it appears. A plain link threw the merchant into whatever browser
    * the operating system felt like opening — a fresh window, signed out,
    * three windows away, with a customer standing at the counter.
@@ -1282,7 +1283,7 @@
    * Some browsers refuse to open a window at all. That is not an error to
    * report; it is the same job done one click differently, so the panel says
    * so plainly and hands over a button that opens the page instead. Either
-   * way the order is still on screen behind it, and either way Foundry learns
+   * way the order is still on screen behind it, and either way StockChief learns
    * about the payment from Stripe rather than from anybody remembering.
    */
   /* A receipt is printed from the page it is shown on. */
@@ -1324,8 +1325,8 @@
     /*
      * Only ever somewhere a payment can actually be taken.
      *
-     * A relative value here would be opened against Foundry's own origin, and
-     * a merchant standing at the counter would get a Foundry page saying "We
+     * A relative value here would be opened against StockChief's own origin, and
+     * a merchant standing at the counter would get a StockChief page saying "We
      * could not find that" instead of a card form. That is exactly what a
      * broken attribute did once, so the check is here as well as in the
      * template: a wrong address should look wrong, not be visited.
@@ -1353,7 +1354,7 @@
       // A window if the browser allows one, a tab if it does not, and if it
       // allows neither the panel offers the page as a button.
       // Deliberately no 'noopener': that makes window.open return nothing, and
-      // then Foundry cannot tell when the payment window is closed again.
+      // then StockChief cannot tell when the payment window is closed again.
       paying = popup(url) || window.open(url, '_blank');
       blocked.hidden = Boolean(paying);
       watching.hidden = !paying;
@@ -1363,7 +1364,7 @@
 
       /*
        * Asked every few seconds while the panel is open, whichever way the
-       * customer is paying — a window Foundry can watch, a tab it cannot, or
+       * customer is paying — a window StockChief can watch, a tab it cannot, or
        * a link they opened on their phone.
        */
       asking = setInterval(ask, 3000);
@@ -1384,7 +1385,7 @@
      *
      * The merchant is standing at the counter with the customer. Before this,
      * the panel could only say "the window is open" and the person had to
-     * guess when to close it, then reload and hope. Foundry asks the payment
+     * guess when to close it, then reload and hope. StockChief asks the payment
      * provider directly, so the answer arrives whether or not a webhook does.
      */
     function finish(state) {
@@ -1499,7 +1500,7 @@
    *
    * The command box is a textarea because what people type is often more than
    * one line, but a textarea swallows Enter — so the box that is meant to be
-   * the fastest way to talk to Foundry was the one thing on the page you could
+   * the fastest way to talk to StockChief was the one thing on the page you could
    * not send from the keyboard.
    */
   function initComposerSend() {
@@ -1600,7 +1601,7 @@
         if (!response.ok) return;
         const progress = await response.json();
         if (progress.preparationStatus === 'RUNNING') {
-          if (copy) copy.textContent = progress.preparationDetail || 'Foundry is preparing the saved source evidence.';
+          if (copy) copy.textContent = progress.preparationDetail || 'StockChief is preparing the saved source evidence.';
           if (phase) phase.textContent = String(progress.preparationStage || 'preparing').replaceAll('_',' ').toLowerCase();
           if (fraction) fraction.textContent = progress.preparationTotal
             ? `${format.format(progress.preparationCompleted || 0)} of ${format.format(progress.preparationTotal)} datasets`
@@ -1619,7 +1620,7 @@
         const entity = String(progress.currentEntityType || 'verified records').replaceAll('_',' ');
         if (copy) copy.textContent = 'Applying ' + entity + ' through its normal business service. ' + format.format(progress.appliedCount || 0) + ' of ' +
           format.format(progress.stagedCount || 0) +
-          ' prepared records are safely applied. Foundry will reconcile the live totals before it calls the switch complete.';
+          ' prepared records are safely applied. StockChief will reconcile the live totals before it calls the switch complete.';
         if (phase) phase.textContent = `Applying ${entity}`;
         if (fraction) fraction.textContent = `${format.format(progress.appliedCount || 0)} of ${format.format(progress.stagedCount || 0)}`;
         if (bar) { bar.max = Math.max(1,progress.stagedCount || 1); bar.value = progress.appliedCount || 0; }
@@ -1643,7 +1644,7 @@
     initStockHints();
     initConfirms();
     initAutoFilters();
-    initFoundry();
+    initStockChief();
     initThinking();
     initOpenDetailsButtons();
     initBusyButtons();

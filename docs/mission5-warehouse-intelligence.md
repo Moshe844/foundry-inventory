@@ -2,7 +2,7 @@
 
 ## What is implemented
 
-Foundry has one warehouse execution layer around the canonical inventory
+StockChief has one warehouse execution layer around the canonical inventory
 engine. It does not maintain a competing stock ledger.
 
 - Locations form a validated hierarchy: warehouse/store → zone → aisle →
@@ -24,7 +24,7 @@ engine. It does not maintain a competing stock ledger.
 - Totes, cartons, pallets and packages retain their exact scanned contents and
   current location.
 - Putaway rules may select a stored destination. Without a matching rule,
-  Foundry asks for a destination rather than inventing one.
+  StockChief asks for a destination rather than inventing one.
 - Product, location, lot, serial and container labels render printable Code 128
   SVG and verify the encoded value before display.
 - The warehouse task page is mobile-first and uses large, ordered scan fields.

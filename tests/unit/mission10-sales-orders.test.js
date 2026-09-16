@@ -33,6 +33,7 @@ function draft(env, quantity, overrides = {}) {
     customerName: overrides.customerName || 'ABC School', neededBy: overrides.neededBy || null,
     fulfillmentLocationId: overrides.fulfillmentLocationId || null,
     lines: [{ skuId: env.item.skuId, quantity }],
+    deliveryMethod: 'PICKUP',
   });
 }
 
@@ -50,6 +51,7 @@ test('a kit stays one customer SKU while its exact components reserve and leave 
   inventory.receive(env.db, env.ctx, { skuId: cloth.skuId, locationId: env.workspace.main.id, quantity: 10 });
 
   let order = sales.createOrder(env.db, env.ctx, { customerName: 'Kit Customer',
+    deliveryMethod: 'PICKUP',
     fulfillmentLocationId: env.workspace.main.id, lines: [{ skuId: kit.skuId, quantity: 2 }] });
   assert.equal(order.lines.length, 1, 'the customer order contains the kit, not invented component sale lines');
   assert.equal(order.lines[0].isKit, true);
@@ -71,6 +73,33 @@ test('a kit stays one customer SKU while its exact components reserve and leave 
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, cleaner.skuId, env.workspace.main.id), 6);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, cloth.skuId, env.workspace.main.id), 4);
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, kit.skuId, env.workspace.main.id), 0);
+});
+
+test('a preassembled kit reserves and leaves finished-kit stock without consuming its components again', () => {
+  const env = setup('Preassembled kit company');
+  const component = makeQuantityItem(env.db, env.ctx, { name: 'Refill Pack', baseCode: 'REFILL-1' });
+  const kit = makeQuantityItem(env.db, env.ctx, { name: 'Packed Service Kit', baseCode: 'PACKED-KIT' });
+  kits.define(env.db, env.ctx, {
+    kitSkuId: kit.skuId,
+    stockBasis: 'preassembled',
+    components: [{ skuId: component.skuId, quantity: 3 }],
+  });
+  prices.setPrice(env.db, env.ctx, { skuId: kit.skuId, amount: '45.00', currency: 'USD' });
+  inventory.receive(env.db, env.ctx, { skuId: component.skuId, locationId: env.workspace.main.id, quantity: 20 });
+  inventory.receive(env.db, env.ctx, { skuId: kit.skuId, locationId: env.workspace.main.id, quantity: 5 });
+
+  let order = sales.createOrder(env.db, env.ctx, { customerName: 'Packed Kit Customer',
+    deliveryMethod: 'PICKUP',
+    fulfillmentLocationId: env.workspace.main.id, lines: [{ skuId: kit.skuId, quantity: 2 }] });
+  order = sales.confirm(env.db, env.ctx, order.id);
+  assert.equal(sales.availabilityForSku(env.db, env.workspace.workspaceId, kit.skuId).committed, 2);
+  assert.equal(sales.availabilityForSku(env.db, env.workspace.workspaceId, component.skuId).committed, 0);
+
+  order = sales.fulfill(env.db, env.ctx, order.id, {}, { idempotencyKey: `packed-kit:${order.id}` });
+  assert.equal(order.status, 'FULFILLED');
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, kit.skuId, env.workspace.main.id), 3);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, component.skuId, env.workspace.main.id), 20);
+  assert.equal(kits.definition(env.db, env.workspace.workspaceId, kit.skuId).stockBasis, 'preassembled');
 });
 
 test('a kit pick list shows physical components while shipment fulfills the kit line', () => {

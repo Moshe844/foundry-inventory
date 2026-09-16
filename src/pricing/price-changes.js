@@ -90,7 +90,7 @@ function matchesBulkInstruction(message) {
  *
  * One amount and no named product used to fall through to the single-change
  * path, where the resolver picked one product out of the catalogue and prepared
- * a price for that one. The owner said "each item" and Foundry quietly chose
+ * a price for that one. The owner said "each item" and StockChief quietly chose
  * one of them — the worst possible reading, because it looks like it worked.
  *
  * A whole-catalogue instruction is its own kind: one proposal per product, all
@@ -215,7 +215,7 @@ function clarificationError(resolved, data, statedAs) {
 
 function proposalFromInterpreted(db, ctx, data, statedAs) {
   if (data.operation === 'set' && Number(data.amount) < 0) {
-    throw new ValidationError('What selling price should Foundry use?');
+    throw new ValidationError('What selling price should StockChief use?');
   }
   const resolved = resolver.resolveSku(db, ctx.workspaceId, data.itemText, data.variantText, {
     instruction: statedAs,
@@ -290,7 +290,7 @@ function interpretEvery(db, ctx, message) {
   // whether it is a removal, and both are already parsed here.
   const parsed = fallback(statedAs, catalogue(db, ctx.workspaceId));
   if (parsed.operation !== 'remove' && !(Number(parsed.amount) > 0)) {
-    throw new ValidationError('What selling price should Foundry use for every product?');
+    throw new ValidationError('What selling price should StockChief use for every product?');
   }
   const amountMinor = parsed.operation === 'remove' ? null : prices.toMinor(String(parsed.amount));
   const currency = prices.normaliseCurrency(parsed.currency || 'USD');
@@ -331,7 +331,7 @@ async function interpretMany(db, ctx, message, options = {}) {
     changes = fallbackMany(db, ctx, statedAs);
   }
   if (!Array.isArray(changes) || changes.length < 2) {
-    throw new ValidationError('List each product code with its selling price, one per line. Foundry did not find at least two complete price changes.');
+    throw new ValidationError('List each product code with its selling price, one per line. StockChief did not find at least two complete price changes.');
   }
 
   const prepared = [];

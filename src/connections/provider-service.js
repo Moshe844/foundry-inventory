@@ -57,7 +57,7 @@ function providerOrigin(requestOrigin) { return config.connections.publicOrigin 
 
 /*
  * Xero explicitly permits http://localhost OAuth returns while developing.
- * Prefer that direct loopback route when the owner is already using Foundry
+ * Prefer that direct loopback route when the owner is already using StockChief
  * on localhost: it removes the temporary public tunnel (and its DNS/edge
  * availability) from the interactive authorization round trip. Production,
  * and every non-loopback provider flow, still uses the configured public
@@ -129,7 +129,7 @@ async function beginAuthorization(db, ctx, input, requestOrigin) {
     .run(JSON.stringify({
       ...(auth.metadata || {}),
       // The OAuth callback may arrive through the public HTTPS hostname while
-      // the owner has Foundry open on localhost. Preserve the exact opener so
+      // the owner has StockChief open on localhost. Preserve the exact opener so
       // the return page can notify that window and send the owner back to the
       // same installation without relying on cross-host cookies.
       returnOrigin: requestOrigin,
@@ -163,7 +163,7 @@ async function loadProviderCredentials(db, connection, adapter) {
       connections.issue(db, { workspaceId: connection.workspace_id, connectorId: connection.id,
         issueType: 'CONNECTION_AUTHORIZATION_REVOKED', fingerprint: `provider-auth:${connection.id}`,
         title: `${connection.display_name} needs to be reconnected`,
-        detail: 'The provider rejected Foundry\'s saved authorization or token refresh. No external write was attempted.',
+        detail: 'The provider rejected StockChief\'s saved authorization or token refresh. No external write was attempted.',
         resolutionHint: 'Reconnect on the provider authorization screen. Existing mappings and audit history are preserved.' });
       throw error;
     }
@@ -252,7 +252,7 @@ async function finishAuthorization(db, connection, actorId, result, requestOrigi
     connection.provider_type, result.accountId);
   const current = connections.get(db, connection.workspace_id, connection.id);
   // Accounting providers are deliberately not catalog/event providers.  A
-  // successful OAuth return proves only that Foundry can read one real fact.
+  // successful OAuth return proves only that StockChief can read one real fact.
   // It must not start importing, reconciling, or posting until the owner has
   // chosen a source of truth and an authority level on the next screen.
   if (adapter.integrationClass === 'accounting') {
@@ -383,9 +383,9 @@ function cacheRecord(db, connection, actorId, record) {
   connections.issue(db, { workspaceId: connection.workspace_id, connectorId: connection.id,
     issueType: `UNKNOWN_${record.entityType.toUpperCase()}`,
     fingerprint: `unknown-${record.entityType}:${connection.id}:${record.externalId}`,
-    title: `${record.displayName} needs a Foundry match`,
-    detail: `${connection.display_name} supplied ${record.entityType === 'sku' ? `SKU ${record.code || record.externalId}` : 'this location'}, but Foundry cannot safely match it yet.`,
-    resolutionHint: 'Choose the matching Foundry record once. Future activity will use that mapping automatically.',
+    title: `${record.displayName} needs a StockChief match`,
+    detail: `${connection.display_name} supplied ${record.entityType === 'sku' ? `SKU ${record.code || record.externalId}` : 'this location'}, but StockChief cannot safely match it yet.`,
+    resolutionHint: 'Choose the matching StockChief record once. Future activity will use that mapping automatically.',
   });
   return 'unmapped';
 }
@@ -459,7 +459,7 @@ async function sync(db, workspaceId, connectorId, actorId, options = {}) {
  * Write an answer to a customer and leave it unsent.
  *
  * Only once per message, and never over a draft somebody has already touched
- * or a reply that has already gone. Foundry re-writing the owner's own words
+ * or a reply that has already gone. StockChief re-writing the owner's own words
  * on the next poll would be worse than not writing anything.
  */
 async function prepareReply(db, auth, messageId) {
@@ -472,7 +472,7 @@ async function prepareReply(db, auth, messageId) {
 /**
  * A person disagrees with the gate, so the message comes in.
  *
- * The envelope is all Foundry kept, so the message itself is fetched from the
+ * The envelope is all StockChief kept, so the message itself is fetched from the
  * provider again and put through exactly the pipeline it would have gone
  * through in the first place. The set-aside row stays as the record that this
  * was once turned away and who overruled it.
@@ -503,7 +503,7 @@ async function bringInSetAside(db, ctx, setAsideId, options = {}) {
       const orders = require('../sales/order-from-email');
       try { await orders.draft(db, auth, captured.id); }
       catch (error) { orders.noteReason(db, auth, captured.id,
-        `Foundry could not draft an order from this: ${error.message}`); }
+        `StockChief could not draft an order from this: ${error.message}`); }
     }
   }
   return { messageId: captured?.id || null, replayed: false };
@@ -544,12 +544,12 @@ async function syncMailbox(db, workspaceId, connectorId, options = {}) {
     const rule = require('./email-ingestion').matchingRule(db, auth, message.sender || message.from || '');
     if (!rule && !openToStrangers) continue;
     /*
-     * A connected mailbox is the business's mailbox, not Foundry's inbox.
+     * A connected mailbox is the business's mailbox, not StockChief's inbox.
      *
      * Everything that arrived used to become a record here — newsletters, bank
      * alerts, the owner's personal mail — and then be triaged, listed, and
      * counted as work. The gate asks the only question that matters: is this
-     * about the business Foundry runs. What it turns away is not deleted and
+     * about the business StockChief runs. What it turns away is not deleted and
      * not silently dropped; the envelope and the reason are kept so the owner
      * can find it and overrule the decision.
      */
@@ -625,7 +625,7 @@ async function syncMailbox(db, workspaceId, connectorId, options = {}) {
         // a condition of it. But the reason is written down, because a
         // customer's order that silently produced nothing is the one failure
         // the owner most needs to hear about.
-        orders.noteReason(db, auth, captured.id, `Foundry could not draft an order from this: ${error.message}`);
+        orders.noteReason(db, auth, captured.id, `StockChief could not draft an order from this: ${error.message}`);
       }
     }
     /*
@@ -776,9 +776,9 @@ async function reviewHistory(db, workspaceId, connectorId) {
       mismatch ? 'MISMATCH' : 'MATCHED', now);
   if (mismatch) connections.issue(db, { workspaceId, connectorId, issueType: 'RECONCILIATION_MISMATCH',
     fingerprint: `provider-history:${connectorId}:${expected.periodStart || connection.created_at}`,
-    title: `${connection.display_name} history does not match Foundry`,
-    detail: `${connection.display_name} reports ${expected.operationalRecords} operational record(s) since connection; Foundry safely processed ${observed}.`,
-    resolutionHint: 'Review the missing or conflicting provider events. Foundry did not overwrite inventory.' });
+    title: `${connection.display_name} history does not match StockChief`,
+    detail: `${connection.display_name} reports ${expected.operationalRecords} operational record(s) since connection; StockChief safely processed ${observed}.`,
+    resolutionHint: 'Review the missing or conflicting provider events. StockChief did not overwrite inventory.' });
   return { expected: Number(expected.operationalRecords), observed: Number(observed), status: mismatch ? 'MISMATCH' : 'MATCHED' };
 }
 
@@ -805,8 +805,8 @@ async function createSandboxCheckout(db, workspaceId, connectorId, input, option
     WHERE er.workspace_id = ? AND er.connector_id = ? AND er.entity_type = 'location'
       AND er.external_id = ? AND er.mapping_status = 'MAPPED' AND er.selected = 1`)
     .get(workspaceId, connectorId, externalLocationId);
-  if (!mappedSku) throw new ValidationError('Choose a Square product that is already matched to Foundry.');
-  if (!mappedLocation) throw new ValidationError('Choose a selected Square location that is already matched to Foundry.');
+  if (!mappedSku) throw new ValidationError('Choose a Square product that is already matched to StockChief.');
+  if (!mappedLocation) throw new ValidationError('Choose a selected Square location that is already matched to StockChief.');
   const providerCredentials = await loadProviderCredentials(db, connection, adapter);
   return adapter.createSandboxCheckout({ credentials: providerCredentials, externalSku, externalLocationId, quantity });
 }

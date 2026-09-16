@@ -3,7 +3,7 @@
 const crypto = require('node:crypto');
 const config = require('../../config');
 const { ValidationError, AuthenticationError } = require('../../domain/errors');
-const { safeEqual, hmacBase64, requireVerified, jsonRequest } = require('./common');
+const { safeEqual, hmacBase64, requireVerified, jsonRequest, postalAddress } = require('./common');
 
 const API_VERSION = '2026-07';
 const SCOPES = ['read_orders', 'read_products', 'read_locations', 'read_inventory', 'read_fulfillments'];
@@ -12,7 +12,7 @@ function metadata() {
   return { type: 'shopify', name: 'Shopify', mark: 'S', category: 'selling', authMode: 'oauth', available: config.connections.shopify.configured,
     description: 'Automatically receive Shopify orders, cancellations, fulfillment, returns, products, SKUs, and locations.',
     provides: ['customer orders', 'cancellations', 'fulfillment', 'returns', 'products, SKUs and locations'],
-    unavailableReason: config.connections.shopify.configured ? null : 'Foundry’s Shopify app credentials have not been configured on this installation.',
+    unavailableReason: config.connections.shopify.configured ? null : 'StockChief’s Shopify app credentials have not been configured on this installation.',
   };
 }
 
@@ -24,7 +24,7 @@ function normalizeShop(value) {
 }
 
 function authorizationUrl({ state, input }) {
-  if (!config.connections.shopify.configured) throw new ValidationError('Shopify is not configured on this Foundry installation.');
+  if (!config.connections.shopify.configured) throw new ValidationError('Shopify is not configured on this StockChief installation.');
   const shop = normalizeShop(input.shop);
   const url = new URL(`https://${shop}/admin/oauth/authorize`);
   url.searchParams.set('client_id', config.connections.shopify.clientId);
@@ -70,12 +70,12 @@ async function tryDirectAuthorization({ input }) {
     // A different organization's store must use the merchant approval flow.
     if (providerCode === 'shop_not_permitted') return null;
     if (providerCode === 'app_not_installed') {
-      throw new ValidationError(`Shopify says Foundry Inventory is not installed on ${shop}. Install it from the Shopify Dev Dashboard—or uninstall and reinstall it—then try Connect Shopify again.`);
+      throw new ValidationError(`Shopify says StockChief Inventory is not installed on ${shop}. Install it from the Shopify Dev Dashboard—or uninstall and reinstall it—then try Connect Shopify again.`);
     }
     if (error instanceof TypeError && error.message === 'fetch failed') {
-      throw new ValidationError('Foundry could not reach Shopify securely. Check the internet connection and try again.');
+      throw new ValidationError('StockChief could not reach Shopify securely. Check the internet connection and try again.');
     }
-    throw new ValidationError('Shopify did not authorize this connection. Check that the store address is correct and that Foundry has the client ID and secret for the installed app.');
+    throw new ValidationError('Shopify did not authorize this connection. Check that the store address is correct and that StockChief has the client ID and secret for the installed app.');
   }
 }
 
@@ -250,6 +250,10 @@ function normalizeWebhook({ headers, body }) {
   if (topic === 'orders/create') return [{ eventId: delivery, type: 'sales_order.created', version, occurredAt,
     aggregateId: String(body.id), data: { externalOrderId: String(body.id), orderNumber: body.name,
       customer: body.customer ? { externalId: String(body.customer.id), name: [body.customer.first_name, body.customer.last_name].filter(Boolean).join(' ') || body.customer.email } : undefined,
+      shippingAddress: postalAddress({ line1: body.shipping_address?.address1, line2: body.shipping_address?.address2,
+        city: body.shipping_address?.city, region: body.shipping_address?.province,
+        postalCode: body.shipping_address?.zip, country: body.shipping_address?.country_code || body.shipping_address?.country }),
+      customerEmail: body.email || body.customer?.email,
       externalLocationId: body.location_id ? shopifyGid('Location', body.location_id) : undefined, currency: body.currency,
       lines: orderLines(body) } }];
   if (topic === 'orders/updated') return [{ eventId: delivery, type: 'sales_order.snapshot', version, occurredAt,

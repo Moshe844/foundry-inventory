@@ -728,7 +728,7 @@ function openingCounts(db, workspace) {
   });
   const sku = repo.listSkusForItem(db, workspace.workspaceId, item.itemId)[0];
 
-  // What a person types in when Foundry asks what is on the shelf.
+  // What a person types in when StockChief asks what is on the shelf.
   for (const [location, counted] of [[workspace.main, 50], [workspace.store, 10]]) {
     scenarios.at(db, workspace.ctx, 3, 'adjust', {
       skuId: sku.id, locationId: location.id, countedQty: counted, reasonCode: 'physical_count',
@@ -745,7 +745,7 @@ test('opening balances do not become unusual-adjustment exceptions', () => {
   assert.equal(
     byCategory(open(db, workspace), 'unusual_adjustment').length,
     0,
-    'telling Foundry what is on the shelf is not an anomaly'
+    'telling StockChief what is on the shelf is not an anomaly'
   );
 
   // The ledger keeps every entry — this is a detection change, not a hidden one.

@@ -9,7 +9,7 @@
  * product and every one of its fifteen combinations. Making them type it again
  * is not caution — it is the setup failing to finish its own sentence.
  *
- * The line this does not cross is quantity. Foundry will create the *shape* of
+ * The line this does not cross is quantity. StockChief will create the *shape* of
  * what a customer described, because they described it. It will never write a
  * balance: how many are on the shelf is a physical fact nobody has told it, and
  * a system that guesses at those is worse than one that asks.
@@ -116,7 +116,7 @@ function suggestCode(name) {
 }
 
 /**
- * What Foundry would create, from what this workspace already told it.
+ * What StockChief would create, from what this workspace already told it.
  *
  * Returns null whenever there is nothing worth offering — no configuration, no
  * described product, or an inventory that already has items in it. An offer to

@@ -45,7 +45,7 @@ router.get(
       title: 'Activity',
       nav: 'activity',
       // Reached from the item record, from Everything else, and from links in
-      // Foundry's own messages. Whatever the way in, there is a way out.
+      // StockChief's own messages. Whatever the way in, there is a way out.
       backToFallback: { href: '/everything', label: 'Everything else' },
       groups,
       hasMore,

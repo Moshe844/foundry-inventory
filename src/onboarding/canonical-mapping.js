@@ -4,7 +4,7 @@
  * Provider-neutral source mapping.
  *
  * A connector describes columns and samples; this service proposes only
- * canonical Foundry meanings. Exact canonical names are deterministic. Aliases
+ * canonical StockChief meanings. Exact canonical names are deterministic. Aliases
  * are suggestions that an owner must approve, and every other column must be
  * explicitly mapped or ignored. The model may supply an explanation in the UI,
  * but it never decides what a source field means.
@@ -215,7 +215,7 @@ const NUMBER_FIELDS = new Set(['lastUnitCost','minimumOrderAmount','sellingPrice
 const BOOLEAN_FIELDS = new Set(['isPreferred','trackSerial']);
 
 // These are business concepts, not workbook or provider templates. They let a
-// relational export keep its own IDs while Foundry resolves those IDs only
+// relational export keep its own IDs while StockChief resolves those IDs only
 // inside the same immutable migration package.
 const ENTITY_ALIASES = Object.freeze({
   product: {
@@ -380,7 +380,7 @@ function setMappings(db, ctx, membership, profileId, decisions = []) {
       const sourceField = requireText(decision.sourceField, 'Source column', { max:200 });
       if (!profile.columns.some((column) => column.name === sourceField)) throw new ValidationError(`${sourceField} is not a source column.`);
       const ignored = decision.disposition === 'IGNORED' || decision.targetField === null;
-      const targetField = ignored ? null : requireText(decision.targetField, 'Foundry field', { max:100 });
+      const targetField = ignored ? null : requireText(decision.targetField, 'StockChief field', { max:100 });
       if (targetField && !spec.fields.includes(targetField)
           && !(ATTRIBUTE_ENTITIES.has(profile.entityType) && targetField.startsWith('attribute:'))) {
         throw new ValidationError(`${targetField} is not a ${profile.entityType} field.`);
@@ -583,7 +583,7 @@ function derivedSourceKey(entityType,row,rowNumber) {
     history_fact:[row.factType,row.sourceRecord,row.occurredAt],
   }[entityType] || [];
   const usable = candidates.map(keyPart).filter(Boolean);
-  if (!usable.length) throw new ValidationError(`Foundry cannot establish a stable identity for ${entityType} row ${rowNumber}. Map Source key or the record's identifier.`);
+  if (!usable.length) throw new ValidationError(`StockChief cannot establish a stable identity for ${entityType} row ${rowNumber}. Map Source key or the record's identifier.`);
   return `${entityType}:${usable.join(':')}`.slice(0,300);
 }
 
@@ -602,7 +602,7 @@ function expandCatalogInventory(rows) {
     const name = String(row.name || row.code || '').trim();
     if (!name) throw new ValidationError(`Product name or SKU is missing on row ${index + 1}.`);
     const code = String(row.code || '').trim();
-    if (!code) throw new ValidationError(`SKU is missing on row ${index + 1}. Foundry will not invent a business identifier.`);
+    if (!code) throw new ValidationError(`SKU is missing on row ${index + 1}. StockChief will not invent a business identifier.`);
     const productIdentity = keyPart(row.baseCode || row.name || row.code);
     const productKey = `product:${productIdentity}`;
     const skuKey = `sku:${keyPart(code)}`;
@@ -624,7 +624,7 @@ function expandCatalogInventory(rows) {
           skuKey,locationKey,
           // A serial is exact identity evidence for one unit. Leave quantity
           // absent when the source omitted it so canonical validation derives
-          // one from the serial rather than Foundry fabricating a count.
+          // one from the serial rather than StockChief fabricating a count.
           quantity:row.quantity === null || row.quantity === undefined || row.quantity === ''
             ? undefined : Number(row.quantity),
           lotCode:row.lotCode || null,
@@ -646,7 +646,7 @@ function expandCatalogInventory(rows) {
         } });
       }
     } else if (row.quantity !== null && row.quantity !== undefined && row.quantity !== '') {
-      throw new ValidationError(`Location is missing on row ${index + 1}; Foundry will not guess where ${row.quantity} units are.`);
+      throw new ValidationError(`Location is missing on row ${index + 1}; StockChief will not guess where ${row.quantity} units are.`);
     }
     if (row.sellingPrice !== null && row.sellingPrice !== undefined && row.sellingPrice !== '') {
       add({ entityType:'selling_price',sourceKey:`selling-price:${skuKey}:${currency}`,payload:{
@@ -674,7 +674,7 @@ function requireConsistent(group,row,fields,rowNumber) {
     if (incoming === null || incoming === undefined || incoming === '') continue;
     if (group[field] === null || group[field] === undefined || group[field] === '') group[field] = incoming;
     else if (String(group[field]) !== String(incoming)) {
-      throw new ValidationError(`${field} conflicts between lines of ${group.orderNumber} (row ${rowNumber}). Foundry will not choose one.`);
+      throw new ValidationError(`${field} conflicts between lines of ${group.orderNumber} (row ${rowNumber}). StockChief will not choose one.`);
     }
   }
 }
@@ -723,7 +723,7 @@ function expandOrderRows(type,rows) {
         throw new ValidationError(`Received and remaining quantities on row ${rowNumber} must be non-negative whole numbers.`);
       }
       if (hasReceived && hasBackordered && quantity !== received + remaining) {
-        throw new ValidationError(`Ordered, received and remaining quantities do not reconcile on row ${rowNumber}. Foundry will not choose which quantity is right.`);
+        throw new ValidationError(`Ordered, received and remaining quantities do not reconcile on row ${rowNumber}. StockChief will not choose which quantity is right.`);
       }
       group.lines.push({
       skuKey:`sku:${keyPart(skuCode)}`,quantityUnits:remaining,orderedQuantityUnits:quantity,

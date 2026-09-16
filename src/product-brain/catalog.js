@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Foundry's product contract.
+ * StockChief's product contract.
  *
  * This is deliberately a compact declaration of business capabilities and
  * route families, not a second route table. Express remains responsible for
@@ -82,7 +82,7 @@ const capabilities = [
   { id: 'learning.governed', label: 'Outcome learning', status: 'available', permission: P.VIEW_PURCHASING,
     actionPermission: P.ADMIN, destination: 'planning',
     description: 'Compare expected and actual outcomes, detect recurring bias, and propose versioned policy improvements with monitored rollout and rollback.',
-    prerequisites: ['Measured outcomes are required before Foundry proposes a change.'],
+    prerequisites: ['Measured outcomes are required before StockChief proposes a change.'],
     sideEffects: ['A proposal changes nothing until approved or covered by explicit narrow learning authority.',
       'Approved changes use the owning deterministic policy service and preserve the previous value for rollback.'] },
   { id: 'connections.manage', label: 'Connections', status: 'available', permission: P.ADMIN,
@@ -90,7 +90,7 @@ const capabilities = [
     manager: { intentClass: 'CONFIGURATION_CHANGE', handler: 'connection_management', examples: ['connect Shopify', 'diagnose Square'], safety: 'Mappings are workspace scoped and external events are idempotent.' } },
   { id: 'connections.accounting-sync', label: 'Accounting integrations', status: 'available', permission: P.ADMIN,
     description: 'Connect QuickBooks or Xero read-only, verify a real company fact, shadow-reconcile exact account identities, and enable outbound posting only after parity and explicit authority.',
-    destination: 'connections', prerequisites: ['Provider OAuth credentials are required.', 'Posting requires Foundry to be the declared source of truth and a matching shadow reconciliation.'] },
+    destination: 'connections', prerequisites: ['Provider OAuth credentials are required.', 'Posting requires StockChief to be the declared source of truth and a matching shadow reconciliation.'] },
   { id: 'communications.manage', label: 'Business email', status: 'available', permission: P.ADMIN,
     authorityCapability: 'supplier_emails',
     description: 'Connect approved mailboxes and handle supplier or customer messages with evidence.', destination: 'mail' },
@@ -113,8 +113,8 @@ const capabilities = [
   { id: 'data.import-file', label: 'Data import', status: 'available', permission: P.OPERATE,
     description: 'Read and preview spreadsheets, PDFs, documents, images and text before applying records.', destination: 'imports',
     manager: { intentClass: 'IMPORT', handler: 'attachment_required', examples: ['import this spreadsheet'], safety: 'A source is interpreted and previewed before changes.' } },
-  { id: 'manager.answer', label: 'Ask Foundry', status: 'available', permission: P.VIEW,
-    description: 'Answer grounded questions about the business and how to use Foundry.', destination: 'ask',
+  { id: 'manager.answer', label: 'Ask StockChief', status: 'available', permission: P.VIEW,
+    description: 'Answer grounded questions about the business and how to use StockChief.', destination: 'ask',
     manager: { intentClass: 'QUESTION', handler: 'ask', examples: ['where do I receive a PO', 'how many are in stock'], safety: 'Read-only unless the user explicitly asks to act.' } },
   { id: 'manager.explain', label: 'Explain decisions', status: 'available', permission: P.VIEW,
     description: 'Explain a recommendation, decision, refusal or calculation from recorded evidence.', destination: 'ask',
@@ -123,7 +123,7 @@ const capabilities = [
     description: 'Pause consequential automatic work immediately.', destination: 'autopilot',
     manager: { intentClass: 'STOP', handler: 'autopilot_pause', examples: ['pause automatic work'], safety: 'Reversible and never changes inventory.' } },
   { id: 'exceptions.resolve', label: 'Needs You', status: 'available', permission: P.VIEW,
-    description: 'Resolve only decisions or missing evidence Foundry cannot safely settle.', destination: 'needs-you' },
+    description: 'Resolve only decisions or missing evidence StockChief cannot safely settle.', destination: 'needs-you' },
   { id: 'audit.view', label: 'Activity and audit trail', status: 'available', permission: P.VIEW,
     description: 'Trace actions, evidence, actors and changes.', destination: 'activity' },
   { id: 'support.use', label: 'Support and guidance', status: 'available', permission: P.VIEW,
@@ -136,13 +136,13 @@ const capabilities = [
       'count_campaign','approve_count_variance','customer_return','inspect_customer_return','refund_customer_return',
       'supplier_return','ship_supplier_return','reconcile_supplier_return','fulfillment_wave'],
     description: 'Track hierarchical warehouse locations; execute durable receiving, putaway and transfers; run blind count campaigns, governed returns, and multi-order fulfillment waves.', destination: 'warehouse',
-    prerequisites: ['Scanned locations and products need real barcode identities; Foundry never infers a scanned identity.'] },
+    prerequisites: ['Scanned locations and products need real barcode identities; StockChief never infers a scanned identity.'] },
   { id: 'costing.landed-cost', label: 'Landed cost allocation', status: 'available', permission: P.VIEW_ACCOUNTING,
     actionPermission: P.MANAGE_ACCOUNTING,
     description: 'Allocate evidenced freight, duty, insurance and handling across received inventory with deterministic rounding and accounting reconciliation.', destination: 'purchasing',
     prerequisites: ['A received purchase and evidenced charge amount are required; missing conversions or weights are never guessed.'] },
   { id: 'manufacturing.manage', label: 'Manufacturing', status: 'unavailable', permission: P.VIEW,
-    description: 'Manage manufacturing work orders, production consumption and finished-goods output.', unavailableReason: 'Foundry does not currently include manufacturing work orders. Sellable kits and their component BOMs are supported separately in the product catalogue.', prerequisites: ['A manufacturing domain for production work orders must be implemented.'] },
+    description: 'Manage manufacturing work orders, production consumption and finished-goods output.', unavailableReason: 'StockChief does not currently include manufacturing work orders. Sellable kits and their component BOMs are supported separately in the product catalogue.', prerequisites: ['A manufacturing domain for production work orders must be implemented.'] },
   { id: 'edi.manage', label: 'EDI', status: 'unavailable', permission: P.ADMIN,
     description: 'Exchange structured trading documents over EDI.', unavailableReason: 'EDI connections are not implemented yet.', prerequisites: ['An approved EDI provider and document contracts are required.'] },
 ];
@@ -150,7 +150,7 @@ const capabilities = [
 const destinations = [
   { id: 'home', label: 'Home', href: '/', capability: 'manager.answer', aliases: ['home', 'brief', 'morning briefing'] },
   { id: 'needs-you', label: 'Needs You', href: '/needs-you', capability: 'exceptions.resolve', aliases: ['needs you', 'decisions', 'exceptions'] },
-  { id: 'ask', label: 'Ask Foundry', href: '/ask', capability: 'manager.answer', aliases: ['ask foundry', 'questions'] },
+  { id: 'ask', label: 'Ask StockChief', href: '/ask', capability: 'manager.answer', aliases: ['ask stockchief', 'ask foundry', 'questions'] },
   { id: 'inventory', label: 'Inventory', href: '/inventory', capability: 'inventory.view', aliases: ['inventory', 'products', 'stock', 'catalog', 'catalogue'] },
   { id: 'locations', label: 'Locations', href: '/locations', capability: 'inventory.view', aliases: ['locations', 'warehouses', 'stores'] },
   { id: 'warehouse', label: 'Warehouse work', href: '/warehouse', capability: 'warehouse.bins', aliases: ['warehouse', 'bins', 'aisles', 'shelves', 'scan', 'scanning', 'putaway', 'warehouse tasks'] },
@@ -170,7 +170,7 @@ const destinations = [
   { id: 'settings', label: 'Settings', href: '/settings', capability: 'workspace.manage', aliases: ['settings', 'people', 'permissions'] },
   { id: 'workspaces', label: 'Inventories', href: '/inventories', capability: 'workspace.manage', aliases: ['workspaces', 'inventories', 'businesses'] },
   { id: 'onboarding', label: 'Set up inventory', href: '/onboarding', capability: 'onboarding.manage', aliases: ['setup', 'onboarding', 'set up inventory'] },
-  { id: 'migration', label: 'Move to Foundry', href: '/onboarding/migrations/new', capability: 'onboarding.manage', aliases: ['migration', 'migrate', 'switch systems', 'move to foundry', 'import my existing inventory'] },
+  { id: 'migration', label: 'Move to StockChief', href: '/onboarding/migrations/new', capability: 'onboarding.manage', aliases: ['migration', 'migrate', 'switch systems', 'move to stockchief', 'move to foundry', 'import my existing inventory'] },
   { id: 'support', label: 'Support', href: '/support', capability: 'support.use', aliases: ['support', 'help', 'contact support'] },
   { id: 'repairs', label: 'Repair cases', href: '/repairs', capability: 'operations.repair', aliases: ['repairs', 'mismatches', 'fix problems'] },
   { id: 'operations', label: 'Production operations', href: '/settings/operations', capability: 'operations.certify', aliases: ['production status', 'readiness', 'dead letters', 'monitoring'] },

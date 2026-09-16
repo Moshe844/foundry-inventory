@@ -24,7 +24,7 @@
 
 <section class="rm-migration-state" aria-label="Migration state">
   <div class="is-done"><span>Workbook</span><strong>Saved</strong><small><%= datasets.length %> tabs read</small></div>
-  <div class="<%= allPrepared ? 'is-done' : 'is-now' %>"><span>Private staging</span><strong><%= stagedSourceRows.toLocaleString() %> source rows</strong><small><%= pkg.stagedCount.toLocaleString() %> Foundry records prepared</small></div>
+  <div class="<%= allPrepared ? 'is-done' : 'is-now' %>"><span>Private staging</span><strong><%= stagedSourceRows.toLocaleString() %> source rows</strong><small><%= pkg.stagedCount.toLocaleString() %> StockChief records prepared</small></div>
   <div><span>Live inventory</span><strong><%= pkg.appliedCount.toLocaleString() %> records</strong><small>Nothing changes before verification and approval</small></div>
 </section>
 
@@ -36,7 +36,7 @@
 
 <% if (isPreparing) { %>
 <section class="rm-next-card rm-next-card--working" data-migration-progress="/onboarding/migrations/<%= pkg.id %>/progress">
-  <div class="rm-working-copy"><span class="rm-stamp">Working automatically</span><h2>Foundry is preparing this inventory.</h2>
+  <div class="rm-working-copy"><span class="rm-stamp">Working automatically</span><h2>StockChief is preparing this inventory.</h2>
     <p data-migration-progress-copy><%= pkg.preparationDetail || 'Identifying each dataset and checking its source meaning.' %></p>
     <div class="rm-live-progress"><span data-migration-progress-phase><%= String(pkg.preparationStage || 'understanding').replaceAll('_',' ').toLowerCase() %></span><span data-migration-progress-fraction><% if (pkg.preparationTotal) { %><%= pkg.preparationCompleted %> of <%= pkg.preparationTotal %> datasets<% } else { %>Starting…<% } %></span></div>
     <progress max="<%= Math.max(1,pkg.preparationTotal || 1) %>" value="<%= pkg.preparationCompleted %>" data-migration-job-bar></progress>
@@ -45,7 +45,7 @@
 </section>
 <% } else if (canAutoStart) { %>
 <section class="rm-next-card rm-next-card--working" aria-live="polite">
-  <div class="rm-working-copy"><span class="rm-stamp">Starting automatically</span><h2><%= automaticConflict ? 'Foundry is reconciling the workbook.' : 'Foundry is continuing the preparation.' %></h2>
+  <div class="rm-working-copy"><span class="rm-stamp">Starting automatically</span><h2><%= automaticConflict ? 'StockChief is reconciling the workbook.' : 'StockChief is continuing the preparation.' %></h2>
     <p><%= automaticConflict
       ? 'Detailed operational rows will control stock, purchasing and accounting. Conflicting summary totals remain attached as evidence and cannot create duplicate business effects. No technical choice is required from you.'
       : 'It will prepare every meaning it can prove and run verification. You will only be interrupted for a genuinely ambiguous source fact or the final switch approval.' %></p>
@@ -59,22 +59,22 @@
 
 <% if (pkg.preparationStatus === 'WAITING' && pkg.preparationError && !decisionPending) { %>
 <section class="rm-next-card rm-next-card--attention">
-  <div><span class="rm-stamp">Source evidence needed</span><h2>Foundry stopped before guessing.</h2>
+  <div><span class="rm-stamp">Source evidence needed</span><h2>StockChief stopped before guessing.</h2>
     <p><%= pkg.preparationError %></p><small>Correct that fact in the source or review its mapping. Everything already prepared remains saved, and nothing has been switched live.</small></div>
 </section>
 <% } %>
 
 <% if (decisionPending && !isPreparing && !canAutoStart) { %>
 <section class="rm-panel rm-panel--attention rm-migration-decision">
-  <div class="rm-panel__head"><%- helpers.icon('alert',{ size:15 }) %><h2>Foundry needs one source fact</h2><span class="right">Nothing is live</span></div>
+  <div class="rm-panel__head"><%- helpers.icon('alert',{ size:15 }) %><h2>StockChief needs one source fact</h2><span class="right">Nothing is live</span></div>
   <div class="rm-migration-choice">
     <h3>Some row-level values contradict each other.</h3>
-    <p>Foundry has kept every source row but stopped before a disputed value could change stock or accounting.</p>
+    <p>StockChief has kept every source row but stopped before a disputed value could change stock or accounting.</p>
     <ul class="rm-migration-conflicts">
       <% if (sourceReview.inventoryFormulaMismatches) { %><li><strong><%= sourceReview.inventoryFormulaMismatches.toLocaleString() %></strong> stock row<%= sourceReview.inventoryFormulaMismatches === 1 ? '' : 's' %> do not reconcile on-hand, reserved, damaged and available quantities.</li><% } %>
       <% if (sourceReview.inventoryValueMismatches) { %><li><strong><%= sourceReview.inventoryValueMismatches.toLocaleString() %></strong> inventory value<%= sourceReview.inventoryValueMismatches === 1 ? '' : 's' %> do not equal quantity × unit cost.</li><% } %>
     </ul>
-    <p><strong>What to do:</strong> correct those exact values in the source and upload the corrected snapshot. Foundry will reuse the mappings it already proved.</p>
+    <p><strong>What to do:</strong> correct those exact values in the source and upload the corrected snapshot. StockChief will reuse the mappings it already proved.</p>
     <form method="post" action="/onboarding/migrations/<%= pkg.id %>/choose-operational-truth">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <input type="hidden" name="choice" value="DETAILED_OPERATIONAL_RECORDS">
@@ -96,9 +96,9 @@
           <strong><%= dataset.entityType === 'purchase_order' ? 'Purchase orders' : dataset.sheetName %></strong>
           <% if (verifiedOrderSplit) { %>
             <small>This file mixes open, partially received and completed orders. Its ordered, received and remaining quantities can be checked line by line.</small>
-            <span class="rm-field-list">Foundry will prepare only the verified quantity still incoming. Received and closed orders stay as history.</span>
+            <span class="rm-field-list">StockChief will prepare only the verified quantity still incoming. Received and closed orders stay as history.</span>
           <% } else { %>
-            <small><%= dataset.sourceRowCount.toLocaleString() %> rows · <% if (dataset.unresolved && dataset.unresolved.length) { %><%= dataset.unresolved.length %> consequential field<%= dataset.unresolved.length === 1 ? '' : 's' %> need a rule<% } else { %>Foundry cannot safely finish this dataset yet<% } %></small>
+            <small><%= dataset.sourceRowCount.toLocaleString() %> rows · <% if (dataset.unresolved && dataset.unresolved.length) { %><%= dataset.unresolved.length %> consequential field<%= dataset.unresolved.length === 1 ? '' : 's' %> need a rule<% } else { %>StockChief cannot safely finish this dataset yet<% } %></small>
             <% if (dataset.unresolved && dataset.unresolved.length) { %><span class="rm-field-list"><%= dataset.unresolved.map(function(field) { return field.sourceField; }).join(' · ') %></span><% } %>
           <% } %>
         </span>
@@ -127,7 +127,7 @@
 <% } %>
 
 <details class="rm-panel rm-migration-details">
-  <summary><span><%- helpers.icon('check',{ size:15 }) %> <strong>What Foundry understood</strong></span><span><%= staged.length %> prepared</span></summary>
+  <summary><span><%- helpers.icon('check',{ size:15 }) %> <strong>What StockChief understood</strong></span><span><%= staged.length %> prepared</span></summary>
   <div class="rm-feed">
     <% operational.filter(function(d) { return ['READY_TO_STAGE','STAGED'].includes(d.status); }).forEach(function(dataset) { %>
       <div class="rm-feed__row">

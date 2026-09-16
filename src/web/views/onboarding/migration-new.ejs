@@ -1,8 +1,8 @@
 <div class="rm-head">
   <a class="rm-back" href="/onboarding/migrations">← Migration control</a>
-  <p class="rm-head__eyebrow">Move to Foundry</p>
+  <p class="rm-head__eyebrow">Move to StockChief</p>
   <h1>Bring the records you already trust.</h1>
-  <p>Upload exports from your current system or spreadsheets. Foundry stores the exact files, works out their structure, and asks only about meanings it cannot prove.</p>
+  <p>Upload exports from your current system or spreadsheets. StockChief stores the exact files, works out their structure, and asks only about meanings it cannot prove.</p>
 </div>
 
 <form method="post" action="/onboarding/migrations/new" enctype="multipart/form-data" data-busy data-migration-upload class="rm-panel">
@@ -27,7 +27,7 @@
       <div class="rm-upload-options">
         <label class="rm-field">
           <span>Source label <small>optional</small></span>
-          <input name="sourceLabel" maxlength="160" placeholder="Foundry can label this from the filenames">
+          <input name="sourceLabel" maxlength="160" placeholder="StockChief can label this from the filenames">
         </label>
         <label class="rm-field"><span>Paste one dataset</span>
           <textarea name="pasted" rows="5" placeholder="SKU,Product,Location,Quantity&#10;ABC-1,Blue shoe,Main warehouse,42"></textarea>
@@ -40,4 +40,4 @@
   </div>
 </form>
 
-<div class="rm-note"><%- helpers.icon('shield',{ size:16 }) %><span><strong>Nothing is live yet.</strong> Uploading records only creates a reviewable source snapshot. Foundry cannot activate it until mappings, dependencies and reconciliation checks pass.</span></div>
+<div class="rm-note"><%- helpers.icon('shield',{ size:16 }) %><span><strong>Nothing is live yet.</strong> Uploading records only creates a reviewable source snapshot. StockChief cannot activate it until mappings, dependencies and reconciliation checks pass.</span></div>

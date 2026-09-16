@@ -35,7 +35,7 @@ async function post(agent, path, body, formPath = '/') {
 
 // --- creating and switching --------------------------------------------------
 
-test('a person can create a second inventory and is handed to Foundry', async () => {
+test('a person can create a second inventory and is handed to StockChief', async () => {
   const store = makeApp();
   const first = seedWorkspace(store.db, { workspaceName: 'Clothing Business' });
   const agent = request.agent(store.app);
@@ -56,10 +56,10 @@ test('a person can create a second inventory and is handed to Foundry', async ()
   const front = await agent.get('/foundry');
   assert.equal(front.headers.location, '/onboarding');
   const chooser = plain((await agent.get('/onboarding')).text);
-  assert.match(chooser, /Where should Foundry get your inventory from/);
+  assert.match(chooser, /Where should StockChief get your inventory from/);
 
   const describe = plain((await agent.get('/foundry/describe')).text);
-  assert.match(describe, /Give Foundry what you already have/);
+  assert.match(describe, /Give StockChief what you already have/);
   assert.match(describe, /Equipment Company/);
 });
 
@@ -307,5 +307,5 @@ test('an account with no inventory is asked to make one, not shown an empty cons
   const home = await agent.get('/');
   assert.equal(home.status, 302);
   assert.equal(home.headers.location, '/inventories');
-  assert.match(plain((await agent.get('/inventories')).text), /Give Foundry an inventory to manage/);
+  assert.match(plain((await agent.get('/inventories')).text), /Give StockChief an inventory to manage/);
 });

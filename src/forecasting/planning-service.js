@@ -89,7 +89,7 @@ function forSku(db, workspaceId, skuId, options = {}) {
     : { planningDays: policy.leadTimeDays ?? null, source: policy.leadTimeDays ? 'configured' : 'unknown',
       configuredDays: policy.leadTimeDays ?? null, measured: null, material: false,
       differenceDays: null, supplierName: null, supplierId: null, deliveries: [],
-      explanation: 'No supplier is linked to this product, so Foundry has no delivery time to plan against.' };
+      explanation: 'No supplier is linked to this product, so StockChief has no delivery time to plan against.' };
 
   /*
    * The horizon is the lead time plus the review gap, never a round number.
@@ -157,7 +157,7 @@ function chooseSupplierItem(suppliers, policy) {
  *
  * The quantity comes from the target the *owner* configured where one exists,
  * and from the recommended target only where none does. Ordering to a number
- * Foundry made up, on a line whose rule the owner set deliberately, would be
+ * StockChief made up, on a line whose rule the owner set deliberately, would be
  * overriding them without saying so — the recommendation to change the rule is
  * a separate conversation with its own buttons.
  */
@@ -194,11 +194,11 @@ function decidePurchase({ db, workspaceId, sku, forecast, leadTime, projection, 
     return { ...base, order: false, reason: 'covered',
       headline: 'Nothing to order yet',
       explanation: forecast.dailyRate === null
-        ? `${projection.onHand} in stock and no customer order outstanding. Foundry cannot estimate a `
+        ? `${projection.onHand} in stock and no customer order outstanding. StockChief cannot estimate a `
           + 'sales rate for this yet, so it is not recommending a purchase on a guess.'
         : `${projection.onHand} in stock at about ${forecast.dailyRate} a day`
           + `${projection.onOrder ? `, with ${projection.onOrder} already on order,` : ''} is `
-          + `${cover ? `about ${cover} days of cover` : 'enough'} — past the point Foundry can see. `
+          + `${cover ? `about ${cover} days of cover` : 'enough'} — past the point StockChief can see. `
           + 'Ordering now would just be holding it sooner.' };
   }
 
@@ -216,7 +216,7 @@ function decidePurchase({ db, workspaceId, sku, forecast, leadTime, projection, 
   if (usefulTransfer && goals.preferTransferBeforePurchasing) {
     return { ...base, order: false, reason: 'transfer_first',
       headline: `Move ${usefulTransfer.units} from ${usefulTransfer.fromLocationName} instead`,
-      explanation: `${usefulTransfer.why} You asked Foundry to move stock before buying more.`,
+      explanation: `${usefulTransfer.why} You asked StockChief to move stock before buying more.`,
       transfer: usefulTransfer };
   }
 
@@ -224,7 +224,7 @@ function decidePurchase({ db, workspaceId, sku, forecast, leadTime, projection, 
     return { ...base, order: false, reason: 'no_supplier',
       headline: 'Nothing to order from',
       explanation: `This is heading for a shortage around ${projection.stockoutDate}, but no supplier is `
-        + 'linked to it, so Foundry cannot work out a pack size, a cost or a delivery time.' };
+        + 'linked to it, so StockChief cannot work out a pack size, a cost or a delivery time.' };
   }
 
   // --- how much ---------------------------------------------------------------
@@ -233,12 +233,12 @@ function decidePurchase({ db, workspaceId, sku, forecast, leadTime, projection, 
     ? policy.targetStock
     : (advice.advisable ? advice.recommended.target : null);
   const targetSource = policy.targetStock !== null && policy.targetStock !== undefined
-    ? 'your configured target' : 'the level Foundry works out from demand and lead time';
+    ? 'your configured target' : 'the level StockChief works out from demand and lead time';
 
   if (target === null) {
     return { ...base, order: false, reason: 'no_target',
       headline: 'Cannot work out a quantity',
-      explanation: 'There is no target stock level configured and not enough demand history for Foundry '
+      explanation: 'There is no target stock level configured and not enough demand history for StockChief '
         + 'to suggest one, so it will not invent a quantity.' };
   }
 
@@ -306,7 +306,7 @@ function explainPurchase({ sku, projection, forecast, leadTime, converted, targe
   }
   if (leadTime.source === 'measured' && leadTime.material) {
     parts.push(`${leadTime.supplierName} has recently been taking about ${leadTime.planningDays} days rather `
-      + `than the ${leadTime.configuredDays} configured, which Foundry is planning around.`);
+      + `than the ${leadTime.configuredDays} configured, which StockChief is planning around.`);
   } else if (leadTime.planningDays !== null) {
     parts.push(`Delivery takes about ${leadTime.planningDays} days.`);
   }
@@ -323,7 +323,7 @@ function explainPurchase({ sku, projection, forecast, leadTime, converted, targe
  *
  * Offered as a comparison rather than a warning. There are perfectly good
  * reasons to buy a bigger drop — a price break, a container, a supplier who is
- * about to close for a month — and Foundry cannot see any of them. What it can
+ * about to close for a month — and StockChief cannot see any of them. What it can
  * see is the cash, so it says the cash.
  */
 function tradeoff({ converted, supplierItem, forecast, currency, projection }) {

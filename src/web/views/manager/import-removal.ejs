@@ -1,6 +1,6 @@
 <div class="page-head">
   <div class="titles">
-    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> Foundry</a>
+    <a class="back-link" href="/"><%- helpers.icon('chevron', { size: 14 }) %> StockChief</a>
     <h1><%= proposal.status === 'COMPLETED' ? 'Imported products removed' : 'Choose the newly added products to remove' %></h1>
     <div class="page-sub"><%= proposal.snapshot.source.sourceName %> · imported <%= new Date(proposal.snapshot.source.completedAt).toLocaleString() %></div>
   </div>
@@ -21,7 +21,7 @@
 <% } else { %>
   <div class="notice notice--warn section">
     <%- helpers.icon('alert', { size: 18 }) %>
-    <span><strong>Nothing has been removed yet.</strong> Foundry traced these records to the latest completed import. Select any combination, or remove all of them at once.</span>
+    <span><strong>Nothing has been removed yet.</strong> StockChief traced these records to the latest completed import. Select any combination, or remove all of them at once.</span>
   </div>
 
   <form method="post" action="/import-removals/<%= proposal.id %>/approve" class="card section" data-selection-group data-busy>

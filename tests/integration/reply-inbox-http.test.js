@@ -4,7 +4,7 @@
  * The mailbox as a place to work.
  *
  * These prove the two things the pages promise: that every message says why it
- * was sorted where it was, and that Foundry does not pretend it can answer any
+ * was sorted where it was, and that StockChief does not pretend it can answer any
  * of them yet.
  */
 
@@ -102,7 +102,7 @@ test('a message page shows what arrived and offers only the three drawers', asyn
   assert.match(text, /Needs a reply/);
   assert.match(text, /I answered — waiting on them/);
   assert.match(text, /Handled, nothing needed/);
-  assert.match(text, /Foundry can draft this from what it holds about/,
+  assert.match(text, /StockChief can draft this from what it holds about/,
     'the page offers the draft rather than leaving somebody hunting');
 
   // Giving a reason keeps it with the message.

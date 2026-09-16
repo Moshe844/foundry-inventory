@@ -115,7 +115,7 @@ test('a description picks a path, most specific wins', () => {
 
 // --- understanding a spreadsheet ---------------------------------------------
 
-test('Foundry reads the file and reports what it found', () => {
+test('StockChief reads the file and reports what it found', () => {
   const env = setup();
   const source = addSource(env, 'warehouse.csv', MAIN);
   const sheet = source.profile.sheets[source.profile.primarySheetIndex];
@@ -129,7 +129,7 @@ test('Foundry reads the file and reports what it found', () => {
     sheet.totals.locations.map((location) => location.name).sort(),
     ['Brooklyn Warehouse', 'New Jersey Warehouse']
   );
-  // The file dated itself, so Foundry knows how old it is.
+  // The file dated itself, so StockChief knows how old it is.
   assert.equal(source.observedAt, '2026-08-14');
   assert.match(source.freshnessBasis, /Exported 14 August 2026/);
 });
@@ -221,7 +221,7 @@ test('running the same migration twice does not import twice', async () => {
   );
 });
 
-test('after migrating, Foundry does not invent a demand history', async () => {
+test('after migrating, StockChief does not invent a demand history', async () => {
   const env = setup();
   addSource(env, 'warehouse.csv', MAIN);
   const plan = migration.buildPlan(env.db, env.ctx, env.membership);
@@ -271,7 +271,7 @@ test('overlapping files surface real conflicts and normalise the rest', () => {
   assert.equal(plan.proposedLocations.includes('Brooklyn Warehouse'), true);
   assert.equal(plan.proposedLocations.includes('Brooklyn Whse'), false);
 
-  // Same SKU, two descriptions: one product, and Foundry says which name.
+  // Same SKU, two descriptions: one product, and StockChief says which name.
   const naming2 = conflicts.filter((c) => c.kind === 'same_product_different_names');
   assert.ok(naming2.length >= 1);
   assert.ok(naming2.some((c) => /OX-1002/.test(c.subject)));
@@ -281,7 +281,7 @@ test('overlapping files surface real conflicts and normalise the rest', () => {
   assert.equal(quantity.length, 1);
   assert.match(quantity[0].subject, /Navy Oxford/);
   assert.equal(quantity[0].options.length, 2);
-  // The count is dated later, so Foundry recommends it — and says why.
+  // The count is dated later, so StockChief recommends it — and says why.
   assert.ok(quantity[0].recommendedOption);
   assert.match(quantity[0].recommendationReason, /2026-08-20|physical count/i);
 
@@ -300,11 +300,11 @@ test('an undecided blocking conflict stops the migration', async () => {
 
   assert.ok(quantity, 'the disagreement must be reported');
   assert.equal(quantity.severity, 'blocking');
-  assert.equal(quantity.recommendedOption, null, 'Foundry must not pick a stock figure on its own');
+  assert.equal(quantity.recommendedOption, null, 'StockChief must not pick a stock figure on its own');
 
   await assert.rejects(
     () => migration.migrate(env.db, env.ctx, env.membership, plan.id),
-    /need a decision before Foundry can take this inventory over/
+    /need a decision before StockChief can take this inventory over/
   );
   assert.equal(
     env.db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ?').get(env.workspace.workspaceId).n,
@@ -344,7 +344,7 @@ test('a decision has to be one of the options offered', () => {
   );
 });
 
-test('accepting the recommendations settles only what Foundry recommended', () => {
+test('accepting the recommendations settles only what StockChief recommended', () => {
   const env = setup();
   addSource(env, 'inventory-main.csv', MAIN);
   addSource(env, 'physical-count.csv', COUNT);
@@ -352,7 +352,7 @@ test('accepting the recommendations settles only what Foundry recommended', () =
 
   const result = migration.acceptRecommendations(env.db, env.ctx, env.membership, plan.id);
   assert.ok(result.accepted >= 1);
-  // Anything Foundry had no recommendation for is still waiting for a person.
+  // Anything StockChief had no recommendation for is still waiting for a person.
   for (const conflict of migration.conflictsFor(env.db, env.workspace.workspaceId, plan.id, { onlyOpen: true })) {
     assert.equal(conflict.recommendedOption, null);
   }
@@ -381,10 +381,10 @@ test('a migration whose totals disagree is not reported as verified', async () =
 
 // --- source of truth and connectors -------------------------------------------
 
-test('every inventory says which system owns its truth, and defaults to Foundry', () => {
+test('every inventory says which system owns its truth, and defaults to StockChief', () => {
   const env = setup();
   assert.equal(paths.sourceOfTruth(env.db, env.workspace.workspaceId), 'FOUNDRY_NATIVE');
-  assert.equal(paths.isFoundryNative(env.db, env.workspace.workspaceId), true);
+  assert.equal(paths.isStockChiefNative(env.db, env.workspace.workspaceId), true);
 });
 
 test('an inventory cannot claim an external owner with nothing connected', () => {
@@ -396,7 +396,7 @@ test('an inventory cannot claim an external owner with nothing connected', () =>
   assert.equal(paths.sourceOfTruth(env.db, env.workspace.workspaceId), 'FOUNDRY_NATIVE');
 });
 
-test('Foundry ships no pretend integrations', () => {
+test('StockChief ships no pretend integrations', () => {
   // The registry is the architecture. A connector appears in it when one really
   // exists, and an empty list is the honest state today.
   assert.deepEqual(registry.available(), []);
@@ -482,7 +482,7 @@ test('a position counted in two files is established once, from the row that won
   const conflicts = migration.conflictsFor(env.db, env.workspace.workspaceId, plan.id);
   const quantity = conflicts.find((entry) => entry.kind === 'quantity_conflict');
   assert.ok(quantity, 'files disagreeing about one position is a conflict');
-  assert.equal(quantity.severity, 'blocking', 'Foundry will not pick a stock figure itself');
+  assert.equal(quantity.severity, 'blocking', 'StockChief will not pick a stock figure itself');
 
   // The agreeing rows are not a conflict — there is nothing to decide.
   assert.equal(conflicts.filter((entry) => entry.kind === 'quantity_conflict').length, 1);
@@ -533,7 +533,7 @@ test('a position counted in two files is established once, from the row that won
  *
  * And with no location column, nothing was proposed to hold the stock, so every
  * row failed validation with "No location for this stock, and no default
- * chosen". The migration then reported "There is nothing in that file Foundry
+ * chosen". The migration then reported "There is nothing in that file StockChief
  * can import" about a file it had just read forty products and 751 units out of.
  */
 const VARIANTS_NO_LOCATION = csv([
@@ -594,7 +594,7 @@ test('the whole spreadsheet path completes and the stock lands', async () => {
  * version its own code, so forty rows became forty products — six of them
  * called "Classic Crew T-Shirt". Grouping by name fixes that, but only if the
  * codes survive: TSH-BLK-S is what is on the label, in the till, and in the
- * next file the shop sends. Foundry generating CLASSIC-CREW-T-SHIRT-BLACK-S
+ * next file the shop sends. StockChief generating CLASSIC-CREW-T-SHIRT-BLACK-S
  * over the top would be renaming the customer's own products.
  */
 test('a variant sheet becomes one product per name, with the file’s own codes', async () => {

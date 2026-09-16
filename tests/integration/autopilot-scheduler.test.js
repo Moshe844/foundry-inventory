@@ -3,7 +3,7 @@
 /**
  * Mission 7: the clock.
  *
- * The scheduler is the only part of Foundry that acts without a person present,
+ * The scheduler is the only part of StockChief that acts without a person present,
  * so these tests are almost entirely about what it declines to do: not acting
  * for a paused inventory, not acting under an authority nobody granted, not
  * acting twice, and not letting one broken workspace stop the rest.

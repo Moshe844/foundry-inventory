@@ -1,11 +1,11 @@
 'use strict';
 
 /**
- * Reading a sentence about what Foundry may do, and turning it into grants.
+ * Reading a sentence about what StockChief may do, and turning it into grants.
  *
  * "Automatically send payment requests to customers, but always ask me before
  * placing supplier orders" is two instructions in one breath, pointing in
- * opposite directions. The owner should be able to say that and have Foundry
+ * opposite directions. The owner should be able to say that and have StockChief
  * end up with exactly two settings changed and nothing else touched — the same
  * settings the Settings page edits, because there is only one set of rules.
  *
@@ -67,7 +67,7 @@ const PHRASES = {
 const GRANTING = [
   'automatically', 'automatic', 'auto', 'without asking', 'without me',
   'on its own', 'by itself', 'yourself', 'go ahead and', 'you can', 'you may',
-  'feel free to', 'handle', 'take care of', 'let foundry', 'allow foundry',
+  'feel free to', 'handle', 'take care of', 'let stockchief', 'allow stockchief', 'let foundry', 'allow foundry',
 ];
 
 /* Somebody keeping it. */
@@ -176,7 +176,7 @@ function read(sentence) {
     grants,
     unclear: unclear.filter((name) => !(name in grants)),
     summary: changes.length
-      ? changes.map(([name, on]) => `${on ? 'Foundry may' : 'Foundry may not'} `
+      ? changes.map(([name, on]) => `${on ? 'StockChief may' : 'StockChief may not'} `
         + `${CAPABILITIES[name].label.toLowerCase()} on its own.`).join(' ')
       : null,
     /*

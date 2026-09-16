@@ -93,7 +93,7 @@ test('a stated preference changes what the planner aims for', () => {
   assert.deepEqual(
     preferences.balanceSettings(env.db, env.workspace.workspaceId, DEFAULTS),
     { ...DEFAULTS, neverAutomateSerialized: false },
-    'with nothing set, Foundry uses its own numbers'
+    'with nothing set, StockChief uses its own numbers'
   );
 
   preferences.set(env.db, env.ctx, env.membership, {
@@ -130,10 +130,10 @@ test('a value stored before a limit changed cannot slip past it', () => {
   assert.equal(applied.targetDays, 30, 'out of range falls back rather than being obeyed');
 });
 
-test('a preference never grants Foundry anything new', () => {
+test('a preference never grants StockChief anything new', () => {
   const env = setup();
   // Every key is a number or a yes/no about how work is sized — none of them
-  // name an action, a location, or an amount Foundry may move unattended. That
+  // name an action, a location, or an amount StockChief may move unattended. That
   // is a policy's job, and this is the test that keeps the two apart.
   const permission = /allow|permit|authoris|authoriz|grant|enable_|automate_transfer/;
   for (const definition of Object.values(preferences.KEYS)) {
@@ -144,7 +144,7 @@ test('a preference never grants Foundry anything new', () => {
       `${definition.key} sounds like permission, which belongs in a policy`
     );
     // A choice is still a preference, so none of its options may read as one
-    // either — "let Foundry order" hiding inside a dropdown is the same bug.
+    // either — "let StockChief order" hiding inside a dropdown is the same bug.
     for (const choice of definition.choices || []) {
       assert.ok(!permission.test(choice.id),
         `${definition.key}.${choice.id} sounds like permission`);

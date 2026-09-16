@@ -3,13 +3,13 @@
 /**
  * The planning surface.
  *
- * Two buttons and a page. The buttons are the point — everything Foundry
+ * Two buttons and a page. The buttons are the point — everything StockChief
  * predicts appears where the work already is (Home, Needs you, the product,
  * purchasing), and each of those places needs somewhere to send a decision.
  *
  * The page exists for the times somebody wants the whole picture at once: what
  * is heading for zero, which rules have drifted, where stock is in the wrong
- * shop, what money is asleep on a shelf, and how Foundry's past predictions
+ * shop, what money is asleep on a shelf, and how StockChief's past predictions
  * actually turned out. It is deliberately not the front door. An owner who has
  * to open a forecasting tab every morning is an owner the forecasting is
  * failing.
@@ -49,7 +49,7 @@ router.get('/planning', asyncRoute(async (req, res) => {
   const sweep = safely(() => planning.sweep(req.db, req.ctx.workspaceId, { limit: 25 }),
     { shortages: [], purchases: [], policyChanges: [], transfers: [], decisions: [], informational: [], scanned: 0 });
   const excess = safely(() => planning.excessReview(req.db, req.ctx.workspaceId, { goals }),
-    { rows: [], totals: {}, headline: 'Foundry could not read the stock position just now.' });
+    { rows: [], totals: {}, headline: 'StockChief could not read the stock position just now.' });
   const accuracy = safely(() => outcomes.accuracy(req.db, req.ctx.workspaceId),
     { scored: 0, summary: 'No forecast has been scored yet.' });
   const inventoryPosition = safely(() => goalsService.inventoryPosition(req.db, req.ctx.workspaceId, goals),
@@ -79,7 +79,7 @@ router.post('/planning/learning/:id/approve', asyncRoute(async (req, res) => {
   try {
     learningService.rollout(req.db, req.ctx, req.user, req.params.id,
       { expectedHash:trimOrNull(req.body.integrityHash) });
-    req.flash('success', 'Applied and verified. Foundry will measure what happens next, and this can be rolled back.');
+    req.flash('success', 'Applied and verified. StockChief will measure what happens next, and this can be rolled back.');
   } catch (error) {
     if (!error.status || error.status >= 500) throw error;
     req.flash('error', error.message);
@@ -90,7 +90,7 @@ router.post('/planning/learning/:id/approve', asyncRoute(async (req, res) => {
 router.post('/planning/learning/:id/decline', asyncRoute(async (req, res) => {
   try {
     learningService.decline(req.db, req.ctx, req.user, req.params.id, trimOrNull(req.body.reason));
-    req.flash('success', 'Kept the current policy. Foundry recorded your decision.');
+    req.flash('success', 'Kept the current policy. StockChief recorded your decision.');
   } catch (error) {
     if (!error.status || error.status >= 500) throw error;
     req.flash('error', error.message);
@@ -113,7 +113,7 @@ router.post('/planning/learning/:id/rollback', asyncRoute(async (req, res) => {
  * "Use 84."
  *
  * No capability is required and that is deliberate: authority is about what
- * Foundry may do unattended, and this is the owner changing their own setting.
+ * StockChief may do unattended, and this is the owner changing their own setting.
  * The permission checked is the ordinary one for editing replenishment.
  */
 router.post('/planning/recommendations/:id/accept', asyncRoute(async (req, res) => {
@@ -130,11 +130,11 @@ router.post('/planning/recommendations/:id/accept', asyncRoute(async (req, res) 
   return res.redirect(303, backTo(req));
 }));
 
-/* "Keep 60." Recorded rather than dismissed, so Foundry stops re-raising it. */
+/* "Keep 60." Recorded rather than dismissed, so StockChief stops re-raising it. */
 router.post('/planning/recommendations/:id/decline', asyncRoute(async (req, res) => {
   try {
     applyService.decline(req.db, req.ctx, req.params.id, trimOrNull(req.body.reason));
-    req.flash('success', 'Kept as it is. Foundry will leave that setting alone.');
+    req.flash('success', 'Kept as it is. StockChief will leave that setting alone.');
   } catch (error) {
     if (!error.status || error.status >= 500) throw error;
     req.flash('error', error.message);
@@ -143,9 +143,9 @@ router.post('/planning/recommendations/:id/decline', asyncRoute(async (req, res)
 }));
 
 /**
- * Telling Foundry what matters.
+ * Telling StockChief what matters.
  *
- * A goal chooses between answers Foundry was already allowed to give. It cannot
+ * A goal chooses between answers StockChief was already allowed to give. It cannot
  * widen authority, and the preference store refuses any key that is not one of
  * the handful that mean something.
  */
@@ -170,7 +170,7 @@ router.post('/planning/goals', asyncRoute(async (req, res) => {
     }
   }
   if (problems.length) req.flash('error', problems.join(' '));
-  else req.flash('success', 'Foundry will plan around that.');
+  else req.flash('success', 'StockChief will plan around that.');
   return res.redirect(303, '/planning#goals');
 }));
 

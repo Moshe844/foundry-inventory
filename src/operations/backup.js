@@ -87,7 +87,7 @@ async function create(db, options = {}) {
 /**
  * Performs an actual restore into a new file and verifies the restored copy.
  * It intentionally refuses to overwrite a live database; production cutover
- * is a separate, operator-controlled step after Foundry has been stopped.
+ * is a separate, operator-controlled step after StockChief has been stopped.
  */
 function restoreTo(backupPath, destinationPath) {
   const source = path.resolve(backupPath);
@@ -136,7 +136,7 @@ function startScheduler(db, options = {}) {
       try {
         require('./checkpoints').record(db, 'backup.created', 'FAIL', { error: error.message });
         require('./monitoring').raise(db, {
-          severity: 'CRITICAL', kind: 'backup.failed', title: 'Foundry backup failed',
+          severity: 'CRITICAL', kind: 'backup.failed', title: 'StockChief backup failed',
           detail: error.message, fingerprint: 'backup.failed',
         });
       } catch { /* the original backup failure is still logged */ }

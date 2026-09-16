@@ -4,10 +4,10 @@
  * Mission 2 acceptance run, in a real browser, from a clean database, using a
  * real AI call — no scripted provider anywhere in this file.
  *
- * Sign in → describe the business → Foundry interprets → review the proposal →
+ * Sign in → describe the business → StockChief interprets → review the proposal →
  * choose the highest-information evidence path → enter real facts manually →
  * build a real product → receive stock → confirm Mission 1 truth still holds →
- * refresh → ask Foundry why, and get a grounded answer.
+ * refresh → ask StockChief why, and get a grounded answer.
  */
 
 const test = require('node:test');
@@ -97,7 +97,7 @@ async function createLocation(page, name, kind) {
 }
 
 test(
-  'Mission 2 end to end: Foundry understands a business and configures the engine',
+  'Mission 2 end to end: StockChief understands a business and configures the engine',
   { skip: !config.ai.configured, timeout: 900000 },
   async (t) => {
     fs.rmSync(SHOTS, { recursive: true, force: true });
@@ -137,7 +137,7 @@ test(
       fs.rmSync(dataDir, { recursive: true, force: true });
     });
 
-    await t.test('1-2. a new workspace lands on Foundry, not an empty dashboard', async () => {
+    await t.test('1-2. a new workspace lands on StockChief, not an empty dashboard', async () => {
       await page.goto(`${BASE}/register`);
       await page.fill('#name', ACCOUNT.name);
       await page.fill('#email', ACCOUNT.email);
@@ -154,10 +154,10 @@ test(
       // the Mission 2 experience, unchanged.
       await Promise.all([
         page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Enter it in Foundry")'),
+        page.click('button:has-text("Enter it in StockChief")'),
       ]);
 
-      await page.locator('text=Give Foundry what you already have').first().waitFor();
+      await page.locator('text=Give StockChief what you already have').first().waitFor();
       await page.locator('text=Understand my inventory').first().waitFor();
       await page.locator('text=Set it up manually').first().waitFor();
       await shot(page, 'first-run');
@@ -180,7 +180,7 @@ test(
 
       // And that page must actually say what is happening.
       const progress = await page.locator('main').innerText();
-      assert.match(progress, /Foundry is reading your inventory/);
+      assert.match(progress, /StockChief is reading your inventory/);
       assert.match(progress, /Reading your operation/);
       await shot(page, 'thinking');
 
@@ -222,7 +222,7 @@ test(
         assert.ok(rec.whyItMatters.length > 15);
       }
       assert.equal(
-        await page.locator('details summary:has-text("What Foundry knows / Why Foundry decided this")').count(),
+        await page.locator('details summary:has-text("What StockChief knows / Why StockChief decided this")').count(),
         1,
         'detailed reasoning remains available through progressive disclosure'
       );
@@ -230,11 +230,11 @@ test(
 
     await t.test('8. evidence is the one dominant next step', async () => {
       const shown = await page.locator('body').innerText();
-      assert.match(shown, /What Foundry understood/i);
+      assert.match(shown, /What StockChief understood/i);
       assert.match(shown, /Where are your real product and stock records today\?/i);
       assert.match(shown, /You do not need to clean or reorganize anything first/i);
       assert.doesNotMatch(shown, /Configure my inventory/i);
-      assert.equal(await page.locator('button:has-text("Enter records in Foundry")').count(), 1);
+      assert.equal(await page.locator('button:has-text("Enter records in StockChief")').count(), 1);
       assert.equal(await page.locator('button:has-text("Upload inventory files")').count(), 1);
       assert.equal(await page.locator('button:has-text("Connect a business system")').count(), 1);
       assert.equal(await page.locator('button:has-text("Use email attachments")').count(), 1);
@@ -244,7 +244,7 @@ test(
     await t.test('9-11. manual evidence creates only facts the owner supplies', async () => {
       await Promise.all([
         page.waitForURL(/\/foundry\/ready\//),
-        page.click('button:has-text("Enter records in Foundry")'),
+        page.click('button:has-text("Enter records in StockChief")'),
       ]);
       await page.goto(`${BASE}/locations`);
 
@@ -297,7 +297,7 @@ test(
       const rows = await page.locator('tbody tr').filter({ hasText: '/' }).count();
       assert.ok(rows >= 4, `expected four variants, saw ${rows}`);
 
-      // Receive into the first Foundry-configured location.
+      // Receive into the first StockChief-configured location.
       await page.click('button[data-modal-open="modal-receive"]');
       await page.waitForSelector('#modal-receive[open]');
       const dialog = page.locator('#modal-receive');
@@ -319,7 +319,7 @@ test(
     });
 
     await t.test('14. Mission 1 inventory truth still holds', async () => {
-      // Transfer between the two Foundry-configured locations, then adjust.
+      // Transfer between the two StockChief-configured locations, then adjust.
       const itemUrl = page.url();
       await page.click('button[data-modal-open="modal-transfer"]');
       await page.waitForSelector('#modal-transfer[open]');
@@ -369,11 +369,11 @@ test(
       assert.match(home, /Everything is under control/i);
       assert.match(home, /Needs you\s+0\s+nothing is waiting/i);
       assert.doesNotMatch(home, /Transferred stock has no established source cost/i);
-      assert.doesNotMatch(home, /Getting Foundry ready/i);
+      assert.doesNotMatch(home, /Getting StockChief ready/i);
       await shot(page, 'foundry-home');
     });
 
-    await t.test('17-18. Foundry answers why the item uses variants, grounded in the configuration', async () => {
+    await t.test('17-18. StockChief answers why the item uses variants, grounded in the configuration', async () => {
       await page.goto(`${BASE}/ask`);
       await page.fill('#ask-question', 'Why does the Harbour Runner use variants?');
       await Promise.all([
@@ -399,7 +399,7 @@ test(
       assert.deepEqual(pageErrors, [], 'uncaught JavaScript errors');
       const blocking = consoleErrors.filter((m) => !/favicon/i.test(m));
       assert.deepEqual(blocking, [], 'console errors');
-      console.log(`\nFoundry E2E screenshots: ${SHOTS}`);
+      console.log(`\nStockChief E2E screenshots: ${SHOTS}`);
       console.log(`Interpretation took ${Math.round(state.interpretMs / 1000)}s of real model time.`);
     });
   }

@@ -3,7 +3,7 @@
 /*
  * Which inbound mail still owes somebody an answer.
  *
- * Foundry already classified inbound mail, but only ever along one axis: did a
+ * StockChief already classified inbound mail, but only ever along one axis: did a
  * document come out of it. That is a different question from whether a person
  * is waiting to hear back. A supplier can send an order acknowledgement that
  * matches a purchase order perfectly — processed, filed, nothing left to
@@ -14,7 +14,7 @@
  *
  *   Needs a reply — a person asked something and is waiting.
  *   Waiting       — we answered; the ball is with them.
- *   Handled       — nothing is owed. Foundry filing a document counts.
+ *   Handled       — nothing is owed. StockChief filing a document counts.
  *
  * The judgement is deterministic and it explains itself. Every message carries
  * the reason it landed where it did, because an inbox that sorts your mail
@@ -86,7 +86,7 @@ const PLEASE = /\bplease\b(?!\s+(?:find|note|see|be advised|disregard|ignore|do 
 const NO_REPLY_SENDER = /(^|[.@_-])(no[._-]?reply|do[._-]?not[._-]?reply|donotreply|notifications?|no[._-]?response|mailer-daemon|postmaster|bounce|automated|auto[._-]?confirm|alerts?)([.@_-]|$)/i;
 const AUTOMATIC_SUBJECT = /\b(out of office|automatic reply|undeliverable|delivery status notification|read receipt|unsubscribe)\b/i;
 
-// Statuses that mean Foundry got what it needed out of this message.
+// Statuses that mean StockChief got what it needed out of this message.
 const FILED = ['MATCHED', 'INVENTORY_APPLIED', 'INVENTORY_RESTORED', 'SAVED_NO_ACTION',
   'DUPLICATE', 'DUPLICATE_IGNORED', 'IGNORED'];
 
@@ -153,7 +153,7 @@ function judge(message = {}) {
    *
    * A real customer wrote "I want to order size 36, 2 pieces" — no question
    * mark, no phrase on the asking list, four lines long — and it was filed as
-   * handled, nothing needed. Foundry had already read it as an order request
+   * handled, nothing needed. StockChief had already read it as an order request
    * and then decided nobody was waiting on it. Whether the words scan as a
    * question is beside the point next to what the message is: an order that
    * nobody answers is a customer who buys somewhere else.
@@ -165,7 +165,7 @@ function judge(message = {}) {
   /*
    * Bulk mail, which nobody is waiting on an answer to.
    *
-   * This became load-bearing the moment Foundry started capturing senders the
+   * This became load-bearing the moment StockChief started capturing senders the
    * owner had not approved. On the owner's real mailbox that is newsletters,
    * marketing blasts and bank alerts, and the first run marked most of them
    * "needs a reply" — which would turn the one screen they are supposed to
@@ -204,7 +204,7 @@ function judge(message = {}) {
   }
 
   if (FILED.includes(status)) {
-    return { state: 'HANDLED', reason: 'Foundry took what it needed from this and filed it. Nothing was asked.' };
+    return { state: 'HANDLED', reason: 'StockChief took what it needed from this and filed it. Nothing was asked.' };
   }
 
   // A file with nothing written around it is a delivery, not a conversation.
@@ -215,7 +215,7 @@ function judge(message = {}) {
   if (body.length >= 140) {
     return {
       state: 'NEEDS_REPLY',
-      reason: 'Somebody wrote to you at length without asking anything Foundry recognised, so it has not assumed this is finished.',
+      reason: 'Somebody wrote to you at length without asking anything StockChief recognised, so it has not assumed this is finished.',
     };
   }
 

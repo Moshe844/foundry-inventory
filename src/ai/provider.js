@@ -3,7 +3,7 @@
 /**
  * The AI boundary.
  *
- * Everything above this line is Foundry's intelligence layer; everything below
+ * Everything above this line is StockChief's intelligence layer; everything below
  * is a vendor. A provider takes a prompt plus a JSON Schema and returns parsed,
  * schema-shaped data — nothing more. It cannot run SQL, call services, or reach
  * the inventory engine, because it is never handed anything that could.

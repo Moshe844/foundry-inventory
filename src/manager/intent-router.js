@@ -38,18 +38,18 @@ CATALOG_CHANGE adds or changes products, variants or locations.
 IMPORT asks to load data from a file or another system.
 PHYSICAL_EVENT reports something that happened in the physical world: a count, delivery, damage, return or found stock.
 PURCHASING_REQUEST asks to buy, reorder or manage a purchase order.
-POLICY_CHANGE changes what Foundry may do automatically or its limits.
+POLICY_CHANGE changes what StockChief may do automatically or its limits.
 OPERATING_INSTRUCTION teaches a lasting inventory rule: reorder/target/safety levels, location floors,
 supplier assignment or terms, transfer-before-buying, lead time, MOQ, packs, cooldowns, or approval requirements.
-INVESTIGATION_REQUEST asks why records differ or asks Foundry to investigate.
+INVESTIGATION_REQUEST asks why records differ or asks StockChief to investigate.
 CONFIGURATION_CHANGE changes terminology or inventory configuration, including mapping a vendor's product code to the customer's own internal code.
-EXPLANATION asks why Foundry did, did not do, or recommends something.
+EXPLANATION asks why StockChief did, did not do, or recommends something.
 PAYMENT_REPORT reports money that has already moved, in either direction: "I paid
 ABC $400 toward invoice 8832", "ABC School paid us $500 by cheque". It is a report of
-a completed payment, never a request for Foundry to pay anyone — Foundry does not
+a completed payment, never a request for StockChief to pay anyone — StockChief does not
 move money.
 
-STOP is only for a message whose whole point is that Foundry should stop, pause or hold off acting
+STOP is only for a message whose whole point is that StockChief should stop, pause or hold off acting
 on its own: "stop", "stop doing that", "pause", "hold off", "don't do anything for now". A message
 that asks for work to be done — ordering, moving, counting, receiving — is never STOP, however
 urgent it sounds.
@@ -73,17 +73,17 @@ function fallbackClassify(message) {
   // quietly dropped. It is checked before anything else, and matched on the
   // plain words people actually use rather than on the word "policy".
   if (/^\s*(?:stop|halt|pause|freeze)\b|\b(?:stop|pause|halt)\s+(?:doing|what|that|it|everything|for now)\b|\bdon'?t do (?:that|anything)\b|\bhold off\b/i.test(clean)) {
-    return result('STOP', 'This asks Foundry to stop acting on its own.');
+    return result('STOP', 'This asks StockChief to stop acting on its own.');
   }
   /*
    * A payment that already happened, reported after the fact.
    *
-   * Foundry cannot observe money moving outside it, so this sentence is the
+   * StockChief cannot observe money moving outside it, so this sentence is the
    * only way it learns. It is unmistakable language — a past-tense payment verb
    * with an amount — and routing it through a probabilistic classifier only
    * adds a way for it to be missed.
    *
-   * "Pay ABC $400" is not this: that asks Foundry to make a payment, which it
+   * "Pay ABC $400" is not this: that asks StockChief to make a payment, which it
    * does not do. Only a report of one already made.
    */
   // "Transferred", "sent" and "settled" belong to stock as much as to money —
@@ -97,18 +97,18 @@ function fallbackClassify(message) {
     return result('PAYMENT_REPORT', 'This reports a payment that has already been made or received.');
   }
   if (/\b(handle everything|automatically|autopilot|may (?:approve|move|order)|never (?:approve|move|order)|policy|authority|limit)\b/i.test(clean)) {
-    return result('POLICY_CHANGE', 'This explicitly changes what Foundry may do or its limits.');
+    return result('POLICY_CHANGE', 'This explicitly changes what StockChief may do or its limits.');
   }
   if (/(?:\breorder\b.*\b(?:at|below|when|to)\b)|\b(restock(?:ing)?|replenish(?:ment|ing)?|stock (?:level|reaches)|order[- ]?up[- ]?to|safety stock|keep(?: at least)?|never let|days? of stock|lead time|minimum order|moq|purchase unit|order multiple|preferred supplier|use .+ for|transfer before (?:buying|purchasing)|cooldown)\b/i.test(clean)) {
     return result('OPERATING_INSTRUCTION', 'This teaches a lasting inventory operating rule.');
   }
   /*
-   * Retiring one of the records Foundry keeps around its stock.
+   * Retiring one of the records StockChief keeps around its stock.
    *
    * This sits above purchasing deliberately. "Get rid of One Step Vendor, we
    * do not buy from them any more" is a sentence about ending a relationship,
    * but it contains the word buy, and the purchasing rule below matched it
-   * first — so asking Foundry to drop a supplier set it planning a purchase
+   * first — so asking StockChief to drop a supplier set it planning a purchase
    * instead. A removal verb beside one of these records outranks that.
    *
    * The vocabulary comes from the removal registry, so a kind added there is
@@ -118,7 +118,7 @@ function fallbackClassify(message) {
    */
   if (/\b(archive|remove|delete|deactivate|retire|drop|get rid of|no longer use|don'?t use)\b/i.test(clean)
       && new RegExp(`\\b(${removals.nounPattern()})\\b`, 'i').test(clean)) {
-    return result('CATALOG_CHANGE', 'This retires a record Foundry keeps.');
+    return result('CATALOG_CHANGE', 'This retires a record StockChief keeps.');
   }
   if (/^\s*order\b|\b(order what|what should (?:i|we) order|buy|purchase|reorder|purchase order|supplier order)\b/i.test(clean)) {
     return result('PURCHASING_REQUEST', 'This explicitly asks about purchasing or replenishment.');
@@ -128,13 +128,13 @@ function fallbackClassify(message) {
   // action preview immediately so it cannot stall behind a second provider
   // call before the deterministic action parser sees it.
   if (/^\s*(?:set|correct|adjust)\b.+\bto\s+\d+\b.+\bphysical count\b/i.test(clean)) {
-    return result('INVENTORY_ACTION', 'This explicitly asks Foundry to correct a recorded count from physical evidence.');
+    return result('INVENTORY_ACTION', 'This explicitly asks StockChief to correct a recorded count from physical evidence.');
   }
   if (/\b(physical count|counted|i count|we count|shipment arrived|delivery arrived|arrived damaged|damaged|returned|found stock)\b/i.test(clean)) {
     return result('PHYSICAL_EVENT', 'This explicitly reports something that happened to physical inventory.');
   }
   if (/\b(investigate|discrepancy|doesn'?t match|do not match|records? (?:is|are) (?:wrong|off)|why (?:is|are).*(?:off|different))\b/i.test(clean)) {
-    return result('INVESTIGATION_REQUEST', 'This explicitly asks Foundry to investigate a mismatch.');
+    return result('INVESTIGATION_REQUEST', 'This explicitly asks StockChief to investigate a mismatch.');
   }
   if (/\b(delete|remove|undo|roll\s*back|take\s+out)\b/i.test(clean) &&
       /\b(items?|products?|records?|inventory|stock)\b/i.test(clean) &&
@@ -147,7 +147,7 @@ function fallbackClassify(message) {
     return result('CATALOG_CHANGE', 'This changes existing internal catalogue identifiers.');
   }
   if (/\b(import|upload|spreadsheet|csv|excel|pdf|document|file)\b/i.test(clean)) {
-    return result('IMPORT', 'This explicitly asks Foundry to read or import a source.');
+    return result('IMPORT', 'This explicitly asks StockChief to read or import a source.');
   }
   if (/(?:change|map|rename|replace)\s+(?:the\s+)?(?:vendor|supplier)(?:'s)?\s+(?:code|sku)\b/i.test(clean) ||
       /(?:vendor|supplier)\s+(?:code|sku)\s+[A-Za-z0-9][A-Za-z0-9._/-]*\s*,?\s*(?:use|make it|call it)\b/i.test(clean)) {
@@ -166,10 +166,10 @@ function fallbackClassify(message) {
   }
   // Normal inventory work is most often reported after it happens. The older
   // fallback recognised only command-form verbs ("issue", "move", "receive")
-  // and missed the ordinary sentences shown by Foundry itself: "I sold...",
+  // and missed the ordinary sentences shown by StockChief itself: "I sold...",
   // "we received..." and "we moved...". That made a complete transaction
   // depend on a probabilistic top-level classifier and, when it answered
-  // UNKNOWN, produced the meaningless "what would you like Foundry to do?"
+  // UNKNOWN, produced the meaningless "what would you like StockChief to do?"
   // question. This is grammar-level routing only: product, variant, quantity
   // and location are still resolved by the normal grounded action pipeline.
   if (/\b(?:customer|client|school|company)\b.*\b(?:ordered|cancelled|canceled)\b|\badd\b.*\bto\b.*\border\b|\b(?:ship|fulfill)\b.*\b(?:order|customer)\b|\b(?:complete|finish)\b.*\b(?:(?:sales|customer)\s+)?order\b|\b(?:sales order|backorder|waiting for stock)\b/i.test(clean)) {
@@ -189,20 +189,20 @@ function fallbackClassify(message) {
   if (/\b(receive|issue|move|transfer|adjust|correct|set)\b.*\b(stock|inventory|units?|items?|sku|warehouse|location)\b/i.test(clean)) {
     return result('INVENTORY_ACTION', 'This explicitly asks for an inventory movement or correction.');
   }
-  if (/\bwhy did (?:foundry|you)|why (?:was|wasn'?t|didn'?t)\b/i.test(clean)) {
-    return result('EXPLANATION', 'This asks Foundry to explain a recorded decision.');
+  if (/\bwhy did (?:stockchief|foundry|you)|why (?:was|wasn'?t|didn'?t)\b/i.test(clean)) {
+    return result('EXPLANATION', 'This asks StockChief to explain a recorded decision.');
   }
   if (!/\b(?:that|it|this one|that one)\b/i.test(clean) &&
       (/\?$|^(?:what|where|when|which|who|how|show|tell me)\b/i.test(clean))) {
     return result('QUESTION', 'This is an inventory question.');
   }
   return { intentClass: 'UNKNOWN', confidence: 'low',
-    reason: 'The request is ambiguous and Foundry will not guess.', resolvedReference: '',
-    clarifyingQuestion: 'What would you like Foundry to do with the inventory?' };
+    reason: 'The request is ambiguous and StockChief will not guess.', resolvedReference: '',
+    clarifyingQuestion: 'What would you like StockChief to do with the inventory?' };
 }
 
 async function classify(db, ctx, message, options = {}) {
-  const clean = requireText(message, 'Message', { max: 1200 });
+  const clean = requireText(message, 'Message', { max: 4000 });
   const state = managerContext.snapshot(db, ctx);
   let data;
   const deterministic = fallbackClassify(clean);

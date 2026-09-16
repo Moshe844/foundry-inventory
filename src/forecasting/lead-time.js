@@ -8,7 +8,7 @@
  * reason a well-run reorder point still runs out: the rule is arithmetically
  * perfect and the input is three days optimistic, every time, for a year.
  *
- * So once there is real evidence, Foundry plans on the evidence. What it must
+ * So once there is real evidence, StockChief plans on the evidence. What it must
  * never do is edit the owner's configured value. That number is theirs; it may
  * be a negotiated term, it may be what the contract says, and silently
  * replacing it would mean the supplier page shows a figure nobody chose. The
@@ -37,7 +37,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MINIMUM_SAMPLES = 3;
 
 /*
- * How far measured has to be from configured before Foundry mentions it at all.
+ * How far measured has to be from configured before StockChief mentions it at all.
  * Half a day of drift is not news, and an assistant that reports it every week
  * gets ignored about the things that matter.
  */
@@ -193,11 +193,11 @@ function forSupplier(db, workspaceId, supplierId, options = {}) {
     if (configured === null) {
       explanation = `${supplier ? supplier.name : 'This supplier'} has taken about `
         + `${measured.meanDays} days across the last ${measured.samples} orders. No lead time is configured, `
-        + 'so that is what Foundry is planning on.';
+        + 'so that is what StockChief is planning on.';
     } else if (material) {
       explanation = `${supplier ? supplier.name : 'This supplier'} is configured at ${configured} days but has `
         + `recently been taking about ${measured.meanDays} across the last ${measured.samples} orders. `
-        + 'Foundry is planning on the longer figure and leaving your setting alone.';
+        + 'StockChief is planning on the longer figure and leaving your setting alone.';
     } else {
       explanation = `${supplier ? supplier.name : 'This supplier'} takes about ${measured.meanDays} days, `
         + `close to the ${configured} configured.`;
@@ -206,11 +206,11 @@ function forSupplier(db, workspaceId, supplierId, options = {}) {
     planningDays = configured;
     source = 'configured';
     const seen = measured ? `Only ${measured.samples} delivered order${measured.samples === 1 ? '' : 's'} so far, ` : 'No delivered orders yet, ';
-    explanation = `${seen}so Foundry is using the ${configured} days set on ${configuredFrom}.`;
+    explanation = `${seen}so StockChief is using the ${configured} days set on ${configuredFrom}.`;
   } else {
     planningDays = null;
     source = 'unknown';
-    explanation = 'No lead time is configured and no delivery has been recorded, so Foundry cannot say how long this takes.';
+    explanation = 'No lead time is configured and no delivery has been recorded, so StockChief cannot say how long this takes.';
   }
 
   return {

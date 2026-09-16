@@ -13,7 +13,7 @@
   <div class="card section" style="border-color:var(--accent-line);">
     <div class="card-head">
       <%- helpers.icon('alert', { size: 18 }) %>
-      <h2>Foundry cannot order this yet</h2>
+      <h2>StockChief cannot order this yet</h2>
     </div>
     <div class="card-body">
       <p class="lede" style="margin-top:0;">
@@ -116,14 +116,14 @@
     <h2>Reorder settings</h2>
     <span class="spacer"></span>
     <span class="badge badge--<%= policy.isSet ? 'muted' : 'ok' %>">
-      <%= policy.isSet ? 'Set by ' + (policy.source === 'foundry' ? 'Foundry' : 'you') : 'Worked out from usage' %>
+      <%= policy.isSet ? 'Set by ' + (policy.source === 'foundry' ? 'StockChief' : 'you') : 'Worked out from usage' %>
     </span>
   </div>
   <div class="card-body">
     <% if (rulePreview && rulePreview.kind === 'reorder') { %>
       <div class="notice notice--info">
         <div>
-          <strong>Foundry understood this rule for <%= rulePreview.displayName %>:</strong>
+          <strong>StockChief understood this rule for <%= rulePreview.displayName %>:</strong>
           reorder at <strong><%= rulePreview.reorderPoint %></strong> and bring the inventory position back to <strong><%= rulePreview.targetStock %></strong>.
           Nothing changes until you save it below.
         </div>
@@ -131,7 +131,7 @@
     <% } %>
     <% if (!policy.isSet && proposal && proposal.canPropose) { %>
       <p class="muted">
-        Foundry has no settings for this line and works the figures out from usage each time.
+        StockChief has no settings for this line and works the figures out from usage each time.
         From what it has seen it would suggest a reorder point of <strong><%= proposal.proposal.reorderPoint %></strong>
         and a target of <strong><%= proposal.proposal.targetStock %></strong>.
       </p>
@@ -142,7 +142,7 @@
     <% if (permissions.replenishment) { %>
       <form method="post" action="/purchasing/policies/<%= line.skuId %>">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-        <p><strong>When should Foundry get more?</strong></p>
+        <p><strong>When should StockChief get more?</strong></p>
         <div class="grid grid--2">
           <label class="field">
             <span class="field-label">Reorder when available stock reaches</span>
@@ -189,11 +189,11 @@
           numbers you had just entered — and it deleted them without asking. %>
       <% if (policy.isSet) { %>
         <form method="post" action="/purchasing/policies/<%= line.skuId %>" class="reorder-clear"
-              data-confirm="Discard your reorder settings for <%= line.displayName %>? Foundry will go back to working the levels out from usage, and it needs enough sales history to do that.">
+              data-confirm="Discard your reorder settings for <%= line.displayName %>? StockChief will go back to working the levels out from usage, and it needs enough sales history to do that.">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <input type="hidden" name="clear" value="1">
           <p class="muted" style="margin:14px 0 6px;">
-            Your own levels are in use for this line. Foundry will not change them.
+            Your own levels are in use for this line. StockChief will not change them.
           </p>
           <button class="btn btn--ghost btn--sm" type="submit">Discard my settings for this line</button>
         </form>
@@ -205,10 +205,10 @@
 <div class="card section" id="location-minimums">
   <div class="card-head"><h2>Location minimums</h2><span class="spacer"></span><span class="badge badge--muted">Advanced</span></div>
   <div class="card-body">
-    <p class="muted">A location minimum is a hard keep-back level. Foundry will not transfer this variant below it.</p>
+    <p class="muted">A location minimum is a hard keep-back level. StockChief will not transfer this variant below it.</p>
     <% if (rulePreview && rulePreview.kind === 'location_minimum') { %>
       <div class="notice notice--info"><div>
-        <strong>Foundry understood:</strong> keep at least <strong><%= rulePreview.minimum %></strong> of
+        <strong>StockChief understood:</strong> keep at least <strong><%= rulePreview.minimum %></strong> of
         <%= rulePreview.displayName %> at <strong><%= rulePreview.locationName %></strong>.
         Nothing changes until you save it below.
       </div></div>

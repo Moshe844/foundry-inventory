@@ -17,15 +17,15 @@ function metadata() {
     provides: ['completed POS sales', 'returns', 'catalog SKUs and locations'],
     // Square is a source of real business evidence, not a suggestion list.
     // An external id is durable, so a new Square record can safely become a
-    // Foundry record once; later discovery maps back to that same record.
+    // StockChief record once; later discovery maps back to that same record.
     catalogImportMode: 'automatic',
     sandboxMode: config.connections.square.environment === 'sandbox',
-    unavailableReason: config.connections.square.configured ? null : 'Foundry’s Square app credentials have not been configured on this installation.',
+    unavailableReason: config.connections.square.configured ? null : 'StockChief’s Square app credentials have not been configured on this installation.',
   };
 }
 
 function authorizationUrl({ state, input }) {
-  if (!config.connections.square.configured) throw new ValidationError('Square is not configured on this Foundry installation.');
+  if (!config.connections.square.configured) throw new ValidationError('Square is not configured on this StockChief installation.');
   const url = new URL(`${base()}/oauth2/authorize`);
   url.searchParams.set('client_id', config.connections.square.applicationId);
   url.searchParams.set('scope', SCOPES.join(' '));
@@ -110,7 +110,7 @@ async function registerWebhooks({ credentials, webhookUrl }) {
   if (credentials.authMode !== 'sandbox_personal') return null;
   const subscriptions = (await api(credentials, '/v2/webhooks/subscriptions')).body.subscriptions || [];
   const existing = subscriptions.find((subscription) => subscription.notification_url === webhookUrl);
-  const subscription = { name: 'Foundry inventory events', enabled: true,
+  const subscription = { name: 'StockChief inventory events', enabled: true,
     event_types: WEBHOOK_EVENTS, notification_url: webhookUrl, api_version: API_VERSION };
   const response = existing
     ? await api(credentials, `/v2/webhooks/subscriptions/${encodeURIComponent(existing.id)}`, {
@@ -124,7 +124,7 @@ async function registerWebhooks({ credentials, webhookUrl }) {
 
 function verifyWebhook({ headers, rawBody, webhookUrl, credentials }) {
   const key = credentials.webhookSignatureKey || config.connections.square.webhookSignatureKey;
-  if (!key) throw new ValidationError('Square webhook verification is not configured for this Foundry installation.');
+  if (!key) throw new ValidationError('Square webhook verification is not configured for this StockChief installation.');
   const expected = crypto.createHmac('sha256', key).update(`${webhookUrl}${rawBody.toString('utf8')}`).digest('base64');
   requireVerified(safeEqual(headers['x-square-hmacsha256-signature'], expected), 'This webhook did not pass Square signature verification.');
 }
@@ -135,11 +135,11 @@ async function createSandboxCheckout({ credentials, externalSku, externalLocatio
   }
   const result = await api(credentials, '/v2/online-checkout/payment-links', { method: 'POST',
     body: JSON.stringify({ idempotency_key: crypto.randomUUID(),
-      description: 'Foundry connector end-to-end Sandbox test',
+      description: 'StockChief connector end-to-end Sandbox test',
       order: { location_id: externalLocationId,
         line_items: [{ catalog_object_id: externalSku, quantity: String(quantity) }] },
       checkout_options: { allow_tipping: false },
-      payment_note: 'Foundry connector customer-operated Sandbox test',
+      payment_note: 'StockChief connector customer-operated Sandbox test',
     }) });
   const link = result.body.payment_link;
   if (!link?.url) throw new ValidationError('Square did not return a Sandbox checkout link.');

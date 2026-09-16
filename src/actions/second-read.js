@@ -7,7 +7,7 @@
  * and fill in a product, a variant, a location, a quantity, a lot code, a
  * supplier. A reader that is unsure of any part of that can return no usable
  * line at all, and what the person then saw was "Could you say a little more
- * about what you want Foundry to do?" — a shrug, after a sentence that was
+ * about what you want StockChief to do?" — a shrug, after a sentence that was
  * perfectly clear.
  *
  * Twenty ways of asking to delete an inventory were tried against the full

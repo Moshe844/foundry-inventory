@@ -243,7 +243,7 @@ test('recommendations are specific, not generic filler', { skip: !LIVE, timeout:
   }
 });
 
-test('nothing Foundry cannot do is promised as configured', { skip: !LIVE, timeout: TIMEOUT }, async () => {
+test('nothing StockChief cannot do is promised as configured', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const all = await results();
   for (const [key, r] of Object.entries(all)) {
     // Anything the engine genuinely does not have must be future-scoped.
@@ -251,7 +251,7 @@ test('nothing Foundry cannot do is promised as configured', { skip: !LIVE, timeo
     // Reorder points and purchase orders were on this list until Mission 6 built
     // them. Leaving them here would now fail the model for telling the truth,
     // which is the same defect in the opposite direction: a customer told
-    // Foundry cannot do something it does goes and buys a second system.
+    // StockChief cannot do something it does goes and buys a second system.
     for (const rec of r.understanding.recommendations) {
       // Disclaiming a missing feature is the model being careful, not promising
       // it: "reorder points are a floor, not a seasonal buy plan" names
@@ -308,14 +308,14 @@ test('applying a live plan configures structure and never invents inventory', { 
     assert.deepEqual(
       counts,
       { items: 0, skus: 0, movements: 0, units: 0, lots: 0, onHand: 0 },
-      `${key}: Foundry must create structure only`
+      `${key}: StockChief must create structure only`
     );
     assert.equal(repo.listLocations(r.db, r.workspace.workspaceId).length, r.plan.locations.length,
       `${key}: only verified location names were configured`);
   }
 });
 
-test('Foundry answers a question about the real configuration', { skip: !LIVE, timeout: TIMEOUT }, async () => {
+test('StockChief answers a question about the real configuration', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const { clothing } = await results();
   const answer = await assistant.ask(
     clothing.db,
@@ -341,7 +341,7 @@ test('Foundry answers a question about the real configuration', { skip: !LIVE, t
   );
 });
 
-test('Foundry truthfully reports its implemented forecasting capability', { skip: !LIVE, timeout: TIMEOUT }, async () => {
+test('StockChief truthfully reports its implemented forecasting capability', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const { food } = await results();
   const answer = await assistant.ask(
     food.db,

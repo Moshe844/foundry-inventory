@@ -24,7 +24,8 @@ function definition(db, workspaceId, kitSkuId) {
     WHERE kc.workspace_id = ? AND kc.kit_sku_id = ?
     ORDER BY i.name COLLATE NOCASE, s.variant_label COLLATE NOCASE, s.code`)
     .all(workspaceId, kitSkuId);
-  return { kit, components, isKit: components.length > 0 };
+  return { kit, components, isKit: components.length > 0,
+    stockBasis: components[0] ? components[0].stock_basis : null };
 }
 
 function isKit(db, workspaceId, skuId) {
@@ -62,15 +63,19 @@ function normaliseDefinition(db, workspaceId, kitSkuId, supplied) {
 function define(db, ctx, input) {
   const kit = repo.requireSku(db, ctx.workspaceId, input.kitSkuId);
   const components = normaliseDefinition(db, ctx.workspaceId, kit.id, input.components);
+  const stockBasis = input.stockBasis || 'components';
+  if (!['components', 'preassembled'].includes(stockBasis)) {
+    throw new ValidationError('Kit stock basis must be components or preassembled.');
+  }
   const now = nowIso();
   const transaction = db.transaction(() => {
     db.prepare('DELETE FROM kit_components WHERE workspace_id = ? AND kit_sku_id = ?')
       .run(ctx.workspaceId, kit.id);
     const insert = db.prepare(`INSERT INTO kit_components
-      (id, workspace_id, kit_sku_id, component_sku_id, quantity, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`);
+      (id, workspace_id, kit_sku_id, component_sku_id, quantity, stock_basis, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
     for (const component of components) {
-      insert.run(newId('kitc'), ctx.workspaceId, kit.id, component.skuId, component.quantity, now, now);
+      insert.run(newId('kitc'), ctx.workspaceId, kit.id, component.skuId, component.quantity, stockBasis, now, now);
     }
   });
   transaction();
@@ -79,9 +84,10 @@ function define(db, ctx, input) {
 
 function explode(db, workspaceId, kitSkuId, multiplier = 1, path = new Set()) {
   if (path.has(kitSkuId)) throw new ValidationError('This kit definition contains a cycle.');
-  const direct = db.prepare('SELECT component_sku_id, quantity FROM kit_components WHERE workspace_id = ? AND kit_sku_id = ?')
+  const direct = db.prepare('SELECT component_sku_id, quantity, stock_basis FROM kit_components WHERE workspace_id = ? AND kit_sku_id = ?')
     .all(workspaceId, kitSkuId);
   if (!direct.length) return [{ skuId: kitSkuId, quantity: multiplier }];
+  if (direct[0].stock_basis === 'preassembled') return [{ skuId: kitSkuId, quantity: multiplier }];
   const nextPath = new Set(path).add(kitSkuId);
   const totals = new Map();
   for (const row of direct) {
@@ -94,6 +100,12 @@ function explode(db, workspaceId, kitSkuId, multiplier = 1, path = new Set()) {
 
 function snapshotOrderLine(db, workspaceId, salesOrderLineId, kitSkuId, kitsOrdered) {
   if (!isKit(db, workspaceId, kitSkuId)) return [];
+  const basis = db.prepare(`SELECT stock_basis FROM kit_components
+    WHERE workspace_id = ? AND kit_sku_id = ? LIMIT 1`).get(workspaceId, kitSkuId);
+  // Already assembled kits are ordinary finished stock at sale time. Their
+  // BOM remains available for assembly/history, but fulfilment reserves and
+  // moves the kit SKU itself instead of consuming the components twice.
+  if (basis && basis.stock_basis === 'preassembled') return [];
   const components = explode(db, workspaceId, kitSkuId);
   const now = nowIso();
   const insert = db.prepare(`INSERT INTO sales_order_kit_components

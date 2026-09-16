@@ -12,7 +12,7 @@
  * understand what they are being asked will refuse.
  *
  * Connect asks for the job instead. The business signs in on Stripe's own
- * page, approves, and comes back. What Foundry keeps is an account id — acct_…
+ * page, approves, and comes back. What StockChief keeps is an account id — acct_…
  * — which is not a secret, is useless to anybody who is not the platform it
  * was granted to, and which they can revoke from their own dashboard in one
  * click.
@@ -21,7 +21,7 @@
  * The token that is deliberately thrown away.
  *
  * Stripe's OAuth exchange returns an access token alongside the account id,
- * and for a Standard account that token is a working key. Foundry does not
+ * and for a Standard account that token is a working key. StockChief does not
  * keep it. Acting through the platform key with the Stripe-Account header does
  * exactly the same work, and leaves nothing in the database worth stealing.
  * Keeping it "just in case" would give back the whole problem this exists to
@@ -91,7 +91,7 @@ function platform() {
     /*
      * The publishable key is not a secret — it is designed to be read by every
      * browser that loads the page — and it is what Stripe's embedded onboarding
-     * needs in order to run inside Foundry rather than on a page of its own.
+     * needs in order to run inside StockChief rather than on a page of its own.
      */
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || null,
   };
@@ -124,7 +124,7 @@ function usesHostedOnboarding() {
 }
 
 /**
- * Whether the form can be shown inside Foundry rather than on Stripe's page.
+ * Whether the form can be shown inside StockChief rather than on Stripe's page.
  *
  * The questions are the same either way — they are Stripe's identity checks,
  * required before money may be moved into anybody's bank, and no integration
@@ -160,11 +160,11 @@ function requirePlatform(options = {}) {
   const held = platform();
   if (options.oauth !== false && !held.clientId) {
     throw new ValidationError('Stripe existing-account sign-in is not configured. Add this '
-      + "Foundry installation's Stripe Connect OAuth client ID, then try again.");
+      + "StockChief installation's Stripe Connect OAuth client ID, then try again.");
   }
   if (!held.secretKey) {
     throw new ValidationError('Stripe existing-account sign-in is not configured on this '
-      + 'Foundry installation.');
+      + 'StockChief installation.');
   }
   return held;
 }
@@ -282,9 +282,9 @@ function authorizeUrl(db, ctx, membership, options = {}) {
  * Create the business's own Stripe account, and a page for them to finish it.
  *
  * A Standard account, deliberately. The business gets a full Stripe dashboard,
- * its own relationship with Stripe, its own fees and its own payouts — Foundry
+ * its own relationship with Stripe, its own fees and its own payouts — StockChief
  * is how the account was made and is not who it belongs to, and they keep it
- * whether or not they keep Foundry.
+ * whether or not they keep StockChief.
  *
  * The account is created before it is complete, which is normal here: Stripe
  * expects a platform to make the account and then hand the person a link to
@@ -312,7 +312,7 @@ async function openOnboarding(db, ctx, membership, options = {}) {
          * they get Stripe's own dashboard, they pay Stripe directly, and they
          * — not Keeper — answer for a chargeback. A platform that collected
          * fees or absorbed losses would be a different business, and it is not
-         * the one Foundry is in.
+         * the one StockChief is in.
          */
         dashboard: 'full',
         /*
@@ -320,11 +320,11 @@ async function openOnboarding(db, ctx, membership, options = {}) {
          *
          * Stripe will not set a default currency without a country, so that
          * one has to be stated. entity_type — individual or company — is a
-         * fact about the business that Foundry does not know, and the first
+         * fact about the business that StockChief does not know, and the first
          * version asserted "individual" simply because it made the API stop
          * complaining. A sole trader would not notice; every company would
          * arrive at Stripe's form with the wrong answer already filled in and
-         * have to undo it, which is a step Foundry added by guessing.
+         * have to undo it, which is a step StockChief added by guessing.
          *
          * Left out, Stripe asks them. That is the right party to ask.
          */
@@ -418,7 +418,7 @@ async function relink(db, ctx, options = {}) {
 async function embeddedSession(db, ctx, options = {}) {
   const held = requirePlatform({ oauth: false });
   if (!held.publishableKey) {
-    throw new ValidationError('Foundry has no Stripe publishable key, so the setup form cannot be '
+    throw new ValidationError('StockChief has no Stripe publishable key, so the setup form cannot be '
       + 'shown here. It will open on Stripe instead.');
   }
   const row = rowFor(db, ctx.workspaceId);
@@ -535,7 +535,7 @@ const nameOf = (account) => (account && (account.display_name || account.busines
  * v1 says charges_enabled. v2 says the merchant configuration's card_payments
  * capability is active, and says "restricted" while it is still waiting for
  * the business to finish its form. They mean the same thing and the rest of
- * Foundry should not have to know which one answered.
+ * StockChief should not have to know which one answered.
  */
 function canTakeCharges(account) {
   if (!account) return false;
@@ -609,7 +609,7 @@ async function refresh(db, workspaceId, options = {}) {
  * Hand the access back to Stripe and forget the account.
  *
  * Deauthorized at Stripe as well as forgotten here, so the merchant's own
- * dashboard stops listing Foundry. Forgetting locally while Stripe still shows
+ * dashboard stops listing StockChief. Forgetting locally while Stripe still shows
  * a live connection would leave them with a grant they cannot see the purpose
  * of and no obvious way to be rid of.
  */
@@ -631,7 +631,7 @@ async function disconnect(db, ctx, membership, options = {}) {
     } catch {
       /*
        * Stripe refusing — most often because the merchant already revoked it
-       * there — must not stop Foundry letting go of it here. The alternative
+       * there — must not stop StockChief letting go of it here. The alternative
        * is a row nobody can remove.
        */
     }
@@ -676,8 +676,8 @@ function describe(db, workspaceId) {
         ? attempt.last_error : null,
       lastAttemptAt: attempt ? attempt.updated_at : null,
       because: available()
-        ? 'This business can connect its own Stripe account without giving Foundry a key.'
-        : 'Stripe existing-account sign-in is not configured on this Foundry installation yet.',
+        ? 'This business can connect its own Stripe account without giving StockChief a key.'
+        : 'Stripe existing-account sign-in is not configured on this StockChief installation yet.',
     };
   }
   return {

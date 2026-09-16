@@ -1,19 +1,19 @@
 'use strict';
 
 /*
- * Foundry reading what somebody actually said.
+ * StockChief reading what somebody actually said.
  *
  * "Please remove the entire inventory" came back as: there is nothing called
  * "please remove entire" in this inventory — with a button offering to create
  * a product by that name. The sentence was clear, the request was real, and
- * Foundry turned the person's own words into a product it wanted to add.
+ * StockChief turned the person's own words into a product it wanted to add.
  *
  * The cause was a fallback with only one shape for anything it could not
  * place: "a product I have not heard of". So every unrecognised sentence
  * became a product name, and the leftover words became its title.
  *
  * Two rules come out of that. A name has to be plausibly a name — a sentence
- * made of instructions named nothing. And a request Foundry cannot carry out
+ * made of instructions named nothing. And a request StockChief cannot carry out
  * here is answered by saying where it is done, not by inventing a record.
  */
 
@@ -26,6 +26,26 @@ const realBusinessGrounding = require('../../src/foundry/real-business-grounding
 const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem } = require('../helpers');
 
 test.after(cleanupAll);
+
+test('explicit SKU evidence outranks approximate product wording and never substitutes a missing identifier',()=>{
+ const env=setup();const item=makeQuantityItem(env.db,env.workspace.ctx,{name:'Precision mounting block',baseCode:'PMB-X41'});
+ const found=resolver.resolveSku(env.db,env.workspace.workspaceId,'blocks','',{instruction:'Prepare 7 blocks SKU: PMB-X41 for review'});
+ assert.equal(found.ok,true);assert.equal(found.value.id,item.skuId);
+ const missing=resolver.resolveSku(env.db,env.workspace.workspaceId,'Precision mounting block','',{instruction:'Prepare 7 Precision mounting block SKU: MISSING-Z9 for review'});
+ assert.equal(missing.ok,false);assert.match(missing.question||missing.message,/missing-z9/i);
+ const multi=resolver.resolveSku(env.db,env.workspace.workspaceId,'blocks','',{instruction:'Buy SKU PMB-X41 and SKU OTHER-R2'});
+ assert.equal(multi.ok,false,'several source identifiers cannot select the first one');
+});
+
+test('review-only supplier creation continues to a draft and is never approval to order or send',async()=>{
+ const env=setup();
+ const prepared=await actionService.interpret(env.db,env.ctx,env.membership,'Order 4 Black Small Shirt from New Vendor Kappa',{previewOnly:true});
+ assert.equal(prepared.kind,'question');assert.doesNotMatch(prepared.question,/approve this purchase order/);
+ const continued=await actionService.continueInterpretation(env.db,env.ctx,env.membership,
+   {...prepared.continuation,previewOnly:true},'__create_purchase_supplier__');
+ assert.equal(continued.kind,'purchase_order');assert.equal(continued.order.status,'DRAFT');
+ assert.equal(continued.approvedByConfirmation,false);
+});
 
 test('generic location language shapes structure but never creates a production location name', () => {
   assert.equal(realBusinessGrounding.locationIsGrounded(
@@ -59,7 +79,7 @@ test('a sentence made of instructions is not a product name', () => {
     const result = read(env, said);
     assert.equal(result.reason, 'not_understood', said);
     assert.equal(result.subject, null,
-      `"${said}" must not become a name Foundry offers to create`);
+      `"${said}" must not become a name StockChief offers to create`);
   }
 });
 
@@ -67,20 +87,20 @@ test('a verb is never part of the product name', () => {
   const env = setup();
   /*
    * The other half of the same bug: "remove" was being kept inside the name,
-   * so Foundry looked for a product called "remove blue widget". Checked on
+   * so StockChief looked for a product called "remove blue widget". Checked on
    * sentences that count something, because those are the ones where a name
-   * Foundry has not seen is worth offering to create.
+   * StockChief has not seen is worth offering to create.
    */
   assert.equal(read(env, 'receive 12 blue widgets').subject, 'blue widget');
   assert.equal(read(env, 'we counted 8 navy socks').subject, 'navy sock');
   assert.equal(read(env, 'put 4 red hats in Main').subject, 'red hat');
 });
 
-test('removing something Foundry does not have is not answered by creating it', () => {
+test('removing something StockChief does not have is not answered by creating it', () => {
   /*
    * "remove the blue widget" used to offer to create a blue widget, which
    * cannot be what anybody wanted: the request was to get rid of one. There
-   * is no quantity here and no sensible offer to make, so Foundry says it did
+   * is no quantity here and no sensible offer to make, so StockChief says it did
    * not understand rather than proposing the opposite of the request.
    */
   const env = setup();
@@ -95,14 +115,14 @@ test('a product that genuinely does not exist is still offered for creation', ()
   assert.equal(result.subject, 'navy sock');
 });
 
-test('an instruction naming a product Foundry has does not trip any of this', () => {
+test('an instruction naming a product StockChief has does not trip any of this', () => {
   const env = setup();
   const result = read(env, 'we sold 3 Black Small Shirt');
   assert.ok(!result || result.ok !== false || result.reason !== 'not_understood',
     'a working instruction must not be diverted');
 });
 
-test(`a request Foundry cannot carry out keeps the reader own words`, async () => {
+test(`a request StockChief cannot carry out keeps the reader own words`, async () => {
   /*
    * The first fix for this was a hand-written table of sentences and a regex.
    * It covered the one sentence that was reported and almost nothing else,
@@ -114,7 +134,7 @@ test(`a request Foundry cannot carry out keeps the reader own words`, async () =
    * What broke it was a step *after* the reader that re-grounded any question
    * mentioning "item" or "product" into "there is nothing called <your own
    * words>", with a button offering to create that. So the rule under test is
-   * narrow: whatever Foundry says back, it must never offer to create a
+   * narrow: whatever StockChief says back, it must never offer to create a
    * product out of a sentence that was an instruction.
    */
   const env = setup();
@@ -153,7 +173,7 @@ test('phrasings nobody wrote down still cannot become products', () => {
    * product: "get rid of this whole thing" became a product called "get rid
    * thi whole thing".
    *
-   * The rule that replaced it needs no list. Somebody names a product Foundry
+   * The rule that replaced it needs no list. Somebody names a product StockChief
    * has never heard of when they are putting stock in, and a sentence about
    * getting rid of everything never carries a count. So the offer to create
    * requires a number, and none of these have one.
@@ -172,7 +192,7 @@ test('phrasings nobody wrote down still cannot become products', () => {
   ]) {
     const result = read(env, said);
     assert.equal(result.subject, null,
-      `"${said}" must not become a product Foundry offers to create`);
+      `"${said}" must not become a product StockChief offers to create`);
   }
 });
 
@@ -196,7 +216,7 @@ test('"the entire inventory" means the entire inventory', async () => {
    * The reader was not being stupid. Every operation it was allowed to choose
    * from was a stock operation — receive, issue, transfer, adjust, archive a
    * product — so there was no correct answer available and it picked the
-   * nearest one. Foundry did not have the concept of removing an inventory,
+   * nearest one. StockChief did not have the concept of removing an inventory,
    * so it could not hear somebody asking for it.
    *
    * The fix was to give it the word, not to pattern-match the sentence.
@@ -209,7 +229,12 @@ test('"the entire inventory" means the entire inventory', async () => {
     'nuke it',
     'start from scratch',
   ]) {
-    const answer = await actionService.interpret(env.db, env.ctx, env.membership, said);
+    // This is a grounding/workflow test, not a paid live-model test. Supply
+    // the typed interpretation so local API credentials cannot cause retries
+    // or keep the entire regression suite alive during a provider outage.
+    const answer = await actionService.interpret(env.db, env.ctx, env.membership, said, {
+      parsedIntent:{lines:[{actionType:'delete_inventory',sourceText:said}],clarifyingQuestion:'',unsupportedReason:''},
+    });
 
     /*
      * The reader is not deterministic, and more than one outcome is defensible
@@ -230,14 +255,16 @@ test('"the entire inventory" means the entire inventory', async () => {
 test('the answer names the inventory and says it cannot be undone', async () => {
   const env = setup();
   const answer = await actionService.interpret(env.db, env.ctx, env.membership,
-    'Please remove the entire inventory');
+    'Please remove the entire inventory', {
+      parsedIntent:{lines:[{actionType:'delete_inventory',sourceText:'Please remove the entire inventory'}],clarifyingQuestion:'',unsupportedReason:''},
+    });
   if (answer.kind !== 'delete_inventory') return; // the reader may route it as unsupported; both are correct
   assert.match(answer.message, /Shop/, 'it says which inventory');
   assert.match(answer.message, /cannot be undone/);
   assert.equal(answer.where.href, `/inventories/${env.workspace.workspaceId}/delete`, 'and offers the way there');
 });
 
-test('when the first read comes back empty, Foundry asks an easier question', async () => {
+test('when the first read comes back empty, StockChief asks an easier question', async () => {
   /*
    * Twenty ways of asking to delete an inventory were run against the full
    * read. Seventeen landed and three came back with nothing — a different
@@ -303,9 +330,9 @@ test('an instruction typed into the question box is not answered as a question',
    * "Please delete my entire inventory" typed into Ask came back with:
    *
    *   "I'm not able to delete your entire inventory from the system…
-   *    Foundry cannot delete or wipe an entire inventory."
+   *    StockChief cannot delete or wipe an entire inventory."
    *
-   * Which is false. Foundry deletes inventories; it does it on the inventory's
+   * Which is false. StockChief deletes inventories; it does it on the inventory's
    * own settings page. Every intent the question planner could choose from was
    * a lookup, so an instruction had nowhere to go but 'unsupported', and the
    * reader wrote its own explanation for a limit that does not exist.
@@ -321,11 +348,13 @@ test('an instruction typed into the question box is not answered as a question',
     'receive 10 navy socks',
     'move 5 shirts to the store',
   ]) {
-    const answer = await planner.ask(env.db, env.workspace.workspaceId, said, {});
+    const answer = await planner.ask(env.db, env.workspace.workspaceId, said, {
+      provider:{complete:async()=>({data:{decision:'action',interpretation:'Prepare the requested operation',clarification:'',parts:[]}})},
+    });
     assert.equal(answer.plan.intent, 'action',
       `"${said}" is something to do, not something to look up`);
     assert.doesNotMatch(String(answer.plan.unsupportedReason || ''), /cannot delete|not able to delete/i,
-      'and Foundry must not claim a limit it does not have');
+      'and StockChief must not claim a limit it does not have');
   }
 });
 
@@ -333,14 +362,18 @@ test('a real question is still a question', async () => {
   const env = setup();
   const planner = require('../../src/attention/query-planner');
   const asked = await planner.ask(env.db, env.workspace.workspaceId,
-    'how many Black Small Shirt do we have?', {});
+    'how many Black Small Shirt do we have?', {
+      provider:{complete:async()=>({data:{decision:'answer',interpretation:'Read current stock',clarification:'',parts:[{
+        question:'how many Black Small Shirt do we have?',intent:'stock_level',entityQuery:'Black Small Shirt',locationQuery:'',windowDays:30,limit:10,unsupportedReason:'',recordQuery:null,
+      }]}})},
+    });
   assert.notEqual(asked.plan.intent, 'action', 'looking something up must not be diverted');
 });
 
-test('Foundry can be asked to write to somebody', async () => {
+test('StockChief can be asked to write to somebody', async () => {
   /*
    * "Please email motty6700@gmail.com that we received the order" was answered
-   * "Foundry cannot send emails to customers or suppliers."
+   * "StockChief cannot send emails to customers or suppliers."
    *
    * It had sent one that morning — a payment link, from the owner's own Gmail,
    * message id 1a062d53f96aeddf. There are three working paths for it. None
@@ -381,10 +414,10 @@ test('the words sent are the words that were asked for', async () => {
   const draft = outbound.prepare(env.db, env.ctx,
     { recipientText: 'jo@example.test', body: 'the order is delayed', instruction: 'x' });
   assert.equal(draft.body, 'the order is delayed', 'not composed, not expanded');
-  assert.equal(draft.subject, null, 'and no heading Foundry made up');
+  assert.equal(draft.subject, null, 'and no heading StockChief made up');
 });
 
-test('a recipient Foundry does not know is asked about, never guessed', async () => {
+test('a recipient StockChief does not know is asked about, never guessed', async () => {
   const env = setup();
   const outbound = require('../../src/actions/outbound-message');
   const draft = outbound.prepare(env.db, env.ctx,
@@ -395,7 +428,7 @@ test('a recipient Foundry does not know is asked about, never guessed', async ()
 
 test('a connected mailbox is a mailbox, whether or not one was "chosen"', () => {
   /*
-   * Gmail sat on the Connections page marked Connected, and Foundry answered
+   * Gmail sat on the Connections page marked Connected, and StockChief answered
    * "No mailbox is connected for sending". It was reading a separate setting —
    * which mailbox customer messages go from — that almost nobody sets, because
    * there is no reason to choose between mailboxes when you only have one.
@@ -427,7 +460,7 @@ test('a paused mailbox is not sent from', () => {
     paused_at = '2026-09-02T00:00:00.000Z' WHERE id = ?`).run(made.connection.id);
 
   assert.equal(comms.sendingMailbox(env.db, env.workspace.workspaceId).connectorId, null,
-    'a mailbox somebody paused is one they asked Foundry not to use');
+    'a mailbox somebody paused is one they asked StockChief not to use');
 });
 
 test('with a mailbox connected, an emailed instruction becomes a draft', async () => {

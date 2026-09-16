@@ -3,12 +3,12 @@
 /**
  * Mission 5 acceptance run, in a real browser, from an empty inventory.
  *
- * A bakery supplier signs up with nothing in Foundry and an .xlsx exported from
+ * A bakery supplier signs up with nothing in StockChief and an .xlsx exported from
  * whatever they were using before: messy headings, a title row, a blank line, a
  * price column, a location spelled wrong, a row with no quantity and a row with
  * a quantity that is not a number.
  *
- * They upload it, read what Foundry made of it, fix the one thing it could not
+ * They upload it, read what StockChief made of it, fix the one thing it could not
  * settle, approve, and end up with a real catalogue and real opening stock —
  * with movements explaining every unit. Then the two things that must not
  * happen: importing it twice, and a second inventory seeing any of it.
@@ -212,7 +212,7 @@ test(
       await shot(page, 'preview');
     });
 
-    await t.test('2. Foundry says what it read, and has created nothing', async () => {
+    await t.test('2. StockChief says what it read, and has created nothing', async () => {
       const text = await page.locator('body').innerText();
 
       // The title rows, the blank lines and the repeated header are gone; the
@@ -227,7 +227,7 @@ test(
       const costMapping = costLabel.locator('xpath=../following-sibling::td/select');
       assert.equal(await costMapping.inputValue(), 'unitCost');
       // The row with no number, and the row that says "call".
-      assert.match(text, /not a number Foundry can count/);
+      assert.match(text, /not a number StockChief can count/);
       assert.match(text, /no opening stock/);
       // The misspelled depot is either corrected in front of them or asked about.
       assert.match(text, /Sout Depot/);
@@ -327,7 +327,7 @@ test(
       await page.fill('#name', 'Meridian Coffee');
       await Promise.all([
         page.waitForURL(`${BASE}/onboarding`),
-        page.click('button[type=submit]:has-text("Continue with Foundry")'),
+        page.click('button[type=submit]:has-text("Continue with StockChief")'),
       ]);
 
       await page.goto(`${BASE}/inventory`);
@@ -357,7 +357,7 @@ test(
  *
  * The same bakery, a week later, adding stock the way people actually ask —
  * one product with sizes, several products in one sentence — and finding that
- * Foundry knows how this business counts things without asking, and still
+ * StockChief knows how this business counts things without asking, and still
  * creates nothing until it is approved.
  *
  * Runs after the import test, on its own database and its own server.
@@ -416,7 +416,7 @@ test(
     await t.test('1. a described product becomes a proposal, not a product', async () => {
       await ask('Add a new product called Sourdough Starter Culture, code SD-01');
       const text = await page.locator('body').innerText();
-      assert.match(text, /Foundry is ready to add a product/);
+      assert.match(text, /StockChief is ready to add a product/);
       assert.match(text, /Sourdough Starter Culture/);
       // Not asked how it is counted: the business already answered that once.
       assert.doesNotMatch(text, /serial number\?|how do you track/i);
@@ -442,7 +442,7 @@ test(
     await t.test('3. several products in one sentence become several lines', async () => {
       await ask('Add three products: Rye Flour 16kg, Spelt Flour 16kg and Semolina 10kg');
       const text = await page.locator('body').innerText();
-      assert.match(text, /Foundry is ready to make 3 changes/);
+      assert.match(text, /StockChief is ready to make 3 changes/);
       assert.match(text, /Rye Flour 16kg/);
       assert.match(text, /Spelt Flour 16kg/);
       assert.match(text, /Semolina 10kg/);
@@ -457,9 +457,9 @@ test(
       await shot(page, 'three-products-created');
     });
 
-    await t.test('4. a range of sizes is expanded by Foundry, not by the model', async () => {
+    await t.test('4. a range of sizes is expanded by StockChief, not by the model', async () => {
       await ask('Add Baking Trays in sizes 1 through 6');
-      assert.match(await page.locator('body').innerText(), /Foundry is ready to add a product/);
+      assert.match(await page.locator('body').innerText(), /StockChief is ready to add a product/);
       await Promise.all([
         page.waitForLoadState('networkidle'),
         page.click('button:has-text("Approve")'),

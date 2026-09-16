@@ -298,7 +298,7 @@ test('over-long prose is trimmed to the contract instead of failing', () => {
   assert.equal(normalised.importantOperationalPatterns[0].length, 300);
 });
 
-test('Foundry asks few questions: at most three survive', () => {
+test('StockChief asks few questions: at most three survive', () => {
   const many = Array.from({ length: 8 }, (_, i) => buildQuestion({ id: `question_${i}` }));
   const normalised = understandingService.normalise(buildUnderstanding({ unresolvedDecisions: many }), 'desc');
   assert.ok(normalised.unresolvedDecisions.length <= 3);

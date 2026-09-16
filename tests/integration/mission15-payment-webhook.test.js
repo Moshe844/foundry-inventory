@@ -3,7 +3,7 @@
 /*
  * The webhook, over HTTP.
  *
- * This is the only route in Foundry a stranger can reach without signing in, so
+ * This is the only route in StockChief a stranger can reach without signing in, so
  * these tests are mostly about what it refuses. An unsigned claim that an
  * invoice was paid must not become an entry in somebody's books.
  */

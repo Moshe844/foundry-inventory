@@ -11,7 +11,7 @@ const { makeDatabase, cleanupAll, seedWorkspace, makeQuantityItem, signIn, csrfF
 
 test.after(cleanupAll);
 
-test('an owner reports a real incorrect product match in Foundry and it becomes one Needs You repair', async () => {
+test('an owner reports a real incorrect product match in StockChief and it becomes one Needs You repair', async () => {
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db, { workspaceName: 'Owner Repair Co' });
   const membership = auth.getMembership(db, workspace.workspaceId, workspace.accountId);
@@ -36,7 +36,7 @@ test('an owner reports a real incorrect product match in Foundry and it becomes 
   assert.match(opened.headers.location, /^\/repairs\/repair_/);
 
   const needs = plain((await agent.get('/needs-you').expect(200)).text);
-  assert.equal((needs.match(/SHOE-35 is connected to the wrong Foundry product/g) || []).length, 1);
+  assert.equal((needs.match(/SHOE-35 is connected to the wrong StockChief product/g) || []).length, 1);
   assert.match(needs, /Authorize the repair/i);
   assert.match(needs, /Report something else wrong/i);
   const repair = repairs.list(db, workspace.workspaceId, { statuses: 'NEEDS_AUTHORITY' })[0];
@@ -67,8 +67,8 @@ test('Needs You compresses a mismatch into one simulated repair and the browser 
     entityType: 'sku', externalId: 'POS-100', foundryRecordId: oldProduct.skuId,
   });
   const repair = repairs.openAndAssess(db, workspace.ctx, {
-    kind: 'wrong_mapping', symptom: 'POS-100 is connected to the wrong Foundry product',
-    failedInvariant: 'External product POS-100 must resolve to the owner-approved Foundry SKU',
+    kind: 'wrong_mapping', symptom: 'POS-100 is connected to the wrong StockChief product',
+    failedInvariant: 'External product POS-100 must resolve to the owner-approved StockChief SKU',
     affectedRecords: { connectorId: connection.id, entityType: 'sku', externalId: 'POS-100',
       foundryRecordId: correctProduct.skuId },
     evidence: [{ source: 'owner confirmation', expectedSkuId: correctProduct.skuId }],
@@ -79,13 +79,13 @@ test('Needs You compresses a mismatch into one simulated repair and the browser 
   await signIn(agent, workspace.account.email, workspace.account.password);
 
   const needs = await agent.get('/needs-you').expect(200);
-  assert.equal((plain(needs.text).match(/POS-100 is connected to the wrong Foundry product/g) || []).length, 1,
+  assert.equal((plain(needs.text).match(/POS-100 is connected to the wrong StockChief product/g) || []).length, 1,
     'one failed invariant becomes one owner decision');
   assert.match(needs.text, new RegExp(`/repairs/${repair.id}`));
 
   let detail = await agent.get(`/repairs/${repair.id}`).expect(200);
   let text = plain(detail.text);
-  assert.match(text, /What Foundry found.*What the repair would do.*One next step/i);
+  assert.match(text, /What StockChief found.*What the repair would do.*One next step/i);
   assert.match(text, /Historical business records are not rewritten/i);
   assert.match(detail.text, /owner confirmation/i, 'opening evidence survives deterministic diagnosis');
   assert.match(text, /Approve this repair/i);
@@ -100,7 +100,7 @@ test('Needs You compresses a mismatch into one simulated repair and the browser 
     .send({ _csrf: csrfFrom(detail.text) }).expect(303);
 
   const finished = plain((await agent.get(`/repairs/${repair.id}`).expect(200)).text);
-  assert.match(finished, /RESOLVED.*What Foundry verified.*Passed/i);
+  assert.match(finished, /RESOLVED.*What StockChief verified.*Passed/i);
   assert.equal(connections.mapping(db, workspace.workspaceId, connection.id, 'sku', 'POS-100').foundry_record_id,
     correctProduct.skuId);
   assert.equal(repairs.list(db, workspace.workspaceId, { statuses: repairs.ACTIVE }).length, 0);

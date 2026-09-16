@@ -1,10 +1,10 @@
 'use strict';
 
 /*
- * Foundry learning that money moved.
+ * StockChief learning that money moved.
  *
  * On a real account it never did. Stripe fired charge.failed,
- * payment_intent.payment_failed and invoice.payment_failed; Foundry's
+ * payment_intent.payment_failed and invoice.payment_failed; StockChief's
  * payment_provider_events table had zero rows in it, ever, and the order went
  * on saying $300.00 was still owed.
  *
@@ -16,7 +16,7 @@
  * inventory it named had since been deleted. Every event got a 404.
  *
  * And the address was a tunnel that was not running. Nothing could arrive
- * however well it was addressed, which is why Foundry no longer waits to be
+ * however well it was addressed, which is why StockChief no longer waits to be
  * told: it asks, and the answer travels the same code path as the event would
  * have.
  */
@@ -85,7 +85,7 @@ const DECLINED = { ...UNPAID, attempted: true, attempt_count: 1,
 const PAID = { ...UNPAID, status: 'paid', amount_paid: 30000, attempted: true, attempt_count: 1,
   status_transitions: { paid_at: Math.floor(Date.now() / 1000) } };
 
-test('with no webhook at all, Foundry learns the payment was declined and says why', async () => {
+test('with no webhook at all, StockChief learns the payment was declined and says why', async () => {
   const env = setup();
   let invoice = UNPAID;
   const undo = registry.register('fake', askable(() => invoice));
@@ -156,7 +156,7 @@ test('the waiting order learns payment immediately and returns receipt and invoi
 
     const home = plain((await agent.get('/')).text);
     assert.match(home, /Handled\s*1\s*automatic action completed in the last day/i);
-    assert.match(home, /Recorded \$300\.00 from Moshe Ekstein.*confirmed the payment and Foundry posted it to SO-1001 without you/i);
+    assert.match(home, /Recorded \$300\.00 from Moshe Ekstein.*confirmed the payment and StockChief posted it to SO-1001 without you/i);
   } finally { undo(); env.db.close(); }
 });
 

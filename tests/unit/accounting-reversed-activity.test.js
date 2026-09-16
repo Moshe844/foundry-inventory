@@ -4,7 +4,7 @@
  * A payment that never happened must not appear as two payments that did.
  *
  * Providers report the same card payment twice, a receipt gets entered by hand
- * as well as pulled in, an owner corrects a mistake. Foundry reverses the bad
+ * as well as pulled in, an owner corrects a mistake. StockChief reverses the bad
  * entry, and the balances come out right: the pair cancels. The story does not.
  * Read as activity, the mistake and its correction are money arriving from an
  * unnamed source and the same money leaving to an unnamed one — which is how

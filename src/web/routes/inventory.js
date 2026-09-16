@@ -67,7 +67,7 @@ function presentItemFindings(db, workspaceId, findings) {
  * moving, and is deliberately withheld from them.
  *
  * The permission is the one the action already declares in ACTION_PERMISSION,
- * so the console and Tell Foundry can never drift apart on who may do what.
+ * so the console and Tell StockChief can never drift apart on who may do what.
  */
 const may = (actionType) => (req, res, next) => {
   try {
@@ -250,8 +250,8 @@ router.get(
   '/inventory/new',
   asyncRoute(async (req, res) => {
     // Somebody who described "size: 0-6 months, 6-12 months / colour: white,
-    // red, blue" during setup has already told Foundry their option axes, and
-    // Foundry wrote them down. Presenting an empty form here asks them to type
+    // red, blue" during setup has already told StockChief their option axes, and
+    // StockChief wrote them down. Presenting an empty form here asks them to type
     // it all again and makes the configuration look like it did nothing.
     //
     // This is a starting point, not a decision: every field is editable and
@@ -369,7 +369,7 @@ router.get(
     detail.onOrder = Number(purchasingPosition.onOrderByItem(
       req.db, req.ctx.workspaceId, [req.params.id]
     ).get(req.params.id) || 0);
-    // What Foundry has noticed about this record, on the record itself.
+    // What StockChief has noticed about this record, on the record itself.
     const findings = attention.listAttentionForItem(req.db, req.ctx.workspaceId, req.params.id);
     const findingTotal = findings.length;
     const purchasingLines = detail.skus.map((sku) => ({
@@ -478,7 +478,7 @@ router.post(
     const components = String(req.body.components || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
       .map((line) => {
         const match = line.match(/^(.+?)\s*[,=:]\s*(\d+)$/) || line.match(/^(\d+)\s*[x×]\s+(.+)$/i);
-        if (!match) throw new ValidationError(`Write each component as “SKU, quantity”. Foundry could not read: ${line}`);
+        if (!match) throw new ValidationError(`Write each component as “SKU, quantity”. StockChief could not read: ${line}`);
         const code = /^\d+$/.test(match[1]) ? match[2].trim() : match[1].trim();
         const quantity = /^\d+$/.test(match[1]) ? Number(match[1]) : Number(match[2]);
         const sku = req.db.prepare(`${repo.SKU_SELECT} WHERE s.workspace_id = ? AND s.code = ? COLLATE NOCASE
@@ -572,7 +572,7 @@ router.post(
       notes: req.body.notes,
       reference: req.body.reference,
       // Stock rarely leaves on the day somebody gets around to typing it in.
-      // Foundry works out what to reorder from when things actually went, so a
+      // StockChief works out what to reorder from when things actually went, so a
       // week of sales entered on Friday must not read as a Friday spike.
       occurredAt: trimOrNull(req.body.occurredAt),
     };

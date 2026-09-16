@@ -283,7 +283,7 @@ function stageDataset(db, ctx, membership, profileId) {
   return { dataset:getDataset(db,ctx.workspaceId,dataset.id),result:{ inserted,enriched,sourceRows:rows.length } };
 }
 
-/** Upgrade older owner uploads when Foundry has since gained a deterministic
+/** Upgrade older owner uploads when StockChief has since gained a deterministic
  * meaning for their columns. This is one action for the workbook, never one
  * raw form per field. */
 function prepareKnownEvidence(db,ctx,membership,packageId,options = {}) {
@@ -431,7 +431,7 @@ function sourceReview(db,workspaceId,packageId) {
 /**
  * Summary cells are useful evidence, but they are not safe business commands.
  * When the only disagreement is between a summary and the row-level records
- * that produced it, Foundry can make the conservative choice without asking
+ * that produced it, StockChief can make the conservative choice without asking
  * the owner to understand the import engine: operational rows control, while
  * every conflicting summary remains attached to the immutable source.
  *
@@ -512,10 +512,10 @@ function preparePurchaseOrderLifecycle(db,ctx,membership,datasetId) {
     .filter(({ target }) => target && !existingTargets.has(target));
   const promotedTargets = new Set(promotions.map(({ target }) => target));
   if (!existingTargets.has('receivedQuantityUnits') && !promotedTargets.has('receivedQuantityUnits')) {
-    throw new InvariantError('The source does not identify how many units were already received. Foundry cannot calculate what is still incoming.','migration_po_received_quantity_missing');
+    throw new InvariantError('The source does not identify how many units were already received. StockChief cannot calculate what is still incoming.','migration_po_received_quantity_missing');
   }
   if (!existingTargets.has('backorderedQuantityUnits') && !promotedTargets.has('backorderedQuantityUnits')) {
-    throw new InvariantError('The source does not identify the remaining or backordered quantity. Foundry cannot calculate what is still incoming.','migration_po_remaining_quantity_missing');
+    throw new InvariantError('The source does not identify the remaining or backordered quantity. StockChief cannot calculate what is still incoming.','migration_po_remaining_quantity_missing');
   }
   const now = nowIso();
   inTransaction(db,() => {

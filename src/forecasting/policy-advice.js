@@ -14,7 +14,7 @@
  * measured demand and measured lead time, and compares. It does not change
  * anything. A recommendation with two buttons on it is the default and the
  * owner's answer is the decision; only an explicit grant of authority lets
- * Foundry move a target on its own, and even then only inside stated bounds.
+ * StockChief move a target on its own, and even then only inside stated bounds.
  *
  * The arithmetic is the standard one, and it is standard on purpose — an owner
  * can check it against any inventory textbook, or their accountant can:
@@ -64,7 +64,7 @@ const DEFAULT_REVIEW_DAYS = 7;
 const DEFAULT_COVER_DAYS = 30;
 
 /*
- * How far out a current setting has to be before Foundry raises it. Rules that
+ * How far out a current setting has to be before StockChief raises it. Rules that
  * are nearly right are left alone: an assistant that suggests 62 instead of 60
  * has taught the owner to ignore it by the third time.
  */
@@ -107,7 +107,7 @@ function advise(input) {
       advisable: false,
       reason: 'no_demand_evidence',
       headline: 'Not enough trading history to judge these settings',
-      explanation: `${displayName} does not yet have enough demand history for Foundry to say whether `
+      explanation: `${displayName} does not yet have enough demand history for StockChief to say whether `
         + 'its reorder settings are right. Your configured rule is being followed exactly as set.',
       service,
       recommendations: [],
@@ -120,7 +120,7 @@ function advise(input) {
   /*
    * A rate of zero is not a rate. It is the absence of one, and the arithmetic
    * below cannot tell the difference: nothing sold per day, times any lead time
-   * at all, is a reorder point of zero and a target of zero — which is Foundry
+   * at all, is a reorder point of zero and a target of zero — which is StockChief
    * advising an owner to switch replenishment off entirely.
    *
    * This is the stockout trap wearing a different hat. A product that sold seven
@@ -129,7 +129,7 @@ function advise(input) {
    * stayed that way, and the recommendation would look perfectly reasoned on the
    * way past.
    *
-   * So Foundry declines, says which of the two cases it thinks it is looking at,
+   * So StockChief declines, says which of the two cases it thinks it is looking at,
    * and leaves the configured rule exactly as the owner set it.
    */
   if (!(dailyRate > 0)) {
@@ -144,15 +144,15 @@ function advise(input) {
         ? 'This has stopped selling, so its settings are not being second-guessed'
         : 'Nothing has sold, so there is nothing to size these settings against',
       explanation: stoppedSelling
-        ? displayName + ' has sold ' + sold + ' in the period Foundry looked at, but nothing '
+        ? displayName + ' has sold ' + sold + ' in the period StockChief looked at, but nothing '
           + 'recently'
           + (emptyDays > 0
             ? ', and it was out of stock on ' + emptyDays + ' of those days, which is the most '
               + 'likely reason. '
             : '. ')
-          + 'Foundry will not recommend a reorder level of zero on the strength of a quiet week. '
+          + 'StockChief will not recommend a reorder level of zero on the strength of a quiet week. '
           + 'Your rule is being followed exactly as set.'
-        : displayName + ' has no recorded sales, so Foundry has nothing to size a reorder level '
+        : displayName + ' has no recorded sales, so StockChief has nothing to size a reorder level '
           + 'against. Your configured rule is being followed exactly as set.',
       service,
       recommendations: [],
@@ -167,7 +167,7 @@ function advise(input) {
       advisable: false,
       reason: 'no_lead_time',
       headline: 'No lead time to plan against',
-      explanation: `${displayName} sells about ${dailyRate} a day, but Foundry does not know how long `
+      explanation: `${displayName} sells about ${dailyRate} a day, but StockChief does not know how long `
         + 'its supplier takes, so it cannot say when to reorder. Set a lead time on the supplier and this becomes answerable.',
       service,
       recommendations: [],
@@ -357,7 +357,7 @@ function targetAdvice({ displayName, current, recommended, dailyRate, daysOfCove
       why: `A target of ${current} is about ${currentDays} days of supply at the current pace of `
         + `${dailyRate} a day, which is tying money up in stock that will sit. Dropping the target to `
         + `${recommended} still leaves about ${daysOfCoverAtTarget} days of cover`
-        + (coverCapped ? `, inside the ${maxDays} days you asked Foundry to stay under.` : '.'),
+        + (coverCapped ? `, inside the ${maxDays} days you asked StockChief to stay under.` : '.'),
       actionLabel: `Use ${recommended}`,
       keepLabel: `Keep ${current}`,
     };

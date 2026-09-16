@@ -12,7 +12,7 @@
    * There is one row per variant now, carrying everything that is true of that
    * variant, because that is the shape of the fact. What is genuinely narrow —
    * the record's own details, where the stock sits, archiving — stays in the
-   * rail. What is a story rather than a figure — what Foundry expects next,
+   * rail. What is a story rather than a figure — what StockChief expects next,
    * what has happened — stays underneath in the order somebody reads it.
    */
   var mode = item.tracking_mode;
@@ -80,7 +80,7 @@
   </div>
 <% } %>
 
-<%# What Foundry has noticed about this record, stated where the person is
+<%# What StockChief has noticed about this record, stated where the person is
     already looking rather than only on a page they have to remember to open. %>
 <% findings.forEach(function (finding) { %>
   <a class="rm-decision" href="<%= finding.actionHref || '/attention/' + finding.attentionId %>">
@@ -128,14 +128,18 @@
 </div>
 
 <section class="rm-panel" id="kit-definition" style="margin-bottom:18px">
+  <% var shownKitDefinition = Object.values(kitDefinitions).find(function(definition){ return definition.isKit; }); %>
   <div class="rm-panel__head">
     <%- helpers.icon('layers', { size: 15, className: 'rm-quiet' }) %>
     <h2>Kit / bill of materials</h2>
-    <span class="right">The customer buys this SKU; Foundry moves its components.</span>
+    <span class="right"><%= shownKitDefinition && shownKitDefinition.stockBasis === 'preassembled'
+      ? 'StockChief tracks the assembled kits on hand; selling one moves the kit SKU itself.'
+      : 'The customer buys this SKU; StockChief moves its components.' %></span>
   </div>
   <div class="rm-panel__body">
     <% skus.forEach(function(sku){ var definition=kitDefinitions[sku.id]; if(definition && definition.isKit){ %>
-      <div class="rm-note" style="margin-bottom:12px"><div><strong><%= sku.code %> contains</strong><br>
+      <div class="rm-note" style="margin-bottom:12px"><div><strong><%= sku.code %> contains</strong>
+        <% if (definition.stockBasis === 'preassembled') { %><span class="badge badge--ok" style="margin-left:8px">Preassembled stock</span><% } %><br>
         <% definition.components.forEach(function(component,index){ %><%= index ? ' · ' : '' %><%= component.quantity %> × <%= component.item_name %><%= component.variant_label ? ' / ' + component.variant_label : '' %> (<span class="mono"><%= component.code %></span>)<% }) %>
       </div></div>
     <% } }); %>
@@ -164,7 +168,7 @@
     <button class="rm-btn rm-btn--ghost rm-btn--sm" type="button" data-modal-open="modal-adjust"><%- helpers.icon('adjust', { size: 15 }) %> Fix the count</button>
   </div>
   <p class="rm-quiet" style="font-size:12.5px;margin:0 0 18px">
-    Or just <a href="/#tell-foundry">tell Foundry</a> what happened.
+    Or just <a href="/#tell-foundry">tell StockChief</a> what happened.
     <%# A greyed-out button explains itself in a tooltip, which nobody hovers and
         no phone has. Say it on the page. %>
     <% if (locations.length < 2) { %>
@@ -266,7 +270,7 @@
     <% } %>
     <p class="rm-panel__foot">
       Selling price is charged to customers; supplier cost is kept separately for purchasing and
-      margin reporting. Foundry will not pick a reorder level for you until it has seen one
+      margin reporting. StockChief will not pick a reorder level for you until it has seen one
       sell — or you set it yourself.
     </p>
   </section>
@@ -394,13 +398,13 @@
       Where this product is heading.
 
       Immediately after the rule it is produced by: the row above states what
-      Foundry will do, this states what that is currently producing. Every
+      StockChief will do, this states what that is currently producing. Every
       figure here is a prediction and says so; the confidence is never buried
       behind a tooltip.
     %>
     <%
       /*
-       * Five variants Foundry has never seen sell produced five identical
+       * Five variants StockChief has never seen sell produced five identical
        * paragraphs saying so. Nothing is learned by reading the fourth. When
        * every line is still learning and none of them has a purchase, a
        * recommendation, a transfer or an anomaly attached, it is one fact about
@@ -422,11 +426,11 @@
         <div class="rm-panel__head">
           <%- helpers.icon('trendUp', { size: 15, className: 'rm-quiet' }) %>
           <h2>What happens next</h2>
-          <span class="right">Foundry's read on where this is heading</span>
+          <span class="right">StockChief's read on where this is heading</span>
         </div>
         <div class="rm-panel__body">
           <p class="rm-quiet" style="font-size:13.5px;line-height:1.6;margin:0">
-            Nothing to order yet. Foundry has not seen any of the
+            Nothing to order yet. StockChief has not seen any of the
             <%= item.has_variants ? variantTotal : outlookLines.length %> <%= item.has_variants ? 'variants' : 'lines' %> sell, so it
             cannot estimate how fast this sells yet and will not recommend a purchase on a guess. It starts
             advising as soon as this product moves.
@@ -438,7 +442,7 @@
         <div class="rm-panel__head">
           <%- helpers.icon('trendUp', { size: 15, className: 'rm-quiet' }) %>
           <h2>What happens next</h2>
-          <span class="right">Foundry's read on where this is heading</span>
+          <span class="right">StockChief's read on where this is heading</span>
         </div>
         <div class="rm-panel__body">
           <% outlook.forEach(function (line) { %>
@@ -447,7 +451,7 @@
 
               <p>
                 <% if (line.forecast.dailyRate === null) { %>
-                  Foundry cannot estimate how fast this sells yet
+                  StockChief cannot estimate how fast this sells yet
                   <span class="rm-pillbadge">Still learning</span>.
                   <% if (line.forecast.committedUnits > 0) { %>
                     Customers have ordered <%= line.forecast.committedUnits %> that have not shipped,
@@ -483,7 +487,7 @@
                   <strong><%= change.headline %></strong>
                   <p class="rm-quiet"><%= change.why %></p>
                   <%
-                    // Only a recommendation Foundry has actually written down can
+                    // Only a recommendation StockChief has actually written down can
                     // be decided: the row is what carries the evidence and the
                     // authority verdict, and a decision has to attach to it.
                     var raised = line.decisions && line.decisions[change.kind];
@@ -542,7 +546,7 @@
           <% }) %>
         </div>
         <p class="rm-panel__foot">
-          These are predictions from your own trading history. Foundry never changes a reorder setting
+          These are predictions from your own trading history. StockChief never changes a reorder setting
           you configured without being told to.
         </p>
       </section>
@@ -843,7 +847,7 @@
         <div class="field">
           <label class="label" for="issue-occurred">When did it go out? <span class="optional">optional</span></label>
           <input class="input" id="issue-occurred" name="occurredAt" type="date" max="<%= new Date().toISOString().slice(0, 10) %>">
-          <span class="field-help">Leave blank for today. Foundry works out what to reorder from when stock actually left, so entering last week's sales with last week's dates keeps that right.</span>
+          <span class="field-help">Leave blank for today. StockChief works out what to reorder from when stock actually left, so entering last week's sales with last week's dates keeps that right.</span>
         </div>
         <div class="field-row">
           <div class="field">
@@ -972,7 +976,7 @@
           <% } %>
           <div class="field-row">
             <div class="field">
-              <label class="label">Foundry expects</label>
+              <label class="label">StockChief expects</label>
               <input class="input num" value="0" data-expected readonly tabindex="-1" aria-readonly="true">
             </div>
             <div class="field">

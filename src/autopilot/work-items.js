@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * The durable record of work Foundry decided should happen.
+ * The durable record of work StockChief decided should happen.
  *
  * The important word is durable. A screen showing "transferring…" is not state:
  * if the process dies between the engine writing a movement and the record
@@ -298,7 +298,7 @@ function awaitingReplenishmentForSku(db, workspaceId, skuId) {
     || item.recommendedAction?.skuId === skuId) || null;
 }
 
-/** What Foundry actually completed, for "what did you do today". */
+/** What StockChief actually completed, for "what did you do today". */
 function completedSince(db, workspaceId, since) {
   return db
     .prepare(

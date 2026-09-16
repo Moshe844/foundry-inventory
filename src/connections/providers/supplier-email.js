@@ -8,7 +8,7 @@ module.exports = Object.freeze({
   integrationClass:'email',
   metadata() {
     return { type:'supplier_email', name:'Supplier email', mark:'Mail', category:'email',
-      authMode:'token', description:'Receive approved supplier messages and documents through Foundry’s documented email endpoint.',
+      authMode:'token', description:'Receive approved supplier messages and documents through StockChief’s documented email endpoint.',
       provides:['supplier messages','purchasing documents','authorized supplier email'], available:true };
   },
 });

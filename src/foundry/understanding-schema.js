@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * InventoryUnderstanding — what Foundry believes about a customer's operation.
+ * InventoryUnderstanding — what StockChief believes about a customer's operation.
  *
  * This schema is the contract in both directions: it is sent to the model as
  * the required output format, and every response is validated against it before
@@ -29,7 +29,7 @@ const ANSWER_EFFECTS = [
   'skip_expiration',
 ];
 
-/** Foundry must say which of the four honest states each conclusion is in. */
+/** StockChief must say which of the four honest states each conclusion is in. */
 const CERTAINTY = [
   'verified_fact',
   'safe_structural_inference',
@@ -224,7 +224,7 @@ const UNDERSTANDING_SCHEMA = {
     importantOperationalPatterns: stringList,
 
     /**
-     * An exhaustive ledger of what the owner explicitly asked Foundry to
+     * An exhaustive ledger of what the owner explicitly asked StockChief to
      * handle. This is deliberately separate from configuration fields such as
      * variantDimensions: the engine may support only three configured option
      * axes, but the understanding must never make a fourth requirement vanish.
@@ -257,7 +257,7 @@ const UNDERSTANDING_SCHEMA = {
       },
     },
 
-    /** What Foundry intends to configure, in engine vocabulary. */
+    /** What StockChief intends to configure, in engine vocabulary. */
     recommendedConfiguration: {
       type: 'object',
       additionalProperties: false,
@@ -368,7 +368,7 @@ const ADVICE_KEYS = ['statedRequirements', 'recommendations', 'unresolvedDecisio
  * six-field objects, and nesting that inside the structural pass pushed the
  * compiled grammar past the size the provider will accept — the whole
  * understanding then failed with "the compiled grammar is too large", which
- * reached the owner as "Foundry could not finish reading that."
+ * reached the owner as "StockChief could not finish reading that."
  *
  * Measured rather than guessed: core with this block is refused, core without
  * it compiles at 4,413 characters, and this block on its own compiles at 709.

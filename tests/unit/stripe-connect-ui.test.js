@@ -81,7 +81,7 @@ test('an unfinished hosted attempt is not presented as a connected Stripe accoun
   assert.doesNotMatch(html, /Connected to Example/);
 });
 
-test('Stripe tab paints a useful loading state before Foundry asks Stripe for the URL', async () => {
+test('Stripe tab paints a useful loading state before StockChief asks Stripe for the URL', async () => {
   const html = await ejs.renderFile(path.join(views, 'payment-start.ejs'), {
     postPath: '/settings/connections/payments/connect', csrfToken: 'test-csrf',
   });
@@ -104,8 +104,8 @@ test('Stripe return page updates the Connections window and closes the popup', a
   assert.match(html, /window\.opener\.postMessage/);
   assert.match(html, /postMessage\(message, '\*'\)/);
   assert.match(html, /window\.setTimeout\(function \(\) \{ window\.close\(\); \}, 500\)/);
-  assert.match(html, /Return to Foundry/);
-  assert.match(html, /Foundry inventory:<\/strong> Example Inventory/);
+  assert.match(html, /Return to StockChief/);
+  assert.match(html, /StockChief inventory:<\/strong> Example Inventory/);
   assert.match(html, /workspaceId: "wsp_example"/);
 });
 

@@ -1,4 +1,4 @@
-# Foundry production-certification runbook
+# StockChief production-certification runbook
 
 Mission 4 is a release gate backed by runtime evidence. A green local test run
 does not certify an external service, a human response, or a hosting operation.
@@ -15,7 +15,7 @@ every missing prerequisite.
 - Provider inbox identities and domain idempotency keys prevent duplicate
   delivery from repeating an effect. The outbox retries delivery independently
   from the transaction which created it.
-- Interrupted Foundry UI work is persisted and becomes an explicit retryable
+- Interrupted StockChief UI work is persisted and becomes an explicit retryable
   failure; a restart cannot leave the browser spinning forever.
 - Workspace authorization and action permissions are checked server-side.
 - `/healthz` reports liveness and database status. `/readyz` reports the full
@@ -72,7 +72,7 @@ default `development` value.
 `certify:browser` requires two consecutive completions of the complete browser
 pack. It covers actual browser navigation and provider popup behavior; it is not
 replaced by unit tests. The independent zero-training walkthrough is separate
-and must be completed by a person who was not trained on Foundry.
+and must be completed by a person who was not trained on StockChief.
 The unauthenticated soak creates no browser sessions. An authenticated soak
 reuses one dedicated staging cookie; it must not manufacture a new anonymous
 CSRF session on every request.
@@ -106,7 +106,7 @@ are not infrastructure incidents.
 2. Create and verify an off-site backup and perform a hosting-platform restore.
 3. Stop old-version schedulers before the new version begins polling.
 4. Deploy, check `/healthz` and `/readyz`, then run signed-in smoke workflows.
-5. If rollback is required, stop Foundry, preserve the failed database and
+5. If rollback is required, stop StockChief, preserve the failed database and
    sidecars, restore the verified pre-deploy backup to a new path, deploy the
    recorded previous revision, and verify the latest inventory, purchasing,
    sales, payment and accounting records. Never overwrite the only database.

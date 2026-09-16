@@ -46,7 +46,7 @@
     <%- helpers.icon('alert', { size: 18 }) %>
     <div>
       <% if (!setup.suppliers) { %>
-        <strong>Foundry does not know who you buy from yet.</strong>
+        <strong>StockChief does not know who you buy from yet.</strong>
         <p>Once it knows your supplier and how long they take to deliver, it can tell you what to
           order and write the order for you to check. It takes a minute and you only do it once.</p>
       <% } else if (setup.withoutSupplier) { %>
@@ -54,11 +54,11 @@
           <%= setup.withoutSupplier %>
           <%= setup.withoutSupplier === 1 ? 'version has' : 'versions have' %> nobody to buy from yet.
         </strong>
-        <p>Foundry can work out what those need, but not who to order them from. The ones that are
+        <p>StockChief can work out what those need, but not who to order them from. The ones that are
           short say so on the line itself.</p>
       <% } else { %>
-        <strong>Foundry is working these out from what they have been selling.</strong>
-        <p>You have not set your own reorder levels, so Foundry uses the ones it derives from usage
+        <strong>StockChief is working these out from what they have been selling.</strong>
+        <p>You have not set your own reorder levels, so StockChief uses the ones it derives from usage
           and says so. Set them yourself whenever you want to be exact.</p>
       <% } %>
       <p><a class="btn btn--sm" href="/purchasing/setup">Set up purchasing</a></p>
@@ -158,7 +158,7 @@
           </div>
           <% if (permissions.create) { %>
             <% if ((group.activePlans || []).length === 1) { %>
-              <a class="btn btn--primary" href="/autopilot/work/<%= group.activePlans[0].id %>">Review Foundry's decision</a>
+              <a class="btn btn--primary" href="/autopilot/work/<%= group.activePlans[0].id %>">Review StockChief's decision</a>
             <% } else if ((group.activePlans || []).length > 1) { %>
               <a class="btn btn--primary" href="/needs-you">Review these decisions</a>
             <% } else { %>
@@ -215,7 +215,7 @@
             <p class="need__happened"><%= line.headline %></p>
             <dl class="need__detail">
               <div>
-                <dt>Why Foundry stopped</dt>
+                <dt>Why StockChief stopped</dt>
                 <dd>It worked out what this needs, but has nobody to order it from. Nothing has been ordered.</dd>
               </div>
             </dl>
@@ -234,14 +234,14 @@
       <span class="dot dot--ok" aria-hidden="true"></span>
       <% if (unknown.length && plan.covered.length) { %>
         <%= plan.covered.length === 1 ? 'One version was checked and is' : plan.covered.length + ' versions were checked and are' %>
-        fine for now. Foundry has not seen the other <%= unknown.length === 1 ? 'one' : unknown.length %> selling yet.
+        fine for now. StockChief has not seen the other <%= unknown.length === 1 ? 'one' : unknown.length %> selling yet.
       <% } else if (unknown.length) { %>
-        <%# "Has not seen these selling" is only one of the reasons Foundry
+        <%# "Has not seen these selling" is only one of the reasons StockChief
             cannot judge a line, and it is the wrong one to state by default.
             A product sold twice today has been seen selling; what it lacks is
             days. Saying otherwise contradicts the line's own reason directly
             underneath, and tells somebody to record a sale they just recorded. %>
-        Foundry does not have enough history for these yet, so it cannot say whether they need
+        StockChief does not have enough history for these yet, so it cannot say whether they need
         ordering — and it will not guess. Each one says what it is waiting for.
       <% } else { %>
         Everything was checked against how fast it sells and what is already on the way. Nothing is below its reorder point.
@@ -295,7 +295,7 @@
   <% } %>
 </section>
 
-<%# --------------------------------------------- What Foundry checked and left %>
+<%# --------------------------------------------- What StockChief checked and left %>
 <% if (plan.covered.length || unknown.length) { %>
   <section class="section">
     <details class="disclose">
@@ -303,9 +303,9 @@
         <span>
           <% if (plan.covered.length) { %>
             <%= plan.covered.length %> <%= plan.covered.length === 1 ? 'version' : 'versions' %> checked and not needed yet<%
-              %><% if (unknown.length) { %>, <%= unknown.length %> Foundry cannot judge yet<% } %>
+              %><% if (unknown.length) { %>, <%= unknown.length %> StockChief cannot judge yet<% } %>
           <% } else { %>
-            <%= unknown.length %> <%= unknown.length === 1 ? 'version' : 'versions' %> Foundry cannot judge yet
+            <%= unknown.length %> <%= unknown.length === 1 ? 'version' : 'versions' %> StockChief cannot judge yet
           <% } %>
         </span>
         <span class="disclose__cue">Show</span>
@@ -330,7 +330,7 @@
         <% } %>
         <% if (unknown.length) { %>
           <p class="t-muted" style="margin-top:12px;">
-            Foundry will not guess a demand figure it cannot stand behind. Keep recording what
+            StockChief will not guess a demand figure it cannot stand behind. Keep recording what
             goes out, or set the level to reorder at yourself, and it can act on these.
           </p>
           <ul class="plain-list">

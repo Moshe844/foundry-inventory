@@ -1,12 +1,12 @@
 <%
   /*
-   * What Foundry read, before anything is created.
+   * What StockChief read, before anything is created.
    *
    * This is the screen the whole safety promise rests on, so it is built around
    * three things in this order: the figures it would create, the things it
    * could not settle on its own, and the button that commits.
    *
-   * What it replaced put "what Foundry found", the conflicts and the commit
+   * What it replaced put "what StockChief found", the conflicts and the commit
    * button in three identical cards, so a conflict that must be settled looked
    * exactly like a count of locations. Anything blocking now carries the amber,
    * and the commit button says plainly what is still in its way.
@@ -21,7 +21,7 @@
   <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Read from <%= sources.length %> file<%= sources.length === 1 ? '' : 's' %> · nothing created yet</p>
   <h1>Here is what I understand about your inventory.</h1>
   <p>
-    Check the figures below. Nothing exists in Foundry until you press the button at the bottom, and
+    Check the figures below. Nothing exists in StockChief until you press the button at the bottom, and
     everything it creates will have a record explaining where it came from.
   </p>
 </div>
@@ -118,14 +118,14 @@
 
   <form method="post" action="/onboarding/review/<%= plan.id %>/accept-recommendations" style="margin-bottom:18px">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Accept everything Foundry recommended</button>
+    <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Accept everything StockChief recommended</button>
   </form>
 <% } %>
 
 <section class="rm-panel" style="margin-bottom:14px">
   <div class="rm-panel__head">
     <%- helpers.icon('shield', { size: 15, className: 'rm-quiet' }) %>
-    <h2>Foundry is ready to take over</h2>
+    <h2>StockChief is ready to take over</h2>
   </div>
   <ul class="rm-checks">
     <li>

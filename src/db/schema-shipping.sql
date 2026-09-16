@@ -4,7 +4,7 @@
 -- that they left. What did not exist was everything a carrier is actually for
 -- — what it would cost, which service, the label, and where the parcel is now.
 -- Those are facts a carrier owns, so they are stored as the carrier's answers
--- rather than as anything Foundry decided.
+-- rather than as anything StockChief decided.
 
 -- What one package weighs and measures.
 --
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS shipment_packages (
 
 -- What the carriers said they would charge, when asked.
 --
--- Kept rather than used and discarded, because "Foundry chose UPS Ground"
+-- Kept rather than used and discarded, because "StockChief chose UPS Ground"
 -- is only checkable next to what it was choosing between. A rate goes stale;
 -- `quoted_at` says when it was true.
 CREATE TABLE IF NOT EXISTS shipment_rates (
@@ -176,7 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_shipment_tracking_shipment
 -- Provider messages, kept before they are believed.
 --
 -- The same discipline as payment provider events: what arrived is recorded
--- first, and what Foundry made of it second, so a message that could not be
+-- first, and what StockChief made of it second, so a message that could not be
 -- read is visible rather than lost.
 CREATE TABLE IF NOT EXISTS shipping_provider_events (
   id                  TEXT PRIMARY KEY,
@@ -191,7 +191,7 @@ CREATE TABLE IF NOT EXISTS shipping_provider_events (
   UNIQUE (workspace_id, provider, external_event_id)
 );
 
--- The rule an owner gave Foundry about buying labels.
+-- The rule an owner gave StockChief about buying labels.
 --
 -- Structured on purpose. "Use UPS Ground automatically if it arrives by the
 -- promised date and costs under $25" is three conditions and a choice, and
@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS shipping_rules (
 CREATE INDEX IF NOT EXISTS idx_shipping_rules_workspace
   ON shipping_rules(workspace_id, is_active);
 
--- How much of the label-selection loop Foundry owns for this inventory.
+-- How much of the label-selection loop StockChief owns for this inventory.
 -- Automatic still needs the universal operator to be running, the explicit
 -- shipping-label capability, and a saved rule that covers the exact rate.
 CREATE TABLE IF NOT EXISTS shipping_operation_policy (
@@ -229,10 +229,10 @@ CREATE TABLE IF NOT EXISTS shipping_operation_policy (
   updated_at            TEXT NOT NULL
 );
 
--- A shipping account Foundry opened on a merchant's behalf.
+-- A shipping account StockChief opened on a merchant's behalf.
 --
 -- The alternative to asking every shop owner to leave, create an EasyPost
--- account, fund a wallet and copy a key back. Foundry creates the account
+-- account, fund a wallet and copy a key back. StockChief creates the account
 -- through the partner API and the merchant never sees EasyPost — but the
 -- account is theirs, not Keeper's: their rates, their labels, their bill.
 --
@@ -245,7 +245,7 @@ CREATE TABLE IF NOT EXISTS shipping_referral_accounts (
   workspace_id          TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   connector_id          TEXT REFERENCES workspace_connectors(id) ON DELETE SET NULL,
   partner               TEXT NOT NULL DEFAULT 'easypost',
-  -- The carrier's own id for this merchant. The account survives Foundry
+  -- The carrier's own id for this merchant. The account survives StockChief
   -- disconnecting from it, which is why the id is worth keeping.
   referral_customer_id  TEXT NOT NULL,
   name                  TEXT,

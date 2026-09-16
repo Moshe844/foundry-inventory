@@ -1,13 +1,13 @@
 'use strict';
 
 /*
- * Only the business's mail reaches Foundry.
+ * Only the business's mail reaches StockChief.
  *
  * The owner connected the shop's Gmail and got everything: newsletters, bank
  * alerts, delivery robots, personal mail — all of it captured, triaged, listed
  * and counted as work on the one screen they are supposed to trust. Their
- * instruction was plain: only related mail should be sent to Foundry, and when
- * a customer writes asking to order something, Foundry should have prepared
+ * instruction was plain: only related mail should be sent to StockChief, and when
+ * a customer writes asking to order something, StockChief should have prepared
  * the order by the time they look.
  *
  * Both halves are asserted here, because a gate that keeps the customer out is
@@ -74,7 +74,7 @@ test('"nothing about purchasing" is not somebody purchasing', () => {
   env.db.close();
 });
 
-test('a bank alert is nobody Foundry has to answer', () => {
+test('a bank alert is nobody StockChief has to answer', () => {
   const env = setup();
   const verdict = judge(env, { messageId: 'n-3', sender: 'no.reply.alerts@bank.test',
     subject: 'Your account balance', bodyText: 'A payment of $40.00 was made on your card.',
@@ -163,7 +163,7 @@ test('somebody we trade with is the business, but their marketing is still marke
   env.db.close();
 });
 
-test('a reply on a conversation Foundry already keeps stays in the conversation', () => {
+test('a reply on a conversation StockChief already keeps stays in the conversation', () => {
   const env = setup();
   ingestion.capture(env.db, { workspaceId: env.workspace.workspaceId, connectorId: env.connectorId }, {
     occurredAt: now(),
@@ -216,7 +216,7 @@ test('a customer writing about anything is a customer message, not supplier post
 test('somebody asking to buy is waiting on you, however they phrased it', () => {
   /*
    * A real customer wrote "I want to order size 36, 2 pieces" — no question
-   * mark, no phrase on the asking list — and Foundry read it as an order
+   * mark, no phrase on the asking list — and StockChief read it as an order
    * request and then filed it as handled, nothing needed. What the message is
    * outranks how it scans.
    */

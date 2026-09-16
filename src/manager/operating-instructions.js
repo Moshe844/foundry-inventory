@@ -229,7 +229,7 @@ function compileSupplierCommunication(instruction) {
     priceTolerancePercent: tolerance ? Number(tolerance[1]) : -1 };
   return { understood: true, summary: `Configure supplier communication${supplierText ? ` for ${supplierText}` : ''}`,
     changes: [change], clarifyingQuestion: change.autoSendEnabled && change.autoSendLimit < 0
-      ? 'What is the most Foundry may send to this supplier without asking?' : '', unsupportedReason: '' };
+      ? 'What is the most StockChief may send to this supplier without asking?' : '', unsupportedReason: '' };
 }
 
 function supplierMatch(db, workspaceId, name) {
@@ -240,7 +240,7 @@ function supplierMatch(db, workspaceId, name) {
   const partial = exact.length ? exact : rows.filter((row) => row.name.toLowerCase().includes(clean) || clean.includes(row.name.toLowerCase()));
   if (partial.length === 1) return { ok: true, value: partial[0] };
   if (partial.length > 1) return { ok: false, question: `Which supplier do you mean: ${partial.map((r) => r.name).join(' or ')}?` };
-  return { ok: false, question: `There is no supplier called “${name}” in this inventory. Add it first, then teach Foundry the rule.` };
+  return { ok: false, question: `There is no supplier called “${name}” in this inventory. Add it first, then teach StockChief the rule.` };
 }
 
 function needsSku(domain) {
@@ -281,14 +281,14 @@ function resolveChange(db, workspaceId, raw, instruction) {
     else { out.supplierId = supplier.value.id; out.supplierName = supplier.value.name; }
   }
   if (raw.domain === 'transfer_authority' && raw.operation === 'set' && !positive(raw.maximumQuantity)) {
-    questions.push('What is the most Foundry may transfer automatically in one action?');
+    questions.push('What is the most StockChief may transfer automatically in one action?');
   }
   if (raw.domain === 'purchase_authority' && raw.operation === 'set' && !positive(raw.maximumValue)) {
-    questions.push('What is the most Foundry may commit on one supplier order without asking?');
+    questions.push('What is the most StockChief may commit on one supplier order without asking?');
   }
   if (raw.domain === 'supplier_communication' && raw.operation === 'set'
       && raw.autoSendEnabled && !positive(raw.autoSendLimit)) {
-    questions.push('What is the most Foundry may send to this supplier without asking?');
+    questions.push('What is the most StockChief may send to this supplier without asking?');
   }
   if (raw.domain === 'supplier_communication' && raw.watchSupplier && out.supplierId) {
     const supplier = suppliers.getSupplier(db, workspaceId, out.supplierId);
@@ -305,8 +305,8 @@ function resolveChange(db, workspaceId, raw, instruction) {
     const guardMode = raw.guardMode || (raw.guardReleaseCondition ? 'block' : '');
     out.guardMode = guardMode;
     if (raw.guardAction !== 'issue') questions.push('Should this block outgoing sales/issues, or supplier purchase orders?');
-    if (!['block', 'warn'].includes(guardMode)) questions.push('Should Foundry block outgoing stock at the limit, or only warn you?');
-    if (nonnegative(raw.guardThreshold) === null) questions.push('At what on-hand quantity should Foundry warn or block outgoing stock?');
+    if (!['block', 'warn'].includes(guardMode)) questions.push('Should StockChief block outgoing stock at the limit, or only warn you?');
+    if (nonnegative(raw.guardThreshold) === null) questions.push('At what on-hand quantity should StockChief warn or block outgoing stock?');
     if (guardMode === 'block' && !raw.guardReleaseCondition) questions.push('What should release the block: a placed supplier order, received stock, or an owner changing the rule?');
   }
   return { change: out, questions };
@@ -342,8 +342,8 @@ function describe(change) {
       if (nonnegative(change.priceTolerancePercent) !== null) parts.push(`ask above a ${change.priceTolerancePercent}% price change`);
       return `${change.supplierName}: ${parts.join('; ')}.`;
     }
-    case 'transfer_authority': return `Foundry may automatically transfer no more than ${change.maximumQuantity} units per action${change.locationName ? ` involving ${change.locationName}` : ''}; all safety checks still apply.`;
-    case 'purchase_authority': return `Foundry may automatically approve routine replenishment orders from ${change.supplierName} up to $${change.maximumValue}; anything else still needs approval.`;
+    case 'transfer_authority': return `StockChief may automatically transfer no more than ${change.maximumQuantity} units per action${change.locationName ? ` involving ${change.locationName}` : ''}; all safety checks still apply.`;
+    case 'purchase_authority': return `StockChief may automatically approve routine replenishment orders from ${change.supplierName} up to $${change.maximumValue}; anything else still needs approval.`;
     case 'operating_preference': return change.preferTransferBeforePurchasing ? 'Try an internal transfer before buying more.' : `Aim for ${change.daysOfStock} days of stock.`;
     case 'hard_limits': return `Wait at least ${change.cooldownHours} hours before repeating automatic work on the same item.`;
     case 'stock_protection': {
@@ -442,13 +442,13 @@ function list(db, workspaceId, { status = null } = {}) {
 
 async function interpret(db, ctx, membership, instruction, options = {}) {
   const clean = String(instruction || '').trim().slice(0, 2000);
-  if (!clean) throw new ValidationError('Tell Foundry how you want this inventory run.');
+  if (!clean) throw new ValidationError('Tell StockChief how you want this inventory run.');
   // Connected installations always use the closed AI schema so supplier names,
   // wording and policy changes are not encoded as phrase lists. The narrow
   // compiler is retained only as an offline compatibility fallback.
   const offlineFallback = !options.provider && !config.ai.configured
     ? compileSupplierCommunication(clean) : null;
-  if (!offlineFallback && !options.provider && !config.ai.configured) throw new ValidationError('Foundry needs its model connection to read that instruction.');
+  if (!offlineFallback && !options.provider && !config.ai.configured) throw new ValidationError('StockChief needs its model connection to read that instruction.');
   const provider = offlineFallback ? null : options.provider || createProviderForTier('standard');
   const catalogue = db.prepare(
     `SELECT i.name, s.code, s.variant_label FROM skus s JOIN items i ON i.id = s.item_id
@@ -466,7 +466,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     ? checked.data
     : compileStockProtection(clean);
   if (!interpreted) {
-    throw new ValidationError(checked.data?.unsupportedReason || 'Foundry could not turn that into a safe operating rule.');
+    throw new ValidationError(checked.data?.unsupportedReason || 'StockChief could not turn that into a safe operating rule.');
   }
   const resolved = interpreted.changes.map((change) => resolveChange(db, ctx.workspaceId, change, clean));
   const questions = [...new Set([interpreted.clarifyingQuestion, ...resolved.flatMap((r) => r.questions)].filter(Boolean))];
@@ -510,7 +510,7 @@ function parseStockProtectionAnswer(value) {
 function proposeStockProtectionAnswer(db, ctx, membership, answer, statedAs) {
   const parsed = parseStockProtectionAnswer(answer);
   const cleanProduct = String(parsed.productText || '').trim().slice(0, 300);
-  if (!cleanProduct) throw new ValidationError('Enter the product Foundry should protect.');
+  if (!cleanProduct) throw new ValidationError('Enter the product StockChief should protect.');
   const cleanStatement = String(statedAs || cleanProduct).trim().slice(0, 2000);
   const change = {
     ...emptyChange(), domain: 'stock_protection', itemText: cleanProduct,
@@ -560,7 +560,7 @@ function applyChange(db, ctx, membership, change) {
       targetStock: nonnegative(change.targetStock) ?? undefined,
       safetyStock: nonnegative(change.safetyStock) ?? undefined,
       leadTimeDays: nonnegative(change.leadTimeDays) ?? undefined,
-      source: 'foundry', notes: `Taught through Tell Foundry: ${change.displayName}`,
+      source: 'foundry', notes: `Taught through Tell StockChief: ${change.displayName}`,
     }));
     return { kind: 'reorder_policy', id: result.id, skuId: change.skuId };
   }
@@ -632,7 +632,7 @@ function applyChange(db, ctx, membership, change) {
     }));
     if (change.watchSupplier && change.connectorId) {
       const sender = change.trustedSender || updated.email;
-      if (!sender) throw new ValidationError(`${updated.name} needs an ordering email before Foundry can watch it.`);
+      if (!sender) throw new ValidationError(`${updated.name} needs an ordering email before StockChief can watch it.`);
       require('../connections/service').addEmailRule(db, ctx, change.connectorId, {
         senderPattern: sender, supplierId: updated.id, documentMode: 'supplier_documents',
       });
@@ -648,7 +648,7 @@ function applyChange(db, ctx, membership, change) {
       && (!change.locationId || policy.locationScope.includes(change.locationId));
     if (change.operation === 'remove') {
       for (const policy of automationPolicies.list(db, ctx.workspaceId, { activeOnly: true })) {
-        if (matchesScope(policy)) automationPolicies.disable(db, ctx, membership, policy.id, 'Removed through Tell Foundry');
+        if (matchesScope(policy)) automationPolicies.disable(db, ctx, membership, policy.id, 'Removed through Tell StockChief');
       }
       return { kind: 'automation_policy', removed: true, domain: change.domain };
     }
@@ -659,7 +659,7 @@ function applyChange(db, ctx, membership, change) {
           automationPolicies.CONDITIONS.NO_DUPLICATE_INCOMING_DEMAND, automationPolicies.CONDITIONS.PRICE_WITHIN_POLICY];
     const definition = {
       name: transfer ? 'Taught automatic transfers' : `Taught purchasing limit — ${change.supplierName}`,
-      description: 'Approved through Tell Foundry.',
+      description: 'Approved through Tell StockChief.',
       allowedActionTypes: [transfer ? 'transfer' : 'approve_purchase_order'],
       scope: { managedBy: 'tell_foundry' },
       itemScope: change.itemId ? [change.itemId] : [],
@@ -716,7 +716,7 @@ function applyChange(db, ctx, membership, change) {
     });
     return { kind: 'stock_guard', id: guard.id, skuId: guard.skuId, locationId: guard.locationId };
   }
-  throw new ValidationError('Foundry does not have a structured setting for that instruction.');
+  throw new ValidationError('StockChief does not have a structured setting for that instruction.');
 }
 
 function approve(db, ctx, membership, id, expectedHash) {
@@ -775,7 +775,7 @@ async function answer(db, ctx, membership, id, value, options = {}) {
     throw new ValidationError('That instruction is not waiting for an answer.');
   }
   const clean = String(value || '').trim().slice(0, 500);
-  if (!clean) throw new ValidationError('Enter the missing detail so Foundry can continue the same instruction.');
+  if (!clean) throw new ValidationError('Enter the missing detail so StockChief can continue the same instruction.');
   const clarification = clarificationFor(proposal);
   const selected = clarification && clarification.kind === 'choice'
     ? clarification.choices.find((choice) => choice.value === clean)

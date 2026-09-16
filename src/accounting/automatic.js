@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Accounting is part of every Foundry workspace, not an optional module.
+ * Accounting is part of every StockChief workspace, not an optional module.
  * This boundary gives legacy workspaces the same deterministic configuration
  * new workspaces receive and carries forward only costs proven by immutable
  * purchase-receipt evidence. Nothing here invents a price or cost.
@@ -52,7 +52,7 @@ function ensure(db, workspaceId, options = {}) {
   // The owner-facing Accounting page may be opened long after a legacy
   // workspace started operating. Reconstruct every still-on-hand position up
   // to now from immutable PO receipts and movements, rather than forcing the
-  // owner to re-enter costs Foundry already possesses. Event processing keeps
+  // owner to re-enter costs StockChief already possesses. Event processing keeps
   // the historical boundary so its current movement is never consumed twice.
   const inference = openingCostEvidence.infer(db, workspaceId, configured.startDate, null,
     options.recoverCurrent ? { boundary: options.boundary || new Date(Date.now() + 1000).toISOString() } : {});

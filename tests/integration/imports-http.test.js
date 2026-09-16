@@ -249,7 +249,7 @@ test('correcting a column re-reads the file and withdraws the approval', async (
   const session = await signIn(agent, env.workspace.account.email);
   const token = await session.token('/imports');
 
-  // "Amount" is pricing wording, so Foundry leaves it out — and a person can
+  // "Amount" is pricing wording, so StockChief leaves it out — and a person can
   // say that it is in fact the quantity.
   const posted = await upload(agent, token, {
     buffer: Buffer.from(['Item,Warehouse,Amount', 'Copper Elbow,Main Warehouse,30'].join('\n'), 'utf8'),
@@ -379,7 +379,7 @@ test('the progress endpoint reports from what is written, not what is hoped', as
   assert.equal(done.body.unitsEstablished, 226);
 });
 
-test('a spreadsheet handed to the Ask Foundry box becomes an import preview', async () => {
+test('a spreadsheet handed to the Ask StockChief box becomes an import preview', async () => {
   const env = setup();
   const agent = request.agent(env.app);
   const session = await signIn(agent, env.workspace.account.email);

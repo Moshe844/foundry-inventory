@@ -90,7 +90,7 @@ function backfillShipments(db) {
           nextNumber(db, order.workspace_id),
           from.size === 1 ? lines[0].locationId : null,
           address,
-          'Rebuilt from this order\'s own fulfilment record. Foundry did not capture a carrier '
+          'Rebuilt from this order\'s own fulfilment record. StockChief did not capture a carrier '
             + 'or tracking number at the time, so it does not claim one.',
           event.created_at, event.created_at, event.created_at, now);
 

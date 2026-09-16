@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Getting a business's inventory into Foundry.
+ * Getting a business's inventory into StockChief.
  *
  * The first question is no longer "describe your business" — that is the right
  * question for one kind of customer and the wrong one for everybody who already
@@ -47,7 +47,7 @@ router.get(
     if (state.isComplete && hasProducts) return res.redirect(303, '/');
 
     return res.page('onboarding/start', {
-      title: 'Get your inventory into Foundry',
+      title: 'Get your inventory into StockChief',
       nav: 'foundry',
       state,
       paths: paths.PATHS,
@@ -87,7 +87,7 @@ router.get('/onboarding/migrations', asyncRoute(async (req, res) => {
 
 router.get('/onboarding/migrations/new', asyncRoute(async (req,res) => {
   return res.page('onboarding/migration-new',{
-    title:'Move to Foundry',nav:'foundry',types:ownerMigration.OWNER_TYPES,
+    title:'Move to StockChief',nav:'foundry',types:ownerMigration.OWNER_TYPES,
   });
 }));
 
@@ -103,7 +103,7 @@ router.post('/onboarding/migrations/new', asyncRoute(async (req,res) => {
     preparationRunner.queue(req.db,databasePathFor(req.db),req.ctx,req.user,result.package.id);
     const location = `/onboarding/migrations/${result.package.id}/sources`;
     if (wantsJson) return res.status(201).json({ ok:true,location });
-    req.flash('success','Your exports are stored as an immutable source snapshot. Confirm only the meanings Foundry cannot prove.');
+    req.flash('success','Your exports are stored as an immutable source snapshot. Confirm only the meanings StockChief cannot prove.');
     return res.redirect(303,location);
   } catch (error) {
     if (!error.status || error.status >= 500) throw error;
@@ -143,7 +143,7 @@ router.get('/onboarding/migrations/:id/sources', asyncRoute(async (req,res) => {
 router.post('/onboarding/migrations/:id/prepare-known-evidence', asyncRoute(async (req,res) => {
   try {
     preparationRunner.queue(req.db,databasePathFor(req.db),req.ctx,req.user,req.params.id);
-    req.flash('success','Foundry is preparing and verifying every source meaning it can prove. The progress is shown on this page.');
+    req.flash('success','StockChief is preparing and verifying every source meaning it can prove. The progress is shown on this page.');
   } catch (error) {
     if (!error.status || error.status >= 500) throw error;
     req.flash('error',error.message);
@@ -155,7 +155,7 @@ router.post('/onboarding/migrations/:id/choose-operational-truth', asyncRoute(as
   try {
     ownerMigration.decideOperationalTruth(req.db,req.ctx,req.user,req.params.id,req.body.choice);
     preparationRunner.queue(req.db,databasePathFor(req.db),req.ctx,req.user,req.params.id);
-    req.flash('success','Decision saved. Foundry is now finishing preparation and verification automatically.');
+    req.flash('success','Decision saved. StockChief is now finishing preparation and verification automatically.');
   } catch (error) {
     if (!error.status || error.status >= 500) throw error;
     req.flash('error',error.message);
@@ -166,7 +166,7 @@ router.post('/onboarding/migrations/:id/choose-operational-truth', asyncRoute(as
 router.post('/onboarding/migrations/:id/reanalyze', asyncRoute(async (req,res) => {
   try {
     ownerMigration.reanalyze(req.db,req.ctx,req.user,req.params.id);
-    req.flash('success','Foundry re-read every worksheet and rebuilt the plan from their structure and relationships.');
+    req.flash('success','StockChief re-read every worksheet and rebuilt the plan from their structure and relationships.');
   } catch (error) {
     if (!error.status || error.status >= 500) throw error;
     req.flash('error',error.message);
@@ -177,7 +177,7 @@ router.post('/onboarding/migrations/:id/reanalyze', asyncRoute(async (req,res) =
 router.post('/onboarding/migrations/:id/stage-ready', asyncRoute(async (req,res) => {
   try {
     preparationRunner.queue(req.db,databasePathFor(req.db),req.ctx,req.user,req.params.id);
-    req.flash('success','Foundry is preparing and verifying the understood datasets automatically.');
+    req.flash('success','StockChief is preparing and verifying the understood datasets automatically.');
   } catch (error) {
     if (!error.status || error.status >= 500) throw error;
     req.flash('error',error.message);
@@ -261,7 +261,7 @@ router.post('/onboarding/migration-mappings/:id', asyncRoute(async (req,res) => 
     const ownerStaged = ownerMigration.stageDataset(req.db,req.ctx,req.user,profile.id);
     if (ownerStaged) preparationRunner.queue(req.db,databasePathFor(req.db),req.ctx,req.user,profile.packageId);
     req.flash('success',ownerStaged
-      ? 'Source meanings approved. Foundry staged every row from the exact file you reviewed.'
+      ? 'Source meanings approved. StockChief staged every row from the exact file you reviewed.'
       : 'Source meanings approved. The connected source can now stage rows through this locked mapping.');
     return res.redirect(303,ownerStaged
       ? `/onboarding/migrations/${profile.packageId}/sources`
@@ -300,15 +300,15 @@ router.post('/onboarding/migrations/:id/approve-and-activate', asyncRoute(async 
       canonicalMigration.beginCutover(req.db,req.ctx,req.user,req.params.id);
       const queued = cutoverRunner.queue(databasePathFor(req.db),req.ctx,req.user,req.params.id);
       req.flash('success',queued
-        ? 'The verified switch is running in the background. You can keep using Foundry; completed records are saved after every batch.'
+        ? 'The verified switch is running in the background. You can keep using StockChief; completed records are saved after every batch.'
         : 'The verified switch is already running.');
       return res.redirect(303,`/onboarding/migrations/${req.params.id}`);
     }
     const result = canonicalMigration.approveAndActivate(req.db,req.ctx,req.user,req.params.id);
     req.flash(result.activated || result.replayed ? 'success' : 'error',result.activated
-      ? `Switch complete. Foundry applied ${result.totalApplied} verified records and reconciled the result.`
+      ? `Switch complete. StockChief applied ${result.totalApplied} verified records and reconciled the result.`
       : result.replayed ? 'This verified switch is already active.'
-        : 'Foundry applied the source but did not activate it because reconciliation did not match.');
+        : 'StockChief applied the source but did not activate it because reconciliation did not match.');
   } catch (error) {
     if (!error.status || error.status >= 500) throw error;
     req.flash('error',error.message);
@@ -322,9 +322,9 @@ router.post('/onboarding/migrations/:id/resolve-missing-serials', asyncRoute(asy
     if (resolved.package.status === 'APPROVED') {
       canonicalMigration.beginCutover(req.db,req.ctx,req.user,req.params.id);
       cutoverRunner.queue(databasePathFor(req.db),req.ctx,req.user,req.params.id);
-      req.flash('success',`Decision saved. Foundry retained ${resolved.evidence.provenQuantity.toLocaleString()} proven units and resumed the verified switch.`);
+      req.flash('success',`Decision saved. StockChief retained ${resolved.evidence.provenQuantity.toLocaleString()} proven units and resumed the verified switch.`);
     } else {
-      req.flash('success','Decision saved. Foundry retained the proven quantities and the migration is ready for final approval.');
+      req.flash('success','Decision saved. StockChief retained the proven quantities and the migration is ready for final approval.');
     }
   } catch (error) {
     if (!error.status || error.status >= 500) throw error;
@@ -348,7 +348,7 @@ router.post(
     const state = paths.ensure(req.db, req.ctx.workspaceId);
 
     return res.page('onboarding/start', {
-      title: 'Get your inventory into Foundry',
+      title: 'Get your inventory into StockChief',
       nav: 'foundry',
       state,
       paths: paths.PATHS,
@@ -358,9 +358,9 @@ router.post(
          for a recommendation has to come from the list the page renders. */
       recommendedOption,
       sourcePrompt: recommendation
-        ? `Foundry recommends this because ${recommendation.reason}. You can still choose any other source below.`
+        ? `StockChief recommends this because ${recommendation.reason}. You can still choose any other source below.`
         : (description
-          ? 'That explains the kind of business, but it does not contain the actual product names, variants, locations, or quantities. Choose where Foundry should get those real records.'
+          ? 'That explains the kind of business, but it does not contain the actual product names, variants, locations, or quantities. Choose where StockChief should get those real records.'
           : null),
       description,
       canOperate: permissions.can(req.user, permissions.OPERATE),
@@ -397,7 +397,7 @@ router.get(
   asyncRoute(async (req, res) => {
     const state = paths.ensure(req.db, req.ctx.workspaceId);
     return res.page('onboarding/files', {
-      title: 'Give Foundry what you have',
+      title: 'Give StockChief what you have',
       nav: 'foundry',
       state,
       messy: req.query.mode === 'messy' || state.path === 'messy',
@@ -461,7 +461,7 @@ router.post(
   })
 );
 
-/** What Foundry understood, and what it needs decided. */
+/** What StockChief understood, and what it needs decided. */
 router.get(
   '/onboarding/review/:id',
   asyncRoute(async (req, res) => {
@@ -478,7 +478,7 @@ router.get(
     }
 
     return res.page('onboarding/review', {
-      title: 'How Foundry would set this up',
+      title: 'How StockChief would set this up',
       nav: 'foundry',
       state: paths.ensure(req.db, req.ctx.workspaceId),
       plan,
@@ -539,7 +539,7 @@ router.get(
   asyncRoute(async (req, res) => {
     const run = migration.hydrateRun(req.db, req.ctx.workspaceId, req.params.id);
     return res.page('onboarding/done', {
-      title: run.verified ? 'Foundry is ready' : 'Migration needs checking',
+      title: run.verified ? 'StockChief is ready' : 'Migration needs checking',
       nav: 'foundry',
       run,
       plan: migration.getPlan(req.db, req.ctx.workspaceId, run.planId),

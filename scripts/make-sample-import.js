@@ -4,13 +4,13 @@
  * Writes the sample files used to try the import by hand.
  *
  * They are deliberately untidy in the ways real exports are — a title row, a
- * blank line, a price column Foundry does not track, an abbreviated heading, a
+ * blank line, a price column StockChief does not track, an abbreviated heading, a
  * misspelled location, a missing quantity and a quantity that is not a number.
  * A clean file proves very little.
  *
  *   node scripts/make-sample-import.js
  *
- * Uses the `xlsx` dev dependency to *write* the workbook, so the file Foundry
+ * Uses the `xlsx` dev dependency to *write* the workbook, so the file StockChief
  * reads was produced by a different implementation than the one reading it.
  */
 

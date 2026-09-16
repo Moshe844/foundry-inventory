@@ -11,7 +11,7 @@
  *
  * These are the claims that make the other path worth having:
  *
- *   1. Foundry ends up holding an account id and no secret — and the access
+ *   1. StockChief ends up holding an account id and no secret — and the access
  *      token Stripe hands over in the exchange is deliberately thrown away.
  *   2. The invoice is still made on the merchant's account, through the
  *      platform key and Stripe's own act-on-behalf-of header.
@@ -67,7 +67,7 @@ function setup(name) {
 /*
  * Stripe, standing still. `granted` is the OAuth token response, and it
  * carries an access token on purpose: the point of the first test is that
- * Foundry is handed one and does not keep it.
+ * StockChief is handed one and does not keep it.
  */
 function stripeStub(options = {}) {
   const state = { exchanged: [], deauthorized: [], read: [] };
@@ -117,7 +117,7 @@ test('the key Stripe hands over is thrown away, and an account id is kept', () =
   assert.match(begun.url, /client_id=ca_pretend_platform/);
   assert.match(begun.url, /scope=read_write/);
   assert.ok(!new URL(begun.url).searchParams.has('stripe_user[email]'),
-    'Foundry does not prefill a local/test login address into Stripe');
+    'StockChief does not prefill a local/test login address into Stripe');
   assert.equal(done.connected, true);
   assert.equal(done.accountId, 'acct_merchant_1');
 
@@ -223,7 +223,7 @@ test('connected but not taking charges is said, not hidden behind a tick', () =>
 test('access withdrawn at Stripe is noticed here rather than failing later', () => asPlatform(async () => {
   /*
    * The merchant can revoke from their own dashboard, and should be able to —
-   * it is the thing a pasted key never allowed. Foundry finds out by being
+   * it is the thing a pasted key never allowed. StockChief finds out by being
    * refused, and the honest answer is to stop claiming a connection.
    */
   const env = setup();
@@ -246,7 +246,7 @@ test('disconnecting hands the grant back to Stripe', () => asPlatform(async () =
   const released = await accounts.disconnect(env.db, env.ctx, env.membership,
     { deauthorize: stripe.deauthorize });
   assert.deepEqual(stripe.state.deauthorized, ['acct_merchant_1'],
-    'so the business dashboard stops listing Foundry too');
+    'so the business dashboard stops listing StockChief too');
   assert.equal(released.connected, false);
   env.db.close();
 }));
@@ -291,7 +291,7 @@ test('a granted account is not quietly written over by a pasted key', () => asPl
   env.db.close();
 }));
 
-test('a code without a state Foundry issued is not acted on', () => asPlatform(async () => {
+test('a code without a state StockChief issued is not acted on', () => asPlatform(async () => {
   /*
    * The state is what says which inventory a returning browser belongs to. A
    * code arriving without one is somebody else's request or a forgery, and
@@ -326,7 +326,7 @@ test('a merchant who declines is told, not shown the form again', () => asPlatfo
   env.db.close();
 }));
 
-test('without an OAuth registration, Foundry reports that account sign-in is not configured', () => asPlatform(() => {
+test('without an OAuth registration, StockChief reports that account sign-in is not configured', () => asPlatform(() => {
   const env = setup();
   const said = connect.describe(env.db, env.workspace.workspaceId);
   assert.equal(said.available, false);
@@ -359,7 +359,7 @@ test('normal Stripe account sign-in wins when OAuth and hosted onboarding are bo
  * OAuth needs a client id, and Stripe no longer issues one to every new
  * platform — a sandbox created this morning has none, and the setting a
  * developer is told to go and find simply is not there. Hosted onboarding
- * needs nothing but the platform key that has to be set anyway: Foundry makes
+ * needs nothing but the platform key that has to be set anyway: StockChief makes
  * the account and Stripe shows the merchant its own form.
  *
  * What matters is that everything after the merchant comes back is the same.
@@ -428,7 +428,7 @@ test('hosted onboarding remains an internal capability but is not substituted fo
   assert.deepEqual(stripe.state.created, [{ name: 'HalFi Shoes', email: 'owner@halfi.test' }]);
 
   /*
-   * The account exists and cannot take a payment, and Foundry says exactly
+   * The account exists and cannot take a payment, and StockChief says exactly
    * that. Half a signup is the ordinary result of closing the tab, and a green
    * tick over it is how a merchant finds out from a customer.
    */

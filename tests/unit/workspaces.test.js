@@ -114,7 +114,7 @@ test('items, locations, search and activity never cross', () => {
   assert.ok(!clothingLocations.includes('Service Center'), 'the other inventory\'s location is not here');
 });
 
-test('Foundry configuration is per inventory', () => {
+test('StockChief configuration is per inventory', () => {
   const { db } = makeDatabase();
   const clothing = seedWorkspace(db, { workspaceName: 'Clothing Business' });
   const equipment = seedAnotherWorkspace(db, clothing.accountId, 'Equipment Company');
@@ -161,7 +161,7 @@ test('attention items are detected and held per inventory', () => {
   assert.equal(attention.getAttention(db, equipment.workspaceId, clothingItems[0].attentionId), null);
 });
 
-test('Ask Foundry only ever sees the inventory that asked', () => {
+test('Ask StockChief only ever sees the inventory that asked', () => {
   const { db } = makeDatabase();
   const clothing = seedWorkspace(db, { workspaceName: 'Clothing Business' });
   const equipment = seedAnotherWorkspace(db, clothing.accountId, 'Equipment Company');

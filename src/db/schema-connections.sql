@@ -1,5 +1,5 @@
 -- Mission 11: external connections and trustworthy event ingestion.
--- Provider payloads are evidence. Only Foundry's existing domain services may
+-- Provider payloads are evidence. Only StockChief's existing domain services may
 -- create inventory movements, commitments, or purchasing records.
 
 CREATE TABLE IF NOT EXISTS connection_mappings (
@@ -90,15 +90,15 @@ CREATE TABLE IF NOT EXISTS connection_email_messages (
   -- Whether a person still owes this sender an answer.
   --
   -- Deliberately separate from processing_status, which only ever meant "did
-  -- Foundry get a document out of this". A supplier can send an order
-  -- acknowledgement that Foundry matches perfectly and that still ends with a
+  -- StockChief get a document out of this". A supplier can send an order
+  -- acknowledgement that StockChief matches perfectly and that still ends with a
   -- question nobody has answered. One state cannot carry both facts.
   reply_state         TEXT NOT NULL DEFAULT 'HANDLED'
                         CHECK (reply_state IN ('NEEDS_REPLY','WAITING','HANDLED')),
   reply_reason        TEXT,
   reply_state_by_user_id TEXT,
   reply_state_at      TEXT,
-  -- A reply Foundry wrote and nobody has sent. Kept on the message because a
+  -- A reply StockChief wrote and nobody has sent. Kept on the message because a
   -- draft only means anything next to what it answers.
   draft_subject       TEXT,
   draft_body          TEXT,
@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS connection_sync_runs (
 CREATE INDEX IF NOT EXISTS idx_connection_sync_runs_connection
   ON connection_sync_runs(workspace_id, connector_id, started_at DESC);
 
--- Mail Foundry looked at and did not take.
+-- Mail StockChief looked at and did not take.
 --
 -- Connecting a mailbox is not handing over an inbox. A message that is not
 -- about the business never becomes a connection_email_messages row at all, so
@@ -207,7 +207,7 @@ CREATE INDEX IF NOT EXISTS idx_connection_sync_runs_connection
 -- reversible: who it was from, what it was called, when it arrived, and why it
 -- was set aside. Deliberately no body and no attachments — storing the
 -- contents of the owner's personal mail is the thing this table exists to
--- avoid. If they bring one in, Foundry fetches that single message from the
+-- avoid. If they bring one in, StockChief fetches that single message from the
 -- provider again.
 CREATE TABLE IF NOT EXISTS connection_email_set_aside (
   id                    TEXT PRIMARY KEY,

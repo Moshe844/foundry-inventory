@@ -29,7 +29,7 @@ test('Take me navigation redirects, verifies arrival, and preserves return conte
   const arrived = await agent.get('/planning');
   assert.equal(arrived.status, 200);
   const text = plain(arrived.text);
-  assert.match(text, /Foundry opened the requested place: Planning and forecasts/i);
+  assert.match(text, /StockChief opened the requested place: Planning and forecasts/i);
   assert.match(text, /Back to your question/i);
   assert.match(arrived.text, /href="\/ask\?q=Take%20me%20to%20forecasting"/i);
 });

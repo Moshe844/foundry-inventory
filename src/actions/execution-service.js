@@ -132,6 +132,35 @@ function applyCatalogueRecord(db, ctx, membership, engineCtx, reference, itemId,
   return { movementIds, groupIds };
 }
 
+function executableCatalogueVariants(variants) {
+  const source = Array.isArray(variants) ? variants : [];
+  if (source.length < 2) return source.map((variant) => ({ ...variant, options: {} }));
+
+  const names = [];
+  for (const variant of source) {
+    for (const name of Object.keys(variant.options || {})) {
+      if (!names.some((existing) => existing.toLowerCase() === name.toLowerCase())) names.push(name);
+    }
+  }
+  const axes = names.filter((name) => {
+    const values = source.map((variant) => {
+      const key = Object.keys(variant.options || {})
+        .find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+      return key ? String(variant.options[key] || '').trim().toLowerCase() : '';
+    });
+    return values.every(Boolean) && new Set(values).size > 1;
+  }).slice(0, 3);
+
+  return source.map((variant) => ({
+    ...variant,
+    options: Object.fromEntries(axes.map((name) => {
+      const key = Object.keys(variant.options || {})
+        .find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+      return [name, variant.options[key]];
+    })),
+  }));
+}
+
 class StaleProposalError extends DomainError {
   constructor(message, details) {
     super(message, { code: 'proposal_stale', status: 409 });
@@ -179,7 +208,7 @@ function approve(db, ctx, membership, proposalId) {
 function describe(check) {
   const problems = [...(check.problems || [])];
   if (check.changed && problems.length === 0) {
-    problems.push('The stock changed since this was worked out. Foundry has recalculated it.');
+    problems.push('The stock changed since this was worked out. StockChief has recalculated it.');
   }
   return problems;
 }
@@ -319,7 +348,7 @@ function runOnce(db, ctx, membership, proposal, idempotencyKey) {
  */
 function perform(db, ctx, membership, proposal) {
   const engineCtx = { workspaceId: ctx.workspaceId, actorId: ctx.actorId };
-  const reference = `Foundry ${proposal.proposalId}`;
+  const reference = `StockChief ${proposal.proposalId}`;
 
   if (proposal.actionType === 'receive') {
     return engine.receive(db, engineCtx, {
@@ -379,6 +408,12 @@ function perform(db, ctx, membership, proposal) {
   }
 
   if (proposal.actionType === 'create_item') {
+    const catalogueRecords = (proposal.settings && proposal.settings.catalogueRecords) || [];
+    const exactVariants = proposal.settings.exactVariants
+      ? (catalogueRecords.length
+          ? executableCatalogueVariants(proposal.settings.exactVariants)
+          : proposal.settings.exactVariants)
+      : null;
     const created = proposal.settings.exactVariants
       ? itemService.createExactItem(db, engineCtx, {
         name: proposal.settings.name,
@@ -386,10 +421,9 @@ function perform(db, ctx, membership, proposal) {
         description: proposal.settings.description,
         unitLabel: proposal.settings.unitLabel,
         trackingMode: proposal.settings.trackingMode,
-        variants: proposal.settings.exactVariants,
+        variants: exactVariants,
       })
       : itemService.createItem(db, engineCtx, catalog.toCreateInput(proposal.settings));
-    const catalogueRecords = (proposal.settings && proposal.settings.catalogueRecords) || [];
     if (catalogueRecords.length) {
       const bySource = new Map((created.skus || [])
         .map((sku) => [String(sku.sourceKey || sku.code).toLowerCase(), sku]));
@@ -416,7 +450,11 @@ function perform(db, ctx, membership, proposal) {
           if (!row) throw new ValidationError(`Kit component SKU ${component.exactSku} is not in this inventory.`);
           return { skuId: row.id, quantity: component.quantity };
         });
-        kits.define(db, engineCtx, { kitSkuId: kitSku.skuId, components });
+        kits.define(db, engineCtx, {
+          kitSkuId: kitSku.skuId,
+          components,
+          stockBasis: kitRecord.kitStockBasis || 'components',
+        });
       }
       return { movementIds, groupIds, itemId: created.itemId, skuIds: created.skuIds };
     }
@@ -459,7 +497,7 @@ function perform(db, ctx, membership, proposal) {
 
   if (proposal.actionType === removals.ACTION_TYPE) {
     const kind = removals.kindOf(proposal);
-    if (!kind) throw new ValidationError('Foundry cannot remove that sort of record.');
+    if (!kind) throw new ValidationError('StockChief cannot remove that sort of record.');
     // The registry decides deletion versus archiving from what currently refers
     // to the record — the same call the preview and the re-check made. Nothing
     // here overrides it, so an approved preview and the outcome cannot diverge.
@@ -495,7 +533,7 @@ function perform(db, ctx, membership, proposal) {
     return { movementIds: [], groupIds: [] };
   }
 
-  throw new ValidationError(`Foundry cannot carry out “${proposal.actionType}”.`);
+  throw new ValidationError(`StockChief cannot carry out “${proposal.actionType}”.`);
 }
 
 /** Presentation vocabulary only; the domain never sees these words. */
@@ -639,7 +677,7 @@ function executePlan(db, ctx, membership, planId, options = {}) {
         map.set(key, (map.get(key) || 0) + delta);
       };
 
-      for (const line of plan.lines) {
+      for (const line of orderPlanLinesForExecution(plan.lines)) {
         const check = proposals.revalidate(db, ctx, line, { ignoreExpiry: true, appliedByPlan });
         if (!check.ok) {
           throw new StaleProposalError(
@@ -703,5 +741,61 @@ function executePlan(db, ctx, membership, planId, options = {}) {
   return outcome;
 }
 
+function retryPlan(db, ctx, membership, planId) {
+  return inTransaction(db, () => {
+    const plan = actionService.getPlan(db, ctx.workspaceId, planId);
+    if (!plan) throw new NotFoundError('That plan could not be found.');
+    if (plan.status !== 'FAILED') throw new ValidationError('Only a failed plan can be tried again.');
+    for (const line of plan.lines) {
+      permissions.assertCanPerform(membership, line.actionType, line);
+      if (line.status !== 'APPROVED') {
+        throw new ValidationError('This plan is no longer approved and must be reviewed again.');
+      }
+      const check = proposals.revalidate(db, ctx, line);
+      if (!check.ok) throw new StaleProposalError(
+        describe(check)[0] || 'The inventory changed since this plan was approved.',
+        { current: check.current, line: line.lineNumber }
+      );
+    }
+    actionService.setPlanStatus(db, ctx.workspaceId, planId, 'APPROVED');
+    return actionService.getPlan(db, ctx.workspaceId, planId);
+  });
+}
+
+function orderPlanLinesForExecution(lines) {
+  const source = Array.isArray(lines) ? lines : [];
+  const producedBy = new Map();
+  source.forEach((line, index) => {
+    for (const variant of (line.settings && line.settings.exactVariants) || []) {
+      const code = String(variant.code || '').trim().toLowerCase();
+      if (code && !producedBy.has(code)) producedBy.set(code, index);
+    }
+  });
+
+  const dependencies = source.map((line) => new Set(
+    ((line.settings && line.settings.catalogueRecords) || [])
+      .flatMap((record) => record.components || [])
+      .map((component) => producedBy.get(String(component.exactSku || '').trim().toLowerCase()))
+      .filter((index) => Number.isInteger(index))
+  ));
+  const ordered = [];
+  const visiting = new Set();
+  const visited = new Set();
+  const visit = (index) => {
+    if (visited.has(index)) return;
+    if (visiting.has(index)) throw new ValidationError('Kit components form a circular dependency.');
+    visiting.add(index);
+    for (const dependency of dependencies[index]) visit(dependency);
+    visiting.delete(index);
+    visited.add(index);
+    ordered.push(source[index]);
+  };
+  source.forEach((_, index) => visit(index));
+  return ordered;
+}
+
 module.exports.approvePlan = approvePlan;
 module.exports.executePlan = executePlan;
+module.exports.retryPlan = retryPlan;
+module.exports.executableCatalogueVariants = executableCatalogueVariants;
+module.exports.orderPlanLinesForExecution = orderPlanLinesForExecution;

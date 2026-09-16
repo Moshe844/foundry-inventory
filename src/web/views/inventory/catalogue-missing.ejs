@@ -1,9 +1,9 @@
 <a class="rm-head__back" href="/inventory/describe?review=<%= encodeURIComponent(jobId) %>"><%- helpers.icon('chevron', { size: 13 }) %> Back to edit the catalogue</a>
 
 <div class="rm-head clarification-head">
-  <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Foundry finished reading your catalogue</p>
+  <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> StockChief finished reading your catalogue</p>
   <h1>Answer <%= review.issues.length %> <%= review.issues.length === 1 ? 'question' : 'questions' %>, then review everything.</h1>
-  <p>Foundry understood the products you supplied. It paused because the answers below change how stock is counted. Answer them here—you do not need to rewrite your catalogue.</p>
+  <p>StockChief understood the products you supplied. It paused because the answers below change how stock is counted. Answer them here—you do not need to rewrite your catalogue.</p>
 </div>
 
 <div class="clarification-safety" role="status">
@@ -45,7 +45,7 @@
 
         <% if (issue.type === 'serials') { %>
           <h2>Do you give every <%= record.name %> its own serial number?</h2>
-          <p class="clarification-step__lead">You entered <strong><%= record.locations.reduce(function(total, location) { return total + location.quantity; }, 0) %> units</strong> across <%= record.locations.length %> <%= record.locations.length === 1 ? 'location' : 'locations' %>, and also said “Serial Number Tracking: Yes.” Foundry needs to know which statement reflects how you really work.</p>
+          <p class="clarification-step__lead">You entered <strong><%= record.locations.reduce(function(total, location) { return total + location.quantity; }, 0) %> units</strong> across <%= record.locations.length %> <%= record.locations.length === 1 ? 'location' : 'locations' %>, and also said “Serial Number Tracking: Yes.” StockChief needs to know which statement reflects how you really work.</p>
 
           <div class="clarification-why">
             <strong>How to answer</strong>
@@ -54,13 +54,13 @@
 
           <fieldset class="clarification-choices">
             <legend class="sr-only">How <%= record.name %> is tracked</legend>
-            <label class="choice"><input type="radio" name="serial_mode_<%= record.ordinal %>" value="quantity" <%= answers['serial_mode_' + record.ordinal] === 'quantity' ? 'checked' : '' %> required> <span><strong>No—just count how many I have</strong><small>Foundry will keep your quantities by location. You will not need to enter serial numbers.</small></span></label>
-            <label class="choice"><input type="radio" name="serial_mode_<%= record.ordinal %>" value="serial" <%= answers['serial_mode_' + record.ordinal] === 'serial' ? 'checked' : '' %> required> <span><strong>Yes—every physical unit has a unique serial</strong><small>Enter those real serials below so Foundry can identify each unit.</small></span></label>
+            <label class="choice"><input type="radio" name="serial_mode_<%= record.ordinal %>" value="quantity" <%= answers['serial_mode_' + record.ordinal] === 'quantity' ? 'checked' : '' %> required> <span><strong>No—just count how many I have</strong><small>StockChief will keep your quantities by location. You will not need to enter serial numbers.</small></span></label>
+            <label class="choice"><input type="radio" name="serial_mode_<%= record.ordinal %>" value="serial" <%= answers['serial_mode_' + record.ordinal] === 'serial' ? 'checked' : '' %> required> <span><strong>Yes—every physical unit has a unique serial</strong><small>Enter those real serials below so StockChief can identify each unit.</small></span></label>
           </fieldset>
 
           <div class="clarification-followup" data-show-for="serial_mode_<%= record.ordinal %>" data-show-value="serial">
             <h3>Enter the serials printed on the physical units</h3>
-            <p>Look on the item labels or in the system you use today. Paste the serials separated by commas. Foundry checks that the number of serials matches your quantity.</p>
+            <p>Look on the item labels or in the system you use today. Paste the serials separated by commas. StockChief checks that the number of serials matches your quantity.</p>
             <div class="form-grid">
               <% record.locations.forEach(function(location, index) { %>
                 <label class="field"><span><%= location.name %> — <%= location.quantity %> <%= location.quantity === 1 ? 'serial' : 'serials' %></span><textarea name="serials_<%= record.ordinal %>_<%= index %>" rows="3" data-required-when-shown placeholder="Paste <%= location.quantity %> serial <%= location.quantity === 1 ? 'number' : 'numbers' %>, separated by commas"><%= answers['serials_' + record.ordinal + '_' + index] || '' %></textarea></label>
@@ -72,11 +72,11 @@
         <% if (issue.type === 'kit_components') { %>
           <% var matchedComponents = record.components.filter(function(component) { return component.exactSku; }).length; %>
           <h2>Which exact products are inside <%= record.name %>?</h2>
-          <p class="clarification-step__lead">You described the kit by component names. Foundry matched <strong><%= matchedComponents %> of <%= record.components.length %></strong> to an exact SKU already in your catalogue. Complete only the unmatched rows so a kit sale reduces the correct inventory items.</p>
+          <p class="clarification-step__lead">You described the kit by component names. StockChief matched <strong><%= matchedComponents %> of <%= record.components.length %></strong> to an exact SKU already in your catalogue. Complete only the unmatched rows so a kit sale reduces the correct inventory items.</p>
 
           <div class="clarification-why">
             <strong>Where to find the SKU</strong>
-            <p>Use the same code printed on the component’s product record, barcode label, spreadsheet, POS, or ERP. Foundry only fills a match automatically when exactly one submitted product fits.</p>
+            <p>Use the same code printed on the component’s product record, barcode label, spreadsheet, POS, or ERP. StockChief only fills a match automatically when exactly one submitted product fits.</p>
           </div>
 
           <div class="component-map" role="group" aria-label="Components in <%= record.name %>">
@@ -88,12 +88,12 @@
               </div>
             <% }) %>
           </div>
-          <p class="clarification-footnote"><strong>If a component is not a product yet:</strong> enter the SKU you want it to have. Foundry will include a new zero-stock product with that exact name and SKU in the final preview. It will not invent a price, quantity, category, or any other detail.</p>
+          <p class="clarification-footnote"><strong>If a component is not a product yet:</strong> enter the SKU you want it to have. StockChief will include a new zero-stock product with that exact name and SKU in the final preview. It will not invent a price, quantity, category, or any other detail.</p>
         <% } %>
 
         <% if (issue.type === 'kit_stock') { %>
           <h2>Are the <%= record.name %> quantities already packed kits?</h2>
-          <p class="clarification-step__lead">You entered quantities for the kit itself. This answer decides whether Foundry tracks those kits as physical stock or calculates how many can be built from their components.</p>
+          <p class="clarification-step__lead">You entered quantities for the kit itself. This answer decides whether StockChief tracks those kits as physical stock or calculates how many can be built from their components.</p>
 
           <div class="clarification-why">
             <strong>A quick example</strong>

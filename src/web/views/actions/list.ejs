@@ -1,8 +1,8 @@
 <div class="page-head">
   <div class="titles">
-    <h1>Tell Foundry what you need</h1>
+    <h1>Tell StockChief what you need</h1>
     <div class="page-sub">
-      Use ordinary language. Foundry will work out the records involved, show the exact change,
+      Use ordinary language. StockChief will work out the records involved, show the exact change,
       and ask only for information or approval it genuinely needs.
     </div>
   </div>
@@ -10,7 +10,7 @@
 
 <div class="card section">
   <div class="card-body">
-    <%# This is a new, general Tell Foundry request. Send it through the same
+    <%# This is a new, general Tell StockChief request. Send it through the same
         manager entry point as Home so questions, pricing, purchasing, rules,
         catalogue changes and stock actions all have the same capabilities.
         The smaller reply forms below intentionally remain on /actions/ask:
@@ -23,7 +23,7 @@
         type="text"
         name="message"
         value="<%= instruction %>"
-        placeholder="<%= (typeof examples !== 'undefined' && examples.length) ? examples[0] : 'Tell Foundry what happened' %>"
+        placeholder="<%= (typeof examples !== 'undefined' && examples.length) ? examples[0] : 'Tell StockChief what happened' %>"
         maxlength="500"
         autocomplete="off"
         <%= instruction ? '' : 'autofocus' %>
@@ -38,7 +38,7 @@
         <%- helpers.icon('send', { size: 15 }) %> Continue
       </button>
     </form>
-    <div class="ask-pending" data-ask-pending role="status" aria-live="polite" hidden><span class="working-spinner" aria-hidden="true"></span> Foundry is working out what that means…</div>
+    <div class="ask-pending" data-ask-pending role="status" aria-live="polite" hidden><span class="working-spinner" aria-hidden="true"></span> StockChief is working out what that means…</div>
 
     <% if (!aiConfigured) { %>
       <p class="muted" style="font-size:13px; margin-top:10px;">
@@ -47,7 +47,7 @@
       </p>
     <% } else if (!canOperate) { %>
       <p class="muted" style="font-size:13px; margin-top:10px;">
-        You have read-only access to this inventory, so Foundry cannot make changes for you here.
+        You have read-only access to this inventory, so StockChief cannot make changes for you here.
       </p>
     <% } else if (!instruction) { %>
       <% if (typeof examples !== 'undefined' && examples.length) { %>
@@ -73,7 +73,7 @@
                 <% } else { %>
                   <%# Candidate records answer the exact unresolved dimension.
                       The original request travels with the selected value, so
-                      Foundry continues the same instruction instead of making
+                      StockChief continues the same instruction instead of making
                       the person start over. %>
                   <form method="post" action="<%= locals.answerAction || '/actions/ask' %>" data-busy>
                     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -100,7 +100,7 @@
                * and an answer box under it asks somebody to reply to something
                * nobody said. Found walking the new-owner scenario: Home says
                * "add the first thing you sell", the obvious sentence is typed,
-               * and Foundry stops on a product it has never heard of — which
+               * and StockChief stops on a product it has never heard of — which
                * is exactly the moment to offer to create it.
                *
                * The answer box stays underneath, because the other reason to
@@ -121,7 +121,7 @@
             <% } %>
             <% if (locals.notFound) { %>
               <div class="act-create">
-                <p>Foundry has no record of <strong><%= locals.notFound %></strong> yet.</p>
+                <p>StockChief has no record of <strong><%= locals.notFound %></strong> yet.</p>
                 <a class="btn btn--primary btn--sm" href="/inventory/new?name=<%= encodeURIComponent(locals.notFound) %>">
                   Create <%= locals.notFound %>
                 </a>
@@ -129,7 +129,7 @@
               </div>
             <% } %>
             <%# A question with nowhere to answer is a dead end. Reply here and
-                Foundry re-reads the original instruction with the answer added. %>
+                StockChief re-reads the original instruction with the answer added. %>
             <form class="act-reply" method="post" action="<%= locals.answerAction || '/actions/ask' %>" data-busy>
               <input type="hidden" name="_csrf" value="<%= csrfToken %>">
               <input type="hidden" name="original" value="<%= instruction %>">
@@ -157,7 +157,7 @@
       </div>
     <% } %>
 
-    <%# A rule said no. That is not the same as Foundry not understanding, and
+    <%# A rule said no. That is not the same as StockChief not understanding, and
         it does not read the same either: the numbers are named, and so are the
         three things that can actually be done about it. %>
     <% const blocked = locals.blocked; %>
@@ -165,7 +165,7 @@
       <div class="act-question act-question--blocked">
         <span class="att-rec-icon"><%- helpers.icon('alert', { size: 15 }) %></span>
         <div class="act-question-body">
-          <p><strong>Foundry understood this, and cannot record it.</strong></p>
+          <p><strong>StockChief understood this, and cannot record it.</strong></p>
           <p>
             You asked to take <strong><%= blocked.wanted %></strong> of
             <%= blocked.subject %> out of <%= blocked.locationName %>, where
@@ -229,7 +229,7 @@
           <%#
             Where the thing they asked for is actually done.
 
-            A request Foundry understood but does not carry out from here is
+            A request StockChief understood but does not carry out from here is
             not a dead end, and sending somebody back to rephrase a sentence
             that was already clear is how "remove the entire inventory" got
             asked "which item did you mean?" twice.
@@ -241,7 +241,7 @@
           <% } else { %>
             <p class="muted" style="font-size:12.5px; margin-top:6px;">
               If you were asking about your stock rather than changing it,
-              <a href="/ask?q=<%= encodeURIComponent(instruction) %>">Foundry can look that up</a>.
+              <a href="/ask?q=<%= encodeURIComponent(instruction) %>">StockChief can look that up</a>.
             </p>
           <% } %>
         </div>
@@ -253,7 +253,7 @@
 <% if (pending.length) { %>
   <section class="section">
     <div class="att-group-head">
-      <h2>Foundry prepared this</h2>
+      <h2>StockChief prepared this</h2>
       <span class="badge badge--warn"><%= pending.length %></span>
     </div>
     <div class="att-list">
@@ -265,7 +265,7 @@
                 <%= item.safetyLevel === 'HIGH' ? 'Needs care' : 'Changes stock' %>
               </span>
               <% if (item.sourceType === 'ATTENTION_ITEM') { %>
-                <span class="badge badge--muted">From a Foundry finding</span>
+                <span class="badge badge--muted">From a StockChief finding</span>
               <% } %>
               <% if (item.status === 'APPROVED') { %><span class="badge badge--ok">Approved</span><% } %>
             </div>

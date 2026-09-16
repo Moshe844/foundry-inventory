@@ -7,7 +7,7 @@
    * not meet a different-looking screen asking the same question.
    *
    * What this page adds is the other way in: describe the business in a
-   * sentence and let Foundry pick the source for you.
+   * sentence and let StockChief pick the source for you.
    */
   var options = locals.sourceOptions || [];
   var chosen = state && state.path;
@@ -17,9 +17,9 @@
 
 <div class="rm-head">
   <p class="rm-head__eyebrow"><%- helpers.icon('layers', { size: 14 }) %> Getting set up</p>
-  <h1>Where should Foundry get your inventory from?</h1>
+  <h1>Where should StockChief get your inventory from?</h1>
   <p>
-    Pick the one that is closest to the truth today. You are not locked in — Foundry can take a
+    Pick the one that is closest to the truth today. You are not locked in — StockChief can take a
     second source later and reconcile the two.
   </p>
 </div>
@@ -111,7 +111,7 @@
   <%- helpers.icon('shield', { size: 16 }) %>
   <span>
     <strong>Nothing is created until you approve it.</strong>
-    Whichever source you choose, Foundry reads it, shows you every product and quantity it would
+    Whichever source you choose, StockChief reads it, shows you every product and quantity it would
     create, and waits for you.
   </span>
 </div>

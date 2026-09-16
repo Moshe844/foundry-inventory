@@ -124,7 +124,7 @@ test('Mission 14 owner accounting proves all twenty required lifecycle scenarios
     assert.equal(bill.status, 'PAID'); assert.equal(bill.balance_minor, 0);
   });
   await t.test('08 customer order completed but unpaid', () => {
-    order = sales.createOrder(db, workspace.ctx, { customerName: 'Lifecycle Customer',
+    order = sales.createOrder(db, workspace.ctx, { customerName: 'Lifecycle Customer', deliveryMethod: 'PICKUP',
       fulfillmentLocationId: workspace.main.id, lines: [{ skuId: product.skuId, quantity: 10 }] });
     order = sales.confirm(db, workspace.ctx, order.id);
     sales.fulfill(db, workspace.ctx, order.id, {}, { idempotencyKey: 'life-sale-1' });

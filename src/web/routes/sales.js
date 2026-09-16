@@ -65,7 +65,7 @@ function moneyForOrder(db, workspaceId, order) {
     ...position,
     /*
      * The panel appears once an order is a commitment, not once it has an
-     * invoice — Foundry raises the invoice at shipment, so waiting for it left
+     * invoice — StockChief raises the invoice at shipment, so waiting for it left
      * an order silent about money until after the goods had gone.
      *
      * A draft is still silent, because nothing has been promised to anybody
@@ -84,7 +84,7 @@ function moneyForOrder(db, workspaceId, order) {
  * The email this order was read out of, when it was read out of one.
  *
  * An order the owner did not type has to say where it came from, or it is
- * indistinguishable from one Foundry invented. The sender, the subject and
+ * indistinguishable from one StockChief invented. The sender, the subject and
  * the message itself are all one click away, so "approve" is a decision made
  * against the customer's own words rather than against a form.
  */
@@ -419,7 +419,7 @@ router.get(['/orders/:id', '/sales/orders/:id', '/orders/:id/detail', '/sales/or
     nav: 'sales', order,
     room: !wantsDetail,
     /*
-     * The order as one story: what was promised, what Foundry committed, what
+     * The order as one story: what was promised, what StockChief committed, what
      * the customer was told, what shipped, what is owed, and what happens
      * next. Composed here from what this page already gathered rather than
      * from a second set of queries, so the story and the detail can never
@@ -487,7 +487,7 @@ router.get(['/orders/:id', '/sales/orders/:id', '/orders/:id/detail', '/sales/or
 }));
 
 /**
- * What to add to the flash when Foundry has been at the money by itself.
+ * What to add to the flash when StockChief has been at the money by itself.
  *
  * Silence would be the wrong answer either way. If it asked and sent, the
  * owner needs to know a customer of theirs has just been emailed. If it got
@@ -499,13 +499,13 @@ async function moneyChased(req, orderId, customerName) {
   const outcome = await require('../../sales/payment-automation').onMoneyDue(req.db, req.ctx, orderId);
   if (outcome.sent) {
     const amount = require('../../sales/payment-terms').money(outcome.request.amountMinor, outcome.request.currency);
-    return ` Foundry asked ${customerName} for ${amount} and emailed the link.`;
+    return ` StockChief asked ${customerName} for ${amount} and emailed the link.`;
   }
   if (outcome.asked) {
     const amount = require('../../sales/payment-terms').money(outcome.request.amountMinor, outcome.request.currency);
-    return ` Foundry made a ${amount} payment link and wrote the email — ${outcome.because} It is on the order, ready to send.`;
+    return ` StockChief made a ${amount} payment link and wrote the email — ${outcome.because} It is on the order, ready to send.`;
   }
-  // A shipment confirmation is about the parcel that just left. When Foundry
+  // A shipment confirmation is about the parcel that just left. When StockChief
   // could not prepare or send a payment request, the order's Money section is
   // the right place to explain why. Appending a payment-account prerequisite
   // here makes a successful shipment read like a failed, unrelated task.
@@ -645,7 +645,7 @@ router.post('/sales/orders/:id/confirm', requirePermission(permissions.OPERATE, 
     /*
      * A price given with the approval. It is the owner's number, recorded on
      * the product like any other selling price, and the draft's blank lines
-     * pick it up before the order is confirmed. Foundry never fills a blank
+     * pick it up before the order is confirmed. StockChief never fills a blank
      * price itself; it only carries the one it was just given.
      */
     const given = req.body.price && typeof req.body.price === 'object' ? req.body.price : {};
@@ -671,7 +671,7 @@ router.post('/sales/orders/:id/confirm', requirePermission(permissions.OPERATE, 
 /*
  * Commit stock that arrived after the order was confirmed.
  *
- * Deliberately a person's decision rather than something Foundry does on its
+ * Deliberately a person's decision rather than something StockChief does on its
  * own: holding stock for one customer takes it from the next one who asks.
  */
 router.post('/sales/orders/:id/allocate', requirePermission(permissions.OPERATE, 'commit stock to sales orders'), asyncRoute(async (req, res) => {
@@ -736,7 +736,7 @@ router.post('/sales/clarify', requirePermission(permissions.OPERATE, 'create or 
   delete req.session.pendingSalesContinuation;
   if (result.kind === 'list') return res.redirect(303, '/sales?status=BACKORDERED');
   req.flash(result.order.totals.backordered ? 'warn' : 'success',
-    `${result.order.order_number} is ${result.order.status.toLowerCase().replace(/_/g, ' ')}. `
+    result.message || `${result.order.order_number} is ${result.order.status.toLowerCase().replace(/_/g, ' ')}. `
     + `${result.order.totals.allocated} committed and ${result.order.totals.backordered} waiting for stock.`);
   return res.redirect(303, `/sales/orders/${result.order.id}`);
 }));
@@ -804,7 +804,7 @@ router.post('/sales/orders/:id/cancel', requirePermission(permissions.OPERATE, '
  *
  * Every one of these is a step a person takes with their hands, so each is a
  * single POST that says what happened rather than a form that asks the person
- * to restate what Foundry already knows.
+ * to restate what StockChief already knows.
  */
 
 router.get('/fulfilment', requirePermission(permissions.VIEW, 'view fulfilment'), asyncRoute(async (req, res) => {
@@ -840,6 +840,8 @@ router.get('/fulfilment/:id', requirePermission(permissions.VIEW, 'view fulfilme
   res.page('sales/shipment', {
     title: list.shipment.shipment_number, nav: 'fulfilment',
     shipment,
+    paymentPosition: paymentTerms.positionForOrder(req.db, req.ctx.workspaceId,
+      sales.getOrder(req.db, req.ctx.workspaceId, shipment.sales_order_id)),
     shipping: state ? {
       ready: state.ready,
       blocked: state.blocked,
@@ -881,6 +883,17 @@ router.post('/sales/orders/:id/pick', requirePermission(permissions.OPERATE, 'fu
   }
   req.flash('success', `${shipment.shipment_number} is ready to pick — ${shipment.units} to collect. Nothing has left stock yet.`);
   res.redirect(303, `/fulfilment/${shipment.id}`);
+}));
+
+router.post('/fulfilment/:id/destination', requirePermission(permissions.OPERATE, 'resolve shipment destinations'), asyncRoute(async (req, res) => {
+  try {
+    shipments.setDestination(req.db, req.ctx, req.params.id, req.body);
+    req.flash('success', 'Delivery choice saved for this order and this box. No stock moved.');
+  } catch (err) {
+    if (!err.status || err.status >= 500) throw err;
+    req.flash('warn', err.message);
+  }
+  res.redirect(303, `/fulfilment/${req.params.id}`);
 }));
 
 router.post('/fulfilment/:id/line', requirePermission(permissions.OPERATE, 'fulfill sales orders'), asyncRoute(async (req, res) => {
@@ -991,7 +1004,7 @@ router.post('/fulfilment/:id/label/void', requirePermission(permissions.FULFILL_
       const result = await shipping.service.voidLabel(req.db, req.ctx, req.params.id);
       req.flash(result.status === 'SUCCEEDED' ? 'success' : 'warn', result.status === 'SUCCEEDED'
         ? `The carrier voided the label. ${result.amountMinor ? 'The postage refund was reconciled.' : ''}`
-        : 'The carrier is still deciding the void. Foundry will not reuse or rebuy it while that is uncertain.');
+        : 'The carrier is still deciding the void. StockChief will not reuse or rebuy it while that is uncertain.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);
@@ -1048,7 +1061,7 @@ router.post('/fulfilment/:id/ship', requirePermission(permissions.OPERATE, 'fulf
     else told = ' A note to the customer is written below, ready when you are.';
   }
   /*
-   * The balance falls due the moment the goods go, so this is where Foundry
+   * The balance falls due the moment the goods go, so this is where StockChief
    * asks for it — after the shipment is a fact, never before, and never in a
    * way that could undo it.
    */
@@ -1101,7 +1114,7 @@ router.post('/fulfilment/:id/notice', requirePermission(permissions.OPERATE, 'wr
       req.flash('success', 'That note will not be sent.');
     } else if (action === 'rewrite') {
       notices.prepareShippingNotice(req.db, req.ctx, req.params.id);
-      req.flash('success', 'Written again from what Foundry has on record.');
+      req.flash('success', 'Written again from what StockChief has on record.');
     } else {
       // Save whatever is on screen first, so send always sends what was read.
       notices.updateDraft(req.db, req.ctx.workspaceId, messageId, {
@@ -1129,7 +1142,7 @@ router.post('/fulfilment/settings/notices', requirePermission(permissions.OPERAT
       replyTo: req.body.replyTo,
       signature: req.body.signature,
     });
-    req.flash('success', 'Saved how Foundry handles shipping notices.');
+    req.flash('success', 'Saved how StockChief handles shipping notices.');
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
     req.flash('warn', err.message);
@@ -1190,7 +1203,7 @@ router.post('/sales/orders/:id/payment-hold', requirePermission(permissions.OPER
       req.flash('success', 'The hold is back on. This order will not ship until it is paid.');
     } else {
       paymentTerms.overrideHold(req.db, req.ctx, req.params.id, req.body.reason);
-      req.flash('success', 'Approved. This order can go out unpaid, and Foundry has kept a note that you allowed it.');
+      req.flash('success', 'Approved. This order can go out unpaid, and StockChief has kept a note that you allowed it.');
     }
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;

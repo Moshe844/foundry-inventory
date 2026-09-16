@@ -1,6 +1,6 @@
 # Mission 2 — One Business Story
 
-Foundry records business provenance as immutable, workspace-scoped relations between existing domain records. The relation graph supplements domain records; it does not replace their operational or accounting truth.
+StockChief records business provenance as immutable, workspace-scoped relations between existing domain records. The relation graph supplements domain records; it does not replace their operational or accounting truth.
 
 ## Contract
 
@@ -13,7 +13,7 @@ Foundry records business provenance as immutable, workspace-scoped relations bet
 
 ## Owner experience
 
-Purchase and customer-order stories remain concise by default. **See how this purchase is connected** and **See how this order is connected** expose the supporting records and links. Ask Foundry uses the same persisted graph for “Why?” answers and says when no linked cause or outcome is known.
+Purchase and customer-order stories remain concise by default. **See how this purchase is connected** and **See how this order is connected** expose the supporting records and links. Ask StockChief uses the same persisted graph for “Why?” answers and says when no linked cause or outcome is known.
 
 ## Covered lifecycle paths
 

@@ -52,9 +52,9 @@ const NARRATIVE_SCHEMA = {
   },
 };
 
-/** Words that would turn a description into a claim Foundry cannot make. */
+/** Words that would turn a description into a claim StockChief cannot make. */
 const FORBIDDEN = [
-  /\b(?:i|we|foundry)\s+(?:have\s+)?(?:transferred|moved|adjusted|ordered|reordered|issued|received|written off|corrected)\b/i,
+  /\b(?:i|we|stockchief|foundry)\s+(?:have\s+)?(?:transferred|moved|adjusted|ordered|reordered|issued|received|written off|corrected)\b/i,
   /\b(?:fraud|theft|stole|stolen|stealing|dishonest|deliberately|negligent|incompeten)/i,
   /\bautomatically\s+(?:ordered|transferred|adjusted|resolved)\b/i,
 ];
@@ -108,7 +108,7 @@ function verifyNarrative(narrative, item) {
     }
     for (const pattern of FORBIDDEN) {
       if (pattern.test(text)) {
-        problems.push(`${field} makes a claim Foundry cannot support`);
+        problems.push(`${field} makes a claim StockChief cannot support`);
         break;
       }
     }
@@ -204,7 +204,7 @@ async function interpret(db, workspaceId, items, options = {}) {
   for (const narrative of clamped.items || []) {
     const item = byId.get(narrative.id);
     if (!item) {
-      // An id Foundry did not supply — the model does not get to add findings.
+      // An id StockChief did not supply — the model does not get to add findings.
       rejected.push({ id: narrative.id, problems: ['unknown finding id'] });
       continue;
     }

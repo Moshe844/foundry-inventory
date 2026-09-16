@@ -4,11 +4,11 @@
  * Reading a customer's email as a Sales Order.
  *
  * A stranger writing "I'd like to order 10 of the small black t-shirt" is
- * placing an order in the only way most customers ever will. Foundry used to
+ * placing an order in the only way most customers ever will. StockChief used to
  * fetch that mail from Gmail and drop it on the floor, because the sender was
  * not an approved supplier, so the owner saw nothing at all.
  *
- * What is built here is a DRAFT, and the word is load-bearing. Foundry reads
+ * What is built here is a DRAFT, and the word is load-bearing. StockChief reads
  * the message, matches the products against the catalogue, and stops. Nothing
  * is confirmed, no stock is committed, no reply is sent. The owner opens a
  * draft order that says where it came from and approves it, edits it, or
@@ -39,7 +39,7 @@ const SCHEMA = {
    * The other fields are required-and-empty-when-absent, which is the
    * convention here for strict structured output. This one is not, because the
    * cost of the two mistakes is not the same: a reader that omits an address
-   * would fail validation and Foundry would lose the entire order over a line
+   * would fail validation and StockChief would lose the entire order over a line
    * that is optional information. Missing is read as "no address given", which
    * is exactly what it means.
    */
@@ -52,7 +52,7 @@ const SCHEMA = {
      * The address as the customer wrote it, copied and not tidied.
      *
      * Most people put where they live at the bottom of the email and expect
-     * that to be enough — as the one that started this did. Foundry used to
+     * that to be enough — as the one that started this did. StockChief used to
      * read past it, so a parcel could not be quoted or labelled until
      * somebody typed it in again from the message sitting next to the order.
      *
@@ -90,7 +90,7 @@ named in the email. Return only the schema.`;
 /*
  * Everything the customer has written in this conversation, oldest first.
  *
- * An order is rarely one email. Foundry asked "which of these four did you
+ * An order is rarely one email. StockChief asked "which of these four did you
  * mean?", the customer answered "the moc toe slip in 36", and that answer read
  * on its own says nothing about how many — while the first message says two
  * and nothing about which. Neither is an order; together they are one.
@@ -202,7 +202,7 @@ function customerFor(db, ctx, message, told) {
  *   1. Every word of it has to be a word the customer actually wrote. The same
  *      grounding as the product lines, for the same reason.
  *   2. It has to be a complete address. An address missing its postcode is not
- *      most of an address — a carrier will refuse it, and Foundry filling in
+ *      most of an address — a carrier will refuse it, and StockChief filling in
  *      the gap would be inventing where somebody lives.
  *
  * Anything else is left alone, and the parcel screen asks once. Never
@@ -215,13 +215,13 @@ function addressFromEmail(db, ctx, message, told, customerId) {
   const wrote = new Set(tokens(`${message.subject || ''} ${message.body_text || ''}`));
   const claimed = tokens(written);
   if (!claimed.length || !claimed.every((word) => wrote.has(word))) {
-    return { attached: false, because: 'Foundry did not attach an address it could not find in their own words.' };
+    return { attached: false, because: 'StockChief did not attach an address it could not find in their own words.' };
   }
 
   const parsed = require('../shipping/address').parse(written);
   if (!parsed.complete) {
     return { attached: true, parsed, address: written, incomplete: true,
-      because: `The address in the email is missing the ${parsed.missing.join(', ')}. Foundry copied exactly what the customer wrote, but a carrier cannot use it yet.` };
+      because: `The address in the email is missing the ${parsed.missing.join(', ')}. StockChief copied exactly what the customer wrote, but a carrier cannot use it yet.` };
   }
 
   const existing = db.prepare('SELECT shipping_address FROM customers WHERE id = ? AND workspace_id = ?')
@@ -296,7 +296,7 @@ async function draft(db, ctx, messageId, options = {}) {
 
   const told = await read(message, { ...options, conversation });
   if (!told || !told.isAnOrder || !Array.isArray(told.lines) || !told.lines.length) {
-    const because = 'Foundry could not read a specific order out of that email.';
+    const because = 'StockChief could not read a specific order out of that email.';
     noteReason(db, ctx, messageId, because);
     return { order: null, because };
   }
@@ -306,10 +306,10 @@ async function draft(db, ctx, messageId, options = {}) {
   /*
    * Lines the catalogue answered with a choice rather than a product.
    *
-   * "Size 36" is four different shoes here. Foundry must not pick one, and it
+   * "Size 36" is four different shoes here. StockChief must not pick one, and it
    * must not throw the question away either — which is what happened: the
    * customer's request became "nothing matched the catalogue: 2 × size 36",
-   * as though their words meant nothing, when in fact Foundry knew exactly
+   * as though their words meant nothing, when in fact StockChief knew exactly
    * which four things they could have meant.
    */
   const questions = [];
@@ -329,7 +329,7 @@ async function draft(db, ctx, messageId, options = {}) {
       ? questions.map((question) => {
         const choices = question.candidates.map(orderReply.nameOf).filter(Boolean);
         return `They asked for ${question.asked}, which is ${choices.length} different products here — `
-          + `${orderReply.series(choices)}. Foundry will not choose between them.`;
+          + `${orderReply.series(choices)}. StockChief will not choose between them.`;
       }).join(' ')
       : `Nothing in that email matched the catalogue: ${unmatched.join('; ') || 'no products named'}.`;
     noteReason(db, ctx, messageId, because);
@@ -346,7 +346,7 @@ async function draft(db, ctx, messageId, options = {}) {
   }
 
   /*
-   * Everything the email asked for that Foundry could not identify, in the
+   * Everything the email asked for that StockChief could not identify, in the
    * customer's own words. An order that quietly contained half a request
    * would be worse than no order at all, because it would look complete.
    */
@@ -417,7 +417,7 @@ Delivery address copied from their email.${shipTo.incomplete ? ` ${shipTo.becaus
   }
   noteReason(db, ctx, messageId, null);
   /*
-   * An order Foundry cannot fill is still an order, and the customer should
+   * An order StockChief cannot fill is still an order, and the customer should
    * hear it from us rather than from the delivery that never comes. Drafted,
    * never sent — what to promise a customer who is short is the owner's call.
    */
@@ -573,7 +573,7 @@ async function draftPending(db, ctx, options = {}) {
     try {
       results.push({ id: row.id, ...(await draft(db, ctx, row.id, options)) });
     } catch (error) {
-      const because = `Foundry could not draft an order from this: ${error.message}`;
+      const because = `StockChief could not draft an order from this: ${error.message}`;
       noteReason(db, ctx, row.id, because);
       results.push({ id: row.id, order: null, because });
     }
@@ -602,12 +602,12 @@ function waitingForApproval(db, workspaceId) {
 }
 
 /**
- * Order emails Foundry could not turn into a draft, with the reason.
+ * Order emails StockChief could not turn into a draft, with the reason.
  *
  * A second copy of a request already drafted is not in this list: the
  * decision it needs is the order that exists, and that is listed already.
  *
- * Nor is one the owner has already answered. Foundry asked the customer which
+ * Nor is one the owner has already answered. StockChief asked the customer which
  * of four shoes they meant, the owner read the question and sent it — and the
  * card went on saying "read the order yourself", as though nothing had
  * happened. Once we have written back, the next move is theirs, and a queue

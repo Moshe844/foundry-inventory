@@ -4,7 +4,7 @@
  * The actual browser handoff after a customer pays.
  *
  * Route tests prove the money reaches the ledger. This test proves the part a
- * person sees: Stripe's popup closes, Foundry performs one final provider
+ * person sees: Stripe's popup closes, StockChief performs one final provider
  * check, the order visibly becomes paid, and both printable documents remain.
  */
 

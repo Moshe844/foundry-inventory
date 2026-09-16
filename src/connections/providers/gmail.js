@@ -15,11 +15,11 @@ function metadata() {
     available: config.connections.gmail.configured,
     description: 'Watch approved supplier senders and send authorized purchasing messages through Gmail.',
     provides: ['supplier messages', 'purchasing documents', 'authorized supplier email'],
-    unavailableReason: config.connections.gmail.configured ? null : 'Add the Gmail OAuth client ID and secret to this Foundry installation.' };
+    unavailableReason: config.connections.gmail.configured ? null : 'Add the Gmail OAuth client ID and secret to this StockChief installation.' };
 }
 
 function authorizationUrl({ state, input }) {
-  if (!config.connections.gmail.configured) throw new ValidationError('Gmail is not configured on this Foundry installation.');
+  if (!config.connections.gmail.configured) throw new ValidationError('Gmail is not configured on this StockChief installation.');
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   for (const [key, value] of Object.entries({ client_id: config.connections.gmail.clientId,
     redirect_uri: input.redirectUri, response_type: 'code', scope: SCOPES.join(' '), state,
@@ -135,9 +135,9 @@ const OVERLAP_MS = 15 * 60_000;
  * And "in:inbox" is not where a stranger's first email lands. Someone writing
  * to a business for the first time to ask about ordering is exactly what Gmail
  * files as spam, so the one message a shop most wants to see was the one
- * Foundry could not see. Spam is included and marked untrusted like any
+ * StockChief could not see. Spam is included and marked untrusted like any
  * unknown sender; the owner decides, which is the arrangement everywhere else
- * in Foundry.
+ * in StockChief.
  */
 async function poll({ credentials, since }) {
   const from = new Date(since || Date.now() - 86400000).getTime() - OVERLAP_MS;
@@ -154,7 +154,7 @@ async function poll({ credentials, since }) {
 /*
  * One message, asked for by name.
  *
- * Foundry only keeps the envelope of mail it set aside, so bringing one in
+ * StockChief only keeps the envelope of mail it set aside, so bringing one in
  * means going back to Gmail for it rather than to a copy we chose not to make.
  */
 async function fetchMessage({ credentials, messageId }) {

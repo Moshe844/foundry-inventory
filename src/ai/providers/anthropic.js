@@ -3,7 +3,7 @@
 /**
  * Anthropic adapter.
  *
- * Uses structured outputs so the model is constrained to the schema Foundry
+ * Uses structured outputs so the model is constrained to the schema StockChief
  * asked for rather than free prose that needs parsing. The response is still
  * validated by the caller — a constrained decode is a convenience, not a
  * security boundary.
@@ -58,7 +58,7 @@ netTrust.installSystemCertificates();
  * The SDK does retry, twice, but immediately — all three attempts land inside
  * the same few seconds and so inside the same window. That is why the customer
  * saw a failure at all: not because the machine could not be reached, but
- * because Foundry gave up in six seconds on something that clears in under a
+ * because StockChief gave up in six seconds on something that clears in under a
  * minute. Waiting longer between attempts is the whole fix.
  *
  * Deliberately narrow. A refused socket and a dropped connection are worth
@@ -99,7 +99,7 @@ const pause = (ms, signal) => new Promise((resolve, reject) => {
  *
  * Anything that is not one of those is thrown on the first attempt, translated
  * as it always was. Only the last failure is translated, so the customer is
- * told what was still true after Foundry had genuinely stopped trying.
+ * told what was still true after StockChief had genuinely stopped trying.
  */
 /** How long this occasion is willing to wait for the machine to change its mind. */
 function backoffFor() {
@@ -132,7 +132,7 @@ function create(options = {}) {
 
   if (!apiKey) {
     throw new ProviderError(
-      'Foundry is not connected to a model provider yet. Set ANTHROPIC_API_KEY and restart.',
+      'StockChief is not connected to a model provider yet. Set ANTHROPIC_API_KEY and restart.',
       { code: 'ai_not_configured', status: 503 }
     );
   }
@@ -149,7 +149,7 @@ function create(options = {}) {
     async complete(request) {
       const startedAt = Date.now();
       // Extended thinking is a per-tier choice, not a constant. The small
-      // models Foundry uses for bounded extraction do not support it at all,
+      // models StockChief uses for bounded extraction do not support it at all,
       // and would not benefit from it if they did — deciding which column
       // holds quantities is not a reasoning problem.
       const wantsThinking = effort !== 'none' && effort !== null;
@@ -309,14 +309,14 @@ function translateError(err) {
   // calm sentence on a screen, and all three were.
   recordFailure(err);
   if (status === 401 || status === 403) {
-    return new ProviderError('Foundry could not authenticate with the model provider.', {
+    return new ProviderError('StockChief could not authenticate with the model provider.', {
       code: 'ai_unauthorized',
       status: 503,
       cause: err,
     });
   }
   if (status === 429) {
-    return new ProviderError('The model provider is rate limiting Foundry. Try again shortly.', {
+    return new ProviderError('The model provider is rate limiting StockChief. Try again shortly.', {
       code: 'ai_rate_limited',
       status: 503,
       retryable: true,
@@ -332,9 +332,9 @@ function translateError(err) {
     });
   }
   if (status === 400) {
-    // A 400 is Foundry's own bug, not a network problem. The operator needs the
+    // A 400 is StockChief's own bug, not a network problem. The operator needs the
     // provider's actual complaint; the customer still sees something calm.
-    return new ProviderError('Foundry could not ask the model that. This has been logged.', {
+    return new ProviderError('StockChief could not ask the model that. This has been logged.', {
       code: 'ai_bad_request',
       status: 500,
       cause: err,
@@ -344,30 +344,30 @@ function translateError(err) {
   // security, a firewall — refusing an outbound socket surfaces as EACCES or
   // EPERM on connect, and telling somebody to check their connection sends
   // them to look at the one thing that is working. The connection is fine; a
-  // program on this machine is not letting Foundry open it.
+  // program on this machine is not letting StockChief open it.
   if (deniedLocally(err)) {
     return new ProviderError(
-      'This Foundry server process is not allowed to connect to the model provider. '
-        + 'Restart Foundry with normal outbound network access, or ask whoever manages this '
+      'This StockChief server process is not allowed to connect to the model provider. '
+        + 'Restart StockChief with normal outbound network access, or ask whoever manages this '
         + 'machine to allow outbound HTTPS to api.anthropic.com. Nothing was changed.',
       { code: 'ai_blocked_locally', status: 503, retryable: true, cause: err }
     );
   }
 
-  // An intercepted certificate this runtime will not accept. Foundry adds the
+  // An intercepted certificate this runtime will not accept. StockChief adds the
   // machine's own authorities at startup, so reaching here means the runtime is
   // too old to expose them — a fact about the installation, not the network.
   if (certificateRejected(err)) {
     return new ProviderError(
-      'Foundry could not verify the model provider\'s certificate. This computer inspects '
-        + 'secure traffic, and the version of Node.js running Foundry is too old to read the '
+      'StockChief could not verify the model provider\'s certificate. This computer inspects '
+        + 'secure traffic, and the version of Node.js running StockChief is too old to read the '
         + 'certificate authorities this machine trusts. Upgrading Node.js fixes it.',
       { code: 'ai_untrusted_certificate', status: 503, cause: err }
     );
   }
 
   return new ProviderError(
-    'Foundry could not reach the model provider. Check the connection and try again.',
+    'StockChief could not reach the model provider. Check the connection and try again.',
     { code: 'ai_request_failed', status: 503, retryable: true, cause: err }
   );
 }

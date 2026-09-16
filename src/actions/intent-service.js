@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Reading what a person asked Foundry to do.
+ * Reading what a person asked StockChief to do.
  *
  * The model's entire job is to turn a sentence into a typed *intent*: which
  * operation, and which things by the words the person used. It never returns an
@@ -26,7 +26,7 @@ const { ValidationError } = require('../domain/errors');
 
 // A real operating instruction often contains a complete product definition,
 // BOM, handling rules and exceptions. Five hundred characters forced people
-// to strip out exactly the evidence Foundry needs to avoid guessing.
+// to strip out exactly the evidence StockChief needs to avoid guessing.
 const MAX_INSTRUCTION = 10000;
 
 const ACTION_TYPES = [
@@ -68,17 +68,17 @@ const ACTION_TYPES = [
    * had just said "the entire inventory" was asked which item they meant,
    * twice.
    *
-   * The reader was not misreading. Foundry did not have the concept. This is
+   * The reader was not misreading. StockChief did not have the concept. This is
    * the concept.
    */
   'delete_inventory',
   /*
    * Writing to somebody.
    *
-   * Foundry has three working paths for this — replies to customers, supplier
+   * StockChief has three working paths for this — replies to customers, supplier
    * messages, and shipping and payment notices — and it sent a real one
    * today. None of that was in this list, so a reader asked to email somebody
-   * had no correct option and said "Foundry cannot send emails to customers
+   * had no correct option and said "StockChief cannot send emails to customers
    * or suppliers". It can. It just could not say so from here.
    */
   'send_message',
@@ -87,7 +87,7 @@ const ACTION_TYPES = [
 ];
 
 /**
- * How many operations Foundry will read out of one instruction.
+ * How many operations StockChief will read out of one instruction.
  *
  * Six was far too few for the thing people actually type first: opening stock
  * for a product with variants, across more than one location. "Main Warehouse
@@ -162,7 +162,7 @@ const LINE_SCHEMA = {
     productName: { type: 'string' },
     productCode: { type: 'string' },
     // "Colour: Navy, Black | Size: 6 through 12". Ranges are left as written —
-    // Foundry expands them, so no size is ever quietly dropped.
+    // StockChief expands them, so no size is ever quietly dropped.
     variantAxes: { type: 'string' },
     // configure_kit only. The kit itself is named by item/variant; each exact
     // component identity and required quantity stays separate and auditable.
@@ -182,6 +182,11 @@ const LINE_SCHEMA = {
     },
     // purchase / receive_shipment only: the supplier they named, verbatim.
     supplier: { type: 'string' },
+    purchaseExpectedDate: { type: 'string' },
+    purchaseDateSource: { type: 'string' },
+    deliveryInstructions: { type: 'string' },
+    trackingMode: { type: 'string', enum: ['', 'quantity', 'lot', 'serial'] },
+    trackingSource: { type: 'string' },
     // pay_supplier only: how much left the account, in the currency they typed.
     // -1 when they gave no figure.
     amount: { type: 'number' },
@@ -206,14 +211,15 @@ const LINE_SCHEMA = {
  * them out — and a message with no recipient is a question, not a draft. But
  * an answer that omits them is still a perfectly good answer about a stock
  * movement, and rejecting it turned every older scripted reply into
- * "Foundry could not work out what that meant". So the wire demands them and
+ * "StockChief could not work out what that meant". So the wire demands them and
  * the check on the way back does not; normaliseLine fills the blanks.
  */
 const OPTIONAL_ON_READ = ['amount', 'reference', 'recipient', 'messageBody',
   // Same bargain for the removal fields: demanded on the wire so the reader
   // fills them in, forgiven on the way back so every reply written before
   // they existed is still a perfectly good answer about something else.
-  'recordKind', 'recordName', 'kitComponents'];
+  'recordKind', 'recordName', 'kitComponents', 'purchaseExpectedDate', 'purchaseDateSource',
+  'deliveryInstructions', 'trackingMode', 'trackingSource'];
 const ACCEPTED_LINE_SCHEMA = {
   ...LINE_SCHEMA,
   required: LINE_SCHEMA.required.filter((key) => !OPTIONAL_ON_READ.includes(key)),
@@ -240,7 +246,7 @@ const ACCEPTED_INTENT_SCHEMA = {
 
 const SYSTEM = `You turn an inventory instruction into a typed action.
 
-You do not carry the action out and you do not look anything up. Foundry
+You do not carry the action out and you do not look anything up. StockChief
 resolves every name you return against its own records, checks it, shows the
 person what will happen, and only runs it once they approve.
 
@@ -265,7 +271,7 @@ Operations you may choose:
   SKU. Put the kit SKU or product in item and any variant in variant. Put every
   explicitly named component SKU/product, variant and required whole-number
   quantity in kitComponents. A kit is not an issue and its components are not
-  separate customer order lines: Foundry keeps the kit as the saleable SKU and
+  separate customer order lines: StockChief keeps the kit as the saleable SKU and
   uses this definition to reserve, pick, fulfil and return the physical
   components. Never invent a component or quantity. Never downgrade a required
   kit/BOM capability to a manual workaround or label it unsupported.
@@ -273,22 +279,29 @@ Operations you may choose:
   variant. Use this for requests such as "remove SKU-10 from my inventory" or
   "delete the item I added by mistake". This changes whether the catalogue
   record is active; it is never a stock-count correction. Copy the named
-  product/code into item and any named variation into variant. Foundry will
+  product/code into item and any named variation into variant. StockChief will
   refuse safely if the record still has stock on hand.
 ${removals.promptSection()}
 - purchase: they want to BUY something from a supplier — "order 5 cases of
   navy 8 from ABC", "reorder the low stock shoes", "buy enough to cover the
   next month". Put the supplier in supplier if they named one, and the unit
   they counted in ("cases", "boxes") in purchaseUnit. Leave quantity -1 if
-  they did not say a number; Foundry works out how many from its own figures.
+  they did not say a number; StockChief works out how many from its own figures.
   This creates a draft order for them to approve, never an actual purchase.
+  A purchase can introduce a brand-new SKU. Preserve its human product name in productName,
+  its stated SKU in productCode, and its inventory unit in unitLabel when explicitly supplied.
+  Do not substitute a catalogue product just because the new SKU is absent from context.
+  Copy delivery instructions/address verbatim into deliveryInstructions. Put a stated arrival
+  date in purchaseExpectedDate as YYYY-MM-DD and its exact supporting excerpt in purchaseDateSource.
+  Preserve explicitly stated stock tracking in trackingMode with an exact excerpt in trackingSource.
+  Leave each unstated field empty; ordering alone does not imply quantity, lot or serial tracking.
 - send_message: write to somebody — "email motty@example.com that the order
   is delayed", "tell ABC we need the shipment by Friday", "let the customer
   know it shipped". Put who it is going to in recipient: an email address
   exactly as written, or the customer or supplier name they used. Put what
   they want said in messageBody, in their own words — do not compose, expand
-  or improve it. Foundry writes the message and shows it before anything is
-  sent. Never refuse this; sending messages is something Foundry does.
+  or improve it. StockChief writes the message and shows it before anything is
+  sent. Never refuse this; sending messages is something StockChief does.
 - delete_inventory: the whole inventory is to go — the workspace itself, not
   a product in it and not a stock count. Every way of saying that belongs
   here: remove/delete/wipe/erase/scrap/bin/destroy/throw away the inventory,
@@ -296,18 +309,18 @@ ${removals.promptSection()}
   start over, start fresh, begin again, or shut it down. Asking HOW to delete
   it is the same request. Never read it as issue, adjust or archive_item, and
   never ask which item or location was meant — they told you, it is all of it.
-  Choose this whenever that is what was asked for, whatever Foundry then does
+  Choose this whenever that is what was asked for, whatever StockChief then does
   about it; it is a classification, not a promise to carry it out.
 - pay_supplier: money was paid to a supplier — "I paid ABC $100 toward
   invoice 9281", "paid the remaining 140", "we sent Langchi the deposit". Put
   the supplier in supplier, the figure in amount, and any invoice or bill
-  number they named in reference. Foundry records what was paid and what is
+  number they named in reference. StockChief records what was paid and what is
   still owed. Paying for goods is NEVER receiving them: it changes no stock,
   and an instruction that only mentions money is only ever this.
 - receive_shipment: a delivery has arrived — "ABC's shipment arrived", "the
   order from XYZ came in". Put the supplier in supplier. This opens the
   receiving screen; it does not book anything in by itself.
-- rename_terminology: change the word Foundry uses for something. Set
+- rename_terminology: change the word StockChief uses for something. Set
   terminologyKey to which one ('item', 'location', 'variant', 'lot',
   'serialUnit') and terminologyValue to the word they want.
 - clarify: you need one specific thing before this can be a real action.
@@ -328,7 +341,7 @@ Rules:
 - Once the operation itself is clear, do not choose 'clarify' merely because a
   product, variant axis, location, supplier, quantity, batch, unit or reason is
   incomplete. Return the operation with exactly the fields the person supplied
-  and leave the missing fields empty. Foundry resolves those fields against the
+  and leave the missing fields empty. StockChief resolves those fields against the
   real workspace and asks a grounded question with the actual candidates.
 - quantity is how many to move. adjustmentTarget is what the count should READ
   afterwards. "Set it to 37" is adjustmentTarget 37, not quantity 37.
@@ -336,7 +349,7 @@ Rules:
 - reasonCode for an issue, when clear: ${ISSUE_REASON_IDS.join(', ')}.
 - reasonCode for a correction, when clear: ${ADJUSTMENT_REASON_IDS.join(', ')}.
   Never invent a reason for a correction. If they did not say why the count is
-  wrong, leave reasonCode '' — Foundry will ask.
+  wrong, leave reasonCode '' — StockChief will ask.
 - Copy names, lot codes and serial numbers exactly as written. Do not correct
   spelling, expand abbreviations or tidy them up.
 - For every line, copy the shortest exact contiguous part of the instruction
@@ -348,33 +361,33 @@ Rules:
 - A serial number or lot code identifies one unit or batch, and usually sits
   right next to the product in the sentence. Separate them: "issue laptop
   DL-829193" is item "laptop" with serials ["DL-829193"], and "move 20 of lot
-  B-2609" is lotCode "B-2609". Never leave the code inside item — Foundry
+  B-2609" is lotCode "B-2609". Never leave the code inside item — StockChief
   looks the product up by name and will not find one called "laptop DL-829193".
 - You do not need to know where stock currently is, or how much of it there is.
-  Foundry looks both up. If they did not say where something is coming from,
+  StockChief looks both up. If they did not say where something is coming from,
   leave sourceLocation ''. If they did not say how many, leave quantity -1: an
-  instruction with no number means all of whatever is there, and Foundry works
+  instruction with no number means all of whatever is there, and StockChief works
   out how much that is and shows them before anything happens. Never ask for
   either, and never choose 'clarify' because one is missing. A serial number or
   a lot code identifies the stock on its own.
 - An instruction may end with " — " and then a short reply to a question
-  Foundry already asked: a batch code, a serial number, a location, a reason or
+  StockChief already asked: a batch code, a serial number, a location, a reason or
   a number, on its own and out of sentence form. Read that reply as the missing
   detail and put it in its proper field — "sold 85 House Blend 250g from the
   Roastery. — R-2603" is lotCode "R-2603", not part of the product name and not
   a second line. Never ask the same question back.
-- Never state what Foundry cannot do beyond "that is not one of the operations
-  listed above". You are shown a list of operations, not a list of Foundry's
+- Never state what StockChief cannot do beyond "that is not one of the operations
+  listed above". You are shown a list of operations, not a list of StockChief's
   abilities, and it does far more than this list — it emails customers and
   suppliers, keeps books, deletes inventories, takes payments. Three times a
-  reader with no matching operation invented a limitation instead: "Foundry
-  cannot send emails", "Foundry cannot delete an inventory", "Foundry does not
+  reader with no matching operation invented a limitation instead: "StockChief
+  cannot send emails", "StockChief cannot delete an inventory", "StockChief does not
   handle payments". All three were false and all three were read by the owner
   as fact. If nothing here matches, say only that, and say it in one line.
-- Choose 'unsupported' for anything Foundry has no operation for, and
-  say in one line what Foundry cannot do.
+- Choose 'unsupported' for anything StockChief has no operation for, and
+  say in one line what StockChief cannot do.
 - You do not need to ask whether something is counted by quantity, by serial
-  number or by lot. Foundry already knows how this business tracks stock and
+  number or by lot. StockChief already knows how this business tracks stock and
   applies it. Only set a different one if they explicitly said so.
 - Several products in one instruction become several create_item lines.
 - clarifyingQuestion and unsupportedReason are '' unless nothing can be done.
@@ -389,7 +402,7 @@ function intentPrompt(instruction, context) {
   if (context.itemNames && context.itemNames.length) {
     // Without this the reader cannot tell a one-product inventory from a
     // thousand-product one, so it asks "which product?" of a business that has
-    // exactly one. Foundry knows the answer; the reader should too.
+    // exactly one. StockChief knows the answer; the reader should too.
     lines.push(
       context.itemNames.length === 1
         ? `They have exactly one product: ${context.itemNames[0]}. Any variant they name belongs to it — never ask which product.`
@@ -399,7 +412,7 @@ function intentPrompt(instruction, context) {
   if (context.stockNoun) lines.push(`They call their stock "${context.stockNoun}".`);
   if (context.pendingAction) {
     lines.push(
-      `Foundry has already proposed: ${context.pendingAction}. ` +
+      `StockChief has already proposed: ${context.pendingAction}. ` +
         'If they are agreeing to that ("do it", "go ahead", "yes"), or changing its ' +
         'quantity, return that same action with the new number.'
     );
@@ -433,6 +446,11 @@ function normaliseLine(raw) {
     productCode: String(raw.productCode || '').trim(),
     supplier: String(raw.supplier || '').trim(),
     purchaseUnit: String(raw.purchaseUnit || '').trim(),
+    purchaseExpectedDate: String(raw.purchaseExpectedDate || '').trim(),
+    purchaseDateSource: String(raw.purchaseDateSource || '').trim(),
+    deliveryInstructions: String(raw.deliveryInstructions || '').trim(),
+    trackingMode: ['', 'quantity', 'lot', 'serial'].includes(raw.trackingMode) ? raw.trackingMode : '',
+    trackingSource: String(raw.trackingSource || '').trim(),
     // An unknown kind is dropped rather than passed on: the proposal builder
     // would only fail to find a registry entry for it, later and less clearly.
     recordKind: removals.get(raw.recordKind) ? String(raw.recordKind).trim().toLowerCase() : '',
@@ -480,7 +498,7 @@ function normalise(raw) {
       lines: [],
       clarifyingQuestion: '',
       unsupportedReason:
-        `That asks for ${raws.length} separate changes and Foundry reads up to ${MAX_LINES} at once. `
+        `That asks for ${raws.length} separate changes and StockChief reads up to ${MAX_LINES} at once. `
         + 'It will not carry out part of an instruction, so send it in smaller pieces — '
         + 'one location at a time works well — or bring the quantities in as a file.',
     };
@@ -743,7 +761,7 @@ async function readInstruction(instruction, options = {}) {
   const deterministic = deterministicInstruction(clean, options.context || {});
   if (deterministic) return deterministic;
   if (!options.provider && !config.ai.configured) {
-    throw new ValidationError('Foundry needs an AI provider configured before it can read instructions.');
+    throw new ValidationError('StockChief needs an AI provider configured before it can read instructions.');
   }
 
   const provider = options.provider || createProviderForTier('standard');
@@ -760,7 +778,7 @@ async function readInstruction(instruction, options = {}) {
   if (!result.ok) {
     return {
       lines: [],
-      clarifyingQuestion: 'Foundry could not work out what that meant. Could you say it another way?',
+      clarifyingQuestion: 'StockChief could not work out what that meant. Could you say it another way?',
       unsupportedReason: '',
     };
   }
@@ -771,7 +789,7 @@ async function readInstruction(instruction, options = {}) {
   return {
     lines: [],
     clarifyingQuestion:
-      'Foundry could not safely separate every numbered change in that instruction. Please put each change on its own line.',
+      'StockChief could not safely separate every numbered change in that instruction. Please put each change on its own line.',
     unsupportedReason: '',
   };
 }

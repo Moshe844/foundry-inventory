@@ -15,7 +15,7 @@ const adapters = Object.freeze({ shopify, square, clover, woocommerce, gmail, mi
 
 const generic = Object.freeze({
   type: 'reference_webhook', name: 'Custom business system', mark: 'API', category: 'business', authMode: 'token',
-  description: 'Connect a custom POS, ERP, or internal system with a Foundry API key and documented event endpoint.',
+  description: 'Connect a custom POS, ERP, or internal system with a StockChief API key and documented event endpoint.',
   provides: ['sales', 'customer orders', 'fulfillment', 'returns', 'receipts and transfers'],
   available: true,
 });
@@ -23,7 +23,7 @@ const generic = Object.freeze({
 const future = Object.freeze([
   { type: 'erp_future', name: 'Any ERP or business system', mark: 'ERP', category: 'business', available: true,
     integrationMode: 'custom_contract',
-    description: 'Connect a bespoke ERP now through Foundry’s verified event contract; packaged adapters are added only after their provider-specific certification passes.',
+    description: 'Connect a bespoke ERP now through StockChief’s verified event contract; packaged adapters are added only after their provider-specific certification passes.',
     provides: ['sales, orders, fulfillment, returns, receipts, transfers, adjustments, products and locations'] },
 ]);
 

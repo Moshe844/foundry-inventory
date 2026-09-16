@@ -18,7 +18,7 @@ function attachment(db, workspaceId, connectorId, attachmentId) {
     .get(workspaceId, connectorId, attachmentId);
   if (!row) throw new NotFoundError('That email attachment is no longer available.');
   if (row.trust_status !== 'TRUSTED') throw new ValidationError('Approve this sender before using its attachment as inventory evidence.');
-  if (!row.content) throw new ValidationError('Foundry kept the attachment record, but the file content is unavailable.');
+  if (!row.content) throw new ValidationError('StockChief kept the attachment record, but the file content is unavailable.');
   if (!SUPPORTED.has(path.extname(row.filename).toLowerCase())) {
     throw new ValidationError('Use a PDF, spreadsheet, Word document, CSV, TSV, or text attachment.');
   }
@@ -60,7 +60,7 @@ async function prepare(db, ctx, membership, connectorId, attachmentId, options =
   const file = { filename: row.filename, mimeType: row.mime_type, buffer: Buffer.from(row.content) };
   const understood = await documentEvents.understand(db, ctx, file, { provider: options.provider });
   if (!understood.interpretation.lines.length) {
-    throw new ValidationError(`Foundry could not find inventory rows in ${row.filename}. Nothing was changed.`);
+    throw new ValidationError(`StockChief could not find inventory rows in ${row.filename}. Nothing was changed.`);
   }
   const prepared = documentIntake.prepareFromInterpretation(
     db, ctx, membership, file, understood.interpretation, understood.extractedText
@@ -101,7 +101,7 @@ function reconcileStatuses(db, workspaceId, connectorId) {
             AND a.message_id = connection_email_messages.id AND d.status = 'APPLIED'
         )`).run(now, workspaceId, connectorId).changes;
 
-    // A later resend may have been classified as purchasing before Foundry
+    // A later resend may have been classified as purchasing before StockChief
     // noticed that the exact file was already approved as inventory. Close the
     // false purchasing review while preserving both email and audit records.
     const duplicates = db.prepare(`SELECT DISTINCT sd.id, sd.message_id

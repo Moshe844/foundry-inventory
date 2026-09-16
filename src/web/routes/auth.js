@@ -91,7 +91,7 @@ router.post(
       req.session.flash = [
         {
           type: 'success',
-          message: `Welcome to Foundry, ${created.name.split(' ')[0]}. Create your first inventory to begin.`,
+          message: `Welcome to StockChief, ${created.name.split(' ')[0]}. Create your first inventory to begin.`,
         },
       ];
       req.session.save(() => res.redirect('/inventories'));

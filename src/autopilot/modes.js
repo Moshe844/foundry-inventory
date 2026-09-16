@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * How much authority Foundry has in one inventory, and how to take it away.
+ * How much authority StockChief has in one inventory, and how to take it away.
  *
- * Three modes, and the difference between them is exactly what Foundry may do
+ * Three modes, and the difference between them is exactly what StockChief may do
  * without being asked:
  *
  *   OBSERVE           watch, detect, explain, recommend. Nothing is mutated.
@@ -12,7 +12,7 @@
  *                     and only that.
  *
  * Two separate ways to stop, because they are different situations. A *pause*
- * is a person deciding to stop; a *suspension* is Foundry stopping itself after
+ * is a person deciding to stop; a *suspension* is StockChief stopping itself after
  * something it could not verify. Conflating them would mean a customer
  * resuming their own pause and silently clearing a safety stop they never saw.
  */
@@ -34,9 +34,9 @@ const MODE_LABEL = {
 };
 
 const MODE_BLURB = {
-  OBSERVE: 'Foundry watches and explains, but prepares or changes nothing.',
-  SUPERVISED: 'Foundry watches, recommends what to do, and carries out only what you approve.',
-  POLICY_AUTOMATED: 'Foundry handles safe routine work inside limits you approved and asks about everything else.',
+  OBSERVE: 'StockChief watches and explains, but prepares or changes nothing.',
+  SUPERVISED: 'StockChief watches, recommends what to do, and carries out only what you approve.',
+  POLICY_AUTOMATED: 'StockChief handles safe routine work inside limits you approved and asks about everything else.',
 };
 
 /** Sensible starting limits. Deliberately conservative. */
@@ -45,7 +45,7 @@ const DEFAULT_LIMITS = {
   maxUnitsPerAction: 50,
   maxValuePerAction: null,
   maxValuePerDay: null,
-  // maxRetries is stored by the schema but deliberately not a setting: Foundry
+  // maxRetries is stored by the schema but deliberately not a setting: StockChief
   // does not retry a failed automatic action at all. A verification failure
   // suspends the scope for a person to look at, which is a stronger guarantee
   // than any retry count, and offering the dial would imply otherwise.
@@ -121,7 +121,7 @@ function limits(db, workspaceId) {
 }
 
 function setLimits(db, ctx, membership, changes) {
-  permissions.assertCan(membership, permissions.ADMIN, 'change what Foundry may do');
+  permissions.assertCan(membership, permissions.ADMIN, 'change what StockChief may do');
   ensure(db, ctx.workspaceId);
   const current = limits(db, ctx.workspaceId);
 
@@ -154,7 +154,7 @@ function setLimits(db, ctx, membership, changes) {
 }
 
 /**
- * Changes how much authority Foundry has.
+ * Changes how much authority StockChief has.
  *
  * Moving up to POLICY_AUTOMATED is an ADMIN decision. Moving *down* is
  * deliberately available to anyone who can operate the inventory: taking
@@ -166,9 +166,9 @@ function setMode(db, ctx, membership, mode) {
 
   const rank = { OBSERVE: 0, SUPERVISED: 1, POLICY_AUTOMATED: 2 };
   if (rank[mode] > rank[current.mode]) {
-    permissions.assertCan(membership, permissions.ADMIN, 'give Foundry more authority');
+    permissions.assertCan(membership, permissions.ADMIN, 'give StockChief more authority');
   } else {
-    permissions.assertCan(membership, permissions.OPERATE, 'change what Foundry does');
+    permissions.assertCan(membership, permissions.OPERATE, 'change what StockChief does');
   }
 
   db.prepare('UPDATE workspace_autopilot SET mode = ?, updated_at = ? WHERE workspace_id = ?')
@@ -176,9 +176,9 @@ function setMode(db, ctx, membership, mode) {
   return get(db, ctx.workspaceId);
 }
 
-/** A person stopping Foundry. */
+/** A person stopping StockChief. */
 function pause(db, ctx, membership, reason) {
-  permissions.assertCan(membership, permissions.OPERATE, 'pause Foundry');
+  permissions.assertCan(membership, permissions.OPERATE, 'pause StockChief');
   ensure(db, ctx.workspaceId);
   const now = nowIso();
   db.prepare(
@@ -190,7 +190,7 @@ function pause(db, ctx, membership, reason) {
 }
 
 function resume(db, ctx, membership) {
-  permissions.assertCan(membership, permissions.OPERATE, 'resume Foundry');
+  permissions.assertCan(membership, permissions.OPERATE, 'resume StockChief');
   const state = ensure(db, ctx.workspaceId);
   // Resuming clears a person's pause. A safety suspension is a separate thing
   // and needs its own deliberate clearing, so it is not swept away here.
@@ -206,7 +206,7 @@ function resume(db, ctx, membership) {
 }
 
 /**
- * Foundry stopping itself.
+ * StockChief stopping itself.
  *
  * Called when something could not be verified, an invariant failed, or the same
  * work keeps coming back. The failure mode of an autonomous system is not one
@@ -216,6 +216,8 @@ function resume(db, ctx, membership) {
 function suspend(db, workspaceId, { scope = null, reason }) {
   ensure(db, workspaceId);
   const now = nowIso();
+  const notificationId = require('../lib/util').newId('ntf');
+  const notificationTitle = scope ? `StockChief paused automatic ${scope}s` : 'StockChief paused itself';
   db.prepare(
     `UPDATE workspace_autopilot
         SET suspended = 1, suspended_at = ?, suspended_scope = ?, suspended_reason = ?, updated_at = ?
@@ -226,12 +228,20 @@ function suspend(db, workspaceId, { scope = null, reason }) {
     `INSERT INTO notifications (id, workspace_id, kind, severity, title, body, created_at)
      VALUES (?, ?, 'paused', 'critical', ?, ?, ?)`
   ).run(
-    require('../lib/util').newId('ntf'),
+    notificationId,
     workspaceId,
-    scope ? `Foundry paused automatic ${scope}s` : 'Foundry paused itself',
+    notificationTitle,
     String(reason || ''),
     now
   );
+  try {
+    require('../notifications/email-alerts').queueNotification(db, workspaceId, {
+      id: notificationId, kind: 'paused', severity: 'critical',
+      title: notificationTitle, body: String(reason || ''), link: '/needs-you',
+    });
+  } catch (error) {
+    console.error('[notifications] could not queue suspension email: %s', error.message);
+  }
   return get(db, workspaceId);
 }
 
@@ -262,13 +272,13 @@ function recordEvaluation(db, workspaceId, { nextAt = null } = {}) {
 function executionState(db, workspaceId, { scope = null } = {}) {
   const state = get(db, workspaceId);
   if (state.paused) {
-    return { allowed: false, because: state.pausedReason || 'Foundry is paused.', state };
+    return { allowed: false, because: state.pausedReason || 'StockChief is paused.', state };
   }
   if (state.suspended && (!state.suspendedScope || state.suspendedScope === scope)) {
     return { allowed: false, because: state.suspendedReason, suspended: true, state };
   }
   if (state.mode === MODES.OBSERVE) {
-    return { allowed: false, because: 'Foundry is only watching this inventory.', state };
+    return { allowed: false, because: 'StockChief is only watching this inventory.', state };
   }
   return { allowed: true, automatic: state.mode === MODES.POLICY_AUTOMATED, state };
 }

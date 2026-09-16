@@ -4,16 +4,16 @@
     <h1>Needs attention</h1>
     <div class="page-sub">
       <% if (showResolved) { %>
-        Things Foundry has closed, and things you asked it to hide.
+        Things StockChief has closed, and things you asked it to hide.
       <% } else if (summary.healthy) { %>
-        Foundry checked your inventory against its movement history.
+        StockChief checked your inventory against its movement history.
       <% } else { %>
-        <%= summary.total %> <%= helpers.plural(summary.total, 'thing') %> Foundry thinks you should look at, most urgent first.
+        <%= summary.total %> <%= helpers.plural(summary.total, 'thing') %> StockChief thinks you should look at, most urgent first.
       <% } %>
     </div>
   </div>
   <div class="page-actions">
-    <a class="btn" href="/ask"><%- helpers.icon('question', { size: 16 }) %> Ask Foundry</a>
+    <a class="btn" href="/ask"><%- helpers.icon('question', { size: 16 }) %> Ask StockChief</a>
     <form method="post" action="/attention/refresh">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <button class="btn btn--primary" type="submit">Check again</button>
@@ -36,7 +36,7 @@
 <% if (usefulness.length) { %>
   <div class="card section">
     <div class="card-head">
-      <h2>How Foundry is doing</h2>
+      <h2>How StockChief is doing</h2>
       <span class="spacer"></span>
       <span class="muted" style="font-size:12px;">What your team has said about these checks</span>
     </div>
@@ -56,7 +56,7 @@
         <% }) %>
       </div>
       <p class="muted" style="font-size:12px; margin-top:12px;">
-        Foundry records this and shows it to you. It does not quietly re-tune what it checks —
+        StockChief records this and shows it to you. It does not quietly re-tune what it checks —
         a check that keeps coming back unhelpful is worth changing openly, not silently.
       </p>
     </div>
@@ -73,15 +73,15 @@
       <% } else if (isEmpty) { %>
         <h3>There is nothing in this inventory yet</h3>
         <p>
-          Foundry watches your stock as it moves, so there is nothing to watch until
-          something is here. Tell Foundry what you keep, and it will set this inventory up.
+          StockChief watches your stock as it moves, so there is nothing to watch until
+          something is here. Tell StockChief what you keep, and it will set this inventory up.
         </p>
         <a class="btn btn--primary" href="/foundry">Set this inventory up</a>
         <a class="btn" href="/inventory/new">Add an item myself</a>
       <% } else { %>
         <h3>Nothing needs your attention</h3>
         <p>
-          Foundry looked at every line against its movement history and found no shortages,
+          StockChief looked at every line against its movement history and found no shortages,
           imbalances, unusual corrections or idle stock. It will keep checking as stock moves.
         </p>
         <a class="btn" href="/inventory">Open inventory</a>

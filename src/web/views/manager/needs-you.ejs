@@ -8,10 +8,10 @@
    * it visibly shortens, and the only way to reach the end of it is to decide.
    *
    * The four questions every entry has already answered — what happened, why
-   * Foundry stopped, what it recommends, what it needs — are typeset as a
+   * StockChief stopped, what it recommends, what it needs — are typeset as a
    * structure rather than four paragraphs of equal weight, so the
    * recommendation is visibly the recommendation. It is the only line on the
-   * screen in the accent, because it is the only line that is Foundry's
+   * screen in the accent, because it is the only line that is StockChief's
    * opinion rather than its record.
    *
    * Evidence is a disclosure inside the decision, never a link to a further
@@ -40,13 +40,13 @@
   <p class="rm-stamp">Nothing on the desk</p>
   <h1 class="rm-verdict">Nothing is waiting for you.</h1>
   <p class="rm-prose">
-    You do not have to watch Foundry. Only what it cannot settle by itself reaches you — a number
+    You do not have to watch StockChief. Only what it cannot settle by itself reaches you — a number
     it cannot know, a difference it cannot explain, or permission it does not have — and when that
     happens it stops there, waits here, and says why.
   </p>
   <p class="rm-choices">
     <a class="rm-btn" href="/">Back to the brief</a>
-    <a class="rm-btn rm-btn--ghost" href="/ask">Ask Foundry something</a>
+    <a class="rm-btn rm-btn--ghost" href="/ask">Ask StockChief something</a>
     <% if (currentUser.role === 'owner') { %><a class="rm-btn rm-btn--ghost" href="/repairs/report">Report something wrong</a><% } %>
   </p>
 
@@ -72,7 +72,7 @@
     <h1 class="rm-h"><%= entry.title %></h1>
     <%#
       What this queue is for, said once, on the entry somebody starts at. Only
-      what Foundry cannot settle by itself arrives here: a number it cannot
+      what StockChief cannot settle by itself arrives here: a number it cannot
       know, a difference it cannot explain, or permission it does not have.
       Everything else it is getting on with.
     %>

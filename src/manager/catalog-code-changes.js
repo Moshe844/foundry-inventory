@@ -156,7 +156,7 @@ function approve(db, ctx, membership, id, expectedHash) {
   if (!expectedHash || expectedHash !== proposal.integrityHash) throw new ValidationError('Review the current code changes before approving.');
   const current = snapshotFor(db, ctx.workspaceId, proposal.operation);
   if (hash(current) !== proposal.integrityHash) {
-    throw new ValidationError('Catalogue codes changed after this preview was prepared. Ask Foundry again to prepare a current preview.');
+    throw new ValidationError('Catalogue codes changed after this preview was prepared. Ask StockChief again to prepare a current preview.');
   }
   return inTransaction(db, () => {
     const now = nowIso();

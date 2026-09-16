@@ -56,8 +56,8 @@
           <h3>No archived products</h3><p>None of this inventory’s products are currently archived.</p><% if (returnTo) { %><a class="btn btn--primary" href="<%= returnTo %>">Back to <%= returnLabel %> message history</a><% } %>
         <% } else { %>
           <h3>Your setup is ready. Now add your products.</h3>
-          <p>Foundry knows how this inventory should work, but no product or stock records have been added yet.</p>
-          <a class="btn btn--primary" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell Foundry what you sell</a>
+          <p>StockChief knows how this inventory should work, but no product or stock records have been added yet.</p>
+          <a class="btn btn--primary" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell StockChief what you sell</a>
           <a class="btn" href="/inventory/new">Add one manually</a>
           <p class="hint">Already have records? <a href="/onboarding/migrations/new">Import a file</a>, <a href="/onboarding/system">connect a business system</a>, or <a href="/onboarding/mailbox">use email attachments</a>.</p>
         <% } %>
@@ -71,7 +71,7 @@
            * The columns are the ones a decision is made from.
            *
            * "Tracking" — quantity, serial or lot — was a column of its own with
-           * a badge on every row, which is Foundry's internal model shown to
+           * a badge on every row, which is StockChief's internal model shown to
            * somebody who only wants to know what they have. It matters when a
            * product carries serials or lots, so it appears on those rows and is
            * silent on the rest.

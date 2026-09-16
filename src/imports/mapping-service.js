@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Asking the model what the columns Foundry could not name are for.
+ * Asking the model what the columns StockChief could not name are for.
  *
  * The deterministic pass in fields.js has already claimed everything it
  * recognises. What reaches the model is the leftovers — "Whse 3 Bal", "Descr 2",
@@ -37,7 +37,7 @@ const MAPPING_SCHEMA = {
         additionalProperties: false,
         required: ['index', 'field', 'axisName'],
         properties: {
-          // The column number Foundry gave you. Never a name.
+          // The column number StockChief gave you. Never a name.
           index: { type: 'integer' },
           field: { type: 'string', enum: [...fields.FIELD_IDS, 'ignore'] },
           // For a variant column only: what the values vary by ("Size").
@@ -53,7 +53,7 @@ const MAPPING_SCHEMA = {
 
 const SYSTEM = `You work out what the unclear columns of an inventory file are for.
 
-Foundry has already settled the columns whose headings say plainly what they
+StockChief has already settled the columns whose headings say plainly what they
 are. You are asked about two kinds: the ones it could not name at all, and the
 ones it matched on a word that often means something else — those are shown
 with what it currently thinks, and you should say so if the values disagree.
@@ -103,10 +103,10 @@ function profilePrompt(profile, asked, deterministic, weak = []) {
 
   const describe = (column) => {
     const samples = (column.samples || []).slice(0, MAX_SAMPLES);
-    // A weakly-held column is presented with what Foundry currently thinks, so
+    // A weakly-held column is presented with what StockChief currently thinks, so
     // the model is correcting a specific reading rather than guessing blind.
     const current = column.currentField
-      ? ` — Foundry read this as ${fields.FIELD_LABEL[column.currentField]}, but is not certain`
+      ? ` — StockChief read this as ${fields.FIELD_LABEL[column.currentField]}, but is not certain`
       : '';
     return `- column ${column.index} “${column.name}”${current} — ${
       samples.length ? `values: ${samples.map((s) => JSON.stringify(s)).join(', ')}` : 'no values'
@@ -116,7 +116,7 @@ function profilePrompt(profile, asked, deterministic, weak = []) {
   const lines = [
     `File: ${profile.sourceName} (${profile.rowCount} rows of data).`,
     '',
-    'Columns Foundry has already settled, which you are not being asked about:',
+    'Columns StockChief has already settled, which you are not being asked about:',
     ...(settled.length
       ? settled.map(
           ([field, index]) =>
@@ -137,7 +137,7 @@ function profilePrompt(profile, asked, deterministic, weak = []) {
  *
  * A column index that does not exist, a field already taken, a second serial
  * column, a quantity column full of words — all dropped, with the reason kept
- * so the preview can show that Foundry disagreed rather than silently obeyed.
+ * so the preview can show that StockChief disagreed rather than silently obeyed.
  */
 function reconcile(proposed, { columns, deterministic, confident, profilesByIndex }) {
   const mappings = { ...deterministic };
@@ -159,14 +159,14 @@ function reconcile(proposed, { columns, deterministic, confident, profilesByInde
        * Settled by its own heading, so the model does not get to move it.
        *
        * Reported rather than dropped in silence: the preview lists what the
-       * model suggested and what Foundry did not take, and a suggestion that
+       * model suggested and what StockChief did not take, and a suggestion that
        * vanishes without a line is the one nobody can argue with later.
        */
       if (held !== entry.field) {
         rejected.push({
           column: column.name,
           field: entry.field,
-          because: `Foundry had already matched “${column.name}” to `
+          because: `StockChief had already matched “${column.name}” to `
             + `${fields.FIELD_LABEL[held]} from its own heading.`,
         });
       }
@@ -185,7 +185,7 @@ function reconcile(proposed, { columns, deterministic, confident, profilesByInde
       rejected.push({
         column: column.name,
         field: entry.field,
-        because: `Foundry had already matched ${fields.FIELD_LABEL[entry.field]} to another column.`,
+        because: `StockChief had already matched ${fields.FIELD_LABEL[entry.field]} to another column.`,
       });
       continue;
     }
@@ -324,7 +324,7 @@ async function proposeMappings(sheet, options = {}) {
    * that "Shoe / Description" was the product name — the assumption said so on
    * screen — and the model then filed the same column as a description, which
    * silently undid it. Nothing named a product, and every row was rejected
-   * underneath Foundry's own note explaining what the column was.
+   * underneath StockChief's own note explaining what the column was.
    */
   const recovered = fields.ensureIdentity(reconciled.mappings, {
     columns: sheet.columns,

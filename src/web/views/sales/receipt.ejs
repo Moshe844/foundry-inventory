@@ -67,12 +67,12 @@
   <%#
     Every figure above is read from the payment and the order it belongs to.
     A receipt is what somebody hands a customer, so there is nothing on it
-    Foundry cannot show them elsewhere in the same words.
+    StockChief cannot show them elsewhere in the same words.
   %>
   <footer class="receipt__foot">
     <p>Thank you.</p>
     <p class="t-xs t-muted">
-      Recorded by Foundry on <%= (payment.created_at || '').slice(0, 10) %>.
+      Recorded by StockChief on <%= (payment.created_at || '').slice(0, 10) %>.
     </p>
   </footer>
 </article>

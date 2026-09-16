@@ -5,9 +5,9 @@
  *
  * Everything here is deterministic and reuses the Mission 5 reader: the same
  * ZIP/XML parser, the same header location, the same column recognition. There
- * is one import engine in Foundry and this is not a second one — it is the part
+ * is one import engine in StockChief and this is not a second one — it is the part
  * that looks at a file *before* anyone has decided what to do with it, so that
- * Foundry can propose a configuration rather than ask for one.
+ * StockChief can propose a configuration rather than ask for one.
  *
  * A source is immutable once stored. The hash over its bytes is what makes
  * "1,842 variants" a claim about specific bytes that can be re-checked later,
@@ -44,7 +44,7 @@ const PURPOSE_LABEL = {
   suppliers: 'a supplier list',
   purchasing: 'purchasing information',
   sales_orders: 'sales orders',
-  unknown: 'something Foundry could not identify',
+  unknown: 'something StockChief could not identify',
 };
 
 /**
@@ -245,7 +245,7 @@ function hydrate(row) {
 const MAX_BYTES = config.uploads.maxBytes;
 
 /**
- * Stores a file and what Foundry made of it.
+ * Stores a file and what StockChief made of it.
  *
  * The same bytes uploaded twice return the source that already exists rather
  * than a second copy — somebody uploading the same export again is correcting
@@ -259,13 +259,13 @@ function addSource(db, ctx, membership, input) {
   if (!buffer && !String(text || '').trim()) throw new ValidationError('There was nothing in that.');
 
   const bytes = buffer || Buffer.from(String(text), 'utf8');
-  if (bytes.length > MAX_BYTES) throw new ValidationError('That file is larger than Foundry can read.');
+  if (bytes.length > MAX_BYTES) throw new ValidationError('That file is larger than StockChief can read.');
 
   // Macro-enabled workbooks are refused outright rather than read and trusted.
   const name = trimOrNull(input.filename) || 'pasted data';
   if (/\.(xlsm|xlsb|xltm)$/i.test(name)) {
     throw new ValidationError(
-      'Foundry does not open macro-enabled workbooks. Save it as .xlsx or .csv and upload that.'
+      'StockChief does not open macro-enabled workbooks. Save it as .xlsx or .csv and upload that.'
     );
   }
 
@@ -281,7 +281,7 @@ function addSource(db, ctx, membership, input) {
   } catch (error) {
     // A failed multi-file migration must identify the exact evidence that did
     // not parse.  "That spreadsheet" forced an owner to guess which one of
-    // twenty exports Foundry meant, and a redirect then hid the filenames.
+    // twenty exports StockChief meant, and a redirect then hid the filenames.
     if (error && error.code === 'spreadsheet_unreadable') {
       error.message = `${name}: ${error.message}`;
     }

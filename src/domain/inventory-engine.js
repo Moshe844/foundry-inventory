@@ -170,7 +170,7 @@ function commonMeta(input, { requireReason = false, reasonCodes = null } = {}) {
 /**
  * A connected system may deliver an event seconds later or replay historical
  * movement history during its first sync. The ledger records that business
- * timestamp while balances still carry the time Foundry actually applied it.
+ * timestamp while balances still carry the time StockChief actually applied it.
  */
 function operationOccurredAt(input, recordedAt) {
   const occurredAt = optionalDate(input && input.occurredAt, 'Occurred at') || recordedAt;
@@ -860,7 +860,7 @@ function adjust(db, ctx, input) {
     const delta = counted - expected;
     if (delta === 0) {
       throw new ValidationError(
-        `The counted quantity already matches what Foundry has on record (${expected}). No adjustment was recorded.`
+        `The counted quantity already matches what StockChief has on record (${expected}). No adjustment was recorded.`
       );
     }
 

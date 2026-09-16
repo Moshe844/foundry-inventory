@@ -83,14 +83,14 @@ test('an owner accepting a recommendation changes the setting and records why', 
   env.db.close();
 });
 
-test('an owner does not need to grant Foundry authority to press a button themselves', () => {
+test('an owner does not need to grant StockChief authority to press a button themselves', () => {
   const env = drifted();
   // Nothing granted at all: watching only, no capabilities.
   assert.notEqual(env.change.authorityVerdict, 'authorized');
 
   const outcome = applyService.accept(env.db, env.ctx, env.membership, env.change.id);
   assert.equal(outcome.applied, true,
-    'authority governs what Foundry does unattended, not what the owner may do');
+    'authority governs what StockChief does unattended, not what the owner may do');
   env.db.close();
 });
 
@@ -122,7 +122,7 @@ test('declining is remembered, and a declined recommendation cannot then be appl
   env.db.close();
 });
 
-test('Foundry acting alone needs the capability, and re-asks at the moment it acts', () => {
+test('StockChief acting alone needs the capability, and re-asks at the moment it acts', () => {
   const env = drifted();
 
   // 1. Nothing granted: it declines to act and says so rather than throwing.
@@ -141,11 +141,11 @@ test('Foundry acting alone needs the capability, and re-asks at the moment it ac
   assert.equal(paused.applied, false);
   assert.match(paused.because || '', /Stock take this weekend/);
   assert.equal(purchasingPolicy.effectivePolicy(env.db, env.workspace.workspaceId, env.skuId).reorderPoint, 20,
-    'a paused Foundry changes nothing');
+    'a paused StockChief changes nothing');
   env.db.close();
 });
 
-test('Foundry never applies an order or a transfer from here', () => {
+test('StockChief never applies an order or a transfer from here', () => {
   const env = drifted();
   const order = env.swept.recorded.find((row) => row.kind === 'order_now');
   if (!order) { env.db.close(); return; }

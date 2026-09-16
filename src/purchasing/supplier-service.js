@@ -11,7 +11,7 @@
  * contacts — and merging them would leak one customer's terms into another's.
  *
  * The second is the purchase unit. We count shoes; ABC sells cases of twelve
- * with a minimum of two. Every quantity Foundry recommends has to survive that
+ * with a minimum of two. Every quantity StockChief recommends has to survive that
  * conversion, so it is stored explicitly rather than folded into a number
  * nobody can check.
  */
@@ -394,7 +394,7 @@ function listWithCounts(db, workspaceId, { includeInactive = false } = {}) {
 }
 
 /**
- * Records wording Foundry actually observed on a document without replacing
+ * Records wording StockChief actually observed on a document without replacing
  * the supplier's chosen display term. Future invoices can use either spelling.
  */
 function rememberItemCodeAlias(db, workspaceId, supplierId, observedLabel) {

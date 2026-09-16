@@ -52,7 +52,7 @@ const existing = db
   )
   .get(account.id, name);
 if (existing) {
-  console.error(`"${name}" already exists. Delete it in Foundry first, or set WORKSPACE_NAME.`);
+  console.error(`"${name}" already exists. Delete it in StockChief first, or set WORKSPACE_NAME.`);
   process.exit(1);
 }
 
@@ -121,14 +121,14 @@ const sell = (label, locationId, quantity, daysAgo) => {
   for (const id of result.movementIds) backdate.run(new Date(Date.now() - daysAgo * DAY).toISOString(), id);
 };
 
-// The one Foundry should act on: Brooklyn sells White 6-12 steadily and is down
+// The one StockChief should act on: Brooklyn sells White 6-12 steadily and is down
 // to eight; New Jersey has sixty-one and has barely moved any.
 for (const [quantity, daysAgo] of [[5, 28], [4, 22], [3, 16], [4, 10], [5, 4]]) {
   sell('6-12 months / White', brooklyn.id, quantity, daysAgo);
 }
 sell('6-12 months / White', jersey.id, 4, 12);
 
-// Ordinary trading elsewhere, so the workspace does not look staged and Foundry
+// Ordinary trading elsewhere, so the workspace does not look staged and StockChief
 // has plenty of positions it correctly leaves alone.
 for (const [label, location, quantity, daysAgo] of [
   ['0-6 months / White', brooklyn.id, 6, 24], ['0-6 months / White', brooklyn.id, 5, 9],

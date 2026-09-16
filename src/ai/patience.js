@@ -14,7 +14,7 @@
  * worse outcome than telling them to try again. Scheduled work has nobody
  * watching it at all, and a run that quietly takes four minutes instead of one
  * costs nothing and saves the customer an entry in Needs You explaining that
- * Foundry could not think.
+ * StockChief could not think.
  *
  * So patience is a property of the occasion, not of the call site. The
  * schedulers mark their runs unattended and everything they reach inherits it,

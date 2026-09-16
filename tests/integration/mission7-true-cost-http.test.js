@@ -42,7 +42,7 @@ test('the purchase page leads an owner to a simple landed-cost evidence workflow
   const app = createApp({ db: store.db, env: 'test', sessionSecret: 'mission7-http' });
   const agent = request.agent(app); await signIn(agent, workspace.account.email);
   const orderPage = await agent.get(`/purchasing/orders/${order.id}`).expect(200);
-  assert.match(plain(orderPage.text), /Foundry prepared the documented landed-cost split/);
+  assert.match(plain(orderPage.text), /StockChief prepared the documented landed-cost split/);
   assert.match(plain(orderPage.text), /Review split/);
   const page = await agent.get(`/purchasing/orders/${order.id}/landed-costs`).expect(200);
   const text = plain(page.text);

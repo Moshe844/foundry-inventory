@@ -6,7 +6,7 @@
   <div class="titles">
     <h1>Who do you buy <%= line.displayName %> from?</h1>
     <div class="page-sub">
-      Foundry knows this one needs ordering. It cannot prepare the order until it knows who supplies it.
+      StockChief knows this one needs ordering. It cannot prepare the order until it knows who supplies it.
     </div>
   </div>
 </div>
@@ -14,7 +14,7 @@
 <div class="card section">
   <div class="card-head">
     <%- helpers.icon('alert', { size: 18 }) %>
-    <h2>What Foundry already worked out</h2>
+    <h2>What StockChief already worked out</h2>
   </div>
   <div class="card-body">
     <div class="act-ledger">
@@ -24,7 +24,7 @@
       </div>
       <% if (line.reorderPoint !== undefined && line.reorderPoint !== null) { %>
         <div class="act-row">
-          <span class="act-place">Reorder point<small>where Foundry starts asking</small></span>
+          <span class="act-place">Reorder point<small>where StockChief starts asking</small></span>
           <span class="act-move"><span class="num"><%= line.reorderPoint %></span></span>
         </div>
       <% } %>
@@ -50,7 +50,7 @@
 <div class="card section">
   <div class="card-head">
     <%- helpers.icon('purchasing', { size: 18 }) %>
-    <h2>Tell Foundry who supplies it</h2>
+    <h2>Tell StockChief who supplies it</h2>
   </div>
   <form method="post" action="/purchasing/supplier-for/<%= line.skuId %>">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -92,7 +92,7 @@
         <label class="field">
           <span class="field-label">Units in one of those</span>
           <input class="input num" type="number" name="unitsPerPurchaseUnit" value="1" min="1" step="1">
-          <span class="field-help">A case of twelve is 12. Foundry rounds orders up to whole ones.</span>
+          <span class="field-help">A case of twelve is 12. StockChief rounds orders up to whole ones.</span>
         </label>
       </div>
 
@@ -105,13 +105,13 @@
         <label class="field">
           <span class="field-label">Lead time in days <span class="optional">optional</span></span>
           <input class="input num" type="number" name="leadTimeDays" min="0" step="1">
-          <span class="field-help">How long a delivery takes. Foundry orders early enough to cover it.</span>
+          <span class="field-help">How long a delivery takes. StockChief orders early enough to cover it.</span>
         </label>
         <% if (itemSkus.length === 1 || itemSkus.length > 8) { %>
         <label class="field">
           <span class="field-label"><%= itemSkus.length > 1 ? 'Same cost for every selected variant' : 'Cost of one inventory unit' %> <span class="optional">optional</span></span>
           <input class="input num" type="number" name="lastUnitCost" min="0" step="0.01">
-          <span class="field-help">Enter the cost of one item inside the pack—not the cost of the whole case or box.<% if (itemSkus.length > 1) { %> Leave this blank if the variants cost different amounts; add their individual costs from the supplier page.<% } else { %> Example: if a case of 12 costs $96, enter $8.00. Foundry then shows the case cost as $96.<% } %></span>
+          <span class="field-help">Enter the cost of one item inside the pack—not the cost of the whole case or box.<% if (itemSkus.length > 1) { %> Leave this blank if the variants cost different amounts; add their individual costs from the supplier page.<% } else { %> Example: if a case of 12 costs $96, enter $8.00. StockChief then shows the case cost as $96.<% } %></span>
         </label>
         <% } %>
       </div>
@@ -135,7 +135,7 @@
       <% } %>
     </div>
     <div class="card-foot">
-      <span class="muted">Nothing is ordered here. Foundry recalculates this line and shows you the order to review.</span>
+      <span class="muted">Nothing is ordered here. StockChief recalculates this line and shows you the order to review.</span>
       <span class="btn-row" style="margin-left:auto;">
         <a class="btn" href="/purchasing">Cancel</a>
         <button class="btn btn--primary" type="submit"><%= itemSkus.length > 1 ? 'Save supplier for all variants' : 'Save supplier and work out the order' %></button>

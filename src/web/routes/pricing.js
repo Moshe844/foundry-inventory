@@ -75,10 +75,10 @@ router.post('/pricing/clarify', requireOwner, asyncRoute(async (req, res) => {
     delete req.session.pendingActionQuestion;
     if (result.kind === 'batch') {
       req.session.pendingPriceBatch = result.proposals.map((proposal) => proposal.id);
-      req.flash('success', `Foundry understood ${result.proposals.length} selling-price changes. Review the complete list before anything changes.`);
+      req.flash('success', `StockChief understood ${result.proposals.length} selling-price changes. Review the complete list before anything changes.`);
       return res.redirect(303, '/pricing/proposals/batch');
     }
-    req.flash('success', 'Foundry understood the selling-price change. Review it before anything changes.');
+    req.flash('success', 'StockChief understood the selling-price change. Review it before anything changes.');
     return res.redirect(303, `/pricing/proposals/${result.id}`);
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;

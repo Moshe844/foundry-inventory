@@ -240,7 +240,7 @@ test('manager reconciliation includes whole-inventory ledger, lot and serial int
 // --- what the banner is allowed to claim -------------------------------------
 
 /**
- * A count that agreed with the records was announced as "Foundry recorded the
+ * A count that agreed with the records was announced as "StockChief recorded the
  * physical event and put the unresolved part in Needs you", and the person was
  * sent to Needs you to look for an exception that was never created. The words
  * have to follow the outcome.
@@ -310,7 +310,7 @@ test('a count that does not match says that, and does send them to Needs you', a
   env.db.close();
 });
 
-test('an event Foundry could not place says that, without pretending to have compared anything', async () => {
+test('an event StockChief could not place says that, without pretending to have compared anything', async () => {
   const env = setup();
   const event = await physicalEvents.recordNatural(env.db, env.workspace.ctx,
     'something odd happened in the back room');

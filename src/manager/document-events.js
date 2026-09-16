@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Read an operational document and connect it to work Foundry already knows
+ * Read an operational document and connect it to work StockChief already knows
  * about.  The model extracts bounded document evidence; matching to a purchase
  * order is deterministic and may only select records from this workspace.
  */

@@ -139,7 +139,7 @@ function loadUser(db) {
 }
 
 /**
- * Makes the workspace's Foundry configuration and its customer-facing
+ * Makes the workspace's StockChief configuration and its customer-facing
  * vocabulary available to every view. Terminology is presentation only — the
  * domain layer never sees it.
  */
@@ -180,10 +180,10 @@ function foundryContext(db) {
 }
 
 /**
- * A brand-new workspace meets Foundry before it meets the console.
+ * A brand-new workspace meets StockChief before it meets the console.
  *
  * Only a genuinely empty workspace is redirected. A workspace that already
- * has locations or items — anything set up before Foundry existed, or by hand —
+ * has locations or items — anything set up before StockChief existed, or by hand —
  * keeps going straight to its console, because taking a working install to a
  * setup screen would be a regression, not an onboarding.
  */
@@ -443,7 +443,7 @@ function pageRenderer(req, res, next) {
         })();
         const labels = req.session.renderedPageLabels || {};
         // Keep this navigation aid bounded; it is not browsing history.
-        labels[currentHref] = String(data.title).replace(/\s+·\s+Foundry$/, '').slice(0, 100);
+        labels[currentHref] = String(data.title).replace(/\s+·\s+StockChief$/, '').slice(0, 100);
         const keys = Object.keys(labels);
         for (const key of keys.slice(0, Math.max(0, keys.length - 40))) delete labels[key];
         req.session.renderedPageLabels = labels;
@@ -451,7 +451,7 @@ function pageRenderer(req, res, next) {
       return res.render('layout', {
         ...data,
         body: html,
-        title: data.title || 'Foundry',
+        title: data.title || 'StockChief',
         nav: data.nav || null,
         /*
          * A page nobody can leave.
@@ -505,7 +505,7 @@ function errorHandler(isProduction) {
         require('../operations/monitoring').raise(req.db, {
           severity: 'ERROR',
           kind: 'http.unexpected_error',
-          title: 'Foundry returned an unexpected server error',
+          title: 'StockChief returned an unexpected server error',
           detail: `${req.method} ${req.path} · ${err && err.code ? err.code : err && err.name ? err.name : 'Error'}`,
           fingerprint: `http.unexpected_error:${req.method}:${req.route && req.route.path || req.path}:${err && err.code || err && err.name || 'Error'}`,
         });

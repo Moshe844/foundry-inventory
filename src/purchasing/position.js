@@ -20,7 +20,7 @@
  * suppress a real shortage.
  *
  * There is deliberately no "available" figure that nets off customer demand:
- * Foundry has no sales orders and no reservations, so any such number would be
+ * StockChief has no sales orders and no reservations, so any such number would be
  * invented.
  */
 
@@ -204,7 +204,7 @@ function openOrders(db, workspaceId, { supplierId = null } = {}) {
  *
  * Only orders whose date came from something real — a supplier's stated lead
  * time, or a date a person typed — are eligible. Calling a supplier late
- * against a date Foundry invented would be an accusation it cannot support.
+ * against a date StockChief invented would be an accusation it cannot support.
  */
 function lateOrders(db, workspaceId, { now = Date.now(), graceDays = 0 } = {}) {
   const cutoff = addLocalDays(now, -graceDays);

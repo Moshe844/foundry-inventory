@@ -1,7 +1,7 @@
 -- First-class kits / bills of materials.
 --
 -- A kit SKU is what the customer buys. Its components are the physical stock
--- Foundry reserves, picks, ships and receives back. Definitions are copied to
+-- StockChief reserves, picks, ships and receives back. Definitions are copied to
 -- order/return snapshots so changing a kit tomorrow never rewrites history.
 
 CREATE TABLE IF NOT EXISTS kit_components (
@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS kit_components (
   kit_sku_id         TEXT NOT NULL REFERENCES skus(id) ON DELETE CASCADE,
   component_sku_id   TEXT NOT NULL REFERENCES skus(id) ON DELETE RESTRICT,
   quantity           INTEGER NOT NULL CHECK (quantity > 0),
+  stock_basis        TEXT NOT NULL DEFAULT 'components'
+                       CHECK (stock_basis IN ('components','preassembled')),
   created_at         TEXT NOT NULL,
   updated_at         TEXT NOT NULL,
   UNIQUE (kit_sku_id, component_sku_id),

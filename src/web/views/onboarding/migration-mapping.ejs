@@ -4,11 +4,11 @@
   <a class="rm-back" href="/onboarding/migrations/<%= profile.packageId %>/sources">← Workbook analysis</a>
   <p class="rm-head__eyebrow"><%= profile.sourceDataset %></p>
   <h1><%= unresolved.length %> business fact<%= unresolved.length === 1 ? '' : 's' %> need a rule.</h1>
-  <p>Foundry knows what the headings say. It stopped because applying them without related records or an accounting rule could change your stock or money incorrectly.</p>
+  <p>StockChief knows what the headings say. It stopped because applying them without related records or an accounting rule could change your stock or money incorrectly.</p>
 </div>
 
 <section class="rm-panel" style="margin-bottom:18px">
-  <div class="rm-panel__head"><%- helpers.icon('alert', { size:15 }) %><h2>Why Foundry stopped</h2></div>
+  <div class="rm-panel__head"><%- helpers.icon('alert', { size:15 }) %><h2>Why StockChief stopped</h2></div>
   <div class="rm-feed">
     <% unresolved.forEach(function(mapping) { %>
       <div class="rm-feed__row">

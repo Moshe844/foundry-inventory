@@ -4,10 +4,10 @@
  * Mission 3 acceptance run, in a real browser, from a clean database, against a
  * real server with a real AI call for the language layers.
  *
- * Register → configure through Foundry → build real inventory and trade it →
+ * Register → configure through StockChief → build real inventory and trade it →
  * let the operator detect what is wrong → read the briefing → open the evidence
  * → act on the inventory and watch the item resolve itself → ask a question →
- * ask one Foundry cannot answer → give feedback → confirm Mission 1 truth is
+ * ask one StockChief cannot answer → give feedback → confirm Mission 1 truth is
  * untouched throughout.
  *
  * The second half re-runs the operator against a completely different business
@@ -127,7 +127,7 @@ function inspect(databasePath, fn) {
 }
 
 test(
-  'Mission 3 end to end: Foundry operates the inventory it configured',
+  'Mission 3 end to end: StockChief operates the inventory it configured',
   { skip: !config.ai.configured, timeout: 1200000 },
   async (t) => {
     fs.rmSync(SHOTS, { recursive: true, force: true });
@@ -163,7 +163,7 @@ test(
       fs.rmSync(dataDir, { recursive: true, force: true });
     });
 
-    await t.test('1. a new workspace is configured through Foundry', async () => {
+    await t.test('1. a new workspace is configured through StockChief', async () => {
       await page.goto(`${BASE}/register`);
       await page.fill('#name', ACCOUNT.name);
       await page.fill('#email', ACCOUNT.email);
@@ -181,7 +181,7 @@ test(
       // the Mission 2 experience, unchanged.
       await Promise.all([
         page.waitForURL(`${BASE}/foundry/describe`),
-        page.click('button:has-text("Enter it in Foundry")'),
+        page.click('button:has-text("Enter it in StockChief")'),
       ]);
 
       await page.fill(
@@ -205,7 +205,7 @@ test(
       );
       const setupAlert = page.locator('[role="alert"]');
       if (await setupAlert.count()) {
-        assert.fail(`Foundry onboarding failed: ${await setupAlert.first().innerText()}`);
+        assert.fail(`StockChief onboarding failed: ${await setupAlert.first().innerText()}`);
       }
       assert.match(new URL(page.url()).pathname, /\/foundry\/proposal\//);
       await shot(page, 'proposal');
@@ -220,7 +220,7 @@ test(
       assert.doesNotMatch(proposal, /Configure my inventory/i);
       await Promise.all([
         page.waitForURL(/\/foundry\/ready\//),
-        page.click('button:has-text("Enter records in Foundry")'),
+        page.click('button:has-text("Enter records in StockChief")'),
       ]);
       await page.goto(`${BASE}/locations`);
       for (const [name, kind] of [['Central Warehouse', 'warehouse'], ['Trade Counter', 'store']]) {
@@ -333,9 +333,9 @@ test(
       const body = await page.locator('body').innerText();
       assert.match(body, /The evidence/);
       assert.match(body, /Current stock/);
-      assert.match(body, /Foundry's working/);
+      assert.match(body, /StockChief's working/);
       assert.match(body, /not counted/);
-      // A stockout has no operation Foundry can carry out — purchasing does not
+      // A stockout has no operation StockChief can carry out — purchasing does not
       // exist — so it says so rather than offering an invented action.
       assert.match(body, /draft the purchase order/);
       assert.ok(!body.includes('Review transfer'));
@@ -378,7 +378,7 @@ test(
 
     await t.test('8. acting on the inventory resolves the finding, with a reason', async () => {
       await page.goto(`${BASE}/inventory/${state.valve.itemId}`);
-      // The record itself says what Foundry has noticed about it.
+      // The record itself says what StockChief has noticed about it.
       await page.locator('.rm-decision', { hasText: 'may run out' }).first().waitFor();
       await shot(page, 'item-with-finding');
 
@@ -439,7 +439,7 @@ test(
           .get(state.workspaceId, state.valveSku.id).n
       );
       assert.match(body, new RegExp(String(total)), 'the answer is the engine\'s number');
-      assert.match(body, /How Foundry read this/);
+      assert.match(body, /How StockChief read this/);
       assert.match(body, /on hand/i);
     });
 

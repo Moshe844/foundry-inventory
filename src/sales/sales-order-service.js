@@ -209,7 +209,7 @@ function recordEvent(db, ctx, orderId, eventType, detail = {}, idempotencyKey = 
 }
 
 /**
- * Fill in what Foundry does not know about a customer, and change nothing else.
+ * Fill in what StockChief does not know about a customer, and change nothing else.
  */
 function fillInCustomer(db, ctx, customer, input) {
   const email = trimOrNull(input.customerEmail);
@@ -262,7 +262,7 @@ function createOrder(db, ctx, input) {
      * choosing an existing name from the list and typing their email threw the
      * email away — and the order then refused a payment link because "there is
      * no email address for Chavy". The form asked, the person answered, and
-     * Foundry dropped it: the worst of the three possible behaviours.
+     * StockChief dropped it: the worst of the three possible behaviours.
      *
      * A blank is filled and an existing value is left alone. Quietly changing
      * the address a customer's parcels go to, because somebody typed something
@@ -550,7 +550,7 @@ function confirm(db, ctx, orderId, options = {}) {
     const order = requireOrderRow(db, ctx.workspaceId, orderId);
     if (order.status !== 'DRAFT') return { order: getOrder(db, ctx.workspaceId, orderId), event: null, replayed: true };
     if (order.customer_decision_required) {
-      throw new ValidationError('First decide whether this new email sender is a new customer or matches a customer already in Foundry.');
+      throw new ValidationError('First decide whether this new email sender is a new customer or matches a customer already in StockChief.');
     }
     if (order.delivery_decision_required) {
       throw new ValidationError('First confirm whether this order will be shipped or collected. A carrier shipment also needs its delivery address.');
@@ -592,7 +592,7 @@ function confirm(db, ctx, orderId, options = {}) {
  * no way to put the two together. Needs you sent the reader to that page, where
  * the only options were to add more demand or cancel.
  *
- * Foundry does not do this by itself, and that is deliberate rather than
+ * StockChief does not do this by itself, and that is deliberate rather than
  * missing. Committing stock to one customer takes it away from the next person
  * who asks, which is a commercial decision about who gets served — so it stays
  * a decision somebody makes, with the shortfall and the free stock both on
@@ -607,7 +607,7 @@ function allocateAvailable(db, ctx, orderId, options = {}) {
   const outcome = inTransaction(db, () => {
     const order = requireOrderRow(db, ctx.workspaceId, orderId);
     if (order.status === 'DRAFT') {
-      throw new ValidationError('Confirm the order first. Foundry holds stock for a customer once the order is committed.');
+      throw new ValidationError('Confirm the order first. StockChief holds stock for a customer once the order is committed.');
     }
     if (['CANCELLED', 'FULFILLED'].includes(order.status)) {
       throw new ValidationError('That sales order is already closed.');
@@ -723,7 +723,7 @@ function setLineQuantity(db, ctx, orderId, lineId, quantity, options = {}) {
     const target = Number(quantity);
     if (!Number.isInteger(target) || target < 0) throw new ValidationError('Ordered quantity must be a whole number of zero or more.');
     if (target < Number(line.quantity_fulfilled)) {
-      throw new ValidationError('An external order update cannot remove units that Foundry has already fulfilled.');
+      throw new ValidationError('An external order update cannot remove units that StockChief has already fulfilled.');
     }
     const current = Number(line.quantity_ordered);
     if (target === current) return { order: getOrder(db, ctx.workspaceId, orderId), event: null };
@@ -739,7 +739,7 @@ function setLineQuantity(db, ctx, orderId, lineId, quantity, options = {}) {
       for (const component of components) {
         const required = target * Number(component.quantity_per_kit);
         if (required < Number(component.quantity_fulfilled)) {
-          throw new ValidationError('An order update cannot remove kit components that Foundry has already fulfilled.');
+          throw new ValidationError('An order update cannot remove kit components that StockChief has already fulfilled.');
         }
         let toRelease = Number(component.quantity_required) - required;
         const allocations = db.prepare(`SELECT * FROM sales_order_kit_allocations
@@ -805,6 +805,12 @@ function fulfill(db, ctx, orderId, input = {}, options = {}) {
     if (order.customer_decision_required || order.delivery_decision_required) {
       throw new ValidationError('Resolve the customer and delivery details before any stock leaves for this order.');
     }
+    const collected = options.handover === 'COLLECTED' || order.delivery_method === 'PICKUP';
+    if (!collected && !trimOrNull(options.destinationAddress || order.ship_to_address)) {
+      throw new ValidationError('Enter the delivery address or explicitly choose customer pickup before any stock leaves for this order.');
+    }
+    const payment = require('./payment-terms').positionForOrder(db, ctx.workspaceId, order);
+    if (payment.blocksShipping) throw new ValidationError(`${payment.heldReason.ship} Record the payment or an authorized payment-hold override before any stock leaves.`);
     const eventKey = options.idempotencyKey || `sales-order-fulfillment:${orderId}:${newId('run')}`;
     const prior = db.prepare('SELECT * FROM sales_order_events WHERE workspace_id = ? AND idempotency_key = ?')
       .get(ctx.workspaceId, eventKey);

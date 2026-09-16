@@ -3,7 +3,7 @@
 /**
  * Deleting an entire inventory.
  *
- * This is the most destructive thing Foundry can do, and it is deliberately the
+ * This is the most destructive thing StockChief can do, and it is deliberately the
  * only place that removes a movement. Everywhere else the ledger is immutable —
  * a correction is a new movement, an undo is a new movement, and a trigger
  * enforces it. That invariant protects history *inside* a live inventory.
@@ -71,7 +71,7 @@ function deletionOrder(db, tables) {
       // leave orphans behind, say so — this is a schema change that needs a
       // human decision, not something to paper over.
       throw new ValidationError(
-        `Foundry cannot work out a safe order to delete these tables: ${remaining.join(', ')}.`
+        `StockChief cannot work out a safe order to delete these tables: ${remaining.join(', ')}.`
       );
     }
 
@@ -232,7 +232,7 @@ async function deleteWorkspaceInBatches(db, accountId, workspaceId, options = {}
 
     const stranded = db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE workspace_id = ?`).get(workspaceId).n;
     if (stranded) {
-      throw new ValidationError(`Foundry could not safely remove ${stranded} cyclic ${table} record(s).`);
+      throw new ValidationError(`StockChief could not safely remove ${stranded} cyclic ${table} record(s).`);
     }
   }
 

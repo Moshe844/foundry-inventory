@@ -1,6 +1,6 @@
 <%
   /*
-   * Give Foundry the files.
+   * Give StockChief the files.
    *
    * What this replaced was a page-head, a card of two form fields and a table
    * of what had been uploaded — the same shape as every other screen in the old
@@ -8,7 +8,7 @@
    * no sense of being part of a setup at all.
    *
    * The table of uploaded files is a table no longer: each file is a row that
-   * says what Foundry read it as and how sure it is, because that is the thing
+   * says what StockChief read it as and how sure it is, because that is the thing
    * somebody checks before pressing the button that reads them all.
    */
 %>
@@ -18,13 +18,13 @@
 
 <div class="rm-head">
   <p class="rm-head__eyebrow"><%- helpers.icon('import', { size: 14 }) %> Inventory source · files</p>
-  <h1><%= messy ? 'Give Foundry everything you have.' : 'Give Foundry your spreadsheet.' %></h1>
+  <h1><%= messy ? 'Give StockChief everything you have.' : 'Give StockChief your spreadsheet.' %></h1>
   <p>
     <% if (messy) { %>
-      Upload every file that holds part of the picture. Foundry works out what agrees, what does not,
+      Upload every file that holds part of the picture. StockChief works out what agrees, what does not,
       and what only looks like a duplicate.
     <% } else { %>
-      Upload the file you already keep your stock in. Foundry reads it and sets itself up from what it
+      Upload the file you already keep your stock in. StockChief reads it and sets itself up from what it
       finds — you do not need to configure anything first.
     <% } %>
   </p>
@@ -65,7 +65,7 @@
   <section class="rm-panel" style="margin-bottom:16px">
     <div class="rm-panel__head">
       <%- helpers.icon('layers', { size: 15, className: 'rm-quiet' }) %>
-      <h2>What Foundry has so far</h2>
+      <h2>What StockChief has so far</h2>
       <span class="right"><%= sources.length %> file<%= sources.length === 1 ? '' : 's' %></span>
     </div>
     <div class="rm-feed">
@@ -104,7 +104,7 @@
   <%- helpers.icon('shield', { size: 16 }) %>
   <span>
     <strong>Nothing becomes stock until you approve it.</strong>
-    Foundry reads the files as evidence, shows you every product and quantity it would create, and
+    StockChief reads the files as evidence, shows you every product and quantity it would create, and
     waits. It never invents a number that is not in the file.
   </span>
 </div>

@@ -43,10 +43,10 @@ test('owner completes a blind count and recount through the real browser contrac
 
 test('customer return and fulfillment wave pages are actionable rather than dead summaries',async()=>{
   const f=fixture(),agent=request.agent(f.app);await signIn(agent,f.workspace.account.email);
-  let shipped=sales.createOrder(f.db,f.workspace.ctx,{customerName:'Returned Browser Customer',fulfillmentLocationId:f.workspace.main.id,
+  let shipped=sales.createOrder(f.db,f.workspace.ctx,{shipToAddress:'7 Example Lane, Albany, NY 12207, US',customerName:'Returned Browser Customer',fulfillmentLocationId:f.workspace.main.id,
     lines:[{skuId:f.item.skuId,quantity:2}]});shipped=sales.confirm(f.db,f.workspace.ctx,shipped.id);
   sales.fulfill(f.db,f.workspace.ctx,shipped.id,{}, {idempotencyKey:'m8-browser-fulfilled'});
-  let ready=sales.createOrder(f.db,f.workspace.ctx,{customerName:'Wave Browser Customer',fulfillmentLocationId:f.workspace.main.id,
+  let ready=sales.createOrder(f.db,f.workspace.ctx,{shipToAddress:'7 Example Lane, Albany, NY 12207, US',customerName:'Wave Browser Customer',fulfillmentLocationId:f.workspace.main.id,
     lines:[{skuId:f.item.skuId,quantity:2}]});ready=sales.confirm(f.db,f.workspace.ctx,ready.id);
   const quarantine=locations.createLocation(f.db,f.workspace.ctx,{name:'Browser quarantine',kind:'zone',barcode:'M8-QUAR'});
   let page=await agent.get('/warehouse/operations');
@@ -57,4 +57,3 @@ test('customer return and fulfillment wave pages are actionable rather than dead
   assert.equal(wave.status,303);page=await agent.get(wave.headers.location);assert.match(plain(page.text),/Location scan/);
   assert.match(plain(page.text),/Report a shortage/);assert.match(plain(page.text),/Packing does not move stock/);
 });
-

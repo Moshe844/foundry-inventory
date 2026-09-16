@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * What Foundry may do without asking, as data a person approved.
+ * What StockChief may do without asking, as data a person approved.
  *
  * A model may help someone *express* a policy — "handle ordinary transfers
  * yourself" becomes a structured proposal with real limits — but nothing a
@@ -150,7 +150,7 @@ function validate(db, workspaceId, input) {
   const unsupported = actions.filter((a) => !AUTOMATABLE_ACTIONS.includes(a));
   if (unsupported.length) {
     throw new ValidationError(
-      `Foundry will not automate ${unsupported.join(', ')}. Today it can only be trusted with transfers and approved purchase orders.`
+      `StockChief will not automate ${unsupported.join(', ')}. Today it can only be trusted with transfers and approved purchase orders.`
     );
   }
 
@@ -160,7 +160,7 @@ function validate(db, workspaceId, input) {
   const needsQuantityLimit = actions.includes('transfer');
   if (needsQuantityLimit && (maximumQuantity === null || !Number.isFinite(maximumQuantity) || maximumQuantity <= 0)) {
     // Not optional. A policy with no ceiling is not a policy, it is permission.
-    throw new ValidationError('Say the most Foundry may move in one go. A policy without a limit is not a limit.');
+    throw new ValidationError('Say the most StockChief may move in one go. A policy without a limit is not a limit.');
   }
 
   const locationScope = (Array.isArray(input.locationScope) ? input.locationScope : []).filter(Boolean);
@@ -179,12 +179,12 @@ function validate(db, workspaceId, input) {
     if (!supplier) throw new ValidationError('One of the suppliers in this policy is not in this inventory.');
   }
   if (actions.includes('approve_purchase_order') && supplierScope.length === 0) {
-    throw new ValidationError('Choose which suppliers Foundry may approve orders from.');
+    throw new ValidationError('Choose which suppliers StockChief may approve orders from.');
   }
   const maximumValue = input.maximumValue === undefined || input.maximumValue === null || input.maximumValue === ''
     ? null : Number(input.maximumValue);
   if (actions.includes('approve_purchase_order') && (!Number.isFinite(maximumValue) || maximumValue <= 0)) {
-    throw new ValidationError('Say the most Foundry may commit on one purchase order.');
+    throw new ValidationError('Say the most StockChief may commit on one purchase order.');
   }
 
   return {
@@ -274,7 +274,7 @@ function approve(db, ctx, membership, policyId, { expectedHash = null } = {}) {
   /*
    * Approving a policy is what authorises the job it is about.
    *
-   * The job permissions were added so that letting Foundry chase an invoice
+   * The job permissions were added so that letting StockChief chase an invoice
    * could not also let it spend money. But a policy already says which
    * actions it allows, and approving one is an owner saying "yes, do this
    * kind of work" in the most explicit way the product offers. Making them
@@ -391,13 +391,13 @@ const array = (value) => Array.isArray(value) ? value.filter(Boolean) : value ? 
  * versioned and retain the exact hash/evidence trail used everywhere else.
  */
 function configureRoutine(db, ctx, membership, input) {
-  permissions.assertCan(membership, permissions.ADMIN, 'decide what Foundry may handle automatically');
+  permissions.assertCan(membership, permissions.ADMIN, 'decide what StockChief may handle automatically');
 
   const enableTransfers = selected(input.enableTransfers);
   const enablePurchasing = selected(input.enablePurchasing);
   const before = routineSetup(db, ctx.workspaceId);
   if (!enableTransfers && !enablePurchasing && !before.hasGuidedAuthority) {
-    throw new ValidationError('Choose at least one routine task for Foundry to handle. Nothing is enabled automatically.');
+    throw new ValidationError('Choose at least one routine task for StockChief to handle. Nothing is enabled automatically.');
   }
 
   const locations = repo.listLocations(db, ctx.workspaceId).filter((location) => location.is_active);
@@ -486,13 +486,13 @@ function recordEvaluation(db, workspaceId, evaluation) {
   return id;
 }
 
-/** In plain words: what this policy lets Foundry do. */
+/** In plain words: what this policy lets StockChief do. */
 function describe(policy) {
   // Tolerant of a partial policy on purpose: this is also how a *draft* is read
   // back to someone before it exists, and a display helper that throws on a
   // missing field would take a whole page down to save a null check.
   const lines = [];
-  lines.push(`Foundry may ${(policy.allowedActionTypes || []).join(' and ') || 'do nothing'} without asking.`);
+  lines.push(`StockChief may ${(policy.allowedActionTypes || []).join(' and ') || 'do nothing'} without asking.`);
   if (policy.maximumQuantity) lines.push(`Never more than ${policy.maximumQuantity} units in one go.`);
   if (policy.maximumValue) lines.push(`Never commit more than ${policy.maximumValue} on one action.`);
   if ((policy.supplierScope || []).length) lines.push(`Only for ${policy.supplierScope.length} approved supplier${policy.supplierScope.length === 1 ? '' : 's'}.`);

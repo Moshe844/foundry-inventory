@@ -5,7 +5,7 @@
     <div class="page-sub">
       <%= helpers.columnLabel(order.status.toLowerCase().replace('_', ' ')) %>
       <% if (order.expectedDate) { %> · expected <%= order.expectedDate %><% } %>
-      <% if (order.source === 'foundry_recommendation') { %> · prepared by Foundry<% } %>
+      <% if (order.source === 'foundry_recommendation') { %> · prepared by StockChief<% } %>
       <% if (order.source === 'instruction') { %> · from something you asked for<% } %>
     </div>
   </div>
@@ -14,7 +14,7 @@
 <% var missingCostLines = (order.lines || []).filter(function(line) { return line.unitCost === null || line.unitCost === undefined; }); %>
 <% if (order.isEditable && missingCostLines.length) { %>
   <form method="post" action="/purchasing/orders/<%= order.id %>/prices" class="card section">
-    <div class="card-head"><div><h2>Finish pricing this order</h2><p class="muted">Foundry will not approve or send an order until every selected product has a unit cost.</p></div><span class="spacer"></span><span class="badge badge--warn">Do this now</span></div>
+    <div class="card-head"><div><h2>Finish pricing this order</h2><p class="muted">StockChief will not approve or send an order until every selected product has a unit cost.</p></div><span class="spacer"></span><span class="badge badge--warn">Do this now</span></div>
     <div class="card-body grid">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
       <% missingCostLines.forEach(function(line) { %>
@@ -34,9 +34,9 @@
     </div>
     <div class="card-body grid">
       <% if (communication.status === 'PREPARED') { %>
-        <div class="notice"><span>Prepared, not queued or sent. Approving the order records the commitment in Foundry.</span></div>
+        <div class="notice"><span>Prepared, not queued or sent. Approving the order records the commitment in StockChief.</span></div>
       <% } else if (communication.status === 'QUEUED') { %>
-        <div class="notice notice--warn"><span>Ready to send. Foundry has not told the supplier yet.</span></div>
+        <div class="notice notice--warn"><span>Ready to send. StockChief has not told the supplier yet.</span></div>
       <% } else if (communication.status === 'SENT') { %>
         <div class="notice" style="background:var(--ok-bg); border-color:#bbf7d0; color:#14532d;"><span>Sent successfully<%= communication.mailboxProviderName ? ' through ' + communication.mailboxProviderName : '' %> from <%= communication.mailboxName %> to <%= communication.recipient %>.</span></div>
       <% } %>
@@ -62,7 +62,7 @@
      : billSummary.owedMinor === 0 ? 'Paid'
      : billSummary.paidMinor > 0 ? 'Partially paid' : 'Unpaid'; %>
 <section class="card section supplier-order-story">
-  <div class="card-head"><div><p class="eyebrow">Foundry handles the routine work</p><h2>Delivery and payment are tracked separately</h2><p class="hint">Receiving products changes inventory. A supplier invoice creates the bill. A payment reduces only the bill.</p></div></div>
+  <div class="card-head"><div><p class="eyebrow">StockChief handles the routine work</p><h2>Delivery and payment are tracked separately</h2><p class="hint">Receiving products changes inventory. A supplier invoice creates the bill. A payment reduces only the bill.</p></div></div>
   <div class="card-body">
     <div class="supplier-order-tracks">
       <div class="supplier-order-track">
@@ -76,10 +76,10 @@
         <dl class="money-plain-list"><div><dt>Supplier invoices received</dt><dd><%= helpers.money(billSummary.invoiceTotalMinor, order.currency) %></dd></div><div><dt>Paid</dt><dd><%= helpers.money(billSummary.paidMinor, order.currency) %></dd></div><div><dt>Still owed</dt><dd><%= helpers.money(billSummary.owedMinor, order.currency) %></dd></div></dl>
       </div>
     </div>
-    <div class="notice notice--info"><div><strong>These balances never change each other.</strong><br>A partial delivery changes “Still expected.” A partial payment changes “Still owed.” Foundry waits for evidence of each event and never treats an invoice as a delivery or a delivery as a payment.</div></div>
+    <div class="notice notice--info"><div><strong>These balances never change each other.</strong><br>A partial delivery changes “Still expected.” A partial payment changes “Still owed.” StockChief waits for evidence of each event and never treats an invoice as a delivery or a delivery as a payment.</div></div>
 
     <% if (!supplierBills.length) { %>
-      <div class="notice"><div><strong>No supplier invoice has been received for this order yet.</strong><br>Foundry is watching the approved supplier mailbox. A trusted invoice will be matched to <%= order.poNumber %>, checked against its products and prices, and turned into a supplier bill automatically. Receiving inventory alone does not say the supplier was paid.</div></div>
+      <div class="notice"><div><strong>No supplier invoice has been received for this order yet.</strong><br>StockChief is watching the approved supplier mailbox. A trusted invoice will be matched to <%= order.poNumber %>, checked against its products and prices, and turned into a supplier bill automatically. Receiving inventory alone does not say the supplier was paid.</div></div>
     <% } else { %>
       <div class="stack supplier-bill-list">
         <% supplierBills.forEach(function(bill) { var openBill = ['OPEN','PARTIALLY_PAID'].includes(bill.status); var paid = Number(bill.total_minor) - Number(bill.balance_minor); %>
@@ -91,13 +91,13 @@
       </div>
     <% } %>
 
-    <div class="supplier-autonomy-next"><strong>What Foundry does next</strong><p><% if (order.outstandingUnits > 0) { %>Keeps watching for shipment and delivery evidence for the remaining <%= order.outstandingUnits %> units. <% } %><% if (!supplierBills.length) { %>Keeps watching for the supplier invoice. <% } else if (billSummary.owedMinor > 0) { %>Keeps the <%= helpers.money(billSummary.owedMinor, order.currency) %> balance open and updates it when payment evidence is recorded. <% } %>Any price, quantity, SKU, duplicate, or authority exception goes to Needs You instead of being guessed.</p></div>
+    <div class="supplier-autonomy-next"><strong>What StockChief does next</strong><p><% if (order.outstandingUnits > 0) { %>Keeps watching for shipment and delivery evidence for the remaining <%= order.outstandingUnits %> units. <% } %><% if (!supplierBills.length) { %>Keeps watching for the supplier invoice. <% } else if (billSummary.owedMinor > 0) { %>Keeps the <%= helpers.money(billSummary.owedMinor, order.currency) %> balance open and updates it when payment evidence is recorded. <% } %>Any price, quantity, SKU, duplicate, or authority exception goes to Needs You instead of being guessed.</p></div>
   </div>
 </section>
 
 <div class="card section">
   <div class="card-head">
-    <h2><%= order.isEditable && !order.hasCosts ? 'This order needs a price' : order.status === 'DRAFT' || order.status === 'AWAITING_APPROVAL' ? 'Foundry is ready to order' : 'The order' %></h2>
+    <h2><%= order.isEditable && !order.hasCosts ? 'This order needs a price' : order.status === 'DRAFT' || order.status === 'AWAITING_APPROVAL' ? 'StockChief is ready to order' : 'The order' %></h2>
     <span class="spacer"></span>
     <span class="badge badge--<%= order.status === 'RECEIVED' ? 'ok' : order.status === 'CANCELLED' ? 'danger' : 'muted' %>">
       <%= helpers.columnLabel(order.status.toLowerCase().replace('_', ' ')) %>
@@ -173,7 +173,7 @@
                   var reckoned = Math.round((order.hasCosts ? order.subtotal : 0) * 100)
                     + charges.reduce(function (s, c) { return s + c.amountMinor; }, 0);
                   if (reckoned !== documentTotalMinor) { %>, which is <%= ((documentTotalMinor - reckoned) / 100).toFixed(2)
-                  %> away from the lines above. Foundry has not adjusted anything to make them agree.<% } else { %>, and the lines above come to the same.<% } %>
+                  %> away from the lines above. StockChief has not adjusted anything to make them agree.<% } else { %>, and the lines above come to the same.<% } %>
               </td>
             </tr>
           <% } %>
@@ -196,7 +196,7 @@
       <% if (order.isOpen && permissions.receive) { %>
         <%# The common case first: the delivery matches the order, so one button
             books the whole thing in. The form behind "Something is different"
-            is for short, over or damaged deliveries. Foundry does not decide by
+            is for short, over or damaged deliveries. StockChief does not decide by
             itself that the boxes arrived — nobody has told it that — but once
             you say so it fills in everything it already knows. %>
         <%# One click only where one click can actually finish. A batch number or
@@ -212,7 +212,7 @@
           <span class="muted" style="font-size:12px;">Expected <%= order.expectedDate %>. Nothing is booked in until you report that it arrived.</span>
         <% } else if (needsArrivalDetail) { %>
           <a class="btn btn--primary" href="/purchasing/orders/<%= order.id %>/receive">Book in the delivery</a>
-          <span class="muted" style="font-size:12px;">Foundry needs the batch or serial numbers that arrived — it cannot know those.</span>
+          <span class="muted" style="font-size:12px;">StockChief needs the batch or serial numbers that arrived — it cannot know those.</span>
         <% } else { %>
           <form method="post" action="/purchasing/orders/<%= order.id %>/receive-all" style="display:inline;" data-busy>
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
@@ -247,7 +247,7 @@
 
 <% if (order.sourceDetail && order.sourceDetail.assumptions && order.sourceDetail.assumptions.length) { %>
   <div class="card section">
-    <div class="card-head"><h2>What Foundry assumed</h2></div>
+    <div class="card-head"><h2>What StockChief assumed</h2></div>
     <div class="card-body">
       <ul class="plain-list">
         <% order.sourceDetail.assumptions.forEach(function (line) { %><li><%= line %></li><% }) %>

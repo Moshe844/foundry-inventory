@@ -6,7 +6,7 @@ const activityService = require('./activity-service');
  * What actually happened to the operation, as a business would tell it.
  *
  * Activity had become two problems at once. The link in the sidebar went to
- * Foundry's own work log, so the page a customer opened looking for their
+ * StockChief's own work log, so the page a customer opened looking for their
  * trading history was fifty near-identical lines of "Scheduled inventory check
  * — 6 stock positions checked". And the real ledger underneath it held only
  * movements, so the things a business thinks of as events — an order placed, a
@@ -19,12 +19,12 @@ const activityService = require('./activity-service');
  * truth beneath it.
  *
  * Events carry a stream so the page can separate what a person did to their
- * stock from what Foundry did about it. They are related but they are not the
+ * stock from what StockChief did about it. They are related but they are not the
  * same story, and telling them as one is what made this page unreadable:
  *
  *   inventory  — stock moved, arrived, left, or was corrected
  *   purchasing — orders placed, received, cancelled
- *   foundry    — work Foundry prepared or carried out
+ *   foundry    — work StockChief prepared or carried out
  *   exception  — differences opened and settled
  *   system     — routine checks that produced nothing, kept for the audit trail
  */
@@ -36,7 +36,7 @@ const STREAM_LABEL = {
   inventory: 'Inventory',
   sales: 'Sales orders',
   purchasing: 'Purchasing',
-  foundry: 'Foundry actions',
+  foundry: 'StockChief actions',
   exception: 'Exceptions',
   system: 'System checks',
 };
@@ -117,7 +117,7 @@ function purchasingEvents(db, workspaceId) {
       kind: 'po_drafted',
       title: `${order.po_number} drafted for ${supplier}`,
       subject: order.po_number,
-      who: order.created_by || 'Foundry',
+      who: order.created_by || 'StockChief',
       detail: `${units(order.units)}. Nothing sent to the supplier yet.`,
       href: `/purchasing/orders/${order.id}`,
     });
@@ -129,7 +129,7 @@ function purchasingEvents(db, workspaceId) {
         kind: 'po_placed',
         title: `${order.po_number} placed with ${supplier}`,
         subject: order.po_number,
-        who: order.approved_by || 'Foundry',
+        who: order.approved_by || 'StockChief',
         detail: `${units(order.units)} now on order.`,
         href: `/purchasing/orders/${order.id}`,
       });
@@ -209,9 +209,9 @@ function purchasingEvents(db, workspaceId) {
         ? `${document.supplier_name || 'Supplier'} ${label} matched${document.po_number ? ` ${document.po_number}` : ''}`
         : `${document.supplier_name || 'Supplier'} ${label} needs review`,
       subject: document.po_number || document.supplier_name || 'Supplier document',
-      who: 'Foundry',
+      who: 'StockChief',
       detail: matched
-        ? 'Foundry compared the supplier evidence with the purchase order; no action is needed.'
+        ? 'StockChief compared the supplier evidence with the purchase order; no action is needed.'
         : `${discrepancies.length || 1} difference${discrepancies.length === 1 ? '' : 's'} found. Nothing unsafe was applied.`,
       href: document.purchase_order_id ? `/purchasing/orders/${document.purchase_order_id}` : '/needs-you',
     });
@@ -232,7 +232,7 @@ function purchasingEvents(db, workspaceId) {
       kind: followup ? 'supplier_follow_up_sent' : 'supplier_order_sent',
       title: `${followup ? 'Follow-up' : message.po_number || 'Purchase order'} sent to ${message.supplier_name || message.recipient || 'supplier'}`,
       subject: message.po_number || message.supplier_name || 'Supplier communication',
-      who: 'Foundry',
+      who: 'StockChief',
       detail: message.recipient ? `Sent to ${message.recipient}.` : '',
       href: message.purchase_order_id ? `/purchasing/orders/${message.purchase_order_id}` : '/purchasing',
     });
@@ -263,7 +263,7 @@ function salesEvents(db, workspaceId) {
           : detail.released !== undefined ? `${detail.released} commitment(s) released` : '';
       return { id: `sales:${row.id}`, stream: 'sales', at: row.created_at,
         kind: row.event_type.toLowerCase(), title: titles[row.event_type] || `${row.order_number} updated`,
-        subject: row.order_number, who: row.actor_name || 'Foundry', detail: quantities,
+        subject: row.order_number, who: row.actor_name || 'StockChief', detail: quantities,
         href: `/sales/orders/${row.order_id}` };
     });
 }
@@ -294,7 +294,7 @@ function exceptionEvents(db, workspaceId) {
       kind: 'investigation_opened',
       title: `${name} did not match the records`,
       subject: name,
-      who: 'Foundry',
+      who: 'StockChief',
       detail: observed.statedAs
         ? `You said: “${observed.statedAs}”`
         : (row.recommended_next_step || ''),
@@ -317,7 +317,7 @@ function exceptionEvents(db, workspaceId) {
   return events;
 }
 
-/** Work Foundry prepared or carried out — not what it merely looked at. */
+/** Work StockChief prepared or carried out — not what it merely looked at. */
 function foundryEvents(db, workspaceId) {
   return db
     .prepare(
@@ -342,10 +342,10 @@ function foundryEvents(db, workspaceId) {
         at: iso(row.completed_at || row.created_at),
         kind: row.category,
         title: failed
-          ? `Foundry could not finish work on ${named}`
-          : `Foundry ${outcome.nothingToDo ? 'reviewed' : 'handled'} ${named}`,
+          ? `StockChief could not finish work on ${named}`
+          : `StockChief ${outcome.nothingToDo ? 'reviewed' : 'handled'} ${named}`,
         subject: named,
-        who: row.approved_at ? 'You approved it' : 'Foundry',
+        who: row.approved_at ? 'You approved it' : 'StockChief',
         detail: outcome.because || outcome.poNumber || '',
         href: `/autopilot/work/${row.id}`,
       };
@@ -355,7 +355,7 @@ function foundryEvents(db, workspaceId) {
 /**
  * Routine checks, as one line rather than fifty.
  *
- * A check that found nothing is evidence that Foundry looked, which is worth
+ * A check that found nothing is evidence that StockChief looked, which is worth
  * keeping and worth being able to audit. It is not worth fifty rows above the
  * sale somebody came here to find, so it is counted rather than listed, and
  * the individual runs stay one click away.
@@ -382,8 +382,8 @@ function systemChecks(db, workspaceId) {
       at: iso(quiet[0].finished_at),
       kind: 'routine_checks',
       title: `${quiet.length} routine inventory check${quiet.length === 1 ? '' : 's'} — no action needed`,
-      subject: 'Foundry',
-      who: 'Foundry',
+      subject: 'StockChief',
+      who: 'StockChief',
       detail: 'Stock was checked against your levels and nothing needed doing. Kept for the audit trail.',
       href: '/autopilot/history',
       collapsed: quiet.length,

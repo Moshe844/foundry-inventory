@@ -930,7 +930,7 @@ test('an overdue order becomes a finding, and an undated one never does', () => 
   assert.equal(finding.metrics.daysLate, 4);
 
   // An order with no expected date at all is never called late: there is no
-  // date to be late against, and Foundry will not invent one to accuse anybody.
+  // date to be late against, and StockChief will not invent one to accuse anybody.
   const noDateSupplier = suppliers.createSupplier(env.db, env.ctx, env.membership, { name: 'Undated Supply' });
   suppliers.linkItem(env.db, env.ctx, env.membership, {
     supplierId: noDateSupplier.id, skuId: item.skuId, purchaseUnit: 'unit', unitsPerPurchaseUnit: 1,
@@ -1031,7 +1031,7 @@ test('a workspace that buys nothing gets no purchasing findings at all', () => {
 
 const setupService = require('../../src/purchasing/setup-service');
 
-test('Foundry proposes reorder points only where the history supports one', () => {
+test('StockChief proposes reorder points only where the history supports one', () => {
   const env = setup();
   const selling = makeQuantityItem(env.db, env.ctx, { name: 'Fast Mover', baseCode: 'FM-1' });
   const quiet = makeQuantityItem(env.db, env.ctx, { name: 'Never Sold', baseCode: 'NS-1' });
@@ -1050,7 +1050,7 @@ test('Foundry proposes reorder points only where the history supports one', () =
   // The one that never sold gets nothing invented for it, and says why.
   assert.equal(assessment.summary.needHistory, 1);
   assert.equal(assessment.blocked[0].displayName, 'Never Sold');
-  // Said as a fact about the product rather than about Foundry’s method.
+  // Said as a fact about the product rather than about StockChief’s method.
   assert.match(assessment.blocked[0].because, /sold in the last/i);
 });
 
@@ -1110,10 +1110,10 @@ test('setting purchasing up cannot be done by someone without the permission', (
   );
 });
 
-// --- a line Foundry cannot act on still needs ordering -----------------------
+// --- a line StockChief cannot act on still needs ordering -----------------------
 //
 // Reported from the console: a SKU set to reorder at 20, sold down to 15, with
-// no supplier attached. Foundry worked out it was 85 short and then answered
+// no supplier attached. StockChief worked out it was 85 short and then answered
 // "nothing needs ordering right now", with the real finding reduced to a count
 // of things that "cannot be assessed".
 
@@ -1135,7 +1135,7 @@ test('a shortfall with no supplier is reported as needing ordering, not as nothi
   assert.equal(plan.blocked[0].reason, 'no_supplier');
   assert.match(plan.blocked[0].headline, /85 short/);
 
-  // What Foundry says about it is.
+  // What StockChief says about it is.
   const answer = queryService.execute(db, workspace.workspaceId, { intent: 'replenishment' });
   assert.doesNotMatch(answer.answer, /^Nothing needs ordering/, 'something is 85 short');
   assert.match(answer.answer, /need ordering/);
@@ -1160,7 +1160,7 @@ test('with nothing short at all, it still says so plainly', () => {
 
 test('no history is reported as not knowing, never as needing ordering', () => {
   // Found crawling a new account: a fresh product with no sales was announced
-  // as "6 lines need ordering", which is the demand guess Foundry refuses to
+  // as "6 lines need ordering", which is the demand guess StockChief refuses to
   // make, wearing the opposite disguise.
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db);
@@ -1194,7 +1194,7 @@ test('a known shortfall with no supplier is still reported as needing ordering',
   assert.match(answer.answer, /Known Short/);
 });
 
-test('a line that was checked and found fine is visible next to ones Foundry cannot judge', () => {
+test('a line that was checked and found fine is visible next to ones StockChief cannot judge', () => {
   // Found walking purchasing setup: after configuring one product and testing
   // it, the page talked only about the five untouched variants — so the line
   // the customer had just set up and proven looked as though nothing happened.

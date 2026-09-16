@@ -1,15 +1,15 @@
 'use strict';
 
 /*
- * The record of mail Foundry did not take.
+ * The record of mail StockChief did not take.
  *
  * A filter nobody can see is indistinguishable from a bug. If a customer says
- * "I emailed you last Tuesday" and Foundry has nothing, the owner needs to be
+ * "I emailed you last Tuesday" and StockChief has nothing, the owner needs to be
  * able to look at what was set aside and find it there, with the reason it was
  * set aside, and bring it in with one click.
  *
  * So this stores the envelope and nothing else: sender, subject, when, and
- * why. No body, no attachments. The whole point of the gate is that Foundry
+ * why. No body, no attachments. The whole point of the gate is that StockChief
  * does not keep the contents of mail that is not its business, and a log that
  * kept them anyway would be the same mistake wearing a different name.
  */

@@ -92,7 +92,7 @@ function shipmentLines(db, workspaceId, shipmentId) {
  *
  * A parcel with a courier and a tracking number was shipped. A box the
  * customer put in their own car was collected, and calling that "shipped to"
- * an address nobody entered is how Foundry ended up asserting a delivery that
+ * an address nobody entered is how StockChief ended up asserting a delivery that
  * never took place. Shipments recorded before the question existed say the
  * only true thing left to say about them.
  */
@@ -114,7 +114,7 @@ function wentBy(row) {
  * single word that is true of every order. Goods a customer collected were
  * not shipped; goods with no method recorded were not necessarily shipped
  * either. "Gone" is the word that is true when the others are not, and it is
- * deliberately less flattering than the one Foundry used to reach for.
+ * deliberately less flattering than the one StockChief used to reach for.
  */
 function wordForOrder(db, workspaceId, orderId) {
   const rows = db.prepare(`SELECT DISTINCT handover FROM sales_shipments
@@ -388,6 +388,20 @@ function setLineQuantity(db, ctx, shipmentId, lineId, locationId, quantity, kitC
 /**
  * Packed: the box is closed and weighed. Still nothing has left the building.
  */
+function setDestination(db, ctx, shipmentId, input = {}) {
+  return inTransaction(db, () => {
+    const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
+    if (!OPEN_SHIPMENT.includes(shipment.status)) throw new ValidationError('A completed handover keeps its original destination. It needs a separately recorded correction, not a rewritten shipment history.');
+    if (shipment.label_url || shipment.tracking_number) throw new ValidationError('This box already has carrier evidence. Resolve its label or tracking details before changing its destination.');
+    const order = orders.resolveDelivery(db, ctx, shipment.sales_order_id, {
+      deliveryMethod: input.deliveryMethod, shippingAddress: input.shippingAddress,
+    });
+    db.prepare('UPDATE sales_shipments SET ship_to_address = ?, updated_at = ? WHERE id = ? AND workspace_id = ?')
+      .run(order.delivery_method === 'PICKUP' ? null : order.ship_to_address, nowIso(), shipmentId, ctx.workspaceId);
+    return decorate(db, ctx.workspaceId, requireShipment(db, ctx.workspaceId, shipmentId));
+  });
+}
+
 function markPacked(db, ctx, shipmentId, input = {}) {
   return inTransaction(db, () => {
     const shipment = requireShipment(db, ctx.workspaceId, shipmentId);
@@ -419,9 +433,9 @@ function markPacked(db, ctx, shipmentId, input = {}) {
 /*
  * How the goods left, in the three ways goods actually leave a small business.
  *
- * Foundry used to accept a shipment with nothing said about it, and then tell
+ * StockChief used to accept a shipment with nothing said about it, and then tell
  * the owner the order was "shipped". Shipped where? By whom? Nobody had said,
- * and Foundry had not asked — it had simply moved the stock and picked the
+ * and StockChief had not asked — it had simply moved the stock and picked the
  * most flattering word for what it had done.
  *
  * So the method is required and has no default. It is one click either way,
@@ -439,7 +453,7 @@ function requireHandover(input, shipment = null) {
   /*
    * A tracking number is somebody telling us it went with a carrier, so it
    * answers the question on its own. Nothing else is inferred: a shipment with
-   * no method stated is a shipment nobody has described, and Foundry says so
+   * no method stated is a shipment nobody has described, and StockChief says so
    * rather than choosing on their behalf.
    */
   if (trimOrNull(input.trackingNumber) || trimOrNull(input.carrier)) return 'CARRIER';
@@ -449,7 +463,7 @@ function requireHandover(input, shipment = null) {
   if (shipment?.delivery_method === 'PICKUP') return 'COLLECTED';
   if (shipment?.delivery_method === 'DELIVER') return 'DELIVERED_BY_US';
   if (shipment?.delivery_method === 'SHIP') return 'CARRIER';
-  throw new ValidationError('Say how these goods left: sent by carrier, collected by the customer, or delivered by us. Foundry will not record a shipment it cannot describe.');
+  throw new ValidationError('Say how these goods left: sent by carrier, collected by the customer, or delivered by us. StockChief will not record a shipment it cannot describe.');
 }
 
 function ship(db, ctx, shipmentId, input = {}) {
@@ -478,6 +492,9 @@ function ship(db, ctx, shipmentId, input = {}) {
   }
 
   const handover = requireHandover(input, shipment);
+  if (HANDOVER[handover].needsAddress && !trimOrNull(shipment.ship_to_address)) {
+    throw new ValidationError('This box has no delivery address. Enter its destination before recording a carrier handover or delivery. Nothing has left stock.');
+  }
   const trackingNumber = trimOrNull(input.trackingNumber) || trimOrNull(shipment.tracking_number);
   const detected = trackingNumber ? carriers.detect(trackingNumber) : null;
   const carrierCode = trimOrNull(input.carrier) || trimOrNull(shipment.carrier)
@@ -505,7 +522,7 @@ function ship(db, ctx, shipmentId, input = {}) {
   }
   orders.fulfill(db, ctx, shipment.sales_order_id, {
     lines: fulfillmentLines,
-  }, { idempotencyKey: `sales-shipment:${shipmentId}` });
+  }, { idempotencyKey: `sales-shipment:${shipmentId}`, handover, destinationAddress: shipment.ship_to_address });
 
   const result = inTransaction(db, () => {
     const now = nowIso();
@@ -745,7 +762,7 @@ function fulfilmentState(db, workspaceId, order) {
 
 module.exports = { HANDOVER, wentBy, wordForOrder,
   OPEN_SHIPMENT, CLOSED_SHIPMENT,
-  startPicking, setLineQuantity, markPacked, ship, shipInOneStep, markDelivered, cancelShipment,
+  startPicking, setLineQuantity, setDestination, markPacked, ship, shipInOneStep, markDelivered, cancelShipment,
   pickable, pickList, listForOrder, getShipment, workQueue, fulfilmentState,
   nextShipmentNumber,
 };

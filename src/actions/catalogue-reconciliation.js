@@ -36,8 +36,38 @@ function instructionLabelsCode(instruction, code) {
     .test(String(instruction || ''));
 }
 
-function variantFrom(line, grouped) {
-  const options = exactOptions(line.variantAxes);
+function variantAxesFor(rows) {
+  if (rows.length < 2) return [];
+
+  const parsed = rows.map((row) => exactOptions(row.line.variantAxes));
+  const names = [];
+  for (const options of parsed) {
+    for (const name of Object.keys(options)) {
+      if (!names.some((existing) => existing.toLowerCase() === name.toLowerCase())) names.push(name);
+    }
+  }
+
+  // A product option is an attribute that actually distinguishes its supplied
+  // SKU records. Shared facts such as material, colour, pack quantity, voltage,
+  // or a custom field still live on each catalogue record, but they must not
+  // become option axes merely because the owner supplied them. The product
+  // engine supports three axes; any further distinguishing facts remain on the
+  // exact SKU evidence instead of preventing the whole atomic plan from running.
+  return names.filter((name) => {
+    const values = parsed.map((options) => {
+      const key = Object.keys(options).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+      return key ? identity(options[key]) : '';
+    });
+    return values.every(Boolean) && new Set(values).size > 1;
+  }).slice(0, 3);
+}
+
+function variantFrom(line, grouped, axes) {
+  const supplied = exactOptions(line.variantAxes);
+  const options = Object.fromEntries((axes || []).map((name) => {
+    const key = Object.keys(supplied).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+    return [name, supplied[key]];
+  }));
   const values = Object.values(options);
   const variant = {
     code: String(line.productCode || '').trim(),
@@ -75,12 +105,13 @@ function reconcile(lines, instruction) {
     // merge or silently rename anything.
     if (uniqueCodes.size !== rows.length) continue;
     const grouped = rows.length > 1;
+    const axes = variantAxesFor(rows);
     const first = rows[0];
     replacements.set(first.index, {
       ...first.line,
       productCode: '',
       variantAxes: '',
-      exactVariants: rows.map((row) => variantFrom(row.line, grouped)),
+      exactVariants: rows.map((row) => variantFrom(row.line, grouped, axes)),
       sourceText: rows.map((row) => row.line.sourceText).filter(Boolean).join('\n'),
     });
     rows.slice(1).forEach((row) => consumed.add(row.index));
@@ -92,4 +123,4 @@ function reconcile(lines, instruction) {
   });
 }
 
-module.exports = { reconcile, identity, exactOptions, instructionLabelsCode };
+module.exports = { reconcile, identity, exactOptions, instructionLabelsCode, variantAxesFor };

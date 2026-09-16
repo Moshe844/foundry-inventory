@@ -170,7 +170,7 @@ test('return label completes the carrier loop but cannot receive stock or issue 
   } finally { undo(); env.db.close(); }
 });
 
-test('Ask Foundry and the order story read the complete carrier and accounting evidence', async () => {
+test('Ask StockChief and the order story read the complete carrier and accounting evidence', async () => {
   const env = setup(); const carrier = fakeCarrier(); const undo = withCarrier(carrier);
   try {
     shipping.service.setPromise(env.db, env.ctx, env.box.id, {

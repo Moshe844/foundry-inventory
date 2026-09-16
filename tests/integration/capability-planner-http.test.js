@@ -9,7 +9,7 @@ const { fakeProvider } = require('../helpers/fake-provider');
 
 test.after(cleanupAll);
 
-test('Tell Foundry routes a new code-change paraphrase through the shared capability plan and preview', async () => {
+test('Tell StockChief routes a new code-change paraphrase through the shared capability plan and preview', async () => {
   const store = makeDatabase();
   const workspace = seedWorkspace(store.db, { workspaceName: 'Capability HTTP Co' });
   const item = makeQuantityItem(store.db, workspace.ctx, { name: 'Travel Mug', baseCode: 'TS-100' });

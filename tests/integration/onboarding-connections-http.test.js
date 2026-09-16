@@ -27,8 +27,8 @@ test('new-inventory onboarding exposes real connection choices before sending ow
   const start = await agent.get('/onboarding');
   const startText = plain(start.text);
   assert.equal(start.status, 200);
-  assert.match(startText, /Where should Foundry get your inventory from/);
-  for (const source of ['Enter it in Foundry', 'Move from files', 'Use email attachments', 'Connect another system', 'Use several sources']) {
+  assert.match(startText, /Where should StockChief get your inventory from/);
+  for (const source of ['Enter it in StockChief', 'Move from files', 'Use email attachments', 'Connect another system', 'Use several sources']) {
     assert.match(startText, new RegExp(source));
   }
   assert.match(startText, /Excel, CSV or TSV exports/);
@@ -63,7 +63,7 @@ test('new-inventory onboarding exposes real connection choices before sending ow
     .send({ _csrf: csrfFrom(start.text), description: 'I sell clothing' });
   assert.equal(vague.status, 200);
   assert.match(plain(vague.text), /That explains the kind of business, but it does not contain the actual product names/);
-  assert.match(plain(vague.text), /Choose where Foundry should get those real records/);
+  assert.match(plain(vague.text), /Choose where StockChief should get those real records/);
 
   const mixed = await agent.post('/onboarding/describe').type('form')
     .send({
@@ -77,6 +77,6 @@ test('new-inventory onboarding exposes real connection choices before sending ow
   const mailbox = await agent.get('/onboarding/mailbox');
   assert.equal(mailbox.status, 200);
   assert.match(plain(mailbox.text), /Use files that arrive by email/);
-  assert.match(plain(mailbox.text), /Foundry ignores every sender you do not approve/);
+  assert.match(plain(mailbox.text), /StockChief ignores every sender you do not approve/);
   store.db.close();
 });

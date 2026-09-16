@@ -1,4 +1,4 @@
-<div class="page-head"><div><a class="back-link" href="/accounting">‹ Accounting setup</a><p class="eyebrow">Final review</p><h1>Confirm what Foundry will start with</h1>
+<div class="page-head"><div><a class="back-link" href="/accounting">‹ Accounting setup</a><p class="eyebrow">Final review</p><h1>Confirm what StockChief will start with</h1>
   <p class="lede">This creates one balanced opening entry on <%= opening.accounting_start_date %>. It does not recreate earlier transactions or move physical stock.</p></div></div>
 
 <section class="card"><div class="card-head"><h2>Opening journal</h2><span class="badge"><%= opening.currency %></span></div><div class="card-body">
@@ -14,6 +14,6 @@
   </tbody></table></div><% } %>
 </div></section>
 
-<div class="notice notice--warning"><div><strong>After approval</strong><br>Foundry will account only for activity dated <%= opening.accounting_start_date %> or later. Posted entries can be corrected only by a visible reversal.</div></div>
+<div class="notice notice--warning"><div><strong>After approval</strong><br>StockChief will account only for activity dated <%= opening.accounting_start_date %> or later. Posted entries can be corrected only by a visible reversal.</div></div>
 <form method="post" action="/accounting/opening/<%= opening.id %>/approve" class="form-actions"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="integrityHash" value="<%= opening.integrity_hash %>">
   <button class="btn" type="submit">Approve and start accounting</button><a class="btn btn--ghost" href="/accounting">Go back without posting</a></form>

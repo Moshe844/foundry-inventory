@@ -77,7 +77,7 @@ test('permission-valid where questions resolve exactly and inaccessible pages ar
 test('switching systems resolves to the owner migration workspace and stays hidden from staff', () => {
   const { db } = makeDatabase(); const workspace = seedWorkspace(db);
   const owner = auth.getMembership(db,workspace.workspaceId,workspace.accountId);
-  const result = navigation.resolve(db,workspace.workspaceId,owner,'Take me where I can move to Foundry from my old system');
+  const result = navigation.resolve(db,workspace.workspaceId,owner,'Take me where I can move to StockChief from my old system');
   assert.equal(result.href,'/onboarding/migrations/new');
   assert.equal(result.canNavigate,true);
   const staff = navigation.resolve(db,workspace.workspaceId,{ role:'staff' },'Where do I migrate from another system?');
@@ -112,7 +112,7 @@ test('unavailable capabilities explain the real prerequisite without inventing a
   const { db } = makeDatabase();
   const workspace = seedWorkspace(db);
   const result = navigation.resolve(db, workspace.workspaceId, { role: 'owner' },
-    'Can Foundry manage manufacturing orders?');
+    'Can StockChief manage manufacturing orders?');
   assert.equal(result.canNavigate, false);
   assert.match(result.answer, /not available/i);
   assert.match(result.answer, /manufacturing domain/i);
@@ -133,7 +133,7 @@ test('available capability questions are answered from deterministic product met
   const workspace = seedWorkspace(db);
   const owner = auth.getMembership(db, workspace.workspaceId, workspace.accountId);
   const result = navigation.resolve(db, workspace.workspaceId, owner,
-    'Can Foundry forecast demand?');
+    'Can StockChief forecast demand?');
   assert.equal(result.capabilityId, 'forecasting.plan');
   assert.equal(result.available, true);
   assert.equal(result.canNavigate, true);

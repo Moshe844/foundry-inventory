@@ -4,7 +4,7 @@
  * The forward half of the Home briefing.
  *
  * The claim is that these lines are counted from records and name dates
- * somebody gave, never dates Foundry worked out. An employee who says "expected
+ * somebody gave, never dates StockChief worked out. An employee who says "expected
  * Thursday" is repeating what the supplier told them; a system that guesses it
  * has invented a promise the owner will be held to.
  */

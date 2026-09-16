@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * Mission 7: Foundry answering for itself.
+ * Mission 7: StockChief answering for itself.
  *
- * Once Foundry does work of its own, three questions become inevitable — what
+ * Once StockChief does work of its own, three questions become inevitable — what
  * did you do, why did you do it, and stop doing that. Each is answered from the
  * work records, so the answer is the same thing the history page shows. A model
  * is used to read the question and nothing else; it is never asked to recall
@@ -127,7 +127,7 @@ test('"what did you do today" is answered from the work records', () => {
 
 test('a quiet day says so rather than inventing activity', () => {
   const env = tights();
-  // No policy, so Foundry has done nothing on its own.
+  // No policy, so StockChief has done nothing on its own.
   const answer = ask(env, { intent: 'foundry_activity' });
 
   assert.equal(answer.rows.length, 0);
@@ -135,7 +135,7 @@ test('a quiet day says so rather than inventing activity', () => {
   assert.doesNotMatch(answer.answer, /Moved/);
 });
 
-test('Foundry explains inventory it created from an invoice and what still needs the owner', () => {
+test('StockChief explains inventory it created from an invoice and what still needs the owner', () => {
   const env = tights();
   const now = new Date().toISOString();
   env.db.prepare(
@@ -179,7 +179,7 @@ test('"why did you move the tights" gives the measurements, not a story', () => 
   assert.deepEqual(answer.columns, ['measure', 'value']);
 });
 
-test('asking why about something Foundry never touched admits it', () => {
+test('asking why about something StockChief never touched admits it', () => {
   const env = tights();
   balancing(env);
   modes.setMode(env.db, env.ctx, env.membership, 'POLICY_AUTOMATED');
@@ -210,7 +210,7 @@ test('"stop doing that" names the policy and hands over — it does not silently
 
   // Asking is not doing. The policy is still on until someone presses the button.
   const after = policyService.get(env.db, env.workspace.workspaceId, policy.id);
-  assert.equal(after.isActive, true, 'a question never changes what Foundry is allowed to do');
+  assert.equal(after.isActive, true, 'a question never changes what StockChief is allowed to do');
 
   // And it does not get routed to the actions page, which changes stock.
   assert.equal(answer.isAction, false);
@@ -235,7 +235,7 @@ test('work that is only proposed is never described as done', () => {
   const presenter = require('../../src/autopilot/presenter');
   const workItems = require('../../src/autopilot/work-items');
 
-  // Supervised, no policy: Foundry prepares and asks.
+  // Supervised, no policy: StockChief prepares and asks.
   runner.planWork(env.db, env.ctx, env.membership, { trigger: 'test' });
   const [proposed] = workItems.list(env.db, env.workspace.workspaceId, { category: 'balance_transfer' });
   assert.equal(proposed.executionStatus, 'WAITING_FOR_APPROVAL');
@@ -275,7 +275,7 @@ test('prepared suggestions are not misrepresented as automatic work', () => {
   const presenter = require('../../src/autopilot/presenter');
 
   runner.planWork(env.db, env.ctx, env.membership, { trigger: 'test' });
-  const did = presenter.whatFoundryDid(env.db, env.workspace.workspaceId);
+  const did = presenter.whatStockChiefDid(env.db, env.workspace.workspaceId);
 
   assert.doesNotMatch(did.headline, /Nothing needed doing/);
   assert.match(did.headline, /Prepared suggestions are available/);
@@ -294,8 +294,8 @@ test('the handled-without-you count excludes owner sales and includes connector 
   });
   sales.confirm(env.db, env.ctx, ownerOrder.id, { idempotencyKey: `web-confirm:${ownerOrder.id}` });
 
-  let did = presenter.whatFoundryDid(env.db, env.workspace.workspaceId);
-  assert.equal(did.counts.handled, 0, 'an owner confirmation is not credited to Foundry');
+  let did = presenter.whatStockChiefDid(env.db, env.workspace.workspaceId);
+  assert.equal(did.counts.handled, 0, 'an owner confirmation is not credited to StockChief');
   assert.ok(!did.actions.some((entry) => entry.link === `/sales/orders/${ownerOrder.id}`));
 
   const connectorOrder = sales.createOrder(env.db, env.ctx, {
@@ -306,7 +306,7 @@ test('the handled-without-you count excludes owner sales and includes connector 
     idempotencyKey: `external:square:test:${connectorOrder.id}:confirm`,
   });
 
-  did = presenter.whatFoundryDid(env.db, env.workspace.workspaceId);
+  did = presenter.whatStockChiefDid(env.db, env.workspace.workspaceId);
   assert.equal(did.counts.handled, 1);
   assert.equal(did.actions[0].link, `/sales/orders/${connectorOrder.id}`,
     'the handled record links to the exact order rather than a general activity page');

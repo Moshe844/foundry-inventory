@@ -1,6 +1,6 @@
--- Foundry Inventory : controlled actions (Mission 4)
+-- StockChief Inventory : controlled actions (Mission 4)
 --
--- Foundry may now carry out inventory work, but only ever by proposing it here
+-- StockChief may now carry out inventory work, but only ever by proposing it here
 -- and having a person approve it. Nothing in this file mutates stock: every row
 -- is a *request* to run one of the Mission 1 operations, plus the evidence that
 -- it was authorised, what it expected, what actually happened, and whether the

@@ -16,7 +16,7 @@
 
 <% if (sourceEvent) { %>
   <div class="notice notice--info section">
-    <strong>Foundry prepared this from <%= sourceEvent.attachmentName %>.</strong>
+    <strong>StockChief prepared this from <%= sourceEvent.attachmentName %>.</strong>
     It matched the supplier, purchase order and <%= (sourceEvent.matchedEntities.receiptLines || []).length %>
     line<%= (sourceEvent.matchedEntities.receiptLines || []).length === 1 ? '' : 's' %>.
     Check what physically arrived; nothing has changed yet.
@@ -69,7 +69,7 @@
               <label class="field" style="grid-column: 1 / -1;">
                 <span class="field-label">Serial numbers, one per line</span>
                 <textarea class="input" name="serials_<%= line.id %>" rows="4"><%= submitted ? (submitted['serials_' + line.id] || '') : '' %></textarea>
-                <span class="field-help">Foundry counts the serials you list, not the number in the box.</span>
+                <span class="field-help">StockChief counts the serials you list, not the number in the box.</span>
               </label>
             <% } %>
           </div>

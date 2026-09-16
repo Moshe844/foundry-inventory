@@ -4,7 +4,7 @@
  * Reading an uploaded file off the request.
  *
  * Express parses forms and JSON but not file uploads, and the usual answer is a
- * dependency. This is the whole of what Foundry needs from one: split the body
+ * dependency. This is the whole of what StockChief needs from one: split the body
  * on its boundary, keep the fields as fields and the files as buffers, and stop
  * at a size limit. Binary-safe throughout — the parts are sliced as Buffers and
  * never turned into strings, because an .xlsx is a zip and would not survive it.
@@ -35,7 +35,7 @@ function parseDisposition(header) {
   const filename = /filename\*?=(?:UTF-8'')?"?([^";]*)"?/i.exec(header);
   return {
     name: name ? name[1] : null,
-    // Only the basename: a filename is display text, never a path Foundry follows.
+    // Only the basename: a filename is display text, never a path StockChief follows.
     filename: filename ? decodeURIComponent(filename[1] || '').split(/[\\/]/).pop() : null,
   };
 }

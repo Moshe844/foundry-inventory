@@ -12,20 +12,20 @@
  *   authority is checked here, again      not because the gate was wrong when
  *                                         the recommendation was raised, but
  *                                         because that was hours ago and the
- *                                         owner may have paused Foundry since
+ *                                         owner may have paused StockChief since
  *
- *   a person's click needs no capability  granting Foundry authority is about
+ *   a person's click needs no capability  granting StockChief authority is about
  *                                         what it may do *unattended*. An owner
  *                                         pressing "Use 84" is the owner
  *                                         changing their own setting, and
  *                                         requiring a capability for that would
- *                                         be Foundry withholding a button
+ *                                         be StockChief withholding a button
  *
  *   applying twice changes nothing        the recommendation moves to APPLIED
  *                                         and a second attempt returns the
  *                                         first outcome
  *
- * What Foundry may do on its own is narrow on purpose: keep replenishment
+ * What StockChief may do on its own is narrow on purpose: keep replenishment
  * levels current, and only that. Placing orders and moving stock stay where
  * they already were — behind their own capabilities and their own approved
  * policies, planned by the existing engines. A forecast is not a new way to
@@ -48,7 +48,7 @@ const POLICY_FIELD = {
 /**
  * Applies a recommendation on somebody's instruction.
  *
- * @param options.automatic true when Foundry is acting unattended, which is the
+ * @param options.automatic true when StockChief is acting unattended, which is the
  *        only case that has to pass the authority gate.
  */
 function accept(db, ctx, membership, id, options = {}) {
@@ -63,7 +63,7 @@ function accept(db, ctx, membership, id, options = {}) {
     /*
      * Re-asked at the moment of acting. The verdict stored on the row was true
      * when the sweep ran; between then and now somebody may have paused
-     * Foundry, and a stale yes is exactly the sort of thing that acts through
+     * StockChief, and a stale yes is exactly the sort of thing that acts through
      * a stock take.
      */
     const verdict = judge(db, ctx.workspaceId, recommendation, { now: options.now });
@@ -76,7 +76,7 @@ function accept(db, ctx, membership, id, options = {}) {
   if (!field) {
     // Transfers and purchase orders are not applied from here. They are
     // prepared by the engines that already own them, under their own authority.
-    throw new ValidationError('Foundry does not apply that kind of recommendation directly. '
+    throw new ValidationError('StockChief does not apply that kind of recommendation directly. '
       + 'Open the order or transfer and approve it there.');
   }
   if (recommendation.recommendedValue === null || recommendation.recommendedValue === undefined) {
@@ -146,11 +146,11 @@ function judge(db, workspaceId, recommendation, { now = Date.now() } = {}) {
 }
 
 /**
- * Applies everything Foundry is actually allowed to apply on its own.
+ * Applies everything StockChief is actually allowed to apply on its own.
  *
  * Called from the scheduled turn. Returns what it did and what it left alone,
  * so the turn can report both — an owner who granted this should be able to see
- * every level Foundry moved, and every one it wanted to and could not.
+ * every level StockChief moved, and every one it wanted to and could not.
  */
 function applyAuthorised(db, ctx, membership, options = {}) {
   const applied = [];

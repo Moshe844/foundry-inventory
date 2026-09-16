@@ -4,7 +4,7 @@
 %>
 <div class="page-head"><div>
   <a class="back-link" href="<%= owner && owner.orderId ? '/orders/' + owner.orderId : '/accounting' %>">‹ <%= owner && owner.orderNumber ? owner.orderNumber : 'Accounting' %></a>
-  <p class="eyebrow"><%= owner && owner.kind === 'sale' ? 'How Foundry worked out this sale' : 'Accounting evidence' %></p>
+  <p class="eyebrow"><%= owner && owner.kind === 'sale' ? 'How StockChief worked out this sale' : 'Accounting evidence' %></p>
   <h1><%= owner && owner.orderNumber ? owner.orderNumber : 'Entry #' + entry.entry_number %></h1>
   <p class="lede"><%= owner && owner.kind === 'sale' ? 'The sale, exact product cost, gross profit, and customer balance—tied to the goods that left.' : entry.description %></p>
 </div><span class="badge badge--success">Recorded</span></div>
@@ -46,4 +46,4 @@
     <div class="grid grid--2" style="margin-top:20px"><div><span class="field-label">Source</span><p><%= entry.source_type.replaceAll('_',' ') %></p></div><div><span class="field-label">Source record</span><p><%= entry.source_record_type || '—' %> <%= entry.source_record_id || '' %></p></div><div><span class="field-label">Domain event</span><p><%= entry.source_event_id || 'Manual approved entry' %></p></div><div><span class="field-label">Correction</span><p><%= entry.reversal_of_entry_id ? 'Reverses an earlier posted entry' : 'Original entry' %></p></div></div>
   </div>
 </details>
-<% if (!entry.reversal_of_entry_id) { %><details class="card"><summary class="card-head"><div><h2>Correct this entry</h2><p class="hint">The original is never edited or deleted. Foundry posts a linked reversal.</p></div></summary><form class="card-body form-inline" method="post" action="/accounting/entries/<%= entry.id %>/reverse"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Correction date</span><input class="input" type="date" name="postingDate" required></label><label class="field field--wide"><span class="field-label">Why</span><input class="input" name="reason" required maxlength="250"></label><button class="btn btn--danger" type="submit">Post reversal</button></form></details><% } %>
+<% if (!entry.reversal_of_entry_id) { %><details class="card"><summary class="card-head"><div><h2>Correct this entry</h2><p class="hint">The original is never edited or deleted. StockChief posts a linked reversal.</p></div></summary><form class="card-body form-inline" method="post" action="/accounting/entries/<%= entry.id %>/reverse"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Correction date</span><input class="input" type="date" name="postingDate" required></label><label class="field field--wide"><span class="field-label">Why</span><input class="input" name="reason" required maxlength="250"></label><button class="btn btn--danger" type="submit">Post reversal</button></form></details><% } %>

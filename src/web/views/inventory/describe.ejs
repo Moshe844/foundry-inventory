@@ -1,8 +1,8 @@
 <a class="rm-head__back" href="/inventory"><%- helpers.icon('chevron', { size: 13 }) %> Back to inventory</a>
 
 <div class="rm-head">
-  <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Add products with Foundry</p>
-  <h1>Tell Foundry what you sell.</h1>
+  <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Add products with StockChief</p>
+  <h1>Tell StockChief what you sell.</h1>
   <p>Describe one product or your whole catalogue in ordinary words. Include any names, codes, options, quantities and locations you already know.</p>
 </div>
 
@@ -14,9 +14,9 @@
 <% if (review) { %>
   <section class="rm-panel" aria-labelledby="catalogue-review-title" style="margin-bottom:16px">
     <div class="rm-panel__body">
-      <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> Foundry's understanding</p>
+      <p class="rm-head__eyebrow"><%- helpers.icon('spark', { size: 14 }) %> StockChief's understanding</p>
       <h2 id="catalogue-review-title" style="margin:4px 0 6px">
-        Foundry analyzed all <%= review.recordCount %> supplied SKU record<%= review.recordCount === 1 ? '' : 's' %>
+        StockChief analyzed all <%= review.recordCount %> supplied SKU record<%= review.recordCount === 1 ? '' : 's' %>
       </h2>
       <% if (review.understanding) { %>
         <p style="margin:0"><%= review.understanding.overview %></p>
@@ -25,7 +25,7 @@
           The exact values below remain grounded in what you supplied.
         </p>
         <details class="rm-work" style="margin-top:14px">
-          <summary>See how Foundry grouped the products and variants</summary>
+          <summary>See how StockChief grouped the products and variants</summary>
           <div class="rm-work__body">
             <% review.understanding.productGroups.forEach(function(group) { %>
               <div class="act-row">
@@ -39,15 +39,15 @@
           </div>
         </details>
       <% } else { %>
-        <p style="margin:0">Foundry preserved every supplied field, but did not receive a complete model analysis. Nothing was created.</p>
+        <p style="margin:0">StockChief preserved every supplied field, but did not receive a complete model analysis. Nothing was created.</p>
       <% } %>
     </div>
   </section>
 
   <section class="rm-panel" aria-labelledby="catalogue-issues-title" style="margin-bottom:16px">
     <div class="rm-panel__body">
-      <h2 id="catalogue-issues-title" style="margin-top:0">Before Foundry can build the exact preview</h2>
-      <p class="rm-quiet">Foundry will not invent these missing facts. Resolve the items below, then it will return the complete product preview for your approval.</p>
+      <h2 id="catalogue-issues-title" style="margin-top:0">Before StockChief can build the exact preview</h2>
+      <p class="rm-quiet">StockChief will not invent these missing facts. Resolve the items below, then it will return the complete product preview for your approval.</p>
       <div style="display:grid;gap:12px;margin-top:14px">
         <% (review.issues || []).forEach(function(issue) { %>
           <article class="rm-note rm-note--warn">
@@ -75,7 +75,7 @@
       <textarea class="rm-composer__input" id="description" name="description" rows="8" maxlength="12000" required <%= autofocus ? 'autofocus' : '' %>
         placeholder="Children's Oxford shoes, code OXF-100, in navy and black, sizes 6 through 12. Copper Elbow, code CE-100."><%= description %></textarea>
       <div class="rm-composer__foot">
-        <span class="rm-quiet">Up to 12,000 characters. Foundry uses only the details you provide.</span>
+        <span class="rm-quiet">Up to 12,000 characters. StockChief uses only the details you provide.</span>
         <span class="right">
           <button class="rm-btn" type="submit" data-busy-label="<%= busyLabel %>"><%= buttonLabel %></button>
         </span>
@@ -95,7 +95,7 @@
 
 <div class="rm-note" style="margin-top:16px">
   <%- helpers.icon('eye', { size: 16 }) %>
-  <span><strong>You review the exact products first.</strong> Foundry adds them only after you approve the preview. Quantities are never invented.</span>
+  <span><strong>You review the exact products first.</strong> StockChief adds them only after you approve the preview. Quantities are never invented.</span>
 </div>
 
 <p class="rm-disclose">

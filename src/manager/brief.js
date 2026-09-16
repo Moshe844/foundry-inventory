@@ -50,10 +50,10 @@ function build(db, workspaceId, { now = Date.now() } = {}) {
       ORDER BY expected_date LIMIT 12`
   ).all(workspaceId).map((po) => ({ type: 'delivery', id: po.id, title: `${po.po_number} expected`, at: po.expected_date }));
   const summary = needsYou.length
-    ? `${needsYou.length} item${needsYou.length === 1 ? ' needs' : 's need'} your decision. Foundry is handling ${handling.length}.`
+    ? `${needsYou.length} item${needsYou.length === 1 ? ' needs' : 's need'} your decision. StockChief is handling ${handling.length}.`
     : handling.length
-      ? `Nothing needs you right now. Foundry is handling ${handling.length} item${handling.length === 1 ? '' : 's'}.`
-      : 'Everything Foundry can verify is in order. Nothing needs you right now.';
+      ? `Nothing needs you right now. StockChief is handling ${handling.length} item${handling.length === 1 ? '' : 's'}.`
+      : 'Everything StockChief can verify is in order. Nothing needs you right now.';
   const payload = { handled, handling, needsYou, nextEvents, summary };
   const hash = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
   const date = new Date(now).toISOString().slice(0, 10);

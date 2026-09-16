@@ -14,7 +14,7 @@ function launch(role) {
   const child = spawn(process.execPath, [server], {
     cwd: path.join(__dirname, '..'),
     env: { ...process.env, FOUNDRY_PROCESS_ROLE: role },
-    stdio: 'inherit',
+    stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
   });
   children.add(child);
   child.on('exit', (code, signal) => {
@@ -28,8 +28,15 @@ function launch(role) {
   return child;
 }
 
-launch('web');
-launch('worker');
+// SQLite migrations must complete in one process before a second connection
+// tries to migrate. Readiness is explicit, not an arbitrary startup delay.
+const web = launch('web');
+let workerStarted = false;
+web.on('message', (message) => {
+  if (message?.type !== 'stockchief.web.ready' || workerStarted || stopping) return;
+  workerStarted = true;
+  launch('worker');
+});
 
 function shutdown() {
   if (stopping) return;
@@ -39,4 +46,3 @@ function shutdown() {
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
-

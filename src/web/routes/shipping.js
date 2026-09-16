@@ -3,7 +3,7 @@
 /*
  * Hearing from the carrier, and setting the rules it works under.
  *
- * The webhook is the second route in Foundry a stranger can reach without
+ * The webhook is the second route in StockChief a stranger can reach without
  * signing in, and it is treated exactly like the first: the provider's
  * signature over the raw bytes is the whole authentication, so the body must
  * arrive unparsed and this router is mounted before the parsers and before
@@ -29,9 +29,9 @@ const router = express.Router();
 /**
  * Which inventory a carrier's message belongs to.
  *
- * The tracking number decides, because Foundry issued it and knows which
+ * The tracking number decides, because StockChief issued it and knows which
  * shipment it is on. The id in the address is only a fallback for a message
- * that names nothing Foundry recognises — the same reasoning as payments,
+ * that names nothing StockChief recognises — the same reasoning as payments,
  * where an address that named a deleted workspace silently dropped every
  * event for days.
  */
@@ -93,7 +93,7 @@ webhooks.post('/webhooks/shipping/:provider/:workspaceId?',
     if (!workspaceId) {
       /*
        * 200, for the same reason as payments. A signed message about a parcel
-       * Foundry does not have is not a delivery failure, and an error makes
+       * StockChief does not have is not a delivery failure, and an error makes
        * the provider retry it for days.
        */
       console.warn('[shipping] a verified event matched no inventory', { provider: name });
@@ -109,7 +109,7 @@ webhooks.post('/webhooks/shipping/:provider/:workspaceId?',
         : shipping.tracking.receiveEvent(req.db, { workspaceId, actorId: null }, name, event);
       return res.status(200).json({ ok: true, applied: Boolean(result.applied), outcome: result.outcome });
     } catch (error) {
-      // Kept for a retry: this is Foundry failing, not the carrier.
+      // Kept for a retry: this is StockChief failing, not the carrier.
       return res.status(500).json({ error: error.message });
     }
   }));
@@ -168,7 +168,7 @@ router.post('/settings/shipping', requirePermission(permissions.OPERATE, 'set sh
         requireByPromised: req.body.requireByPromised !== undefined,
         maxDeliveryDays: trimOrNull(req.body.maxDeliveryDays),
       });
-      req.flash('success', 'Saved. Foundry will use this when a parcel is ready and it fits.');
+      req.flash('success', 'Saved. StockChief will use this when a parcel is ready and it fits.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);
@@ -182,10 +182,10 @@ router.post('/settings/shipping/operation-mode',
     try {
       const saved = shipping.operationPolicy.set(req.db, req.ctx, req.body.mode);
       req.flash('success', saved.mode === 'AUTOMATIC'
-        ? 'Shipping is set to Automatic. Foundry will still buy only when the universal operator, label authority, and an exact shipping rule all allow it.'
+        ? 'Shipping is set to Automatic. StockChief will still buy only when the universal operator, label authority, and an exact shipping rule all allow it.'
         : saved.mode === 'RECOMMEND'
-          ? 'Shipping is set to Recommend. Foundry compares rates, but you approve every purchase.'
-          : 'Shipping is set to Manual. Foundry shows carrier facts and leaves every choice to you.');
+          ? 'Shipping is set to Recommend. StockChief compares rates, but you approve every purchase.'
+          : 'Shipping is set to Manual. StockChief shows carrier facts and leaves every choice to you.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);
@@ -221,7 +221,7 @@ router.post('/settings/shipping/account', requirePermission(permissions.ADMIN, '
   }));
 
 /*
- * Opening an account from inside Foundry, rather than sending them away.
+ * Opening an account from inside StockChief, rather than sending them away.
  *
  * The same destination as the form above — a key this inventory ships on — and
  * the merchant never leaves. Admin only, for the same reason: it decides who
@@ -291,7 +291,7 @@ router.post('/settings/shipping/shipengine/complete',
   }));
 
 /*
- * Collecting a card, without the card passing through Foundry.
+ * Collecting a card, without the card passing through StockChief.
  *
  * This answers with a client secret and nothing else. The number is typed into
  * Stripe's own field in the merchant's browser and goes straight to Stripe;
@@ -323,7 +323,7 @@ router.post('/settings/shipping/account/billing/confirm',
       req.flash(state.billingReady ? 'success' : 'warn', state.billingReady
         ? 'Payment method added. This account can buy real labels now, and rates are live rates.'
         : 'Stripe stored the payment method, but EasyPost is not reporting one yet. '
-          + 'Foundry will keep checking rather than buy a label it cannot pay for.');
+          + 'StockChief will keep checking rather than buy a label it cannot pay for.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);
@@ -335,7 +335,7 @@ router.post('/settings/shipping/account/billing/confirm',
  * "I added it somewhere else."
  *
  * A merchant may add a card on EasyPost's own page, or on a phone, or finish
- * the form tomorrow. Foundry asks the carrier rather than assuming, because a
+ * the form tomorrow. StockChief asks the carrier rather than assuming, because a
  * payment method it was told about is not the same as one that will be billed.
  */
 router.post('/settings/shipping/account/billing/recheck',
@@ -362,9 +362,9 @@ router.post('/settings/shipping/account/remove', requirePermission(permissions.A
         || shipping.shipenginePlatform.rowFor(req.db, req.ctx.workspaceId);
       shipping.accounts.disconnect(req.db, req.ctx, req.user);
       req.flash('success', opened
-        ? 'Disconnected. Foundry has forgotten the keys — the shipping account itself, and every '
+        ? 'Disconnected. StockChief has forgotten the keys — the shipping account itself, and every '
           + 'label and tracking record on it, still exists and still belongs to this business.'
-        : 'Disconnected. Foundry will not get rates or buy labels for this inventory, '
+        : 'Disconnected. StockChief will not get rates or buy labels for this inventory, '
           + 'and parcels handed over by hand are recorded exactly as they always were.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -376,7 +376,7 @@ router.post('/settings/shipping/account/remove', requirePermission(permissions.A
 router.post('/settings/shipping/:id/remove', requirePermission(permissions.OPERATE, 'set shipping rules'),
   asyncRoute(async (req, res) => {
     shipping.rules.remove(req.db, req.ctx, req.params.id);
-    req.flash('success', 'That rule is off. Foundry will ask about these parcels instead.');
+    req.flash('success', 'That rule is off. StockChief will ask about these parcels instead.');
     res.redirect(303, '/settings/shipping');
   }));
 

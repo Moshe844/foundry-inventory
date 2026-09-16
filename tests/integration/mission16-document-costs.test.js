@@ -5,7 +5,7 @@
  *
  * A real proforma for 800 pairs of shoes read: $21,390.00 of goods, $5,411.00
  * of sea freight, $83.00 of insurance and $280.00 credited back for samples —
- * $26,604.00, exactly the total the document itself stated. Foundry read all
+ * $26,604.00, exactly the total the document itself stated. StockChief read all
  * four lines, showed all four on the proposal screen, posted the goods, and
  * dropped the other $5,214.00: the only place it knew how to keep a charge
  * was on a purchase order, and "this is stock I already have" creates none.

@@ -8,7 +8,7 @@
  * created by import are the same kind of record, made the same way.
  *
  * The tracking mode comes from the workspace's Mission 2 configuration rather
- * than from a question. A business already told Foundry how it counts things;
+ * than from a question. A business already told StockChief how it counts things;
  * asking again on every product would be forgetting.
  */
 
@@ -137,7 +137,7 @@ function planItem(db, workspaceId, spec) {
   if (count > MAX_VARIANTS) {
     return {
       ok: false,
-      unsupported: `That would create ${count} variants. Foundry creates up to ${MAX_VARIANTS} at once — split it into a few products.`,
+      unsupported: `That would create ${count} variants. StockChief creates up to ${MAX_VARIANTS} at once — split it into a few products.`,
     };
   }
 

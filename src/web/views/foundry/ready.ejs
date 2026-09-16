@@ -3,9 +3,9 @@
    * Setup is done and this says exactly what is now true.
    *
    * Everything here is a fact about the configuration that just took effect,
-   * so it reads as a list of things Foundry can now be held to rather than as
+   * so it reads as a list of things StockChief can now be held to rather than as
    * a congratulations screen. The two things that are not facts — an offer to
-   * create the first product, and what the owner asked Foundry to watch — are
+   * create the first product, and what the owner asked StockChief to watch — are
    * kept visibly apart from it.
    */
   var s = summary || {};
@@ -27,10 +27,10 @@
   <h1><%= addedToExisting ? 'The file is now recorded.' : (hasInventoryRecords ? 'Your inventory is ready.' : 'Your inventory setup is ready.') %></h1>
   <p>
     <%= addedToExisting
-      ? 'Foundry added exactly what you approved. Your existing inventory setup was not changed.'
+      ? 'StockChief added exactly what you approved. Your existing inventory setup was not changed.'
       : (hasInventoryRecords
-        ? 'Foundry configured the inventory engine and added the records you approved. Everything below is true as of now, and every quantity has a movement behind it.'
-        : 'Foundry configured how this inventory will work. No products or stock were created because you have not supplied those records yet. Add or import them next.') %>
+        ? 'StockChief configured the inventory engine and added the records you approved. Everything below is true as of now, and every quantity has a movement behind it.'
+        : 'StockChief configured how this inventory will work. No products or stock were created because you have not supplied those records yet. Add or import them next.') %>
   </p>
 </div>
 
@@ -40,7 +40,7 @@
     <div style="padding:16px">
       <p style="margin:0 0 14px;color:var(--ink-2)">Choose the source that contains the real records. You are finished describing the setup.</p>
       <div class="rm-choices">
-        <a class="rm-btn" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell Foundry what you sell</a>
+        <a class="rm-btn" href="/inventory/describe"><%- helpers.icon('spark', { size: 15 }) %> Tell StockChief what you sell</a>
         <a class="rm-btn rm-btn--ghost" href="/inventory/new">Add one manually</a>
         <a class="rm-btn rm-btn--ghost" href="/onboarding/migrations/new">Import a file</a>
         <a class="rm-btn rm-btn--ghost" href="/onboarding/system">Connect a business system</a>
@@ -65,17 +65,17 @@
         <span><strong><%= imported.supplier %></strong> linked as supplier, with its codes and unit costs</span></li>
       <li><span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
         <span>This file called the vendor identifier <strong><%= imported.detectedSupplierCodeLabel || setupDocument.detectedSupplierCodeLabel %></strong>.
-          Foundry will call it <strong><%= imported.itemCodeLabel || setupDocument.supplierCodeLabel %></strong> for <%= imported.supplier %>
+          StockChief will call it <strong><%= imported.itemCodeLabel || setupDocument.supplierCodeLabel %></strong> for <%= imported.supplier %>
           and recognize alternate headings on future documents.</span></li>
       <li><span class="rm-checks__ic"><%- helpers.icon('check', { size: 13 }) %></span>
         <span>Purchase order <strong><%= imported.poNumber %></strong> recorded, approved, and fully received</span></li>
       <% if (imported.landedCostProposal && imported.landedCostProposal.proposed) { %>
         <li><span class="rm-checks__ic"><%- helpers.icon('spark', { size: 13 }) %></span>
-          <span>Foundry prepared the supplier invoice's landed-cost split from the posted bill and received goods.
+          <span>StockChief prepared the supplier invoice's landed-cost split from the posted bill and received goods.
             <a href="/purchasing/orders/<%= imported.landedCostProposal.purchaseOrderId %>/landed-costs/<%= imported.landedCostProposal.documentId %>">Review it before applying</a>.</span></li>
       <% } else if (imported.landedCostProposal && imported.landedCostProposal.waitingFor === 'receipt') { %>
         <li><span class="rm-checks__ic"><%- helpers.icon('clock', { size: 13 }) %></span>
-          <span>Foundry recorded the supplier's delivery charge and will prepare the landed-cost split after physical receipt is recorded.</span></li>
+          <span>StockChief recorded the supplier's delivery charge and will prepare the landed-cost split after physical receipt is recorded.</span></li>
       <% } %>
     </ul>
     <div style="padding:12px 16px;border-top:1px solid var(--line-2);display:flex;flex-wrap:wrap;gap:10px;align-items:center">
@@ -89,7 +89,7 @@
 
   <div class="rm-spine-foot">
     <a class="rm-btn" href="/inventory"><%- helpers.icon('inventory', { size: 15 }) %> See live inventory</a>
-    <a class="rm-btn rm-btn--ghost" href="/">Return to Foundry</a>
+    <a class="rm-btn rm-btn--ghost" href="/">Return to StockChief</a>
   </div>
 
 <% } else { %>
@@ -171,7 +171,7 @@
     </div>
     <form method="post" action="/foundry/first-item" data-busy style="padding:16px">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <%# Deliberately the tidied name rather than the raw example Foundry
+      <%# Deliberately the tidied name rather than the raw example StockChief
           worked from: "you described Baby headband - White, 0-6 months" is not
           what they said, and reads as though it misheard them. %>
       <p style="font-size:15px;line-height:1.55;margin:0 0 14px;max-width:70ch">
@@ -207,7 +207,7 @@
 
       <p class="rm-quiet" style="font-size:13px;margin:0 0 14px;max-width:70ch">
         This creates the <%= term('item').toLowerCase() %><% if (firstItem.options && firstItem.options.length) { %> and its combinations<% } %>,
-        and nothing else. Foundry does not know what is on your shelves yet, so every one starts at
+        and nothing else. StockChief does not know what is on your shelves yet, so every one starts at
         zero — you receive stock next, or bring it in from a spreadsheet.
       </p>
 
@@ -228,7 +228,7 @@
   <section class="rm-panel" style="margin-bottom:16px">
     <div class="rm-panel__head">
       <%- helpers.icon('eye', { size: 15, className: 'rm-quiet' }) %>
-      <h2>What you asked Foundry to keep an eye on</h2>
+      <h2>What you asked StockChief to keep an eye on</h2>
       <span class="right">Not part of the configuration above</span>
     </div>
     <ul class="rm-checks">
@@ -255,7 +255,7 @@
           <span class="rm-told__t"><%= d.question %><small><%= d.answer_label %></small></span>
           <span class="rm-told__m">
             <span class="rm-pillbadge <%= d.decided_by === 'foundry' ? '' : 'is-ok' %>">
-              <%= d.decided_by === 'foundry' ? 'Foundry decided' : 'You decided' %>
+              <%= d.decided_by === 'foundry' ? 'StockChief decided' : 'You decided' %>
             </span>
           </span>
         </div>
@@ -266,7 +266,7 @@
 
 <% if (plan.assumptions && plan.assumptions.length) { %>
   <details class="rm-work" style="margin-bottom:16px">
-    <summary>What Foundry assumed · <%= plan.assumptions.length %></summary>
+    <summary>What StockChief assumed · <%= plan.assumptions.length %></summary>
     <div class="rm-work__body">
       <ul class="plain-list">
         <% plan.assumptions.forEach(function (a) { %><li><%= a %></li><% }) %>
@@ -279,7 +279,7 @@
   <% if (!firstItem && !imported) { %>
     <a class="rm-btn" href="/inventory/new"><%- helpers.icon('plus', { size: 15 }) %> Add my first <%= term('item').toLowerCase() %></a>
   <% } %>
-  <a class="rm-btn rm-btn--ghost" href="/ask">Ask Foundry something</a>
+  <a class="rm-btn rm-btn--ghost" href="/ask">Ask StockChief something</a>
   <a class="rm-btn rm-btn--ghost" href="/">Go to the brief</a>
 </div>
 

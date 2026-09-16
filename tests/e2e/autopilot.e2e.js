@@ -6,10 +6,10 @@
  * The scenario from the brief: Kids Tights, Black / Size 5, eight left in
  * Brooklyn against sixty-one in New Jersey, with Brooklyn doing all the selling.
  *
- * What is being proved is not that Foundry can move stock — that was Mission 4.
+ * What is being proved is not that StockChief can move stock — that was Mission 4.
  * It is the order of the gates. A workspace that has approved nothing gets
  * nothing done to it. Approving a policy on its own still gets nothing done.
- * Only with both does Foundry act, and then it has to be able to say what it
+ * Only with both does StockChief act, and then it has to be able to say what it
  * did, why, and stop when told to. The last run is the one that matters most:
  * pausing mid-flight. Mission 8 adds the primary manager surface and the
  * evidence-backed physical discrepancy that becomes exactly one human exception.
@@ -195,7 +195,7 @@ const balance = (databasePath, state, locationId) =>
 
 // ---------------------------------------------------------------------------
 
-test('Mission 8 end to end: Foundry runs the operation, investigates, and stops when told', { timeout: 1200000 }, async (t) => {
+test('Mission 8 end to end: StockChief runs the operation, investigates, and stops when told', { timeout: 1200000 }, async (t) => {
   fs.rmSync(SHOTS, { recursive: true, force: true });
   fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -223,10 +223,10 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  await t.test('0. the home page is what Foundry is doing, not a table of counts', async () => {
+  await t.test('0. the home page is what StockChief is doing, not a table of counts', async () => {
     await signIn(page);
     const text = await page.locator('body').innerText();
-    assert.match(text, /Foundry is working/i);
+    assert.match(text, /StockChief is working/i);
     assert.match(text, /Do this next/i);
     assert.match(text, /The business/i);
     await shot(page, 'operator-home');
@@ -270,7 +270,7 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     await shot(page, 'prepared-awaiting-approval');
   });
 
-  await t.test('4. Foundry explains the transfer it is proposing, with the numbers', async () => {
+  await t.test('4. StockChief explains the transfer it is proposing, with the numbers', async () => {
     const waiting = inspect(databasePath, (db) =>
       workItems.awaitingApproval(db, state.workspaceId)
         .find((item) => item.category === 'balance_transfer'));
@@ -338,7 +338,7 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     assert.match(text, /TR-\d+ is ready for warehouse execution/);
     assert.match(text, /stock stays at the source until dispatch/i);
     assert.doesNotMatch(text, /Moved 12 Kids Tights/,
-      'Foundry must not claim it physically moved goods when it prepared the transfer');
+      'StockChief must not claim it physically moved goods when it prepared the transfer');
     await shot(page, 'history');
   });
 
@@ -374,7 +374,7 @@ test('Mission 8 end to end: Foundry runs the operation, investigates, and stops 
     ]);
 
     const text = await page.locator('body').innerText();
-    assert.match(text, /Foundry is paused/);
+    assert.match(text, /StockChief is paused/);
     await shot(page, 'paused');
 
     // Even asked directly, it does nothing while paused.

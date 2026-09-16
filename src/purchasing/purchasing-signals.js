@@ -10,7 +10,7 @@
  *
  * This is also where "do not accuse the supplier" is enforced. An order is only
  * eligible to be called late when its expected date came from a stated lead
- * time or a date a person typed. An order whose date Foundry had to invent has
+ * time or a date a person typed. An order whose date StockChief had to invent has
  * no date worth measuring against, so it is never reported as late.
  */
 
@@ -67,7 +67,7 @@ function lateOrderSignals(db, workspaceId, { now = Date.now() } = {}) {
  * Price movements between the last two committed orders for a product.
  *
  * Both figures are prices actually agreed on real orders. Nothing is inferred
- * from quotes, list prices or anything Foundry has not seen committed.
+ * from quotes, list prices or anything StockChief has not seen committed.
  */
 function priceChangeSignals(db, workspaceId, { skuIds = null, sinceDays = 365, now = Date.now() } = {}) {
   const filter = skuIds && skuIds.length ? ` AND l.sku_id IN (${skuIds.map(() => '?').join(',')})` : '';

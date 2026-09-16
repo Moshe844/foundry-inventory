@@ -3,10 +3,10 @@
 /**
  * Stock that came in from a file carrying its cost, and was stored worth zero.
  *
- * Imports used to discard the supplier's cost column — "Foundry does not track
+ * Imports used to discard the supplier's cost column — "StockChief does not track
  * supplier cost" — so a spreadsheet invoice created 250 pairs of shoes valued
  * at nothing at all. The books showed inventory with no value, and the first
- * sale of any of it would have stopped on "Foundry has no recorded cost for
+ * sale of any of it would have stopped on "StockChief has no recorded cost for
  * this product".
  *
  * The import path now attaches the cost as it creates the stock. This is for
@@ -30,7 +30,7 @@ function costColumn(plan) {
   } catch { /* fall through to the headings */ }
 
   /*
-   * A plan stored before Foundry had a unit-cost field at all. Its headings
+   * A plan stored before StockChief had a unit-cost field at all. Its headings
    * are still on the plan, and they are recognised the same way a fresh upload
    * would recognise them — the same rules, so the same answer.
    */

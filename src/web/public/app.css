@@ -1,4 +1,4 @@
-/* Foundry Inventory — screen-specific styles.
+/* StockChief Inventory — screen-specific styles.
    What was shared — buttons, fields, cards, tables, badges, the page header —
    now lives in design.css, which owns it for the whole product. What is left
    here belongs to one screen each: the item record, the movement ledger, the
@@ -791,7 +791,7 @@ a.list-row:hover { background: var(--surface-2); text-decoration: none; }
 .wsp-card-foot { display: flex; gap: 8px; align-items: center; margin-top: auto; padding-top: 4px; }
 
 /* ------------------------------------------------------ controlled actions --
-   The preview is the moment a person decides whether to let Foundry touch
+   The preview is the moment a person decides whether to let StockChief touch
    their inventory, so the before → after figures are the largest thing on the
    page and the warning is impossible to scroll past. */
 

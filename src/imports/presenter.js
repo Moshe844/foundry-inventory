@@ -17,7 +17,7 @@ const TYPE_LABEL = {
   serials: 'individually numbered units',
   lots: 'batches or lots',
   receiving: 'a delivery or packing list',
-  unknown: 'something Foundry could not identify',
+  unknown: 'something StockChief could not identify',
 };
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || `${one}s`}`;
@@ -49,10 +49,10 @@ function summary(plan) {
     const blocked = plan.recordsInvalid
       ? ` ${plural(plan.recordsInvalid, 'row')} cannot be matched safely and will not run.`
       : '';
-    return `Foundry read ${plan.sourceName} as a selling-price update with ${plural(plan.recordsDetected, 'row')}.${blocked}`;
+    return `StockChief read ${plan.sourceName} as a selling-price update with ${plural(plan.recordsDetected, 'row')}.${blocked}`;
   }
   const parts = [
-    `Foundry read ${plan.sourceName} as ${TYPE_LABEL[plan.detectedType] || 'data'}`,
+    `StockChief read ${plan.sourceName} as ${TYPE_LABEL[plan.detectedType] || 'data'}`,
     `${plural(plan.recordsDetected, 'row')} found`,
   ];
   if (plan.recordsInvalid) parts.push(`${plan.recordsInvalid} of them cannot be imported as they stand`);

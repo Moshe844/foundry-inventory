@@ -1,16 +1,16 @@
 <section class="page-head">
-  <div><p class="eyebrow">Foundry fixes messes</p><h1>Report something that looks wrong</h1>
-    <p>Choose the exact records. Foundry will diagnose and simulate a correction before anything changes.</p></div>
+  <div><p class="eyebrow">StockChief fixes messes</p><h1>Report something that looks wrong</h1>
+    <p>Choose the exact records. StockChief will diagnose and simulate a correction before anything changes.</p></div>
 </section>
 
 <section class="section">
   <div class="card">
     <div class="card-head"><div><h2>An external product is matched incorrectly</h2>
-      <p class="muted">Use this when activity from Square, Shopify, Clover, or another connection is going to the wrong Foundry product.</p></div></div>
+      <p class="muted">Use this when activity from Square, Shopify, Clover, or another connection is going to the wrong StockChief product.</p></div></div>
     <div class="card-body">
       <% if (!mappings.length) { %>
         <div class="empty"><h3>No external product matches exist yet</h3>
-          <p>Connect or import a business system first. Foundry can only repair a match that actually exists.</p>
+          <p>Connect or import a business system first. StockChief can only repair a match that actually exists.</p>
           <a class="btn" href="/settings/connections">Open Connections</a></div>
       <% } else { %>
         <form method="post" action="/repairs/report/wrong-mapping" class="grid">
@@ -21,7 +21,7 @@
               <% mappings.forEach(function(row) { %><option value="<%= row.id %>"><%= row.connection_name %> · <%= row.external_id %> → <%= row.item_name %><%= row.variant_label ? ' / ' + row.variant_label : '' %> · <%= row.code %></option><% }) %>
             </select>
           </label>
-          <label class="field"><span class="field-label">Which Foundry product should it use?</span>
+          <label class="field"><span class="field-label">Which StockChief product should it use?</span>
             <select class="select" name="correctSkuId" required><option value="">Choose the correct product</option>
               <% skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %><%= sku.variant_label ? ' / ' + sku.variant_label : '' %> · <%= sku.code %></option><% }) %>
             </select>
@@ -29,7 +29,7 @@
           <label class="field"><span class="field-label">What made you notice? <span class="muted">optional</span></span>
             <textarea class="textarea" name="note" maxlength="1000" placeholder="For example: Square sales for this code are appearing under the wrong shoe."></textarea>
           </label>
-          <div class="notice"><div><strong>Nothing changes when you submit this.</strong><p>Foundry first shows the evidence, the proposed correction, and its consequences. The owner must approve a mapping repair.</p></div></div>
+          <div class="notice"><div><strong>Nothing changes when you submit this.</strong><p>StockChief first shows the evidence, the proposed correction, and its consequences. The owner must approve a mapping repair.</p></div></div>
           <div class="form-actions"><button class="btn btn--primary" type="submit">Diagnose this mismatch</button><a class="btn" href="/repairs">Cancel</a></div>
         </form>
       <% } %>

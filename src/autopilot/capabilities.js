@@ -1,11 +1,11 @@
 'use strict';
 
 /**
- * What Foundry may do on its own, one job at a time.
+ * What StockChief may do on its own, one job at a time.
  *
  * The mode above this — watch only, ask me first, handle routine work — says
- * how much authority Foundry has in general. It used to say all of it: turning
- * on "handle routine work" so that Foundry could email a payment request also
+ * how much authority StockChief has in general. It used to say all of it: turning
+ * on "handle routine work" so that StockChief could email a payment request also
  * let it place supplier orders, move stock between locations, and answer
  * customers. One switch, six unrelated consequences, and no way to want one of
  * them without the others.
@@ -22,7 +22,7 @@
  *
  * Raising the mode grants nothing by itself. Granting a capability does
  * nothing while the mode is below it. Both have to agree, which is the whole
- * point: authorising Foundry to chase an invoice should never quietly
+ * point: authorising StockChief to chase an invoice should never quietly
  * authorise it to spend money.
  */
 
@@ -38,21 +38,21 @@ const CAPABILITIES = {
   inventory_transfers: {
     domain: 'transfers',
     label: 'Move stock between locations',
-    blurb: 'Foundry transfers stock to where it is needed, inside the limits of an approved policy.',
+    blurb: 'StockChief transfers stock to where it is needed, inside the limits of an approved policy.',
     consequence: 'Stock moves.',
   },
   replenishment: {
     domain: 'purchasing',
     label: 'Reorder and place purchase orders',
-    blurb: 'Foundry raises purchase orders to restore stock it has been told to keep.',
+    blurb: 'StockChief raises purchase orders to restore stock it has been told to keep.',
     consequence: 'Money is committed to suppliers.',
   },
   replenishment_settings: {
     domain: 'planning',
     label: 'Keep replenishment levels up to date',
-    blurb: 'Foundry adjusts reorder points and stock targets to match measured demand and delivery '
+    blurb: 'StockChief adjusts reorder points and stock targets to match measured demand and delivery '
       + 'times, inside limits you set.',
-    // Separate from placing orders on purpose. Letting Foundry keep a level
+    // Separate from placing orders on purpose. Letting StockChief keep a level
     // current is a much smaller thing than letting it spend, and an owner who
     // wants the first should not have to grant the second to get it.
     consequence: 'Reorder levels change, which changes what gets ordered later.',
@@ -60,25 +60,25 @@ const CAPABILITIES = {
   supplier_emails: {
     domain: 'purchasing',
     label: 'Email suppliers',
-    blurb: 'Foundry sends prepared purchase orders and follow-ups to suppliers itself.',
+    blurb: 'StockChief sends prepared purchase orders and follow-ups to suppliers itself.',
     consequence: 'Suppliers receive mail from you.',
   },
   customer_replies: {
     domain: 'sales',
     label: 'Answer customers',
-    blurb: 'Foundry replies to customer mail it can answer from your own records.',
+    blurb: 'StockChief replies to customer mail it can answer from your own records.',
     consequence: 'Customers receive mail from you.',
   },
   payment_requests: {
     domain: 'accounting',
     label: 'Ask customers to pay',
-    blurb: 'When a deposit or balance falls due, Foundry makes the payment link and emails it.',
+    blurb: 'When a deposit or balance falls due, StockChief makes the payment link and emails it.',
     consequence: 'Customers are asked for money.',
   },
   shipping_labels: {
     domain: 'shipping',
     label: 'Buy shipping labels',
-    blurb: 'When a parcel is ready and a shipping rule covers it, Foundry buys the label from the '
+    blurb: 'When a parcel is ready and a shipping rule covers it, StockChief buys the label from the '
       + 'carrier and the parcel goes.',
     // Named plainly. Everything else about shipping is free — asking a carrier
     // what something would cost commits nobody — and this one step is the one
@@ -88,7 +88,7 @@ const CAPABILITIES = {
   shipping_notices: {
     domain: 'sales',
     label: 'Tell customers their order has shipped',
-    blurb: 'Foundry sends the shipping notice it writes when a box goes.',
+    blurb: 'StockChief sends the shipping notice it writes when a box goes.',
     consequence: 'Customers receive mail from you.',
   },
 };
@@ -115,7 +115,7 @@ const CAPABILITY_FOR_ACTION = {
 function requireName(capability) {
   const name = String(capability || '').trim();
   if (!CAPABILITIES[name]) {
-    throw new ValidationError(`There is no Foundry job called "${capability}".`);
+    throw new ValidationError(`There is no StockChief job called "${capability}".`);
   }
   return name;
 }
@@ -127,7 +127,7 @@ function granted(db, workspaceId, capability) {
 }
 
 /**
- * May Foundry do this job by itself right now, and if not, why not.
+ * May StockChief do this job by itself right now, and if not, why not.
  *
  * The reason matters as much as the answer. A prepared message with no
  * explanation looks like something the owner forgot to send, rather than
@@ -137,23 +137,23 @@ function may(db, workspaceId, capability) {
   const name = requireName(capability);
   const state = require('./modes').get(db, workspaceId);
 
-  if (state.paused) return { allowed: false, because: 'Foundry is paused.' };
+  if (state.paused) return { allowed: false, because: 'StockChief is paused.' };
   const suspendedHere = state.suspended && (!state.suspendedScope
     || state.suspendedScope === CAPABILITIES[name].domain
     || (name === 'inventory_transfers' && state.suspendedScope === 'transfer'));
   if (suspendedHere) {
-    return { allowed: false, because: 'Foundry has stopped itself and is waiting to be looked at.' };
+    return { allowed: false, because: 'StockChief has stopped itself and is waiting to be looked at.' };
   }
   if (state.mode === 'OBSERVE') {
-    return { allowed: false, because: 'Foundry is set to watch only, so it acts on nothing by itself.' };
+    return { allowed: false, because: 'StockChief is set to watch only, so it acts on nothing by itself.' };
   }
   if (!state.canAutomate) {
     return { allowed: false,
-      because: 'Foundry is set to ask before acting, so it prepares the work and stops.' };
+      because: 'StockChief is set to ask before acting, so it prepares the work and stops.' };
   }
   if (!granted(db, workspaceId, name)) {
     return { allowed: false,
-      because: `Nobody has authorised Foundry to ${CAPABILITIES[name].label.toLowerCase()} on its own.` };
+      because: `Nobody has authorised StockChief to ${CAPABILITIES[name].label.toLowerCase()} on its own.` };
   }
   return { allowed: true, because: null };
 }
@@ -179,8 +179,8 @@ function list(db, workspaceId) {
  */
 function set(db, ctx, membership, capability, isGranted) {
   const name = requireName(capability);
-  if (isGranted) permissions.assertCan(membership, permissions.ADMIN, 'authorise Foundry to work on its own');
-  else permissions.assertCan(membership, permissions.OPERATE, 'take authority back from Foundry');
+  if (isGranted) permissions.assertCan(membership, permissions.ADMIN, 'authorise StockChief to work on its own');
+  else permissions.assertCan(membership, permissions.OPERATE, 'take authority back from StockChief');
 
   const now = nowIso();
   db.prepare(`INSERT INTO autopilot_capabilities

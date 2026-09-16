@@ -3,7 +3,7 @@
 /**
  * The import surface.
  *
- * Upload or paste, look at what Foundry made of it, correct anything it got
+ * Upload or paste, look at what StockChief made of it, correct anything it got
  * wrong, approve, and watch it run. Approval and execution are two requests for
  * the same reason as in Mission 4: the execution carries an idempotency key
  * derived from the approved plan, so a retried request cannot import twice.
@@ -180,7 +180,7 @@ router.post(
       locationMappings,
       defaultLocationId: trimOrNull(req.body.defaultLocationId),
     });
-    req.flash('success', 'Foundry re-read the file with your corrections.');
+    req.flash('success', 'StockChief re-read the file with your corrections.');
     return res.redirect(`/imports/${plan.id}`);
   })
 );
@@ -257,7 +257,7 @@ router.post(
     const run = executor.latestExecution(req.db, req.ctx.workspaceId, req.params.id);
     if (run && run.status === 'EXECUTING') {
       executor.requestCancel(req.db, req.ctx, req.user, run.id);
-      req.flash('success', 'Foundry will stop after the product it is working on.');
+      req.flash('success', 'StockChief will stop after the product it is working on.');
     } else {
       planService.cancel(req.db, req.ctx, req.user, req.params.id);
       req.flash('success', 'That import was cancelled. Nothing was created.');

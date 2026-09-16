@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Mission 15 acceptance: Foundry stops asking "are we low right now?" and
+ * Mission 15 acceptance: StockChief stops asking "are we low right now?" and
  * starts asking "where are we heading, and what should I do before that?"
  *
  * Every test here builds a real movement history through the real engine and
@@ -260,7 +260,7 @@ test('4. a single huge order is kept out of the ongoing demand rate', () => {
 // 5. Days with nothing on the shelf are not days nobody wanted it
 // ---------------------------------------------------------------------------
 
-test('5. a stockout does not teach Foundry that demand was zero', () => {
+test('5. a stockout does not teach StockChief that demand was zero', () => {
   const env = setup();
   // Ten days of stock, sold at 6 a day, then empty for twenty days, then restocked.
   stock(env, 60, 60);
@@ -510,7 +510,7 @@ test('12. minimum order quantity and pack size are still respected', () => {
 // 13. The explanation is the calculation
 // ---------------------------------------------------------------------------
 
-test('13. what Foundry says matches the arithmetic it actually did', () => {
+test('13. what StockChief says matches the arithmetic it actually did', () => {
   const env = setup();
   tradeDownTo(env, { perDay: 7, days: 110, leaving: 300 });
   purchasingPolicy.setPolicy(env.db, env.ctx, env.membership, env.skuId,
@@ -551,7 +551,7 @@ test('14. an automatic action stays inside the authority actually granted', () =
   purchasingPolicy.setPolicy(env.db, env.ctx, env.membership, env.skuId,
     { reorderPoint: 120, targetStock: 400 });
 
-  // Nothing granted: the recommendation exists, and Foundry may not act on it.
+  // Nothing granted: the recommendation exists, and StockChief may not act on it.
   const swept = planning.sweepAndRecord(env.db, env.ws, { now: NOW });
   const order = swept.recorded.find((row) => row.kind === 'order_now');
   assert.ok(order, 'the shortage is recognised');
@@ -576,9 +576,9 @@ test('15. work outside the granted authority becomes a decision in Needs you', (
   planning.sweepAndRecord(env.db, env.ws, { now: NOW });
   const items = needsYou.fromPredictedTrouble(env.db, env.ws);
 
-  assert.ok(items.length, 'a shortage Foundry may not fix itself belongs to the owner');
+  assert.ok(items.length, 'a shortage StockChief may not fix itself belongs to the owner');
   const shortage = items.find((row) => /Order/i.test(row.title));
-  assert.ok(shortage, 'the order Foundry cannot place appears as a decision');
+  assert.ok(shortage, 'the order StockChief cannot place appears as a decision');
   assert.equal(shortage.kind, 'decision');
   assert.ok(shortage.recommendation, 'it says what it thinks should happen');
   assert.ok(shortage.missing, 'and what it is waiting on');
@@ -649,10 +649,10 @@ test('17. the same shortage evaluated twice is one recommendation', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 18. A paused Foundry does nothing
+// 18. A paused StockChief does nothing
 // ---------------------------------------------------------------------------
 
-test('18. while Foundry is paused no prediction can authorise anything', () => {
+test('18. while StockChief is paused no prediction can authorise anything', () => {
   const env = setup();
   tradeDownTo(env, { perDay: 6, days: 110, leaving: 40 });
   purchasingPolicy.setPolicy(env.db, env.ctx, env.membership, env.skuId,
@@ -665,7 +665,7 @@ test('18. while Foundry is paused no prediction can authorise anything', () => {
   const swept = planning.sweepAndRecord(env.db, env.ws, { now: NOW });
   const order = swept.recorded.find((row) => row.kind === 'order_now');
 
-  assert.ok(order, 'Foundry still notices — pausing stops acting, not thinking');
+  assert.ok(order, 'StockChief still notices — pausing stops acting, not thinking');
   assert.equal(order.authorityVerdict, 'refused');
   assert.match(order.authorityDetail.reason || '', /Stock take this weekend/);
   assert.equal(recommendations.mayActAlone(order), false);
@@ -673,7 +673,7 @@ test('18. while Foundry is paused no prediction can authorise anything', () => {
   // And it is still shown to the owner, who can act themselves.
   const items = needsYou.fromPredictedTrouble(env.db, env.ws);
   assert.ok(items.some((row) => /Order/i.test(row.title)),
-    'a paused Foundry still tells you what it would have done');
+    'a paused StockChief still tells you what it would have done');
   env.db.close();
 });
 
@@ -773,7 +773,7 @@ test('21. a product that has stopped selling never gets a reorder level of zero'
    * about it. A style had sold steadily for months, run out, and sold nothing
    * for a fortnight — so the measured rate was exactly zero, and every formula
    * downstream agreed: zero a day over a ten day lead time needs a reorder
-   * point of zero and a target of zero. Foundry recommended switching
+   * point of zero and a target of zero. StockChief recommended switching
    * replenishment off for a product whose only problem was that it was out of
    * stock, and the reasoning would have read perfectly to whoever approved it.
    */

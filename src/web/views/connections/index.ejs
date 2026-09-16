@@ -11,7 +11,7 @@
    *
    * Two facts run this screen, in this order:
    *
-   *   1. What is Foundry plugged into, and is it working?
+   *   1. What is StockChief plugged into, and is it working?
    *   2. Plug something else in.
    *
    * So everything connected — tills, mailboxes, the Stripe account, the
@@ -127,8 +127,8 @@
   });
 
   var providerGroups = [
-    { key: 'accounting', title: 'Accounting', description: 'Connect read-only first, prove the books agree, then choose whether Foundry may post.' },
-    { key: 'selling', title: 'Selling', description: 'Stores and tills. Foundry brings completed sales in by itself.' },
+    { key: 'accounting', title: 'Accounting', description: 'Connect read-only first, prove the books agree, then choose whether StockChief may post.' },
+    { key: 'selling', title: 'Selling', description: 'Stores and tills. StockChief brings completed sales in by itself.' },
     { key: 'business', title: 'Business systems', description: 'Your own POS, ERP or warehouse software.' },
     { key: 'supplier', title: 'Supplier communication', description: 'Mailboxes carrying supplier invoices and delivery notes.' },
   ];
@@ -138,7 +138,7 @@
   <p class="rm-head__eyebrow"><%- helpers.icon('link', { size: 15 }) %> Connections</p>
   <h1>Where your business already happens</h1>
   <p>
-    Connect the systems where your business actually happens and Foundry keeps itself informed.
+    Connect the systems where your business actually happens and StockChief keeps itself informed.
     No scripts, manual JSON, or Check now.
   </p>
 </header>
@@ -165,7 +165,7 @@
     <span class="rm-empty__ic"><%- helpers.icon('link', { size: 19 }) %></span>
     <strong>Nothing is connected yet</strong>
     <p>
-      Connect where you make sales and Foundry brings them in automatically, asking only when a
+      Connect where you make sales and StockChief brings them in automatically, asking only when a
       product or location cannot be matched. Pick one below.
     </p>
   </div>
@@ -269,7 +269,7 @@
               <p><strong>OAuth redirect URI — copy this exactly</strong></p>
               <code><%= provider.type === 'xero' ? xeroRedirectOrigin : (publicOrigin || 'https://your-public-foundry-domain.example') %>/settings/connections/<%= provider.type %>/callback</code>
               <% if (!provider.available) { %>
-                <p>Set <code><%= provider.type === 'quickbooks' ? 'QUICKBOOKS_CLIENT_ID' : 'XERO_CLIENT_ID' %></code> and <code><%= provider.type === 'quickbooks' ? 'QUICKBOOKS_CLIENT_SECRET' : 'XERO_CLIENT_SECRET' %></code> on the Foundry server, then restart Foundry. The Connect button will appear here.</p>
+                <p>Set <code><%= provider.type === 'quickbooks' ? 'QUICKBOOKS_CLIENT_ID' : 'XERO_CLIENT_ID' %></code> and <code><%= provider.type === 'quickbooks' ? 'QUICKBOOKS_CLIENT_SECRET' : 'XERO_CLIENT_SECRET' %></code> on the StockChief server, then restart StockChief. The Connect button will appear here.</p>
               <% } else { %>
                 <p>The developer app must contain this exact callback, including the protocol, hostname and path.</p>
               <% } %>
@@ -288,13 +288,13 @@
             <% if (!provider.available) { %>
               <p><%= provider.unavailableReason %></p>
             <% } else if (provider.type === 'reference_webhook' || provider.integrationMode === 'custom_contract') { %>
-              <p>Foundry gives your technical team one endpoint, a scoped API token and the complete event contract. It proves each event is valid, correctly ordered and applied once before it can affect operations.</p>
+              <p>StockChief gives your technical team one endpoint, a scoped API token and the complete event contract. It proves each event is valid, correctly ordered and applied once before it can affect operations.</p>
             <% } else if (provider.type === 'shopify') { %>
-              <p>An installed store in this Shopify organization connects directly. Other stores open Shopify for approval. Foundry stores the resulting credential encrypted.</p>
+              <p>An installed store in this Shopify organization connects directly. Other stores open Shopify for approval. StockChief stores the resulting credential encrypted.</p>
             <% } else if (provider.type === 'clover') { %>
-              <p>Clover opens so you can choose and authorize the merchant. Foundry then discovers that merchant’s catalog and store automatically.</p>
+              <p>Clover opens so you can choose and authorize the merchant. StockChief then discovers that merchant’s catalog and store automatically.</p>
             <% } else { %>
-              <p>You sign in with <%= provider.name %> and approve access. Foundry stores the resulting credential encrypted.</p>
+              <p>You sign in with <%= provider.name %> and approve access. StockChief stores the resulting credential encrypted.</p>
             <% } %>
           </div>
         </details>
@@ -306,7 +306,7 @@
 <details class="rm-work" id="developer-api" <%= apiToken || webhookSecret ? 'open' : '' %>>
   <summary>Advanced: connect custom software with APIs and webhooks</summary>
   <div class="rm-work__body">
-    <p class="quiet"><strong>Most business owners do not need this.</strong> Use it only when your ERP, warehouse system, developer, or reporting tool needs to exchange data directly with Foundry.</p>
+    <p class="quiet"><strong>Most business owners do not need this.</strong> Use it only when your ERP, warehouse system, developer, or reporting tool needs to exchange data directly with StockChief.</p>
     <div class="rm-grid2" style="margin-top:16px">
   <section class="rm-provider">
     <div class="rm-provider__top"><span class="rm-provider__mark is-word">API</span><span class="rm-provider__n">Scoped API clients</span></div>
@@ -314,7 +314,7 @@
     <% if (apiToken) { %><div class="rm-note rm-note--warn"><div><strong>Copy this token now</strong><input class="input mono" value="<%= apiToken.token %>" readonly onclick="this.select()"><small>Shown once. Scopes: <%= apiToken.scopes.join(', ') %></small></div></div><% } %>
     <% apiClients.forEach(function(client) { %><div class="rm-told__row"><span class="rm-told__t"><%= client.name %><small><%= client.scopes.join(', ') %> · <%= client.token_prefix %>…</small></span><span class="rm-told__m <%= client.revoked_at ? '' : 'is-ok' %>"><%= client.revoked_at ? 'Revoked' : 'Active' %></span><% if (!client.revoked_at && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients/<%= client.id %>/revoke" data-confirm="Revoke this API token immediately?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
     <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/api-clients" class="grid" style="margin-top:16px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Client name</span><input class="input" name="name" placeholder="Warehouse automation" required></label><div class="choice-grid"><label class="choice"><input type="checkbox" name="scopes" value="inventory:read"><span><strong>Read inventory</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="events:read"><span><strong>Read events</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="inventory:write"><span><strong>Submit inventory commands</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="migration:read"><span><strong>Read migration checks</strong></span></label><label class="choice"><input type="checkbox" name="scopes" value="migration:write"><span><strong>Stage migration evidence</strong><small>Cannot approve or activate cutover</small></span></label></div><button class="rm-btn rm-btn--wash" type="submit">Create scoped token</button></form><% } %>
-    <details class="rm-more"><summary>How to prove this API works</summary><div><p>Start with a token that has only <strong>Read inventory</strong>. Give it to the test client for this one inventory and request <code>GET /api/v1/public/inventory</code>. The response must identify Foundry as the source of truth and must contain only this inventory’s records.</p><p>Then create a separate write-enabled test token. Send one receive command with an <code>Idempotency-Key</code>, resend the exact same command, and confirm stock changes once. Revoke the token and confirm the next request is refused.</p></div></details>
+    <details class="rm-more"><summary>How to prove this API works</summary><div><p>Start with a token that has only <strong>Read inventory</strong>. Give it to the test client for this one inventory and request <code>GET /api/v1/public/inventory</code>. The response must identify StockChief as the source of truth and must contain only this inventory’s records.</p><p>Then create a separate write-enabled test token. Send one receive command with an <code>Idempotency-Key</code>, resend the exact same command, and confirm stock changes once. Revoke the token and confirm the next request is refused.</p></div></details>
     <details class="rm-more"><summary>Endpoints and contract</summary><div><p><code>GET /api/v1/public/inventory</code></p><p><code>GET /api/v1/public/events</code></p><p><code>POST /api/v1/public/commands/inventory/receive</code></p><p><code>POST /api/v1/public/commands/inventory/adjust</code></p><p>Every write requires a stable <code>Idempotency-Key</code>; retrying the same command returns its original result without posting twice.</p></div></details>
   </section>
   <section class="rm-provider">
@@ -323,7 +323,7 @@
     <% if (webhookSecret) { %><div class="rm-note rm-note--warn"><div><strong>Copy this signing secret now</strong><input class="input mono" value="<%= webhookSecret.secret %>" readonly onclick="this.select()"></div></div><% } %>
     <% outboundWebhooks.forEach(function(hook) { %><div class="rm-told__row"><span class="rm-told__t"><%= hook.name %><small><%= hook.endpoint_url %> · <%= hook.eventTypes.join(', ') %></small></span><span class="rm-told__m <%= hook.status === 'ACTIVE' ? 'is-ok' : '' %>"><%= hook.status %></span><% if (hook.status === 'ACTIVE' && currentUser.role === 'owner') { %><form method="post" action="/settings/connections/outbound-webhooks/<%= hook.id %>/revoke" data-confirm="Stop sending all future events to this webhook?"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Revoke</button></form><% } %></div><% }) %>
     <% if (currentUser.role === 'owner') { %><form method="post" action="/settings/connections/outbound-webhooks" class="grid" style="margin-top:16px"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><label class="field"><span class="field-label">Webhook name</span><input class="input" name="name" placeholder="Data warehouse" required></label><label class="field"><span class="field-label">HTTPS endpoint</span><input class="input" type="url" name="endpointUrl" placeholder="https://example.com/foundry-events" required></label><label class="field"><span class="field-label">Events</span><select class="select" name="eventTypes" multiple required><option value="*">All business events</option><option value="inventory.received">Inventory received</option><option value="inventory.issued">Inventory issued</option><option value="purchase_order.completed">Purchase order completed</option><option value="sales_order.fulfilled">Sales order fulfilled</option></select><span class="field-help">Use Ctrl/Cmd to choose several.</span></label><button class="rm-btn rm-btn--wash" type="submit">Create signed webhook</button></form><% } %>
-    <details class="rm-more"><summary>How to prove this webhook works</summary><div><p>Use an HTTPS test receiver you control. Create the webhook for <strong>Inventory received</strong>, receive one unit in Foundry, and confirm the receiver gets one signed event with its Foundry event ID.</p><p>Return an error once to prove Foundry records the failure and retries durably. Then accept the retry and confirm the same event is not delivered as a second business effect. Revoke the webhook and confirm later events are not sent.</p></div></details>
+    <details class="rm-more"><summary>How to prove this webhook works</summary><div><p>Use an HTTPS test receiver you control. Create the webhook for <strong>Inventory received</strong>, receive one unit in StockChief, and confirm the receiver gets one signed event with its StockChief event ID.</p><p>Return an error once to prove StockChief records the failure and retries durably. Then accept the retry and confirm the same event is not delivered as a second business effect. Revoke the webhook and confirm later events are not sent.</p></div></details>
   </section>
     </div>
   </div>
@@ -362,10 +362,10 @@
         <p class="quiet">
           <% if (unfinishedStripe) { %>
             An earlier attempt started Stripe’s new-account onboarding. It did not finish and
-            cannot take payments. Foundry will not treat it as the existing Stripe account you
+            cannot take payments. StockChief will not treat it as the existing Stripe account you
             wanted to connect.
           <% } else { %>
-            This business granted Foundry permission on Stripe’s own page. Foundry holds no key for
+            This business granted StockChief permission on Stripe’s own page. StockChief holds no key for
             this account and cannot be made to reveal one, and the business can withdraw the
             permission from its own Stripe dashboard at any time.
           <% } %>
@@ -392,7 +392,7 @@
           Key ending <%= pay.keyEndsWith %>.
           <%= pay.hasWebhookSecret
             ? 'Payments are heard about the moment they happen.'
-            : 'No signing secret is set, so Foundry only learns about a payment when it asks.' %>
+            : 'No signing secret is set, so StockChief only learns about a payment when it asks.' %>
         </p>
         <p class="quiet">Webhook address for this inventory: <code><%= paymentWebhookUrl %></code></p>
         <div class="rm-choices">
@@ -419,17 +419,17 @@
           <% if (grant.testMode) { %>
             <p class="quiet">
               <strong>This is Stripe sandbox—not your live Stripe account.</strong>
-              Foundry is currently using Stripe test credentials. Stripe may ask you to create
+              StockChief is currently using Stripe test credentials. Stripe may ask you to create
               or finish a sandbox account even when the same email already owns a live Stripe
-              account. Live existing-account connection requires Foundry’s live Stripe client
+              account. Live existing-account connection requires StockChief’s live Stripe client
               ID and live secret key.
             </p>
           <% } %>
           <p class="quiet">
             Stripe opens in its own secure window. Sign in and choose the Stripe account this
             business already uses. When
-            Stripe is finished, that tab closes and Foundry shows the account as connected. You
-            never copy an API key into Foundry.
+            Stripe is finished, that tab closes and StockChief shows the account as connected. You
+            never copy an API key into StockChief.
           </p>
           <div class="rm-choices">
             <a class="rm-btn rm-btn--wash" href="/settings/connections/payments/start"
@@ -438,7 +438,7 @@
         <% } else if (grant && !grant.connected) { %>
           <p class="quiet">
             <strong>Stripe account sign-in is not ready on this installation.</strong>
-            Foundry’s administrator must finish the Stripe Connect OAuth setup. Foundry will not
+            StockChief’s administrator must finish the Stripe Connect OAuth setup. StockChief will not
             replace account sign-in with a new-account application or ask you to paste an API key.
           </p>
         <% } %>
@@ -466,7 +466,7 @@
       </div>
       <% if (shipping.connected && shipping.source === 'platform') { %>
         <p class="quiet">
-          This business has its own shipping account and payment method. Foundry compares its
+          This business has its own shipping account and payment method. StockChief compares its
           carrier rates without mixing its postage or labels with another business.
         </p>
       <% } else if (shipping.connected) { %>
@@ -475,7 +475,7 @@
       <% } else { %>
         <p class="quiet">
           One short setup connects your carriers, confirms where parcels leave from, and keeps
-          postage on this business’s payment method. Foundry handles the rest from Orders.
+          postage on this business’s payment method. StockChief handles the rest from Orders.
         </p>
         <% if (shippingSetup && !shippingSetup.available) { %>
           <p class="quiet">Guided carrier setup is not enabled on this installation yet.</p>
@@ -502,7 +502,7 @@
 (function () {
   /*
    * Every provider authorization opens from the owner's click in its own
-   * window. Foundry stays put, shows what it is waiting for, and refreshes the
+   * window. StockChief stays put, shows what it is waiting for, and refreshes the
    * exact connection when the one-time OAuth return reports completion.
    */
   document.querySelectorAll('form[data-oauth-connect]:not([data-oauth-connect=""])')
@@ -517,13 +517,13 @@
         event.preventDefault();
 
         try {
-          popup.document.title = 'Opening ' + providerName + ' · Foundry';
+          popup.document.title = 'Opening ' + providerName + ' · StockChief';
           popup.document.body.style.cssText = 'margin:0;min-height:100vh;display:grid;place-items:center;'
             + 'background:#f4f5fb;color:#191b2a;font:16px system-ui,sans-serif';
           popup.document.body.innerHTML = '<div style="text-align:center;padding:32px">'
             + '<div style="font-size:28px;margin-bottom:12px">↗</div>'
             + '<strong>Opening ' + providerName.replace(/[&<>"']/g, '') + '</strong>'
-            + '<p style="color:#666b80">Foundry will stay open here while you approve the connection.</p></div>';
+            + '<p style="color:#666b80">StockChief will stay open here while you approve the connection.</p></div>';
         } catch (_) { /* The provider navigation can begin immediately. */ }
 
         var popupField = form.querySelector('input[name="popup"]');

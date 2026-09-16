@@ -3,7 +3,7 @@
     <a class="back-link" href="/inventories"><%- helpers.icon('chevron', { size: 14 }) %> Your inventories</a>
     <h1>New inventory</h1>
     <div class="page-sub">
-      Give this operation a name. Next, Foundry will ask how you manage its inventory today.
+      Give this operation a name. Next, StockChief will ask how you manage its inventory today.
     </div>
   </div>
 </div>
@@ -30,11 +30,11 @@
         <legend class="label">What will this inventory contain?</legend>
         <label class="choice">
           <input type="radio" name="dataMode" value="production" <%= form.dataMode !== 'synthetic' ? 'checked' : '' %>>
-          <span><strong>My real business</strong><small>Foundry uses only records backed by your business evidence.</small></span>
+          <span><strong>My real business</strong><small>StockChief uses only records backed by your business evidence.</small></span>
         </label>
         <label class="choice">
           <input type="radio" name="dataMode" value="synthetic" <%= form.dataMode === 'synthetic' ? 'checked' : '' %>>
-          <span><strong>Test environment</strong><small>Foundry may generate realistic synthetic products, stock, suppliers, transactions and history here.</small></span>
+          <span><strong>Test environment</strong><small>StockChief may generate realistic synthetic products, stock, suppliers, transactions and history here.</small></span>
         </label>
       </fieldset>
 
@@ -42,7 +42,7 @@
         <a class="btn" href="/inventories">Cancel</a>
         <span class="spacer"></span>
         <button class="btn btn--primary" type="submit" <%= allowance.exceeded ? 'disabled' : '' %>>
-          Continue with Foundry
+          Continue with StockChief
         </button>
       </div>
     </form>

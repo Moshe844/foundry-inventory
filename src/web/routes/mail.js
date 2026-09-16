@@ -23,14 +23,14 @@ router.use('/mail', requireAuth);
 
 /*
  * The fourth drawer is not a state a message can be in — it is the mail
- * Foundry never took. It lives here anyway, because the only place somebody
+ * StockChief never took. It lives here anyway, because the only place somebody
  * looks for an email they cannot find is where the email should have been.
  */
 const DRAWERS = [
   { key: 'needs-reply', state: 'NEEDS_REPLY', label: 'Needs a reply' },
   { key: 'waiting', state: 'WAITING', label: 'Waiting on them' },
   { key: 'handled', state: 'HANDLED', label: 'Handled' },
-  { key: 'not-foundry', state: 'SET_ASIDE', label: 'Not for Foundry' },
+  { key: 'not-foundry', state: 'SET_ASIDE', label: 'Not for StockChief' },
 ];
 
 router.get('/mail', requirePermission(permissions.VIEW, 'read the mailbox'), asyncRoute(async (req, res) => {
@@ -49,17 +49,17 @@ router.get('/mail', requirePermission(permissions.VIEW, 'read the mailbox'), asy
 
 /*
  * Overruling the gate. A person saying "this one is ours" is the last word,
- * and Foundry goes back to the provider for the message it chose not to keep.
+ * and StockChief goes back to the provider for the message it chose not to keep.
  */
 router.post('/mail/set-aside/:id/bring-in', requirePermission(permissions.OPERATE, 'sort the mailbox'),
   asyncRoute(async (req, res) => {
     try {
       const result = await providerService.bringInSetAside(req.db, req.ctx, req.params.id);
       if (result.messageId) {
-        req.flash('success', 'Brought in. Foundry has read it and prepared whatever it could.');
+        req.flash('success', 'Brought in. StockChief has read it and prepared whatever it could.');
         return res.redirect(303, `/mail/${result.messageId}`);
       }
-      req.flash('warn', 'Foundry could not read that message back from the mailbox.');
+      req.flash('warn', 'StockChief could not read that message back from the mailbox.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);
@@ -68,10 +68,10 @@ router.post('/mail/set-aside/:id/bring-in', requirePermission(permissions.OPERAT
   }));
 
 /**
- * What Foundry made of this message before anybody opened it.
+ * What StockChief made of this message before anybody opened it.
  *
  * A draft order, or the reason there is not one. Shown on the message itself
- * because "Foundry has already prepared this" is only reassuring next to the
+ * because "StockChief has already prepared this" is only reassuring next to the
  * email it was prepared from.
  */
 function prepared(db, workspaceId, message) {
@@ -94,7 +94,7 @@ router.get('/mail/:id', requirePermission(permissions.VIEW, 'read the mailbox'),
       WHERE message_id = ? AND workspace_id = ? ORDER BY filename`)
       .all(message.id, req.ctx.workspaceId),
     // Only the three a message can actually be moved between. "Not for
-    // Foundry" is where mail Foundry never took is listed, not a drawer this
+    // StockChief" is where mail StockChief never took is listed, not a drawer this
     // message could be dragged into.
     drawers: DRAWERS.filter((entry) => entry.state !== 'SET_ASIDE'),
   });
@@ -105,7 +105,7 @@ router.get('/mail/:id', requirePermission(permissions.VIEW, 'read the mailbox'),
  *
  * The sweep only retries messages that have neither an order nor a reason, so
  * a message that failed once keeps its reason forever — which is right while
- * the reason is true, and wrong the day Foundry gets better at reading. This
+ * the reason is true, and wrong the day StockChief gets better at reading. This
  * is the owner saying "try that again now", and it clears the old reason so
  * the attempt is a real one rather than a replay of the refusal.
  */
@@ -115,8 +115,8 @@ router.post('/mail/:id/reread', requirePermission(permissions.OPERATE, 'read ord
     try {
       orders.noteReason(req.db, req.ctx, req.params.id, null);
       const result = await orders.draft(req.db, req.ctx, req.params.id);
-      if (result.order) req.flash('success', `Foundry read this as ${result.order.orderNumber || 'an order'}. Nothing is confirmed.`);
-      else req.flash('warn', result.because || 'Foundry still could not read an order out of this.');
+      if (result.order) req.flash('success', `StockChief read this as ${result.order.orderNumber || 'an order'}. Nothing is confirmed.`);
+      else req.flash('warn', result.because || 'StockChief still could not read an order out of this.');
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);
@@ -156,8 +156,8 @@ router.post('/mail/:id/draft', requirePermission(permissions.OPERATE, 'write rep
     } else {
       const written = await drafting.draft(req.db, req.ctx, req.params.id);
       req.flash(written.rejected ? 'warn' : 'success', written.rejected
-        ? `Foundry wrote a reply and threw it away because ${written.rejected}. What is below is built from your records only.`
-        : 'Foundry has written a reply. Nothing is sent until you send it.');
+        ? `StockChief wrote a reply and threw it away because ${written.rejected}. What is below is built from your records only.`
+        : 'StockChief has written a reply. Nothing is sent until you send it.');
     }
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;

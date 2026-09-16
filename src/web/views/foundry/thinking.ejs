@@ -1,6 +1,6 @@
 <%
   /*
-   * The one screen in Foundry where waiting is the whole point of it.
+   * The one screen in StockChief where waiting is the whole point of it.
    *
    * It used to show two steps for three model calls, both named in the
    * abstract, with nothing on the page identifying what was being read. A
@@ -40,7 +40,7 @@
 <div class="rm-intake-thinking" data-job="<%= job.id %>">
   <span class="rm-thinking__mark"><%- helpers.icon('spark', { size: 26 }) %></span>
 
-  <h1>Foundry is reading your inventory</h1>
+  <h1>StockChief is reading your inventory</h1>
   <% if (job.kind === 'catalogue_review') { %>
     <p>Numbered product records are read directly and normally finish in seconds. A free-form description is stopped after 30 seconds rather than being left hanging.</p>
   <% } else { %>

@@ -98,7 +98,7 @@ test('workspace seller opens embedded onboarding, mints a scoped token, and beco
     assert.equal(page.status, 200);
     assert.match(words, /Shipping for Merchant funded postage/);
     assert.match(words, /setup unfinished/);
-    assert.match(words, /Foundry never charges Foundry's platform account/);
+    assert.match(words, /StockChief never charges StockChief's platform account/);
     assert.match(page.text, /Advanced connection details/);
     assert.match(page.text, /shipengine-elements-sdk\.mjs/);
     assert.match(page.text, /12 Main Street/);

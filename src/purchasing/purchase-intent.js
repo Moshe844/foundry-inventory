@@ -3,7 +3,7 @@
 /**
  * Turning "order 5 cases of Navy 8 from ABC Footwear" into a draft order.
  *
- * The model's part is the same as everywhere else in Foundry: it names things
+ * The model's part is the same as everywhere else in StockChief: it names things
  * in the person's words. It does not choose a supplier record, a SKU, a pack
  * size or a price — those are resolved here against this workspace's own data,
  * and an ambiguous name becomes a question rather than a guess.
@@ -49,7 +49,7 @@ function resolveSupplier(db, workspaceId, text) {
 
   const close = resolver.closestMatch(query, all, (s) => s.name);
   if (close.ok) {
-    return { ok: true, value: close.value, note: `You wrote “${query}” — Foundry took that as ${close.value.name}.` };
+    return { ok: true, value: close.value, note: `You wrote “${query}” — StockChief took that as ${close.value.name}.` };
   }
   if (close.reason === 'ambiguous') {
     return {
@@ -76,8 +76,14 @@ function resolveSupplier(db, workspaceId, text) {
  */
 function build(db, ctx, membership, line, options = {}) {
   permissions.assertCan(membership, permissions.CREATE_PO, 'prepare purchase orders');
+  const source = String(options.instruction || '');
+  const date = String(line.purchaseExpectedDate || '');
+  const groundedDate = line.purchaseDateSource && source.includes(line.purchaseDateSource)
+    && /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date))
+    && new Date(date).toISOString().slice(0, 10) === date ? date : null;
+  const groundedNotes = line.deliveryInstructions && source.includes(line.deliveryInstructions) ? line.deliveryInstructions : null;
 
-  // A SKU selected from Foundry's own clarification buttons is already a
+  // A SKU selected from StockChief's own clarification buttons is already a
   // deterministic record choice. Do not feed that choice back through the
   // language resolver: the original wording may have been deliberately vague
   // ("shoes"), and grounding against it would discard the exact selection and
@@ -98,6 +104,19 @@ function build(db, ctx, membership, line, options = {}) {
         instruction: options.instruction,
       });
   if (!sku.ok) {
+    // Purchasing may introduce a catalogue record. Missing identity is not
+    // permission to substitute an existing SKU, nor evidence of stock on hand.
+    if (sku.missingSkuCode) {
+      const existing = db.prepare('SELECT id FROM skus WHERE workspace_id = ? AND code = ? COLLATE NOCASE')
+        .get(ctx.workspaceId, sku.missingSkuCode);
+      if (existing) return { ok: false, question: `SKU ${sku.missingSkuCode} already exists but is inactive. Review that record before ordering it; StockChief will not create a duplicate.` };
+      return { ok: false,
+        question: `SKU ${sku.missingSkuCode} is new. Review its product details here, then continue to your draft purchase order. Buying it does not put it in stock.`,
+        newProduct: { code: sku.missingSkuCode, name: String(line.productName || line.item || '').trim(),
+          unitLabel: String(line.unitLabel || '').trim(), supplier: String(line.supplier || '').trim(),
+          quantity: line.quantity, unitCost: statedUnitCost(options.instruction), notes: groundedNotes || '', expectedDate: groundedDate,
+          trackingMode: line.trackingSource && source.includes(line.trackingSource) ? line.trackingMode : '' } };
+    }
     const rows = ['not_found', 'not_understood'].includes(sku.reason)
       ? db.prepare(
           `SELECT s.id, i.name AS item_name, s.variant_label, s.code
@@ -127,8 +146,10 @@ function build(db, ctx, membership, line, options = {}) {
       return {
         ok: false,
         question: supplierCreationName
-          ? `${supplierCreationName} is not in your suppliers yet. Choose the product below to add this supplier and approve the purchase order in one step.`
-          : `Which product should be on this purchase order? Foundry could not safely match “${line.item || line.variant}”.`,
+          ? options.previewOnly
+            ? `${supplierCreationName} is not in your suppliers yet. Choose the product below to add this supplier and prepare a draft for review. This does not approve or send the order.`
+            : `${supplierCreationName} is not in your suppliers yet. Choose the product below to add this supplier and approve the purchase order in one step.`
+          : `Which product should be on this purchase order? StockChief could not safely match “${line.item || line.variant}”.`,
         choices: productChoices.map(({ label, value }) => ({ label, value })),
         missingProduct: { choices: productChoices, supplierCreationName },
       };
@@ -145,7 +166,7 @@ function build(db, ctx, membership, line, options = {}) {
   if (sku.note) assumptions.push(sku.note);
 
   // Which supplier: the one they named, or — when they did not — the one
-  // Foundry would choose anyway, said out loud.
+  // StockChief would choose anyway, said out loud.
   let supplier;
   if (line.supplier) {
     const found = resolveSupplier(db, ctx.workspaceId, line.supplier);
@@ -158,9 +179,11 @@ function build(db, ctx, membership, line, options = {}) {
             !== String(line.supplier).trim().toLowerCase()) {
           return {
             ok: false,
-            question: `${line.supplier} is not in your suppliers yet. Add it and approve this purchase order?`,
+            question: options.previewOnly
+              ? `${line.supplier} is not in your suppliers yet. Add it so StockChief can prepare a draft purchase order for review?`
+              : `${line.supplier} is not in your suppliers yet. Add it and approve this purchase order?`,
             choices: [{
-              label: `Add ${line.supplier} and approve order`,
+              label: options.previewOnly ? `Add ${line.supplier} and prepare draft` : `Add ${line.supplier} and approve order`,
               value: '__create_purchase_supplier__',
             }],
             missingSupplier: { name: line.supplier, skuId: sku.value.id },
@@ -185,7 +208,7 @@ function build(db, ctx, membership, line, options = {}) {
     if (options_.length === 0) {
       return {
         ok: false,
-        unsupported: `No supplier is on file for ${sku.value.item_name}. Add one, then Foundry can order it.`,
+        unsupported: `No supplier is on file for ${sku.value.item_name}. Add one, then StockChief can order it.`,
       };
     }
     const signals = require('../signals/signal-engine').skuSignals(db, ctx.workspaceId, {
@@ -258,7 +281,7 @@ function build(db, ctx, membership, line, options = {}) {
       };
     }
     purchaseUnits = recommendation.quantityPurchaseUnits;
-    assumptions.push(`${recommendation.explanation} Foundry sized this from that.`);
+    assumptions.push(`${recommendation.explanation} StockChief sized this from that.`);
   }
 
   if (!Number.isFinite(purchaseUnits) || purchaseUnits <= 0) {
@@ -271,12 +294,15 @@ function build(db, ctx, membership, line, options = {}) {
 
   const order = poService.createOrder(db, ctx, membership, {
     supplierId: supplier.id,
+    expectedDate: options.purchaseDetails?.expectedDate ?? groundedDate,
+    destinationLocationId: options.purchaseDetails?.destinationLocationId || null,
+    notes: options.purchaseDetails?.notes ?? groundedNotes,
     source: 'instruction',
     sourceDetail: { instruction: options.instruction || null, assumptions },
     lines: [{
       skuId: sku.value.id,
       quantityPurchaseUnits: purchaseUnits,
-      unitCost: statedUnitCost(options.instruction),
+      unitCost: options.purchaseDetails?.unitCost ?? statedUnitCost(options.instruction),
     }],
   });
 

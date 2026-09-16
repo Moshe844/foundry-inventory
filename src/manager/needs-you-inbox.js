@@ -5,19 +5,19 @@
  *
  * Needs you grew a section per internal mechanism: physical events, manager
  * findings, investigations, prepared corrections, controlled work, readiness
- * decisions. Each section made sense to the part of Foundry that filled it and
+ * decisions. Each section made sense to the part of StockChief that filled it and
  * to nobody else. A sale that could not be recorded appeared under "Deliveries
- * and counts to confirm", headed "Foundry needs one more detail before it can
+ * and counts to confirm", headed "StockChief needs one more detail before it can
  * record this" — without saying which detail — above a button that went to the
- * general Tell Foundry box, where the customer's only option was to type the
+ * general Tell StockChief box, where the customer's only option was to type the
  * same sentence again and get the same result.
  *
  * The mechanisms stay. What changes is that every one of them has to answer the
  * same four questions before it may put anything in front of a person:
  *
  *   happened — what was done or observed, in their own words where possible
- *   why      — why Foundry stopped instead of carrying on
- *   recommendation — the safest next step Foundry recommends
+ *   why      — why StockChief stopped instead of carrying on
+ *   recommendation — the safest next step StockChief recommends
  *   missing  — the specific decision or fact it does not have
  *   action   — one thing to click, going straight to where it is resolved
  *
@@ -39,7 +39,7 @@ const dismissals = require('./needs-you-dismissals');
 const permissions = require('../actions/permissions');
 const { humanizeUnitMarkers } = require('../lib/util');
 
-/** SKUs already covered by a Foundry-prepared order that still needs placing. */
+/** SKUs already covered by a StockChief-prepared order that still needs placing. */
 function preparedReplenishmentSkus(db, workspaceId) {
   return new Set(db.prepare(`SELECT DISTINCT pol.sku_id
     FROM purchase_order_lines pol
@@ -71,7 +71,7 @@ function customerImpactForPurchase(db, workspaceId, purchaseOrderId) {
 }
 
 /**
- * What Foundry does not know about a reported event.
+ * What StockChief does not know about a reported event.
  *
  * Worked out from the record rather than by asking a model, because this runs
  * for every row on the page. It is deliberately specific: "which product" and
@@ -91,9 +91,9 @@ function missingFromEvent(event) {
     return 'Whether to correct the recorded stock to match your count.';
   }
 
-  // Anything Foundry could not place at all. It read the sentence and could not
+  // Anything StockChief could not place at all. It read the sentence and could not
   // tell which inventory operation it describes, or could not carry it out.
-  return 'What Foundry should record — it could not work out the exact change from this on its own.';
+  return 'What StockChief should record — it could not work out the exact change from this on its own.';
 }
 
 function fromPhysicalEvents(db, workspaceId) {
@@ -111,14 +111,14 @@ function fromPhysicalEvents(db, workspaceId) {
       id: `event:${row.id}`,
       kind: 'event',
       // Named for what the customer did, not for the table it landed in.
-      title: counting ? 'A count needs one decision' : 'Foundry could not record this yet',
-      happened: `You told Foundry: “${row.stated_as}”`,
+      title: counting ? 'A count needs one decision' : 'StockChief could not record this yet',
+      happened: `You told StockChief: “${row.stated_as}”`,
       why: counting
-        ? 'Foundry will not change recorded stock from a count without you.'
-        : 'Foundry will not guess an inventory change, so it stopped rather than record the wrong thing.',
+        ? 'StockChief will not change recorded stock from a count without you.'
+        : 'StockChief will not guess an inventory change, so it stopped rather than record the wrong thing.',
       recommendation: counting
         ? 'Confirm the physical count before changing the inventory record.'
-        : 'Supply the missing fact so Foundry can prepare the exact inventory change.',
+        : 'Supply the missing fact so StockChief can prepare the exact inventory change.',
       missing: missingFromEvent(row),
       actionLabel: counting ? 'Settle this count' : 'Finish recording this',
       href: `/needs-you/event/${row.id}`,
@@ -144,13 +144,13 @@ function fromInvestigations(db, workspaceId) {
       kind: 'investigation',
       title: `${(entry.affectedEntities || {}).displayName || 'Stock'} does not match the records`,
       happened: entry.observedDifference && entry.observedDifference.statedAs
-        ? `You told Foundry: “${entry.observedDifference.statedAs}”`
-        : 'Foundry compared the count with its ledger and they disagree.',
-      why: 'Foundry cannot tell which figure is right, and will not overwrite the ledger on a guess.' +
+        ? `You told StockChief: “${entry.observedDifference.statedAs}”`
+        : 'StockChief compared the count with its ledger and they disagree.',
+      why: 'StockChief cannot tell which figure is right, and will not overwrite the ledger on a guess.' +
         (ageDays >= 2 ? ` This discrepancy has been unresolved for ${ageDays} days.` : ''),
       recommendation: entry.recommendedNextStep
         || 'Recount the stock, then correct the record only if the physical count is confirmed.',
-      // The specific next step Foundry worked out, not a generic invitation to
+      // The specific next step StockChief worked out, not a generic invitation to
       // go and look: "Recount Filter Cartridge at Main Warehouse" is an
       // instruction, "look into this" is a shrug.
       missing: entry.recommendedNextStep
@@ -178,12 +178,12 @@ function fromRepairCases(db, workspaceId) {
     id: `repair:${repairCase.id}`,
     kind: 'repair',
     title: repairCase.symptom,
-    happened: `Foundry found that ${repairCase.failedInvariant}.`,
+    happened: `StockChief found that ${repairCase.failedInvariant}.`,
     why: repairCase.status === 'FAILED'
-      ? 'The domain repair ran or resumed, but its post-repair checks did not all pass. Foundry has not called it fixed.'
+      ? 'The domain repair ran or resumed, but its post-repair checks did not all pass. StockChief has not called it fixed.'
       : repairCase.status === 'INCONCLUSIVE'
-        ? 'The records do not prove a safe correction yet, so Foundry stopped instead of forcing the numbers to agree.'
-        : 'Foundry diagnosed the cause and simulated the correction, but the materiality or permissions require your approval.',
+        ? 'The records do not prove a safe correction yet, so StockChief stopped instead of forcing the numbers to agree.'
+        : 'StockChief diagnosed the cause and simulated the correction, but the materiality or permissions require your approval.',
     recommendation: repairCase.simulation_summary
       || 'Open the repair case to review the evidence and simulated consequences.',
     missing: repairCase.status === 'NEEDS_AUTHORITY' ? 'Your approval for the simulated repair.'
@@ -220,7 +220,7 @@ function fromAutonomousOperations(db, workspaceId) {
       return {
         id:`operation:${row.id}`, kind:'operation', title:row.title,
         happened:row.summary || `${definition.title} did not reach a verified outcome.`,
-        why:row.reason || row.error_message || 'Foundry stopped before taking an unapproved or unverified action.',
+        why:row.reason || row.error_message || 'StockChief stopped before taking an unapproved or unverified action.',
         recommendation:verification
           ? 'Review the evidence and resolve the failed verification before this area resumes.'
           : 'Approve this only if the proposed outcome and limits are correct.',
@@ -266,7 +266,7 @@ function fromCorrections(db, workspaceId) {
       kind: 'correction',
       title: 'A change is prepared and waiting for you',
       happened: actionPresenter.oneLine(db, workspaceId, proposal),
-      why: 'Foundry has worked out the exact change but will not apply it without approval.',
+      why: 'StockChief has worked out the exact change but will not apply it without approval.',
       recommendation: 'Approve it only if the preview matches what actually happened.',
       missing: 'Your approval.',
       actionLabel: 'Approve the change',
@@ -286,7 +286,7 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
     const base = { id: `work:${item.id}`, at: item.createdAt, href: `/autopilot/work/${item.id}`, ageDays };
 
     // Checking in a delivery is not an approval, and describing it as one —
-    // "Foundry will not move stock or commit money without you", above a button
+    // "StockChief will not move stock or commit money without you", above a button
     // called Review the plan — told somebody the opposite of what to do. It is
     // a box that has arrived, and the job is to count what is in it.
     if (item.category === 'receiving_followup') {
@@ -298,7 +298,7 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
         happened: state.late
           ? `It was expected ${state.expected}; ${state.detail}`
           : `It is expected today; ${state.detail}`,
-        why: 'Foundry cannot see what is physically in the box, so it will not book a delivery in for you.',
+        why: 'StockChief cannot see what is physically in the box, so it will not book a delivery in for you.',
         recommendation: 'Count the delivery against the order and record only what actually arrived.',
         missing: 'How many actually arrived.',
         actionLabel: 'Book it in',
@@ -321,8 +321,8 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
         happened: `${(item.policyEvaluation || {}).reason || `${po} for ${action.supplierName || 'a supplier'}.`}` +
           `${customerImpact ? ` ${customerImpact}` : ''}`,
         why: exception
-          ? 'Your rule caps how far a price may move, and this order is over it, so Foundry stopped.'
-          : 'Foundry prepared it but will not place an order with a supplier by itself.',
+          ? 'Your rule caps how far a price may move, and this order is over it, so StockChief stopped.'
+          : 'StockChief prepared it but will not place an order with a supplier by itself.',
         recommendation: exception
           ? 'Check the supplier price and approve only if the increase is acceptable.'
           : 'Place the order if the supplier, price and quantity are correct.',
@@ -339,7 +339,7 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
         title: `Move ${action.quantity} ${action.displayName || named || 'units'} to ${action.toLocationName || 'the location that needs them'}?`,
         happened: `${action.fromLocationName || 'Another location'} has stock available while ${action.toLocationName || 'another location'} needs it.`,
         why: (item.policyEvaluation || {}).reason
-          || 'Foundry prepared the transfer but does not have authority to move this stock automatically.',
+          || 'StockChief prepared the transfer but does not have authority to move this stock automatically.',
         recommendation: `Move the recorded quantity only if the stock is physically available at ${action.fromLocationName || 'the source location'}.`,
         missing: 'Your approval to make this transfer.',
         actionLabel: 'Approve the transfer',
@@ -353,8 +353,8 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
         kind: 'setup',
         title: `${named || 'This variant'} needs a supplier`,
         happened: action.explanation || 'It is below its reorder point, but nobody is on file to supply it.',
-        why: 'Without a supplier, Foundry has no pack size, price or lead time and cannot prepare a truthful order.',
-        recommendation: 'Add the supplier and its purchasing terms. Foundry will then recalculate the one replenishment plan.',
+        why: 'Without a supplier, StockChief has no pack size, price or lead time and cannot prepare a truthful order.',
+        recommendation: 'Add the supplier and its purchasing terms. StockChief will then recalculate the one replenishment plan.',
         missing: 'Who supplies this variant, its pack size, price and lead time.',
         actionLabel: 'Add supplier',
         href: action.skuId ? `/purchasing/supplier-for/${action.skuId}` : '/purchasing/setup',
@@ -382,7 +382,7 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
         kind: 'decision',
         title: approval.heading,
         happened: `${approval.summary}${customerImpact ? ` ${customerImpact}` : ''}`,
-        why: action.explanation || 'Foundry combined the stock need and the safest available response into one plan.',
+        why: action.explanation || 'StockChief combined the stock need and the safest available response into one plan.',
         recommendation: approval.approvalEffect,
         missing: 'Your approval of this exact plan.',
         actionLabel: approval.primaryLabel,
@@ -397,7 +397,7 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
       happened: item.category === 'replenishment_plan' && named
         ? `${named} needs replenishing. ${action.explanation || (item.policyEvaluation || {}).reason || ''}`.trim()
         : action.explanation || (item.policyEvaluation || {}).reason || item.categoryLabel,
-      why: 'Foundry will not move stock or commit money without you.',
+      why: 'StockChief will not move stock or commit money without you.',
       recommendation: 'Approve the single plan only if all of its proposed actions are correct.',
       missing: 'Your approval of the plan.',
       actionLabel: 'Approve the plan',
@@ -408,7 +408,7 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
   // A draft without a separate work item is still a real purchasing decision.
   // Home already showed it; omitting it here made the Home total, sidebar badge
   // and Check-now result disagree with the page named “Needs you”.
-  const drafts = autopilotPresenter.whatFoundryPrepared(db, workspaceId, { limit: 100 })
+  const drafts = autopilotPresenter.whatStockChiefPrepared(db, workspaceId, { limit: 100 })
     .filter((entry) => entry.kind === 'purchase')
     .map((entry) => {
       const customerImpact = customerImpactForPurchase(db, workspaceId, entry.id);
@@ -417,7 +417,7 @@ function fromWorkItems(db, workspaceId, { now = Date.now() } = {}) {
         kind: 'decision',
         title: entry.title,
         happened: `${entry.because}${customerImpact ? ` ${customerImpact}` : ''}`,
-        why: 'Foundry prepared the order but will not place it with a supplier by itself.',
+        why: 'StockChief prepared the order but will not place it with a supplier by itself.',
         recommendation: 'Place the order if the supplier, price and quantity are correct.',
         missing: 'Your decision to place it.',
         actionLabel: entry.action,
@@ -439,12 +439,12 @@ function fromFindings(db, workspaceId) {
     id: `finding:${finding.id}`,
     kind: 'finding',
     title: finding.title,
-    happened: finding.because || 'Foundry noticed this in your records.',
+    happened: finding.because || 'StockChief noticed this in your records.',
     why: isProtectedLimit
       ? approachingProtectedLimit
-        ? 'The next outgoing unit would reach the blocked boundary you approved. Foundry cannot choose whether to order, receive stock, or change your rule.'
-        : 'This stock has reached or crossed the protection limit you approved. Foundry cannot choose whether to order, receive stock, or change your rule.'
-      : 'Foundry raised it because the numbers crossed a line you set, or a pattern it watches.',
+        ? 'The next outgoing unit would reach the blocked boundary you approved. StockChief cannot choose whether to order, receive stock, or change your rule.'
+        : 'This stock has reached or crossed the protection limit you approved. StockChief cannot choose whether to order, receive stock, or change your rule.'
+      : 'StockChief raised it because the numbers crossed a line you set, or a pattern it watches.',
     recommendation: finding.recommendation || 'Open the finding and follow the action supported by the recorded evidence.',
     missing: isProtectedLimit
       ? 'Restore the stock, place the supplier order the rule requires, or change the limit if it is no longer right.'
@@ -475,10 +475,10 @@ function fromReadiness(db, workspaceId) {
       id: `readiness:${entry.key || index}`,
       kind: 'setup',
       title: entry.title,
-      happened: entry.because || 'Foundry cannot do part of its job yet.',
-      why: entry.why || 'Foundry needs something from you before it can work this out.',
+      happened: entry.because || 'StockChief cannot do part of its job yet.',
+      why: entry.why || 'StockChief needs something from you before it can work this out.',
       recommendation: entry.recommendation
-        || 'Provide the operating input above so Foundry can manage this safely.',
+        || 'Provide the operating input above so StockChief can manage this safely.',
       missing: entry.missing || entry.action || 'The information named above.',
       actionLabel: entry.actionLabel || entry.action || 'Sort this out',
       href: entry.link || entry.href || '/settings',
@@ -517,11 +517,11 @@ function fromImports(db, workspaceId) {
           ? `${plan.sourceName || 'A file'} is approved and waiting to be brought in`
           : `${plan.sourceName || 'A file'} is read and waiting to be brought in`,
         happened: rows
-          ? `Foundry read ${rows} row(s) from it. Nothing has been created yet.`
-          : 'Foundry read the file. Nothing has been created yet.',
-        why: 'Foundry does not create products or stock from a file until somebody has looked at what it found.',
+          ? `StockChief read ${rows} row(s) from it. Nothing has been created yet.`
+          : 'StockChief read the file. Nothing has been created yet.',
+        why: 'StockChief does not create products or stock from a file until somebody has looked at what it found.',
         recommendation: problems
-          ? 'Review the rows Foundry could not place, then approve the corrected import.'
+          ? 'Review the rows StockChief could not place, then approve the corrected import.'
           : 'Review the mapped rows, then approve the import if they are correct.',
         missing: plan.approvalStatus === 'APPROVED'
           ? 'One more press to actually bring the rows in. Nothing has been created yet.'
@@ -558,8 +558,8 @@ function fromMailboxInventory(db, workspaceId) {
       id: `mailbox-inventory:${row.id}`,
       kind: 'import',
       title: `${row.source_name} is ready for inventory review`,
-      happened: `Foundry read the attachment from ${row.sender}. Nothing has been added or changed yet.`,
-      why: 'Email attachments are external evidence. Foundry waits for you to review the exact products and quantities.',
+      happened: `StockChief read the attachment from ${row.sender}. Nothing has been added or changed yet.`,
+      why: 'Email attachments are external evidence. StockChief waits for you to review the exact products and quantities.',
       recommendation: 'Check the proposed matches and new records, then approve only if the file belongs in this inventory.',
       missing: 'Your approval of the inventory preview.',
       actionLabel: 'Choose what to add',
@@ -588,10 +588,10 @@ function fromUnansweredMail(db, workspaceId) {
    * One customer email produced two cards on a real screen: "Read the order
    * from motty… yourself" and "Reply to motty…", the same sender, the same
    * message, the same Read it button, one above the other. Both were true and
-   * only one is a decision — the order card says what Foundry stopped on and
+   * only one is a decision — the order card says what StockChief stopped on and
    * what it needs. The general dedupe below could not catch it because the
    * titles differ, and they differ because the two rows were written by
-   * different parts of Foundry about the same piece of paper.
+   * different parts of StockChief about the same piece of paper.
    */
   const alreadyAnOrder = new Set([
     ...require('../sales/order-from-email').unreadable(db, workspaceId).map((row) => row.id),
@@ -605,7 +605,7 @@ function fromUnansweredMail(db, workspaceId) {
     title: `Reply to ${message.supplier_name || message.sender}`,
     happened: `${message.sender} wrote ${message.subject ? `"${message.subject}"` : 'without a subject'}`
       + ` on ${String(message.received_at).slice(0, 10)}. Nobody has answered it.`,
-    why: message.reply_reason || 'Foundry could not tell that this was finished with.',
+    why: message.reply_reason || 'StockChief could not tell that this was finished with.',
     recommendation: index === 0 && total > waiting.length
       ? `Answer it, or move it out of the way. ${total} messages are waiting.`
       : 'Answer it, or move it to handled if it needs nothing.',
@@ -683,7 +683,7 @@ function fromHeldOrders(db, workspaceId) {
  * An order a customer placed by email, drafted and waiting.
  *
  * Found on a real mailbox: a customer wrote "I'd like to order bike toe lace
- * size 36 2 pieces", Foundry drafted SO-1001 from it, and told nobody. The
+ * size 36 2 pieces", StockChief drafted SO-1001 from it, and told nobody. The
  * mailbox page said "Ignored sender", Needs you said nothing, and the owner
  * concluded the feature did not exist. Drafting the order is the easy half;
  * the whole point is the approval, and that is a decision only a person makes.
@@ -699,9 +699,9 @@ function fromEmailOrders(db, workspaceId) {
       id: `email-order:${order.id}`,
       kind: 'decision',
       title: `Is ${order.customer_email} a new customer?`,
-      happened: `${order.customer_email} sent ${order.order_number}${order.subject ? ` — “${order.subject}”` : ''}. Foundry prepared the order but did not silently create or merge a customer record.`,
-      why: 'The sender address does not match a confirmed customer in Foundry.',
-      recommendation: 'Create this sender as a customer, or match the order to the correct existing customer. Then Foundry will show the next required step.',
+      happened: `${order.customer_email} sent ${order.order_number}${order.subject ? ` — “${order.subject}”` : ''}. StockChief prepared the order but did not silently create or merge a customer record.`,
+      why: 'The sender address does not match a confirmed customer in StockChief.',
+      recommendation: 'Create this sender as a customer, or match the order to the correct existing customer. Then StockChief will show the next required step.',
       missing: 'Your decision about who this customer is.',
       actionLabel: 'Choose the customer',
       href: `/orders/${order.id}#customer-decision`,
@@ -714,10 +714,10 @@ function fromEmailOrders(db, workspaceId) {
       title: `Where should ${order.order_number} go?`,
       happened: `${order.customer_name} ordered ${what}, but the email did not provide a complete shipping address or confirm pickup.`,
       why: order.reply_sent_at
-        ? `Foundry already emailed ${order.customer_email} asking for the missing answer.`
+        ? `StockChief already emailed ${order.customer_email} asking for the missing answer.`
         : order.draft_at
-          ? 'Foundry prepared the question, but the connected mailbox did not send it.'
-          : 'Foundry cannot safely ship without a destination.',
+          ? 'StockChief prepared the question, but the connected mailbox did not send it.'
+          : 'StockChief cannot safely ship without a destination.',
       recommendation: order.reply_sent_at
         ? 'Wait for their answer, or enter the shipping address or pickup choice if they tell you another way.'
         : 'Open the order and choose pickup or enter the full shipping address.',
@@ -732,7 +732,7 @@ function fromEmailOrders(db, workspaceId) {
       kind: 'decision',
       title: `Approve ${order.order_number} for ${order.customer_name}: ${what}`,
       happened: `${order.customer_email} wrote${order.subject ? ` "${order.subject}"` : ''} asking to buy this. `
-        + 'Foundry drafted the order from their words. Nothing is committed and nobody has been answered.',
+        + 'StockChief drafted the order from their words. Nothing is committed and nobody has been answered.',
       why: 'An order placed by email is still an order you have to accept: the price, the stock and the customer are yours to check.',
       // A product with no selling price is the first thing the owner will be
       // asked for on the order, so it is said here rather than discovered there.
@@ -757,12 +757,12 @@ function fromEmailOrders(db, workspaceId) {
       kind: 'decision',
       title: `Read the order from ${message.sender} yourself`,
       happened: `${message.sender} wrote${message.subject ? ` "${message.subject}"` : ''} asking to buy something, `
-        + 'and Foundry could not turn it into a draft order.',
+        + 'and StockChief could not turn it into a draft order.',
       why: message.order_draft_reason,
-      // When Foundry could not choose between products it has already written
+      // When StockChief could not choose between products it has already written
       // the question to send them, so the decision is smaller than it looks.
       recommendation: message.draft_at
-        ? 'Foundry has written the question to ask them. Read it, send it, or enter the order yourself.'
+        ? 'StockChief has written the question to ask them. Read it, send it, or enter the order yourself.'
         : 'Read the email and enter the order, or reply and ask what they meant.',
       missing: 'An order, or an answer to the customer.',
       actionLabel: 'Read it',
@@ -782,7 +782,7 @@ function fromEmailOrders(db, workspaceId) {
  * is owed it back. Every figure on the Money page is correct and a person is
  * owed three hundred dollars that no screen mentions.
  *
- * Foundry does not send it back on its own. Money leaving is the one direction
+ * StockChief does not send it back on its own. Money leaving is the one direction
  * that always needs a person, and there are honest reasons to hold it — a
  * restocking fee, a replacement order, a credit for next time. So it is put
  * where decisions live, with the figure, and somebody decides.
@@ -801,10 +801,10 @@ function fromEmailOrders(db, workspaceId) {
  * would be a page nobody opens, and slow pages are how good warnings get
  * missed. What appears here has already been worked out, written down with its
  * evidence, and put through the same authority gate as every other automatic
- * action — including the ones that were refused, because "Foundry wanted to do
+ * action — including the ones that were refused, because "StockChief wanted to do
  * this and was not allowed" is something an owner is entitled to know.
  *
- * Only decisions reach this list. A prediction Foundry may act on by itself is
+ * Only decisions reach this list. A prediction StockChief may act on by itself is
  * not a decision anybody has to take, and an anomaly that changes nothing is
  * not either.
  */
@@ -817,7 +817,7 @@ function fromEmailOrders(db, workspaceId) {
  * somebody has to have, and it is worth more than most of what is on this
  * page because the customer is already wondering.
  *
- * Foundry does not write to them on its own here. What to say about a late
+ * StockChief does not write to them on its own here. What to say about a late
  * parcel depends on things it cannot see — whether this customer is owed an
  * apology, a refund, or a replacement sent today — so it brings the facts and
  * a person decides.
@@ -850,13 +850,13 @@ function fromLateShipments(db, workspaceId) {
        * sends them to where they can be read and sent.
        */
       recommendation: written.has(row.id)
-        ? `Foundry has written ${who} a note saying where it is. Read it, send it, or decide `
+        ? `StockChief has written ${who} a note saying where it is. Read it, send it, or decide `
           + 'something else first.'
         : row.customer_email
           ? `Tell ${who} where it is, or open the shipment and check the tracking first.`
           : 'Check the tracking, and decide whether to send another.',
       missing: 'A decision about the parcel, and what to tell the customer.',
-      actionLabel: written.has(row.id) ? 'Read what Foundry wrote' : 'Open the shipment',
+      actionLabel: written.has(row.id) ? 'Read what StockChief wrote' : 'Open the shipment',
       href: `/fulfilment/${row.id}`,
       at: row.expected_delivery_date || row.shipped_at,
       // Above a late reply and below money: a customer is waiting on goods
@@ -881,7 +881,7 @@ function fromPredictedTrouble(db, workspaceId) {
     })();
     const shape = SHAPES[row.kind] || SHAPES[row.kind.split(':')[0]] || SHAPES.default;
     const confidence = row.confidence && row.confidence !== 'high'
-      ? ` Foundry's read on this is ${row.confidence === 'learning' ? 'still forming' : 'moderately confident'}.`
+      ? ` StockChief's read on this is ${row.confidence === 'learning' ? 'still forming' : 'moderately confident'}.`
       : '';
 
     return {
@@ -954,7 +954,7 @@ const SHAPES = {
     priority: () => 58,
   },
   default: {
-    why: 'Foundry expects this to become a problem.',
+    why: 'StockChief expects this to become a problem.',
     missing: 'Your decision.',
     actionLabel: 'Decide what to do',
     recommendation: () => 'Worth a look.',
@@ -997,7 +997,7 @@ function fromMoneyHeldOnCancelledOrders(db, workspaceId) {
         title: `${who} paid ${amount} for ${row.order_number}, which was cancelled`,
         happened: `${amount} was taken for ${row.order_number} and the order was cancelled. `
           + 'The money is still here and nothing has been invoiced against it.',
-        why: 'Money going back out is the one direction Foundry never takes by itself.',
+        why: 'Money going back out is the one direction StockChief never takes by itself.',
         recommendation: `Refund ${amount} to ${who}, or keep it against something else and say so.`,
         missing: 'Your decision about money that is not yours to keep by default.',
         actionLabel: 'Settle the money',
@@ -1015,14 +1015,14 @@ function fromMoneyHeldOnCancelledOrders(db, workspaceId) {
  *
  * Pay a supplier before their invoice arrives — a deposit, a proforma settled
  * up front, a transfer somebody sent early — and the money sits as an advance.
- * When the bill then arrives it is raised unpaid, so Foundry shows a debt to a
+ * When the bill then arrives it is raised unpaid, so StockChief shows a debt to a
  * supplier who already has the money.
  *
  * Deliberately not applied automatically, unlike the customer side. A payment
  * against a customer's order names the order it belongs to; a payment to a
- * supplier names only the supplier, so Foundry cannot tell a deposit for next
+ * supplier names only the supplier, so StockChief cannot tell a deposit for next
  * month from an early settlement of the bill in front of it. Guessing there
- * would be Foundry deciding where somebody else's money went.
+ * would be StockChief deciding where somebody else's money went.
  */
 function fromSupplierMoneyNotOnAnyBill(db, workspaceId) {
   const rows = db.prepare(`SELECT s.id, s.name,
@@ -1053,7 +1053,7 @@ function fromSupplierMoneyNotOnAnyBill(db, workspaceId) {
       title: `${row.name} has ${amount(row.spareMinor)} of yours that is not against any bill`,
       happened: `You have paid ${row.name} ${amount(row.spareMinor)} that no bill has been `
         + `matched to, and ${amount(row.owed_minor)} of their bills still says it is owed.`,
-      why: 'A payment to a supplier names the supplier and not the order, so Foundry cannot '
+      why: 'A payment to a supplier names the supplier and not the order, so StockChief cannot '
         + 'tell an early settlement from a deposit for something else.',
       recommendation: Number(row.bill_count) === 1
         ? 'Put it against that bill if it was paying for it, or leave it as money on account.'
@@ -1083,12 +1083,12 @@ function fromMailboxAttachmentChoices(db, workspaceId) {
     id: `mailbox-choice:${row.message_id}`,
     kind: 'decision',
     title: row.attachment_count === 1
-      ? `Choose what Foundry should do with ${row.filenames}`
-      : `Choose what Foundry should do with ${row.attachment_count} email attachments`,
+      ? `Choose what StockChief should do with ${row.filenames}`
+      : `Choose what StockChief should do with ${row.attachment_count} email attachments`,
     happened: `${row.sender} sent ${row.subject || 'an email without a subject'} with ${row.filenames}. Nothing has been changed.`,
     why: 'This sender is configured to ask you what each new attachment means.',
     recommendation: 'Choose whether it is a supplier purchasing document, an inventory/product list, or history only.',
-    missing: 'How Foundry should use this attachment.',
+    missing: 'How StockChief should use this attachment.',
     actionLabel: 'Choose what this file is',
     href: `/settings/connections/${row.connector_id}#message-${row.message_id}`,
     at: row.received_at,
@@ -1125,7 +1125,7 @@ function fromMailboxRemovedImportChoices(db, workspaceId) {
     id: `mailbox-restore:${row.message_id}`,
     kind: 'decision',
     title: `${row.filename} was sent again after its earlier import was removed`,
-    happened: `Foundry recognized the exact file from ${row.sender}. Its original import was removed, so Foundry did not silently add the stock again.`,
+    happened: `StockChief recognized the exact file from ${row.sender}. Its original import was removed, so StockChief did not silently add the stock again.`,
     why: 'This is a real choice now: restore the original products and quantities, or keep the earlier removal.',
     recommendation: 'Review the exact archived records and quantities before restoring them.',
     missing: 'Your approval to restore the import or keep it removed.',
@@ -1139,7 +1139,7 @@ function fromMailboxRemovedImportChoices(db, workspaceId) {
 /**
  * A rule written but never switched on.
  *
- * Foundry proposes a policy after watching how somebody works, and it does
+ * StockChief proposes a policy after watching how somebody works, and it does
  * nothing at all until approved. Left off this page, the proposal was invisible
  * unless you went looking in Settings for something you did not know existed.
  */
@@ -1152,10 +1152,10 @@ function fromPolicies(db, workspaceId) {
       kind: 'authority',
       title: `A rule is waiting for your decision: ${policy.name}`,
       happened: policy.description
-        || `Foundry has drafted a rule covering ${policy.allowedActionTypes.join(', ') || 'some work'}.`,
-      why: 'Foundry will not act on its own authority until you have read the rule and agreed to it.',
-      recommendation: 'Approve the rule only if its limits match the authority you intend to give Foundry.',
-      missing: 'Whether Foundry may do this without asking, and within what limits.',
+        || `StockChief has drafted a rule covering ${policy.allowedActionTypes.join(', ') || 'some work'}.`,
+      why: 'StockChief will not act on its own authority until you have read the rule and agreed to it.',
+      recommendation: 'Approve the rule only if its limits match the authority you intend to give StockChief.',
+      missing: 'Whether StockChief may do this without asking, and within what limits.',
       actionLabel: 'Read the rule',
       href: `/autopilot/policies/${policy.id}`,
       at: policy.createdAt,
@@ -1169,10 +1169,10 @@ function fromAutomationSuggestions(db, workspaceId) {
     .map((proposal) => ({
       id: `automation-suggestion:${proposal.id}`,
       kind: 'authority', title: proposal.summary,
-      happened: 'Foundry noticed that you approved the same kind of bounded routine work at least three times.',
-      why: 'Nothing has changed. Foundry needs explicit permission before it may stop asking about similar work.',
+      happened: 'StockChief noticed that you approved the same kind of bounded routine work at least three times.',
+      why: 'Nothing has changed. StockChief needs explicit permission before it may stop asking about similar work.',
       recommendation: 'Review the proposed scope and ceiling. Approve only if you want this to become lasting authority.',
-      missing: 'Your explicit decision about whether Foundry may handle this pattern automatically.',
+      missing: 'Your explicit decision about whether StockChief may handle this pattern automatically.',
       actionLabel: 'Decide on this rule', href: `/operating-instructions/${proposal.id}`,
       at: proposal.createdAt, priority: 64,
     }));
@@ -1192,7 +1192,7 @@ function fromSalesOrders(db, workspaceId) {
       // Showing a second customer-shortage card made one problem look like two
       // and its button led to an explanation page with no completion action.
       if (workItems.awaitingReplenishmentForSku(db, workspaceId, line.sku_id)) continue;
-      // Once Foundry has prepared the supplier order, placing that order is the
+      // Once StockChief has prepared the supplier order, placing that order is the
       // one owner decision. The customer consequence is printed on that PO
       // decision instead of becoming a second card for the same shortage.
       if (coveredByPreparedOrder.has(line.sku_id)) continue;
@@ -1242,10 +1242,10 @@ function fromSalesOrders(db, workspaceId) {
             ? committedArrival
               ? `${incoming.onOrder} incoming unit(s) are now expected ${earliest}, after the customer needs them.`
               : `The earliest supported supplier arrival is ${earliest}, after the customer needs it.`
-            : 'No supported supplier arrival date is available, so Foundry cannot promise the requested date.'
+            : 'No supported supplier arrival date is available, so StockChief cannot promise the requested date.'
           : freeNow
-            ? `${freeNow} ${freeNow === 1 ? 'unit is' : 'units are'} on the shelf and free. Foundry does not hold stock for one customer without you, because that takes it from the next one who asks.`
-            : 'Foundry cannot allocate stock that is not physically available or already committed elsewhere.',
+            ? `${freeNow} ${freeNow === 1 ? 'unit is' : 'units are'} on the shelf and free. StockChief does not hold stock for one customer without you, because that takes it from the next one who asks.`
+            : 'StockChief cannot allocate stock that is not physically available or already committed elsewhere.',
         recommendation: freeNow
           ? `Commit the ${freeNow} that ${freeNow === 1 ? 'has' : 'have'} arrived, if this customer should have ${freeNow === 1 ? 'it' : 'them'}.`
           : incoming.onOrder
@@ -1307,19 +1307,19 @@ function fromConnections(db, workspaceId) {
       title: documentReview && !supplierResponse ? 'A supplier document needs your review' : row.title,
       happened: documentReview && !supplierResponse
         ? missingOrder?.message || (unknownCodes.length
-          ? `Foundry does not yet know which product ${unknownCodes.join(', ')} refers to.`
+          ? `StockChief does not yet know which product ${unknownCodes.join(', ')} refers to.`
           : documentDiscrepancies.map((entry) => entry.message).filter(Boolean).join(' ')
-            || 'Foundry found a meaningful difference between the supplier document and the purchase order.')
+            || 'StockChief found a meaningful difference between the supplier document and the purchase order.')
         : row.detail,
       why: row.issue_type === 'CONNECTION_STALE'
-        ? 'Foundry may be missing activity, so its view of demand and stock may be incomplete.'
+        ? 'StockChief may be missing activity, so its view of demand and stock may be incomplete.'
         : supplierResponse
-          ? 'Foundry measured the supplier change against current stock, customer commitments, cash and alternate supply. It did not silently choose a material tradeoff.'
+          ? 'StockChief measured the supplier change against current stock, customer commitments, cash and alternate supply. It did not silently choose a material tradeoff.'
         : documentReview
-          ? 'Foundry saved the original email but did not change the purchase order or physical inventory.'
+          ? 'StockChief saved the original email but did not change the purchase order or physical inventory.'
         : procurement
-          ? 'Foundry prepared the supplier communication but your authority settings require your approval before it is sent.'
-          : 'Foundry stopped before changing business records because the external evidence was not safe to apply.',
+          ? 'StockChief prepared the supplier communication but your authority settings require your approval before it is sent.'
+          : 'StockChief stopped before changing business records because the external evidence was not safe to apply.',
       recommendation: documentReview && !supplierResponse ? 'Review the document and either resolve the match or mark it as not relevant.' : row.resolution_hint,
       missing: procurement ? 'Your approval to send the prepared supplier message.'
         : supplierResponse ? 'Your decision on the material supplier tradeoff. Communication and purchasing are approved separately.'
@@ -1368,17 +1368,17 @@ function fromPendingSupplierCommunications(db, workspaceId) {
           ? `${row.po_number} needs a sending mailbox`
           : `${row.po_number} is approved but has not been sent`,
       happened: row.status === 'FAILED'
-        ? `Foundry tried to send the order, but the message failed: ${row.error_message || 'the provider did not accept it'}.`
-        : `The purchase order is approved inside Foundry, but ${row.supplier_name} has not received it.`,
+        ? `StockChief tried to send the order, but the message failed: ${row.error_message || 'the provider did not accept it'}.`
+        : `The purchase order is approved inside StockChief, but ${row.supplier_name} has not received it.`,
       why: missingEmail
         ? `There is no email address on ${row.supplier_name}'s supplier record.`
         : missingMailbox
           ? 'No approved connected mailbox is selected for this supplier.'
-          : 'The supplier message is prepared, but Foundry does not have authority to send it automatically.',
+          : 'The supplier message is prepared, but StockChief does not have authority to send it automatically.',
       recommendation: missingEmail
-        ? 'Add the real supplier email. Foundry will use it for this order and future communication.'
+        ? 'Add the real supplier email. StockChief will use it for this order and future communication.'
         : missingMailbox
-          ? 'Choose the connected mailbox Foundry should use for this supplier.'
+          ? 'Choose the connected mailbox StockChief should use for this supplier.'
           : 'Send the prepared order.',
       missing: missingEmail ? 'The supplier email address.'
         : missingMailbox ? 'A sending mailbox.' : 'Permission to send this message.',
@@ -1411,10 +1411,10 @@ function fromAccounting(db, workspaceId) {
       kind: 'decision',
       title: row.order_number ? `${row.order_number} shipped, but its accounting is not finished`
         : 'An accounting consequence needs review',
-      happened: outcome.message || row.error_message || `Foundry recorded ${row.event_type.replaceAll('.', ' · ')} operationally.`,
-      why: 'Foundry kept the business event but did not invent a missing cost, price, match, or posting date.',
+      happened: outcome.message || row.error_message || `StockChief recorded ${row.event_type.replaceAll('.', ' · ')} operationally.`,
+      why: 'StockChief kept the business event but did not invent a missing cost, price, match, or posting date.',
       recommendation: row.order_number
-        ? `Open the ${row.order_number} review to see the exact sale, verified cost evidence, and posting Foundry will make.`
+        ? `Open the ${row.order_number} review to see the exact sale, verified cost evidence, and posting StockChief will make.`
         : 'Open Accounting to supply the missing evidence or review the proposed correction.',
       missing: 'The financial evidence needed for a balanced, traceable posting.',
       actionLabel: row.order_number ? `Finish ${row.order_number} accounting` : 'Resolve accounting exception',
@@ -1440,7 +1440,7 @@ function fromAccounting(db, workspaceId) {
       id: `accounting-bill:${bill.id}`, kind: 'decision',
       title: `${bill.supplier_name} invoice needs an accounting decision`,
       happened: `${bill.supplier_invoice_number || bill.bill_number}${bill.po_number ? ` for ${bill.po_number}` : ''}: ${explanation}`,
-      why: 'Foundry saved the bill but posted no guessed inventory, expense, or payable.',
+      why: 'StockChief saved the bill but posted no guessed inventory, expense, or payable.',
       recommendation: 'Resolve the receipt, price, quantity, or PO match before approving this bill.',
       missing: 'A complete PO ↔ receipt ↔ supplier invoice match, or your explicit correction.',
       actionLabel: 'Resolve supplier bill', href: '/accounting/payables',
@@ -1471,7 +1471,7 @@ function fromBusinessConsistency(db, workspaceId) {
         title: `${missing.po_number} was received but has no supplier bill`,
         because: `${missing.receivedUnits} unit${missing.receivedUnits === 1 ? '' : 's'} costing `
           + `${missing.currency || 'USD'} ${(missing.receivedCostMinor / 100).toFixed(2)} arrived. `
-          + 'Foundry cannot know what is owed until the bill is recorded.',
+          + 'StockChief cannot know what is owed until the bill is recorded.',
         href: `/accounting/payables/new?purchaseOrderId=${missing.id}` });
     }
   }
@@ -1481,11 +1481,11 @@ function fromBusinessConsistency(db, workspaceId) {
       title: entry.title,
       happened: entry.because,
       why: entry.kind === 'consistency'
-        ? 'Foundry compared the records across inventory, purchasing, connections, and accounting and they do not agree.'
-        : 'Foundry knows the inventory arrived, but receiving products is not evidence of the supplier bill or payment.',
+        ? 'StockChief compared the records across inventory, purchasing, connections, and accounting and they do not agree.'
+        : 'StockChief knows the inventory arrived, but receiving products is not evidence of the supplier bill or payment.',
       recommendation: entry.kind === 'consistency'
-        ? 'Review the source records before making another change; Foundry will not silently repair a material difference.'
-        : 'Add or match the supplier bill so Foundry can show exactly what is owed.',
+        ? 'Review the source records before making another change; StockChief will not silently repair a material difference.'
+        : 'Add or match the supplier bill so StockChief can show exactly what is owed.',
       missing: entry.kind === 'consistency' ? 'A decision about which source record is correct.' : 'The supplier bill.',
       actionLabel: entry.kind === 'consistency' ? 'Resolve the difference' : 'Add supplier bill',
       href: entry.href,
@@ -1521,7 +1521,7 @@ function fromMigrations(db,workspaceId) {
         id:`migration:${pkg.id}:source-truth`,kind:'migration',
         title:`${sourceName} needs one reconciliation decision`,
         happened:`The workbook says ${Number(sourceReview.sourceIncoming).toLocaleString()} units are incoming, while its detailed open PO lines prove ${Number(sourceReview.openPurchaseOrderIncoming).toLocaleString()}. Nothing is live.`,
-        why:'Foundry will not choose between contradictory source summaries and detailed records by itself.',
+        why:'StockChief will not choose between contradictory source summaries and detailed records by itself.',
         recommendation:'Use the detailed operational records and retain the conflicting summaries as evidence, without posting them to stock or accounting.',
         missing:'Your choice of which proven source controls operations.',
         actionLabel:'Review one decision',href:`/onboarding/migrations/${pkg.id}/sources`,
@@ -1533,7 +1533,7 @@ function fromMigrations(db,workspaceId) {
       entries.push({
         id:`migration:${pkg.id}:approval`,kind:'migration',
         title:`${sourceName} is verified and ready to become live`,
-        happened:`All ${datasets.length} operational datasets passed verification. ${Number(pkg.staged_count || 0).toLocaleString()} prepared Foundry records are still separate from live inventory.`,
+        happened:`All ${datasets.length} operational datasets passed verification. ${Number(pkg.staged_count || 0).toLocaleString()} prepared StockChief records are still separate from live inventory.`,
         why:'Only the inventory owner can approve the final cutover.',
         recommendation:'Review the reconciled totals once, then approve the switch when you are ready.',
         missing:'Your approval to make this prepared inventory live.',
@@ -1546,8 +1546,8 @@ function fromMigrations(db,workspaceId) {
       entries.push({
         id:`migration:${pkg.id}:verification`,kind:'migration',
         title:`${sourceName} did not pass verification`,
-        happened:`Foundry found ${Number(pkg.problem_count || 0).toLocaleString()} prepared records whose source links or values could not be proven. Nothing was applied.`,
-        why:'Foundry will not guess a product, location, supplier, quantity or accounting meaning.',
+        happened:`StockChief found ${Number(pkg.problem_count || 0).toLocaleString()} prepared records whose source links or values could not be proven. Nothing was applied.`,
+        why:'StockChief will not guess a product, location, supplier, quantity or accounting meaning.',
         recommendation:'Review the summarized failure and correct the source mapping, then rerun verification.',
         missing:'A provable source link or value for the blocked records.',
         actionLabel:'Review verification',href:`/onboarding/migrations/${pkg.id}`,
@@ -1578,7 +1578,7 @@ function fromMigrations(db,workspaceId) {
         entries.push({
           id:`migration:${pkg.id}:blocked`,kind:'migration',
           title:`${sourceName} needs source evidence before the switch can continue`,
-          happened:`${live.toLocaleString()} verified records were applied and saved. Foundry stopped before applying ${failures.length === 1 ? 'one record' : `${failures.length} records`} it could not prove.`,
+          happened:`${live.toLocaleString()} verified records were applied and saved. StockChief stopped before applying ${failures.length === 1 ? 'one record' : `${failures.length} records`} it could not prove.`,
           why:exactFailure || 'A deterministic domain check rejected a prepared source record.',
           recommendation:'Review the exact stopped record. Provide the missing evidence or correct the source and upload a new snapshot; retrying alone cannot create it.',
           missing:exactFailure ? `${exactFailure} Add the exact serial identities, or correct the product tracking mode in the source.` : 'Provable source evidence for the stopped record.',
@@ -1590,8 +1590,8 @@ function fromMigrations(db,workspaceId) {
       entries.push({
         id:`migration:${pkg.id}:resume`,kind:'migration',
         title:`${sourceName} is safely paused and ready to resume`,
-        happened:`Foundry stopped the switch after ${live.toLocaleString()} applied record${live === 1 ? '' : 's'}. Completed batches remain saved and retries do not duplicate them.`,
-        why:'A deterministic domain check rejected a prepared record, so Foundry stopped instead of forcing it into live inventory.',
+        happened:`StockChief stopped the switch after ${live.toLocaleString()} applied record${live === 1 ? '' : 's'}. Completed batches remain saved and retries do not duplicate them.`,
+        why:'A deterministic domain check rejected a prepared record, so StockChief stopped instead of forcing it into live inventory.',
         recommendation:'Review the stopped record summary, then resume the verified switch when you are ready.',
         missing:'Your decision to resume the saved switch.',
         actionLabel:'Review paused switch',href:`/onboarding/migrations/${pkg.id}`,
@@ -1606,8 +1606,8 @@ function fromMigrations(db,workspaceId) {
       id:`migration:${pkg.id}`,kind:'migration',
       title:`${sourceName} needs ${remaining.length === 1 ? 'one source decision' : `${remaining.length} source decisions`}`,
       happened:`${prepared.length} of ${datasets.length} operational datasets are safely prepared from ${prepared.reduce((sum,entry) => sum + Number(entry.source_row_count || 0),0).toLocaleString()} source rows. Nothing is live yet.`,
-      why:pkg.preparation_error || 'Foundry stopped before an uncertain source state could become stock, an order, or accounting.',
-      recommendation:'Open the migration and settle only the remaining source issue. Foundry will then verify the totals before the switch.',
+      why:pkg.preparation_error || 'StockChief stopped before an uncertain source state could become stock, an order, or accounting.',
+      recommendation:'Open the migration and settle only the remaining source issue. StockChief will then verify the totals before the switch.',
       missing:pkg.preparation_error || `A safe treatment for ${labels.join(', ')}${remaining.length > labels.length ? ` and ${remaining.length - labels.length} more` : ''}.`,
       actionLabel:'Continue migration',href:`/onboarding/migrations/${pkg.id}/sources`,
       at:pkg.updated_at,priority:92,requiredPermission:permissions.ADMIN,
@@ -1668,10 +1668,10 @@ function fromLearning(db, workspaceId) {
     const rollback = row.status === 'ROLLBACK_RECOMMENDED';
     return { id:`learning:${row.id}`, kind:'decision', title:rollback
       ? `A learned policy change is performing worse` : row.headline,
-    happened:rollback ? 'Foundry measured an adverse result after the policy changed.' : row.rationale,
+    happened:rollback ? 'StockChief measured an adverse result after the policy changed.' : row.rationale,
     why:rollback
       ? 'The previous value was retained and can be restored through the same domain-owned policy service.'
-      : 'This is a proposed operating-policy change. Foundry cannot treat a pattern as permission.',
+      : 'This is a proposed operating-policy change. StockChief cannot treat a pattern as permission.',
     recommendation:rollback ? 'Restore the previous value and keep measuring.'
       : 'Review the measured outcomes and approve only if this tradeoff matches how you want the business run.',
     missing:rollback ? 'Your approval to roll back the change.' : 'Your approval, or an explicit narrow learning grant.',
@@ -1690,7 +1690,7 @@ function fromCountsReturnsAndWaves(db, workspaceId) {
     const recount = row.status === 'RECOUNT_REQUIRED';
     entries.push({ id:`count:${row.id}`,kind:'count',title:`${row.name} ${recount?'needs a blind recount':'has a variance to approve'}`,
       happened: recount?'The first blind count disagreed with the recorded stock.':'Two count passes produced a recorded variance.',
-      why: recount?'Foundry cannot change stock from one disputed count.':'Counting and approving a stock correction are separate authorities.',
+      why: recount?'StockChief cannot change stock from one disputed count.':'Counting and approving a stock correction are separate authorities.',
       recommendation: recount?'Count the affected products again without showing the first answer.':'Review the revealed variance, then approve or reject the correction.',
       missing: recount?'An independent physical recount.':'Variance approval.',actionLabel:recount?'Start recount':'Review variance',
       href:`/warehouse/counts/${row.id}`,at:row.created_at,priority:88,
@@ -1699,17 +1699,17 @@ function fromCountsReturnsAndWaves(db, workspaceId) {
   for (const row of db.prepare(`SELECT id,return_number,status,created_at FROM customer_returns
     WHERE workspace_id=? AND status='AWAITING_REFUND'`).all(workspaceId)) entries.push({id:`rma:${row.id}`,kind:'customer_return',
       title:`${row.return_number} is inspected and waiting for its refund`,happened:'The returned goods were received and their physical condition was recorded.',
-      why:'Foundry cannot decide a refund amount or payment destination without authority.',recommendation:'Approve the evidence-backed refund and let accounting reconcile it.',missing:'Refund amount and approval.',
+      why:'StockChief cannot decide a refund amount or payment destination without authority.',recommendation:'Approve the evidence-backed refund and let accounting reconcile it.',missing:'Refund amount and approval.',
       actionLabel:'Finish the return',href:`/warehouse/returns/customer/${row.id}`,at:row.created_at,priority:85,requiredPermission:permissions.REFUND_CUSTOMER_RETURN});
   for (const row of db.prepare(`SELECT id,return_number,status,created_at FROM supplier_returns
     WHERE workspace_id=? AND status IN ('AWAITING_CREDIT','CREDIT_MISMATCH')`).all(workspaceId)) {const mismatch=row.status==='CREDIT_MISMATCH';entries.push({id:`rtv:${row.id}`,kind:'supplier_return',
       title:mismatch?`${row.return_number} supplier credit does not match`:`${row.return_number} is waiting for the supplier credit`,
       happened:mismatch?'The supplier recorded a different credit from the amount expected.':'The goods left inventory and were returned to the supplier.',
-      why:mismatch?'Foundry will not silently force a difference into agreement.':'No supplier credit is recorded yet.',
+      why:mismatch?'StockChief will not silently force a difference into agreement.':'No supplier credit is recorded yet.',
       recommendation:'Open the return and reconcile it against the supplier evidence.',missing:mismatch?'A decision about the credit difference.':'The supplier credit note.',
       actionLabel:'Reconcile supplier return',href:`/warehouse/returns/supplier/${row.id}`,at:row.created_at,priority:mismatch?92:78,requiredPermission:permissions.RECONCILE_SUPPLIER_RETURN});}
   for (const row of db.prepare(`SELECT id,wave_number,title,created_at FROM fulfillment_waves WHERE workspace_id=? AND status='BLOCKED'`).all(workspaceId)) entries.push({id:`wave:${row.id}`,kind:'wave',title:`Wave #${row.wave_number} stopped on a scan or shortage`,
-    happened:'A product/location scan failed or the shelf quantity was short.',why:'Foundry stopped before substituting an identity or pretending the units were picked.',
+    happened:'A product/location scan failed or the shelf quantity was short.',why:'StockChief stopped before substituting an identity or pretending the units were picked.',
     recommendation:'Review the failed scan, recount or replenish, then resume the exact line.',missing:'Correct physical identity or stock evidence.',actionLabel:'Open blocked wave',href:`/warehouse/waves/${row.id}`,at:row.created_at,priority:90,requiredPermission:permissions.MANAGE_FULFILLMENT_WAVES});
   return entries;
 }
@@ -1729,18 +1729,18 @@ function compressLargeQueues(entries) {
   collect('supplier-mailbox',(entry) => entry.kind === 'setup' && entry.actionLabel === 'Choose mailbox',6,(rows,key) => ({
     id:`group:${key}`,kind:'setup',
     title:`Set up one sending mailbox for ${rows.length.toLocaleString()} prepared supplier orders`,
-    happened:`The orders are saved, but Foundry has no approved mailbox to use. This is one setup gap repeated across ${rows.length.toLocaleString()} orders—not ${rows.length.toLocaleString()} separate choices.`,
-    why:'Foundry cannot send business email from an account you have not explicitly selected.',
-    recommendation:'Connect or choose the supplier mailbox once. Foundry will then evaluate each prepared message under the same communication authority.',
-    missing:'Which connected mailbox Foundry may use for supplier communication.',
+    happened:`The orders are saved, but StockChief has no approved mailbox to use. This is one setup gap repeated across ${rows.length.toLocaleString()} orders—not ${rows.length.toLocaleString()} separate choices.`,
+    why:'StockChief cannot send business email from an account you have not explicitly selected.',
+    recommendation:'Connect or choose the supplier mailbox once. StockChief will then evaluate each prepared message under the same communication authority.',
+    missing:'Which connected mailbox StockChief may use for supplier communication.',
     actionLabel:'Set up supplier communication',href:'/settings/connections',at:null,
     priority:Math.max(...rows.map((entry) => entry.priority || 0)),requiredPermission:permissions.ADMIN,
   }));
   collect('receiving-review',(entry) => entry.kind === 'receiving' && entry.actionLabel === 'Book it in',11,(rows,key) => ({
     id:`group:${key}`,kind:'receiving',
     title:`Review ${rows.length.toLocaleString()} deliveries as one receiving queue`,
-    happened:`Their expected dates have passed. Foundry grouped them instead of asking the same physical-arrival question ${rows.length.toLocaleString()} times.`,
-    why:'Foundry cannot claim a box arrived without a person, scan, carrier event or receiving document.',
+    happened:`Their expected dates have passed. StockChief grouped them instead of asking the same physical-arrival question ${rows.length.toLocaleString()} times.`,
+    why:'StockChief cannot claim a box arrived without a person, scan, carrier event or receiving document.',
     recommendation:'Open the receiving queue and record only the deliveries that physically arrived; the individual purchase orders remain intact.',
     missing:'Which deliveries actually arrived and what was in them.',
     actionLabel:'Open receiving queue',href:'/purchasing/orders',at:null,
@@ -1749,7 +1749,7 @@ function compressLargeQueues(entries) {
   collect('replenishment-review',(entry) => entry.kind === 'finding' && entry.actionLabel === 'Decide what to order',4,(rows,key) => ({
     id:`group:${key}`,kind:'finding',
     title:`Review ${rows.length.toLocaleString()} replenishment suggestions as one plan`,
-    happened:`Foundry found ${rows.length.toLocaleString()} products whose stock crossed their reorder rules and kept the exact SKU calculations in the planning view.`,
+    happened:`StockChief found ${rows.length.toLocaleString()} products whose stock crossed their reorder rules and kept the exact SKU calculations in the planning view.`,
     why:'These related suggestions need one inventory-plan review, not a separate top-level interruption for every SKU.',
     recommendation:'Review the combined plan against incoming stock, suppliers and cash before placing any orders.',
     missing:'Your decision on the combined replenishment plan.',
@@ -1769,7 +1769,7 @@ function inbox(db, workspaceId, membership = null, options = {}) {
       db,
       workspaceId,
       'business_consistency_inventory-cost-coverage',
-      'Foundry reclassified this as missing financial evidence, not a disagreement in the business records.'
+      'StockChief reclassified this as missing financial evidence, not a disagreement in the business records.'
     );
   } catch {
     // The defensive filter in fromInvestigations still prevents stale UI if a
@@ -1779,7 +1779,7 @@ function inbox(db, workspaceId, membership = null, options = {}) {
     ...operationalEntries(db, workspaceId),
     ...fromBusinessConsistency(db, workspaceId),
     // Learning demand is not a decision. Home teaches the user to record real
-    // sales in context; Needs You remains reserved for something Foundry is
+    // sales in context; Needs You remains reserved for something StockChief is
     // genuinely blocked on, such as a mismatch, approval or unknown mapping.
   ]);
   const dismissedEntryIds = dismissals.dismissedIds(db, workspaceId, rawEntries.map((entry) => entry.id));
@@ -1844,7 +1844,7 @@ function inbox(db, workspaceId, membership = null, options = {}) {
       action: '/needs-you/dismiss',
       entryId: entry.id,
       label: 'Dismiss completely',
-      confirm: 'Dismiss this from Foundry everywhere? This does not delete or change the underlying business record.',
+      confirm: 'Dismiss this from StockChief everywhere? This does not delete or change the underlying business record.',
     },
   }));
   // Arrays keep the existing public contract. The non-enumerable total lets a

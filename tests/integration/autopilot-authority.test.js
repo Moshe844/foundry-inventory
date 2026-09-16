@@ -26,7 +26,7 @@ function scenario(requiredQuantity = 5) {
 
 function enableRunIt(env) {
   /*
-   * Two permissions now, not one. The mode says how much authority Foundry
+   * Two permissions now, not one. The mode says how much authority StockChief
    * has in general; the jobs say what it may use it for. These tests are
    * about moving stock, so they authorise moving stock.
    */

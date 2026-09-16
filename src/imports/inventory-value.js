@@ -5,13 +5,13 @@
  *
  * Giving imported stock a cost is only half an entry. The costing engine
  * records what each unit is worth; the ledger has to be told the same thing,
- * or the two disagree and Foundry's own reconciliation reports it as a
+ * or the two disagree and StockChief's own reconciliation reports it as a
  * difference nobody can explain — inventory worth $31,774.50 on one screen and
  * $21,390.00 on another.
  *
  * The other side is opening balance equity, and it has to be. A file is not a
  * purchase: no supplier was billed, no money left an account, nothing is owed
- * to anybody. It is stock the business already had, arriving in Foundry for
+ * to anybody. It is stock the business already had, arriving in StockChief for
  * the first time — which is exactly what opening balance equity is for, and
  * what the same value coming in from a PDF is already posted against.
  */

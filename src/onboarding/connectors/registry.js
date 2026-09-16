@@ -3,7 +3,7 @@
 /**
  * The connector boundary.
  *
- * Foundry should eventually be able to sit on top of a system a business
+ * StockChief should eventually be able to sit on top of a system a business
  * already runs — reading its inventory, watching it, recommending work, and
  * carrying out only the actions that system actually supports. This file is
  * that architecture.
@@ -25,8 +25,8 @@ const { ValidationError, NotFoundError } = require('../../domain/errors');
  * The vocabulary every connector speaks.
  *
  * Reads are separated from writes because the interesting case is a system that
- * will tell Foundry everything and let it change nothing — which is most of
- * them, and which Foundry has to handle honestly rather than treat as broken.
+ * will tell StockChief everything and let it change nothing — which is most of
+ * them, and which StockChief has to handle honestly rather than treat as broken.
  */
 const CAPABILITIES = {
   READ_CATALOG: 'read_catalog',
@@ -82,7 +82,7 @@ function register(definition) {
   return definition;
 }
 
-/** Every connector Foundry genuinely has. Empty until one really exists. */
+/** Every connector StockChief genuinely has. Empty until one really exists. */
 function available() {
   return [...registry.values()].map((definition) => ({
     key: definition.key,
@@ -96,7 +96,7 @@ function get(key) {
   const definition = registry.get(key);
   if (!definition) {
     throw new NotFoundError(
-      `Foundry has no connector for that system yet. Export your inventory to CSV or Excel and Foundry will take it from there.`
+      `StockChief has no connector for that system yet. Export your inventory to CSV or Excel and StockChief will take it from there.`
     );
   }
   return definition;
@@ -107,7 +107,7 @@ function has(key) {
 }
 
 /**
- * What a connected system will let Foundry do, read from the connector rather
+ * What a connected system will let StockChief do, read from the connector rather
  * than from anything a customer or a model asserted.
  */
 function capabilitiesFor(db, workspaceId) {
@@ -133,7 +133,7 @@ function capabilitiesFor(db, workspaceId) {
 }
 
 /**
- * Whether Foundry may carry out an action itself, and what to say when it may not.
+ * Whether StockChief may carry out an action itself, and what to say when it may not.
  *
  * The refusal wording matters as much as the refusal. "This connected system is
  * read-only — complete the transfer in your existing system" tells someone what
@@ -142,7 +142,7 @@ function capabilitiesFor(db, workspaceId) {
  */
 function canPerform(db, workspaceId, actionType) {
   const paths = require('../paths');
-  if (paths.isFoundryNative(db, workspaceId)) {
+  if (paths.isStockChiefNative(db, workspaceId)) {
     return { allowed: true, through: 'foundry' };
   }
 
@@ -165,8 +165,8 @@ function canPerform(db, workspaceId, actionType) {
       through: 'external',
       readOnly: state.readOnly,
       because: state.readOnly
-        ? 'This connected system is read-only. Foundry can tell you what to do, but the work has to be done in your existing system.'
-        : `This connected system does not let Foundry ${actionType} on its own. Do it in your existing system and Foundry will see the result.`,
+        ? 'This connected system is read-only. StockChief can tell you what to do, but the work has to be done in your existing system.'
+        : `This connected system does not let StockChief ${actionType} on its own. Do it in your existing system and StockChief will see the result.`,
     };
   }
   return { allowed: true, through: 'connector', connectorKey: state.key };

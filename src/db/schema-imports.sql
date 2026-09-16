@@ -1,6 +1,6 @@
--- Foundry Inventory : data import (Mission 5)
+-- StockChief Inventory : data import (Mission 5)
 --
--- Foundry can now do the data-entry work: read a customer's file, work out what
+-- StockChief can now do the data-entry work: read a customer's file, work out what
 -- it means, and create the catalog and opening stock for them. What it may not
 -- do is write inventory directly — every product goes through the catalog
 -- service and every unit of opening stock goes through a Mission 1 receive, so
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS import_plans (
 CREATE INDEX IF NOT EXISTS idx_import_plans_workspace ON import_plans(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_import_plans_hash ON import_plans(workspace_id, source_hash);
 
--- Every row of the source, with what Foundry made of it. Kept whether or not it
+-- Every row of the source, with what StockChief made of it. Kept whether or not it
 -- imported: "17 rows skipped" is only meaningful if you can see which 17.
 CREATE TABLE IF NOT EXISTS import_rows (
   id             TEXT PRIMARY KEY,
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS import_rows (
   workspace_id   TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   row_number     INTEGER NOT NULL,             -- the line in the customer's file
   raw            TEXT NOT NULL DEFAULT '{}',   -- exactly what the file said
-  parsed         TEXT NOT NULL DEFAULT '{}',   -- what Foundry read it as
+  parsed         TEXT NOT NULL DEFAULT '{}',   -- what StockChief read it as
 
   status         TEXT NOT NULL CHECK (status IN
                    ('VALID', 'INVALID', 'NEEDS_REVIEW', 'EXCLUDED', 'IMPORTED', 'FAILED', 'SKIPPED')),

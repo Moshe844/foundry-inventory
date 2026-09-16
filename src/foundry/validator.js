@@ -42,7 +42,7 @@ function validate(schema, data, { key } = {}) {
 function validateOrThrow(schema, data, { key, label = 'data' } = {}) {
   const result = validate(schema, data, { key });
   if (!result.ok) {
-    throw new ValidationError(`Foundry produced ${label} that did not match its own contract.`, {
+    throw new ValidationError(`StockChief produced ${label} that did not match its own contract.`, {
       errors: result.errors.slice(0, 12),
     });
   }

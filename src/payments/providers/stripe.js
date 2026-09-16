@@ -3,14 +3,14 @@
 /**
  * Stripe, as a payment provider.
  *
- * Stripe Invoicing is a good fit for what Foundry needs: it hosts the page, it
+ * Stripe Invoicing is a good fit for what StockChief needs: it hosts the page, it
  * owns the card details, it issues the receipt, and it tells you what happened.
- * Foundry creates a customer, creates an invoice, finalises it to get the
+ * StockChief creates a customer, creates an invoice, finalises it to get the
  * hosted URL, and then waits to be told.
  *
  * What this deliberately does not do is decide anything. Stripe's hosted page
  * will not let a customer type in an arbitrary part-payment, and that suits
- * Foundry: the amount is whatever the customer's terms said was due, worked out
+ * StockChief: the amount is whatever the customer's terms said was due, worked out
  * before this file is reached. A deposit is an invoice for the deposit; the
  * balance is a second invoice later. Two invoices for one order is how a
  * deposit works everywhere else too.
@@ -21,7 +21,7 @@
  * implements is proven; the wire format is not. Treat the first real call as
  * the test it is.
  *
- * No card number ever reaches this process. Foundry holds identifiers and a
+ * No card number ever reaches this process. StockChief holds identifiers and a
  * URL, nothing else.
  */
 
@@ -61,7 +61,7 @@ async function call(ctx, path, { method = 'POST', values = null, idempotencyKey 
    * Acting on a merchant's behalf rather than as them.
    *
    * A business that connected its account through Stripe Connect never gave
-   * Foundry a key. What it gave was permission, and this header is how that
+   * StockChief a key. What it gave was permission, and this header is how that
    * permission is exercised: the platform's own key with the merchant's
    * account id attached, so the customer, the invoice and the money all belong
    * to them and nothing of theirs is stored here.
@@ -108,7 +108,7 @@ async function createInvoice(ctx, { externalCustomerId, amountMinor, currency, d
    * sweep up the customer's pending items — is how this was written, and it
    * silently stopped working. Newer API versions do not pull pending items in
    * by default, so Stripe built a $0.00 invoice, finalised it, decided a $0.00
-   * invoice was already settled, and sent invoice.paid. Foundry was told an
+   * invoice was already settled, and sent invoice.paid. StockChief was told an
    * order had been paid when not a cent had moved, and the $10.00 line item
    * was still sitting on the customer attached to nothing.
    *
@@ -144,13 +144,13 @@ async function createInvoice(ctx, { externalCustomerId, amountMinor, currency, d
   });
 
   /*
-   * What Stripe finalised has to be what Foundry asked for. If it is not, the
+   * What Stripe finalised has to be what StockChief asked for. If it is not, the
    * invoice is wrong and sending it to a customer is worse than failing here.
    */
   const total = Number(finalised.total);
   if (total !== Math.round(Number(amountMinor))) {
     throw new ValidationError(`Stripe finalised this invoice for ${(total / 100).toFixed(2)} `
-      + `when Foundry asked for ${(Number(amountMinor) / 100).toFixed(2)}. Nothing was sent.`);
+      + `when StockChief asked for ${(Number(amountMinor) / 100).toFixed(2)}. Nothing was sent.`);
   }
 
   return {
@@ -210,7 +210,7 @@ async function readInvoice(ctx, { externalInvoiceId }) {
 
   /*
    * And the fact that explains most declines on a new account: a real card
-   * cannot succeed against a sandbox key, however valid it is. Foundry knows
+   * cannot succeed against a sandbox key, however valid it is. StockChief knows
    * which mode the invoice was created in, so it says so rather than leaving
    * somebody to test their own card again.
    */
@@ -235,7 +235,7 @@ async function refundPayment(ctx, { externalPaymentId, amountMinor }) {
  * Prove the event came from Stripe before believing a word of it.
  *
  * A webhook endpoint is a URL anybody can post to. Without this check, a
- * stranger could tell Foundry an invoice was paid, and Foundry would write it
+ * stranger could tell StockChief an invoice was paid, and StockChief would write it
  * into the books.
  */
 function verifyEvent(raw, headers = {}, options = {}) {
@@ -248,7 +248,7 @@ function verifyEvent(raw, headers = {}, options = {}) {
     .map((piece) => piece.split('=', 2)).filter((pair) => pair.length === 2));
   const timestamp = parts.t;
   const provided = parts.v1;
-  if (!timestamp || !provided) throw new AuthenticationError('That Stripe signature is not in a form Foundry can check.');
+  if (!timestamp || !provided) throw new AuthenticationError('That Stripe signature is not in a form StockChief can check.');
 
   const body = typeof raw === 'string' ? raw : JSON.stringify(raw);
   const expected = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
@@ -267,10 +267,10 @@ function verifyEvent(raw, headers = {}, options = {}) {
 }
 
 /**
- * Stripe's vocabulary, translated into the four facts Foundry acts on.
+ * Stripe's vocabulary, translated into the four facts StockChief acts on.
  */
 /**
- * An invoice Foundry asked about, in the shape an event would have arrived in.
+ * An invoice StockChief asked about, in the shape an event would have arrived in.
  *
  * Deliberately not a second way of understanding a payment. It builds the
  * event Stripe would have sent and hands it to the same reader, so a payment
@@ -343,7 +343,7 @@ function readEvent(event) {
       reason: 'Stripe reported a refund.',
     };
   }
-  return { kind: 'IGNORED', reason: `Foundry does not act on ${type || 'that'}.` };
+  return { kind: 'IGNORED', reason: `StockChief does not act on ${type || 'that'}.` };
 }
 
 module.exports = {

@@ -2,8 +2,8 @@
   /*
    * The line, wherever it is needed.
    *
-   * One box for everything somebody says to Foundry — what happened, what they
-   * want, how they want the operation run — because Foundry has one
+   * One box for everything somebody says to StockChief — what happened, what they
+   * want, how they want the operation run — because StockChief has one
    * understanding of a sentence and which box it was typed into must never
    * decide whether it understands them. It posts to the router that already
    * classifies fifteen kinds of intent.
@@ -19,7 +19,8 @@
 <form class="rm-composer" id="tell-foundry" method="post" action="/foundry/tell"
       enctype="multipart/form-data" data-busy data-ask-form data-operator-command-form>
   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-  <label class="visually-hidden" for="ask-question">Tell Foundry what happened, or ask it something</label>
+  <% if (locals.queryConversation) { %><input type="hidden" name="queryConversation" value="1"><% } %>
+  <label class="visually-hidden" for="ask-question">Tell StockChief what happened, or ask it something</label>
   <textarea class="rm-composer__input" id="ask-question" data-ask-input name="message" rows="2"
     maxlength="2000" placeholder="<%= prompt %>"><%= prefill %></textarea>
   <div class="rm-composer__foot">
@@ -30,7 +31,7 @@
     <span class="right"><button class="rm-btn rm-btn--sm rm-composer__send" type="submit" data-ask-submit><span>Send</span><%- helpers.icon('send', { size: 16 }) %></button></span>
   </div>
   <p class="rm-composer__pending" data-ask-pending role="status" aria-live="polite" hidden>
-    Foundry is working out what that means…
+    StockChief is working out what that means…
   </p>
   <p class="rm-composer__pending" data-operator-attachment-status role="status" aria-live="polite" hidden>
     <strong data-operator-attachment-name></strong> attached. Add a note if useful, then send.

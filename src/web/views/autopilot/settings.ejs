@@ -7,7 +7,7 @@
 
 <div class="card section">
   <div class="card-head">
-    <h2>How should Foundry work?</h2>
+    <h2>How should StockChief work?</h2>
     <span class="spacer"></span>
     <% if (state.paused) { %><span class="badge badge--danger">Paused</span><% } %>
     <% if (state.suspended) { %><span class="badge badge--danger">Stopped itself</span><% } %>
@@ -21,19 +21,19 @@
       <div class="grid grid--2">
         <button class="authority-choice <%= state.mode === 'SUPERVISED' ? 'is-selected' : '' %>" type="submit" name="mode" value="SUPERVISED" <%= canOperate ? '' : 'disabled' %>>
           <strong>Ask me first</strong>
-          <span>Foundry watches and recommends. It makes consequential changes only after you approve them.</span>
+          <span>StockChief watches and recommends. It makes consequential changes only after you approve them.</span>
         </button>
         <button class="authority-choice <%= state.mode === 'POLICY_AUTOMATED' ? 'is-selected' : '' %>" type="submit" name="mode" value="POLICY_AUTOMATED" <%= canOperate ? '' : 'disabled' %>>
           <strong>Handle routine work</strong>
-          <span>Foundry performs safe routine work inside limits you approved and asks about everything else.</span>
+          <span>StockChief performs safe routine work inside limits you approved and asks about everything else.</span>
         </button>
       </div>
     </form>
     <%#
-      Which jobs Foundry may do on its own.
+      Which jobs StockChief may do on its own.
 
       Separate from the mode above it, because the mode used to be both: the
-      switch that let Foundry email a payment request also let it place
+      switch that let StockChief email a payment request also let it place
       supplier orders and move stock. One authority, six unrelated
       consequences, and no way to want one without the others.
 
@@ -43,11 +43,11 @@
     %>
     <section id="jobs" class="card authority-jobs">
       <div class="card-head">
-        <h3>Which jobs Foundry may do on its own</h3>
+        <h3>Which jobs StockChief may do on its own</h3>
         <p>
-          Each is separate. Authorising Foundry to chase an invoice never authorises it to spend money.
+          Each is separate. Authorising StockChief to chase an invoice never authorises it to spend money.
           <% if (state.mode !== 'POLICY_AUTOMATED') { %>
-            <strong>While Foundry is set to “<%= state.modeLabel %>”, none of these run</strong> — it prepares
+            <strong>While StockChief is set to “<%= state.modeLabel %>”, none of these run</strong> — it prepares
             the work and waits for you. The grants are kept, so they take effect if you change the mode.
           <% } %>
         </p>
@@ -65,7 +65,7 @@
               <input type="hidden" name="capability" value="<%= job.capability %>">
               <input type="hidden" name="granted" value="<%= job.granted ? '0' : '1' %>">
               <button class="btn btn--sm <%= job.granted ? '' : 'btn--primary' %>" type="submit" <%= canOperate ? '' : 'disabled' %>>
-                <%= job.granted ? 'Take this back' : 'Let Foundry do this' %>
+                <%= job.granted ? 'Take this back' : 'Let StockChief do this' %>
               </button>
             </form>
             <span class="job-state <%= job.granted ? 'is-on' : '' %>">
@@ -76,7 +76,7 @@
       </ul>
       <p class="hint t-muted">
         You can also just say it: “Automatically send payment requests to customers, but always ask me
-        before placing supplier orders.” Foundry sets exactly these switches and leaves the rest alone.
+        before placing supplier orders.” StockChief sets exactly these switches and leaves the rest alone.
       </p>
     </section>
 
@@ -85,8 +85,8 @@
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="routine-setup__head">
           <div>
-            <h3>Foundry may automatically:</h3>
-            <p>Choose only the routine work you want Foundry to handle. Nothing is enabled unless you select it and save these limits.</p>
+            <h3>StockChief may automatically:</h3>
+            <p>Choose only the routine work you want StockChief to handle. Nothing is enabled unless you select it and save these limits.</p>
           </div>
           <% if (routine.hasGuidedAuthority) { %><span class="badge badge--ok">Limits approved</span><% } %>
         </div>
@@ -99,13 +99,13 @@
             <% } %>
             <% if (routine.purchasing.enabled) { %>
               purchase orders of no more than <strong>$<%= Number(routine.purchasing.maximumValue).toLocaleString('en-US') %></strong>
-              may be approved and recorded as ordered in Foundry for
+              may be approved and recorded as ordered in StockChief for
               <strong><%= routine.purchasing.supplierIds.length %> selected supplier<%= routine.purchasing.supplierIds.length === 1 ? '' : 's' %></strong>.
             <% } %>
             Everything outside these limits comes to you first.
           </div>
         <% } else { %>
-          <p class="routine-current muted"><strong>Nothing is enabled yet.</strong> Foundry will keep asking before it moves stock or places an order.</p>
+          <p class="routine-current muted"><strong>Nothing is enabled yet.</strong> StockChief will keep asking before it moves stock or places an order.</p>
         <% } %>
 
         <div class="routine-capabilities">
@@ -121,7 +121,7 @@
                 <span class="routine-limit"><input class="input" type="number" name="maximumQuantity" value="<%= routine.transfer.maximumQuantity %>" min="1" max="100000" required> <span>units at a time</span></span>
               </label>
             <% } else { %>
-              <p class="field-help routine-capability__limits">Add a second active location before Foundry can transfer stock.</p>
+              <p class="field-help routine-capability__limits">Add a second active location before StockChief can transfer stock.</p>
             <% } %>
           </section>
 
@@ -129,7 +129,7 @@
             <label class="routine-capability__choice" for="routine-purchasing">
               <input id="routine-purchasing" type="checkbox" name="enablePurchasing" value="1"
                      <%= routine.purchasing.enabled ? 'checked' : '' %> <%= suppliers.length && canAdmin ? '' : 'disabled' %>>
-              <span><strong>Approve routine purchase orders</strong><small>Foundry may create the PO and record it as ordered when the replenishment evidence, supplier rules, price and limits all pass.</small></span>
+              <span><strong>Approve routine purchase orders</strong><small>StockChief may create the PO and record it as ordered when the replenishment evidence, supplier rules, price and limits all pass.</small></span>
             </label>
             <% if (suppliers.length) { %>
               <div class="routine-capability__limits">
@@ -143,15 +143,15 @@
                     <label class="check"><input type="checkbox" name="supplierScope" value="<%= supplier.id %>" <%= routine.purchasing.supplierIds.includes(supplier.id) ? 'checked' : '' %>> <%= supplier.name %></label>
                   <% }) %>
                 </fieldset>
-                <p class="field-help"><strong>No supplier connection is active.</strong> “Ordered” is recorded inside Foundry; this version does not email, upload or transmit the PO to the supplier.</p>
+                <p class="field-help"><strong>No supplier connection is active.</strong> “Ordered” is recorded inside StockChief; this version does not email, upload or transmit the PO to the supplier.</p>
               </div>
             <% } else { %>
-              <p class="field-help routine-capability__limits">Add an active supplier before Foundry can reorder.</p>
+              <p class="field-help routine-capability__limits">Add an active supplier before StockChief can reorder.</p>
             <% } %>
           </section>
         </div>
 
-        <p class="routine-safety"><strong>Foundry will still ask you</strong> about counts, corrections, uncertain matches, work outside these limits, or anything that fails a safety check.</p>
+        <p class="routine-safety"><strong>StockChief will still ask you</strong> about counts, corrections, uncertain matches, work outside these limits, or anything that fails a safety check.</p>
         <% if (routine.otherActivePolicies.length) { %>
           <p class="notice notice--info"><strong><%= routine.otherActivePolicies.length %> additional Custom <%= routine.otherActivePolicies.length === 1 ? 'policy is' : 'policies are' %> active.</strong> Those approved limits also remain in force until you stop them under Custom.</p>
         <% } %>
@@ -165,30 +165,30 @@
   <summary class="card-head"><span><strong>Custom</strong><span class="muted"> — Advanced policies, preferences and hard limits</span></span></summary>
   <div class="card-body">
     <div class="act-row">
-      <div><strong>Watch only</strong><p>Foundry explains what it sees but prepares or changes nothing.</p></div>
+      <div><strong>Watch only</strong><p>StockChief explains what it sees but prepares or changes nothing.</p></div>
       <form method="post" action="/autopilot/mode"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn btn--sm <%= state.mode === 'OBSERVE' ? 'btn--primary' : '' %>" type="submit" name="mode" value="OBSERVE" <%= canOperate ? '' : 'disabled' %>>Use watch only</button></form>
     </div>
   </div>
 
 <div class="card section">
   <div class="card-head">
-    <h2>What Foundry may do on its own</h2>
+    <h2>What StockChief may do on its own</h2>
     <span class="spacer"></span>
     <%# "Active" describes the policy, not what is happening. A policy only ever
-        fires when Foundry is also set to run the inventory, so saying "active"
+        fires when StockChief is also set to run the inventory, so saying "active"
         beside "It changes nothing" was two true statements that read as a
         contradiction. %>
     <span class="badge badge--muted"><%= policies.filter(function (p) { return p.isActive; }).length %> approved</span>
   </div>
   <div class="card-body">
     <% if (!policies.length) { %>
-      <p class="lede">Nothing. Foundry prepares work and waits for you on all of it.</p>
+      <p class="lede">Nothing. StockChief prepares work and waits for you on all of it.</p>
     <% } else if (!state.canAutomate) { %>
       <p class="lede muted">
         <% if (state.paused) { %>
-          These are approved, but Foundry is paused, so none of them are doing anything.
+          These are approved, but StockChief is paused, so none of them are doing anything.
         <% } else { %>
-          These limits are approved, but Foundry is set to <strong><%= state.modeLabel.toLowerCase() %></strong> —
+          These limits are approved, but StockChief is set to <strong><%= state.modeLabel.toLowerCase() %></strong> —
           it still brings this work to you. Choose “Handle routine work” above for them to take effect.
         <% } %>
       </p>
@@ -224,7 +224,7 @@
 <% if (reviewAll) { %>
   <div class="notice notice--info section">
     <strong>“Handle everything” is a policy review, never unlimited permission.</strong>
-    Foundry can safely prepare work and investigate without authority. Automatic transfers and routine purchase-order approval each need their own limits below. Counts, ambiguous identities and destructive changes always remain human decisions.
+    StockChief can safely prepare work and investigate without authority. Automatic transfers and routine purchase-order approval each need their own limits below. Counts, ambiguous identities and destructive changes always remain human decisions.
   </div>
 <% } %>
 <%
@@ -238,7 +238,7 @@
    * approval rules, hard limits and running preferences. Each is real and some
    * owner wants every one of them, but presented as siblings of the choice they
    * make the choice look unfinished — as though picking one of two options had
-   * left eight more things to fill in before Foundry would do anything.
+   * left eight more things to fill in before StockChief would do anything.
    *
    * One heading is enough to say these are for people who want the exact rules.
    */
@@ -282,14 +282,14 @@
 </details>
 
 <form method="post" action="/autopilot/policies/read" class="card section" data-busy>
-  <div class="card-head"><h2>Tell Foundry what it may handle</h2></div>
+  <div class="card-head"><h2>Tell StockChief what it may handle</h2></div>
   <div class="card-body">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label class="field">
       <span class="field-label">In your own words</span>
       <input class="input" type="text" name="instruction" maxlength="600"
              placeholder="You can move stock between Brooklyn and New Jersey when one is running out, but never more than 20 at a time">
-      <span class="field-help">Foundry writes the policy. You read it and decide.</span>
+      <span class="field-help">StockChief writes the policy. You read it and decide.</span>
     </label>
   </div>
   <div class="card-foot">
@@ -339,7 +339,7 @@
         </label>
       <% } %>
       <p class="muted">
-        Foundry chose none of the safety conditions itself — every policy written this way carries all of
+        StockChief chose none of the safety conditions itself — every policy written this way carries all of
         them. Nothing happens until you approve it.
       </p>
     </div>
@@ -351,10 +351,10 @@
 
 <%# Balancing moves stock between locations. Offering it to an inventory with
     one location invites somebody to write a policy that can never fire, and
-    then wonder why Foundry never does anything. Say why instead. %>
+    then wonder why StockChief never does anything. Say why instead. %>
 <% if (locations.length < 2) { %>
   <div class="card section">
-    <div class="card-head"><h2>Let Foundry balance your warehouses</h2></div>
+    <div class="card-head"><h2>Let StockChief balance your warehouses</h2></div>
     <div class="card-body">
       <p class="lede">
         This needs somewhere to move stock <em>to</em>.
@@ -362,7 +362,7 @@
         so there is nothing to balance yet.
       </p>
       <p class="muted">
-        Add a second location and Foundry can keep them level — moving stock when one is running out
+        Add a second location and StockChief can keep them level — moving stock when one is running out
         and the other has plenty, within a limit you set.
       </p>
     </div>
@@ -372,11 +372,11 @@
   </div>
 <% } else { %>
 <form method="post" action="/autopilot/policies" class="card section">
-  <div class="card-head"><h2>Let Foundry balance your warehouses</h2></div>
+  <div class="card-head"><h2>Let StockChief balance your warehouses</h2></div>
   <div class="card-body">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <p class="lede">
-      Foundry can move stock between your own locations when one is running out and another has plenty.
+      StockChief can move stock between your own locations when one is running out and another has plenty.
       Nothing leaves the business, the total never changes, and a wrong one is undone by moving it back.
     </p>
     <label class="field">
@@ -403,7 +403,7 @@
       <% }) %>
     </fieldset>
     <p class="muted">
-      Foundry will only do it when the destination is measurably about to run out and the source keeps
+      StockChief will only do it when the destination is measurably about to run out and the source keeps
       enough for its own demand. You will see every move and can stop this at any time.
     </p>
   </div>
@@ -415,11 +415,11 @@
 
 <% if (suppliers.length) { %>
 <form method="post" action="/autopilot/policies" class="card section">
-  <div class="card-head"><h2>Let Foundry approve routine replenishment</h2></div>
+  <div class="card-head"><h2>Let StockChief approve routine replenishment</h2></div>
   <div class="card-body">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <input type="hidden" name="actionType" value="approve_purchase_order">
-    <p class="lede">Foundry may approve an order only when measured demand supports it, incoming stock does not already cover it, supplier pack rules pass, and price stays inside your limit.</p>
+    <p class="lede">StockChief may approve an order only when measured demand supports it, incoming stock does not already cover it, supplier pack rules pass, and price stays inside your limit.</p>
     <label class="field"><span class="field-label">Call it</span>
       <input class="input" type="text" name="name" value="Routine replenishment purchasing" maxlength="120" required></label>
     <label class="field"><span class="field-label">Never commit more than</span>
@@ -431,7 +431,7 @@
     <fieldset class="field"><span class="field-label">Only these suppliers</span>
       <% suppliers.forEach(function (supplier) { %><label class="check"><input type="checkbox" name="supplierScope" value="<%= supplier.id %>"> <%= supplier.name %></label><% }) %>
     </fieldset>
-    <p class="muted">Foundry records the evidence and policy version on every automatic approval. Receiving remains a physical confirmation.</p>
+    <p class="muted">StockChief records the evidence and policy version on every automatic approval. Receiving remains a physical confirmation.</p>
   </div>
   <div class="card-foot"><button class="btn btn--primary" type="submit" <%= canAdmin ? '' : 'disabled' %>>Write this policy</button></div>
 </form>
@@ -472,7 +472,7 @@
   <div class="card-body">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <p class="muted">
-      Foundry never works these out from watching you. It uses what you set here and nothing else —
+      StockChief never works these out from watching you. It uses what you set here and nothing else —
       leave one blank and it uses its own judgement.
     </p>
     <%
@@ -485,7 +485,7 @@
           <span class="field-label"><%= definition.label %></span>
           <% if (definition.kind === 'boolean') { %>
             <select class="input" name="<%= definition.key %>">
-              <option value="">Foundry decides</option>
+              <option value="">StockChief decides</option>
               <option value="true" <%= current[definition.key] === true ? 'selected' : '' %>>Yes</option>
               <option value="false" <%= current[definition.key] === false ? 'selected' : '' %>>No</option>
             </select>

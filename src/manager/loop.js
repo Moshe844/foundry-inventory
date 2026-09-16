@@ -22,7 +22,7 @@ function run(db, ctx, membership, options = {}) {
   for (const item of workItems.inFlight(db, workspaceId)) {
     const assessed = repairs.openAndAssess(db, ctx, {
       kind: 'stuck_job',
-      symptom: `${item.categoryLabel || 'Foundry work'} was interrupted`,
+      symptom: `${item.categoryLabel || 'StockChief work'} was interrupted`,
       failedInvariant: 'Every started job must end with one independently verified outcome',
       affectedRecords: { workItemId: item.id },
       idempotencyKey: `repair:work-item:${item.id}`,

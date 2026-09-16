@@ -2,7 +2,7 @@
   /*
    * Inventory that arrives as an email attachment.
    *
-   * The thing somebody is actually worried about here is what Foundry will be
+   * The thing somebody is actually worried about here is what StockChief will be
    * allowed to read, so the answer to that is on the screen rather than in a
    * paragraph at the bottom: it ignores every sender you have not approved.
    */
@@ -16,7 +16,7 @@
   <h1>Use files that arrive by email.</h1>
   <p>
     Connect the mailbox, then choose the sender and whether their PDF, Excel, CSV, Word or text files
-    carry inventory or purchasing information. Foundry checks on its own from then on.
+    carry inventory or purchasing information. StockChief checks on its own from then on.
   </p>
 </div>
 
@@ -53,7 +53,7 @@
           <span class="rm-pillbadge <%= provider.available ? 'is-ok' : '' %>"><%= provider.available ? 'Ready' : 'Setup required' %></span>
         </span>
       </div>
-      <p>Sign in as normal. Foundry then asks which sender and which attachments it may use.</p>
+      <p>Sign in as normal. StockChief then asks which sender and which attachments it may use.</p>
       <% if (!canManageConnections) { %>
         <p class="quiet">Ask an inventory owner to connect this mailbox.</p>
       <% } else if (!provider.available) { %>
@@ -72,7 +72,7 @@
 <div class="rm-note">
   <%- helpers.icon('shield', { size: 16 }) %>
   <span>
-    <strong>Foundry ignores every sender you do not approve.</strong>
+    <strong>StockChief ignores every sender you do not approve.</strong>
     After connection it checks automatically, prepares one safe review when an approved file arrives,
     and puts that review on your brief. Nothing becomes stock until you approve the exact products
     and quantities.

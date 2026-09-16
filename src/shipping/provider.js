@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * The seam between Foundry and whoever moves the box.
+ * The seam between StockChief and whoever moves the box.
  *
  * A sales order must not know what EasyPost is, and it must not know what UPS
  * is either. It knows there are goods, an address and a date it promised. Who
@@ -12,7 +12,7 @@
  * This is deliberately the same shape as the payments seam. That is not
  * tidiness: the two problems are the same problem. An outside company does
  * something in the real world, tells us about it in its own vocabulary, and
- * Foundry has to hold exactly the few facts its own records turn on.
+ * StockChief has to hold exactly the few facts its own records turn on.
  *
  * A provider implements five core things. Charge-changing recovery methods
  * are advertised as capabilities so a provider without refunds can never be
@@ -27,18 +27,18 @@
  *   track(ctx, { trackingNumber, carrier, providerShipmentId })
  *                                        -> { status, detail, events: [...] }
  *   verifyEvent(raw, headers, options)   -> the event, or throws
- *   readEvent(event)                     -> a shape Foundry understands
+ *   readEvent(event)                     -> a shape StockChief understands
  *   voidLabel(ctx, { providerReferences, idempotencyKey })
  *                                        -> { status, references, detail }
  *
  * `readEvent` is the important one, exactly as it is for payments. It turns
- * whatever the carrier calls things into the handful of facts Foundry acts on:
+ * whatever the carrier calls things into the handful of facts StockChief acts on:
  * which shipment this is about, where the parcel has got to, when that
  * happened, and whether something has gone wrong. Everything downstream — the
  * order's status, the customer's notice, the exception that reaches Needs You
  * — reads that shape and never the provider's.
  *
- * The statuses are Foundry's, not any carrier's. Every carrier has its own
+ * The statuses are StockChief's, not any carrier's. Every carrier has its own
  * words for the same seven things, and translating once here is what stops
  * "IT" and "InTransit" and "in_transit" from all having to be understood by a
  * screen that just wants to say where the parcel is.

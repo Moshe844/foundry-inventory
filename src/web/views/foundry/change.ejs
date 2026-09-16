@@ -4,7 +4,7 @@
 %>
 
 <div class="breadcrumb">
-  <a href="/foundry">Foundry</a> <%- helpers.icon('chevron', { size: 13 }) %> <span>Proposed change</span>
+  <a href="/foundry">StockChief</a> <%- helpers.icon('chevron', { size: 13 }) %> <span>Proposed change</span>
 </div>
 
 <div class="page-head">
@@ -31,7 +31,7 @@
             <% var custom = Object.keys(plan.terminology).filter(function (k) { return plan.terminology[k]; }); %>
             <% if (custom.length) { %>
               <% custom.forEach(function (k) { %><span class="pill"><%= k %> → <strong><%= plan.terminology[k] %></strong></span><% }) %>
-            <% } else { %><strong>Foundry's defaults</strong><% } %>
+            <% } else { %><strong>StockChief's defaults</strong><% } %>
           </span>
         </li>
       </ul>
@@ -54,7 +54,7 @@
 
     <div class="notice">
       <%- helpers.icon('shield', { size: 16 }) %>
-      <span>Foundry only proposes configuration. It cannot move, create or remove inventory.</span>
+      <span>StockChief only proposes configuration. It cannot move, create or remove inventory.</span>
     </div>
   </div>
 </div>

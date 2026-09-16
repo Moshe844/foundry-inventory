@@ -57,7 +57,7 @@ function tolerance(text) {
 /**
  * The one close-enough name, when there is exactly one.
  *
- * Deliberately strict: a second candidate within tolerance means Foundry has no
+ * Deliberately strict: a second candidate within tolerance means StockChief has no
  * business choosing, because picking wrong here moves real stock to the wrong
  * place. Every match it does make is reported, never applied silently.
  */
@@ -172,13 +172,13 @@ function resolveLocation(db, workspaceId, text, { role = 'location' } = {}) {
   }
 
   // Nothing matched as written. A near miss is almost always a typo, so it is
-  // offered — named, so the preview shows what Foundry read it as.
+  // offered — named, so the preview shows what StockChief read it as.
   const all = db
     .prepare('SELECT * FROM locations WHERE workspace_id = ? AND is_active = 1 ORDER BY name')
     .all(workspaceId);
   const close = closestMatch(query, all, (l) => l.name);
   if (close.ok) {
-    return { ...found(close.value), note: `You wrote “${query}” — Foundry took that as ${close.value.name}.` };
+    return { ...found(close.value), note: `You wrote “${query}” — StockChief took that as ${close.value.name}.` };
   }
   if (close.reason === 'ambiguous') {
     return ambiguous(
@@ -255,7 +255,7 @@ function narrowSkuRowsByInstruction(db, candidates, instruction) {
 /**
  * Narrow attributes that an imported catalogue encoded in the item name.
  *
- * Foundry supports both common catalogue shapes:
+ * StockChief supports both common catalogue shapes:
  *
  *   one item + Colour/Size option rows
  *   Classic Cotton T-Shirt - White + one Size option per imported row
@@ -375,7 +375,7 @@ function skuAmbiguity(db, rows) {
  * Words that are an instruction, not the name of anything.
  *
  * "Please remove the entire inventory" was read as a product called "please
- * remove entire", and Foundry offered to create it. Nobody has ever called a
+ * remove entire", and StockChief offered to create it. Nobody has ever called a
  * product that, and offering to create one out of somebody's own sentence is
  * the moment a person stops believing the software understands them.
  *
@@ -412,14 +412,14 @@ function couldBeAName(tokens) {
 }
 
 /**
- * Did this sentence name a product, or is Foundry about to invent one?
+ * Did this sentence name a product, or is StockChief about to invent one?
  *
  * The word list above was the wrong shape of answer and it showed: six of
  * eight phrasings nobody had thought to add still came back as products.
  * "get rid of this whole thing" became a product called "get rid thi whole
  * thing". Enumerating the ways people phrase things is a losing game.
  *
- * The general rule needs no list. A person names a product Foundry has never
+ * The general rule needs no list. A person names a product StockChief has never
  * heard of when they are putting stock in — "receive 10 navy socks", "we
  * counted 40 blue mugs". Nobody introduces a product in order to get rid of
  * it, and no sentence about deleting everything carries a quantity. So the
@@ -427,7 +427,7 @@ function couldBeAName(tokens) {
  *
  * This is deliberately stricter than it needs to be. Refusing to offer
  * creation on "remove the blue widget" costs a click, because removing
- * something Foundry does not have was never going to work anyway. Offering to
+ * something StockChief does not have was never going to work anyway. Offering to
  * create "nuke it" costs the person's belief that the software can read.
  */
 function namesSomethingCountable(instruction) {
@@ -438,7 +438,7 @@ function notUnderstood(instruction) {
   return {
     ok: false,
     reason: 'not_understood',
-    message: 'Foundry did not understand that as something it can do. '
+    message: 'StockChief did not understand that as something it can do. '
       + 'Say what should change and which product or place it affects.',
     subject: null,
     candidates: [],
@@ -545,6 +545,20 @@ function resolveSku(db, workspaceId, itemText, variantText, options = {}) {
 }
 
 function resolveSkuWith(db, workspaceId, itemText, variantText, options = {}, trace = { ignored: [] }) {
+  // A labelled exact identifier in the owner's source outranks a model's
+  // approximate product wording. Never substitute a similarly named product
+  // when the explicitly supplied SKU does not exist in this workspace.
+  const explicitCodes=[...new Set([...String(options.instruction||'').matchAll(/\bSKU\b\s*(?:[:#=]\s*)?["“]?([A-Za-z0-9][A-Za-z0-9._/-]*)/gi)]
+    .map(match=>match[1].replace(/[.]$/,'').toLowerCase()))];
+  if(explicitCodes.length===1){
+    const exact=db.prepare(`SELECT s.*,i.name AS item_name,i.tracking_mode,i.unit_label,i.has_variants
+      FROM skus s JOIN items i ON i.id=s.item_id AND i.workspace_id=s.workspace_id
+      WHERE s.workspace_id=? AND s.is_active=1 AND i.is_active=1 AND s.code=? COLLATE NOCASE`).get(workspaceId,explicitCodes[0]);
+    if(exact)return found(exact);
+    return { ...none(`SKU “${explicitCodes[0]}” is not an active SKU in this inventory. Correct the SKU or add the new product before preparing this operation.`),
+      missingSkuCode: [...String(options.instruction || '').matchAll(/\bSKU\b\s*(?:[:#=]\s*)?["“]?([A-Za-z0-9][A-Za-z0-9._/-]*)/gi)][0][1].replace(/[.]$/, '') };
+  }
+  if(explicitCodes.length>1)return none('This operation contains several explicit SKUs. Put each product and quantity on its own line so none can be substituted or dropped.');
   // "Move 15 Navy 4 to the store" names no product at all — "Navy 4" is the
   // whole identifier. Searching on the variant wording when that is all there
   // is beats refusing to look, and the narrowing below still applies.
@@ -632,7 +646,7 @@ function resolveSkuWith(db, workspaceId, itemText, variantText, options = {}, tr
    * however short, keeping only the ones the catalogue can match. A query of
    * nothing but words nobody sells still finds nothing, which is the answer
    * it should have. What was set aside travels back as `ignored`, because a
-   * word Foundry could not place is worth saying out loud rather than quietly
+   * word StockChief could not place is worth saying out loud rather than quietly
    * pretending was never written.
    */
   if (rows.length === 0) {
@@ -666,7 +680,7 @@ function resolveSkuWith(db, workspaceId, itemText, variantText, options = {}, tr
     if (close.ok) {
       const corrected = resolveSku(db, workspaceId, close.value.name, variantText);
       if (corrected.ok) {
-        return { ...corrected, note: `You wrote “${query}” — Foundry took that as ${close.value.name}.` };
+        return { ...corrected, note: `You wrote “${query}” — StockChief took that as ${close.value.name}.` };
       }
       return corrected;
     }

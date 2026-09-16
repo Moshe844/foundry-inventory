@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * What Foundry proposed, who decided, and what happened next.
+ * What StockChief proposed, who decided, and what happened next.
  *
  * A prediction that changes a decision has to outlive the decision. Six months
  * after a recommendation was accepted, the useful question is never "what does
@@ -16,7 +16,7 @@
  * and eventually scored.
  *
  * The authority story is not this module's to invent. Every consequential
- * action goes to the same gate everything else in Foundry goes to, and the
+ * action goes to the same gate everything else in StockChief goes to, and the
  * verdict is recorded whatever it is. A forecast being confident is not a
  * reason to act — confidence is a property of a prediction, and authority is a
  * property of a permission somebody granted. Conflating the two is how a
@@ -96,7 +96,7 @@ function keyFor({ kind, subjectId, recommendedValue, asOf }) {
  * Records a recommendation, asking the authority gate what may be done with it.
  *
  * Returns the stored row either way. A refused recommendation is still worth
- * keeping and still worth showing — "Foundry wanted to do this and was not
+ * keeping and still worth showing — "StockChief wanted to do this and was not
  * allowed" is information the owner is entitled to.
  */
 function record(db, workspaceId, input, options = {}) {
@@ -113,7 +113,7 @@ function record(db, workspaceId, input, options = {}) {
     WHERE workspace_id = ? AND idempotency_key = ?`).get(workspaceId, idempotencyKey);
   if (existing) return hydrate(existing);
 
-  // What would it take to do this on Foundry's own authority?
+  // What would it take to do this on StockChief's own authority?
   const actionType = ACTION_FOR_KIND[input.kind] || null;
   let verdict = null;
   let detail = {};
@@ -214,7 +214,7 @@ function open(db, workspaceId, { kind = null, limit = 50 } = {}) {
  */
 function decide(db, ctx, id, status, { detail = {}, resultingAction = null } = {}) {
   const allowed = ['ACCEPTED', 'DECLINED', 'APPLIED', 'SUPERSEDED', 'EXPIRED'];
-  if (!allowed.includes(status)) throw new ValidationError('That is not a decision Foundry records.');
+  if (!allowed.includes(status)) throw new ValidationError('That is not a decision StockChief records.');
   const now = nowIso();
   const changed = db.prepare(`UPDATE planning_recommendations
       SET status = ?, decided_by_user_id = ?, decided_at = ?, resulting_action = ?,
@@ -230,7 +230,7 @@ function decide(db, ctx, id, status, { detail = {}, resultingAction = null } = {
 }
 
 /**
- * May Foundry do this one on its own?
+ * May StockChief do this one on its own?
  *
  * The single place that question is answered, so it cannot be answered
  * differently in two code paths. Note what it does *not* consider: how

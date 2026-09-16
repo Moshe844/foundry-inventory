@@ -140,7 +140,7 @@ function expiryState(iso) {
   return { tone: 'muted', text: shortDate(iso) };
 }
 
-/** Column headings for Ask Foundry results, which come back as plain keys. */
+/** Column headings for Ask StockChief results, which come back as plain keys. */
 const COLUMN_LABELS = {
   label: 'Item',
   code: 'Code',

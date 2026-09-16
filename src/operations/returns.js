@@ -225,7 +225,7 @@ function refundCustomerReturn(db,ctx,membership,id,input){
     if(row.resolution!=='REFUND'||row.status!=='AWAITING_REFUND')throw new ValidationError('This return is not waiting for a refund.');
     const original=db.prepare(`SELECT id FROM accounting_journal_entries WHERE workspace_id=? AND source_type='sales_fulfillment'
       AND json_extract(metadata,'$.salesOrderId')=? AND status='POSTED' ORDER BY posting_date LIMIT 1`).get(ctx.workspaceId,row.sales_order_id);
-    if(!original)throw new ValidationError('Foundry cannot refund this return until the original fulfilled sale has a posted accounting entry.');
+    if(!original)throw new ValidationError('StockChief cannot refund this return until the original fulfilled sale has a posted accounting entry.');
     const movementIds=row.lines.flatMap((line)=>line.kitComponents.length
       ? line.kitComponents.flatMap((component)=>component.receiveMovementIds) : line.receiveMovementIds);
     const result=refunds.refundSale(db,ctx,membership,{originalJournalEntryId:original.id,revenueMinor:Number(input.revenueMinor),taxMinor:Number(input.taxMinor||0),cogsMinor:Number(input.cogsMinor||0),physicalReturn:true,movementIds,destination:input.destination||'CASH',reference:row.return_number,sourceKey:`customer-return:${row.id}`});

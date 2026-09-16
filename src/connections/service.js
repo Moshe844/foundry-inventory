@@ -223,7 +223,7 @@ function authenticate(db, authorization) {
   const match = /^Bearer\s+(.+)$/i.exec(String(authorization || '').trim());
   const token = match && match[1];
   if (!token || token.length > 200 || !token.startsWith(TOKEN_PREFIX)) {
-    throw new AuthenticationError('A valid Foundry connection bearer token is required.');
+    throw new AuthenticationError('A valid StockChief connection bearer token is required.');
   }
   const prefix = token.slice(TOKEN_PREFIX.length).split('.')[0];
   const row = db.prepare(`SELECT t.*, c.status AS connector_status, c.paused_at, c.provider_type,
@@ -253,10 +253,10 @@ function mapExternal(db, ctx, connectorId, input) {
   const target = ENTITY_TABLES[entityType];
   if (!target) throw new ValidationError('Mapping type must be SKU, location, customer, sales order, or supplier.');
   const externalId = requireText(input.externalId, 'External id', { max: 160 });
-  const foundryRecordId = requireText(input.foundryRecordId, 'Foundry record', { max: 160 });
+  const foundryRecordId = requireText(input.foundryRecordId, 'StockChief record', { max: 160 });
   const found = db.prepare(`SELECT ${target[1]} AS id FROM ${target[0]} WHERE workspace_id = ? AND ${target[1]} = ?`)
     .get(ctx.workspaceId, foundryRecordId);
-  if (!found) throw new ValidationError('That Foundry record is not in this inventory.');
+  if (!found) throw new ValidationError('That StockChief record is not in this inventory.');
   const now = nowIso();
   const id = newId('cmap');
   db.prepare(`INSERT INTO connection_mappings
@@ -313,8 +313,8 @@ function refreshHealth(db, workspaceId, options = {}) {
       issue(db, { workspaceId, connectorId: connection.id, issueType: 'CONNECTION_STALE',
         fingerprint: `connection-stale:${connection.id}`, title: `${connection.display_name} has stopped sending activity`,
         detail: baseline
-          ? `Foundry has not completed a successful check or received activity since ${baseline}. It may be missing external events.`
-          : 'Foundry has not completed a successful check or received activity since this connection was established.',
+          ? `StockChief has not completed a successful check or received activity since ${baseline}. It may be missing external events.`
+          : 'StockChief has not completed a successful check or received activity since this connection was established.',
         resolutionHint: 'Check the external system, then reconnect or resume this connection.' });
     }
   }

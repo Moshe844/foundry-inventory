@@ -10,7 +10,7 @@
  * days" into a cap, and hands both to arithmetic that has no opinions of its
  * own.
  *
- * A goal chooses between answers Foundry was already permitted to give. It
+ * A goal chooses between answers StockChief was already permitted to give. It
  * cannot widen authority, raise a spending limit, or make an action automatic
  * that was not automatic before — those come from a capability and an approved
  * policy, and nothing here touches either. Wanting fewer stockouts very much is
@@ -68,7 +68,7 @@ function forWorkspace(db, workspaceId) {
   goals.preferTransferBeforePurchasing = stored[KEYS.PREFER_TRANSFER_BEFORE_PURCHASING.key] === true;
 
   /*
-   * A ceiling on days of supply also caps the cover Foundry buys. Without this
+   * A ceiling on days of supply also caps the cover StockChief buys. Without this
    * the two settings quietly contradict each other and the more generous one
    * wins, which is the opposite of what somebody setting a limit intended.
    */
@@ -80,7 +80,7 @@ function forWorkspace(db, workspaceId) {
 }
 
 /**
- * The goals as sentences, for the page that shows an owner what Foundry thinks
+ * The goals as sentences, for the page that shows an owner what StockChief thinks
  * it has been told. Only what was actually set — silence is not a goal.
  */
 function describe(db, workspaceId) {
@@ -89,7 +89,7 @@ function describe(db, workspaceId) {
     .map((row) => ({
       key: row.key,
       label: row.label,
-      // Their words if they used any, Foundry's paraphrase if they did not.
+      // Their words if they used any, StockChief's paraphrase if they did not.
       text: row.statedAs || row.description,
       description: row.description,
       statedAs: row.statedAs,

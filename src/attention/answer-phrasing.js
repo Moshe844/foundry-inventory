@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * The sentence an accountant would say, from numbers Foundry already proved.
+ * The sentence an accountant would say, from numbers StockChief already proved.
  *
  * Answers were assembled from templates, so they read like column headings:
  * "Fulfilled units: 8. 0 open sales orders; 0 units committed and 0 waiting for
@@ -36,7 +36,7 @@ Rules that are not style preferences:
 - If the answer to the question is a single number, lead with it.
 - Do not add advice, caveats, or encouragement. The detail that follows your
   sentence already carries those.
-- Do not mention Foundry, yourself, or that you are answering a question.
+- Do not mention StockChief, yourself, or that you are answering a question.
 - Plain words. No accounting jargon unless the question used it.`;
 
 const SCHEMA = {

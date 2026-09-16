@@ -227,7 +227,7 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     await page.fill('#name', ACCOUNT.workspaceName);
     await page.click('form[action="/inventories"] button[type=submit]');
 
-    // Mission 2 puts Foundry first. This run is about the Mission 1 console, so
+    // Mission 2 puts StockChief first. This run is about the Mission 1 console, so
     // take the documented manual path — which exercises that route too.
     await page.waitForURL(`${BASE}/onboarding`);
     // A new inventory is asked how it is managed today. These customers are
@@ -235,9 +235,9 @@ test('Mission 1 end to end, from a clean database', { timeout: 240000 }, async (
     // the Mission 2 experience, unchanged.
     await Promise.all([
       page.waitForURL(`${BASE}/foundry/describe`),
-      page.click('button:has-text("Enter it in Foundry")'),
+      page.click('button:has-text("Enter it in StockChief")'),
     ]);
-    await assertVisibleText(page, 'Give Foundry what you already have');
+    await assertVisibleText(page, 'Give StockChief what you already have');
     await Promise.all([
       page.waitForURL(`${BASE}/locations`),
       page.click('button:has-text("Set it up manually")'),

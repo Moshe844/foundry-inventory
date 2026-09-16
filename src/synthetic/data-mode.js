@@ -8,7 +8,7 @@ function workspaceMode(db, workspaceId) {
 }
 
 /*
- * This service is called only from Foundry's inventory-setup lifecycle. The
+ * This service is called only from StockChief's inventory-setup lifecycle. The
  * persisted workspace mode, chosen explicitly when the inventory is created,
  * is therefore the authority for whether setup may create synthetic records.
  * Request wording never reclassifies the workspace. It only describes the

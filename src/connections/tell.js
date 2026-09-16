@@ -34,9 +34,9 @@ function providerMappingInstruction(db, connection, message) {
     .filter((row) => `${row.display_name} ${row.code || ''} ${row.external_id}`.toLowerCase().includes(externalQuery));
   if (records.length !== 1) throw new ValidationError(records.length
     ? `More than one ${connection.display_name} record matches “${match[1].trim()}”. Use its exact external SKU.`
-    : `Foundry could not find an unmapped ${connection.display_name} record matching “${match[1].trim()}”.`);
+    : `StockChief could not find an unmapped ${connection.display_name} record matching “${match[1].trim()}”.`);
   if (/^this\s+(?:foundry\s+)?(?:variant|item|product)$/i.test(match[2].trim())) {
-    throw new ValidationError('Name the Foundry SKU code you want this external product mapped to.');
+    throw new ValidationError('Name the StockChief SKU code you want this external product mapped to.');
   }
   return { entityType: records[0].entity_type, externalId: records[0].external_id, target: match[2].trim() };
 }
@@ -46,7 +46,7 @@ function resolveTarget(db, workspaceId, parsed) {
     const rows = queryService.resolveSkus(db, workspaceId, parsed.target, 3);
     if (rows.length !== 1) throw new ValidationError(rows.length
       ? `More than one inventory line matches “${parsed.target}”. Use its exact SKU code.`
-      : `Foundry could not find an inventory line matching “${parsed.target}”.`);
+      : `StockChief could not find an inventory line matching “${parsed.target}”.`);
     return rows[0].id;
   }
   const exact = db.prepare('SELECT id FROM locations WHERE workspace_id = ? AND name = ? COLLATE NOCASE AND is_active = 1')
@@ -54,7 +54,7 @@ function resolveTarget(db, workspaceId, parsed) {
   if (exact.length === 1) return exact[0].id;
   const partial = db.prepare("SELECT id FROM locations WHERE workspace_id = ? AND name LIKE ? ESCAPE '\\' COLLATE NOCASE AND is_active = 1")
     .all(workspaceId, `%${parsed.target.replace(/[%_]/g, (c) => `\\${c}`)}%`);
-  if (partial.length !== 1) throw new ValidationError(`Foundry could not match “${parsed.target}” to exactly one location.`);
+  if (partial.length !== 1) throw new ValidationError(`StockChief could not match “${parsed.target}” to exactly one location.`);
   return partial[0].id;
 }
 
@@ -71,14 +71,14 @@ function apply(db, ctx, user, message) {
   }
   if (/\b(?:stop\s+trusting|pause|hold|suspend)\b/i.test(message)) {
     service.pause(db, ctx.workspaceId, connection.id);
-    return { connection, message: `Foundry stopped trusting new events from ${connection.display_name}.` };
+    return { connection, message: `StockChief stopped trusting new events from ${connection.display_name}.` };
   }
   if (/\b(?:resume|start\s+trusting|unpause)\b/i.test(message)) {
     service.resume(db, ctx.workspaceId, connection.id);
-    return { connection, message: `Foundry is accepting trusted events from ${connection.display_name} again.` };
+    return { connection, message: `StockChief is accepting trusted events from ${connection.display_name} again.` };
   }
   if (/\breconnect\b/i.test(message)) {
-    return { connection, message: `Foundry found ${connection.display_name}. Use Reconnect on its connection page to sign in with the provider again; existing mappings and audit history will be kept.` };
+    return { connection, message: `StockChief found ${connection.display_name}. Use Reconnect on its connection page to sign in with the provider again; existing mappings and audit history will be kept.` };
   }
   return { connection, message: `Opened ${connection.display_name}.` };
 }

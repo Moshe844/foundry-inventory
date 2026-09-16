@@ -4,7 +4,7 @@ const repo = require('../domain/repository');
 const { NotFoundError, ValidationError } = require('../domain/errors');
 
 // Code 128 patterns are widths of alternating bars and spaces. Set B covers
-// every printable ASCII character used by Foundry codes without a font,
+// every printable ASCII character used by StockChief codes without a font,
 // browser plug-in or remote image service.
 const CODE128 = [
   '212222','222122','222221','121223','121322','131222','122213','122312','132212','221213','221312','231212',

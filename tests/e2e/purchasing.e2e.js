@@ -211,7 +211,7 @@ const onOrder = (databasePath, state) =>
 // ---------------------------------------------------------------------------
 
 test(
-  'Mission 6 end to end: Foundry plans, orders and receives',
+  'Mission 6 end to end: StockChief plans, orders and receives',
   { skip: !config.ai.configured, timeout: 1200000 },
   async (t) => {
     fs.rmSync(SHOTS, { recursive: true, force: true });
@@ -282,7 +282,7 @@ test(
       assert.ok(recommended.quantityUnits >= recommended.shortfall);
     });
 
-    await t.test('3. Foundry prepares the order; nothing is committed yet', async () => {
+    await t.test('3. StockChief prepares the order; nothing is committed yet', async () => {
       await page.goto(`${BASE}/purchasing`);
       await Promise.all([
         page.waitForURL(/\/purchasing\/orders\/po_/),
@@ -292,7 +292,7 @@ test(
       await shot(page, 'draft-order');
 
       const text = await page.locator('body').innerText();
-      assert.match(text, /Foundry prepared this/);
+      assert.match(text, /StockChief prepared this/);
       assert.match(text, /supplier has not been told anything/i);
       assert.equal(onOrder(databasePath, state), 0, 'a draft is not incoming stock');
 
@@ -437,7 +437,7 @@ test(
 // ---------------------------------------------------------------------------
 
 test(
-  'Mission 6 end to end: Foundry knows when NOT to buy',
+  'Mission 6 end to end: StockChief knows when NOT to buy',
   { skip: !config.ai.configured, timeout: 1200000 },
   async (t) => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-m6-nobuy-'));

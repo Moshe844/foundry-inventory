@@ -1,7 +1,7 @@
 <p class="rm-stamp">Warehouse</p>
 <div class="rm-titleline">
   <div><h1 class="rm-figure">Work that starts with a scan.</h1>
-    <p class="rm-sub">Bins are real stock locations. Every accepted stock-changing scan uses the same inventory engine as the rest of Foundry.</p></div>
+    <p class="rm-sub">Bins are real stock locations. Every accepted stock-changing scan uses the same inventory engine as the rest of StockChief.</p></div>
 </div>
 
 <section class="rm-panel">
@@ -45,7 +45,7 @@
       <span><%= helpers.qty(location.on_hand) %> on hand</span>
     </div>
   <% }) %></div>
-  <p class="rm-note">Existing stock remains at its existing location until somebody scans or records a real move. Foundry never invents bins during migration.</p>
+  <p class="rm-note">Existing stock remains at its existing location until somebody scans or records a real move. StockChief never invents bins during migration.</p>
 </section>
 
 <section class="rm-panel" id="containers">
@@ -57,7 +57,7 @@
 </section>
 
 <% if (canAdmin) { %><section class="rm-panel" id="barcodes">
-  <div class="rm-panel__head"><div><p class="rm-kicker">Barcode aliases</p><h2>Teach Foundry an exact existing scan code</h2></div></div>
+  <div class="rm-panel__head"><div><p class="rm-kicker">Barcode aliases</p><h2>Teach StockChief an exact existing scan code</h2></div></div>
   <p class="rm-note">An alias is a deterministic identity, not an AI guess. Once saved, that code can identify only this record in this inventory.</p>
   <div class="rm-form-grid">
     <form method="post" action="/warehouse/barcodes" class="rm-inline-form">
@@ -75,7 +75,7 @@
 
 <% if (canAdmin) { %><section class="rm-panel" id="putaway">
   <div class="rm-panel__head"><div><p class="rm-kicker">Putaway</p><h2>Rules that choose a real destination</h2></div></div>
-  <% if (!rules.length) { %><p class="rm-muted">No putaway rules yet. Foundry will ask instead of guessing a bin.</p><% } %>
+  <% if (!rules.length) { %><p class="rm-muted">No putaway rules yet. StockChief will ask instead of guessing a bin.</p><% } %>
   <div class="rm-list"><% rules.forEach(function(rule) { %><div class="rm-row"><span><strong><%= rule.item_name || 'Any product' %><%= rule.sku_code ? ' · ' + rule.sku_code : '' %></strong><small>From <%= rule.from_name || 'anywhere' %></small></span><span>→ <%= rule.destination_name %></span></div><% }) %></div>
   <form method="post" action="/warehouse/putaway-rules" class="rm-form-grid"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <label>Product<select name="skuId"><option value="">Any product</option><% skus.forEach(function(sku) { %><option value="<%= sku.id %>"><%= sku.item_name %> · <%= sku.code %></option><% }) %></select></label>

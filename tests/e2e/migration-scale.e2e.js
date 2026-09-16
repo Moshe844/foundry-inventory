@@ -112,7 +112,7 @@ test('a real browser proves a staged migration before activating cutover', { tim
   await page.fill('#password', account.password);
   await Promise.all([page.waitForURL(`${BASE}/`), page.getByRole('button', { name:'Sign in' }).click()]);
   await page.goto(`${BASE}/onboarding/migrations/${pkg.id}`);
-  assert.match(await page.locator('body').innerText(), /Foundry records prepared\s+4/i);
+  assert.match(await page.locator('body').innerText(), /StockChief records prepared\s+4/i);
   await page.screenshot({ path:path.join(SHOTS, '01-staged-not-cut-over.png'), fullPage:true });
 
   await page.getByRole('button',{ name:'Approve and switch' }).waitFor();
@@ -233,7 +233,7 @@ test('an owner starts and completes a migration entirely in the browser with the
   assert.match(await busyRead.innerText(),/Reading/);
   await page.screenshot({ path:path.join(SHOTS,'05-owner-upload-working.png'),fullPage:true });
   await destination;
-  assert.match(await page.locator('body').innerText(),/open-purchase-orders\.csv · inventory-export\.csv · open-sales-orders\.csv|Foundry is preparing this inventory/);
+  assert.match(await page.locator('body').innerText(),/open-purchase-orders\.csv · inventory-export\.csv · open-sales-orders\.csv|StockChief is preparing this inventory/);
   await page.getByRole('button',{ name:'Approve and switch' }).waitFor({ timeout:30_000 });
   assert.match(await page.locator('body').innerText(),/Verification passed|source totals match/i);
   await page.screenshot({ path:path.join(SHOTS,'05-owner-upload-staged.png'),fullPage:true });

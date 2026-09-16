@@ -6,7 +6,7 @@
    * be re-read every time a parcel is ready, and a reader that is right
    * ninety-nine times in a hundred is wrong about one parcel a week — which,
    * for a rule that spends money, is not a rounding error. The sentence
-   * underneath each rule is Foundry saying back what it will do, so an owner
+   * underneath each rule is StockChief saying back what it will do, so an owner
    * can see it understood them.
    */
   const money = function (minor) { return '$' + (Number(minor || 0) / 100).toFixed(2); };
@@ -15,10 +15,10 @@
 
 <div class="page-head">
   <div>
-    <p class="eyebrow">Foundry</p>
+    <p class="eyebrow">StockChief</p>
     <h1>Shipping rules</h1>
     <p class="lede">
-      When a parcel is ready, Foundry gets live rates from the carriers. A rule here says which of
+      When a parcel is ready, StockChief gets live rates from the carriers. A rule here says which of
       them it may buy on its own. Anything a rule does not cover becomes a question rather than a
       guess.
     </p>
@@ -27,7 +27,7 @@
 
 <section class="card section" id="handling">
   <div class="card-head"><div>
-    <h2>How Foundry handles each parcel</h2>
+    <h2>How StockChief handles each parcel</h2>
     <p class="hint">Rate shopping is always read-only. Only Automatic can purchase, and only inside a saved rule and explicit authority.</p>
   </div></div>
   <form method="post" action="/settings/shipping/operation-mode" data-busy>
@@ -35,8 +35,8 @@
     <div class="card-body choice-grid">
       <% [
         ['MANUAL','Manual','Show all carrier rates; I choose and buy.'],
-        ['RECOMMEND','Recommend','Foundry explains the best qualifying rate; I approve the purchase.'],
-        ['AUTOMATIC','Automatic','Foundry may buy only when a saved rule and shipping-label authority both cover it.']
+        ['RECOMMEND','Recommend','StockChief explains the best qualifying rate; I approve the purchase.'],
+        ['AUTOMATIC','Automatic','StockChief may buy only when a saved rule and shipping-label authority both cover it.']
       ].forEach(function (choice) { %>
         <label class="choice">
           <input type="radio" name="mode" value="<%= choice[0] %>"
@@ -62,7 +62,7 @@
 <section class="card section" id="account">
   <div class="card-head"><div>
     <h2>Your shipping</h2>
-    <p class="hint">Your carrier rates, your payment method, and one Foundry workflow.</p>
+    <p class="hint">Your carrier rates, your payment method, and one StockChief workflow.</p>
   </div></div>
 
   <div class="card-body stack">
@@ -71,7 +71,7 @@
         <div class="choice"><span class="choice-body"><strong><%= carrier %></strong><span class="t-xs t-muted">Rates, labels and tracking</span></span></div>
       <% }) %>
     </div>
-    <p class="hint">Foundry compares eligible services against the customer promise. It never changes the carrier charge or delivery evidence.</p>
+    <p class="hint">StockChief compares eligible services against the customer promise. It never changes the carrier charge or delivery evidence.</p>
   </div>
 
   <%# ------------------------------------- a workspace ShipEngine seller %>
@@ -84,8 +84,8 @@
       </p>
       <p class="hint">
         This is this business's separate shipping account. Its carrier rates, payment method,
-        labels and charges are isolated from every other Foundry workspace. Foundry never charges
-        Foundry's platform account for this business's postage.
+        labels and charges are isolated from every other StockChief workspace. StockChief never charges
+        StockChief's platform account for this business's postage.
       </p>
       <% if (!se.billingReady) { %>
         <div class="notice notice--warn"><div>
@@ -113,7 +113,7 @@
       </form>
     </div>
 
-  <%# ------------------------------------------- an account Foundry opened %>
+  <%# ------------------------------------------- an account StockChief opened %>
   <% } else if (account.connected && account.source === 'referral') { %>
     <div class="card-body">
       <p class="lede">
@@ -122,8 +122,8 @@
         <% } else { %> <span class="badge badge--ok">live</span><% } %>
       </p>
       <p class="hint">
-        Foundry opened this account and it belongs to this business — its rates, its labels, its
-        bill. Foundry is not charged for anything shipped on it.
+        StockChief opened this account and it belongs to this business — its rates, its labels, its
+        bill. StockChief is not charged for anything shipped on it.
       </p>
       <details class="disclose"><summary><span>Advanced connection details</span><span class="disclose__cue">Show</span></summary>
         <div class="disclose__body t-xs t-muted">Shipping platform: EasyPost · reference
@@ -145,8 +145,8 @@
          *
          * The field below is Stripe's own, mounted into this page. The number
          * is typed into Stripe's iframe and goes straight to Stripe; what
-         * reaches Foundry is a pm_ reference, which is worth nothing to
-         * anybody who steals it. Foundry then asks EasyPost whether it can
+         * reaches StockChief is a pm_ reference, which is worth nothing to
+         * anybody who steals it. StockChief then asks EasyPost whether it can
          * really bill this merchant, rather than believing the browser.
          */
       %>
@@ -172,7 +172,7 @@
         <button class="btn btn--ghost" type="submit">Disconnect</button>
       </form>
       <p class="t-xs t-muted">
-        Disconnecting makes Foundry forget the connection. The shipping account and everything
+        Disconnecting makes StockChief forget the connection. The shipping account and everything
         shipped on it stay with this business.
       </p>
     </div>
@@ -185,7 +185,7 @@
       </p>
       <p class="hint"><%= account.hasWebhookSecret
         ? 'Carrier scans update this inventory automatically.'
-        : 'Foundry checks the carrier on a schedule because instant scan updates are not connected.' %></p>
+        : 'StockChief checks the carrier on a schedule because instant scan updates are not connected.' %></p>
       <details class="disclose"><summary><span>Advanced connection details</span><span class="disclose__cue">Show</span></summary>
         <div class="disclose__body t-xs t-muted">Platform:
           <%= account.provider === 'shipengine' ? 'ShipEngine'
@@ -212,7 +212,7 @@
       <div class="card-body">
         <p class="lede">No carrier account is connected.</p>
         <p class="hint">
-          Foundry can hold these rules, but it cannot get a rate or buy a label until there is an
+          StockChief can hold these rules, but it cannot get a rate or buy a label until there is an
           account to ask. Nothing about shipping stops working meanwhile — parcels handed over by
           hand are recorded exactly as they always were.
         </p>
@@ -236,13 +236,13 @@
         <div class="card-body stack">
           <h3>Set up shipping for me</h3>
           <p class="hint">
-            Foundry will open one secure setup window. Your business address is filled in. You
+            StockChief will open one secure setup window. Your business address is filled in. You
             activate a carrier and add the payment method that pays for this business's labels.
-            After that, Foundry can compare rates, buy labels, print them and keep tracking updated.
+            After that, StockChief can compare rates, buy labels, print them and keep tracking updated.
           </p>
           <div class="notice notice--ok"><div>
             <strong>This business pays its own postage.</strong><br>
-            Foundry never charges its platform account. The payment method entered during
+            StockChief never charges its platform account. The payment method entered during
             setup belongs only to this business's shipping account.
           </div></div>
         </div>
@@ -254,7 +254,7 @@
       <div class="card-body stack">
         <div class="notice notice--warn"><div>
           <strong>Guided carrier setup is not enabled on this installation yet.</strong><br>
-          Foundry needs its shipping-partner credential before it can open the secure UPS, FedEx,
+          StockChief needs its shipping-partner credential before it can open the secure UPS, FedEx,
           USPS and DHL connection window. No carrier or payment information has been guessed.
         </div></div>
         <a class="btn" href="#existing-carrier-connection">Connect an existing shipping account</a>
@@ -265,9 +265,9 @@
       <form method="post" action="/settings/shipping/account/open" data-busy>
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="card-body stack">
-          <h3>Let Foundry open one</h3>
+          <h3>Let StockChief open one</h3>
           <p class="hint">
-            Foundry creates a carrier account in this business's name. The account is yours — your
+            StockChief creates a carrier account in this business's name. The account is yours — your
             rates, your labels, your bill — and you never leave this page to make it.
           </p>
           <label class="field">
@@ -279,7 +279,7 @@
             <span class="field-label">Email for billing notices</span>
             <input class="input" type="email" name="email" required>
             <span class="field-hint">
-              The carrier sends receipts and account notices here. It is not used by Foundry for
+              The carrier sends receipts and account notices here. It is not used by StockChief for
               anything else.
             </span>
           </label>
@@ -336,7 +336,7 @@
           <input class="input" type="password" name="webhookSecret" autocomplete="off">
           <span class="field-hint">
             Only needed when the provider uses a shared secret. ShipStation API signs its webhooks
-            automatically. Without instant updates Foundry still uses the slower scheduled check.
+            automatically. Without instant updates StockChief still uses the slower scheduled check.
           </span>
         </label>
       </div>
@@ -405,7 +405,7 @@
         headers: { accept: 'text/plain' }, credentials: 'same-origin',
       });
       const token = await response.text();
-      if (!response.ok) throw new Error(token || 'Foundry could not open secure shipping setup.');
+      if (!response.ok) throw new Error(token || 'StockChief could not open secure shipping setup.');
       return token;
     }
 
@@ -438,7 +438,7 @@
       const result = await response.json();
       if (!response.ok || !result.ok) {
         completing = false;
-        throw new Error(result.error || 'Foundry could not verify that shipping setup finished.');
+        throw new Error(result.error || 'StockChief could not verify that shipping setup finished.');
       }
       window.location.assign(result.redirect || '/settings/shipping#account');
     }
@@ -487,7 +487,7 @@
   <div class="card-body stack">
     <% if (!rules.filter(function (r) { return r.active; }).length) { %>
       <p class="planning-item">
-        No rule yet, so Foundry asks about every parcel. That is a reasonable place to stay —
+        No rule yet, so StockChief asks about every parcel. That is a reasonable place to stay —
         a rule is worth setting when you notice yourself answering the same way each time.
       </p>
     <% } %>
@@ -557,7 +557,7 @@
 </section>
 
 <p class="money-foot">
-  Foundry only ever chooses between rates a carrier has actually quoted for the parcel in front of
+  StockChief only ever chooses between rates a carrier has actually quoted for the parcel in front of
   it. A rule cannot make it buy something nobody offered, and a rate with no delivery date never
   counts as arriving on time — a carrier that declines to say is not a carrier promising.
 </p>
@@ -565,10 +565,10 @@
 <% if (account.connected && account.source === 'referral' && !referral.billingReady) { %>
 <script>
 /*
- * The card field, which is Stripe's and not Foundry's.
+ * The card field, which is Stripe's and not StockChief's.
  *
  * Loaded only when there is a payment method to add, so the page does not pull
- * a third-party script it has no use for. The sequence: ask Foundry for a
+ * a third-party script it has no use for. The sequence: ask StockChief for a
  * client secret, mount Stripe's own field with it, and post back the reference
  * Stripe returns. At no point does a card number exist in this page's own
  * variables, this request, or this server.

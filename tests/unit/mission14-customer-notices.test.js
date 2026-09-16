@@ -3,7 +3,7 @@
 /*
  * Shipping notices.
  *
- * The claim under test is that this message contains nothing Foundry cannot
+ * The claim under test is that this message contains nothing StockChief cannot
  * support. A shipping notice is read by somebody who is owed goods, so a
  * tracking number that does not resolve, or a delivery date nobody committed
  * to, is worse than sending nothing at all.
@@ -35,7 +35,7 @@ function setup(name = 'Riverside Supply') {
 
 function orderFor(env, quantity, customerInput = {}) {
   const customer = sales.createCustomer(env.db, env.ctx, {
-    name: 'ABC School', email: 'orders@abcschool.test', ...customerInput,
+    name: 'ABC School', email: 'orders@abcschool.test', shippingAddress: '7 Example Lane, Albany, NY 12207, US', ...customerInput,
   });
   return {
     customer,
@@ -71,7 +71,7 @@ test('shipping a box writes the customer a notice made only of records', () => {
   assert.doesNotMatch(body, /have not shipped yet/, 'the whole order went, so nothing is outstanding');
 });
 
-test('a notice states nothing Foundry was not given', () => {
+test('a notice states nothing StockChief was not given', () => {
   const env = setup();
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 10 });
   const { order } = orderFor(env, 4);
@@ -160,7 +160,7 @@ test('a workspace can switch notices off, and then none are written', () => {
   assert.equal(shipped.status, 'SHIPPED', 'the box still went');
 });
 
-test('asking Foundry to send for you requires naming the mailbox it sends from', () => {
+test('asking StockChief to send for you requires naming the mailbox it sends from', () => {
   const env = setup();
   assert.equal(notices.policy(env.db, env.workspace.workspaceId).shippingNotice, 'prepare',
     'the default writes the message and sends nothing');
@@ -211,7 +211,7 @@ test('an owner can correct the words before they go, but not after', () => {
     /already been sent/);
 });
 
-test('the waiting list is what Foundry has written and not yet sent', () => {
+test('the waiting list is what StockChief has written and not yet sent', () => {
   const env = setup();
   inventory.receive(env.db, env.ctx, { skuId: env.item.skuId, locationId: env.workspace.main.id, quantity: 20 });
   const { order } = orderFor(env, 4);
@@ -295,7 +295,7 @@ test('when the workspace says send, the customer receives exactly what the page 
   } finally { gmail.send = originalSend; }
 });
 
-test('a paused Foundry sends nothing to customers, and says why', async () => {
+test('a paused StockChief sends nothing to customers, and says why', async () => {
   const env = setup();
   const connections = require('../../src/connections/service');
   const modes = require('../../src/autopilot/modes');

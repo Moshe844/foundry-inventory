@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const shipstation = require('../../src/shipping/providers/shipstation');
 
-test('ShipStation V2 provides carrier rates, labels, tracking and voids in Foundry vocabulary', async () => {
+test('ShipStation V2 provides carrier rates, labels, tracking and voids in StockChief vocabulary', async () => {
   const previous = global.fetch;
   const calls = [];
   const replies = [

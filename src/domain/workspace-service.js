@@ -4,7 +4,7 @@
  * Inventory workspaces.
  *
  * A workspace is the tenant boundary: items, locations, movements, balances,
- * Foundry's understanding and configuration, and every attention item belong to
+ * StockChief's understanding and configuration, and every attention item belong to
  * exactly one. It is not a location — one workspace holds many.
  *
  * Nothing here reads or writes inventory. Creating a workspace creates an empty
@@ -80,7 +80,7 @@ function listForAccount(db, accountId, { includeAttention = true } = {}) {
       ...counts,
       attentionCount,
       configured: Boolean(configuration && configuration.configured_at),
-      configuredByFoundry: Boolean(configuration && configuration.configuration_version > 0),
+      configuredByStockChief: Boolean(configuration && configuration.configuration_version > 0),
       deleting: deleting.has(row.id),
     };
   });

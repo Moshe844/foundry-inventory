@@ -174,7 +174,7 @@ test('future deliveries stay on the horizon; due deliveries become actionable', 
   }).item;
 
   assert.equal(presenter.deliveryState(env.db, env.workspace.workspaceId, reminder).actionable, false);
-  assert.equal(presenter.whatFoundryPrepared(env.db, env.workspace.workspaceId)
+  assert.equal(presenter.whatStockChiefPrepared(env.db, env.workspace.workspaceId)
     .some((entry) => entry.id === reminder.id), false);
   assert.equal(planner.plan(env.db, env.workspace.workspaceId).receiving.length, 0,
     'a future expected date is not a receiving job');

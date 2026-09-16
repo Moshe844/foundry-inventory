@@ -5,7 +5,7 @@
  *
  * The detectors are deterministic and are tested without a model elsewhere.
  * What can only be tested live is whether the model, given real findings and
- * real questions, stays inside the boundary Foundry draws around it: no figure
+ * real questions, stays inside the boundary StockChief draws around it: no figure
  * it was not given, no action it cannot take, no guess where the honest answer
  * is "I can't look that up".
  *
@@ -70,7 +70,7 @@ test(
 );
 
 test(
-  'the model never claims Foundry acted on the inventory',
+  'the model never claims StockChief acted on the inventory',
   { skip: !LIVE, timeout: TIMEOUT },
   async () => {
     const { db, workspace, items } = busyWorkspace();
@@ -154,7 +154,7 @@ test(
       { question: 'Show me the stock corrections from the last few weeks', expect: ['recent_adjustments'] },
       { question: 'What needs my attention?', expect: ['attention_summary'] },
       { question: 'What has not sold in three months?', expect: ['idle_stock'] },
-      // Mission 7: questions about Foundry's own work, not about the stock.
+      // Mission 7: questions about StockChief's own work, not about the stock.
       { question: 'What did you do today?', expect: ['foundry_activity'] },
       { question: 'What have you handled this morning?', expect: ['foundry_activity'] },
       { question: 'Why did you move the navy oxfords?', expect: ['foundry_why'] },
@@ -218,7 +218,7 @@ test(
         .get(workspace.workspaceId).n;
       assert.equal(result.rows[0].onHand, total, 'the answer is the balance, not a recollection');
     }
-    // The answer text is composed by Foundry from those rows, never by the model.
+    // The answer text is composed by StockChief from those rows, never by the model.
     assert.ok(!/\bI think\b|\bprobably\b|\baround\b/i.test(result.answer));
   }
 );

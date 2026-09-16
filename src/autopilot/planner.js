@@ -98,7 +98,7 @@ function safePlans(db, workspaceId, skus, now) {
 function planBalanceTransfer(db, workspaceId, sku, options = {}) {
   const maximum = options.maximumQuantity || null;
   const incoming = options.incoming || { onOrder: 0 };
-  // The customer's stated numbers where they have stated any, Foundry's
+  // The customer's stated numbers where they have stated any, StockChief's
   // otherwise. Never inferred — see autopilot/preferences.
   const settings = options.settings || preferences.balanceSettings(db, workspaceId, BALANCE);
   const statedLocationRules = require('../purchasing/policy-service').locationPolicies(db, workspaceId, sku.skuId);
@@ -115,7 +115,7 @@ function planBalanceTransfer(db, workspaceId, sku, options = {}) {
   if (settings.neverAutomateSerialized && sku.trackingMode === 'serial') {
     return decline(
       'serialised',
-      'You asked Foundry not to move serialised items automatically.'
+      'You asked StockChief not to move serialised items automatically.'
     );
   }
 
@@ -123,7 +123,7 @@ function planBalanceTransfer(db, workspaceId, sku, options = {}) {
     return decline(
       'not_enough_history',
       `${sku.displayName} has ${sku.measured.issueEventsInWindow} movements in the last ` +
-        `${sku.measured.windowDays} days. Foundry does not have enough history to automate this safely yet.`
+        `${sku.measured.windowDays} days. StockChief does not have enough history to automate this safely yet.`
     );
   }
 
@@ -231,7 +231,7 @@ function planBalanceTransfer(db, workspaceId, sku, options = {}) {
  */
 function plan(db, workspaceId, options = {}) {
   const now = options.now || Date.now();
-  // Whether Foundry may act on its own decides which work reaches a person.
+  // Whether StockChief may act on its own decides which work reaches a person.
   const state = modes.ensure(db, workspaceId);
   const scopedSkuIds = options.scope && Array.isArray(options.scope.skuIds)
     ? options.scope.skuIds.filter(Boolean) : null;
@@ -255,7 +255,7 @@ function plan(db, workspaceId, options = {}) {
   const transfers = [];
   const conflicts = [];
   // Why particular products are not being handled automatically. Collected so
-  // the answer to "why isn't Foundry doing this one?" is a sentence rather
+  // the answer to "why isn't StockChief doing this one?" is a sentence rather
   // than silence.
   const declined = [];
   const settings = preferences.balanceSettings(db, workspaceId, BALANCE);
@@ -352,7 +352,7 @@ function plan(db, workspaceId, options = {}) {
     purchases = [];                   // an inventory with no purchasing set up
   }
 
-  // Deliveries that have arrived at their date, or gone past it. Foundry cannot
+  // Deliveries that have arrived at their date, or gone past it. StockChief cannot
   // receive them — that is a person checking what is physically in the box, and
   // no packing-list feed exists to check it against — but leaving a delivery to
   // be noticed is exactly the routine work this is meant to take off them.

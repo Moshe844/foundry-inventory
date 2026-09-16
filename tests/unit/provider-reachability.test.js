@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * Reaching the model provider from the machine Foundry is installed on.
+ * Reaching the model provider from the machine StockChief is installed on.
  *
- * Two failures were being reported to customers as one sentence — "Foundry
+ * Two failures were being reported to customers as one sentence — "StockChief
  * could not reach the model provider. Check the connection and try again." —
  * and neither of them was the connection.
  *
@@ -14,7 +14,7 @@
  * the fix survives exactly as long as everybody remembers to type it.
  *
  * The second was the socket being refused outright — EACCES from connect, a
- * filtering driver saying no — in windows lasting under a minute. Foundry gave
+ * filtering driver saying no — in windows lasting under a minute. StockChief gave
  * up after three attempts inside six seconds, so a fault the machine cleared on
  * its own reached the customer as a failure.
  */
@@ -37,7 +37,7 @@ function connectionError(code, message) {
   return wrapped;
 }
 
-test("Foundry trusts the certificate authorities this machine trusts", () => {
+test("StockChief trusts the certificate authorities this machine trusts", () => {
   if (typeof tls.getCACertificates !== 'function') return; // nothing to prove on an older runtime
 
   const restore = tls.getCACertificates('default');
@@ -95,7 +95,7 @@ test('a refused socket is waited out, not reported', async () => {
   }, [1, 1, 1]);
 
   assert.deepEqual(answer, { ok: true }, 'the call that eventually worked is the answer');
-  assert.equal(attempts, 3, 'and Foundry kept trying across the window');
+  assert.equal(attempts, 3, 'and StockChief kept trying across the window');
 });
 
 test('an attended bounded classification can abort provider retry backoff', async () => {

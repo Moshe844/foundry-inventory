@@ -177,7 +177,7 @@
             <input type="radio" name="shippingNotice" value="prepare"
               <%= noticePolicy.shippingNotice === 'prepare' ? 'checked' : '' %>>
             <span class="choice-body">
-              <strong>Foundry writes it, you send it</strong>
+              <strong>StockChief writes it, you send it</strong>
               <span class="t-xs t-muted">
                 A note is drafted from the shipment's own record the moment a box goes out.
                 Nothing reaches a customer until you have read it.
@@ -188,10 +188,10 @@
             <input type="radio" name="shippingNotice" value="send"
               <%= noticePolicy.shippingNotice === 'send' ? 'checked' : '' %>>
             <span class="choice-body">
-              <strong>Foundry sends it for me</strong>
+              <strong>StockChief sends it for me</strong>
               <span class="t-xs t-muted">
                 Sent as soon as the box is marked shipped. Needs a connected mailbox, and
-                nothing goes out while Foundry is paused.
+                nothing goes out while StockChief is paused.
               </span>
             </span>
           </label>
@@ -235,7 +235,7 @@
             </select>
             <% if (!mailboxes || !mailboxes.length) { %>
               <span class="field-hint">
-                <a href="/settings/connections">Connect a mailbox</a> before asking Foundry to send.
+                <a href="/settings/connections">Connect a mailbox</a> before asking StockChief to send.
               </span>
             <% } %>
           </label>

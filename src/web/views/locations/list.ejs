@@ -15,7 +15,7 @@
     <div class="empty">
       <div class="icon-wrap"><%- helpers.icon('locations', { size: 22 }) %></div>
       <h3>No locations yet</h3>
-      <p>Add the first place stock can live. Add bins only when they are real; Foundry never invents them.</p>
+      <p>Add the first place stock can live. Add bins only when they are real; StockChief never invents them.</p>
       <% if (currentUser.role === 'owner') { %>
         <button class="btn btn--primary" type="button" data-modal-open="modal-location">Add your first location</button>
       <% } %>
@@ -111,7 +111,7 @@
           <textarea class="input textarea" id="location-address" name="address" rows="3"
             placeholder="12 Depot Road&#10;Monroe, NY 10950"></textarea>
           <p class="field-hint">
-            Where parcels leave from. Needed only to buy a shipping label, and Foundry asks for it
+            Where parcels leave from. Needed only to buy a shipping label, and StockChief asks for it
             once rather than filling it in on your behalf.
           </p>
         </div>
