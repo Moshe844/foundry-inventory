@@ -231,9 +231,11 @@ test('duplicate and unusable locations are filtered out', () => {
         { name: 'Brooklyn', kind: 'warehouse', certainty: 'inferred_confidently' },
         { name: 'brooklyn', kind: 'store', certainty: 'assumed_safely' },
         { name: 'New Jersey', kind: 'warehouse', certainty: 'inferred_confidently' },
+        // Never said by the owner: a description of the business, not a place.
+        { name: 'Refrigerated warehouse', kind: 'warehouse', certainty: 'assumed_safely' },
       ],
     }),
-    'desc'
+    'A warehouse in Brooklyn and a store in New Jersey for refrigerated goods.'
   );
   assert.deepEqual(normalised.likelyLocations.map((l) => l.name), ['Brooklyn', 'New Jersey']);
 });

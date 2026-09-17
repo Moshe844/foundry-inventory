@@ -28,7 +28,10 @@ const ACTION_LABEL = {
 const ACTION_PAST_LABEL = {
   receive: 'received',
   issue: 'issued',
-  transfer: 'transferred',
+  // A transfer action creates and approves the transfer document; the stock
+  // moves when the warehouse ships and receives it. "Transferred" would be
+  // a claim about the shelves that nothing here has checked.
+  transfer: 'prepared a transfer of',
   adjust: 'corrected the count for',
   create_item: 'added',
   configure_kit: 'configured',

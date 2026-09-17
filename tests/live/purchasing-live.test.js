@@ -104,7 +104,10 @@ test('“what is already on order?” answers from real orders', { skip: !LIVE, 
 
   const { plan, result } = await ask(env, "What's already on order?");
   assert.equal(plan.intent, 'on_order', JSON.stringify(plan));
-  assert.match(result.answer, /48 unit\(s\) outstanding|1 purchase order/);
+  // One order, all 48 units still to come, and the order named — however it is worded.
+  assert.match(result.answer, /\b(?:1|one)\s+purchase\s+order\b/i);
+  assert.match(result.answer, /\b48\s+units?\b/);
+  assert.match(result.answer, new RegExp(order.poNumber));
 });
 
 test('“who supplies this?” names the supplier on file', { skip: !LIVE, timeout: TIMEOUT }, async () => {

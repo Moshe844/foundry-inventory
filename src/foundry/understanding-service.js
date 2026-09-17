@@ -146,6 +146,30 @@ async function describeBusiness(db, ctx, description, options = {}) {
  * Clamp a validated understanding to what the engine supports. Schema
  * validation proves the shape; this proves the meaning.
  */
+/*
+ * Only a place the owner named becomes a location record.
+ *
+ * "We distribute refrigerated food" came back with a "Refrigerated
+ * warehouse" — a description of the business, turned into a record it never
+ * mentioned. A location is kept when the owner's words contain its name, or
+ * a proper noun from it (Brooklyn, New Jersey), or a place noun (warehouse,
+ * store, van…) together with the name's other words. Generic words alone
+ * — "main", "refrigerated", "warehouse" on its own — are not a name.
+ */
+const PLACE_NOUNS = /\b(?:warehouses?|stores?|shops?|sites?|vans?|depots?|branch(?:es)?|locations?|facilit(?:y|ies)|offices?|kitchens?|showrooms?|units?|yards?|trucks?|stockrooms?|back\s*rooms?|premises|outlets?|garages?|lockups?|containers?)\b/i;
+const GENERIC_PLACE_WORDS = new Set(['the', 'a', 'an', 'our', 'my', 'main', 'primary', 'central', 'new', 'old', 'big', 'small', 'refrigerated', 'cold', 'dry', 'front', 'back', 'upper', 'lower', 'north', 'south', 'east', 'west', 'warehouse', 'store', 'shop', 'site', 'van', 'depot', 'branch', 'location', 'facility', 'office', 'kitchen', 'showroom', 'unit', 'yard', 'truck', 'stockroom', 'storage', 'room', 'area', 'space']);
+function locationIsNamedIn(name, description) {
+  const said = String(description || '').toLowerCase();
+  const clean = String(name || '').trim();
+  if (!clean || !said) return false;
+  if (said.includes(clean.toLowerCase())) return true;
+  const words = clean.split(/\s+/).filter(Boolean);
+  const proper = words.filter((w) => /^[A-Z][a-z]/.test(w) && !GENERIC_PLACE_WORDS.has(w.toLowerCase()) && new RegExp(`\\b${w.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(said));
+  if (proper.length) return true;
+  const specific = words.filter((w) => !GENERIC_PLACE_WORDS.has(w.toLowerCase()));
+  return PLACE_NOUNS.test(said) && specific.length > 0 && specific.every((w) => new RegExp(`\\b${w.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(said));
+}
+
 function normalise(raw, description, executionContext = {}) {
   const understanding = clampToSchema(JSON.parse(JSON.stringify(raw)), UNDERSTANDING_SCHEMA);
   understanding.businessDescription = description;
@@ -181,6 +205,7 @@ function normalise(raw, description, executionContext = {}) {
 
   understanding.likelyLocations = (understanding.likelyLocations || [])
     .filter((loc) => loc && loc.name && LOCATION_KIND_IDS.includes(loc.kind))
+    .filter((loc) => locationIsNamedIn(loc.name, description))
     .slice(0, 12);
 
   // Deduplicate location names case-insensitively; the engine requires unique names.
@@ -202,9 +227,12 @@ function normalise(raw, description, executionContext = {}) {
         id: slugify(option.id, `option_${optionIndex + 1}`),
       }));
       const recommendedOptionId = slugify(decision.recommendedOptionId, '');
+      // The schema wants three characters or more; "Q1" and "1" came back as
+      // two, and the whole understanding was thrown away over it.
+      const id = slugify(decision.id, `decision_${index + 1}`);
       return {
         ...decision,
-        id: slugify(decision.id, `decision_${index + 1}`),
+        id: id.length >= 3 ? id : `decision_${index + 1}`,
         options,
         recommendedOptionId: options.some((o) => o.id === recommendedOptionId)
           ? recommendedOptionId
@@ -317,6 +345,7 @@ function listAcceptedRecommendations(db, workspaceId, planId) {
 }
 
 module.exports = {
+  __locationIsNamedIn: locationIsNamedIn,
   describeBusiness,
   save,
   normalise,

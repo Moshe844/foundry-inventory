@@ -263,7 +263,9 @@ Operations you may choose:
 - transfer: stock moving between two of their own locations.
 - adjust: correcting what the records say, when nothing physically moved. This
   is for counts: "set it to 37", "the count says 40", "we actually have 12".
-- add_location: create a new location.
+- add_location: create a new location. Put its name, exactly as they said
+  it, in destinationLocation — "add a location called Service Van 3" is
+  destinationLocation "Service Van 3".
 - create_item: add a new product to the catalogue. Put its name in
   productName and its code, if they gave one, in productCode. If it comes in
   variations, put them in variantAxes as "Axis: values | Axis: values", for
@@ -658,12 +660,40 @@ function deterministicCatalogueList(instruction) {
 function deterministicOutboundMessage(instruction) {
   const source = String(instruction || '').trim();
   const match = /^(?:please\s+)?(?:email|e-mail|message|write\s+to|send\s+(?:an?\s+)?(?:email|message)\s+to)\s+([^\s@]+@[^\s@]+\.[^\s@]+)\s+(?:that|saying|to\s+say)\s+(.+?)\s*[.!]?$/i.exec(source);
-  if (!match || !match[2].trim()) return null;
+  if (match && match[2].trim()) {
+    return {
+      lines: [normaliseLine({
+        actionType: 'send_message',
+        recipient: match[1],
+        messageBody: match[2].trim(),
+        sourceText: source,
+        quantity: -1,
+        adjustmentTarget: -1,
+      })],
+      clarifyingQuestion: '',
+      unsupportedReason: '',
+    };
+  }
+  /*
+   * "Email the supplier about the delay", "chase ABC Footwear about the
+   * order", "tell Acme we need it by Friday". A message is understood the
+   * moment somebody says who and what; a recipient given as a role — the
+   * supplier, our customer — is understood with something missing, and the
+   * message flow asks which one (or takes the only one). It came back from
+   * the reader as no lines and a question, which reads as if writing to a
+   * supplier were not something StockChief does.
+   */
+  const spoken = /^(?:please\s+)?(?:email|e-mail|message|write\s+to|contact|chase|remind|ask|tell|send\s+(?:an?\s+)?(?:email|message|note)\s+to)\s+(.+?)\s+(about|regarding|re:?|concerning|that|saying|to\s+say|asking|to\s+ask|and\s+ask|and\s+chase|and\s+tell)\s+(.+?)\s*[.!]?$/i.exec(source);
+  if (!spoken) return null;
+  const who = spoken[1].replace(/^(?:the|our|my)\s+/i, '').trim();
+  if (!who || /\s(?:from|to|into|at)\s/i.test(who) || who.split(/\s+/).length > 6) return null;
+  const literal = /^(?:that|saying|to\s+say)$/i.test(spoken[2]);
+  const body = literal ? spoken[3].trim() : '';
   return {
     lines: [normaliseLine({
       actionType: 'send_message',
-      recipient: match[1],
-      messageBody: match[2].trim(),
+      recipient: who,
+      messageBody: body,
       sourceText: source,
       quantity: -1,
       adjustmentTarget: -1,
@@ -671,6 +701,38 @@ function deterministicOutboundMessage(instruction) {
     clarifyingQuestion: '',
     unsupportedReason: '',
   };
+}
+
+/*
+ * Configuration said in words: a new place, or what StockChief calls
+ * things. "Add a location called Service Van 3" came back from the reader as
+ * add_location with no name in it; the name is the whole instruction.
+ */
+const TERMINOLOGY_NOUNS = [
+  [/^(?:items?|products?|skus?|stock|goods|parts|styles?|articles?|lines)$/i, 'item'],
+  [/^(?:locations?|places?|sites?|warehouses?|stores?|branches|depots?)$/i, 'location'],
+  [/^(?:variants?|variations?|options?|sizes?|colou?rs?)$/i, 'variant'],
+  [/^(?:lots?|batch(?:es)?)$/i, 'lot'],
+  [/^(?:serials?|serial\s+(?:units?|numbers?)|units?|assets?)$/i, 'serialUnit'],
+];
+function deterministicConfiguration(instruction) {
+  const source = String(instruction || '').trim().replace(/[.!]+$/, '');
+  const place = /^(?:please\s+)?(?:add|create|set\s+up|make|open|register)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:location|warehouse|store|shop|site|van|depot|branch|place|showroom|kitchen|office)\s+(?:called|named|name:?)?\s*["“']?(.+?)["”']?\s*$/i.exec(source);
+  if (place && place[1].trim() && !/^(?:for|with|at|in|of)\b/i.test(place[1])) {
+    return { lines: [normaliseLine({ actionType: 'add_location', destinationLocation: place[1].trim(),
+      sourceText: source, quantity: -1, adjustmentTarget: -1 })], clarifyingQuestion: '', unsupportedReason: '' };
+  }
+  const wording = /^(?:please\s+)?(?:call|refer\s+to|name|label)\s+(?:our|the|my|all)?\s*([a-z][a-z ]{1,24}?)\s+(?:as\s+)?["“']?([A-Za-z][A-Za-z0-9 -]{0,40}?)["”']?\s*(?:instead|from\s+now\s+on|going\s+forward|please)?\s*$/i.exec(source)
+    || /^(?:please\s+)?(?:rename|change)\s+(?:the\s+word\s+|the\s+term\s+)?["“']?([a-z][a-z ]{1,24}?)["”']?\s+to\s+["“']?([A-Za-z][A-Za-z0-9 -]{0,40}?)["”']?\s*(?:instead|from\s+now\s+on|going\s+forward|everywhere)?\s*$/i.exec(source);
+  if (wording) {
+    const noun = wording[1].trim();
+    const found = TERMINOLOGY_NOUNS.find(([re]) => re.test(noun));
+    if (found) {
+      return { lines: [normaliseLine({ actionType: 'rename_terminology', terminologyKey: found[1], terminologyValue: wording[2].trim(),
+        sourceText: source, quantity: -1, adjustmentTarget: -1 })], clarifyingQuestion: '', unsupportedReason: '' };
+    }
+  }
+  return null;
 }
 
 /*
@@ -723,10 +785,26 @@ function movementClause(clause, context = {}) {
   const issue = /^(?:please\s+)?(?:issue|take|remove|book\s+out)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:from|out\s+of|at)\s+(?:the\s+)?(.+?)(?:\s+as\s+(.+?))?\s*$/i.exec(text);
   const match = transfer || issue;
   if (!match) return null;
-  const item = namedMatch(match[2].trim(), context.itemNames);
   const sourceLocation = namedMatch(match[3].trim(), context.locationNames);
-  if (!item || !sourceLocation || sourceLocation.toLowerCase() !== match[3].trim().toLowerCase().replace(/^the\s+/, '')) return null;
-  const variant = removeNamed(match[2].trim(), item);
+  if (!sourceLocation || sourceLocation.toLowerCase() !== match[3].trim().toLowerCase().replace(/^the\s+/, '')) return null;
+  /*
+   * "Move 15 Navy 4 from Main Warehouse to Downtown Store" names the variant
+   * and not the product. When both places are the inventory's own, the words
+   * between are the product as the person said it; the proposal builder
+   * resolves them against the catalogue and asks when they fit more than one
+   * or nothing. The plain movement shape used to go to a model for that, and
+   * once in a while came back with the wrong figure.
+   */
+  const said = match[2].trim();
+  const named = namedMatch(said, context.itemNames);
+  // Only with a real catalogue behind it (the builder must have something
+  // to resolve against), and never for words that are themselves a list —
+  // "Navy 4 and 8 Navy 5" is two lines, not one product.
+  const plainWords = !named && (context.itemNames || []).length > 0 && /^[A-Za-z0-9][A-Za-z0-9 '\/.&-]{0,60}$/.test(said)
+    && !namedMatch(said, context.locationNames) && !/\b(?:all|every|each|rest|remaining|of\s+them|it|these|those|and|plus|with)\b|[,;]|\s\d+\s+\S+\s+\d+/i.test(said);
+  if (!named && !plainWords) return null;
+  const item = named || said;
+  const variant = named ? removeNamed(said, named) : '';
   if (transfer) {
     const destinationLocation = namedMatch(match[4].trim(), context.locationNames);
     if (!destinationLocation || destinationLocation.toLowerCase() !== match[4].trim().toLowerCase().replace(/^the\s+/, '')) return null;
@@ -808,6 +886,8 @@ function deterministicInstruction(instruction, context = {}) {
   const clean = String(instruction || '').trim();
   const outboundMessage = deterministicOutboundMessage(clean);
   if (outboundMessage) return outboundMessage;
+  const configuration = deterministicConfiguration(clean);
+  if (configuration) return configuration;
   const catalogue = deterministicCatalogueList(clean);
   if (catalogue) return catalogue;
   const movements = deterministicMovementList(clean, context);
@@ -854,9 +934,15 @@ function deterministicInstruction(instruction, context = {}) {
     const supplier = from ? from[1].trim() : '';
     placeWords = placeWords.replace(/\bfrom\s+[A-Za-z][A-Za-z0-9&'. -]{1,60}$/i, '').replace(/\b(?:at|@|for)\s*\$?\s*\d+(?:\.\d{1,2})?\s*(?:each|ea\.?|per unit|a piece|apiece)?\b/i, '').trim();
     const destinationLocation = namedMatch(placeWords, context.locationNames);
-    const item = namedMatch(received[2].trim(), context.itemNames);
+    const saidItem = received[2].trim();
+    const namedItem = namedMatch(saidItem, context.itemNames);
+    // As for movements: a product said in the person's own words is resolved
+    // by the builder, which asks when it fits nothing or more than one.
+    const plainItem = !namedItem && (context.itemNames || []).length > 0 && /^[A-Za-z0-9][A-Za-z0-9 '\/.&-]{0,60}$/.test(saidItem)
+      && !/\b(?:and|plus|with|all|every|each)\b|[,;]/i.test(saidItem) ? saidItem : '';
+    const item = namedItem || plainItem;
     if (destinationLocation && item) return { lines: [normaliseLine({
-      actionType: 'receive', item, variant: removeNamed(received[2], item),
+      actionType: 'receive', item, variant: namedItem ? removeNamed(saidItem, namedItem) : '',
       sourceText: clean, destinationLocation, quantity: Number(received[1]),
       adjustmentTarget: -1, reasonCode: '', supplier,
       unitCost: cost ? Number(cost[1]) : -1,

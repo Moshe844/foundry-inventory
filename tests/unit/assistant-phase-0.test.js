@@ -77,13 +77,14 @@ test('fewer lines back than changes listed becomes a question, not a partial pla
     kitComponents: [], supplier: '', purchaseUnit: '', amount: -1, reference: '', recipient: '', messageBody: '',
   };
   const provider = { async complete() { return { data: { lines: [line], clarifyingQuestion: '', unsupportedReason: '' } }; } };
+  // "Relocate" is not in the movement grammar, so the list reaches the reader.
   const intent = await intentService.readInstruction(
-    '1) move 2 Widget from Main Warehouse to Downtown Store; 2) move 1 Gadget from Main Warehouse to Downtown Store; 3) move 5 Gizmo from Downtown Store to Main Warehouse',
+    '1) relocate 2 Widget from Main Warehouse to Downtown Store; 2) relocate 1 Gadget from Main Warehouse to Downtown Store; 3) relocate 5 Gizmo from Downtown Store to Main Warehouse',
     { context: CONTEXT, provider }
   );
   assert.equal(intent.lines.length, 0, 'nothing is prepared from a list that was only partly read');
   assert.match(intent.clarifyingQuestion, /lists 3 things and StockChief could read 1 of them/);
-  assert.match(intent.clarifyingQuestion, /could not read: “move 1 Gadget/);
+  assert.match(intent.clarifyingQuestion, /could not read: “relocate 1 Gadget/);
 });
 
 test('the reader fails in plain words and never in provider vocabulary', async () => {

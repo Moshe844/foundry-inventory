@@ -69,17 +69,43 @@ function findRecipient(db, workspaceId, text) {
  * they did not write, going out over their name.
  */
 function prepare(db, ctx, { recipientText, body, instruction }) {
-  const recipient = findRecipient(db, ctx.workspaceId, recipientText);
   if (!recipientText) {
-    return { kind: 'question', question: 'Who should StockChief send that to?' };
+    return { kind: 'question', reason: 'missing', question: 'Who should StockChief send that to?' };
+  }
+  /*
+   * "The supplier", "our customer": a role, not a name. Understood — and
+   * missing which one. The only supplier on file is the one they mean; two
+   * or more is a question with the names as choices; none is a dead end
+   * with the way out attached. Three different states, said as three.
+   */
+  const role = /^(?:the\s+|our\s+|my\s+)?(supplier|vendor|customer|client)s?$/i.exec(String(recipientText).trim());
+  let recipient;
+  if (role) {
+    const kind = /supplier|vendor/i.test(role[1]) ? 'supplier' : 'customer';
+    const rows = kind === 'supplier'
+      ? db.prepare("SELECT id, name, email FROM suppliers WHERE workspace_id = ? AND status = 'active' ORDER BY name").all(ctx.workspaceId)
+      : db.prepare("SELECT id, name, email FROM customers WHERE workspace_id = ? AND (record_state IS NULL OR record_state <> 'ARCHIVED') ORDER BY name").all(ctx.workspaceId);
+    if (!rows.length) {
+      return { kind: 'question', reason: 'missing',
+        question: `There are no ${kind}s on file yet, so there is nobody to write to. Add the ${kind} first and say this again.`,
+        where: { label: kind === 'supplier' ? 'Add a supplier' : 'Add a customer', href: kind === 'supplier' ? '/suppliers#add-supplier' : '/sales/customers/new' } };
+    }
+    if (rows.length > 1) {
+      return { kind: 'question', reason: 'ambiguous',
+        question: `Which ${kind}? ${rows.slice(0, 6).map((r) => r.name).join(', ')}${rows.length > 6 ? ` and ${rows.length - 6} more` : ''}.`,
+        choices: rows.slice(0, 12).map((r) => ({ label: r.name, value: r.name })) };
+    }
+    recipient = { kind, id: rows[0].id, name: rows[0].name, email: rows[0].email };
+  } else {
+    recipient = findRecipient(db, ctx.workspaceId, recipientText);
   }
   if (!recipient) {
-    return { kind: 'question',
+    return { kind: 'question', reason: 'no_match',
       question: `StockChief has no customer or supplier called “${recipientText}”, `
         + 'and that is not an email address. Who should this go to?' };
   }
   if (recipient.kind === 'several') {
-    return { kind: 'question',
+    return { kind: 'question', reason: 'ambiguous',
       question: `“${recipientText}” could be ${recipient.candidates.join(' or ')}. Which one?`,
       choices: recipient.candidates.map((name) => ({ label: name, value: name })) };
   }

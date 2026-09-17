@@ -237,7 +237,16 @@ async function classify(db, ctx, message, options = {}) {
   const understoodOtherwise = goalKind && agreeing[deterministic.intentClass] && !agreeing[deterministic.intentClass].includes(goalKind);
   const safeFastPath = (['INVENTORY_ACTION', 'PHYSICAL_EVENT', 'PURCHASING_REQUEST', 'STOP', 'PAYMENT_REPORT'].includes(deterministic.intentClass) && !understoodOtherwise)
     || wholeSalesOrderCompletion;
+  // A lasting rule in one of its closed forms — a reorder point, a block on
+  // outgoing stock — is read by the rule compilers; the planner adds nothing.
+  const closedRule = (() => {
+    try { const oi = require('./operating-instructions'); return Boolean(oi.__compileReorderRule(clean) || oi.__compileStockProtection(clean)); } catch { return false; }
+  })();
   if (safeFastPath) data = deterministic;
+  else if (closedRule && (!goalKind || ['instruction', 'change', 'unclear'].includes(goalKind))) {
+    data = { intentClass: 'OPERATING_INSTRUCTION', confidence: 'high',
+      reason: 'This teaches a lasting inventory operating rule.', resolvedReference: '', clarifyingQuestion: '' };
+  }
   else if (options.provider || config.ai.configured) {
     try {
       data = await capabilityPlanner.plan(db, ctx, clean, {

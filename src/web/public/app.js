@@ -1675,6 +1675,11 @@
   function initAskScroll() {
     const chat = document.querySelector('.rm-chat');
     if (!chat || !chat.querySelector('.rm-history, .rm-turn--past')) return;
+    // Back from a page with something to say ("Remembered…", "Dana Brook is
+    // ready"): the message sits above the chat, and scrolling past it is how
+    // "did that work?" went unanswered. The history is folded, so the latest
+    // exchange is on screen either way.
+    if (document.querySelector('.flash-stack')) return;
     // The latest exchange — the question just asked, its answer beneath it —
     // is what the page opens on, never the folded history above it.
     const current = chat.querySelector('.rm-turn--latest') || chat.querySelector('.rm-turn--you:not(.rm-turn--past)') || chat.querySelector('.rm-composer');

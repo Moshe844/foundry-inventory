@@ -239,6 +239,13 @@ function observed(provider) {
           : /abort|timeout|took too long/i.test(String(err && err.message)) ? 'timeout' : 'failed';
         record({ kind: 'model', purpose: request && request.schemaName, provider: provider.name || null, model: provider.model || null,
           prompt: request && request.prompt, latencyMs: Date.now() - started, outcome, error: err && err.message });
+        // Whatever a provider throws is a provider failure at this boundary,
+        // never a bare Error that a page would show as "something went wrong on our side".
+        if (err && !(err instanceof require('../domain/errors').DomainError) && !err.code) {
+          // Lazy: provider.js requires this module.
+          const { ProviderError } = require('../ai/provider');
+          throw new ProviderError('StockChief could not reach its model just now. Nothing was read and nothing changed — please try again.', { cause: err, retryable: true });
+        }
         throw err;
       } finally {
         if (ws) inFlight.set(ws, Math.max(0, (inFlight.get(ws) || 1) - 1));
@@ -248,4 +255,10 @@ function observed(provider) {
   return wrapped;
 }
 
-module.exports = { run, current, extend, record, forGoal, recent, observed, redact, usage, usageSummary, ceilingFor, CeilingError, LIMITS, KEEP_DAYS };
+/** Whether a provider was unreachable or timed out during this request. */
+function unavailableNow() {
+  const context = current();
+  return Boolean(context && context.unavailable);
+}
+
+module.exports = { run, current, extend, record, forGoal, recent, observed, redact, usage, usageSummary, ceilingFor, CeilingError, LIMITS, KEEP_DAYS, unavailableNow };

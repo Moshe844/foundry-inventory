@@ -53,6 +53,11 @@ async function begin(req, res, message, options = {}) {
     turn = ledger.getTurn(req.db, req.ctx.workspaceId, goal.turnId);
     dequeue(req, goal.id);
     message = goal.text;
+    const subject = sharedSubject(req.db, req.ctx.workspaceId, turn.goals.map((g) => g.text));
+    if (subject && !mentionsProduct(req.db, req.ctx.workspaceId, message)) {
+      message = `${message} (the product is ${subject})`;
+      req.assistantReferentNote = `the product is ${subject}`;
+    }
   } else {
     const referents = ledger.recentReferents(req.db, req.ctx, convo);
     const understanding = await understand(message, {
@@ -76,7 +81,19 @@ async function begin(req, res, message, options = {}) {
       message = goal.text;
     }
     if (pronouns.swaps.length) message = pronouns.text;
-    req.assistantReferentNote = [referentNote(understanding.referents), ...pronouns.swaps.map((s) => `“${s.word}” means ${s.meaning}`)].filter(Boolean).join('; ');
+    /*
+     * "When Camping Lantern reaches 4 notify me, and when I try to sell more
+     * I shouldn't be able to" is two goals, and the second names no product
+     * — the sentence did, once, for both. A later goal with no product of
+     * its own is about the product an earlier goal in the same message named;
+     * the readers are told so, and the queued goal carries it in its text.
+     */
+    const subject = sharedSubject(req.db, req.ctx.workspaceId, turn.goals.map((g) => g.text));
+    if (subject) {
+      req.session.assistantQueue?.goals?.forEach((g) => { if (!mentionsProduct(req.db, req.ctx.workspaceId, g.text)) g.text = `${g.text} (the product is ${subject})`; });
+      if (!mentionsProduct(req.db, req.ctx.workspaceId, message)) message = `${message} (the product is ${subject})`;
+    }
+    req.assistantReferentNote = [referentNote(understanding.referents), ...pronouns.swaps.map((s) => `“${s.word}” means ${s.meaning}`), subject ? `the product is ${subject}` : ''].filter(Boolean).join('; ');
     // The last thing prepared is what "actually, make it 15" is about: a
     // correction to a proposal is work for the action reader, not a question.
     const last = ledger.lastSettled(req.db, req.ctx, convo);
@@ -97,6 +114,25 @@ async function begin(req, res, message, options = {}) {
     return redirect(...args);
   };
   return message;
+}
+
+function mentionsProduct(db, workspaceId, text) {
+  try { return require('../product-brain/navigation').mentionsProduct(db, workspaceId, text); } catch { return false; }
+}
+
+/** The one product named by some goals of a message and not by others. */
+function sharedSubject(db, workspaceId, texts) {
+  if (!db || !workspaceId || texts.length < 2) return '';
+  let names;
+  try { names = db.prepare('SELECT name FROM items WHERE workspace_id = ? AND is_active = 1 LIMIT 500').all(workspaceId).map((r) => String(r.name || '')); } catch { return ''; }
+  const named = new Set();
+  for (const text of texts) {
+    const said = String(text || '').toLowerCase();
+    for (const name of names) if (name && said.includes(name.toLowerCase())) named.add(name);
+  }
+  if (named.size !== 1) return '';
+  const some = texts.some((t) => !mentionsProduct(db, workspaceId, t));
+  return some ? [...named][0] : '';
 }
 
 function dequeue(req, goalId) {
@@ -193,9 +229,12 @@ function returnFromHandoff(req, res, next) {
     const flash = pendingFlash(req);
     const last = flash[flash.length - 1] || null;
     const failed = last && ['error', 'warn', 'warning'].includes(last.type);
-    // An error, or back to the same page with nothing to show for it: not done yet.
+    // Done means the page said so: a success message on the way out. A step
+    // that leads to another step (approve → run, answer → next question)
+    // says nothing yet, and the person stays with it. Approving a rule mid-
+    // flow used to bounce them back to the chat with the flow half done.
     const succeeded = last && last.type === 'success';
-    if (failed || !target.startsWith('/') || ((target === handoff.path || target === req.path) && !succeeded)) return redirect(...args);
+    if (failed || !succeeded || !target.startsWith('/') || target.startsWith('/actions')) return redirect(...args);
     delete req.session.assistantHandoff;
     try {
       const goal = ledger.getGoal(req.db, req.ctx.workspaceId, handoff.goalId);

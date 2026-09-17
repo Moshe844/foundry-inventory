@@ -167,7 +167,7 @@ test('every model call is on the record, redacted, tied to the goal it served, a
   const agent = request.agent(app);
   await signIn(agent, w.account.email, w.account.password);
   const home = await agent.get('/');
-  const posted = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'how many Copper Elbow do we have', queryConversation: '1' });
+  const posted = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'tell me the stock position for Copper Elbow', queryConversation: '1' });
   const page = await agent.get(posted.headers.location);
   assert.match(page.text, /Copper Elbow: 40/);
   const rows = db.prepare("SELECT kind, purpose, model, prompt_redacted, input_tokens, goal_id, outcome FROM ai_calls WHERE kind = 'model' ORDER BY created_at").all();

@@ -271,12 +271,13 @@ test('a question StockChief cannot answer is answered honestly', async () => {
     locationQuery: '',
     windowDays: 30,
     limit: 10,
-    unsupportedReason: 'StockChief does not track supplier pricing.',
+    unsupportedReason: 'StockChief does not track the weather.',
   });
 
-  const result = await queryPlanner.ask(db, workspace.workspaceId, 'What did we pay for these?', { provider });
+  // ("What did we pay for these?" is a supported question now, read in code.)
+  const result = await queryPlanner.ask(db, workspace.workspaceId, 'What was the weather at the warehouse yesterday?', { provider });
   assert.equal(result.supported, false);
-  assert.match(result.answer, /supplier pricing/);
+  assert.match(result.answer, /weather/);
   assert.equal(result.rows.length, 0);
 });
 

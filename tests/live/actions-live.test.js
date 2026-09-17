@@ -145,18 +145,26 @@ test('a real instruction becomes a correct, unexecuted proposal', { skip: !LIVE,
   assert.equal(proposal.sourceLocationId, env.workspace.main.id);
   assert.equal(proposal.destinationLocationId, env.workspace.store.id);
   assert.equal(proposal.expectedBeforeState.sourceOnHand, 48);
-  assert.equal(proposal.expectedAfterState.sourceOnHand, 33);
+  assert.equal(proposal.expectedAfterState.sourceOnHand, 33, 'what the shelves will read once the transfer is received');
   assert.equal(proposal.status, 'AWAITING_APPROVAL');
 
   // And nothing has moved.
   assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 48);
 
-  // Approving it does exactly what the preview said.
+  // Approving it creates and approves the transfer document. The stock moves
+  // when the warehouse ships and receives it — so the balances are unchanged,
+  // the verification says a document exists, and the report says nothing
+  // physically moved. It used to be asserted here that 15 had moved, which
+  // is a claim the software cannot make about the shelves.
   execution.approve(env.db, env.ctx, env.membership, proposal.proposalId);
   const done = execution.execute(env.db, env.ctx, env.membership, proposal.proposalId);
   assert.equal(done.verified, true, JSON.stringify(done.verification.problems));
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 33);
-  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 19);
+  assert.ok(done.transferId, 'a transfer document was created');
+  assert.equal(done.transferStatus, 'APPROVED');
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 48);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.store.id), 4);
+  const presenter = require('../../src/actions/presenter');
+  assert.match(presenter.present(env.db, env.workspace.workspaceId, done.proposal).pastVerb, /prepared a transfer/);
 });
 
 test('a serialized instruction resolves the exact unit', { skip: !LIVE, timeout: TIMEOUT }, async () => {

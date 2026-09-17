@@ -181,8 +181,12 @@ function containsVocabulary(text, words) {
 function compileStockProtection(instruction) {
   const text = String(instruction || '').trim();
   const lower = text.toLowerCase();
-  const block = /\b(block|stop|prevent|disallow|refuse|pause)\b/.test(lower);
-  const threshold = lower.match(/\b(at\s+or\s+below|no\s+more\s+than|at\s+most|less\s+than|fewer\s+than|below|under)\s+(\d+)\b/);
+  // "I shouldn't be able to sell more" is a block, said the way people say it.
+  const block = /\b(block|stop|prevent|disallow|refuse|pause)\b|\b(?:(?:should|can|must|will|would)\s*n[o']?t|not)\s+(?:be\s+)?(?:able|allowed|possible|permitted)\b|\bdo\s*n[o']t\s+(?:let|allow|permit)\b|\bnever\s+(?:let|allow|permit)\b/.test(lower);
+  // "below 4", "at or below 4" — and "while quantity is still 4", "once it
+  // reaches 4": at 4 no more goes out, so the result may not fall below 4.
+  const threshold = lower.match(/\b(at\s+or\s+below|no\s+more\s+than|at\s+most|less\s+than|fewer\s+than|below|under)\s+(\d+)\b/)
+    || (() => { const m = lower.match(/\b(?:quantity|stock|level|count|inventory|it|we|they|the\s+stock)\s+(?:is|are|hits?|reach(?:es)?|gets?\s+to|drops?\s+to|falls?\s+to|goes?\s+(?:down\s+)?to|comes?\s+down\s+to)\s+(?:still\s+|only\s+|just\s+|down\s+to\s+)?(\d+)\b/) || lower.match(/\b(?:reach(?:es)?|hits?)\s+(?:the\s+)?(?:quantity\s+of\s+|a\s+quantity\s+of\s+)?(\d+)\b/); return m ? ['', 'below', m[1]] : null; })();
   if (!block || !threshold) return null;
   const untilAt = lower.indexOf('until');
   const beforeUntil = untilAt >= 0 ? lower.slice(0, untilAt) : lower;
@@ -195,7 +199,8 @@ function compileStockProtection(instruction) {
   if (orderingAfter) releaseCondition = 'on_order';
   else if (containsVocabulary(afterUntil, ['receive', 'received', 'restock', 'restocked', 'replenish', 'replenished', 'recover', 'recovered'])) releaseCondition = 'stock_recovered';
   else if (/\b(owner|manually|manual)\b/.test(afterUntil)) releaseCondition = 'manual';
-  if (!releaseCondition) return null;
+  // No release said: not guessed. The rule is understood; the page asks
+  // when the block should lift, with the three answers as buttons.
   const guardThreshold = Number(threshold[2]);
   const inclusive = /^(at\s+or\s+below|no\s+more\s+than|at\s+most)$/.test(threshold[1]);
   return {
@@ -220,6 +225,29 @@ function compileStockProtection(instruction) {
  */
 function compileReorderRule(instruction) {
   const text = String(instruction || '').trim();
+  /*
+   * "Notify me when Camping Lantern reaches the quantity of 4" is a reorder
+   * point of 4: that is the level at which StockChief raises the product in
+   * Needs you and the brief, which is the notice they asked for. A model
+   * read it that way; it is closed enough to read here.
+   */
+  const notify = /^(?:please\s+)?(?:notify|alert|tell|warn|ping|remind|let)\s+me(?:\s+know)?\s+(?:when(?:ever)?|if|once|as\s+soon\s+as)\s+(?:the\s+|our\s+|my\s+)?(.+?)\s+(?:reach(?:es)?|hits?|gets?\s+(?:down\s+)?to|drops?\s+(?:down\s+)?to|falls?\s+to|goes?\s+(?:down\s+)?to|is\s+(?:down\s+)?(?:to|at)|comes?\s+down\s+to|is\s+(?:at\s+or\s+)?below|drops?\s+below|falls?\s+below|goes?\s+below|is\s+under|runs?\s+low\s+at)\s+(?:the\s+)?(?:quantity\s+of\s+|a\s+quantity\s+of\s+|a\s+count\s+of\s+|only\s+)?(\d+)\b(?:\s*(?:units?|pcs|pieces|left|in\s+stock|on\s+hand))?\s*\.?$/i.exec(text);
+  // The same rule the other way round: "when Camping Lantern reaches the
+  // quantity of 4 you should notify me".
+  const inverted = !notify && /^(?:i\s+want\s+|please\s+)?(?:when(?:ever)?|if|once|as\s+soon\s+as)\s+(?:the\s+|our\s+|my\s+)?(.+?)\s+(?:reach(?:es)?|hits?|gets?\s+(?:down\s+)?to|drops?\s+(?:down\s+)?to|falls?\s+to|goes?\s+(?:down\s+)?to|is\s+(?:down\s+)?(?:to|at)|comes?\s+down\s+to|is\s+(?:at\s+or\s+)?below|drops?\s+below|falls?\s+below|goes?\s+below|is\s+under|runs?\s+low\s+at)\s+(?:the\s+)?(?:quantity\s+of\s+|a\s+quantity\s+of\s+|a\s+count\s+of\s+|only\s+)?(\d+)\b(?:\s*(?:units?|pcs|pieces|left|in\s+stock|on\s+hand))?,?\s+(?:you\s+should\s+|please\s+|i\s+want\s+you\s+to\s+|then\s+)?(?:notify|alert|tell|warn|ping|remind|let)\s+me(?:\s+know)?\s*\.?$/i.exec(text);
+  const found = notify || inverted;
+  if (found) {
+    const itemText = found[1].replace(/^(?:the|our|my|all|stock\s+of|quantity\s+of)\s+/i, '').replace(/\s+(?:stock|quantity|level|inventory|count)$/i, '').trim();
+    const reorderPoint = Number(found[2]);
+    if (itemText && Number.isInteger(reorderPoint)) {
+      return {
+        understood: true,
+        summary: `Flag ${itemText} for reordering when it reaches ${reorderPoint} — it appears in Needs you and the brief at that level`,
+        clarifyingQuestion: '', unsupportedReason: '',
+        changes: [{ ...emptyChange(), domain: 'replenishment', operation: 'set', itemText, reorderPoint }],
+      };
+    }
+  }
   const m = /^(?:from\s+now\s+on,?\s+|always\s+|please\s+)?(?:re-?order|order\s+more|restock|replenish|buy\s+more)\s+(?:of\s+)?(.+?)\s+(?:whenever|when|if|once|as\s+soon\s+as)\s+(?:we|it|they|stock|the\s+stock|we're|we\s+are|levels?)?\s*(?:drop|drops|fall|falls|get|gets|go|goes|is|are|dip|dips)?\s*(?:to\s+)?(?:below|under|less\s+than|fewer\s+than|at\s+or\s+below)\s+(\d+)\b(?:\s*(?:units?|pcs|pieces|left|in\s+stock|on\s+hand))?\s*\.?$/i.exec(text);
   if (!m) return null;
   const itemText = m[1].replace(/^(?:the|our|my|all)\s+/i, '').trim();
@@ -472,7 +500,18 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   const offlineFallback = !options.provider && !config.ai.configured
     ? compileSupplierCommunication(clean) : null;
   if (!offlineFallback && !options.provider && !config.ai.configured) throw new ValidationError('StockChief needs its model connection to read that instruction.');
-  const reorderRule = compileReorderRule(clean);
+  /*
+   * The two closed forms — a reorder point, a block on outgoing stock — are
+   * read here before a model sees them. The compiler leaves the product to
+   * the resolver; when the resolver cannot place it from the sentence alone
+   * ("Block outgoing Black Small sales below 10" names a variant of a
+   * product it never names), the model reads the sentence as before, since
+   * it can. A compiled rule with the product settled needs no model.
+   */
+  const closed = compileReorderRule(clean) || compileStockProtection(clean);
+  const closedResolves = closed && closed.changes.every((change) => !needsSku(change.domain)
+    || resolveChange(db, ctx.workspaceId, change, clean).change.skuId);
+  const reorderRule = closed && (closedResolves || (!options.provider && !config.ai.configured)) ? closed : null;
   const provider = offlineFallback || reorderRule ? null : options.provider || createProviderForTier('standard');
   const catalogue = db.prepare(
     `SELECT i.name, s.code, s.variant_label FROM skus s JOIN items i ON i.id = s.item_id
@@ -982,4 +1021,4 @@ function suggestFromRepeatedApproval(db, ctx, item) {
   return get(db, ctx.workspaceId, id);
 }
 
-module.exports = { DOMAINS, CHANGE_SCHEMA, SCHEMA, SYSTEM, interpret, __compileReorderRule: compileReorderRule, proposeStockProtectionAnswer, proposeStockProtectionProduct, resolveChange, describe, clarificationFor, get, list, approve, cancel, answer, selectProduct, remove, suggestFromRepeatedApproval };
+module.exports = { DOMAINS, CHANGE_SCHEMA, SCHEMA, SYSTEM, interpret, __compileReorderRule: compileReorderRule, __compileStockProtection: compileStockProtection, proposeStockProtectionAnswer, proposeStockProtectionProduct, resolveChange, describe, clarificationFor, get, list, approve, cancel, answer, selectProduct, remove, suggestFromRepeatedApproval };

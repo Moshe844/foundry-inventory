@@ -492,7 +492,7 @@ test('a transfer proposal shows real before and after figures', () => {
   );
   assert.deepEqual(view.total, { before: 52, after: 52 });
   assert.equal(view.totalChanges, false, 'a transfer never changes how much you have');
-  assert.equal(view.pastVerb, 'transferred');
+  assert.equal(view.pastVerb, 'prepared a transfer of', 'a transfer document was created; the shelves have not changed');
   assert.equal(proposal.approvalRequirement, 'CONFIRM');
   assert.ok(proposals.verifyIntegrity(proposal));
 });

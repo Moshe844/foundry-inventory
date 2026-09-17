@@ -2,6 +2,7 @@
 
 const express = require('express');
 const crypto = require('node:crypto');
+const { ProviderError } = require('../../ai/provider');
 const intentRouter = require('../../manager/intent-router');
 const paymentIntent = require('../../accounting/payment-intent');
 const managerContext = require('../../manager/context');
@@ -403,7 +404,43 @@ function incompleteRestrictionQuestion(message) {
   return 'What should StockChief restrict: low-stock sales, purchasing, transfers, supplier changes, or supplier email sending?';
 }
 
+/*
+ * Truthful when a reader cannot be reached.
+ *
+ * The model behind a reader going away is not a failure of the request and
+ * not "something went wrong on our side": nothing was read, nothing was
+ * guessed, nothing changed. The message goes back into the box with that
+ * said above it, and the ledger records the goal as unavailable — not
+ * failed, not refused. It used to be a generic 500 page with the sentence
+ * gone.
+ */
+function readerUnavailable(err) {
+  if (!err) return false;
+  if (err.code === 'ai_provider_error' || err.code === 'ai_invalid_output' || err.code === 'ai_refusal') return true;
+  if (err instanceof ProviderError) return true;
+  return /could not reach its (?:reading|question|model)|took too long to read|ran out of room|reading service/i.test(String(err.message || ''));
+}
+
 router.post('/foundry/tell', asyncRoute(async (req, res) => {
+  try {
+    return await tellStockChief(req, res);
+  } catch (err) {
+    const unavailable = readerUnavailable(err) || require('../../assistant/calls').unavailableNow();
+    if (!unavailable) throw err;
+    const message = String(req.body.message || '').trim();
+    const said = 'StockChief could not reach its reading service just now, so your message was not read; no figures were guessed and nothing changed. It is still in the box — try again in a moment.';
+    try { assistantTurns.settleNow(req, { status: 'unavailable', said, provenance: { reason: 'provider_unavailable' } }); } catch (settleErr) { console.error('[foundry] could not settle the goal as unavailable', settleErr); }
+    if (req.body.queryConversation === '1') {
+      const token = crypto.randomUUID();
+      req.session.pendingAskResult = { token, workspaceId: req.ctx.workspaceId, question: message, error: said, result: null };
+      return res.redirect(303, `/ask?q=${encodeURIComponent(message)}&followup=1&turn=${token}`);
+    }
+    req.flash('warn', said);
+    return res.redirect(303, '/#tell-foundry');
+  }
+}));
+
+async function tellStockChief(req, res) {
   const attached = (req.files || []).find((entry) => entry.field === 'file' && entry.size > 0);
   // A clarification answer must continue the original manager request. The
   // action surface carries these two fields back rather than making someone
@@ -506,6 +543,17 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
    * proposal on the table, rather than to the question planner, which
    * asked what "15" was meant to be.
    */
+  /*
+   * The understanding already said what kind of thing this goal is. A rule
+   * ("when it reaches 4, notify me… and I shouldn't be able to sell more")
+   * or a change typed into the chat is not a question, and sending it to
+   * the question planner got back "which product are you referring to?"
+   * — a question about a rule the rule reader would simply have compiled.
+   */
+  if (!attached && req.body.queryConversation === '1' && message && req.assistantGoal
+      && ['instruction', 'change', 'send'].includes(req.assistantGoal.kind) && !req.assistantCorrection) {
+    chatAction = true;
+  }
   if (!attached && req.body.queryConversation === '1' && message && (req.assistantCorrection || chatAction)) {
     // What is being corrected, in full: the proposal on the table when there
     // is one (with the place and batch it settled on), otherwise the question
@@ -1524,7 +1572,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   }
   req.flash('warn', 'StockChief could not safely route that yet. Say what happened or what outcome you want.');
   return res.redirect(303, '/#tell-foundry');
-}));
+}
 
 /**
  * Does this message name a product this inventory actually has?
@@ -1657,7 +1705,18 @@ router.post('/catalog-code-changes/:id/cancel', asyncRoute(async (req, res) => {
 router.post('/operating-instructions/:id/approve', asyncRoute(async (req, res) => {
   try {
     const proposal = operatingInstructions.approve(req.db, req.ctx, req.user, req.params.id, req.body.integrityHash);
-    req.flash('success', `Remembered. ${proposal.resolvedChanges.length === 1 ? 'This rule is' : 'These rules are'} now active and future events will use them.`);
+    const said = `Remembered. ${proposal.resolvedChanges.length === 1 ? 'This rule is' : 'These rules are'} now active and future events will use them.`;
+    req.flash('success', said);
+    // The conversation that asked for this rule now reads it as done, and
+    // the person goes back to it — with the next part of their message, if
+    // there was one, offered there. It used to stay "needs your approval"
+    // in the chat after the rule was already in force.
+    const goal = ledger.goalByResult(req.db, req.ctx, assistantTurns.conversationId(req), `/operating-instructions/${req.params.id}`);
+    if (goal && goal.status !== 'done') {
+      ledger.settle(req.db, req.ctx, goal.id, { status: 'done', said, resultHref: `/operating-instructions/${req.params.id}`, resultLabel: 'Open the rule' });
+      const turn = ledger.getTurn(req.db, req.ctx.workspaceId, goal.turnId);
+      return res.redirect(303, turn && turn.channel === 'ask' ? '/ask' : '/#tell-foundry');
+    }
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
     req.flash('error', err.message);
@@ -1671,11 +1730,25 @@ router.post('/operating-instructions/:id/cancel', asyncRoute(async (req, res) =>
   return res.redirect(303, '/');
 }));
 
+/*
+ * An answered question makes a new proposal with a new id. The goal in the
+ * chat that led here follows it, so approving the answered rule still
+ * settles that goal and brings the person back to the conversation.
+ */
+function followRule(req, fromId, toId) {
+  if (!toId || fromId === toId) return;
+  try {
+    const goal = ledger.goalByResult(req.db, req.ctx, assistantTurns.conversationId(req), `/operating-instructions/${fromId}`);
+    if (goal && goal.status !== 'done') ledger.settle(req.db, req.ctx, goal.id, { resultHref: `/operating-instructions/${toId}` });
+  } catch (err) { console.error('[foundry] could not follow the rule proposal', err); }
+}
+
 router.post('/operating-instructions/:id/answer', asyncRoute(async (req, res) => {
   try {
     const proposal = await operatingInstructions.answer(req.db, req.ctx, req.user, req.params.id, req.body.answer, {
       provider: req.app.locals.aiProvider || undefined,
     });
+    followRule(req, req.params.id, proposal.id);
     return res.redirect(303, `/operating-instructions/${proposal.id}`);
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;
@@ -1689,6 +1762,7 @@ router.post('/operating-instructions/:id/select-product', asyncRoute(async (req,
     const proposal = operatingInstructions.selectProduct(
       req.db, req.ctx, req.user, req.params.id, req.body.skuId
     );
+    followRule(req, req.params.id, proposal.id);
     return res.redirect(303, `/operating-instructions/${proposal.id}`);
   } catch (err) {
     if (!err.status || err.status >= 500) throw err;

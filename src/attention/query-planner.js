@@ -483,6 +483,54 @@ function directPlan(db, workspaceId, question) {
   if (/\b(?:list|show|give\s+me)\b[^.?!]{0,20}\b(?:all\s+(?:the\s+|our\s+)?|every\s+|our\s+|the\s+)?products?\b[^.?!]{0,20}\b(?:with\s+)?(?:their\s+)?(?:selling\s+)?prices\b/i.test(clean) && !/\b(?:cost|purchase|supplier)\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'selling_price', entityQuery: '', limit: 200 });
   }
+  /*
+   * Three readings a model got wrong in the live suite, each with one right
+   * answer: telling StockChief to stop acting on its own is an automation
+   * control, not a stock action; what we charge is the selling price on
+   * file; what demand will be is the forecasting engine. Read here first.
+   */
+  const control = /\b(?:stop|pause|halt|quit|cease|no\s+more|don'?t|do\s+not|never)\b[^.?!]{0,60}\b(?:by\s+yourself|on\s+your\s+own|yourself|automatically|autonomously|without\s+(?:asking|approval|me|my\s+ok(?:ay)?)|autopilot|automation|auto-?pilot)\b/i.test(clean)
+    || /\b(?:turn|switch)\s+(?:off|down)\s+(?:the\s+)?(?:autopilot|automation|auto-?pilot|automatic\s+\w+)\b/i.test(clean)
+    || /\b(?:stop|pause)\s+(?:the\s+)?(?:autopilot|automation|automatic\s+(?:ordering|transfers?|purchasing|moves?|actions?))\b/i.test(clean);
+  if (control && !/\b(?:how\s+do\s+i|where\s+do\s+i|can\s+i)\b/i.test(clean)) return queryService.normalisePlan({ intent: 'stop_automation' });
+  const charge = /^\s*(?:so\s+)?(?:what|how\s+much)\s+(?:do|did|should|are|is)\s+we\s+(?:charge|charging|sell(?:ing)?|ask|asking)\b(?:\s+(?:for|on))?\s*(.*?)\s*(?:\s+for)?\s*\??\s*$/i.exec(clean)
+    || /^\s*(?:what(?:'s|\s+is|\s+are)\s+(?:the\s+|our\s+)?(?:selling|retail|list|sale)\s+prices?\s+(?:of|for|on)\s+)(.*?)\s*\??\s*$/i.exec(clean);
+  if (charge && !/\b(?:cost|paid|pay|supplier|margin|profit)\b/i.test(clean)) {
+    const subject = charge[1].replace(/^(?:for|on)\s+/i, '').replace(/\b(?:these|those|them|it|this|that|each|per\s+unit|a\s+unit)\b/gi, '').trim();
+    return queryService.normalisePlan({ intent: 'selling_price', entityQuery: subject, limit: subject ? 50 : 200 });
+  }
+  /*
+   * "How many Navy 4 do we have?" and "what did we pay our supplier for
+   * these?" came back from the planner as unsupported — the two most
+   * ordinary questions in the room. They have one reading each.
+   */
+  const howMany = /^\s*(?:so\s+)?(?:how\s+many|how\s+much)\s+(.+?)\s+(?:do\s+we\s+have|have\s+we\s+got|are\s+there|is\s+there|do\s+we\s+hold|are\s+(?:in\s+stock|on\s+hand|left)|is\s+(?:in\s+stock|on\s+hand|left)|in\s+stock|on\s+hand)\b(?:\s+(?:in\s+stock|on\s+hand|left|in\s+total|altogether|overall|right\s+now|now|today|at\s+the\s+moment))*(?:\s+(?:at|in)\s+(?:the\s+)?([^?]+?))?\s*\??\s*$/i.exec(clean);
+  if (howMany && !/\b(?:sold|sell|order|ordered|owe|worth|cost|paid|customers?|suppliers?|orders?)\b/i.test(clean)) {
+    const places = db.prepare('SELECT name FROM locations WHERE workspace_id = ?').all(workspaceId).map((r) => String(r.name));
+    const isPlace = (words) => places.find((name) => name.toLowerCase() === String(words || '').trim().toLowerCase()) || '';
+    let subject = howMany[1].replace(/^(?:of\s+)?(?:the|our|my)\s+/i, '').trim();
+    // "…do we have at Main Warehouse" or "…navy 4 at Main Warehouse do we have".
+    let place = isPlace(howMany[2]);
+    const at = !place && /^(.*?)\s+(?:at|in)\s+(?:the\s+)?(.+)$/i.exec(subject);
+    if (at && isPlace(at[2])) { place = isPlace(at[2]); subject = at[1].trim(); }
+    if (howMany[2] && !place) return null;
+    if (subject && !/\b(?:products?|items?|skus?|lines?|things|units)\b$/i.test(subject)) {
+      return queryService.normalisePlan({ intent: 'stock_level', entityQuery: subject, locationQuery: place });
+    }
+  }
+  const paid = /^\s*(?:so\s+)?(?:what|how\s+much)\s+(?:did|do|have)\s+we\s+(?:last\s+)?(?:pay|paid)\b(?:\s+(?:our|the)\s+suppliers?)?\s+(?:for\s+)?(.*?)\s*(?:\s+last\s+time)?\s*\??\s*$/i.exec(clean)
+    || /^\s*(?:what(?:'s|\s+is|\s+was)\s+(?:the\s+|our\s+)?(?:last|latest|unit|purchase)\s+cost\s+(?:of|for)\s+)(.*?)\s*\??\s*$/i.exec(clean)
+    || /^\s*(?:how\s+much\s+(?:did|does)\s+)(.+?)\s+cost\s+us\s*\??\s*$/i.exec(clean);
+  if (paid && !/\b(?:charge|sell|selling|customers?|invoices?|bills?|owe|total|in\s+total|last\s+(?:week|month|year))\b/i.test(clean)) {
+    const subject = paid[1].replace(/\b(?:these|those|them|it|this|that)\b/gi, '').replace(/^(?:the|our|my)\s+/i, '').trim();
+    return queryService.normalisePlan({ intent: 'last_cost', entityQuery: subject });
+  }
+  const forecast = /\b(?:forecast|demand|projected|projection|expected\s+sales|how\s+many\s+will\s+we\s+(?:sell|need)|how\s+much\s+will\s+we\s+(?:sell|need)|what\s+will\s+we\s+(?:sell|need))\b/i.test(clean)
+    && /\b(?:next|coming|upcoming|this|the\s+next)\s+(?:week|month|quarter|year|season|\d+\s+(?:days|weeks|months))\b|\bforecast\b|\bdemand\b/i.test(clean);
+  if (forecast && !scoped && !/\b(?:order|buy|purchase|reorder|price|charge)\b/i.test(clean)) {
+    const windowDays = /quarter|3\s+months|90/i.test(clean) ? 90 : /year|12\s+months/i.test(clean) ? 365 : /week|7\s+days/i.test(clean) ? 7 : 30;
+    return queryService.normalisePlan({ intent: 'demand_forecast', windowDays });
+  }
   return null;
 }
 
@@ -579,6 +627,7 @@ async function finishAsk(question, rawResult, options = {}) {
 }
 
 module.exports = {
+  __directPlan: directPlan,
   PLAN_SCHEMA,
   SYSTEM,
   systemFor,
