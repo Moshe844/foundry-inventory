@@ -426,3 +426,23 @@ test('a count sheet is read in code, every line kept, and a line that already ma
   assert.equal(result.proposal.skuId, elbow.skuId);
   assert.match(result.proposal.assumptions.join(' '), /One line of what you said already matched the records, so it was left alone: Solder Wire at Main Warehouse is already 0\./);
 });
+
+test('answering "which place should it come out of?" settles the goal as prepared, not left waiting', () => {
+  // The source question carries no server-held continuation, so the actions
+  // page clears it from the session when it renders; the answer still has to
+  // settle the goal that asked.
+  const ledger = require('../../src/assistant/ledger');
+  const turns = require('../../src/assistant/turns');
+  const { db, w } = setup();
+  const turn = ledger.openTurn(db, w.ctx, { conversationId: 'default', channel: 'ask', message: 'move 10 of them there', understanding: {}, goals: [{ kind: 'change', text: 'move 10 of them there' }] });
+  ledger.settle(db, w.ctx, turn.goals[0].id, { status: 'clarify', said: 'Which should it come out of?', resultHref: '/actions', resultLabel: 'Answer the question' });
+  const req = { db, ctx: w.ctx, session: { assistantConversationId: 'default' } };
+  const redirected = [];
+  const res = { redirect: (...args) => redirected.push(args[args.length - 1]) };
+  turns.resume(req, res);
+  res.redirect(303, '/actions/act_prepared');
+  assert.deepEqual(redirected, ['/actions/act_prepared']);
+  const settled = ledger.getGoal(db, w.workspaceId, turn.goals[0].id);
+  assert.equal(settled.status, 'needs_approval');
+  assert.equal(settled.resultHref, '/actions/act_prepared');
+});

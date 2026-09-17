@@ -213,9 +213,17 @@ function settleAsk(req, question, outcome) {
  * a plan. The same settlement hook is installed for the same goal.
  */
 function resume(req, res) {
+  if (!req.ctx) return;
   const handed = req.session && req.session.pendingActionQuestion;
-  const goalId = handed && handed.goalId;
-  if (!goalId || !req.ctx) return;
+  // A question with no server-held continuation is cleared from the session
+  // when its page renders; the goal it belonged to is still the one in this
+  // conversation that is waiting for an answer on the actions page.
+  let goalId = handed && handed.goalId;
+  if (!goalId) {
+    const waiting = ledger.goalByResult(req.db, req.ctx, conversationId(req), '/actions');
+    if (waiting && waiting.status === 'clarify') goalId = waiting.id;
+  }
+  if (!goalId) return;
   req.assistantGoal = ledger.getGoal(req.db, req.ctx.workspaceId, goalId) || null;
   if (!req.assistantGoal) return;
   req.assistantTurn = ledger.getTurn(req.db, req.ctx.workspaceId, req.assistantGoal.turnId);
