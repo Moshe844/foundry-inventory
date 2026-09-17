@@ -44,11 +44,16 @@
     ? 'brief'
     : nav === 'attention' ? 'needs' : nav === 'ask' ? 'ask' : null;
   /*
-   * The rooms. Brief, Needs you and Ask are the three ways of working; the
-   * four rooms are where the records live. They sit under the tabs, smaller
-   * and quieter, so a person who wants to look at their stock or their
-   * orders has a door to it without the Brief, search or a typed URL — and
-   * without the sidebar turning back into a department list.
+   * Browse. Brief, Needs you and Ask are the three ways of working and stay
+   * the dominant three; the four doors under them — Inventory, Purchasing,
+   * Orders, Money — are quieter, permanent ways to inspect the records
+   * without the Brief, search or a typed URL.
+   *
+   * These four are the whole list, on purpose. Products, locations,
+   * receiving, transfers, suppliers, fulfilment, mail, books and the rest
+   * stay contextual — reached from the page they belong to, or from
+   * "Everything else" — and are not to be added here. A sidebar that grows a
+   * department list is the thing this shell replaced.
    */
   var roomTab = ['inventory', 'transfers', 'locations', 'warehouse', 'imports', 'history'].indexOf(nav) >= 0 ? 'inventory'
     : nav === 'purchasing' ? 'purchasing'
@@ -80,8 +85,8 @@
     </nav>
 
     <% if (workspace) { %>
-      <nav class="rm-rooms" aria-label="Rooms">
-        <span class="rm-rooms__k" aria-hidden="true">Rooms</span>
+      <nav class="rm-rooms" aria-label="Browse">
+        <span class="rm-rooms__k" aria-hidden="true">Browse</span>
         <a class="rm-room <%= roomTab === 'inventory' ? 'is-on' : '' %>" href="/inventory"<%- roomTab === 'inventory' ? ' aria-current="page"' : '' %>><span class="rm-room__icon"><%- helpers.icon('inventory', { size: 16 }) %></span><span>Inventory</span></a>
         <a class="rm-room <%= roomTab === 'purchasing' ? 'is-on' : '' %>" href="/purchasing"<%- roomTab === 'purchasing' ? ' aria-current="page"' : '' %>><span class="rm-room__icon"><%- helpers.icon('purchasing', { size: 16 }) %></span><span>Purchasing</span></a>
         <a class="rm-room <%= roomTab === 'orders' ? 'is-on' : '' %>" href="/orders"<%- roomTab === 'orders' ? ' aria-current="page"' : '' %>><span class="rm-room__icon"><%- helpers.icon('sales', { size: 16 }) %></span><span>Orders</span></a>
