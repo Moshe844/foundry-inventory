@@ -58,6 +58,12 @@ const ACCEPTED_PART_SCHEMA = {...PART_SCHEMA, properties: {...PART_SCHEMA.proper
  recordQuery: {anyOf: [ACCEPTED_RECORD_SCHEMA, {type: 'null'}]}}};
 const ACCEPTED_SCHEMA = {...SCHEMA, required: SCHEMA.required.filter((key) => !OPTIONAL_ON_READ.includes(key)),
  properties: {...SCHEMA.properties, parts: {...SCHEMA.properties.parts, items: ACCEPTED_PART_SCHEMA}}};
+/** The same schema with the intent and dataset enums cut to what this question may use. */
+function schemaFor(intents,datasets) {
+ const part={...PART_SCHEMA,properties:{...PART_SCHEMA.properties,intent:{type:'string',enum:['record_query',...intents]},
+  recordQuery:{anyOf:[{...RECORD_SCHEMA,properties:{...RECORD_SCHEMA.properties,dataset:{type:'string',enum:datasets.length?datasets:Object.keys(records.REGISTRY)}}},{type:'null'}]}}};
+ return {...SCHEMA,properties:{...SCHEMA.properties,parts:{...SCHEMA.properties.parts,items:part}}};
+}
 function liftMinimums(data) {
  if (!data || !Array.isArray(data.parts)) return data;
  return {...data, parts: data.parts.map((p) => ({...p,
@@ -220,7 +226,20 @@ function safeColumns(result) {
 function executePart(db,workspaceId,part,options){
  if(part.intent==='record_query'){
   if(!part.recordQuery)throw new ValidationError('The question needs a complete record lookup before I can verify it.');
-  if(part.entityQuery||part.locationQuery)throw new ValidationError('The interpretation did not carry the named product or location into its filters. Please restate the product/location scope; I will not return an unscoped total.');
+  /*
+   * A product or place named beside a record lookup becomes a filter on it,
+   * when the dataset has that field; an unscoped total was never returned
+   * and now the scope is not lost either. A dataset with no such field says
+   * so in plain words.
+   */
+  if(part.entityQuery||part.locationQuery){
+   const d=(options.catalog||records.catalogue(db,workspaceId,options.membership))[part.recordQuery.dataset];
+   const fields=d?d.fields:[];
+   const extra=[];
+   if(part.entityQuery){const f=['product','customer','supplier','party','label'].find(x=>fields.includes(x));if(!f)throw new ValidationError(`${String(part.recordQuery.dataset).replace(/_/g,' ')} records have no product to narrow by, so “${part.entityQuery}” could not be applied. Ask about the product itself, or the records without naming one.`);extra.push({field:f,operator:'contains',value:part.entityQuery});}
+   if(part.locationQuery){if(!fields.includes('location'))throw new ValidationError(`${String(part.recordQuery.dataset).replace(/_/g,' ')} records are not kept by place, so “${part.locationQuery}” could not be applied. Ask about stock at that place instead.`);extra.push({field:'location',operator:'contains',value:part.locationQuery});}
+   part={...part,entityQuery:'',locationQuery:'',recordQuery:{...part.recordQuery,filters:[...(part.recordQuery.filters||[]),...extra]}};
+  }
   const lost=scopeProblems(db,workspaceId,part.question,part);
   if(lost.length)return empty(part.question,`I could not keep ${lost.join(' and ')} in that lookup, so the figures would not be for what you asked. Restate it with the code and place spelled out and I will read only that.`);
   return records.execute(db,workspaceId,part.recordQuery,options);
@@ -283,17 +302,29 @@ function executePart(db,workspaceId,part,options){
 }
 async function ask(db,workspaceId,question,options){
  const clean=requireText(question,'Question',{max:2000});
- const catalog=records.catalogue(db,workspaceId,options.membership);
+ const fullCatalog=records.catalogue(db,workspaceId,options.membership);
  const context=options.conversation?.workspaceId===workspaceId?options.conversation:null;
+ /*
+  * Only the areas the question touches (src/attention/prompt-scope.js): the
+  * intents and datasets of those areas plus a core, in the prose, the
+  * catalogue and the schema's enums alike. A question naming no area gets
+  * everything, as before. The previous turn's intent and dataset stay.
+  */
+ const previousPart=(context&&context.semanticPlan&&Array.isArray(context.semanticPlan.parts)&&context.semanticPlan.parts[0])||null;
+ const scope=require('./prompt-scope').scopeFor(clean,{allIntents:service.INTENTS,allDatasets:Object.keys(fullCatalog),
+  previous:previousPart?{intent:previousPart.intent,dataset:previousPart.recordQuery&&previousPart.recordQuery.dataset}:null});
+ const catalog=scope.full?fullCatalog:Object.fromEntries(Object.entries(fullCatalog).filter(([k])=>scope.datasets.includes(k)));
+ const intentSystem=typeof options.intentSystemFor==='function'?options.intentSystemFor(scope.full?null:scope.intents):options.intentSystem;
+ const schema=scope.full?SCHEMA:schemaFor(scope.intents,Object.keys(catalog));
  const system=`You are StockChief's semantic question planner. Interpret arbitrary ordinary language by meaning, not phrase matching. You may only plan retrieval; never answer with invented records or figures, write SQL, or execute changes.
- ${options.intentSystem}
+ ${intentSystem}
 
  General read models (fields are reviewed server-side; use ONLY fields actually listed for that dataset):
  ${records.promptCatalogue(catalog)}
 
  How long a named supplier takes to deliver, or how reliable it is, is most_reliable_supplier with entityQuery set to that supplier — do not ask which measure.
  Products below their reorder point, needing reordering or short of stock are what_to_order (it lists every product under its reorder point and how much to buy); the reorder points themselves are reorder_settings_review. In unsupportedReason and nearest write plain sentences for the person; never mention a capability id, lookup id or contract name.
- Prefer record_query for combinations of filters, counts, missing attributes, grouped totals, lists, comparisons and rankings. Reuse specialized intents for financial, forecasting, replenishment, kit definitions, shipping and other domain reasoning. All registered specialized lookup IDs: ${service.INTENTS.join(', ')}.
+ Prefer record_query for combinations of filters, counts, missing attributes, grouped totals, lists, comparisons and rankings. Reuse specialized intents for financial, forecasting, replenishment, kit definitions, shipping and other domain reasoning. The specialized lookup IDs you may use: ${(scope.full?service.INTENTS:scope.intents).join(', ')}.
  Set entityScope=single when the person refers to one particular product/customer/supplier/order; entityScope=set for a class, plural/list, count, ranking or grouping. Use exact equality for a supplied full name or SKU, contains for a partial name. The server will ask about ambiguous singular references instead of summing unrelated products.
  For multiple measures on the same records (e.g. count AND units AND average), use metrics with an entry for EVERY requested measure; aggregate='' and measure=''. Count uses field=''. Numeric metrics name their actual field. Returned metric/sort keys are 'count' or '<operation>:<field>', e.g. 'sum:on_hand'. For a single legacy aggregate use aggregate/measure and metrics=[]; its metric/sort key is 'value'. For a plain record list use aggregate='', measure='', metrics=[]. Do not collapse several requested measures into one. A grouped lookup always includes matching_records as supporting evidence.
  In record_query use aggregate=count for counts of rows, count_distinct for distinct values; sum only for numeric fields. Product counts use products, SKU counts use variants. Always filter active=1 for current products or variants unless archived/all are explicitly requested. Preserve all filters, location scopes, thresholds, requested measures and material subquestions. Put one lookup in parts for EACH requested part, maximum six. If there are more than six, clarify how to divide the request rather than silently truncating it.
@@ -311,7 +342,7 @@ async function ask(db,workspaceId,question,options){
  // naming conventions.
  // Context, referents and the previous turn carry record values; they go in as data (src/ai/guard.js).
  const guard=require('../ai/guard');
- try {response=await boundedComplete(options.provider,{system,prompt:JSON.stringify({question:clean,context:guard.deep(options.context||{}),referents:options.referentNote?guard.recordValue(options.referentNote,{max:600}):null,previous:context?{question:context.question,plan:guard.deep(context.semanticPlan),clarification:guard.recordValue(context.clarification,{max:600})||null}:null}),schema:SCHEMA,schemaName:'stockchief_semantic_query',maxTokens:2200},options.timeoutMs||20000);}
+ try {response=await boundedComplete(options.provider,{system,prompt:JSON.stringify({question:clean,context:guard.deep(options.context||{}),referents:options.referentNote?guard.recordValue(options.referentNote,{max:600}):null,previous:context?{question:context.question,plan:guard.deep(context.semanticPlan),clarification:guard.recordValue(context.clarification,{max:600})||null}:null}),schema,schemaName:'stockchief_semantic_query',maxTokens:2200},options.timeoutMs||20000);}
  catch(err){if(err instanceof ValidationError)throw err;if(err&&err.status===429)throw new ValidationError(err.message);throw new ValidationError('StockChief could not reach its question interpreter. Your message is preserved; no figures were guessed and nothing changed. Please try again.');}
  // Existing integrations may provide the older single-lookup contract. It is
  // validated, never inferred from an incomplete or malformed new response.
@@ -356,7 +387,7 @@ async function ask(db,workspaceId,question,options){
  const inherited=inheritedFromEmpty(clean,data,context);
  if(inherited)return {...empty(clean,inherited),semanticPlan:data};
  let sections;
- try{sections=data.parts.map(part=>({question:part.question,...executePart(db,workspaceId,part,{...options,catalog})}));}
+ try{sections=data.parts.map(part=>({question:part.question,...executePart(db,workspaceId,part,{...options,catalog:fullCatalog})}));}
  catch(err){if(err instanceof ValidationError)return {...empty(clean,err.message),semanticPlan:data};throw err;}
  const answer=sections.length===1?sections[0].answer:sections.map(s=>`${s.question}\n${s.answer}`).join('\n\n');
  const base=sections.length===1?sections[0]:{plan:{intent:'combined_lookup',entityQuery:'',locationQuery:''},rows:[],columns:[],rowCount:sections.reduce((n,s)=>n+s.rowCount,0),handoff:null};

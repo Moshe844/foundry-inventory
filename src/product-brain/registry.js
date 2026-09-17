@@ -223,8 +223,16 @@ class ProductBrain {
       action: destination ? { href: destination.href, label: `Open ${destination.label}` } : null };
   }
 
-  capabilityPrompt() {
-    return [...this.capabilities.values()].map((entry) => {
+  capabilityPrompt(options = {}) {
+    const all = [...this.capabilities.values()];
+    // The short form: what is available, by name, and what is not and why.
+    // A planner deciding 'unsupported' needs the boundary, not every description.
+    if (options.compact) {
+      const available = all.filter((e) => e.status === 'available').map((e) => e.label);
+      const missing = all.filter((e) => e.status !== 'available').map((e) => `${e.label} (${e.unavailableReason})`);
+      return `Available: ${available.join(', ')}.${missing.length ? `\nNot available: ${missing.join('; ')}.` : ''}`;
+    }
+    return all.map((entry) => {
       const availability = entry.status === 'available' ? 'AVAILABLE' : `NOT AVAILABLE: ${entry.unavailableReason}`;
       return `- ${entry.id} (${entry.label}): ${availability}. ${entry.description}`;
     }).join('\n');

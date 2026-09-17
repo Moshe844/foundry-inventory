@@ -223,9 +223,19 @@ function resolveSkus(db, workspaceId, query, limit) {
 
   // Nothing matched word by word: try the phrase as typed, in case it is a
   // code or a name with punctuation the tokeniser dropped.
-  return db
+  const asTyped = db
     .prepare(`${SKU_SELECT} AND ${MATCHES_TERM} ORDER BY i.name, s.position LIMIT ?`)
     .all(workspaceId, like(query), like(query), like(query), like(query), limit);
+  if (asTyped.length) return asTyped;
+  // "tral ration pack": a typo away from one product's name, and no other's.
+  // The same closeness test the action reader uses; a tie is not a match.
+  try {
+    const { closestMatch } = require('../actions/resolver');
+    const items = db.prepare('SELECT id, name FROM items WHERE workspace_id = ? AND is_active = 1').all(workspaceId);
+    const close = closestMatch(String(query).trim(), items, (i) => i.name);
+    if (close.ok) return db.prepare(`${SKU_SELECT} AND i.id = ? ORDER BY s.position LIMIT ?`).all(workspaceId, close.value.id, limit);
+  } catch { /* the resolver is optional here */ }
+  return [];
 }
 
 function resolveLocation(db, workspaceId, query) {
@@ -2557,6 +2567,7 @@ function stopAutomation(db, workspaceId, plan) {
 }
 
 function notFound(plan) {
+  if (!String(plan.entityQuery || "").trim()) return "There are no active products in this inventory yet.";
   return `StockChief could not find anything matching "${plan.entityQuery}".`;
 }
 
