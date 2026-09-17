@@ -228,7 +228,8 @@
           </details>
         <% } %>
 
-        <% if (result.supported || result.isAction) { %>
+        <% const conversational = result.plan && ['small_talk', 'conversation_recap'].includes(result.plan.intent); %>
+        <% if ((result.supported || result.isAction) && !conversational) { %>
           <%#
             The working, folded. A native disclosure says what it is, opens
             without a script, and is where the statement of record lives.

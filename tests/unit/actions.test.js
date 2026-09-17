@@ -1722,7 +1722,10 @@ test('one batch at the source is chosen, not asked about', () => {
   assert.match(built.proposal.assumptions.join(' '), /B-1 is the only batch at Main Warehouse/);
 });
 
-test('two batches at the source is a question, with the codes', () => {
+test('two good batches: the earliest to expire is taken and said, not asked about', () => {
+  // "Move 10 to the store" should not stop at "which batch?" when nothing has
+  // expired and the first batch covers it. The batch is an assumption on the
+  // proposal, where it can be corrected before anything moves.
   const { db } = makeDatabase();
   const w = seedWorkspace(db);
   const lot = makeLotItem(db, w.ctx);
@@ -1735,6 +1738,26 @@ test('two batches at the source is a question, with the codes', () => {
     sourceLocation: w.main.name,
     destinationLocation: w.store.name,
     quantity: 10,
+  });
+
+  assert.ok(built.ok, JSON.stringify(built));
+  assert.ok(built.proposal.lotId, 'the earliest batch should have been chosen');
+  assert.match(built.proposal.assumptions.join(' '), /Taking it from batch B-1, the earliest to expire of the 2 batches at Main Warehouse/);
+});
+
+test('a quantity bigger than the first batch is still a question, with the codes', () => {
+  const { db } = makeDatabase();
+  const w = seedWorkspace(db);
+  const lot = makeLotItem(db, w.ctx);
+  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 40, lotCode: 'B-1' });
+  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 25, lotCode: 'B-2' });
+
+  const built = proposals.build(db, w.ctx, {
+    actionType: 'transfer',
+    item: 'Trail Ration Pack',
+    sourceLocation: w.main.name,
+    destinationLocation: w.store.name,
+    quantity: 50,
   });
 
   assert.equal(built.ok, false);

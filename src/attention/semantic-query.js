@@ -66,10 +66,10 @@ function liftMinimums(data) {
 }
 
 const FINANCIAL = new Set(['financial_summary','business_health','cash_pressure','profit_and_loss','balance_sheet','cash_position',
- 'receivables_aging','payables_aging','inventory_valuation','inventory_selling_value','sales_tax_summary','bills_due','customer_payments',
+ 'receivables_aging','payables_aging','inventory_valuation','inventory_selling_value','stock_worth','open_purchase_orders','sales_tax_summary','bills_due','customer_payments',
  'period_profit_and_customer_cash','sale_profit_and_payment','supplier_spend','product_profitability','location_profitability',
  'financial_comparison','slow_inventory_value','books_health']);
-const PURCHASING = new Set(['on_order','late_orders','supplier_order_status','supplier_document_changes','supplier_price_changes',
+const PURCHASING = new Set(['on_order','late_orders','open_purchase_orders','supplier_order_status','supplier_document_changes','supplier_price_changes',
  'last_cost','suppliers_for_item','supplier_risk','most_reliable_supplier','what_to_order','replenishment']);
 const SALES = new Set(['selling_price','top_customers','sales_summary','shipment_status','shipping_exceptions','shipping_costs','carrier_performance','customer_orders_at_risk']);
 const ADMIN = new Set(['connection_summary','connection_last_event','connection_mapping_issues','connection_diagnostics','stop_automation']);
@@ -130,6 +130,23 @@ function namedProducts(db, workspaceId, question) {
 }
 
 /** The one location a phrase like "at the store" or "in the van" can mean here. */
+/** Whether the words name a supplier or a customer, by any distinctive word of the name. */
+function namesAParty(db, workspaceId, text) {
+  const said = String(text || '').toLowerCase();
+  if (!said) return false;
+  const generic = new Set(['supply', 'supplies', 'trade', 'trading', 'ltd', 'limited', 'inc', 'llc', 'co', 'company', 'group', 'the', 'and', 'of', 'plc', 'corp', 'corporation']);
+  const rows = [];
+  try { rows.push(...db.prepare('SELECT name FROM suppliers WHERE workspace_id = ? LIMIT 500').all(workspaceId)); } catch { /* no suppliers table */ }
+  try { rows.push(...db.prepare('SELECT name FROM customers WHERE workspace_id = ? LIMIT 500').all(workspaceId)); } catch { /* no customers table */ }
+  return rows.some((r) => {
+    const name = String(r.name || '').toLowerCase();
+    if (!name) return false;
+    if (said.includes(name)) return true;
+    const words = name.split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !generic.has(w));
+    return words.some((w) => new RegExp(`\\b${w}\\b`).test(said));
+  });
+}
+
 function namedLocation(db, workspaceId, question) {
  const said=String(question||'').toLowerCase();
  const places=db.prepare('SELECT name FROM locations WHERE workspace_id = ? AND is_active = 1').all(workspaceId).map((r)=>String(r.name||''));
@@ -215,7 +232,7 @@ function executePart(db,workspaceId,part,options){
   * headed by Copper Elbow. When the question names exactly one product and
   * the lookup is not a whole-inventory report, that product is the scope.
   */
- const globalReportsList=['inventory_summary','inventory_valuation','inventory_selling_value','financial_summary','business_health','cash_pressure','profit_and_loss',
+ const globalReportsList=['inventory_summary','inventory_valuation','inventory_selling_value','stock_worth','financial_summary','business_health','cash_pressure','profit_and_loss',
   'balance_sheet','cash_position','receivables_aging','payables_aging','sales_tax_summary','bills_due','financial_comparison','slow_inventory_value','books_health','top_customers',
   'connection_summary','connection_last_event','connection_mapping_issues','connection_diagnostics','stop_automation','sales_summary','what_to_order','replenishment','reorder_settings_review','capability_status'];
  if(!part.entityQuery&&part.intent!=='record_query'&&!globalReportsList.includes(part.intent)){
@@ -241,8 +258,13 @@ function executePart(db,workspaceId,part,options){
  // Several older whole-workspace reports don't implement entity/location
  // filters. A language model must not attach those filters and have them
  // silently ignored by the downstream executor.
- const globalReports=['inventory_summary','inventory_valuation','inventory_selling_value','financial_summary','business_health','cash_pressure','profit_and_loss',
+ const globalReports=['inventory_summary','inventory_valuation','inventory_selling_value','stock_worth','financial_summary','business_health','cash_pressure','profit_and_loss',
   'balance_sheet','cash_position','receivables_aging','payables_aging','sales_tax_summary','bills_due','financial_comparison','slow_inventory_value','books_health','top_customers'];
+ // "What do we owe Acme?" scopes the payables report to a supplier, and the
+ // report reads the supplier from the question itself. A party's name in the
+ // entity slot is not a product scope to refuse.
+ if(['payables_aging','bills_due','receivables_aging','top_customers'].includes(part.intent)&&part.entityQuery&&!part.locationQuery&&namesAParty(db,workspaceId,part.entityQuery))
+  part={...part,entityQuery:''};
  if(globalReports.includes(part.intent)&&(part.entityQuery||part.locationQuery))
   return empty(part.question,`That report is currently a whole-inventory read; it cannot verify the requested ${part.locationQuery?'location':'record'} scope. Do you want the whole-inventory report, or should we use a scoped record lookup instead?`);
  // Resolve named products before retrieval. A partial singular reference must
@@ -340,4 +362,4 @@ async function ask(db,workspaceId,question,options){
   supported:sections.every(s=>s.supported),needsClarification:sections.some(s=>s.needsClarification),
   semanticPlan:data,answerMode:'verified',spoken:null,isAction:false};
 }
-module.exports={SCHEMA,RECORD_SCHEMA,ask,executePart,boundedComplete,scopeProblems,mismatchedIntent};
+module.exports={SCHEMA,RECORD_SCHEMA,ask,executePart,boundedComplete,scopeProblems,mismatchedIntent,namesAParty};

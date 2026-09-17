@@ -17,6 +17,7 @@ const actionService = require('../../actions/action-service');
 const proposals = require('../../actions/proposal-service');
 const actionPresenter = require('../../actions/presenter');
 const assistantTurns = require('../../assistant/turns');
+const ledger = require('../../assistant/ledger');
 const importPlans = require('../../imports/plan-service');
 const workItems = require('../../autopilot/work-items');
 const operatingInstructions = require('../../manager/operating-instructions');
@@ -56,6 +57,27 @@ router.get('/foundry/navigate', (req, res) => {
   productNavigation.remember(req, { href, label }, returnTo);
   return res.redirect(303, href);
 });
+
+/**
+ * An answer StockChief gives in its own words, shown on the Ask page as any
+ * other answer and settled in the ledger as answered.
+ */
+function plainAnswer(req, res, question, answer) {
+  const token = crypto.randomUUID();
+  req.session.askTurns = [...(req.session.askTurns || []).slice(-7), { token, workspaceId: req.ctx.workspaceId, question, conversation: null }];
+  req.session.pendingAskResult = { token, workspaceId: req.ctx.workspaceId, question, result: {
+    question, answer, rows: [], columns: [], rowCount: 0, supported: true, isAction: false, needsClarification: false, handoff: null,
+    plan: { intent: 'small_talk', entityQuery: '', locationQuery: '' }, interpretation: 'a reply, not a lookup', spoken: null,
+  } };
+  return res.redirect(303, `/ask?q=${encodeURIComponent(question)}&followup=1&turn=${token}`);
+}
+
+/** Whether the sentence names one of this inventory's products. */
+function productNavigationMentions(req, text) {
+  try {
+    return Boolean(productNavigation.mentionsProduct(req.db, req.ctx.workspaceId, text));
+  } catch { return false; }
+}
 
 function actionRedirect(result) {
   if (result.kind === 'proposal' || result.kind === 'existing') return `/actions/${result.proposal.proposalId}`;
@@ -417,7 +439,59 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       noSplit: Boolean(answer),
     });
   }
-  if (!attached && req.body.queryConversation === '1' && message) {
+  /*
+   * "What did I just do?" is answered from the ledger, not by a model asking
+   * what is meant. The Ask page composes it from the last turns.
+   */
+  if (!attached && message && /^\s*(?:what (?:did|have) i (?:just )?(?:do|done|ask|asked|say|said)|what was the last thing|what have we done|recap|what did you (?:just )?do)\b/i.test(message)) {
+    return res.redirect(303, `/ask?q=${encodeURIComponent(message)}&recap=1`);
+  }
+  /*
+   * "Thanks" and "hello" are answered as a person would, without a model and
+   * without dragging the last question along. A thank-you also closes the
+   * question that was open, so the next message starts clean.
+   */
+  const thanks = /^\s*(?:ok(?:ay)?[,!.]?\s*)?(?:thanks|thank you|thx|cheers|great|cool|nice|perfect|awesome|got it|good|bye|see you)(?:\s+(?:a lot|so much|very much|stockchief|foundry))?\s*[.!]*\s*$/i.test(message);
+  const greeting = /^\s*(?:hi|hello|hey|good (?:morning|afternoon|evening))(?:\s+(?:there|stockchief|foundry))?\s*[.!]*\s*$/i.test(message);
+  if (!attached && message && (thanks || greeting)) {
+    if (thanks) delete req.session.askConversation;
+    return plainAnswer(req, res, message, thanks
+      ? 'You’re welcome.'
+      : 'Hello. Ask about stock, orders, suppliers or money — or tell StockChief what happened.');
+  }
+  /*
+   * "Do it" typed into the chat means the thing waiting for approval. It is
+   * opened, not run: a stock change is approved on its own page, with the
+   * checks that page runs, never from a chat message.
+   */
+  if (!attached && message && actionService.AGREEMENT.test(message)) {
+    // The one this conversation just prepared comes first; only when the
+    // conversation has none does the workspace-wide list decide.
+    const last = ledger.lastSettled(req.db, req.ctx, assistantTurns.conversationId(req));
+    const lastId = last && last.status === 'needs_approval' && /^\/actions\/([A-Za-z0-9_-]+)$/.exec(String(last.resultHref || '').split('?')[0]);
+    const fromConversation = lastId ? proposals.get(req.db, req.ctx.workspaceId, lastId[1]) : null;
+    const open = fromConversation && fromConversation.status === 'AWAITING_APPROVAL'
+      ? [fromConversation]
+      : proposals.listOpen(req.db, req.ctx.workspaceId, { limit: 5 }).filter((p) => p.status === 'AWAITING_APPROVAL');
+    if (open.length === 1) {
+      req.flash('info', 'Here it is. Press Approve to carry it out — StockChief does not change stock from a chat message.');
+      assistantTurns.settleNow(req, { status: 'needs_approval', resultHref: `/actions/${open[0].proposalId}`, resultLabel: 'Review and approve', said: 'Opened for your approval. Press Approve there to carry it out; nothing has changed yet.' });
+      return res.redirect(303, `/actions/${open[0].proposalId}`);
+    }
+    if (open.length > 1) chatAction = true;
+  }
+  /*
+   * "Actually, make it 15" right after a proposal is a correction to that
+   * proposal. It goes to the action reader, which already knows the
+   * proposal on the table, rather than to the question planner, which
+   * asked what "15" was meant to be.
+   */
+  if (!attached && req.body.queryConversation === '1' && message && (req.assistantCorrection || chatAction)) {
+    const handedQuestion = req.session.pendingActionQuestion;
+    const earlier = req.assistantCorrection ? ((handedQuestion && handedQuestion.instruction) || req.assistantCorrection.text || '') : '';
+    if (earlier && !/ — Clarification: /.test(earlier)) message = `${earlier} — Clarification: ${message}`;
+    chatAction = true;
+  } else if (!attached && req.body.queryConversation === '1' && message) {
     const token = crypto.randomUUID();
     const previous = req.session.askConversation?.workspaceId === req.ctx.workspaceId
       ? req.session.askConversation : null;
@@ -566,6 +640,24 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       if (!err.status || err.status >= 500) throw err;
       req.flash('warn', err.message);
       return res.redirect(303, '/#tell-foundry');
+    }
+  }
+
+  /*
+   * "Lower the price of all the gloves by 10%": a percentage over a product
+   * or its variants, read by pattern, one proposal per priced variant on the
+   * batch page. It used to be read as a rule about supplier price tolerance.
+   */
+  if (priceChanges.matchesPercentInstruction(message)) {
+    try {
+      const batch = priceChanges.interpretPercent(req.db, req.ctx, message);
+      req.session.pendingPriceBatch = batch.proposals.map((proposal) => proposal.id);
+      req.flash('success', `StockChief worked out ${batch.proposals.length} selling-price change${batch.proposals.length === 1 ? '' : 's'}, ${batch.direction < 0 ? 'down' : 'up'} ${batch.pct}% from today's prices.${batch.unpriced ? ` ${batch.unpriced} variant${batch.unpriced === 1 ? ' has' : 's have'} no selling price yet and ${batch.unpriced === 1 ? 'was' : 'were'} left alone.` : ''} Review the list before anything changes.`);
+      return res.redirect(303, batch.proposals.length === 1 ? `/pricing/proposals/${batch.proposals[0].id}` : '/pricing/proposals/batch');
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      req.session.pendingActionQuestion = { unsupported: err.message, instruction: message };
+      return res.redirect(303, '/actions');
     }
   }
 
@@ -1001,6 +1093,21 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       req.flash('success', `StockChief drafted ${specific.order.poNumber}. Nothing is ordered until you approve it.`);
       return res.redirect(303, `/purchasing/orders/${specific.order.id}`);
     }
+    /*
+     * "We buy it at $1.10" reads as purchasing, but the reader prepared a
+     * stock change — a new product, received. What was prepared is what is
+     * shown; it used to be left on the actions list while the page asked
+     * whether a purchase order was wanted.
+     */
+    const prepared = actionRedirect(specific);
+    if (prepared) {
+      const related = specific.proposal ? specific.proposal.proposalId : specific.plan.planId;
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'action', related);
+      managerContext.remember(req.db, req.ctx, { entities: { actionId: related } });
+      assistantTurns.remember(req, { kind: specific.proposal ? 'proposal' : 'plan', refId: related,
+        label: specific.proposal ? actionPresenter.oneLine(req.db, req.ctx.workspaceId, specific.proposal) : `the ${specific.plan.lines ? specific.plan.lines.length : ''} changes you asked for`, href: prepared });
+      return res.redirect(303, prepared);
+    }
     if (specific.kind === 'question' && specific.question && (specific.purchaseSpecific || namesAProduct)) {
       let continuationId = null;
       if (specific.continuation) continuationId = crypto.randomUUID();
@@ -1202,7 +1309,11 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         physicalEvents.complete(req.db, req.ctx.workspaceId, event.id);
         intentRouter.markRouted(req.db, req.ctx, intent.id, 'action', related);
         managerContext.remember(req.db, req.ctx, { entities: { actionId: related } });
-        req.flash('info', 'No open order matches that delivery, so StockChief prepared it as a receipt. Nothing changes until you approve it.');
+        // The flash says what was prepared, not "receipt" for a write-off.
+        const op = asAction.proposal ? String(asAction.proposal.operation || asAction.proposal.actionType || '') : '';
+        req.flash('info', op === 'receive'
+          ? 'No open order matches that delivery, so StockChief prepared it as a receipt. Nothing changes until you approve it.'
+          : 'StockChief read what happened and prepared the matching stock change. Nothing changes until you approve it.');
         return res.redirect(303, actionTarget);
       }
       const handedOn = actionHandoff.handOff(req, asAction);
@@ -1268,6 +1379,17 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   // Somebody asking StockChief to stop gets StockChief stopped, now, not a form.
   // Pausing takes no inventory action, is reversible in one click, and is the
   // only reading of "stop" that is safe to be wrong about.
+  // "Stop reordering PTFE tape" is about PTFE tape, not about StockChief.
+  // A stop that names a product is a rule for that product, read below as an
+  // operating instruction; it never pauses everything.
+  if (intent.handler === 'autopilot_pause' || intent.intentClass === 'STOP') {
+    const aboutAProduct = /^\s*(?:please\s+)?(?:stop|pause|halt|don'?t|do not|never|quit)\s+(?:re-?order(?:ing)?|order(?:ing)?|restock(?:ing)?|buy(?:ing)?|purchas(?:e|ing)|sell(?:ing)?|stock(?:ing)?|send(?:ing)?|email(?:ing)?)\s+(?:the\s+|any\s+|more\s+)?[a-z0-9]/i.test(message)
+      && productNavigationMentions(req, message);
+    if (aboutAProduct) {
+      intent.handler = 'operating_instruction';
+      intent.intentClass = 'OPERATING_INSTRUCTION';
+    }
+  }
   if (intent.handler === 'autopilot_pause' || intent.intentClass === 'STOP') {
     const state = autopilotModes.get(req.db, req.ctx.workspaceId);
     if (state.paused) {

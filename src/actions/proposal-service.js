@@ -489,7 +489,7 @@ function unresolved(result, fallback = null) {
  *
  * Oldest first, because that is the order stock should leave in.
  */
-function resolveLotAtSource(db, workspaceId, draft, location, verb) {
+function resolveLotAtSource(db, workspaceId, draft, location, verb, wanted = null) {
   if (draft.lotId || !draft.skuId) return { ok: true };
   const sku = db
     .prepare('SELECT tracking_mode FROM skus s JOIN items i ON i.id = s.item_id WHERE s.id = ? AND s.workspace_id = ?')
@@ -532,6 +532,19 @@ function resolveLotAtSource(db, workspaceId, draft, location, verb) {
   };
   const usable = lots.filter((lot) => !lot.expires_at || String(lot.expires_at).slice(0, 10) >= today);
   const expired = lots.filter((lot) => !usable.includes(lot));
+  // When nothing here has expired and the earliest-expiring batch covers the
+  // quantity, that batch is the one any stockroom would take. It is stated
+  // as an assumption on the proposal, where it can be corrected before
+  // anything moves, rather than asked as a question on every transfer of a
+  // batch-tracked product. An expired batch in the room, or a quantity that
+  // would have to be split across batches, is still a real question.
+  if (verb !== 'gets corrected' && !expired.length && usable.length && Number(usable[0].quantity) >= Number(wanted || 0) && Number(wanted || 0) > 0) {
+    draft.lotId = usable[0].id;
+    draft.assumptions.push(
+      `Taking it from batch ${usable[0].code}${usable[0].expires_at ? ` (expires ${String(usable[0].expires_at).slice(0, 10)})` : ''}, the earliest to expire of the ${lots.length} batches at ${location.name}. Say a batch code if you meant another.`
+    );
+    return { ok: true };
+  }
   const suggestion = usable.length
     ? ` StockChief would take ${usable[0].code}, the earliest to expire of the ones still good.`
     : ' Every batch here has expired.';
@@ -975,7 +988,7 @@ function shapeOperation(db, workspaceId, intent, draft) {
     }
     draft.sourceLocationId = from.value.id;
 
-    const issueLot = resolveLotAtSource(db, workspaceId, draft, from.value, 'goes');
+    const issueLot = resolveLotAtSource(db, workspaceId, draft, from.value, 'goes', quantity);
     if (!issueLot.ok) return { ...issueLot, ok: false };
 
     draft.availableAtSource = draft.lotId
@@ -1084,7 +1097,7 @@ function shapeOperation(db, workspaceId, intent, draft) {
     draft.sourceLocationId = from.value.id;
     draft.destinationLocationId = to.value.id;
 
-    const moveLot = resolveLotAtSource(db, workspaceId, draft, from.value, 'moves');
+    const moveLot = resolveLotAtSource(db, workspaceId, draft, from.value, 'moves', quantity);
     if (!moveLot.ok) return { ...moveLot, ok: false };
 
     draft.availableAtSource = draft.lotId

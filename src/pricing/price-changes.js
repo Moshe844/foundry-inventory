@@ -74,6 +74,11 @@ function matchesInstruction(message) {
   // “Can you set …?”. “Make” stays available for imperative product changes,
   // but is deliberately too ambiguous to override a question boundary.
   if (asksForInformation && !unambiguousChange) return false;
+  // "Add a new product: Brass Tee, we buy it at $1.10 and sell at $3.50" is a
+  // product being created with its prices, which the product reader carries
+  // whole; it is not a price list with one line missing.
+  const createsAProduct = /\b(?:add|create|set\s+up|register)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?(?:products?|items?|skus?)\b|\bnew\s+(?:products?|items?|skus?)\s*:/i.test(text);
+  if (createsAProduct) return false;
   return !namesPurchaseCost
     && ((explicitChange && (namesSellingPrice || assignsMoney))
       || (statesValue && /[$£€¥]|\b(?:USD|EUR|GBP|CAD|AUD|JPY)\b/i.test(text)));
@@ -315,6 +320,72 @@ function interpretEvery(db, ctx, message) {
   })))();
 }
 
+/*
+ * "Lower the price of all the gloves by 10%."
+ *
+ * A percentage over a product or a group of variants, read by pattern: the
+ * direction, the percentage and the product are the owner's own words. Every
+ * variant that has a selling price gets its own proposal on the batch page;
+ * one that has no price yet is left alone and said so, because ten percent
+ * of nothing is not a price.
+ */
+const PERCENT = /^\s*(?:please\s+|can\s+you\s+|could\s+you\s+)?(?:(?<down>lower|reduce|cut|drop|decrease|discount|mark\s+down|take)|(?<up>raise|increase|bump|lift|mark\s+up|put\s+up|add|put|move))\s+(?:the\s+)?(?:(?:selling\s+|retail\s+|sale\s+)?prices?\s+(?:of|on|for)\s+)?(?:all\s+(?:of\s+)?(?:the\s+|our\s+)?|every\s+|the\s+|our\s+)?(?<what>.+?)(?:\s+prices?)?\s+(?:by|(?<dir>up|down)\s+by|(?<dir2>up|down))?\s*(?<pct>\d+(?:\.\d+)?)\s*(?:%|percent|per\s+cent)(?:\s+off)?\s*[.!]?\s*$/i;
+const PERCENT_OFF = /^\s*(?:please\s+)?(?:take\s+)?(?<pct>\d+(?:\.\d+)?)\s*(?:%|percent|per\s+cent)\s+off\s+(?:all\s+(?:of\s+)?(?:the\s+|our\s+)?|every\s+|the\s+|our\s+)?(?<what>.+?)\s*[.!]?\s*$/i;
+
+function catalogueIds(db, workspaceId) {
+  return db.prepare(`SELECT s.id FROM skus s JOIN items i ON i.id = s.item_id
+    WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1 ORDER BY i.name, s.position LIMIT 300`).all(workspaceId).map((r) => r.id);
+}
+
+function readPercent(message) {
+  const text = String(message || '').trim();
+  const off = PERCENT_OFF.exec(text);
+  if (off) return { what: off.groups.what.trim(), pct: Number(off.groups.pct), direction: -1 };
+  const m = PERCENT.exec(text);
+  if (!m) return null;
+  const trailing = (m.groups.dir || m.groups.dir2 || '').toLowerCase();
+  return { what: m.groups.what.replace(/\s+(?:prices?|by|up|down)$/i, '').trim(), pct: Number(m.groups.pct), direction: trailing === 'down' ? -1 : trailing === 'up' ? 1 : m.groups.down ? -1 : 1 };
+}
+
+function matchesPercentInstruction(message) {
+  const read = readPercent(message);
+  return Boolean(read && read.what && read.pct > 0 && read.pct < 100 * (read.direction > 0 ? 10 : 1) && !/\b(?:supplier|cost|tolerance|whenever|when|if|never|always|from now on|automatically)\b/i.test(String(message)));
+}
+
+function interpretPercent(db, ctx, message) {
+  const statedAs = requireText(message, 'Price instruction', { max: 2000 });
+  const read = readPercent(statedAs);
+  if (!read) throw new ValidationError('What should change, and by what percentage?');
+  const everything = /^(?:prices?|everything|all|all products|products|items|the catalogue|catalogue|stock|our prices|selling prices)$/i.test(read.what);
+  const resolved = everything ? { ok: false, reason: 'everything' } : resolver.resolveSku(db, ctx.workspaceId, read.what, '', { instruction: statedAs });
+  let skuIds;
+  if (everything) skuIds = catalogueIds(db, ctx.workspaceId);
+  else if (resolved.ok) skuIds = [resolved.value.id];
+  else if (resolved.reason === 'ambiguous' && new Set((resolved.candidates || []).map((c) => c.item_id)).size === 1) skuIds = resolved.candidates.map((c) => c.id);
+  else throw new ValidationError(resolved.reason === 'ambiguous'
+    ? `“${read.what}” could be more than one product. Say which.`
+    : `There is nothing called “${read.what}” in this inventory.`);
+  const factor = 1 + (read.direction * read.pct) / 100;
+  const unpriced = [];
+  const prepared = [];
+  for (const skuId of skuIds) {
+    const current = prices.currentForSku(db, ctx.workspaceId, skuId);
+    if (!current.isSet || !(current.amount_minor > 0)) { unpriced.push(skuId); continue; }
+    const amountMinor = Math.round(current.amount_minor * factor);
+    if (amountMinor === current.amount_minor) continue;
+    prepared.push({ skuId, amountMinor, currency: current.currency || 'USD' });
+  }
+  if (!prepared.length) {
+    throw new ValidationError(unpriced.length
+      ? `${unpriced.length === skuIds.length ? 'None' : 'The rest'} of these has a selling price yet, so there is nothing to take ${read.pct}% off. Set a price first.`
+      : 'That percentage would not change any of these prices.');
+  }
+  const proposals = db.transaction(() => prepared.map((p) => createProposal(db, ctx, {
+    ...p, sourceText: `${statedAs} — ${read.direction < 0 ? 'down' : 'up'} ${read.pct}% from ${prices.formatMinor(prices.currentForSku(db, ctx.workspaceId, p.skuId).amount_minor, p.currency)}`,
+  })))();
+  return { proposals, unpriced: unpriced.length, pct: read.pct, direction: read.direction };
+}
+
 async function interpretMany(db, ctx, message, options = {}) {
   const statedAs = requireText(message, 'Price instruction', { max: 12000 });
   let changes;
@@ -436,6 +507,6 @@ function cancelBatch(db, workspaceId, ids) {
 module.exports = {
   SCHEMA, SYSTEM, BULK_SCHEMA, BULK_SYSTEM,
   matchesInstruction, matchesBulkInstruction, fallback, fallbackMany,
-  matchesEveryProductInstruction, interpretEvery,
+  matchesEveryProductInstruction, interpretEvery, matchesPercentInstruction, interpretPercent, readPercent,
   interpret, continueInterpret, interpretMany, createProposal, get, approve, approveBatch, cancel, cancelBatch,
 };

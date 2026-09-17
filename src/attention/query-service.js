@@ -77,6 +77,8 @@ const INTENTS = [
   'payables_aging',
   'inventory_valuation',
   'inventory_selling_value',
+  'stock_worth',
+  'open_purchase_orders',
   'sales_tax_summary',
   'bills_due',
   'customer_payments',
@@ -477,12 +479,36 @@ const PURCHASING_EXECUTORS = {
       status: po.status,
     }));
 
+    // The next one first, by expected date, said as a delivery and not as a count.
+    const dated = [...rows].sort((a, b) => String(a.expected || '9999').localeCompare(String(b.expected || '9999')));
+    const next = dated[0];
+    const units = rows.reduce((n, r) => n + Number(r.outstanding || 0), 0);
     return {
-      rows,
+      rows: dated,
       answer: rows.length
-        ? `${rows.length} purchase order(s) with ${rows.reduce((n, r) => n + r.outstanding, 0)} unit(s) outstanding.`
+        ? `${rows.length === 1 ? 'One purchase order is' : `${rows.length} purchase orders are`} still to arrive, ${units} unit${units === 1 ? '' : 's'} in all. Next due: ${next.label} from ${next.supplier}${next.expected ? `, expected by ${next.expected}` : ', no expected date'} (${next.outstanding} unit${Number(next.outstanding) === 1 ? '' : 's'} outstanding${/partial/i.test(String(next.status)) ? ', part of it already received' : ''}).${rows.length > 1 ? ` Then ${dated.slice(1, 4).map((r) => `${r.label}${r.expected ? ` by ${r.expected}` : ''}`).join(', ')}.` : ''}`
         : 'There is nothing on order at the moment.',
     };
+  },
+
+  /** "List the open purchase orders with their totals." */
+  open_purchase_orders(db, workspaceId, plan) {
+    const rows = db.prepare(`SELECT po.id, po.po_number, po.status, po.expected_date, po.currency, s.name AS supplier,
+        COALESCE(SUM(COALESCE(l.line_total, l.quantity_units * COALESCE(l.unit_cost, 0))), 0) AS total,
+        COALESCE(SUM(l.quantity_units - l.quantity_received_units), 0) AS outstanding,
+        SUM(CASE WHEN l.unit_cost IS NULL AND l.line_total IS NULL THEN 1 ELSE 0 END) AS uncosted
+      FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id
+      LEFT JOIN purchase_order_lines l ON l.purchase_order_id = po.id
+      WHERE po.workspace_id = ? AND po.status IN ('APPROVED', 'ORDERED', 'PARTIALLY_RECEIVED')
+      GROUP BY po.id ORDER BY COALESCE(po.expected_date, '9999'), po.po_number LIMIT ?`).all(workspaceId, Math.max(plan.limit || 25, 25));
+    const money = (n, c) => new Intl.NumberFormat('en-US', { style: 'currency', currency: c || 'USD' }).format(Number(n || 0));
+    const total = rows.reduce((n, r) => n + Number(r.total || 0), 0);
+    const uncosted = rows.filter((r) => Number(r.uncosted) > 0).length;
+    const shaped = rows.map((r) => ({ label: r.po_number, supplier: r.supplier, status: r.status, expected: r.expected_date, outstanding: Number(r.outstanding), total: money(r.total, r.currency), href: `/purchasing/orders/${r.id}` }));
+    return { rows: shaped, columns: ['label', 'supplier', 'status', 'expected', 'outstanding', 'total'], handoff: { href: '/purchasing', label: 'Open purchasing' },
+      answer: rows.length
+        ? `${rows.length} open purchase order${rows.length === 1 ? '' : 's'}, ${money(total, rows[0].currency)} in all: ${shaped.slice(0, 8).map((r) => `${r.label} — ${r.supplier}, ${r.total}${r.expected ? `, expected ${r.expected}` : ''}${/partial/i.test(r.status) ? ', part received' : ''}`).join('; ')}${rows.length > 8 ? '; the rest are below' : ''}.${uncosted ? ` ${uncosted} of them ${uncosted === 1 ? 'has' : 'have'} lines with no cost recorded, so ${uncosted === 1 ? 'its' : 'their'} total is understated.` : ''}`
+        : 'There are no open purchase orders.' };
   },
 
   /** "Which purchase orders are late?" */
@@ -1116,10 +1142,14 @@ const EXECUTORS = {
      * receives the same treatment.
      */
     const asked = String(options.question || '').toLocaleLowerCase();
-    const namedSupplier = db.prepare(`SELECT id, name FROM suppliers
-      WHERE workspace_id = ? AND status = 'active' ORDER BY length(name) DESC, name`)
-      .all(workspaceId)
-      .find((supplier) => asked.includes(String(supplier.name).toLocaleLowerCase()));
+    const suppliers = db.prepare(`SELECT id, name FROM suppliers
+      WHERE workspace_id = ? AND status = 'active' ORDER BY length(name) DESC, name`).all(workspaceId);
+    // "Acme" names Acme Trade Supply: the whole name, or a distinctive word of it.
+    const generic = new Set(['supply', 'supplies', 'trade', 'trading', 'ltd', 'limited', 'inc', 'llc', 'co', 'company', 'group', 'corp', 'corporation', 'plc']);
+    const byWord = (supplier) => String(supplier.name).toLocaleLowerCase().split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 4 && !generic.has(w)).some((w) => new RegExp(`\\b${w}\\b`).test(asked));
+    const namedSupplier = suppliers.find((supplier) => asked.includes(String(supplier.name).toLocaleLowerCase()))
+      || (suppliers.filter(byWord).length === 1 ? suppliers.find(byWord) : null);
     if (namedSupplier) {
       const bills = require('../accounting/payables').list(db, workspaceId,
         { supplierId: namedSupplier.id }).filter((bill) => bill.status !== 'DRAFT');
@@ -1185,9 +1215,21 @@ const EXECUTORS = {
       totalValue: money(Number(row.total_cost_minor)),
     }));
     return { rows, columns: ['product', 'sku', 'location', 'units', 'averageCost', 'totalValue'], handoff: { href: '/accounting/reports/inventory-valuation', label: 'Open inventory valuation' },
-      answer: `${valuation.totalUnits} cost-ledger units carry a recorded weighted-average value of ${money(valuation.totalCostMinor)}. This is cost value, not selling-price value.`
+      answer: `At what you paid for it, your stock is worth ${money(valuation.totalCostMinor)} (${valuation.totalUnits.toLocaleString('en-US')} units with a recorded cost, weighted average). This is cost value, not selling-price value.`
         + (missingUnits>0 ? ` This is not a complete valuation of your physical stock: ${missingUnits.toLocaleString('en-US')} of ${Number(coverage.physical_units).toLocaleString('en-US')} on-hand units lack fully reconciled cost evidence. Missing cost is not zero value.` : '')
         + (valuation.inTransitUnits>0 ? ` The recorded value also includes ${valuation.inTransitUnits} units in transit.` : '') };
+  },
+
+  /*
+   * "How much stock do we have, in dollars?" — both figures, since the
+   * question did not say which, rather than a question back about cost
+   * versus selling price.
+   */
+  stock_worth(db, workspaceId, plan, options = {}) {
+    const cost = EXECUTORS.inventory_valuation(db, workspaceId, plan, options);
+    const sell = EXECUTORS.inventory_selling_value(db, workspaceId, plan, options);
+    return { rows: cost.rows || [], columns: cost.columns, handoff: cost.handoff || sell.handoff || null,
+      answer: `Two ways to count it.\n${cost.answer}\nAt your selling prices: ${String(sell.answer || '').replace(/^Current stock at recorded selling prices:\s*/i, '')}` };
   },
 
   sales_tax_summary(db, workspaceId) {
@@ -1402,14 +1444,30 @@ const EXECUTORS = {
       : `No matching supplier purchases were posted in the last ${plan.windowDays} days.` };
   },
 
-  product_profitability(db, workspaceId, plan) {
+  product_profitability(db, workspaceId, plan, options = {}) {
     const accounting = require('../accounting/ledger').settings(db, workspaceId);
     if (!accounting.enabled) return EXECUTORS.financial_summary(db, workspaceId, plan);
     const to = new Date().toISOString().slice(0, 10);
     const from = new Date(Date.now() - (plan.windowDays - 1) * 86400000).toISOString().slice(0, 10);
-    const rows = require('../accounting/reports').profitability(db, workspaceId, { from, to, dimension: 'product' }).rows
-      .filter((row) => row.id).slice(0, plan.limit);
+    const all = require('../accounting/reports').profitability(db, workspaceId, { from, to, dimension: 'product' }).rows
+      .filter((row) => row.id);
     const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
+    const period = `the last ${plan.windowDays} days`;
+    // "Which products are we losing money on?" reads from the bottom of the
+    // list, not the top: what sold for less than it cost, or the thinnest
+    // margin when nothing did.
+    const worst = /\b(?:losing|lose|loss|losses|worst|lowest|least|thinnest|smallest|negative|below cost|under cost|unprofitable)\b/i.test(String(options.question || plan.question || ''));
+    if (worst) {
+      const ascending = [...all].sort((a, b) => a.grossProfitMinor - b.grossProfitMinor);
+      const losing = ascending.filter((row) => row.grossProfitMinor < 0);
+      const rows = (losing.length ? losing : ascending).slice(0, plan.limit);
+      if (!all.length) return { rows: [], answer: `Nothing sold with a recorded cost in ${period}, so there is no product to call profitable or not.` };
+      const line = (row) => `${row.label} (sold for ${money(row.revenueMinor)}, cost ${money(row.cogsMinor)}, ${row.grossProfitMinor < 0 ? 'lost' : 'made'} ${money(Math.abs(row.grossProfitMinor))})`;
+      return { rows, answer: losing.length
+        ? `In ${period}, ${losing.length === 1 ? 'one product sold for less than it cost' : `${losing.length} products sold for less than they cost`}: ${losing.slice(0, 5).map(line).join('; ')}. Gross figures — before rent, wages and the rest.`
+        : `None of the ${all.length} products sold in ${period} sold for less than it cost. The thinnest margin is ${line(ascending[0])}. Gross figures — before rent, wages and the rest.` };
+    }
+    const rows = all.slice(0, plan.limit);
     return { rows, answer: rows.length ? `${rows[0].label} has the highest recorded gross profit for this period at ${money(rows[0].grossProfitMinor)} (${money(rows[0].revenueMinor)} revenue minus ${money(rows[0].cogsMinor)} product cost). This is gross, not net, profitability.`
       : 'No product-level revenue and COGS are posted for this period.' };
   },
@@ -1589,7 +1647,9 @@ const EXECUTORS = {
     return {
       rows,
       answer: rows.length === 1
-        ? `${rows[0].label} is priced at ${rows[0].price}.`
+        ? (/not set/i.test(String(rows[0].price))
+          ? `${rows[0].label} has no selling price recorded yet. Say “set the price of ${rows[0].label} to <amount>” to give it one.`
+          : `${rows[0].label} is priced at ${rows[0].price}.`)
         : (() => {
           const priced = rows.filter((row) => !/not set/i.test(String(row.price)));
           const head = `${rows.length} stock lines${unpriced ? `; ${unpriced} ${unpriced === 1 ? 'has' : 'have'} no selling price set yet` : ', all priced'}.`;

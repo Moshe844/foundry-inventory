@@ -584,6 +584,10 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   return inTransaction(db, () => {
     const built = [];
     const missingReasons = [];
+    // Lines of a count that already match the records. They are said, on the
+    // plan, not dropped: "0 solder wire" when the van has none is right, and
+    // the person is told so rather than left wondering where that line went.
+    const alreadyRight = [];
     const slices = instructionSlices(text, usable);
     for (let index = 0; index < usable.length; index += 1) {
       const line = usable[index];
@@ -656,6 +660,12 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
         // A refusal the engine can explain travels with its explanation. The
         // caller needs the numbers to say what is wrong and what to do next.
         if (result.noChange && line._applyAcrossLocations) continue;
+        if (result.noChange && usable.length > 1) {
+          const named = [line.item, line.variant].filter(Boolean).join(' ');
+          const already = /already (\d+)/.exec(String(result.unsupported || ''));
+          alreadyRight.push(`${named}${line.sourceLocation ? ` at ${line.sourceLocation}` : ''} is already ${already ? already[1] : 'that'}.`);
+          continue;
+        }
         if (result.unsupported) {
           return { kind: 'unsupported', message: result.unsupported, blocked: result.blocked || null };
         }
@@ -672,6 +682,14 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
 
     if (built.length === 0 && usable.some((line) => line._applyAcrossLocations)) {
       return { kind: 'unsupported', message: 'Every selected location already has that count. Nothing needs changing.' };
+    }
+    if (built.length === 0 && alreadyRight.length) {
+      return { kind: 'unsupported', message: `Every count you gave already matches the records. ${alreadyRight.join(' ')}` };
+    }
+    const alreadyRightNote = alreadyRight.length ? `${alreadyRight.length === 1 ? 'One line' : `${alreadyRight.length} lines`} of what you said already matched the records, so ${alreadyRight.length === 1 ? 'it was' : 'they were'} left alone: ${alreadyRight.join(' ')}` : null;
+    if (alreadyRightNote) {
+      for (const draft of built) draft.assumptions.push(alreadyRightNote);
+      options = { ...options, catalogueUnderstanding: options.catalogueUnderstanding || { overview: alreadyRightNote } };
     }
 
     if (missingReasons.length) {
