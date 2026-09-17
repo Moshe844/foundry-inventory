@@ -1767,7 +1767,8 @@ const EXECUTORS = {
   },
 
   stock_by_location(db, workspaceId, plan) {
-    const skus = resolveSkus(db, workspaceId, plan.entityQuery, plan.limit);
+    // A place with no product named is the whole place, not the first ten SKUs.
+    const skus = resolveSkus(db, workspaceId, plan.entityQuery, plan.entityQuery ? plan.limit : 2000);
     if (skus.length === 0) return { rows: [], answer: notFound(plan) };
     const ids = skus.map((s) => s.id);
     const placeholders = ids.map(() => '?').join(',');
@@ -1789,6 +1790,18 @@ const EXECUTORS = {
     // answered with every location's figure, the one asked for somewhere in
     // the list; the place asked about is the answer, and the rest is context.
     const place = resolveLocation(db, workspaceId, plan.locationQuery);
+    // "How much is in the van?" names a place and no product: the answer is
+    // what that place holds, product by product, not every product's every
+    // position with the van's figure somewhere in the list.
+    if (place && !plan.entityQuery) {
+      const held = everywhere.filter((r) => r.location === place.name);
+      const total = held.reduce((n, r) => n + r.onHand, 0);
+      const shown = held.slice(0, 8).map((r) => `${r.onHand} ${r.label}`).join(', ');
+      return { rows: held, columns: ['location', 'label', 'onHand'],
+        answer: held.length
+          ? `${place.name} holds ${total} unit${total === 1 ? '' : 's'} across ${held.length} product${held.length === 1 ? '' : 's'}: ${shown}${held.length > 8 ? `, and ${held.length - 8} more` : ''}.`
+          : `${place.name} holds nothing at the moment.` };
+    }
     if (place) {
       const here = everywhere.filter((r) => r.location === place.name);
       const elsewhere = everywhere.filter((r) => r.location !== place.name);

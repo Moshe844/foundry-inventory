@@ -146,3 +146,45 @@ test('"move all the sweaters from the van" moves every variant the van holds, at
   assert.equal(result.kind, 'plan', JSON.stringify(result).slice(0, 300));
   assert.deepEqual(result.plan.lines.map((p) => p.quantity).sort(), [2, 3]);
 });
+
+// 34. Before: "Selling prices is available. You can use it with your current role…" — to a question about gloves.
+test('"do we have enough gloves for the winter?" is about gloves, not about a feature, and is answered with what is held', () => {
+  const { db, w, membership } = setup();
+  const nav = navigation.resolve(db, w.workspaceId, membership, 'do we have enough copper elbow for the winter? we usually sell about 60 a month');
+  assert.equal(nav, null, 'the navigation resolver leaves a business question alone');
+  const forecast = queryService.execute(db, w.workspaceId, queryService.normalisePlan({ intent: 'demand_forecast', entityQuery: 'copper elbow', windowDays: 90 }), { question: 'do we have enough copper elbow?' });
+  assert.match(forecast.answer, /Copper Elbow: 40 on hand/);
+  assert.doesNotMatch(forecast.answer, /most demand for/);
+});
+
+// 37. Before: every product's every position, with the van's figure somewhere in the list.
+test('"how much is in the van?" is what the van holds, product by product', () => {
+  const { db, w } = setup();
+  const van = locationService.createLocation(db, w.ctx, { name: 'Service Van 3', kind: 'truck' });
+  const pack = makeQuantityItem(db, w.ctx, { name: 'Trail Ration Pack', baseCode: 'TRP' });
+  engine.receive(db, w.ctx, { skuId: pack.skuId, locationId: van.id, quantity: 10 });
+  const result = queryService.execute(db, w.workspaceId, queryService.normalisePlan({ intent: 'stock_by_location', entityQuery: '', locationQuery: 'Service Van 3' }), { question: 'how much is in the van' });
+  assert.equal(result.answer, 'Service Van 3 holds 10 units across 1 product: 10 Trail Ration Pack.');
+});
+
+// 36. Before: "StockChief read that as being about purchasing, but not what to do".
+test('"cancel PO-… we don\'t need it" opens the order at its cancel control and cancels nothing', async () => {
+  const { app, w, po, db } = setup();
+  const agent = request.agent(app);
+  await signIn(agent, w.account.email, w.account.password);
+  const home = await agent.get('/');
+  const posted = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: `cancel ${po.poNumber} we dont need it` });
+  assert.equal(posted.headers.location, `/purchasing/orders/${po.id}#cancel`);
+  assert.notEqual(db.prepare('SELECT status FROM purchase_orders WHERE id = ?').get(po.id).status, 'CANCELLED');
+});
+
+// 44. Before: read as a stock change, then "Which location?".
+test('"we got a return today, 2 … from Marlow, one is damaged" opens the return form filled in', async () => {
+  const { app, w } = setup();
+  const agent = request.agent(app);
+  await signIn(agent, w.account.email, w.account.password);
+  const home = await agent.get('/');
+  const posted = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'we got a return today, 2 copper elbow from Marlow, one is damaged' });
+  assert.equal(posted.status, 303);
+  assert.match(posted.headers.location, /^\/warehouse\/operations\?returnCustomer=Marlow&returnQuantity=2&returnReason=Damaged&returnProduct=Copper\+Elbow#customer-returns$/);
+});

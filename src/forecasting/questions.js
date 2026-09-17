@@ -75,7 +75,21 @@ const EXECUTORS = {
   /** What demand is StockChief expecting over the requested future period? */
   demand_forecast(db, workspaceId, plan = {}) {
     const horizonDays = Math.max(1, Math.min(Number(plan.windowDays || 30), 365));
-    const skuIds = db.prepare(`SELECT s.id FROM skus s
+    /*
+     * A named product is the question. "Do we have enough gloves for the
+     * winter?" was forecast across the whole inventory and answered about
+     * Copper Elbow, the busiest product, with gloves nowhere in the sentence.
+     * When the person named something, the forecast is for that, and the
+     * answer puts what they hold beside what they are expected to sell —
+     * which is what "enough" asks.
+     */
+    const scoped = plan.entityQuery
+      ? require('../attention/query-service').resolveSkus(db, workspaceId, plan.entityQuery, 400)
+      : null;
+    if (plan.entityQuery && (!scoped || !scoped.length)) {
+      return { rows: [], columns: ['product', 'expectedUnits', 'days'], answer: `StockChief could not find a product matching “${plan.entityQuery}” to forecast.` };
+    }
+    const skuIds = scoped ? scoped.map((s) => s.id) : db.prepare(`SELECT s.id FROM skus s
       WHERE s.workspace_id = ? AND s.is_active = 1
       ORDER BY s.created_at LIMIT 400`).all(workspaceId).map((row) => row.id);
     const rows = [];
@@ -96,6 +110,19 @@ const EXECUTORS = {
     }
     rows.sort((a, b) => b.expectedUnits - a.expectedUnits);
     const measurable = rows.filter((row) => row.dailyRate !== '—');
+    if (scoped) {
+      const onHand = db.prepare(`SELECT COALESCE(SUM(on_hand), 0) AS n FROM balances WHERE workspace_id = ? AND sku_id IN (${skuIds.map(() => '?').join(',')})`)
+        .get(workspaceId, ...skuIds).n;
+      const expected = rows.reduce((n, row) => n + Number(row.expectedUnits || 0), 0);
+      const label = scoped.length === 1 ? rows[0] ? rows[0].product : plan.entityQuery : `${plan.entityQuery} (${scoped.length} variants)`;
+      const months = Math.round(horizonDays / 30);
+      const span = months >= 2 ? `${months} months` : `${horizonDays} days`;
+      const verdict = !measurable.length
+        ? `${label}: ${onHand} on hand. None of ${scoped.length === 1 ? 'it' : 'these'} has sold often enough yet for StockChief to predict demand, so it cannot say whether that is enough.`
+        : `${label}: ${onHand} on hand, and StockChief expects about ${expected} to sell over the next ${span} — ${onHand >= expected ? `enough, with about ${onHand - expected} to spare` : `about ${expected - onHand} short`} (${measurable[0].confidence} confidence, from recent sales).`;
+      return { rows: rows.slice(0, 25), columns: ['product', 'expectedUnits', 'days', 'dailyRate', 'confidence', 'evidence'],
+        handoff: { href: '/planning', label: 'Open Planning and forecasts' }, answer: verdict };
+    }
     return {
       rows: rows.slice(0, 25),
       columns: ['product', 'expectedUnits', 'days', 'dailyRate', 'confidence', 'evidence'],

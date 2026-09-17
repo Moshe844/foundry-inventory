@@ -14,9 +14,29 @@ const NAVIGATION_TIMEOUT_MS = 8_000;
 function isBusinessDataQuestion(text) {
   const value = String(text || '');
   if (WEBSITE_LOCATION_WORDS.test(value)) return false;
+  // "Do we have enough gloves for the winter?" is about gloves, not about
+  // whether StockChief has a feature; it was answered with the status of
+  // the selling-prices capability because "sell" appeared in the sentence.
+  if (/\b(?:do|does|did)\s+we\s+have\b|\benough\b|\bhow\s+(?:many|much)\b|\bin\s+stock\b|\bon\s+hand\b|\bleft\b/i.test(value)) return true;
   return /\b(?:how many|how much|which|what)\b.*\b(?:stock|inventory|product|sku|order|customer|supplier|sale|payment)\b/i.test(value)
     || /\bwhere\s+(?:is|are)\s+(?:my|our|the)\b/i.test(value)
     || /\bwhere\b.*\b(?:stock|inventory|units?|products?|skus?)\b.*\b(?:held|stored|located|left)\b/i.test(value);
+}
+
+/** Whether the sentence names one of this inventory's own products. */
+function mentionsProduct(db, workspaceId, text) {
+  if (!db || !workspaceId) return false;
+  const said = String(text || '').toLowerCase();
+  try {
+    const names = db.prepare('SELECT name FROM items WHERE workspace_id = ? AND is_active = 1 LIMIT 500').all(workspaceId).map((r) => String(r.name || '').toLowerCase());
+    return names.some((name) => {
+      if (!name) return false;
+      if (said.includes(name)) return true;
+      // "gloves" names Harbour Work Glove: the product's last word, plural or not.
+      const last = name.split(/\s+/).pop().replace(/s$/, '');
+      return last.length > 3 && new RegExp(`\\b${last.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}s?\\b`).test(said);
+    });
+  } catch { return false; }
 }
 
 function navigationTokens(value) {
@@ -209,7 +229,10 @@ function resolve(db, workspaceId, membership, input, options = {}) {
   const text = String(input || '').trim();
   if (!text) return null;
 
-  const unavailable = unavailableMatch(text, brain);
+  // A question about the business's own stock, orders or money is never a
+  // question about StockChief's features, whatever words it shares with one.
+  const aboutTheBusiness = isBusinessDataQuestion(text) || mentionsProduct(db, workspaceId, text);
+  const unavailable = aboutTheBusiness ? null : unavailableMatch(text, brain);
   if (unavailable && /\b(?:can|where|how|support|available|have|do)\b/i.test(text)) {
     const access = brain.accessForCapability(unavailable.id, membership);
     return { kind: 'capability', supported: true, available: false, canNavigate: false, capabilityId: unavailable.id,
@@ -218,7 +241,7 @@ function resolve(db, workspaceId, membership, input, options = {}) {
   }
 
 
-  if (/\b(?:can (?:i|we|foundry|stockchief)|do (?:you|we) (?:have|support)|is .*available)\b/i.test(text)) {
+  if (!aboutTheBusiness && /\b(?:can (?:i|we|foundry|stockchief)|do (?:you|we) (?:have|support)|is .*available)\b/i.test(text)) {
     const capability = capabilityMatch(text, brain);
     if (capability) {
       const evaluation = brain.evaluateCapability(db, workspaceId, capability.id, membership);

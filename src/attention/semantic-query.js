@@ -108,6 +108,21 @@ function mismatchedIntent(question, intent) {
  * location that exists, the query must filter on that location. Otherwise
  * the answer is not to the question asked.
  */
+/** The products this inventory has whose name, or whose last word, the question uses. */
+function namedProducts(db, workspaceId, question) {
+ const said=String(question||'').toLowerCase();
+ const names=db.prepare('SELECT name FROM items WHERE workspace_id = ? AND is_active = 1 LIMIT 500').all(workspaceId).map((r)=>String(r.name||''));
+ const hits=new Set();
+ for(const name of names){
+  const lower=name.toLowerCase();
+  if(!lower)continue;
+  if(said.includes(lower)){hits.add(name);continue;}
+  const last=lower.split(/\s+/).pop().replace(/s$/,'');
+  if(last.length>3&&new RegExp(`\\b${last.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}s?\\b`).test(said))hits.add(name);
+ }
+ return [...hits];
+}
+
 function scopeProblems(db, workspaceId, question, part) {
  const problems = [];
  const q = String(question || '');
@@ -172,6 +187,20 @@ function executePart(db,workspaceId,part,options){
   const lost=scopeProblems(db,workspaceId,part.question,part);
   if(lost.length)return empty(part.question,`I could not keep ${lost.join(' and ')} in that lookup, so the figures would not be for what you asked. Restate it with the code and place spelled out and I will read only that.`);
   return records.execute(db,workspaceId,part.recordQuery,options);
+ }
+ /*
+  * A product the question names must survive into a lookup that can take
+  * one. "Do we have enough gloves for the winter?" was planned as a demand
+  * forecast with no product, and answered about the whole inventory —
+  * headed by Copper Elbow. When the question names exactly one product and
+  * the lookup is not a whole-inventory report, that product is the scope.
+  */
+ const globalReportsList=['inventory_summary','inventory_valuation','inventory_selling_value','financial_summary','business_health','cash_pressure','profit_and_loss',
+  'balance_sheet','cash_position','receivables_aging','payables_aging','sales_tax_summary','bills_due','financial_comparison','slow_inventory_value','books_health','top_customers',
+  'connection_summary','connection_last_event','connection_mapping_issues','connection_diagnostics','stop_automation','sales_summary','what_to_order','replenishment','reorder_settings_review','capability_status'];
+ if(!part.entityQuery&&part.intent!=='record_query'&&!globalReportsList.includes(part.intent)){
+  const named=namedProducts(db,workspaceId,part.question||'');
+  if(named.length===1)part={...part,entityQuery:named[0]};
  }
  if(mismatchedIntent(part.question||'',part.intent)===null&&part.entityQuery){
   const lost=scopeProblems(db,workspaceId,part.question,part).filter((p)=>p.startsWith('the location'));

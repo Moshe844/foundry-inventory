@@ -637,6 +637,39 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     return res.redirect(303, `/suppliers?${query.toString()}#add-supplier`);
   }
 
+  /*
+   * "We got a return today, 2 children's sweater navy 4 from Marlow, one is
+   * damaged." A customer return is authorised, quarantined, inspected and
+   * refunded on the warehouse page; the sentence fills that form in —
+   * customer's order, product, quantity, reason — and the person presses
+   * Request. It used to be read as a stock change and refused.
+   */
+  const customerReturn = /\b(?:got|received|had|have)\s+(?:a\s+)?returns?\b|\b(?:returned|sent\s+back|brought\s+back)\b|\bwants?\s+to\s+return\b/i.test(message)
+    && !/\b(?:supplier|vendor|send\s+(?:it\s+)?back\s+to)\b/i.test(message);
+  if (customerReturn && !attached) {
+    const customers = req.db.prepare(`SELECT id, name FROM customers WHERE workspace_id = ? AND (record_state IS NULL OR record_state <> 'ARCHIVED')`).all(req.ctx.workspaceId);
+    const said = message.toLowerCase();
+    const named = customers.filter((c) => {
+      const words = String(c.name || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+      return words.length && words.some((w) => new RegExp(`\\b${w}\\b`).test(said));
+    });
+    // No customer by that name is still a return: the form opens with the
+    // name shown, and the person picks the order.
+    const spoken = (/\bfrom\s+([A-Z][A-Za-z0-9'&. -]{1,40}?)(?=\s*(?:,|\.|;|$|\s+(?:one|two|and|who|which|the|they|it)\b))/.exec(message) || [])[1] || '';
+    if (named.length === 1 || (named.length === 0 && spoken)) {
+      const quantity = (/\b(\d+)\s+(?:x\s+)?[a-z]/i.exec(message.replace(/\b(?:one|two|three|four|five)\b/gi, (w) => ({ one: 1, two: 2, three: 3, four: 4, five: 5 })[w.toLowerCase()])) || [])[1] || '1';
+      const reason = /\bdamaged\b/i.test(message) ? 'Damaged' : /\bwrong\s+size\b/i.test(message) ? 'Wrong size' : /\bfaulty|broken|defective\b/i.test(message) ? 'Faulty' : /\bunwanted|changed\s+(?:their|his|her)\s+mind\b/i.test(message) ? 'Unwanted' : '';
+      const product = mentionsKnownProduct(req.db, req.ctx.workspaceId, message) ? (req.db.prepare('SELECT name FROM items WHERE workspace_id = ? AND is_active = 1').all(req.ctx.workspaceId)
+        .map((r) => r.name).find((name) => said.includes(String(name).toLowerCase().replace(/'/g, ''))) || '') : '';
+      const who = named[0] ? named[0].name : spoken.trim();
+      const query = new URLSearchParams({ returnCustomer: who, returnQuantity: quantity, ...(reason ? { returnReason: reason } : {}), ...(product ? { returnProduct: product } : {}) });
+      req.flash('info', named[0]
+        ? `StockChief filled in a return from ${who}${quantity !== '1' ? ` for ${quantity}` : ''}${reason ? ` (${reason.toLowerCase()})` : ''}. Check the order and the line, then press Request — nothing is recorded yet.`
+        : `StockChief has no customer called “${who}”. Pick the order the return is against, then press Request — nothing is recorded yet.`);
+      return res.redirect(303, `/warehouse/operations?${query.toString()}#customer-returns`);
+    }
+  }
+
   // "Newly added products" is a provenance request, not an ambiguous product
   // name. Resolve it from the most recent completed import before asking the
   // general language router, whose catalogue candidates cannot know which
@@ -958,6 +991,25 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
      * the whole planner and report the work it had prepared, as if that were
      * an answer to what was said.
      */
+    /*
+     * "Cancel PO-1009, we don't need it." A cancellation is done on the
+     * order's own page, where the confirmation and the reason live; the
+     * sentence takes the person there and says so, and nothing is cancelled
+     * from here. It used to be met with "read that as being about
+     * purchasing, but not what to do".
+     */
+    const cancelling = /\b(?:cancel|void|scrap|kill|drop)\b/i.test(message) && /\b(PO-\d+)\b/i.exec(message);
+    if (cancelling) {
+      const order = req.db.prepare(`SELECT id, po_number, status FROM purchase_orders WHERE workspace_id = ? AND UPPER(po_number) = ?`)
+        .get(req.ctx.workspaceId, cancelling[1].toUpperCase());
+      if (order) {
+        intentRouter.markRouted(req.db, req.ctx, intent.id, 'purchase_order', order.id);
+        req.flash('info', ['CANCELLED', 'RECEIVED', 'CLOSED'].includes(order.status)
+          ? `${order.po_number} is already ${order.status.toLowerCase()}; there is nothing to cancel.`
+          : `To cancel ${order.po_number}, press Cancel on its page and say why — nothing is cancelled until you do.`);
+        return res.redirect(303, `/purchasing/orders/${order.id}#cancel`);
+      }
+    }
     const asksForThePlan = /\b(?:what|which|anything)\s+(?:should|do|to)\s+(?:i|we)\s+(?:order|buy|reorder|restock)|\b(?:order|buy|restock|replenish)\s+(?:what|whatever|everything)\s+(?:we|is|i)\s+(?:need|needed|are\s+low|am\s+low|running\s+low)|\b(?:run|do|make|prepare|plan)\s+(?:the\s+)?(?:replenishment|restock|reorder|purchasing)\b|\bwhat(?:'s|\s+is)\s+(?:running\s+)?low\b/i.test(message);
     if (!asksForThePlan) {
       req.session.pendingActionQuestion = {
