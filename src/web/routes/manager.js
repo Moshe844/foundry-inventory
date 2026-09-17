@@ -1106,7 +1106,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'purchase_order', specific.order.id);
       managerContext.remember(req.db, req.ctx, { purchaseOrderId: specific.order.id });
       assistantTurns.remember(req, { kind: 'purchase_order', refId: specific.order.id, label: specific.order.poNumber, href: `/purchasing/orders/${specific.order.id}` });
-      req.flash('success', `StockChief drafted ${specific.order.poNumber}. Nothing is ordered until you approve it.`);
+      req.flash('success', `StockChief drafted ${specific.order.poNumber}${(specific.order.lines || []).length > 1 ? ` with ${specific.order.lines.length} lines` : ""}. Nothing is ordered until you approve it.`);
       return res.redirect(303, `/purchasing/orders/${specific.order.id}`);
     }
     /*

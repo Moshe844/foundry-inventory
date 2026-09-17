@@ -268,7 +268,7 @@ router.post(
             : `${order.poNumber} was approved. Its supplier message is prepared but has not been sent.`);
         return res.redirect(303, `/purchasing/orders/${order.id}`);
       }
-      req.flash('success', `StockChief drafted ${result.order.poNumber}. Nothing is ordered and nobody is contacted until you approve it.`);
+      req.flash('success', `StockChief drafted ${result.order.poNumber}${(result.order.lines || []).length > 1 ? ` with ${result.order.lines.length} lines` : ""}. Nothing is ordered and nobody is contacted until you approve it.`);
       return res.redirect(303, `/purchasing/orders/${result.order.id}`);
     }
     const handedOn = actionHandoff.handOff(req, result);

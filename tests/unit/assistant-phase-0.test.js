@@ -104,7 +104,7 @@ test('the reader fails in plain words and never in provider vocabulary', async (
   );
 });
 
-test('an order naming two products is refused whole and pointed at the order form', async () => {
+test('an order naming two products, before phase 3, was refused whole; it is now one draft with both lines (see assistant-phase-3)', async () => {
   const { db } = makeDatabase();
   const w = seedWorkspace(db);
   const membership = authService.getMembership(db, w.workspaceId, w.accountId);
@@ -114,13 +114,12 @@ test('an order naming two products is refused whole and pointed at the order for
     actionType: 'purchase', item, variant: '', quantity, sourceLocation: '', destinationLocation: '',
     supplier: 'Acme Trade Supply', purchaseUnit: '', adjustmentTarget: -1, reasonCode: '',
   });
+  // Acme is not a supplier here, so the first line stops the order: a question, named by line, and no draft for the first product alone.
   const result = await actionService.interpret(db, w.ctx, membership,
     'Create a PO for 12 Copper Elbow and 6 Trail Ration Pack from Acme Trade Supply.',
     { parsedIntent: { lines: [purchase('Copper Elbow', 12), purchase('Trail Ration Pack', 6)], clarifyingQuestion: '', unsupportedReason: '' } });
-  assert.equal(result.kind, 'unsupported');
-  assert.match(result.message, /names 2 products \(12 Copper Elbow; 6 Trail Ration Pack\) from Acme Trade Supply/);
-  assert.match(result.message, /prepared nothing rather than order only the first/);
-  assert.equal(result.where.href, '/purchasing/orders/new');
+  assert.notEqual(result.kind, 'purchase_order');
+  assert.match(String(result.question || result.message), /^Line 1 of 2 \(12 Copper Elbow\): /);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM purchase_orders').get().n, 0, 'no order is drafted for the first product alone');
 });
 

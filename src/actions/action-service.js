@@ -397,18 +397,34 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
    * products, or mixing an order with stock movements, is refused whole and
    * pointed at the order form that takes every line.
    */
-  if (purchase && usable.length > 1) {
+  const purchases = usable.filter((line) => line.actionType === 'purchase');
+  if (purchase && purchases.length !== usable.length) {
     const named = usable.map((line) => [line.quantity > 0 ? line.quantity : '', line.item, line.variant].filter(Boolean).join(' ')).filter(Boolean);
-    const purchases = usable.filter((line) => line.actionType === 'purchase');
-    const supplierHint = purchase.supplier ? ` from ${purchase.supplier}` : '';
     return {
       kind: 'unsupported',
       purchaseSpecific: true,
-      message: purchases.length === usable.length
-        ? `That order names ${purchases.length} products (${named.join('; ')})${supplierHint}. From a sentence StockChief writes an order for one product at a time, so it prepared nothing rather than order only the first. Order them one per message, or write the whole order on the purchase order form.`
-        : `That mixes a purchase with other changes (${named.join('; ')}). StockChief prepares one kind of change at a time, so it prepared nothing rather than do part of it. Send the order on its own, then the rest.`,
+      message: `That mixes a purchase with other changes (${named.join('; ')}). StockChief prepares one kind of change at a time, so it prepared nothing rather than do part of it. Send the order on its own, then the rest.`,
       where: { label: 'Write the purchase order', href: '/purchasing/orders/new' },
     };
+  }
+  /*
+   * Several products in one order: one draft with every line, or nothing.
+   * Each line is resolved before the draft is written; the first that cannot
+   * be is the question, named by line; different suppliers are refused with
+   * the split; and the draft records lines asked for against lines carried.
+   */
+  if (purchase && purchases.length > 1) {
+    const result = purchaseIntent.buildMany(db, ctx, membership, purchases, {
+      previewOnly: Boolean(options.previewOnly), instruction: text, purchaseDetails: options.purchaseDetails || null,
+      selectedPurchaseLineIndex: options.selectedPurchaseLineIndex, selectedSkuId: options.selectedPurchaseSkuId,
+      confirmedSupplierCreationName: options.confirmedSupplierCreationName || null,
+    });
+    if (!result.ok) {
+      if (result.unsupported) return { kind: 'unsupported', message: result.unsupported, purchaseSpecific: true, where: { label: 'Write the purchase order', href: '/purchasing/orders/new' } };
+      return { kind: 'question', purchaseSpecific: true, question: result.question, clarification: result.clarification || null,
+        choices: result.choices || (result.clarification && result.clarification.choices) || null };
+    }
+    return { kind: 'purchase_order', order: result.order, assumptions: result.assumptions, purchaseSpecific: true, approvedByConfirmation: Boolean(options.approveAfterCreation) };
   }
   if (purchase) {
     const purchaseSpecific = Boolean(

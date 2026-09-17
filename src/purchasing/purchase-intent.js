@@ -19,6 +19,7 @@ const supplierService = require('./supplier-service');
 const poService = require('./po-service');
 const replenishment = require('./replenishment');
 const { ValidationError } = require('../domain/errors');
+const { inTransaction } = require('../db');
 
 /** Finds the supplier a person named, tolerating spelling as elsewhere. */
 function resolveSupplier(db, workspaceId, text) {
@@ -74,7 +75,89 @@ function resolveSupplier(db, workspaceId, text) {
  *
  * @returns {{ok: true, order}|{ok: false, question}|{ok: false, unsupported}}
  */
+/*
+ * One order from one sentence, however many products it names.
+ *
+ * Every line is resolved before anything is written — product, supplier,
+ * pack size, quantity — and the first thing that cannot be resolved is the
+ * question, with the line it belongs to named. Lines that resolve to
+ * different suppliers are not one order: that is said, with the split, and
+ * nothing is drafted. The draft records how many lines were asked for and
+ * how many it carries, so a dropped line can never pass as a complete order.
+ */
+function buildMany(db, ctx, membership, lines, options = {}) {
+  permissions.assertCan(membership, permissions.CREATE_PO, 'prepare purchase orders');
+  if (!Array.isArray(lines) || !lines.length) return { ok: false, question: 'What would you like to order?' };
+  if (lines.length === 1) return build(db, ctx, membership, lines[0], options);
+  // All or nothing: a supplier link made for line 1 does not outlive a line 3
+  // that could not be read.
+  const stop = {};
+  try {
+    return inTransaction(db, () => {
+      const out = buildManyInside(db, ctx, membership, lines, options);
+      if (!out.ok) { stop.result = out; throw stop; }
+      return out;
+    });
+  } catch (err) {
+    if (err === stop) return stop.result;
+    throw err;
+  }
+}
+
+function buildManyInside(db, ctx, membership, lines, options) {
+  const resolved = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const one = resolveLine(db, ctx, membership, line, { ...options, manyLines: true, selectedSkuId: options.selectedPurchaseLineIndex === index ? options.selectedSkuId : null });
+    if (!one.ok) {
+      const named = [line.quantity > 0 ? line.quantity : '', line.item, line.variant].filter(Boolean).join(' ');
+      return { ...one, lineIndex: index,
+        question: one.question ? `Line ${index + 1} of ${lines.length} (${named}): ${one.question}` : one.question,
+        unsupported: one.unsupported ? `Line ${index + 1} of ${lines.length} (${named}): ${one.unsupported} Nothing was drafted.` : one.unsupported };
+    }
+    resolved.push(one);
+  }
+  const suppliers = [...new Map(resolved.map((r) => [r.supplier.id, r.supplier])).values()];
+  if (suppliers.length > 1) {
+    const split = suppliers.map((s) => `${resolved.filter((r) => r.supplier.id === s.id).map((r) => r.sku.item_name).join(', ')} from ${s.name}`).join('; ');
+    return { ok: false, unsupported: `Those come from different suppliers — ${split} — and a purchase order goes to one supplier. Order them one supplier at a time, or write the order on the form. Nothing was drafted.` };
+  }
+  const supplier = suppliers[0];
+  const assumptions = resolved.flatMap((r, i) => r.assumptions.map((a) => `Line ${i + 1}: ${a}`));
+  const requested = Array.isArray(options.requestedLines) ? options.requestedLines : lines.map((l) => [l.quantity > 0 ? l.quantity : '', l.item, l.variant].filter(Boolean).join(' '));
+  if (requested.length !== resolved.length) {
+    return { ok: false, unsupported: `You asked for ${requested.length} lines and StockChief could only prepare ${resolved.length}, so it drafted nothing rather than an order with lines missing. Write each product on its own line, or use the order form.` };
+  }
+  assumptions.push(`${resolved.length} lines asked for, ${resolved.length} on the order: ${resolved.map((r) => `${r.purchaseUnits} ${r.supplierItem.purchase_unit}${r.purchaseUnits === 1 ? '' : 's'} of ${r.sku.item_name}${r.sku.variant_label ? ` / ${r.sku.variant_label}` : ''}`).join('; ')}.`);
+  const order = poService.createOrder(db, ctx, membership, {
+    supplierId: supplier.id,
+    expectedDate: options.purchaseDetails?.expectedDate ?? resolved.find((r) => r.groundedDate)?.groundedDate ?? null,
+    destinationLocationId: options.purchaseDetails?.destinationLocationId || null,
+    notes: options.purchaseDetails?.notes ?? resolved.find((r) => r.groundedNotes)?.groundedNotes ?? null,
+    source: 'instruction',
+    sourceDetail: { instruction: options.instruction || null, assumptions, requestedLines: requested, preparedLines: resolved.length },
+    lines: resolved.map((r) => ({ skuId: r.sku.id, quantityPurchaseUnits: r.purchaseUnits, unitCost: r.unitCost })),
+  });
+  return { ok: true, order, assumptions };
+}
+
 function build(db, ctx, membership, line, options = {}) {
+  const one = resolveLine(db, ctx, membership, line, options);
+  if (!one.ok) return one;
+  const order = poService.createOrder(db, ctx, membership, {
+    supplierId: one.supplier.id,
+    expectedDate: options.purchaseDetails?.expectedDate ?? one.groundedDate,
+    destinationLocationId: options.purchaseDetails?.destinationLocationId || null,
+    notes: options.purchaseDetails?.notes ?? one.groundedNotes,
+    source: 'instruction',
+    sourceDetail: { instruction: options.instruction || null, assumptions: one.assumptions, requestedLines: [[line.quantity > 0 ? line.quantity : '', line.item, line.variant].filter(Boolean).join(' ')], preparedLines: 1 },
+    lines: [{ skuId: one.sku.id, quantityPurchaseUnits: one.purchaseUnits, unitCost: one.unitCost }],
+  });
+  return { ok: true, order, assumptions: one.assumptions };
+}
+
+/** One line of an order, resolved but not written: product, supplier, pack size, quantity. */
+function resolveLine(db, ctx, membership, line, options = {}) {
   permissions.assertCan(membership, permissions.CREATE_PO, 'prepare purchase orders');
   const source = String(options.instruction || '');
   const date = String(line.purchaseExpectedDate || '');
@@ -292,21 +375,10 @@ function build(db, ctx, membership, line, options = {}) {
     };
   }
 
-  const order = poService.createOrder(db, ctx, membership, {
-    supplierId: supplier.id,
-    expectedDate: options.purchaseDetails?.expectedDate ?? groundedDate,
-    destinationLocationId: options.purchaseDetails?.destinationLocationId || null,
-    notes: options.purchaseDetails?.notes ?? groundedNotes,
-    source: 'instruction',
-    sourceDetail: { instruction: options.instruction || null, assumptions },
-    lines: [{
-      skuId: sku.value.id,
-      quantityPurchaseUnits: purchaseUnits,
-      unitCost: options.purchaseDetails?.unitCost ?? statedUnitCost(options.instruction),
-    }],
-  });
-
-  return { ok: true, order, assumptions };
+  return { ok: true, sku: sku.value, supplier, supplierItem, purchaseUnits, assumptions, groundedDate, groundedNotes,
+    // A cost stated on the line itself wins; a cost stated once in the sentence
+    // belongs to a one-line order only, never to every line of a list.
+    unitCost: options.purchaseDetails?.unitCost ?? (line.unitCostMinor >= 0 ? line.unitCostMinor / 100 : options.manyLines ? undefined : statedUnitCost(options.instruction)) };
 }
 
 /** A price is a business fact only when the owner wrote an explicit amount. */
@@ -327,4 +399,4 @@ function looksLikePurchaseUnit(said, purchaseUnit) {
   return text === unit || text === `${unit}s` || unit.startsWith(text) || text.startsWith(unit);
 }
 
-module.exports = { build, resolveSupplier, looksLikePurchaseUnit, statedUnitCost };
+module.exports = { build, buildMany, resolveLine, resolveSupplier, looksLikePurchaseUnit, statedUnitCost };
