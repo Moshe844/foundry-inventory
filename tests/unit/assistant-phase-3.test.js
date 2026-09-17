@@ -129,3 +129,56 @@ test('"has SO-… shipped and where is it?" is a question about the order, not a
   assert.equal(navigation.isBusinessDataQuestion('has SO-1006 shipped and where is it?'), true);
   assert.equal(navigation.isBusinessDataQuestion('open SO-1006'), false);
 });
+
+// The tool registry and the record of calls.
+test('every tool is declared once: id, kind, schema, permission; input is validated and permission checked before anything runs', async () => {
+  const tools = require('../../src/assistant/tools');
+  const ids = tools.list().map((t) => t.id);
+  assert.deepEqual(ids, ['records.query', 'lookup.run', 'question.ask', 'action.prepare', 'price.change', 'instruction.remember', 'message.draft', 'navigate.resolve']);
+  for (const t of tools.list()) { assert.ok(t.input && t.input.type === 'object', t.id); assert.ok(t.permission, t.id); assert.ok(tools.KINDS.includes(t.kind), t.id); }
+  const { db, w, membership } = setup();
+  await assert.rejects(tools.call(db, w.ctx, membership, 'records.query', { dataset: 'nothing_like_this' }), /could not use read your records/);
+  await assert.rejects(tools.call(db, w.ctx, membership, 'nothing.here', {}), /has no tool called/);
+  const staff = { role: 'accountant', permissions: [] };
+  await assert.rejects(tools.call(db, w.ctx, staff, 'action.prepare', { instruction: 'move 5 copper elbow to the store' }), /Your role \(accountant\) does not allow StockChief to prepare a change to your stock or catalogue/);
+  const read = await tools.call(db, w.ctx, membership, 'records.query', { dataset: 'products' });
+  assert.equal(read.tool, 'records.query'); assert.equal(read.kind, 'read'); assert.equal(read.ok, true);
+  assert.ok(read.result.rows.length >= 2);
+  const rows = db.prepare("SELECT purpose, kind, outcome FROM ai_calls ORDER BY created_at").all();
+  assert.deepEqual(rows.map((r) => [r.purpose, r.kind, r.outcome]), [
+    ['records.query', 'tool', 'invalid_input'], ['action.prepare', 'tool', 'refused'], ['records.query', 'tool', 'ok'],
+  ]);
+});
+
+test('every model call is on the record, redacted, tied to the goal it served, and its cost is said on the answer', async () => {
+  const request = require('supertest');
+  const { createApp } = require('../../src/app');
+  const { signIn, csrfFrom } = require('../helpers');
+  const calls = require('../../src/assistant/calls');
+  const engine = require('../../src/domain/inventory-engine');
+  const { db, w, elbow } = setup();
+  engine.receive(db, w.ctx, { skuId: elbow.skuId, locationId: w.main.id, quantity: 40 });
+  const provider = { name: 'fake', model: 'fake-1', async complete(r) {
+    if (r.schemaName === 'assistant_understanding') return { data: { continuesPrevious: false, goals: [{ kind: 'lookup', text: 'how many Copper Elbow do we have' }] }, usage: { inputTokens: 10, outputTokens: 5, latencyMs: 12 } };
+    if (r.schemaName === 'stockchief_semantic_query') return { data: { decision: 'answer', interpretation: 'stock of Copper Elbow', clarification: '', continuesPrevious: false, unsupportedReason: '', nearest: '', parts: [{ question: 'how many Copper Elbow do we have', intent: 'stock_level', entityQuery: 'Copper Elbow', locationQuery: '', windowDays: 30, limit: 25, unsupportedReason: '', recordQuery: null }] }, usage: { inputTokens: 100, outputTokens: 40, latencyMs: 300 } };
+    return { data: {}, usage: {} };
+  } };
+  const app = createApp({ db, env: 'test', sessionSecret: 'phase3', aiProvider: provider });
+  const agent = request.agent(app);
+  await signIn(agent, w.account.email, w.account.password);
+  const home = await agent.get('/');
+  const posted = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'how many Copper Elbow do we have', queryConversation: '1' });
+  const page = await agent.get(posted.headers.location);
+  assert.match(page.text, /Copper Elbow: 40/);
+  const rows = db.prepare("SELECT kind, purpose, model, prompt_redacted, input_tokens, goal_id, outcome FROM ai_calls WHERE kind = 'model' ORDER BY created_at").all();
+  assert.ok(rows.length >= 1, JSON.stringify(rows));
+  assert.ok(rows.every((r) => r.model === 'fake-1' && r.outcome === 'ok' && r.goal_id), 'each model call names the goal it served');
+  assert.ok(rows.every((r) => !/Copper Elbow/.test(r.prompt_redacted || '')), 'record values are not kept in the prompt');
+  assert.equal(rows.find((r) => r.purpose === 'stockchief_semantic_query').input_tokens, 100);
+  const goal = db.prepare("SELECT id, provenance FROM assistant_goals ORDER BY created_at DESC LIMIT 1").get();
+  const provenance = JSON.parse(goal.provenance);
+  assert.ok(provenance.modelCalls >= 1, 'the answer records what it cost');
+  assert.equal(calls.forGoal(db, goal.id).modelCalls, provenance.modelCalls);
+  assert.match(page.text, /\d+ model calls?, \d+ ms/);
+  assert.equal(calls.redact('Order 12 "Copper Elbow" at $2.50'), 'Order # "…" at $#');
+});

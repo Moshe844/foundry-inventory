@@ -20,6 +20,8 @@ const signalEngine = require('../../signals/signal-engine');
 const { requireAuth, asyncRoute } = require('../middleware');
 const { trimOrNull, nowIso } = require('../../lib/util');
 const ledger = require('../../assistant/ledger');
+const calls = require('../../assistant/calls');
+const tools = require('../../assistant/tools');
 const assistantTurns = require('../../assistant/turns');
 
 const router = express.Router();
@@ -416,17 +418,18 @@ router.get(
         plan: { intent: 'conversation_recap', entityQuery: '', locationQuery: '' }, interpretation: 'what this conversation has done so far', spoken: null,
       };
     } else if (question) {
+      // The goal first, so the model calls the answer takes are on its record.
+      req.currentGoalId = goalFor(req, question);
+      calls.extend({ goalId: req.currentGoalId });
       try {
         const pending = req.session.pendingAskResult;
         const reusable = pending && pending.token === req.query.turn && pending.workspaceId === req.ctx.workspaceId && pending.question === question;
         if (reusable) delete req.session.pendingAskResult;
         if (reusable && pending.error) error=pending.error;
-        result = reusable ? pending.result : await queryPlanner.ask(req.db, req.ctx.workspaceId, question, {
+        result = reusable ? pending.result : await tools.use(req.db, req.ctx, req.user, 'question.ask', { question }, {
           provider: req.app.locals.aiProvider || undefined,
           context: briefingContext(req.db, req.ctx.workspaceId),
-          membership: req.user,
           productBrain: req.app.locals.productBrain,
-          actorId: req.ctx.actorId,
           currentHref: req.get('referer') || '',
           conversation,
           timezone: 'America/New_York',
@@ -469,9 +472,13 @@ router.get(
       }
     }
     if (question && (result || error)) {
-      const goalId = goalFor(req, question);
+      const goalId = req.currentGoalId || goalFor(req, question);
       delete req.session.assistantOpenGoal;
-      ledger.settle(req.db, req.ctx, goalId, askOutcome(question, result, error));
+      const outcome = askOutcome(question, result, error);
+      // What the answer cost, said on the page: model calls and their time.
+      const cost = calls.forGoal(req.db, goalId);
+      if (cost.modelCalls && outcome.status === 'answered') outcome.provenance = { ...outcome.provenance, modelCalls: cost.modelCalls, modelMs: cost.modelMs };
+      ledger.settle(req.db, req.ctx, goalId, outcome);
       req.currentGoalId = goalId;
     }
     const transcript = ledger.conversation(req.db, req.ctx, assistantTurns.conversationId(req), { limit: 12 });

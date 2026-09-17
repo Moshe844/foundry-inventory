@@ -12,6 +12,7 @@
 const express = require('express');
 const ledger = require('../../assistant/ledger');
 const assistantTurns = require('../../assistant/turns');
+const tools = require('../../assistant/tools');
 const crypto = require('node:crypto');
 const config = require('../../config');
 const actionService = require('../../actions/action-service');
@@ -193,7 +194,7 @@ router.post(
         // sentinel back into the language reader. Re-ground the original
         // request, require it to produce the same structured location
         // continuation, and only then apply the all-locations answer.
-        const grounded = await actionService.interpret(req.db, req.ctx, membershipOf(req), original, {
+        const grounded = await tools.use(req.db, req.ctx, membershipOf(req), 'action.prepare', { instruction: original }, {
           provider: req.app.locals.aiProvider || undefined,
         });
         if (grounded.kind === 'question' && grounded.continuation) {
@@ -212,7 +213,7 @@ router.post(
           };
         }
       } else {
-        result = await actionService.interpret(req.db, req.ctx, membershipOf(req), instruction, {
+        result = await tools.use(req.db, req.ctx, membershipOf(req), 'action.prepare', { instruction }, {
           provider: req.app.locals.aiProvider || undefined,
         });
       }

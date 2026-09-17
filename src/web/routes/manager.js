@@ -18,6 +18,7 @@ const proposals = require('../../actions/proposal-service');
 const actionPresenter = require('../../actions/presenter');
 const assistantTurns = require('../../assistant/turns');
 const ledger = require('../../assistant/ledger');
+const tools = require('../../assistant/tools');
 const importPlans = require('../../imports/plan-service');
 const workItems = require('../../autopilot/work-items');
 const operatingInstructions = require('../../manager/operating-instructions');
@@ -515,9 +516,9 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     // a follow-up against its own answer.
     let result;
     try {
-      result = await queryPlanner.ask(req.db, req.ctx.workspaceId, message, {
-        provider:req.app.locals.aiProvider || undefined,membership:req.user,
-        productBrain:req.app.locals.productBrain,actorId:req.ctx.actorId,
+      result = await tools.use(req.db, req.ctx, req.user, 'question.ask', { question: message }, {
+        provider:req.app.locals.aiProvider || undefined,
+        productBrain:req.app.locals.productBrain,
         conversation:previous,timezone:'America/New_York',
         referentNote:req.assistantReferentNote || '',
       });
@@ -1098,9 +1099,8 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     // and the real answer, that nobody is on file to buy it from, was never
     // given. The specific path already exists and answers or asks properly; it
     // just had no caller.
-    const specific = await actionService.interpret(req.db, req.ctx, req.user, message, {
+    const specific = await tools.use(req.db, req.ctx, req.user, 'action.prepare', { instruction: message, previewOnly: Boolean(chatAction) }, {
       provider: req.app.locals.aiProvider || undefined,
-      previewOnly: chatAction,
     });
     if (specific.kind === 'purchase_order' && specific.order) {
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'purchase_order', specific.order.id);
@@ -1203,7 +1203,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   if (intent.handler === 'inventory_action'
       || ['INVENTORY_ACTION', 'CATALOG_CHANGE', 'CONFIGURATION_CHANGE'].includes(intent.intentClass)
       || (readAsWork && ['QUESTION', 'EXPLANATION', 'UNKNOWN'].includes(intent.intentClass))) {
-    const result = await actionService.interpret(req.db, req.ctx, req.user, message, {
+    const result = await tools.use(req.db, req.ctx, req.user, 'action.prepare', { instruction: message }, {
       provider: req.app.locals.aiProvider || undefined,
       referentNote: req.assistantReferentNote || '',
     });
@@ -1316,7 +1316,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     // one?", so it gets asked. A count that genuinely produced an
     // investigation is excluded: that already has somewhere to go.
     if (event.status === 'NEEDS_HUMAN' && !event.investigationId && !event.matchedEntities.purchaseOrderId) {
-      const asAction = await actionService.interpret(req.db, req.ctx, req.user, message, {
+      const asAction = await tools.use(req.db, req.ctx, req.user, 'action.prepare', { instruction: message }, {
         provider: req.app.locals.aiProvider || undefined,
       });
       const actionTarget = actionRedirect(asAction);
@@ -1688,7 +1688,7 @@ router.get(
       return res.redirect(303, '/needs-you');
     }
 
-    const result = await actionService.interpret(req.db, req.ctx, req.user, event.statedAs, {
+    const result = await tools.use(req.db, req.ctx, req.user, 'action.prepare', { instruction: event.statedAs }, {
       provider: req.app.locals.aiProvider || undefined,
     });
 

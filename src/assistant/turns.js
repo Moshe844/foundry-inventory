@@ -86,6 +86,7 @@ async function begin(req, res, message, options = {}) {
   }
   req.assistantTurn = turn;
   req.assistantGoal = goal;
+  require('./calls').extend({ goalId: goal.id });
   // The Ask page settles its own goal with what it said; everything else is
   // settled from where the person was sent.
   req.session.assistantOpenGoal = { goalId: goal.id, message };
@@ -225,6 +226,7 @@ function resume(req, res) {
   }
   if (!goalId) return;
   req.assistantGoal = ledger.getGoal(req.db, req.ctx.workspaceId, goalId) || null;
+  if (req.assistantGoal) require('./calls').extend({ goalId: req.assistantGoal.id });
   if (!req.assistantGoal) return;
   req.assistantTurn = ledger.getTurn(req.db, req.ctx.workspaceId, req.assistantGoal.turnId);
   const redirect = res.redirect.bind(res);
