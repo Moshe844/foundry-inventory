@@ -113,5 +113,9 @@ test('unimplemented scope is clarified rather than silently returning a global f
  const {db,w}=setup();
  const global=semantic.executePart(db,w.workspaceId,{intent:'inventory_valuation',entityQuery:'Ceramic Ring',question:'Value only that ring'},{});
  assert.equal(global.needsClarification,true);assert.equal(global.rows.length,0);
- assert.throws(()=>semantic.executePart(db,w.workspaceId,{...part(query()),entityQuery:'Ceramic Ring'},{}),/unscoped total/);
+ // A product named beside a record lookup narrows it, never widens it: the
+ // count is of products containing the name, not of every product.
+ const scoped=semantic.executePart(db,w.workspaceId,{...part(query()),entityQuery:'Ceramic Ring'},{});
+ assert.match(scoped.answer,/^1 products match your question\.|^No products on record/);
+ assert.throws(()=>semantic.executePart(db,w.workspaceId,{...part(query({dataset:'locations',filters:[]})),entityQuery:'Ceramic Ring'},{}),/have no product to narrow by/);
 });

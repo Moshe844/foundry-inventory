@@ -169,28 +169,43 @@ Rules:
 - locationQuery is the place they named, or ''.
 - windowDays is the period they implied. Default 30. "This week" is 7.
 - limit is how many rows to return. Default 10.
-- Choose 'action' for anything that would change stock — StockChief can do that,
-  just not from this page, and it hands the request over.
-- StockChief now keeps suppliers, purchase orders and replenishment, so questions
-  about buying, incoming stock, lead times, what something cost and who sells
-  it all have real answers. Use the purchasing intents for those.
-- Never infer what StockChief cannot do merely because a question has no matching
-  lookup. You are shown a list of operations, not a list of StockChief's
-  abilities, and it does far more than this list — it emails customers and
-  suppliers, keeps books, deletes inventories, takes payments. Three times a
-  reader with no matching operation invented a limitation instead: "StockChief
-  cannot send emails", "StockChief cannot delete an inventory", "StockChief does not
-  handle payments". All three were false and all three were read by the owner
-  as fact. If nothing here matches, ask what evidence or measure the person needs.
-- Choose 'unsupported' only after the deterministic product contract below says
-  the capability is unavailable. StockChief can answer
-  financial questions from its posted ledger and can prepare, send and
-  follow up supplier messages according to its recorded authority. Put one plain sentence in
-  unsupportedReason saying what it cannot do.
-- unsupportedReason must be '' for every other intent.
+- Choose 'action' for anything that would change stock or records; StockChief
+  hands it to its instruction reader.
+- Buying, incoming stock, lead times, what something cost and who sells it are
+  the purchasing intents; they have real answers.
+- This is a list of lookups, not of StockChief's abilities: it also emails
+  customers and suppliers, keeps books, deletes inventories and takes
+  payments. Never say it cannot do something because no lookup here matches;
+  if nothing matches, ask what evidence or measure the person needs.
+- Choose 'unsupported' only when the product contract below says the
+  capability is not available; then put one plain sentence in
+  unsupportedReason. For every other intent unsupportedReason is ''.
 
 Authoritative product contract (the model may interpret it but may not override it):
 ${productBrain.capabilityPrompt()}`;
+
+/*
+ * The same prompt, cut to the intents a question can use.
+ *
+ * The intent list is parsed from SYSTEM above once, so there is one place
+ * the descriptions live; a scoped prompt keeps the preamble and the rules,
+ * lists only the intents handed to it, and carries the product contract in
+ * its short form (what is available, what is not and why) rather than
+ * every capability's description.
+ */
+const INTENT_BLOCK = SYSTEM.slice(SYSTEM.indexOf('Intents:\n') + 'Intents:\n'.length, SYSTEM.indexOf('\nRules:'));
+const INTENT_DESCRIPTIONS = Object.fromEntries(INTENT_BLOCK.split(/\n(?=- [a-z_]+: )/).map((entry) => {
+  const m = /^- ([a-z_]+): ([\s\S]*)$/.exec(entry.trim());
+  return m ? [m[1], m[2].replace(/\s*\n\s+/g, ' ').trim()] : null;
+}).filter(Boolean));
+const PREAMBLE = SYSTEM.slice(0, SYSTEM.indexOf('Intents:\n'));
+const RULES = SYSTEM.slice(SYSTEM.indexOf('\nRules:') + 1, SYSTEM.indexOf('Authoritative product contract'));
+
+function systemFor(intentIds) {
+  const wanted = Array.isArray(intentIds) && intentIds.length ? intentIds : Object.keys(INTENT_DESCRIPTIONS);
+  const lines = wanted.filter((id) => INTENT_DESCRIPTIONS[id]).map((id) => `- ${id}: ${INTENT_DESCRIPTIONS[id]}`);
+  return `${PREAMBLE}Intents:\n${lines.join('\n')}\n${RULES}Authoritative product contract (the model may interpret it but may not override it):\n${productBrain.capabilityPrompt({ compact: true })}`;
+}
 
 function planPrompt(question, context) {
   const vocabulary = context.stockNoun ? `They call their stock "${context.stockNoun}".` : '';
@@ -453,6 +468,21 @@ function directPlan(db, workspaceId, question) {
   // suppliers, each with what it comes to.
   const asksOpenPurchaseOrders = /\b(?:list|show|what are|which are|give me|get me|all)\b[^.?!]{0,30}\b(?:open|outstanding|pending|current)\s+(?:purchase\s+orders?|pos?\b|supplier\s+orders?)|\b(?:open|outstanding)\s+(?:purchase\s+orders?|pos)\b[^.?!]{0,30}\b(?:totals?|amounts?|values?|worth)\b/i.test(clean);
   if (asksOpenPurchaseOrders && !scoped && !/\b(?:late|overdue|due|from\s+[A-Z])\b/.test(clean)) return queryService.normalisePlan({ intent: 'open_purchase_orders' });
+  // "What did we sell last week?" is the sales summary for that window; "a list
+  // of all products with their prices" is every selling price.
+  const soldWhen = /^\s*(?:so\s+)?what\s+(?:did|have)\s+we\s+(?:sell|sold)(?:\s+(?:last|this|in\s+the\s+last)\s+(?:week|month|7\s+days|30\s+days|quarter|year))?\s*\??\s*$/i.exec(clean);
+  // "Which products are we losing money on?" reads the profitability list
+  // from the bottom; the executor sees the question and knows which end.
+  if (/\b(?:which|what)\s+(?:products?|items?|lines?)\b[^.?!]{0,30}\b(?:los(?:e|es|ing)\s+(?:us\s+)?money|unprofitable|below\s+cost|under\s+cost|negative\s+margin|lowest\s+margin|worst\s+margin)\b/i.test(clean) && !scoped) {
+    return queryService.normalisePlan({ intent: 'product_profitability', windowDays: /year/i.test(clean) ? 365 : 30, limit: 10 });
+  }
+  if (soldWhen && !scoped) {
+    const windowDays = /month|30/i.test(clean) ? 30 : /quarter/i.test(clean) ? 90 : /year/i.test(clean) ? 365 : 7;
+    return queryService.normalisePlan({ intent: 'sales_summary', windowDays });
+  }
+  if (/\b(?:list|show|give\s+me)\b[^.?!]{0,20}\b(?:all\s+(?:the\s+|our\s+)?|every\s+|our\s+|the\s+)?products?\b[^.?!]{0,20}\b(?:with\s+)?(?:their\s+)?(?:selling\s+)?prices\b/i.test(clean) && !/\b(?:cost|purchase|supplier)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'selling_price', entityQuery: '', limit: 200 });
+  }
   return null;
 }
 
@@ -481,7 +511,7 @@ async function ask(db, workspaceId, question, options = {}) {
     : useSemantic
     ? await semanticQuery.ask(db, workspaceId, question, {
       ...options, provider: options.provider || createProviderForTier('standard'),
-      intentSystem: SYSTEM, legacySchema: PLAN_SCHEMA,
+      intentSystem: SYSTEM, intentSystemFor: systemFor, legacySchema: PLAN_SCHEMA,
       legacyPlan: (text, response) => plan(text, {...options,provider:{complete:async()=>response}}),
     })
     : queryService.execute(db, workspaceId, await plan(question, options), {
@@ -551,6 +581,8 @@ async function finishAsk(question, rawResult, options = {}) {
 module.exports = {
   PLAN_SCHEMA,
   SYSTEM,
+  systemFor,
+  INTENT_DESCRIPTIONS,
   MAX_QUESTION,
   plan,
   ask,
