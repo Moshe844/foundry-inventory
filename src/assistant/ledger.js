@@ -17,7 +17,7 @@
 const { newId, nowIso } = require('../lib/util');
 
 const GOAL_KINDS = ['lookup', 'change', 'send', 'communication', 'instruction', 'report', 'navigate', 'unsupported', 'unclear'];
-const GOAL_STATUSES = ['pending', 'answered', 'needs_approval', 'drafted', 'clarify', 'handed', 'refused', 'failed', 'done', 'skipped', 'replaced'];
+const GOAL_STATUSES = ['pending', 'answered', 'needs_approval', 'drafted', 'clarify', 'handed', 'refused', 'failed', 'done', 'skipped', 'replaced', 'withdrawn'];
 
 /** What each status means to the person reading it, and its tone. */
 const STATUS_LABEL = {
@@ -32,6 +32,7 @@ const STATUS_LABEL = {
   done: { label: 'Done', tone: 'ok' },
   skipped: { label: 'Left undone — you skipped it', tone: 'muted' },
   replaced: { label: 'Replaced by your correction', tone: 'muted' },
+  withdrawn: { label: 'Withdrawn — you undid it', tone: 'muted' },
 };
 
 const json = (value, fallback) => { try { return JSON.parse(value) ?? fallback; } catch { return fallback; } };
