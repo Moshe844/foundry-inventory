@@ -161,6 +161,45 @@ function usage(db, workspaceId) {
   return { calls: Number(row.calls), tokens: Number(row.tokens), tokensPerDay: LIMITS.tokensPerDay, inFlight: inFlight.get(workspaceId) || 0 };
 }
 
+/*
+ * The last day and the last thirty, in plain terms for the settings page:
+ * how many model reads, how much of the day's allowance, how many answers
+ * needed no model at all, what the reads were for, and how they ended.
+ */
+const PURPOSE_LABELS = {
+  stockchief_semantic_query: 'planning an answer to a question',
+  inventory_action_intent: 'reading an instruction',
+  manager_intent: 'deciding what a message is',
+  assistant_understanding: 'splitting a message into its parts',
+  assistant_mail_draft: 'writing a message from your records',
+  assistant_general_knowledge: 'answering a general question',
+  selling_price_change: 'reading a price change',
+  selling_price_changes: 'reading a price list',
+  operating_instruction: 'reading a standing rule',
+};
+function usageSummary(db, workspaceId) {
+  const day = usage(db, workspaceId);
+  const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
+  const month = db.prepare(`SELECT COUNT(*) calls, COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)), 0) tokens,
+      SUM(CASE WHEN outcome = 'ok' THEN 1 ELSE 0 END) ok, SUM(CASE WHEN outcome IN ('timeout', 'failed') THEN 1 ELSE 0 END) failed,
+      SUM(CASE WHEN outcome = 'refused' THEN 1 ELSE 0 END) refused, ROUND(AVG(latency_ms)) avg_ms
+    FROM ai_calls WHERE workspace_id = ? AND kind = 'model' AND created_at >= ?`).get(workspaceId, since30);
+  const tools = db.prepare(`SELECT COUNT(*) n FROM ai_calls WHERE workspace_id = ? AND kind = 'tool' AND created_at >= ?`).get(workspaceId, since30);
+  const purposes = db.prepare(`SELECT purpose, COUNT(*) n, COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)), 0) tokens
+    FROM ai_calls WHERE workspace_id = ? AND kind = 'model' AND created_at >= ? GROUP BY purpose ORDER BY n DESC LIMIT 8`).all(workspaceId, since30)
+    .map((r) => ({ purpose: r.purpose, label: PURPOSE_LABELS[r.purpose] || String(r.purpose).replace(/_/g, ' '), calls: Number(r.n), tokens: Number(r.tokens) }));
+  const goalsWithModel = db.prepare(`SELECT COUNT(DISTINCT goal_id) n FROM ai_calls WHERE workspace_id = ? AND kind = 'model' AND goal_id IS NOT NULL AND created_at >= ?`).get(workspaceId, since30).n;
+  let goals = 0;
+  try { goals = db.prepare(`SELECT COUNT(*) n FROM assistant_goals g JOIN assistant_turns t ON t.id = g.turn_id WHERE t.workspace_id = ? AND g.created_at >= ? AND g.status <> 'pending'`).get(workspaceId, since30).n; } catch { goals = 0; }
+  return {
+    today: { calls: day.calls, tokens: day.tokens, allowance: day.tokensPerDay, pct: day.tokensPerDay ? Math.min(100, Math.round((day.tokens / day.tokensPerDay) * 100)) : 0, inFlight: day.inFlight },
+    month: { calls: Number(month.calls), tokens: Number(month.tokens), ok: Number(month.ok || 0), failed: Number(month.failed || 0), refused: Number(month.refused || 0), avgMs: Number(month.avg_ms || 0), toolCalls: Number(tools.n) },
+    goals: { total: Number(goals), withModel: Number(goalsWithModel), inCode: Math.max(0, Number(goals) - Number(goalsWithModel)) },
+    purposes,
+    limits: { concurrent: LIMITS.concurrent, perMinute: LIMITS.perMinute, tokensPerDay: LIMITS.tokensPerDay },
+  };
+}
+
 /**
  * A provider whose every call is on the record. Same shape as the provider
  * it wraps; the request passes through untouched.
@@ -209,4 +248,4 @@ function observed(provider) {
   return wrapped;
 }
 
-module.exports = { run, current, extend, record, forGoal, recent, observed, redact, usage, ceilingFor, CeilingError, LIMITS, KEEP_DAYS };
+module.exports = { run, current, extend, record, forGoal, recent, observed, redact, usage, usageSummary, ceilingFor, CeilingError, LIMITS, KEEP_DAYS };

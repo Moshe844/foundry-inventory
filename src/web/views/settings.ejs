@@ -269,6 +269,54 @@
       </p>
     </section>
 
+    <% if (locals.aiUsage) { var ai = aiUsage; var k = function (n) { return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M' : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n); }; %>
+    <%#
+      What StockChief's model reads have cost this inventory, from the call
+      record: today against the day's allowance, the last thirty days, how
+      many answers needed no model at all, and what the reads were for.
+    %>
+    <section class="rm-panel" id="ai-usage">
+      <div class="rm-panel__head">
+        <%- helpers.icon('chat', { size: 15, className: 'rm-quiet' }) %>
+        <h2>AI reading</h2>
+        <span class="right"><span class="rm-pillbadge"><%= ai.today.calls %> read<%= ai.today.calls === 1 ? '' : 's' %> today</span></span>
+      </div>
+      <div class="rm-told" style="border:0;border-radius:0;box-shadow:none">
+        <div class="rm-told__row">
+          <span class="rm-told__t">Today’s allowance
+            <span class="rm-meter <%= ai.today.pct >= 90 ? 'is-flag' : '' %>" style="margin-top:6px;max-width:200px"><span style="width:<%= Math.max(3, ai.today.pct) %>%"></span></span>
+          </span>
+          <span class="rm-told__m"><%= k(ai.today.tokens) %> of <%= k(ai.today.allowance) %> tokens</span>
+        </div>
+        <div class="rm-told__row">
+          <span class="rm-told__t">Last 30 days</span>
+          <span class="rm-told__m"><%= ai.month.calls %> model read<%= ai.month.calls === 1 ? '' : 's' %> · <%= k(ai.month.tokens) %> tokens<% if (ai.month.calls) { %> · <%= (ai.month.avgMs / 1000).toFixed(1) %> s each<% } %></span>
+        </div>
+        <% if (ai.goals.total) { %>
+        <div class="rm-told__row">
+          <span class="rm-told__t">Things you asked for</span>
+          <span class="rm-told__m"><%= ai.goals.total %> in all · <%= ai.goals.inCode %> answered in code without a model</span>
+        </div>
+        <% } %>
+        <% if (ai.month.failed || ai.month.refused) { %>
+        <div class="rm-told__row">
+          <span class="rm-told__t">Reads that did not finish</span>
+          <span class="rm-told__m"><% if (ai.month.failed) { %><%= ai.month.failed %> timed out or failed<% } %><% if (ai.month.failed && ai.month.refused) { %> · <% } %><% if (ai.month.refused) { %><%= ai.month.refused %> stopped by a ceiling or a refusal<% } %></span>
+        </div>
+        <% } %>
+        <% ai.purposes.forEach(function (p) { %>
+        <div class="rm-told__row">
+          <span class="rm-told__t rm-quiet" style="padding-left:14px"><%= p.label %></span>
+          <span class="rm-told__m"><%= p.calls %> · <%= k(p.tokens) %> tokens</span>
+        </div>
+        <% }) %>
+      </div>
+      <p class="rm-quiet" style="font-size:12.5px;padding:12px 16px;border-top:1px solid var(--line-2);margin:0">
+        Ceilings for this inventory: <%= ai.limits.concurrent %> reads at once, <%= ai.limits.perMinute %> a minute, <%= k(ai.limits.tokensPerDay) %> tokens a day. Lookups StockChief does in code cost nothing and are not counted. Prompts are kept redacted for 30 days; no record values are stored with them.
+      </p>
+    </section>
+    <% } %>
+
     <section class="rm-panel">
       <div class="rm-panel__head">
         <%- helpers.icon(integrity.ok ? 'shield' : 'alert', { size: 15, className: 'rm-quiet' }) %>

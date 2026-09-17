@@ -218,6 +218,9 @@ router.get(
         accountId: req.ctx.accountId,
         workspaceId: req.ctx.workspaceId,
       }),
+      // What the assistant's model reads have cost this inventory, from the
+      // call record; a page that failed to count would be worse than none.
+      aiUsage: (() => { try { return require('../../assistant/calls').usageSummary(req.db, req.ctx.workspaceId); } catch { return null; } })(),
       learnedInstructions,
       stockGuards: operatingGuards.list(req.db, req.ctx.workspaceId, { activeOnly: true })
         .map((guard) => ({

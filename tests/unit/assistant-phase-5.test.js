@@ -181,3 +181,27 @@ test('a name the model saw with [removed] in it comes back matchable, so the hos
   const out = await observed.complete({ schemaName: 'x', prompt: 'y' });
   assert.equal(out.data.supplier, 'Acme Trade Supply');
 });
+
+test('the settings page says what the model reads have cost this inventory, from the call record', async () => {
+  const { db } = makeDatabase();
+  const w = seedWorkspace(db);
+  const context = { db, workspaceId: w.workspaceId, actorId: w.ownerId, goalId: null };
+  const fake = calls.observed({ name: 'fake', model: 'fake-1', async complete() { return { data: {}, usage: { inputTokens: 1200, outputTokens: 300, latencyMs: 40 } }; } });
+  await calls.run(context, async () => {
+    await fake.complete({ schemaName: 'stockchief_semantic_query', prompt: 'x' });
+    await fake.complete({ schemaName: 'assistant_mail_draft', prompt: 'y' });
+  });
+  const summary = calls.usageSummary(db, w.workspaceId);
+  assert.equal(summary.today.calls, 2);
+  assert.equal(summary.today.tokens, 3000);
+  assert.deepEqual(summary.purposes.map((p) => p.label), ['planning an answer to a question', 'writing a message from your records']);
+  const app = createApp({ db, env: 'test', sessionSecret: 'usage' });
+  const agent = request.agent(app);
+  await signIn(agent, w.account.email, w.account.password);
+  const page = await agent.get('/settings');
+  assert.match(page.text, /AI reading/);
+  assert.match(page.text, /2 reads today/);
+  assert.match(page.text, /3k of 3\.0M tokens/);
+  assert.match(page.text, /planning an answer to a question/);
+  assert.match(page.text, /Lookups StockChief does in code cost nothing and are not counted/);
+});
