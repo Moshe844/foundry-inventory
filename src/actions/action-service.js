@@ -547,11 +547,11 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   const message = usable.find((line) => line.actionType === 'send_message');
   if (message) {
     const outbound = require('./outbound-message');
-    return outbound.prepare(db, ctx, {
+    return outbound.prepareOrCompose(db, ctx, {
       recipientText: message.recipient || '',
       body: message.messageBody || '',
       instruction: text,
-    });
+    }, { provider: options.provider, referentNote: options.referentNote || '' });
   }
 
   const payment = usable.find((line) => line.actionType === 'pay_supplier');

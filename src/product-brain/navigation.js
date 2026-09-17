@@ -136,6 +136,13 @@ function navigationResultForDestination(text, destination, brain, membership) {
     answer: !access.available
       ? `${access.capability.label} is not available yet. ${access.reason}`
       : `${destination.label} exists, but I cannot expose it for this user. ${access.reason}` };
+  // "How do I …?" gets the steps, composed from the brain, not a door.
+  const howTo = require('./how-to');
+  if (howTo.isHowTo(text)) {
+    const composed = howTo.compose(brain, destination, membership, text);
+    if (composed) return { kind: 'navigation', supported: true, available: true, canNavigate: true, howTo: true,
+      href: destination.href, label: composed.label, capabilityId: destination.capability, navigateNow: false, answer: composed.answer };
+  }
   return { kind: 'navigation', supported: true, available: true, canNavigate: true,
     href: destination.href, label: `Open ${destination.label}`, capabilityId: destination.capability,
     navigateNow: ACTION_WORDS.test(text), answer: `You can manage this in ${destination.label}. I can open it directly.` };
@@ -332,6 +339,14 @@ function resolve(db, workspaceId, membership, input, options = {}) {
       answer: `I found ${record.title}. ${label} opens the exact ${record.type.replace('_', ' ')} context.` };
   }
 
+  // "How do I receive a delivery?" names a topic before it names a page;
+  // the topic knows its page and its steps.
+  const howTo = require('./how-to');
+  if (howTo.isHowTo(text) && !mentionsProduct(db, workspaceId, text)) {
+    const found = howTo.topic(text);
+    const home = found ? brain.listDestinations().find((d) => d.id === found.destination) : null;
+    if (home) return navigationResultForDestination(text, home, brain, membership);
+  }
   const destination = destinationMatch(text, brain);
   if (destination && NAVIGATION_WORDS.test(text)) {
     return navigationResultForDestination(text, destination, brain, membership);

@@ -345,6 +345,10 @@ function askOutcome(question, result, error) {
   if (conversational) {
     return { status, said: String(said || ''), resultHref: null, resultLabel: null, provenance: { intent: result.plan.intent, interpretation: result.interpretation || null, reads: [], rowCount: null, asOf: null } };
   }
+  // General knowledge read nothing; the page says so, in those words.
+  if (result.general) {
+    return { status: 'answered', said: String(said || ''), resultHref: null, resultLabel: null, provenance: { intent: 'general_knowledge', interpretation: result.interpretation || null, reads: [], rowCount: null, asOf: nowIso(), general: true } };
+  }
   return {
     status, said: String(said || ''),
     resultHref: result.handoff ? result.handoff.href : null, resultLabel: result.handoff ? result.handoff.label : null,

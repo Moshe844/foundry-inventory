@@ -130,13 +130,17 @@ test('"Do not send" cancels it and nothing leaves', async () => {
 test('without a mailbox, the person is told that — not asked for more detail', async () => {
   const env = await setup([line({ actionType: 'send_message', recipient: 'motty6700@gmail.com',
     messageBody: 'we received your order' })]);
+  // The draft is still written and shown; its page says there is nothing to
+  // send it from and offers the words to copy or a mailbox to connect.
   const response = await tell(env, SAID);
   assert.equal(response.status, 303);
-  assert.equal(response.headers.location, '/actions');
-  const page = await env.agent.get('/actions');
+  assert.match(response.headers.location, /^\/messages\//);
+  const page = await env.agent.get(response.headers.location);
   const text = plain(page.text);
   assert.match(text, /No mailbox is connected/);
+  assert.match(text, /Copy the words above into your own email/);
   assert.doesNotMatch(text, /needs more detail/i);
+  assert.doesNotMatch(text, /Send to /, 'no send button without a mailbox');
   env.db.close();
 });
 

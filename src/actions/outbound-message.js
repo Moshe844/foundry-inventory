@@ -94,24 +94,19 @@ function prepare(db, ctx, { recipientText, body, instruction }) {
   }
 
   /*
-   * A mailbox has to exist to send from. Saying so now is better than writing
-   * the message, showing it, and failing at the moment they press send.
+   * No mailbox is not no draft. The draft is written and shown either way;
+   * its page says there is nothing to send it from and offers the words to
+   * copy, or the settings to connect one. Refusing to write it left the
+   * person with nothing at all.
    */
   const sending = require('../sales/customer-communications').sendingMailbox(db, ctx.workspaceId);
-  if (!sending.connectorId) {
-    return { kind: 'question',
-      question: sending.options.length
-        ? 'More than one mailbox is connected and none is set for customer messages. '
-          + 'Choose which one StockChief should send from in Settings.'
-        : 'No mailbox is connected, so StockChief has nothing to send this from. '
-          + 'Connect one in Settings and this will go out from your own address.' };
-  }
 
   return {
     kind: 'message_draft',
     recipient,
     body: String(body).trim(),
     instruction,
+    mailbox: sending.connectorId ? 'ready' : sending.options.length ? 'unchosen' : 'none',
     /*
      * Deliberately not a subject StockChief invented. The owner said what they
      * wanted said; inventing a heading for it is the first step towards
@@ -134,13 +129,22 @@ function record(db, ctx, draft) {
   }
   const comms = require('../sales/customer-communications');
   const sending = comms.sendingMailbox(db, ctx.workspaceId);
-  return comms.prepareOwnerMessage(db, ctx, {
+  const message = comms.prepareOwnerMessage(db, ctx, {
     recipient: draft.recipient.email,
     customerId: draft.recipient.kind === 'customer' ? draft.recipient.id : null,
     subject: draft.subject,
     body: draft.body,
     connectorId: sending.connectorId,
+    messageKind: draft.composed ? 'assistant_draft' : 'owner_message',
   });
+  // The facts a composed draft was written from, kept beside it for its page.
+  if (draft.composed && Array.isArray(draft.facts)) {
+    try {
+      db.prepare(`INSERT INTO assistant_draft_facts (message_id, workspace_id, facts, facts_used, instruction, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(message.id, ctx.workspaceId, JSON.stringify(draft.facts), JSON.stringify(draft.factsUsed || []), String(draft.instruction || '').slice(0, 2000), new Date().toISOString());
+    } catch (err) { console.error('[foundry] could not keep the draft facts', err); }
+  }
+  return message;
 }
 
 /** Send what was approved, through the mailbox everything else goes through. */
@@ -153,4 +157,22 @@ async function send(db, ctx, membership, draft, options = {}) {
   return comms.sendThroughMailbox(db, ctx.workspaceId, message.id, ctx.actorId || null);
 }
 
-module.exports = { prepare, record, send, findRecipient };
+/*
+ * Words dictated are kept exactly; a purpose stated is written up from the
+ * recipient's own records, checked, and shown as a draft with the facts it
+ * used. "Email Lakeside and ask for a price list" is the second kind.
+ */
+async function prepareOrCompose(db, ctx, { recipientText, body, instruction }, options = {}) {
+  const mailDraft = require('../assistant/mail-draft');
+  if (!mailDraft.wantsComposition(instruction, body)) return prepare(db, ctx, { recipientText, body, instruction });
+  // The recipient has to be one StockChief knows before anything is written about them.
+  const shaped = prepare(db, ctx, { recipientText, body: body || '(to be written)', instruction });
+  if (shaped.kind !== 'message_draft') return shaped;
+  const composed = await mailDraft.compose(db, ctx, {
+    recipient: shaped.recipient, purpose: String(body || instruction).trim(), instruction, referentNote: options.referentNote || '',
+  }, { provider: options.provider });
+  if (!composed.ok) return { kind: 'question', question: composed.question };
+  return { ...shaped, body: composed.body, subject: composed.subject, composed: true, facts: composed.facts, factsUsed: composed.factsUsed };
+}
+
+module.exports = { prepare, prepareOrCompose, record, send, findRecipient };

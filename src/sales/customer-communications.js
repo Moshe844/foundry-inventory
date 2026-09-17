@@ -505,9 +505,9 @@ function prepareOwnerMessage(db, ctx, input = {}) {
   db.prepare(`INSERT INTO customer_communications
       (id, workspace_id, customer_id, sales_order_id, channel, recipient, subject, body,
        status, message_kind, connector_id, idempotency_key, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'email', ?, ?, ?, 'PREPARED', 'owner_message', ?, ?, ?, ?)`)
+    VALUES (?, ?, ?, ?, 'email', ?, ?, ?, 'PREPARED', ?, ?, ?, ?, ?)`)
     .run(id, workspaceId, trimOrNull(input.customerId), trimOrNull(input.salesOrderId),
-      recipient, subject, body, trimOrNull(input.connectorId), `owner-message:${id}`, now, now);
+      recipient, subject, body, input.messageKind === 'assistant_draft' ? 'assistant_draft' : 'owner_message', trimOrNull(input.connectorId), `owner-message:${id}`, now, now);
   return get(db, workspaceId, id);
 }
 

@@ -468,7 +468,15 @@ async function ask(db, workspaceId, question, options = {}) {
   // A few questions have one right reading and no need of a model: they are
   // answered from the closed form, so the answer is the same every time.
   const direct = directPlan(db, workspaceId, question);
-  const rawResult = direct
+  // General knowledge — "what does FIFO mean?" — is answered as such and
+  // labelled, with no lookup and no record values in the prompt.
+  const general = require('../assistant/general-knowledge');
+  const generalFirst = !direct && useSemantic && general.looksGeneral(db, workspaceId, question);
+  if (generalFirst) {
+    const said = await general.answer(question, { provider: options.provider || createProviderForTier('fast') });
+    if (said.answer && !said.needsRecords) return finishAsk(question, general.asResult(question, said.answer), options);
+  }
+  let rawResult = direct
     ? queryService.execute(db, workspaceId, direct, { question: String(question).trim(), membership: options.membership || null })
     : useSemantic
     ? await semanticQuery.ask(db, workspaceId, question, {
@@ -479,6 +487,18 @@ async function ask(db, workspaceId, question, options = {}) {
     : queryService.execute(db, workspaceId, await plan(question, options), {
       question: String(question).trim(), membership: options.membership || null,
     });
+  // The planner asked "which product?" of a question that names none:
+  // it is general knowledge, and is answered as that rather than bounced.
+  if (!direct && useSemantic && !generalFirst && rawResult && rawResult.needsClarification && !rawResult.isAction
+      && general.looksGeneral(db, workspaceId, question)) {
+    const said = await general.answer(question, { provider: options.provider || createProviderForTier('fast') });
+    if (said.answer && !said.needsRecords) rawResult = general.asResult(question, said.answer);
+  }
+  return finishAsk(question, rawResult, options);
+}
+
+/** Access checks and hand-off hrefs, the same for every answer. */
+async function finishAsk(question, rawResult, options = {}) {
   const brain = options.productBrain || productBrain;
   const result = { ...rawResult };
   if (result.handoff && options.membership) {
