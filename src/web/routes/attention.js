@@ -338,6 +338,11 @@ function askOutcome(question, result, error) {
   // "Thanks!" answered with "You're welcome" is not a question waiting on the person.
   const smallTalk = /^\s*(?:thanks|thank you|thx|cheers|hi|hello|hey|ok|okay|great|cool|nice|good morning|good afternoon|bye)\b/i.test(question);
   const status = result.isAction ? 'clarify' : result.needsClarification && !smallTalk ? 'clarify' : result.supported === false && !smallTalk ? 'refused' : 'answered';
+  // A reply in StockChief's own words read no records; it carries no "read … · 0 rows" line.
+  const conversational = result.plan && ['small_talk', 'conversation_recap'].includes(result.plan.intent);
+  if (conversational) {
+    return { status, said: String(said || ''), resultHref: null, resultLabel: null, provenance: { intent: result.plan.intent, interpretation: result.interpretation || null, reads: [], rowCount: null, asOf: null } };
+  }
   return {
     status, said: String(said || ''),
     resultHref: result.handoff ? result.handoff.href : null, resultLabel: result.handoff ? result.handoff.label : null,
