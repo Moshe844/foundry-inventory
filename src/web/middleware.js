@@ -170,7 +170,13 @@ function foundryContext(db) {
      * was made in, and is cleared the moment the person switches.
      */
     if (req.session) {
-      if (req.session.assistantWorkspaceId && req.session.assistantWorkspaceId !== req.ctx.workspaceId) clearPendingWork(req.session);
+      if (req.session.assistantWorkspaceId && req.session.assistantWorkspaceId !== req.ctx.workspaceId) {
+        // What was still waiting in the other inventory is left undone there, and says so.
+        try {
+          if (req.session.assistantConversationId) require('../assistant/turns').abandon(db, { workspaceId: req.session.assistantWorkspaceId, actorId: req.ctx.actorId }, req.session.assistantConversationId, 'you switched to another inventory.');
+        } catch (err) { console.error('[foundry] could not settle abandoned goals on switch', err); }
+        clearPendingWork(req.session);
+      }
       req.session.assistantWorkspaceId = req.ctx.workspaceId;
     }
     const configuration = planApplier.getConfiguration(db, req.ctx.workspaceId);

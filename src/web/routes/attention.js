@@ -417,7 +417,16 @@ router.get(
       const turns = ledger.conversation(req.db, req.ctx, assistantTurns.conversationId(req), { limit: 8 })
         .filter((turn) => !turn.goals.some((g) => g.id === openGoal || (g.status === 'pending' && g.text === question)));
       const recent = turns.slice(-3);
-      const lines = recent.flatMap((turn) => turn.goals.map((g) => `You said “${turn.message.length > 80 ? turn.message.slice(0, 80) + '…' : turn.message}” — ${g.statusLabel.toLowerCase()}${g.said ? `: ${g.said.length > 120 ? g.said.slice(0, 120) + '…' : g.said}` : ''}`));
+      // A message with several parts is reported part by part, and never as
+      // handled while one of them is still waiting.
+      const lines = recent.flatMap((turn) => {
+        const coverage = ledger.turnCoverage(turn);
+        const head = turn.message.length > 80 ? turn.message.slice(0, 80) + '…' : turn.message;
+        const parts = turn.goals.map((g) => `${turn.goals.length > 1 ? `Part ${g.position + 1} of ${turn.goals.length} (“${g.text.length > 60 ? g.text.slice(0, 60) + '…' : g.text}”)` : `You said “${head}”`} — ${g.statusLabel.toLowerCase()}${g.said ? `: ${g.said.length > 120 ? g.said.slice(0, 120) + '…' : g.said}` : ''}`);
+        return turn.goals.length > 1
+          ? [`You said “${head}” — ${coverage.complete ? `all ${coverage.total} parts settled` : `${coverage.settled} of ${coverage.total} parts settled, ${coverage.pending} still waiting`}:`, ...parts]
+          : parts;
+      });
       result = {
         question, answer: lines.length ? `Here is what just happened, newest last:\n${lines.join('\n')}` : 'Nothing yet in this conversation. Ask me something, or tell me what happened.',
         rows: [], columns: [], rowCount: 0, supported: true, isAction: false, needsClarification: false, handoff: null,

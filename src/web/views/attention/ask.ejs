@@ -128,7 +128,9 @@
     </details>
     <% } %>
     <div class="rm-turn rm-turn--you<%= turn.goals.some(function (g) { return g.id === currentGoalId; }) ? '' : ' rm-turn--past' %><%= turnIndex === latestIndex ? ' rm-turn--latest' : '' %>">
-      <p class="rm-turn__who">You</p>
+      <p class="rm-turn__who">You<%
+        /* Several parts: how many are settled, so a half-done message never reads as done. */
+        if (turn.goals.length > 1) { var settledParts = turn.goals.filter(function (g) { return g.status !== 'pending'; }).length; %> · <span class="rm-turn__coverage<%= settledParts === turn.goals.length ? '' : ' rm-turn__coverage--open' %>"><%= settledParts === turn.goals.length ? 'all ' + turn.goals.length + ' parts settled' : settledParts + ' of ' + turn.goals.length + ' parts settled' %></span><% } %></p>
       <% if (turn.message.length > 400) { %>
         <details class="rm-turn__said"><summary><%= turn.message.slice(0, 160) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= turn.message %></p></details>
       <% } else { %><p class="rm-turn__said"><%= turn.message %></p><% } %>

@@ -112,6 +112,8 @@
   max-width: min(74%, 680px);
 }
 :is(.rm-chat, .rm-history__body) > .rm-turn--you .rm-turn__who { justify-content: flex-end; padding-right: 4px; }
+.rm-turn__coverage { font-weight: 500; color: var(--muted); }
+.rm-turn__coverage--open { color: var(--copper, #9A5B00); }
 :is(.rm-chat, .rm-history__body) > .rm-turn--you .rm-turn__said {
   width: fit-content;
   max-width: 100%;

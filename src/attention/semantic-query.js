@@ -374,7 +374,15 @@ async function ask(db,workspaceId,question,options){
    : 'Which records and measure should I use?';
   return {...empty(clean,data.clarification||fallback,data.decision),semanticPlan:data};
  }
- if(!data.parts.length||data.parts.some(p=>['action','unsupported'].includes(p.intent)))return empty(clean,'I could not produce a complete, read-only lookup for every part. Please clarify which question to answer first.');
+ if(!data.parts.length)return empty(clean,'I could not produce a read-only lookup for that. Say which records you want and what about them.');
+ /*
+  * Every part gets its own line. One part that is work to do, or that
+  * StockChief cannot look up, used to sink the whole message — the two
+  * answerable questions beside it went unanswered and the person was told
+  * to "clarify which question to answer first". Now each part is answered,
+  * refused or handed on by itself, and says which.
+  */
+ if(data.parts.length===1&&['action','unsupported'].includes(data.parts[0].intent))return empty(clean,'I could not produce a complete, read-only lookup for every part. Please clarify which question to answer first.');
  /*
   * "This customer" after a search that found nobody.
   *
@@ -386,9 +394,17 @@ async function ask(db,workspaceId,question,options){
   */
  const inherited=inheritedFromEmpty(clean,data,context);
  if(inherited)return {...empty(clean,inherited),semanticPlan:data};
- let sections;
- try{sections=data.parts.map(part=>({question:part.question,...executePart(db,workspaceId,part,{...options,catalog:fullCatalog})}));}
- catch(err){if(err instanceof ValidationError)return {...empty(clean,err.message),semanticPlan:data};throw err;}
+ const sections=data.parts.map((part,index)=>{
+  const label=data.parts.length>1?`Part ${index+1}`:'';
+  if(part.intent==='action')return {question:part.question,...empty(part.question,'This part is something to do rather than something to look up. Send it on its own and StockChief will prepare it for your approval.','action'),isAction:false,partState:'handed'};
+  if(part.intent==='unsupported')return {question:part.question,...empty(part.question,String(part.unsupportedReason||'').trim()||'StockChief cannot look that up.','not_supported'),needsClarification:false,partState:'unsupported'};
+  try{return {question:part.question,...executePart(db,workspaceId,part,{...options,catalog:fullCatalog}),partState:'answered'};}
+  catch(err){
+   if(err instanceof ValidationError)return {question:part.question,...empty(part.question,`${label?label+' — ':''}could not be read: ${err.message}`),needsClarification:false,partState:'failed'};
+   throw err;
+  }
+ });
+ if(sections.length===1&&sections[0].partState!=='answered')return {...sections[0],question:clean,semanticPlan:data};
  const answer=sections.length===1?sections[0].answer:sections.map(s=>`${s.question}\n${s.answer}`).join('\n\n');
  const base=sections.length===1?sections[0]:{plan:{intent:'combined_lookup',entityQuery:'',locationQuery:''},rows:[],columns:[],rowCount:sections.reduce((n,s)=>n+s.rowCount,0),handoff:null};
  return {...base,question:clean,answer,sections:sections.length>1?sections:[],interpretation:data.interpretation,

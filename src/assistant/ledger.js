@@ -182,6 +182,19 @@ function lastSettled(db, ctx, conversationId) {
   return row ? hydrateGoal(row) : null;
 }
 
+/** A turn is handled only when none of its goals is still pending. */
+function turnComplete(turn) {
+  const goals = (turn && turn.goals) || [];
+  return goals.length > 0 && goals.every((g) => g.status !== 'pending');
+}
+
+/** "3 of 3 parts settled" / "1 of 3 parts still waiting", for a turn with several goals. */
+function turnCoverage(turn) {
+  const goals = (turn && turn.goals) || [];
+  const settled = goals.filter((g) => g.status !== 'pending').length;
+  return { total: goals.length, settled, pending: goals.length - settled, complete: goals.length > 0 && settled === goals.length };
+}
+
 /** The goals of a conversation that are still waiting, oldest first. */
 function pendingGoals(db, ctx, conversationId) {
   return db.prepare(`SELECT g.* FROM assistant_goals g JOIN assistant_turns t ON t.id = g.turn_id
@@ -192,5 +205,5 @@ function pendingGoals(db, ctx, conversationId) {
 
 module.exports = {
   GOAL_KINDS, GOAL_STATUSES, STATUS_LABEL,
-  openTurn, getTurn, getGoal, goalWithTurn, goalByResult, settle, noteReferent, conversation, recentReferents, pendingGoals, lastSubjects, lastSettled,
+  openTurn, getTurn, getGoal, goalWithTurn, goalByResult, settle, noteReferent, conversation, recentReferents, pendingGoals, lastSubjects, lastSettled, turnComplete, turnCoverage,
 };

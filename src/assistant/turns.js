@@ -30,9 +30,36 @@ function conversationId(req) {
 /** Forgets the conversation: the next message starts a new one. */
 function newConversation(req) {
   if (!req.session) return;
+  // Whatever was still waiting in the old conversation is left undone, and
+  // said so — not carried silently into the void.
+  try { if (req.db && req.ctx) settleAbandoned(req, 'You started a new conversation.'); } catch (err) { console.error('[foundry] could not settle abandoned goals', err); }
   delete req.session.assistantConversationId;
   delete req.session.assistantQueue;
   delete req.session.assistantOpenGoal;
+}
+
+/*
+ * Every part of a message ends somewhere.
+ *
+ * A goal queued behind the first and never continued stayed "pending" for
+ * ever, and the chat said nothing about it. Now, the moment the person
+ * moves on — a new message, a new conversation, another inventory — every
+ * goal still pending in that conversation is settled as skipped, with the
+ * reason, and the chat shows it. The rule the page and the recap share:
+ * a turn is handled only when none of its goals is pending.
+ */
+function abandon(db, ctx, convo, why, { except = null } = {}) {
+  const waiting = ledger.pendingGoals(db, ctx, convo).filter((g) => g.id !== except);
+  for (const goal of waiting) {
+    ledger.settle(db, ctx, goal.id, { status: 'skipped', said: `Left undone — ${why} Say it again to pick it up.`, provenance: { reason: 'moved_on' } });
+  }
+  return waiting.length;
+}
+function settleAbandoned(req, why, { except = null } = {}) {
+  if (!req.db || !req.ctx) return 0;
+  const n = abandon(req.db, req.ctx, conversationId(req), why, { except });
+  if (n && req.session) delete req.session.assistantQueue;
+  return n;
 }
 
 /**
@@ -59,6 +86,10 @@ async function begin(req, res, message, options = {}) {
       req.assistantReferentNote = `the product is ${subject}`;
     }
   } else {
+    // A fresh message is the person moving on; anything still waiting from
+    // an earlier message is left undone, on the record. An answer to a
+    // clarification is not moving on — it continues the goal that asked.
+    if (!options.noSplit && !(req.body && req.body.answerAction)) settleAbandoned(req, 'you moved on to something else.');
     const referents = ledger.recentReferents(req.db, req.ctx, convo);
     const understanding = await understand(message, {
       provider: options.provider, referents, previousQuestion: options.previousQuestion || null, signal: options.signal,
@@ -353,4 +384,4 @@ function skipQueue(req) {
   return n;
 }
 
-module.exports = { conversationId, newConversation, begin, resume, settleFromRedirect, settleAsk, settleNow, remember, queued, skipQueue, returnFromHandoff };
+module.exports = { conversationId, newConversation, begin, resume, settleFromRedirect, settleAsk, settleNow, remember, queued, skipQueue, returnFromHandoff, settleAbandoned, abandon };

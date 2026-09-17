@@ -45,7 +45,12 @@ Each goal's text is copied verbatim from the message (a contiguous span, trimmed
 kind: lookup (a question, or a request to show or find records), change (record or change stock, orders, prices, products, suppliers), send (draft, write or send a message or email), communication (a message, call or email that was received or needs handling), instruction (a standing rule for how StockChief should behave), report (something that already happened being reported), navigate (asking to be taken to a page), unsupported (something an inventory assistant plainly does not do, such as payroll), unclear (you cannot tell).
 continuesPrevious is true only when the message answers or refines the previous question shown; otherwise false.`;
 
-const CONJUNCTION = /\b(?:and then|then|and also|also|after that|as well as|plus)\b|,\s*and\b|\band\s+(?:draft|write|send|email|move|transfer|receive|issue|order|buy|create|add|set|change|update|show|list|find|tell|archive|delete|remove|how|what|which|where|when)\b/i;
+// "…and reorder…", "…and I shouldn't…", "…and when…": a second thing starts
+// after "and" when what follows is a verb, a subject or a condition. A verb
+// missing from this list meant the sentence was never split, and one reader
+// read both halves as one — the movement was lost inside a rule, or the
+// other way round.
+const CONJUNCTION = /\b(?:and then|then|and also|also|after that|as well as|plus)\b|,\s*and\b|\band\s+(?:please\s+|also\s+)?(?:draft|write|send|email|message|chase|remind|contact|ask|move|transfer|ship|receive|book|issue|order|reorder|restock|replenish|buy|purchase|pay|record|count|adjust|correct|create|add|set|make|prepare|raise|change|update|rename|call|show|list|find|check|tell|notify|alert|warn|let|block|stop|pause|prevent|never|don'?t|do\s+not|archive|delete|remove|cancel|how|what|which|where|when|whenever|if|once|i|we|you)\b/i;
 const REFERENT_WORDS = [
   [/\b(?:that|the|this|its)\s+(?:po|purchase\s+order|order\s+(?:we|you)\s+(?:just\s+)?(?:drafted|wrote|made|raised))\b/i, ['purchase_order']],
   [/\b(?:that|the|this)\s+(?:email|draft|message|reply|note)\b/i, ['message']],
