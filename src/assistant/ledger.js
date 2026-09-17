@@ -17,7 +17,7 @@
 const { newId, nowIso } = require('../lib/util');
 
 const GOAL_KINDS = ['lookup', 'change', 'send', 'communication', 'instruction', 'report', 'navigate', 'unsupported', 'unclear'];
-const GOAL_STATUSES = ['pending', 'answered', 'needs_approval', 'drafted', 'clarify', 'handed', 'refused', 'failed', 'done', 'skipped'];
+const GOAL_STATUSES = ['pending', 'answered', 'needs_approval', 'drafted', 'clarify', 'handed', 'refused', 'failed', 'done', 'skipped', 'replaced'];
 
 /** What each status means to the person reading it, and its tone. */
 const STATUS_LABEL = {
@@ -31,6 +31,7 @@ const STATUS_LABEL = {
   failed: { label: 'Not done — failed', tone: 'danger' },
   done: { label: 'Done', tone: 'ok' },
   skipped: { label: 'Left undone — you skipped it', tone: 'muted' },
+  replaced: { label: 'Replaced by your correction', tone: 'muted' },
 };
 
 const json = (value, fallback) => { try { return JSON.parse(value) ?? fallback; } catch { return fallback; } };
@@ -154,6 +155,32 @@ function goalByResult(db, ctx, conversationId, href) {
   return row ? goalWithTurn(db, ctx.workspaceId, row.id) : null;
 }
 
+/**
+ * What the conversation was last about: the one product and the one place
+ * the most recent answered lookup read. "Them" and "there" in the next
+ * message mean these.
+ */
+function lastSubjects(db, ctx, conversationId) {
+  const rows = db.prepare(`SELECT g.provenance, g.status FROM assistant_goals g JOIN assistant_turns t ON t.id = g.turn_id
+    WHERE t.workspace_id = ? AND t.user_id = ? AND t.conversation_id = ? AND g.status = 'answered'
+    ORDER BY g.updated_at DESC LIMIT 3`).all(ctx.workspaceId, ctx.actorId, String(conversationId || 'default'));
+  for (const row of rows) {
+    const reads = (json(row.provenance, {}).reads || []);
+    const products = new Set(reads.map((r) => r.entity).filter(Boolean));
+    const places = new Set(reads.map((r) => r.location).filter(Boolean));
+    if (products.size || places.size) return { product: products.size === 1 ? [...products][0] : null, location: places.size === 1 ? [...places][0] : null };
+  }
+  return { product: null, location: null };
+}
+
+/** The most recent goal of a conversation that ended somewhere, newest first. */
+function lastSettled(db, ctx, conversationId) {
+  const row = db.prepare(`SELECT g.* FROM assistant_goals g JOIN assistant_turns t ON t.id = g.turn_id
+    WHERE t.workspace_id = ? AND t.user_id = ? AND t.conversation_id = ? AND g.status <> 'pending'
+    ORDER BY g.updated_at DESC LIMIT 1`).get(ctx.workspaceId, ctx.actorId, String(conversationId || 'default'));
+  return row ? hydrateGoal(row) : null;
+}
+
 /** The goals of a conversation that are still waiting, oldest first. */
 function pendingGoals(db, ctx, conversationId) {
   return db.prepare(`SELECT g.* FROM assistant_goals g JOIN assistant_turns t ON t.id = g.turn_id
@@ -164,5 +191,5 @@ function pendingGoals(db, ctx, conversationId) {
 
 module.exports = {
   GOAL_KINDS, GOAL_STATUSES, STATUS_LABEL,
-  openTurn, getTurn, getGoal, goalWithTurn, goalByResult, settle, noteReferent, conversation, recentReferents, pendingGoals,
+  openTurn, getTurn, getGoal, goalWithTurn, goalByResult, settle, noteReferent, conversation, recentReferents, pendingGoals, lastSubjects, lastSettled,
 };

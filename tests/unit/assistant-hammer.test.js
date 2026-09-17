@@ -25,6 +25,7 @@ const queryService = require('../../src/attention/query-service');
 const intentRouter = require('../../src/manager/intent-router');
 const actionService = require('../../src/actions/action-service');
 const intentService = require('../../src/actions/intent-service');
+const execution = require('../../src/actions/execution-service');
 const { makeDatabase, seedWorkspace, makeQuantityItem, makeVariantItem, cleanupAll, signIn, csrfFrom } = require('../helpers');
 
 test.after(cleanupAll);
@@ -187,4 +188,261 @@ test('"we got a return today, 2 … from Marlow, one is damaged" opens the retur
   const posted = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'we got a return today, 2 copper elbow from Marlow, one is damaged' });
   assert.equal(posted.status, 303);
   assert.match(posted.headers.location, /^\/warehouse\/operations\?returnCustomer=Marlow&returnQuantity=2&returnReason=Damaged&returnProduct=Copper\+Elbow#customer-returns$/);
+});
+
+// Round three.
+test('"we sold 3 X at the store and 2 Y from the van" is two changes even when the reader returned one', async () => {
+  const one = (item, qty, loc) => ({ actionType: 'issue', item, variant: '', sourceText: `we sold ${qty} ${item}`, lotCode: '', serials: [], sourceLocation: loc, destinationLocation: '',
+    quantity: qty, adjustmentTarget: -1, reasonCode: 'sold', terminologyKey: '', terminologyValue: '', productName: '', productCode: '', variantAxes: '', unitLabel: '', kitComponents: [], supplier: '', purchaseUnit: '', amount: -1, reference: '', recipient: '', messageBody: '' });
+  const provider = { async complete(r) {
+    const text = r.prompt.split('Instruction: ')[1] || '';
+    if (/sweater.*elbow/s.test(text)) return { data: { lines: [one('Children\'s Sweater', 3, 'Downtown Store')], clarifyingQuestion: '', unsupportedReason: '' } };
+    if (/elbow/.test(text)) return { data: { lines: [one('Copper Elbow', 2, 'Service Van 3')], clarifyingQuestion: '', unsupportedReason: '' } };
+    return { data: { lines: [one('Children\'s Sweater', 3, 'Downtown Store')], clarifyingQuestion: '', unsupportedReason: '' } };
+  } };
+  const intent = await intentService.readInstruction('we sold 3 sweater navy 4 at the store and 2 copper elbow from the van', { context: { itemNames: ['Children\'s Sweater', 'Copper Elbow'], locationNames: ['Downtown Store', 'Service Van 3'] }, provider });
+  assert.deepEqual(intent.lines.map((l) => [l.item, l.quantity]), [['Children\'s Sweater', 3], ['Copper Elbow', 2]]);
+});
+
+test('two questions in one sentence stay one multi-part question', async () => {
+  const understand = require('../../src/assistant/understand');
+  const split = { async complete() { return { data: { continuesPrevious: false, goals: [{ kind: 'lookup', text: 'how many navy sweaters in size 5 at the store' }, { kind: 'lookup', text: 'how many are on order' }] } }; } };
+  const result = await understand.understand('how many navy sweaters in size 5 at the store, and how many are on order', { provider: split });
+  assert.equal(result.goals.length, 1);
+});
+
+test('"navy sweaters size 5" is Navy / 5, not every navy sweater', () => {
+  const { db } = makeDatabase();
+  const w = seedWorkspace(db);
+  makeVariantItem(db, w.ctx);
+  const found = queryService.resolveSkus(db, w.workspaceId, 'navy sweaters size 5', 25);
+  assert.deepEqual(found.map((s) => s.variant_label), ['Navy / 5']);
+});
+
+test('"how much did we sell last week?" is a window and a sum of money; a named supplier gets its own delivery record; "all products" is all of them', () => {
+  const { db, w, membership, elbow, acme } = setup();
+  const sales = require('../../src/sales/sales-order-service');
+  const prices = require('../../src/pricing/price-service');
+  prices.setPrice(db, w.ctx, { skuId: elbow.skuId, amountMinor: 250, currency: 'USD', source: 'owner' });
+  const customer = sales.createCustomer(db, w.ctx, { name: 'Fresh Cafe' });
+  sales.createOrder(db, w.ctx, { customerId: customer.id, lines: [{ skuId: elbow.skuId, quantity: 4 }] });
+  const week = queryService.execute(db, w.workspaceId, queryService.normalisePlan({ intent: 'sales_summary', windowDays: 7 }), { question: 'how much did we sell last week in dollars?' });
+  assert.match(week.answer, /In the last 7 days, customers ordered \$10\.00 across 1 order \(4 units\)/);
+  const supplier = queryService.execute(db, w.workspaceId, queryService.normalisePlan({ intent: 'most_reliable_supplier', entityQuery: 'acme' }), { question: 'how long does acme take to deliver?' });
+  assert.match(supplier.answer, /^Acme Trade Supply has not delivered an order yet/);
+  assert.doesNotMatch(supplier.answer, /Lakeside/);
+  void acme;
+  const list = queryService.execute(db, w.workspaceId, queryService.normalisePlan({ intent: 'selling_price', entityQuery: '' }), { question: 'give me a list of all products with their prices' });
+  assert.equal(list.answer, 'Copper Elbow is priced at $2.50.');
+  makeQuantityItem(db, w.ctx, { name: 'Unpriced Thing', baseCode: 'UP' });
+  const two = queryService.execute(db, w.workspaceId, queryService.normalisePlan({ intent: 'selling_price', entityQuery: '' }), { question: 'all products with prices' });
+  assert.equal(two.answer, '2 stock lines; 1 has no selling price set yet. Copper Elbow $2.50.');
+});
+
+test('"receive 50 trail ration pack into main warehouse at $4.20 each from acme" keeps the cost and names the supplier', async () => {
+  const { db, w, membership } = setup();
+  const pack = makeQuantityItem(db, w.ctx, { name: 'Trail Ration Pack', baseCode: 'TRP' });
+  const intent = await intentService.readInstruction('receive 50 trail ration pack into main warehouse at $4.20 each from acme',
+    { context: { itemNames: ['Trail Ration Pack', 'Copper Elbow'], locationNames: ['Main Warehouse', 'Downtown Store'] }, provider: { async complete() { throw new Error('read in code'); } } });
+  assert.equal(intent.lines[0].unitCostMinor, 420);
+  assert.equal(intent.lines[0].supplier, 'acme');
+  const result = await actionService.interpret(db, w.ctx, membership, 'receive 50 trail ration pack into main warehouse at $4.20 each from acme', { parsedIntent: intent });
+  assert.equal(result.kind, 'proposal', JSON.stringify(result).slice(0, 200));
+  assert.ok(result.proposal.assumptions.some((a) => /\$4\.20 each, will be recorded/.test(a)));
+  execution.approve(db, w.ctx, membership, result.proposal.proposalId);
+  execution.execute(db, w.ctx, membership, result.proposal.proposalId);
+  const cost = db.prepare('SELECT amount_minor FROM sku_purchase_costs WHERE sku_id = ? ORDER BY rowid DESC LIMIT 1').get(pack.skuId);
+  assert.equal(cost.amount_minor, 420);
+});
+
+test('"rename downtown store to city store" opens the location\'s edit form with the new name, renaming nothing', async () => {
+  const { app, w, db } = setup();
+  const agent = request.agent(app);
+  await signIn(agent, w.account.email, w.account.password);
+  const home = await agent.get('/');
+  const posted = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'rename downtown store to City Store' });
+  assert.equal(posted.headers.location, `/locations?edit=${w.store.id}&name=City%20Store#modal-location-${w.store.id}`);
+  const page = await agent.get(`/locations?edit=${w.store.id}&name=City%20Store`);
+  assert.match(page.text, new RegExp(`id="edit-name-${w.store.id}" name="name" value="City Store"`));
+  assert.equal(db.prepare('SELECT name FROM locations WHERE id = ?').get(w.store.id).name, 'Downtown Store');
+});
+
+// Round four: a six-turn conversation.
+test('"move 10 of them there" means the product and place the conversation was just about', () => {
+  const { resolvePronouns } = require('../../src/assistant/understand');
+  const moved = resolvePronouns('move 10 of them there', { product: 'Trail Ration Pack', location: 'Downtown Store' });
+  assert.equal(moved.text, 'move 10 Trail Ration Pack to Downtown Store');
+  assert.deepEqual(moved.swaps.map((s) => s.word), ['them', 'there']);
+  assert.equal(resolvePronouns('how many are there', { product: 'Trail Ration Pack', location: 'Downtown Store' }).text, 'how many are there', 'a question is left alone');
+  assert.equal(resolvePronouns('move 10 of them there', {}).text, 'move 10 of them there', 'nothing to resolve against, nothing changed');
+});
+
+test('the ledger knows what the conversation was last about and what was last settled', () => {
+  const ledger = require('../../src/assistant/ledger');
+  const { db, w } = setup();
+  const turn = ledger.openTurn(db, w.ctx, { conversationId: 'c1', channel: 'ask', message: 'and at the store?', understanding: {}, goals: [{ kind: 'lookup', text: 'and at the store?' }] });
+  ledger.settle(db, w.ctx, turn.goals[0].id, { status: 'answered', said: 'Downtown Store: 24 on hand.', provenance: { reads: [{ entity: 'Trail Ration Pack', location: 'Downtown Store' }] } });
+  assert.deepEqual(ledger.lastSubjects(db, w.ctx, 'c1'), { product: 'Trail Ration Pack', location: 'Downtown Store' });
+  const second = ledger.openTurn(db, w.ctx, { conversationId: 'c1', channel: 'ask', message: 'move 10 of them there', understanding: {}, goals: [{ kind: 'change', text: 'move 10 of them there' }] });
+  ledger.settle(db, w.ctx, second.goals[0].id, { status: 'needs_approval', resultHref: '/actions/act_1', said: 'Prepared.' });
+  assert.equal(ledger.lastSettled(db, w.ctx, 'c1').id, second.goals[0].id);
+  assert.ok(ledger.GOAL_STATUSES.includes('replaced'), 'a corrected proposal is recorded as replaced');
+});
+
+test('"what did I just do?", "thanks" and "hi" are answered from the ledger, without a model', async () => {
+  const { app, w } = setup();
+  const agent = request.agent(app);
+  await signIn(agent, w.account.email, w.account.password);
+  const home = await agent.get('/');
+  const hi = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'hi', queryConversation: '1' });
+  const hiPage = await agent.get(hi.headers.location);
+  assert.match(hiPage.text, /Hello\. Ask about stock, orders, suppliers or money/);
+  assert.doesNotMatch(hiPage.text, /How StockChief read this/, 'a greeting shows no provenance block');
+  const recap = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'what did I just do?', queryConversation: '1' });
+  assert.match(recap.headers.location, /^\/ask\?q=what%20did%20I%20just%20do%3F&recap=1$/);
+  const recapPage = await agent.get(recap.headers.location);
+  assert.match(recapPage.text, /Here is what just happened, newest last:/);
+  assert.match(recapPage.text, /You said “hi” — answered: Hello\./);
+  assert.doesNotMatch(recapPage.text, /You said “what did I just do/, 'the question is not part of its own answer');
+  const thanks = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'ok thanks', queryConversation: '1' });
+  const thanksPage = await agent.get(thanks.headers.location);
+  assert.match(thanksPage.text, /You’re welcome\./);
+});
+
+test('"do it" opens the proposal this conversation prepared; it does not run it', async () => {
+  const { app, w, db } = setup();
+  const proposals = require('../../src/actions/proposal-service');
+  const built = proposals.build(db, w.ctx, { actionType: 'transfer', item: 'Copper Elbow', sourceLocation: w.main.name, destinationLocation: w.store.name, quantity: 10 });
+  const stored = proposals.persist(db, w.ctx, built.proposal, { sourceType: 'USER_REQUEST', instruction: 'move 10 copper elbow to the store' });
+  const agent = request.agent(app);
+  await signIn(agent, w.account.email, w.account.password);
+  const home = await agent.get('/');
+  const posted = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'do it', queryConversation: '1' });
+  assert.equal(posted.headers.location, `/actions/${stored.proposalId}`);
+  assert.equal(proposals.get(db, w.workspaceId, stored.proposalId).status, 'AWAITING_APPROVAL', 'nothing ran');
+  assert.equal(db.prepare('SELECT on_hand FROM balances WHERE sku_id = ? AND location_id = ?').get(built.proposal.skuId, w.main.id).on_hand, 40);
+});
+
+test('two good batches: "move 10" takes the earliest to expire and says so, instead of asking', () => {
+  const { makeLotItem } = require('../helpers');
+  const { db } = makeDatabase();
+  const w = seedWorkspace(db);
+  const lot = makeLotItem(db, w.ctx);
+  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 60, lotCode: 'L-1', expiresAt: '2026-10-30' });
+  engine.receive(db, w.ctx, { skuId: lot.skuId, locationId: w.main.id, quantity: 80, lotCode: 'L-2', expiresAt: '2027-01-15' });
+  const proposals = require('../../src/actions/proposal-service');
+  const built = proposals.build(db, w.ctx, { actionType: 'transfer', item: 'Trail Ration Pack', sourceLocation: w.main.name, destinationLocation: w.store.name, quantity: 10 });
+  assert.ok(built.ok, JSON.stringify(built));
+  assert.match(built.proposal.assumptions.join(' '), /Taking it from batch L-1 \(expires 2026-10-30\), the earliest to expire of the 2 batches at Main Warehouse\. Say a batch code if you meant another\./);
+});
+
+// Round five.
+test('"stop reordering <product>" is a rule about that product, never a pause of everything', () => {
+  const { db, w } = setup();
+  assert.equal(navigation.mentionsProduct(db, w.workspaceId, 'stop reordering copper elbow'), true);
+  assert.equal(navigation.mentionsProduct(db, w.workspaceId, 'stop'), false);
+  const importRemovals = require('../../src/manager/import-removals');
+  assert.equal(importRemovals.matchesInstruction('delete the Brass Tee product I just added'), false, 'a named product is not an import rollback');
+  assert.equal(importRemovals.matchesInstruction('remove the newly added products'), true);
+});
+
+test('"add a new product … we buy it at $1.10 and sell at $3.50" is not a price list', () => {
+  const priceChanges = require('../../src/pricing/price-changes');
+  assert.equal(priceChanges.matchesInstruction('add a new product: Brass Tee 3/4 in, we buy it at $1.10 and sell at $3.50, put 40 in the warehouse'), false);
+  assert.equal(priceChanges.matchesInstruction('Add a price for each item'), true);
+  assert.equal(priceChanges.matchesInstruction('change the price of trail ration pack to 12.99'), true);
+});
+
+test('"lower the price of all the gloves by 10%" is one proposal per priced variant, and the unpriced are said', () => {
+  const priceChanges = require('../../src/pricing/price-changes');
+  const prices = require('../../src/pricing/price-service');
+  const { db } = makeDatabase();
+  const w = seedWorkspace(db);
+  const glove = makeVariantItem(db, w.ctx, { name: 'Harbour Work Glove', baseCode: 'HG', options: [{ name: 'Size', values: 'M, L, XL' }] });
+  prices.setPrice(db, w.ctx, { skuId: glove.skus[0].id, amount: '10.00', currency: 'USD' });
+  prices.setPrice(db, w.ctx, { skuId: glove.skus[1].id, amount: '12.00', currency: 'USD' });
+  assert.equal(priceChanges.matchesPercentInstruction('lower the price of all the gloves by 10%'), true);
+  assert.equal(priceChanges.matchesPercentInstruction('lower the price of gloves to $5'), false);
+  const batch = priceChanges.interpretPercent(db, w.ctx, 'lower the price of all the gloves by 10%');
+  assert.equal(batch.proposals.length, 2);
+  assert.deepEqual(batch.proposals.map((p) => p.amount_minor).sort((a, b) => a - b), [900, 1080]);
+  assert.equal(batch.unpriced, 1);
+  assert.equal(batch.direction, -1);
+  assert.deepEqual(priceChanges.readPercent('put the price of copper elbow up 20%'), { what: 'copper elbow', pct: 20, direction: 1 });
+});
+
+test('"what do we owe Acme?" reads Acme’s bills; "which products are we losing money on?" reads from the bottom', () => {
+  const semantic = require('../../src/attention/semantic-query');
+  const { db, w } = setup();
+  assert.equal(semantic.namesAParty(db, w.workspaceId, 'Acme'), true);
+  assert.equal(semantic.namesAParty(db, w.workspaceId, 'copper elbow'), false);
+  const losing = queryService.execute(db, w.workspaceId, { intent: 'product_profitability', windowDays: 30, limit: 10 }, { question: 'which products are we losing money on?' });
+  assert.match(losing.answer, /Nothing sold with a recorded cost|sold for less than|None of the|financial|No product-level/);
+});
+
+test('"how much stock do we have, in dollars" gets both figures; "list the open purchase orders with their totals" lists them', async () => {
+  const { db, w, app, po, po2 } = setup();
+  const planner = require('../../src/attention/query-planner');
+  const worth = await planner.ask(db, w.workspaceId, 'how much stock do we have in total, in dollars', { semantic: false });
+  assert.match(worth.answer, /^Two ways to count it\./);
+  const open = queryService.execute(db, w.workspaceId, { intent: 'open_purchase_orders', limit: 25 }, {});
+  assert.equal(open.rows.length, 2);
+  assert.match(open.answer, /^2 open purchase orders, \$516\.00 in all: /);
+  assert.ok(open.rows.some((r) => r.label === po.poNumber && r.total === '$480.00'));
+  assert.ok(open.rows.some((r) => r.label === po2.poNumber && r.total === '$36.00'));
+  assert.equal(navigation.isBusinessDataQuestion('list the open purchase orders with their totals'), true);
+  const agent = request.agent(app);
+  await signIn(agent, w.account.email, w.account.password);
+  const home = await agent.get('/');
+  const posted = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'list the open purchase orders with their totals', queryConversation: '1' });
+  const page = await agent.get(posted.headers.location);
+  assert.match(page.text, /2 open purchase orders, \$516\.00 in all/);
+});
+
+test('"Brass Tee" is not Brass Compression Nut: a word that matches nothing is a question, not a substitution', () => {
+  const resolver = require('../../src/actions/resolver');
+  const { db } = makeDatabase();
+  const w = seedWorkspace(db);
+  makeQuantityItem(db, w.ctx, { name: 'Brass Compression Nut 15mm', baseCode: 'BN' });
+  const result = resolver.resolveSku(db, w.workspaceId, 'Brass Tee', '');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'ambiguous');
+  assert.match(result.message, /“Brass Tee” — nothing here is called that\. “tee” is not in any product name; “brass” matches Brass Compression Nut 15mm\. Did you mean that\?/);
+  assert.ok(resolver.resolveSku(db, w.workspaceId, 'brass nuts', '').ok, 'a plural of a real word still finds it');
+});
+
+test('a count sheet is read in code, every line kept, and a line that already matches is said rather than dropped', async () => {
+  const { db, w, elbow } = setup();
+  const context = actionService.instructionContext(db, w.workspaceId);
+  const sheet = intentService.deterministicCountSheet('we counted the warehouse today: 35 copper elbow, 0 widgets', context);
+  assert.ok(sheet, 'read without a model');
+  assert.deepEqual(sheet.lines.map((l) => [l.actionType, l.item, l.sourceLocation, l.adjustmentTarget]), [['adjust', 'Copper Elbow', 'Main Warehouse', 35], ['adjust', 'widgets', 'Main Warehouse', 0]]);
+  assert.equal(intentService.deterministicCountSheet('move 3 copper elbow from the warehouse to the store', context), null);
+  const membership = authService.getMembership(db, w.workspaceId, w.accountId);
+  makeQuantityItem(db, w.ctx, { name: 'Solder Wire', baseCode: 'SW' });
+  const result = await actionService.interpret(db, w.ctx, membership, 'we counted the warehouse today: 35 copper elbow, 0 solder wire', { provider: { async complete() { throw new Error('no model needed'); } } });
+  assert.equal(result.kind, 'proposal', JSON.stringify(result));
+  assert.equal(result.proposal.adjustmentTarget, 35);
+  assert.equal(result.proposal.skuId, elbow.skuId);
+  assert.match(result.proposal.assumptions.join(' '), /One line of what you said already matched the records, so it was left alone: Solder Wire at Main Warehouse is already 0\./);
+});
+
+test('answering "which place should it come out of?" settles the goal as prepared, not left waiting', () => {
+  // The source question carries no server-held continuation, so the actions
+  // page clears it from the session when it renders; the answer still has to
+  // settle the goal that asked.
+  const ledger = require('../../src/assistant/ledger');
+  const turns = require('../../src/assistant/turns');
+  const { db, w } = setup();
+  const turn = ledger.openTurn(db, w.ctx, { conversationId: 'default', channel: 'ask', message: 'move 10 of them there', understanding: {}, goals: [{ kind: 'change', text: 'move 10 of them there' }] });
+  ledger.settle(db, w.ctx, turn.goals[0].id, { status: 'clarify', said: 'Which should it come out of?', resultHref: '/actions', resultLabel: 'Answer the question' });
+  const req = { db, ctx: w.ctx, session: { assistantConversationId: 'default' } };
+  const redirected = [];
+  const res = { redirect: (...args) => redirected.push(args[args.length - 1]) };
+  turns.resume(req, res);
+  res.redirect(303, '/actions/act_prepared');
+  assert.deepEqual(redirected, ['/actions/act_prepared']);
+  const settled = ledger.getGoal(db, w.workspaceId, turn.goals[0].id);
+  assert.equal(settled.status, 'needs_approval');
+  assert.equal(settled.resultHref, '/actions/act_prepared');
 });

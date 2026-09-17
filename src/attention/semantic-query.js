@@ -50,20 +50,26 @@ const OPTIONAL_ON_READ = ['continuesPrevious', 'unsupportedReason', 'nearest'];
 // it. That is not a wrong plan; the window is simply unused. Zero is accepted
 // on the way back and lifted to the minimum before anything runs.
 const PART_SCHEMA = SCHEMA.properties.parts.items;
+// "All products" comes back with a limit of 100 against a ceiling of 25; a
+// figure past the ceiling is clamped, not a reason to refuse the question.
+const ACCEPTED_RECORD_SCHEMA = {...RECORD_SCHEMA, properties: {...RECORD_SCHEMA.properties, limit: {type: 'integer', minimum: 0}}};
 const ACCEPTED_PART_SCHEMA = {...PART_SCHEMA, properties: {...PART_SCHEMA.properties,
- windowDays: {...PART_SCHEMA.properties.windowDays, minimum: 0}, limit: {...PART_SCHEMA.properties.limit, minimum: 0}}};
+ windowDays: {type: 'integer', minimum: 0}, limit: {type: 'integer', minimum: 0},
+ recordQuery: {anyOf: [ACCEPTED_RECORD_SCHEMA, {type: 'null'}]}}};
 const ACCEPTED_SCHEMA = {...SCHEMA, required: SCHEMA.required.filter((key) => !OPTIONAL_ON_READ.includes(key)),
  properties: {...SCHEMA.properties, parts: {...SCHEMA.properties.parts, items: ACCEPTED_PART_SCHEMA}}};
 function liftMinimums(data) {
  if (!data || !Array.isArray(data.parts)) return data;
- return {...data, parts: data.parts.map((p) => ({...p, windowDays: Math.max(1, Number(p.windowDays) || 0), limit: Math.max(1, Number(p.limit) || 0)}))};
+ return {...data, parts: data.parts.map((p) => ({...p,
+  windowDays: Math.min(365, Math.max(1, Number(p.windowDays) || 0)), limit: Math.min(25, Math.max(1, Number(p.limit) || 0)),
+  recordQuery: p.recordQuery ? {...p.recordQuery, limit: Math.min(50, Math.max(1, Number(p.recordQuery.limit) || 0))} : p.recordQuery}))};
 }
 
 const FINANCIAL = new Set(['financial_summary','business_health','cash_pressure','profit_and_loss','balance_sheet','cash_position',
- 'receivables_aging','payables_aging','inventory_valuation','inventory_selling_value','sales_tax_summary','bills_due','customer_payments',
+ 'receivables_aging','payables_aging','inventory_valuation','inventory_selling_value','stock_worth','open_purchase_orders','sales_tax_summary','bills_due','customer_payments',
  'period_profit_and_customer_cash','sale_profit_and_payment','supplier_spend','product_profitability','location_profitability',
  'financial_comparison','slow_inventory_value','books_health']);
-const PURCHASING = new Set(['on_order','late_orders','supplier_order_status','supplier_document_changes','supplier_price_changes',
+const PURCHASING = new Set(['on_order','late_orders','open_purchase_orders','supplier_order_status','supplier_document_changes','supplier_price_changes',
  'last_cost','suppliers_for_item','supplier_risk','most_reliable_supplier','what_to_order','replenishment']);
 const SALES = new Set(['selling_price','top_customers','sales_summary','shipment_status','shipping_exceptions','shipping_costs','carrier_performance','customer_orders_at_risk']);
 const ADMIN = new Set(['connection_summary','connection_last_event','connection_mapping_issues','connection_diagnostics','stop_automation']);
@@ -121,6 +127,37 @@ function namedProducts(db, workspaceId, question) {
   if(last.length>3&&new RegExp(`\\b${last.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}s?\\b`).test(said))hits.add(name);
  }
  return [...hits];
+}
+
+/** The one location a phrase like "at the store" or "in the van" can mean here. */
+/** Whether the words name a supplier or a customer, by any distinctive word of the name. */
+function namesAParty(db, workspaceId, text) {
+  const said = String(text || '').toLowerCase();
+  if (!said) return false;
+  const generic = new Set(['supply', 'supplies', 'trade', 'trading', 'ltd', 'limited', 'inc', 'llc', 'co', 'company', 'group', 'the', 'and', 'of', 'plc', 'corp', 'corporation']);
+  const rows = [];
+  try { rows.push(...db.prepare('SELECT name FROM suppliers WHERE workspace_id = ? LIMIT 500').all(workspaceId)); } catch { /* no suppliers table */ }
+  try { rows.push(...db.prepare('SELECT name FROM customers WHERE workspace_id = ? LIMIT 500').all(workspaceId)); } catch { /* no customers table */ }
+  return rows.some((r) => {
+    const name = String(r.name || '').toLowerCase();
+    if (!name) return false;
+    if (said.includes(name)) return true;
+    const words = name.split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !generic.has(w));
+    return words.some((w) => new RegExp(`\\b${w}\\b`).test(said));
+  });
+}
+
+function namedLocation(db, workspaceId, question) {
+ const said=String(question||'').toLowerCase();
+ const places=db.prepare('SELECT name FROM locations WHERE workspace_id = ? AND is_active = 1').all(workspaceId).map((r)=>String(r.name||''));
+ const exact=places.filter((name)=>name&&said.includes(name.toLowerCase()));
+ if(exact.length===1)return exact[0];
+ if(exact.length>1)return null;
+ const m=/\b(?:at|in|from|to)\s+(?:the|our|my)\s+([a-z][a-z0-9-]{2,})\b/i.exec(said);
+ if(!m)return null;
+ const word=m[1].replace(/s$/,'');
+ const hits=places.filter((name)=>name.toLowerCase().split(/[^a-z0-9]+/).some((w)=>w.replace(/s$/,'')===word));
+ return hits.length===1?hits[0]:null;
 }
 
 function scopeProblems(db, workspaceId, question, part) {
@@ -195,12 +232,18 @@ function executePart(db,workspaceId,part,options){
   * headed by Copper Elbow. When the question names exactly one product and
   * the lookup is not a whole-inventory report, that product is the scope.
   */
- const globalReportsList=['inventory_summary','inventory_valuation','inventory_selling_value','financial_summary','business_health','cash_pressure','profit_and_loss',
+ const globalReportsList=['inventory_summary','inventory_valuation','inventory_selling_value','stock_worth','financial_summary','business_health','cash_pressure','profit_and_loss',
   'balance_sheet','cash_position','receivables_aging','payables_aging','sales_tax_summary','bills_due','financial_comparison','slow_inventory_value','books_health','top_customers',
   'connection_summary','connection_last_event','connection_mapping_issues','connection_diagnostics','stop_automation','sales_summary','what_to_order','replenishment','reorder_settings_review','capability_status'];
  if(!part.entityQuery&&part.intent!=='record_query'&&!globalReportsList.includes(part.intent)){
   const named=namedProducts(db,workspaceId,part.question||'');
   if(named.length===1)part={...part,entityQuery:named[0]};
+ }
+ // "At the store" names Downtown Store when it is the only store. A place the
+ // question names must reach a lookup that can take one.
+ if(!part.locationQuery&&part.intent!=='record_query'&&!globalReportsList.includes(part.intent)){
+  const place=namedLocation(db,workspaceId,part.question||'');
+  if(place)part={...part,locationQuery:place};
  }
  if(mismatchedIntent(part.question||'',part.intent)===null&&part.entityQuery){
   const lost=scopeProblems(db,workspaceId,part.question,part).filter((p)=>p.startsWith('the location'));
@@ -215,8 +258,13 @@ function executePart(db,workspaceId,part,options){
  // Several older whole-workspace reports don't implement entity/location
  // filters. A language model must not attach those filters and have them
  // silently ignored by the downstream executor.
- const globalReports=['inventory_summary','inventory_valuation','inventory_selling_value','financial_summary','business_health','cash_pressure','profit_and_loss',
+ const globalReports=['inventory_summary','inventory_valuation','inventory_selling_value','stock_worth','financial_summary','business_health','cash_pressure','profit_and_loss',
   'balance_sheet','cash_position','receivables_aging','payables_aging','sales_tax_summary','bills_due','financial_comparison','slow_inventory_value','books_health','top_customers'];
+ // "What do we owe Acme?" scopes the payables report to a supplier, and the
+ // report reads the supplier from the question itself. A party's name in the
+ // entity slot is not a product scope to refuse.
+ if(['payables_aging','bills_due','receivables_aging','top_customers'].includes(part.intent)&&part.entityQuery&&!part.locationQuery&&namesAParty(db,workspaceId,part.entityQuery))
+  part={...part,entityQuery:''};
  if(globalReports.includes(part.intent)&&(part.entityQuery||part.locationQuery))
   return empty(part.question,`That report is currently a whole-inventory read; it cannot verify the requested ${part.locationQuery?'location':'record'} scope. Do you want the whole-inventory report, or should we use a scoped record lookup instead?`);
  // Resolve named products before retrieval. A partial singular reference must
@@ -243,6 +291,7 @@ async function ask(db,workspaceId,question,options){
  General read models (fields are reviewed server-side; use ONLY fields actually listed for that dataset):
  ${records.promptCatalogue(catalog)}
 
+ How long a named supplier takes to deliver, or how reliable it is, is most_reliable_supplier with entityQuery set to that supplier — do not ask which measure.
  Products below their reorder point, needing reordering or short of stock are what_to_order (it lists every product under its reorder point and how much to buy); the reorder points themselves are reorder_settings_review. In unsupportedReason and nearest write plain sentences for the person; never mention a capability id, lookup id or contract name.
  Prefer record_query for combinations of filters, counts, missing attributes, grouped totals, lists, comparisons and rankings. Reuse specialized intents for financial, forecasting, replenishment, kit definitions, shipping and other domain reasoning. All registered specialized lookup IDs: ${service.INTENTS.join(', ')}.
  Set entityScope=single when the person refers to one particular product/customer/supplier/order; entityScope=set for a class, plural/list, count, ranking or grouping. Use exact equality for a supplied full name or SKU, contains for a partial name. The server will ask about ambiguous singular references instead of summing unrelated products.
@@ -313,4 +362,4 @@ async function ask(db,workspaceId,question,options){
   supported:sections.every(s=>s.supported),needsClarification:sections.some(s=>s.needsClarification),
   semanticPlan:data,answerMode:'verified',spoken:null,isAction:false};
 }
-module.exports={SCHEMA,RECORD_SCHEMA,ask,executePart,boundedComplete,scopeProblems,mismatchedIntent};
+module.exports={SCHEMA,RECORD_SCHEMA,ask,executePart,boundedComplete,scopeProblems,mismatchedIntent,namesAParty};

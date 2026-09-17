@@ -18,6 +18,10 @@ function isBusinessDataQuestion(text) {
   // whether StockChief has a feature; it was answered with the status of
   // the selling-prices capability because "sell" appeared in the sentence.
   if (/\b(?:do|does|did)\s+we\s+have\b|\benough\b|\bhow\s+(?:many|much)\b|\bin\s+stock\b|\bon\s+hand\b|\bleft\b/i.test(value)) return true;
+  // "List the open purchase orders with their totals": "open" is what the
+  // orders are, not a request to open a page; a list of records is a lookup.
+  if (/\bopen\s+(?:purchase\s+|sales\s+|customer\s+)?(?:orders?|bills?|invoices?|proposals?|returns?)\b/i.test(value)) return true;
+  if (/\b(?:list|show|give me|get me|pull up)\b[^.?!]{0,40}\b(?:orders?|customers?|suppliers?|products?|variants?|bills?|invoices?|movements?|payments?|sales|purchases)\b[^.?!]{0,40}\b(?:with|and|their|totals?|amounts?|values?|due|overdue|late|outstanding)\b/i.test(value)) return true;
   return /\b(?:how many|how much|which|what)\b.*\b(?:stock|inventory|product|sku|order|customer|supplier|sale|payment)\b/i.test(value)
     || /\bwhere\s+(?:is|are)\s+(?:my|our|the)\b/i.test(value)
     || /\bwhere\b.*\b(?:stock|inventory|units?|products?|skus?)\b.*\b(?:held|stored|located|left)\b/i.test(value);
@@ -32,6 +36,10 @@ function mentionsProduct(db, workspaceId, text) {
     return names.some((name) => {
       if (!name) return false;
       if (said.includes(name)) return true;
+      // "PTFE tape" names PTFE Tape 12m: every word of the name that is a word
+      // rather than a size or a number.
+      const words = name.split(/\s+/).filter((w) => w.length > 2 && !/^\d/.test(w) && !/^[\d/.]+(?:in|mm|cm|m|kg|g|ml|l)?\.?$/.test(w));
+      if (words.length && words.every((w) => said.includes(w))) return true;
       // "gloves" names Harbour Work Glove: the product's last word, plural or not.
       const last = name.split(/\s+/).pop().replace(/s$/, '');
       return last.length > 3 && new RegExp(`\\b${last.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}s?\\b`).test(said);
@@ -424,4 +432,4 @@ function verifyArrival(req) {
 }
 
 module.exports = { resolve, resolveNatural, asQueryResult, remember, verifyArrival, handoffHref,
-  destinationMatch, recordMatch, recordContextMatch, navigationTokens, semanticSchema, isBusinessDataQuestion };
+  destinationMatch, recordMatch, recordContextMatch, navigationTokens, semanticSchema, isBusinessDataQuestion, mentionsProduct };

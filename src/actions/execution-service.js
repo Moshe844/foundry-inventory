@@ -377,6 +377,11 @@ function perform(db, ctx, membership, proposal) {
   const reference = `StockChief ${proposal.proposalId}`;
 
   if (proposal.actionType === 'receive') {
+    const receipt = proposal.settings && proposal.settings.receipt;
+    if (receipt && receipt.unitCostMinor !== null && receipt.unitCostMinor !== undefined) {
+      priceService.setPurchaseCost(db, ctx, { skuId: proposal.skuId, amountMinor: receipt.unitCostMinor, currency: 'USD',
+        source: 'owner', sourceDetail: { proposalId: proposal.proposalId, supplier: receipt.supplier || null } });
+    }
     return engine.receive(db, engineCtx, {
       skuId: proposal.skuId,
       locationId: proposal.destinationLocationId,
@@ -387,7 +392,7 @@ function perform(db, ctx, membership, proposal) {
       // reachable from here that a person could not already do by hand.
       lotCode: proposal.lotId ? undefined : (proposal.settings && proposal.settings.newLotCode) || undefined,
       reference,
-      notes: proposal.notes || undefined,
+      notes: proposal.notes || (receipt && receipt.supplier ? `Received from ${receipt.supplier}, as stated.` : undefined),
     });
   }
 

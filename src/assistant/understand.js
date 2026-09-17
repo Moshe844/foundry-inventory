@@ -96,6 +96,33 @@ function resolveReferents(message, referents = []) {
   return found;
 }
 
+/*
+ * "Move 10 of them there" after "how many trail ration pack at the store?"
+ *
+ * The question planner reads pronouns against the previous question; the
+ * action reader did not, and answered "there is nothing called ‘them
+ * there’". The subjects of the last answered turn — the one product and the
+ * one place it was about — are what "them" and "there" mean, and the
+ * sentence is rewritten with them before the reader sees it. Only when
+ * there is exactly one candidate for each word; otherwise the pronoun is
+ * left for the reader to ask about.
+ */
+function resolvePronouns(message, subjects = {}) {
+  let text = String(message || '');
+  const swaps = [];
+  const moving = /\b(?:move|transfer|send|ship|put|take|bring|receive|issue|sell|sold|order|buy)\b/i.test(text);
+  if (!moving) return { text, swaps };
+  if (subjects.product && /\b(?:them|those|these|it|that (?:product|item|one)|this (?:product|item|one))\b/i.test(text)) {
+    text = text.replace(/(\bof\s+)?\b(?:them|those|these|it|that (?:product|item|one)|this (?:product|item|one))\b/i, () => subjects.product);
+    swaps.push({ word: 'them', meaning: subjects.product });
+  }
+  if (subjects.location && /\b(?:there|that place|that location|the same place)\b/i.test(text)) {
+    text = text.replace(/(\s*)\b(to|into|at|from)?\s*\b(?:there|that place|that location|the same place)\b/i, (m, lead, prep) => `${lead || ' '}${prep || 'to'} ${subjects.location}`);
+    swaps.push({ word: 'there', meaning: subjects.location });
+  }
+  return { text: text.replace(/\s{2,}/g, ' ').trim(), swaps };
+}
+
 /** The referents as a sentence a reader prompt can carry: “that PO” = PO-1024. */
 function referentNote(resolved = []) {
   if (!resolved.length) return '';
@@ -159,7 +186,10 @@ async function understand(message, options = {}) {
       });
       const checked = validate(toWireSchema(SCHEMA), response.data, { key: 'assistant-understanding' });
       const goals = checked.ok ? verbatim(clean, checked.data.goals) : null;
-      if (goals && goals.length > 1) {
+      // Two questions in one sentence are one multi-part question: the
+      // planner answers every part together, and "how many are on order"
+      // split off on its own has lost what it was asking about.
+      if (goals && goals.length > 1 && !goals.every((goal) => goal.kind === 'lookup')) {
         return { continuesPrevious: checked.data.continuesPrevious === true, goals, referents, how: 'model' };
       }
     } catch {
@@ -169,4 +199,4 @@ async function understand(message, options = {}) {
   return { continuesPrevious: false, goals: [{ kind: guessKind(clean), text: clean }], referents, how: 'single' };
 }
 
-module.exports = { SCHEMA, SYSTEM, understand, guessKind, resolveReferents, referentNote, verbatim };
+module.exports = { SCHEMA, SYSTEM, understand, guessKind, resolveReferents, resolvePronouns, referentNote, verbatim };

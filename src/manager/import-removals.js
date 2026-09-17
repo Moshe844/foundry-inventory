@@ -22,7 +22,12 @@ function matchesInstruction(message) {
   const recent = /\b(newly|recently|just|latest|last)\b/i.test(text)
     && /\b(add(?:ed)?|creat(?:ed)?|import(?:ed)?)\b/i.test(text);
   const importSource = /\b(last|latest|recent|earlier|previous)\s+(?:spreadsheet|sheet|import|upload)\b/i.test(text);
-  return remove && records && (recent || importSource);
+  // "Delete the Brass Tee product I just added" names one product. That is
+  // a request about Brass Tee, for the ordinary reader, not a rollback of
+  // whatever the last import created.
+  const namesOne = /\b(?:the|that|this)\s+(?!newly\b|recently\b|just\b|last\b|latest\b|new\b|added\b|imported\b|created\b)([A-Za-z0-9][\w/.'-]*(?:\s+(?!i\b|we\b|you\b)[\w/.'-]+){0,4}?)\s+(?:product|item)s?\b/i.test(text)
+    || /\b(?:product|item)s?\s+(?:called|named)\b/i.test(text);
+  return remove && records && (recent || importSource) && !namesOne;
 }
 
 function createdItemIds(db, importId) {

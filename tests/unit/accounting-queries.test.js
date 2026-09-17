@@ -203,7 +203,7 @@ test('profit questions are answered in the form they were asked', () => {
   assert.doesNotMatch(ask('Why is profit low?'), /^(Yes|No)/);
 
   // The evidence still follows the verdict; nothing is replaced by it.
-  assert.match(ask('Have I made any profit yet?'), /net profit based on the expenses recorded/);
+  assert.match(ask('Have I made any profit yet?'), /net profit. Gross profit/);
   db.close();
 });
 

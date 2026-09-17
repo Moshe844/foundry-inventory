@@ -338,6 +338,11 @@ function askOutcome(question, result, error) {
   // "Thanks!" answered with "You're welcome" is not a question waiting on the person.
   const smallTalk = /^\s*(?:thanks|thank you|thx|cheers|hi|hello|hey|ok|okay|great|cool|nice|good morning|good afternoon|bye)\b/i.test(question);
   const status = result.isAction ? 'clarify' : result.needsClarification && !smallTalk ? 'clarify' : result.supported === false && !smallTalk ? 'refused' : 'answered';
+  // A reply in StockChief's own words read no records; it carries no "read … · 0 rows" line.
+  const conversational = result.plan && ['small_talk', 'conversation_recap'].includes(result.plan.intent);
+  if (conversational) {
+    return { status, said: String(said || ''), resultHref: null, resultLabel: null, provenance: { intent: result.plan.intent, interpretation: result.interpretation || null, reads: [], rowCount: null, asOf: null } };
+  }
   return {
     status, said: String(said || ''),
     resultHref: result.handoff ? result.handoff.href : null, resultLabel: result.handoff ? result.handoff.label : null,
@@ -394,7 +399,23 @@ router.get(
     const conversation = req.query.followup === '1' && submittedTurn
       ? submittedTurn.conversation : null;
 
-    if (question) {
+    /*
+     * "What did I just do?" — read back from the ledger: the last few turns,
+     * what was asked and what became of each. No model, no guessing.
+     */
+    if (question && req.query.recap === '1') {
+      // The question itself is a turn too; it is not part of the answer.
+      const openGoal = req.session.assistantOpenGoal ? req.session.assistantOpenGoal.goalId : null;
+      const turns = ledger.conversation(req.db, req.ctx, assistantTurns.conversationId(req), { limit: 8 })
+        .filter((turn) => !turn.goals.some((g) => g.id === openGoal || (g.status === 'pending' && g.text === question)));
+      const recent = turns.slice(-3);
+      const lines = recent.flatMap((turn) => turn.goals.map((g) => `You said “${turn.message.length > 80 ? turn.message.slice(0, 80) + '…' : turn.message}” — ${g.statusLabel.toLowerCase()}${g.said ? `: ${g.said.length > 120 ? g.said.slice(0, 120) + '…' : g.said}` : ''}`));
+      result = {
+        question, answer: lines.length ? `Here is what just happened, newest last:\n${lines.join('\n')}` : 'Nothing yet in this conversation. Ask me something, or tell me what happened.',
+        rows: [], columns: [], rowCount: 0, supported: true, isAction: false, needsClarification: false, handoff: null,
+        plan: { intent: 'conversation_recap', entityQuery: '', locationQuery: '' }, interpretation: 'what this conversation has done so far', spoken: null,
+      };
+    } else if (question) {
       try {
         const pending = req.session.pendingAskResult;
         const reusable = pending && pending.token === req.query.turn && pending.workspaceId === req.ctx.workspaceId && pending.question === question;
@@ -446,12 +467,12 @@ router.get(
         if (err.status && err.status < 500) error = err.message;
         else throw err;
       }
-      if (result || error) {
-        const goalId = goalFor(req, question);
-        delete req.session.assistantOpenGoal;
-        ledger.settle(req.db, req.ctx, goalId, askOutcome(question, result, error));
-        req.currentGoalId = goalId;
-      }
+    }
+    if (question && (result || error)) {
+      const goalId = goalFor(req, question);
+      delete req.session.assistantOpenGoal;
+      ledger.settle(req.db, req.ctx, goalId, askOutcome(question, result, error));
+      req.currentGoalId = goalId;
     }
     const transcript = ledger.conversation(req.db, req.ctx, assistantTurns.conversationId(req), { limit: 12 });
 

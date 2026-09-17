@@ -371,9 +371,14 @@ async function plan(question, options = {}) {
   if (/\b(?:accounts?\s+payable|a\s*\/\s*p|bills?\s+(?:to\s+pay|due)|what\s+(?:do\s+)?we\s+owe|payables?\s+aging)\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'payables_aging' });
   }
-  if (/\b(?:inventory\s+(?:value|valuation)|value\s+of\s+(?:my|our|the)\s+inventory|stock\s+value)\b/i.test(clean)) {
-    return queryService.normalisePlan({ intent: 'inventory_valuation' });
-  }
+  // "How much is our stock worth?" without saying cost or selling price gets
+  // both figures; saying one gets that one.
+  const asksWorth = /\b(?:how\s+much\s+(?:is|are)\s+(?:all\s+)?(?:my|our|the)?\s*(?:stock|inventory)\s+worth|(?:stock|inventory)\b[^.?!]{0,40}\b(?:in\s+(?:dollars|money|\$)|worth)|(?:value|worth)\s+of\s+(?:all\s+)?(?:my|our|the)\s+(?:stock|inventory)|(?:inventory|stock)\s+(?:value|valuation))\b/i.test(clean);
+  // "Valuation" is the accounting word for the cost figure.
+  const saysBasis = /\b(?:cost|paid|book|valuation|selling|retail|sale\s+price|sell\s+for)\b/i.test(clean);
+  if (asksWorth && !saysBasis) return queryService.normalisePlan({ intent: 'stock_worth' });
+  if (asksWorth && /\b(?:selling|retail|sale\s+price|sell\s+for)\b/i.test(clean)) return queryService.normalisePlan({ intent: 'inventory_selling_value' });
+  if (asksWorth) return queryService.normalisePlan({ intent: 'inventory_valuation' });
   if (/\b(?:sales\s+tax|tax\s+(?:payable|liability|collected|recoverable))\b/i.test(clean)) {
     return queryService.normalisePlan({ intent: 'sales_tax_summary' });
   }
@@ -432,6 +437,25 @@ async function plan(question, options = {}) {
 }
 
 /** The whole path: question → plan → deterministic lookup → grounded answer. */
+/** Questions with one right reading, planned without a model. */
+function directPlan(db, workspaceId, question) {
+  const clean = String(question || '').trim();
+  const asksWorth = /\b(?:how\s+much\s+(?:is|are)\s+(?:all\s+)?(?:my|our|the)?\s*(?:stock|inventory)\s+worth|(?:stock|inventory)\b[^.?!]{0,40}\b(?:in\s+(?:dollars|money|\$)|worth)|(?:value|worth)\s+of\s+(?:all\s+)?(?:my|our|the)\s+(?:stock|inventory))\b/i.test(clean);
+  let scoped = false;
+  try {
+    const places = db.prepare('SELECT name FROM locations WHERE workspace_id = ?').all(workspaceId).map((r) => String(r.name || '').toLowerCase());
+    const said = clean.toLowerCase();
+    scoped = productNavigation.mentionsProduct(db, workspaceId, clean)
+      || places.some((name) => name && (said.includes(name) || name.split(/\s+/).some((w) => w.length > 3 && new RegExp(`\\b${w}s?\\b`).test(said))));
+  } catch { scoped = false; }
+  if (asksWorth && !scoped && !/\b(?:cost|paid|book|valuation|selling|retail|sale\s+price|sell\s+for)\b/i.test(clean)) return queryService.normalisePlan({ intent: 'stock_worth' });
+  // "List the open purchase orders with their totals" — the open orders to
+  // suppliers, each with what it comes to.
+  const asksOpenPurchaseOrders = /\b(?:list|show|what are|which are|give me|get me|all)\b[^.?!]{0,30}\b(?:open|outstanding|pending|current)\s+(?:purchase\s+orders?|pos?\b|supplier\s+orders?)|\b(?:open|outstanding)\s+(?:purchase\s+orders?|pos)\b[^.?!]{0,30}\b(?:totals?|amounts?|values?|worth)\b/i.test(clean);
+  if (asksOpenPurchaseOrders && !scoped && !/\b(?:late|overdue|due|from\s+[A-Z])\b/.test(clean)) return queryService.normalisePlan({ intent: 'open_purchase_orders' });
+  return null;
+}
+
 async function ask(db, workspaceId, question, options = {}) {
   const navigation = await productNavigation.resolveNatural(
     db, workspaceId, options.membership || null, question,
@@ -441,7 +465,12 @@ async function ask(db, workspaceId, question, options = {}) {
   if (navigation) return productNavigation.asQueryResult(question, navigation);
 
   const useSemantic = options.semantic !== false && (options.provider || config.ai.configured);
-  const rawResult = useSemantic
+  // A few questions have one right reading and no need of a model: they are
+  // answered from the closed form, so the answer is the same every time.
+  const direct = directPlan(db, workspaceId, question);
+  const rawResult = direct
+    ? queryService.execute(db, workspaceId, direct, { question: String(question).trim(), membership: options.membership || null })
+    : useSemantic
     ? await semanticQuery.ask(db, workspaceId, question, {
       ...options, provider: options.provider || createProviderForTier('standard'),
       intentSystem: SYSTEM, legacySchema: PLAN_SCHEMA,

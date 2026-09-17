@@ -757,6 +757,47 @@ function deterministicMovementList(instruction, context = {}) {
   return { lines, clarifyingQuestion: '', unsupportedReason: '' };
 }
 
+/*
+ * A count sheet, as someone writes it after walking the room.
+ *
+ * "We counted the van today: 8 copper elbow 1/2 in, 12 trail ration pack,
+ * 0 solder wire" names one place and then a number and a product per
+ * clause. Every product must be one this inventory has, by name, and the
+ * place one of its own; otherwise the sentence goes to the model as before.
+ * A three-line count took a model half a minute and sometimes timed out;
+ * read here it takes none and never loses a line.
+ */
+function deterministicCountSheet(instruction, context = {}) {
+  const clean = String(instruction || '').replace(/\r/g, '').trim();
+  const head = /^(?:we|i|they|staff)?\s*(?:just\s+)?(?:counted|did\s+a\s+(?:stock\s*)?count\s+(?:of|at|in)|stock\s*took|stocktake(?:\s+(?:of|at|in))?|count(?:ed)?\s+(?:at|in|of)|physical\s+count\s+(?:at|in|of))\s+(?:the\s+)?(.+?)(?:\s+(?:today|this\s+morning|this\s+afternoon|tonight|yesterday|just\s+now))?\s*[:\-–—]\s*(.+)$/is.exec(clean);
+  if (!head) return null;
+  // "The van" is Service Van 3 when it is the only van. The place must be
+  // one of this inventory's own, by its name or by a word only it has.
+  const placeWords = head[1].trim().toLowerCase().split(/\s+/).filter((w) => w.length > 2 && !['the', 'our', 'main', 'back', 'front'].includes(w));
+  const places = (context.locationNames || []).filter((name) => {
+    const lower = String(name).toLowerCase();
+    return lower === head[1].trim().toLowerCase() || placeWords.some((w) => new RegExp(`\\b${escapeRegExp(w)}s?\\b`).test(lower));
+  });
+  const sourceLocation = namedMatch(head[1].trim(), context.locationNames) || (places.length === 1 ? places[0] : '');
+  if (!sourceLocation) return null;
+  const clauses = head[2].split(/\s*(?:[,;\n]|\band\b)\s*/i).map((s) => s.trim().replace(/[.]+$/, '')).filter(Boolean);
+  if (!clauses.length || clauses.length > MAX_LINES) return null;
+  const lines = clauses.map((clause) => {
+    const m = /^(\d+)\s*(?:x|×)?\s+(?:units?\s+of\s+)?(.+?)$/i.exec(clause) || /^(.+?)\s*(?:[:=]|\s)\s*(\d+)$/i.exec(clause);
+    if (!m) return null;
+    const count = /^\d+$/.test(m[1]) ? Number(m[1]) : Number(m[2]);
+    const named = /^\d+$/.test(m[1]) ? m[2].trim() : m[1].trim();
+    // The product is the person's own words; the proposal builder resolves
+    // them against the catalogue and asks when they fit more than one.
+    const item = namedMatch(named, context.itemNames) || named;
+    if (!item || /^\d/.test(item)) return null;
+    return normaliseLine({ actionType: 'adjust', item, variant: named === item ? '' : removeNamed(named, item), sourceText: clause, sourceLocation,
+      adjustmentTarget: count, quantity: -1, reasonCode: 'physical_count' });
+  });
+  if (!lines.every(Boolean)) return null;
+  return { lines, clarifyingQuestion: '', unsupportedReason: '' };
+}
+
 /**
  * Common, fully explicit stock instructions do not need a model round trip.
  * Every product and location still comes from the workspace context and is
@@ -771,6 +812,8 @@ function deterministicInstruction(instruction, context = {}) {
   if (catalogue) return catalogue;
   const movements = deterministicMovementList(clean, context);
   if (movements) return movements;
+  const countSheet = deterministicCountSheet(clean, context);
+  if (countSheet) return countSheet;
   const kitDefinition = /^(?:make|configure|define|set\s+up)\s+(.+?)\s+(?:as\s+)?(?:a\s+)?(?:kit|bundle|bom|bill\s+of\s+materials)\s+(?:containing|contains|with|made\s+(?:up\s+)?of)\s+(.+?)\s*$/i.exec(clean);
   if (kitDefinition) {
     const componentClauses = kitDefinition[2].split(/\s*[,;]\s*|\s+and\s+/i)
@@ -803,12 +846,20 @@ function deterministicInstruction(instruction, context = {}) {
 
   const received = /^receive\s+(\d+)\s+(?:more\s+)?(.+?)\s+(?:into|at)\s+(.+?)\s*$/i.exec(clean);
   if (received) {
-    const destinationLocation = namedMatch(received[3].trim(), context.locationNames);
+    // "… into main warehouse at $4.20 each from acme": the cost and the
+    // supplier ride along with the place; they were read past and dropped.
+    let placeWords = received[3].trim();
+    const cost = /\b(?:at|@|for)\s*\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:each|ea\.?|per unit|a piece|apiece)?\b/i.exec(placeWords);
+    const from = /\bfrom\s+([A-Za-z][A-Za-z0-9&'. -]{1,60})$/i.exec(placeWords.replace(/\s*[.]\s*$/, ''));
+    const supplier = from ? from[1].trim() : '';
+    placeWords = placeWords.replace(/\bfrom\s+[A-Za-z][A-Za-z0-9&'. -]{1,60}$/i, '').replace(/\b(?:at|@|for)\s*\$?\s*\d+(?:\.\d{1,2})?\s*(?:each|ea\.?|per unit|a piece|apiece)?\b/i, '').trim();
+    const destinationLocation = namedMatch(placeWords, context.locationNames);
     const item = namedMatch(received[2].trim(), context.itemNames);
     if (destinationLocation && item) return { lines: [normaliseLine({
       actionType: 'receive', item, variant: removeNamed(received[2], item),
       sourceText: clean, destinationLocation, quantity: Number(received[1]),
-      adjustmentTarget: -1, reasonCode: '',
+      adjustmentTarget: -1, reasonCode: '', supplier,
+      unitCost: cost ? Number(cost[1]) : -1,
     })], clarifyingQuestion: '', unsupportedReason: '' };
   }
 
@@ -967,8 +1018,20 @@ async function readInstruction(instruction, options = {}) {
    * perfectly correct-looking proposal for the first change, approved as if
    * it were all of them.
    */
-  const clauses = enumeratedClauses(clean);
+  let clauses = enumeratedClauses(clean);
   const readsAsChanges = intent.lines.length > 0 && !intent.lines.some((line) => ['clarify', 'unsupported'].includes(line.actionType));
+  /*
+   * "We sold 3 sweater navy 4 at the store and 2 copper elbow from the van"
+   * is two changes in one sentence, joined by "and" before a number. When
+   * the reader returned one line for it, the sentence is split there and
+   * each half is read with the sentence's own verb in front — "we sold 2
+   * copper elbow from the van" — exactly as a numbered list is.
+   */
+  if (readsAsChanges && clauses.length === 1 && needsNumberedClauseRetry(clean, intent)) {
+    const halves = clean.split(/\s*[,;]?\s+(?:and|then|plus|also)\s+(?=\d)/i).map((s) => s.trim()).filter(Boolean);
+    const lead = (/^(.*?)\s*\b\d/.exec(halves[0]) || [])[1] || '';
+    if (halves.length > 1 && lead) clauses = [halves[0], ...halves.slice(1).map((half) => `${lead} ${half}`)];
+  }
   if (readsAsChanges && clauses.length > 1 && intent.lines.length < clauses.length) {
     /*
      * The list is read again, one clause at a time.
@@ -1020,6 +1083,7 @@ module.exports = {
   MAX_LINES,
   enumeratedClauses,
   deterministicMovementList,
+  deterministicCountSheet,
   ACTION_TYPES,
   SYSTEM,
   MAX_INSTRUCTION,

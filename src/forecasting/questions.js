@@ -342,12 +342,33 @@ const EXECUTORS = {
   },
 
   /** Which supplier is most reliable? */
-  most_reliable_supplier(db, workspaceId) {
-    const suppliers = db.prepare(`SELECT id FROM suppliers
-      WHERE workspace_id = ? AND status = 'active'`).all(workspaceId);
+  most_reliable_supplier(db, workspaceId, plan = {}) {
+    /*
+     * "How long does Acme usually take to deliver?" names one supplier; the
+     * whole table, led by whoever is most reliable, answered about Lakeside.
+     * A named supplier gets its own record, in a sentence about it.
+     */
+    const named = String(plan.entityQuery || '').trim();
+    const like = named ? `%${named.replace(/[%_]/g, (c) => `\\${c}`)}%` : null;
+    const suppliers = named
+      ? db.prepare(`SELECT id FROM suppliers WHERE workspace_id = ? AND status = 'active' AND name LIKE ? ESCAPE '\\'`).all(workspaceId, like)
+      : db.prepare(`SELECT id FROM suppliers WHERE workspace_id = ? AND status = 'active'`).all(workspaceId);
+    if (named && !suppliers.length) {
+      return { rows: [], columns: ['supplier', 'deliveredOrders', 'onTime', 'averageDays', 'allArrived'], answer: `StockChief has no supplier matching “${named}”.` };
+    }
     const scored = suppliers
       .map((row) => planning().supplierView(db, workspaceId, row.id))
       .filter(Boolean);
+    if (named && scored.length) {
+      const one = scored[0];
+      const days = one.timing && one.timing.measured ? one.timing.measured.meanDays : null;
+      const answer = !one.orderCount
+        ? `${one.supplierName} has not delivered an order yet, so there is nothing to measure.`
+        : `${one.supplierName}: ${one.orderCount} delivered order${one.orderCount === 1 ? '' : 's'}${days !== null ? `, about ${days} days from order to delivery` : ''}${one.onTimeRate !== null ? `, ${one.onTimeRate}% on time` : ''}${one.orderCount < 3 ? ' — too few deliveries yet to call that a pattern' : ''}.`;
+      return { rows: [{ supplier: one.supplierName, deliveredOrders: one.orderCount, onTime: one.onTimeRate === null ? '—' : `${one.onTimeRate}%`,
+        averageDays: days === null ? '—' : days, allArrived: one.fillRate === null ? '—' : `${one.fillRate}%` }],
+        columns: ['supplier', 'deliveredOrders', 'onTime', 'averageDays', 'allArrived'], answer };
+    }
 
     const rows = scored.map((row) => ({
       supplier: row.supplierName,

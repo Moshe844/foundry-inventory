@@ -666,6 +666,26 @@ function resolveSkuWith(db, workspaceId, itemText, variantText, options = {}, tr
             ORDER BY i.name, s.position`
         )
         .all(workspaceId, ...usable.flatMap((t) => [like(t), like(t), like(t), like(t)]));
+      /*
+       * "Brass Tee" is not Brass Compression Nut. A word that names what the
+       * thing is — not a size, a unit or filler — and matches nothing in the
+       * catalogue means the person may be naming a product StockChief does
+       * not have. The closest match is offered as a question, never taken.
+       */
+      const soft = new Set(['size', 'sizes', 'colour', 'color', 'colours', 'colors', 'the', 'a', 'an', 'of', 'for', 'in', 'and', 'or',
+        'unit', 'units', 'pcs', 'pc', 'pieces', 'piece', 'some', 'more', 'all', 'product', 'products', 'item', 'items', 'sku', 'skus',
+        'each', 'pack', 'packs', 'box', 'boxes', 'case', 'cases', 'new', 'old', 'stock', 'inch', 'inches', 'mm', 'cm', 'kg', 'g', 'ml', 'l', 'lb', 'lbs', 'oz']);
+      const singular = (t) => t.replace(/(?:es|s)$/, '');
+      const meaningful = trace.ignored.filter((t) => t.length > 2 && !soft.has(t) && !/^\d/.test(t)
+        && !canMatch.get(workspaceId, like(singular(t)), like(singular(t)), like(singular(t)), like(singular(t))));
+      if (meaningful.length && rows.length) {
+        const items = [...new Map(rows.map((r) => [r.item_id, { id: r.item_id, name: r.item_name }])).values()];
+        return ambiguous(
+          `“${query}” — nothing here is called that. “${meaningful.join('”, “')}” is not in any product name; “${usable.join('”, “')}” matches ${items.length === 1 ? items[0].name : `${items.length} products`}. Did you mean ${items.length === 1 ? 'that' : 'one of these'}?`,
+          items,
+          choiceClarification('product', items, (item) => item.name)
+        );
+      }
     }
   }
 

@@ -276,7 +276,7 @@ test('Ask StockChief reports completed sales orders without relabelling open-ord
   const page = plain((await agent.get('/ask').query({ q: question })).text);
 
   assert.match(page, /Completed orders: 1\./);
-  assert.match(page, /1 completed sales order; 0 open/);
+  assert.match(page, /1 completed, 0 still open/);
   assert.doesNotMatch(page, /0 completed sales orders?/i);
 });
 
