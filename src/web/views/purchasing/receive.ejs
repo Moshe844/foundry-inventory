@@ -16,9 +16,14 @@
 
 <% if (sourceEvent) { %>
   <div class="notice notice--info section">
-    <strong>StockChief prepared this from <%= sourceEvent.attachmentName %>.</strong>
-    It matched the supplier, purchase order and <%= (sourceEvent.matchedEntities.receiptLines || []).length %>
-    line<%= (sourceEvent.matchedEntities.receiptLines || []).length === 1 ? '' : 's' %>.
+    <% if (sourceEvent.attachmentName) { %>
+      <strong>StockChief prepared this from <%= sourceEvent.attachmentName %>.</strong>
+      It matched the supplier, purchase order and <%= (sourceEvent.matchedEntities.receiptLines || []).length %>
+      line<%= (sourceEvent.matchedEntities.receiptLines || []).length === 1 ? '' : 's' %>.
+    <% } else { %>
+      <strong>From what you said: “<%= sourceEvent.statedAs %>”.</strong>
+      StockChief matched it to <%= order.poNumber %>. The quantities below are what is still outstanding on the order — change any that did not arrive.
+    <% } %>
     Check what physically arrived; nothing has changed yet.
   </div>
 <% } %>

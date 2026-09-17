@@ -1276,3 +1276,13 @@ dialog.rm-ask::backdrop { background: rgba(20, 18, 31, .38); backdrop-filter: bl
 }
 .rm-goal-strip__t { min-width: 0; overflow-wrap: anywhere; }
 .rm-goal-strip a { margin-left: auto; color: var(--brand-2); font-weight: 650; white-space: nowrap; }
+
+/* A "which one?" answered by a click: the candidates are the reply. */
+.rm-said > .rm-suggest--answers { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 18px 14px; }
+.rm-suggest--answers form { margin: 0; }
+.rm-suggest--answers button {
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  padding: 6px 12px; border: 1px solid var(--brand-line); border-radius: var(--pill);
+  color: var(--brand-3); background: var(--brand-wash);
+}
+.rm-suggest--answers button:hover { background: var(--brand); color: #fff; border-color: var(--brand); }

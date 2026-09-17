@@ -549,6 +549,38 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
     });
   }
 
+  /*
+   * "Move all the sweaters from the van to the store" means every sweater
+   * variant the van holds, each at the quantity it holds. It used to be met
+   * with "which Children's Sweater do you mean?", which is the one question
+   * the word "all" had already answered. The line is expanded into one per
+   * variant with stock at the source, at that stock; a variant with nothing
+   * there is left out and said so.
+   */
+  const expanded = [];
+  for (const line of usable) {
+    const allOf = ['transfer', 'issue'].includes(line.actionType) && !line.variant && !line.lotCode && !(line.serials || []).length
+      && /\ball\s+(?:of\s+)?(?:the|our|my)?\s*(?:remaining\s+|leftover\s+)?\S/i.test(`${line.sourceText || ''} ${text}`)
+      && line.item;
+    if (!allOf) { expanded.push(line); continue; }
+    const sku = resolver.resolveSku(db, ctx.workspaceId, line.item, '');
+    const itemIds = new Set(((sku && sku.candidates) || []).map((c) => c.item_id));
+    if (!sku || sku.ok || sku.reason !== 'ambiguous' || itemIds.size !== 1) { expanded.push(line); continue; }
+    const source = resolver.resolveLocation(db, ctx.workspaceId, line.sourceLocation, { role: 'source location' });
+    if (!source.ok) { expanded.push(line); continue; }
+    const stocked = sku.candidates
+      .map((candidate) => ({ candidate, onHand: resolver.balanceAt(db, ctx.workspaceId, candidate.id, source.value.id) }))
+      .filter((entry) => entry.onHand > 0);
+    if (!stocked.length) {
+      return { kind: 'question', question: `None of the ${sku.candidates.length} ${sku.candidates[0].item_name || sku.candidates[0].name} variants has any stock at ${source.value.name}, so there is nothing to ${line.actionType === 'issue' ? 'issue' : 'move'}. Did you mean a different place?` };
+    }
+    for (const { candidate, onHand } of stocked) {
+      expanded.push({ ...line, variant: candidate.variant_label || '', quantity: onHand,
+        sourceText: `${onHand} ${candidate.item_name || candidate.name}${candidate.variant_label ? ` ${candidate.variant_label}` : ''} (all of it at ${source.value.name})`, _expandedFromAll: true });
+    }
+  }
+  usable = expanded;
+
   return inTransaction(db, () => {
     const built = [];
     const missingReasons = [];
@@ -560,8 +592,10 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
         // same original clause. A mechanical two-line split has no second
         // piece of prose, so keep the original identity evidence for each
         // clone instead of turning an exact SKU code back into ambiguity.
-        instruction: line._sourceInstruction || slices[index],
-        groundIdentity: true,
+        instruction: line._sourceInstruction || (line._expandedFromAll ? line.sourceText : slices[index]),
+        // A line expanded from "all the sweaters" names a variant the person
+        // never typed; grounding it against their words would refuse it.
+        groundIdentity: !line._expandedFromAll,
         catalogueUnderstanding: options.catalogueUnderstanding || null,
       });
       if (!result.ok) {

@@ -407,7 +407,17 @@ const PURCHASING_EXECUTORS = {
   on_order(db, workspaceId, plan) {
     const position = require('../purchasing/position');
     const scoped = plan.entityQuery ? resolveSkus(db, workspaceId, plan.entityQuery, plan.limit) : null;
-    if (plan.entityQuery && (!scoped || scoped.length === 0)) return { rows: [], answer: notFound(plan) };
+    if (plan.entityQuery && (!scoped || scoped.length === 0)) {
+      // "What's on order from Lakeside?" names a supplier, not a product.
+      // The name used to be looked up as a product, found nothing, and the
+      // answer was that nothing matched "Lakeside" while three of their
+      // orders were open.
+      const supplier = db.prepare(`SELECT id FROM suppliers WHERE workspace_id = ? AND status = 'active'
+        AND name LIKE ? ESCAPE '\\' ORDER BY CASE WHEN lower(name) = lower(?) THEN 0 ELSE 1 END, name LIMIT 1`)
+        .get(workspaceId, like(plan.entityQuery), plan.entityQuery);
+      if (supplier) return EXECUTORS.supplier_order_status(db, workspaceId, plan);
+      return { rows: [], answer: notFound(plan) };
+    }
 
     if (scoped) {
       const rows = scoped.map((sku) => {
@@ -1465,12 +1475,15 @@ const EXECUTORS = {
       : 'StockChief has no purchase orders recorded yet.' };
     const first = rows[0];
     const confirmation = first.confirmed ? `${first.supplier} has confirmed ${first.label}.`
-      : `StockChief has not recorded a confirmation for ${first.label}.`;
+      : `${first.supplier} has not yet confirmed ${first.label}.`;
     const timing = first.expected && first.expected < new Date().toISOString().slice(0, 10) && first.outstanding > 0
-      ? ` It is past its expected date with ${first.outstanding} unit(s) outstanding${first.latestEvidence ? `; the latest supplier evidence is ${first.latestEvidence.replaceAll('_', ' ')}` : ' and no newer supplier update is recorded'}.`
-      : ` ${first.outstanding} unit(s) remain outstanding${first.expected ? `, expected ${first.expected}` : ''}.`;
+      ? ` It is past its expected date with ${first.outstanding} unit${first.outstanding === 1 ? '' : 's'} still to come${first.latestEvidence ? `; the latest word from the supplier is ${first.latestEvidence.replaceAll('_', ' ')}` : ' and nothing newer from the supplier'}.`
+      : ` ${first.outstanding} unit${first.outstanding === 1 ? '' : 's'} still to come${first.expected ? `, expected ${first.expected}` : ''}.`;
+    const open = rows.filter((row) => Number(row.outstanding) > 0);
+    const units = rows.reduce((n, row) => n + Number(row.outstanding), 0);
+    const late = rows.filter((row) => row.expected && row.expected < new Date().toISOString().slice(0, 10) && Number(row.outstanding) > 0);
     return { rows, answer: rows.length === 1 ? `${confirmation}${timing}`
-      : `${rows.length} order(s) are recorded for ${supplier?.name || 'this scope'}; ${rows.reduce((n, row) => n + Number(row.outstanding), 0)} unit(s) remain outstanding.` };
+      : `${open.length} open order${open.length === 1 ? '' : 's'} from ${supplier?.name || 'suppliers'} — ${rows.map((row) => row.label).join(', ')} — with ${units} unit${units === 1 ? '' : 's'} still to come${late.length ? `; ${late.length === 1 ? `${late[0].label} is` : `${late.length} of them are`} past the expected date` : ''}.` };
   },
 
   /** Consequential differences extracted from a supplier document. */

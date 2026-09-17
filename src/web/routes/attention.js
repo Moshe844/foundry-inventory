@@ -335,7 +335,9 @@ function askOutcome(question, result, error) {
     filters: part.recordQuery ? (part.recordQuery.filters || []).map((f) => `${f.field} ${f.operator}${f.value === null || f.value === undefined ? '' : ` ${f.value}`}`) : [],
     entity: part.entityQuery || null, location: part.locationQuery || null,
   }));
-  const status = result.isAction ? 'clarify' : result.needsClarification ? 'clarify' : result.supported === false ? 'refused' : 'answered';
+  // "Thanks!" answered with "You're welcome" is not a question waiting on the person.
+  const smallTalk = /^\s*(?:thanks|thank you|thx|cheers|hi|hello|hey|ok|okay|great|cool|nice|good morning|good afternoon|bye)\b/i.test(question);
+  const status = result.isAction ? 'clarify' : result.needsClarification && !smallTalk ? 'clarify' : result.supported === false && !smallTalk ? 'refused' : 'answered';
   return {
     status, said: String(said || ''),
     resultHref: result.handoff ? result.handoff.href : null, resultLabel: result.handoff ? result.handoff.label : null,

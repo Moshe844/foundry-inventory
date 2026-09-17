@@ -860,7 +860,7 @@ router.get(
       sourceEvent.matchedEntities.purchaseOrderId === order.id;
     const submitted = eventMatchesOrder ? {
       reference: sourceEvent.matchedEntities.documentNumber || sourceEvent.attachmentName || '',
-      note: `Prepared by StockChief from ${sourceEvent.attachmentName || 'the attached receiving document'}`,
+      note: sourceEvent.attachmentName ? `Prepared by StockChief from ${sourceEvent.attachmentName}` : `Booked in from what you told StockChief: ${String(sourceEvent.statedAs || '').slice(0, 140)}`,
       physicalEventId: sourceEvent.id,
       ...Object.fromEntries((sourceEvent.matchedEntities.receiptLines || []).flatMap((line) => [
         [`qty_${line.lineId}`, line.quantityUnits],
@@ -987,6 +987,10 @@ router.get(
       screenDescription: 'See who you buy from, what each of them sells you, and on what terms.',
       suppliers: supplierService.listWithCounts(req.db, req.ctx.workspaceId, { includeInactive: true }),
       permissions: can(req),
+      // A supplier described in the Ask box arrives here with the form filled in.
+      prefill: ['name', 'email', 'phone', 'contactName'].some((key) => trimOrNull(req.query[key]))
+        ? { name: trimOrNull(req.query.name) || '', email: trimOrNull(req.query.email) || '', phone: trimOrNull(req.query.phone) || '', contactName: trimOrNull(req.query.contactName) || '' }
+        : null,
     });
   })
 );

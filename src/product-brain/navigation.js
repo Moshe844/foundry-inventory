@@ -242,6 +242,41 @@ function resolve(db, workspaceId, membership, input, options = {}) {
     }
   }
 
+  /*
+   * "Show me everything about copper elbow" wants the product's page: stock
+   * by place, on order, price, supplier, recent movement — all of it. It
+   * used to be met with "what would you like to know?", which is the one
+   * answer that page never needs. One product named in full goes straight
+   * there; a name that fits several products is left to the planner, which
+   * asks which.
+   */
+  const about = /^\s*(?:can\s+you\s+)?(?:show\s+me\s+|tell\s+me\s+|give\s+me\s+)?(?:everything|all|all\s+the\s+details|the\s+full\s+picture|a\s+summary|an\s+overview)\s+(?:about|on|of|for)\s+(.+?)\s*[?.!]*\s*$/i.exec(text)
+    || /^\s*(?:tell\s+me\s+about|what\s+do\s+we\s+know\s+about|open\s+the\s+product|show\s+me\s+the\s+product)\s+(.+?)\s*[?.!]*\s*$/i.exec(text);
+  if (about) {
+    const named = about[1].replace(/^(?:the|our|my)\s+/i, '').replace(/\s+(?:product|item|sku)$/i, '').trim();
+    let items = [];
+    try {
+      const skus = require('../attention/query-service').resolveSkus(db, workspaceId, named, 50);
+      items = [...new Map(skus.map((s) => [s.item_id, { id: s.item_id, name: s.item_name || s.name }])).values()];
+    } catch { items = []; }
+    if (items.length === 1) {
+      const href = `/inventory/${items[0].id}`;
+      const access = brain.accessForHref(href, membership);
+      if (access.allowed) {
+        return { kind: 'navigation', supported: true, canNavigate: true, href, label: `Open ${items[0].name}`,
+          capabilityId: access.capability.id, navigateNow: true,
+          answer: `Everything about ${items[0].name} is on its page: stock by place, what is on order, price, supplier and recent movement.` };
+      }
+    }
+    // Several products fit the name: the answer is which, as one click each,
+    // not an open question about what the person would like to know.
+    if (items.length > 1 && items.length <= 6) {
+      return { kind: 'clarify', supported: false, canNavigate: false, needsClarification: true,
+        choices: items.map((item) => `everything about ${item.name}`),
+        answer: `Which product do you mean? ${items.map((item) => item.name).join(' or ')}.` };
+    }
+  }
+
   const record = recordMatch(db, workspaceId, text, options);
   if (record && NAVIGATION_WORDS.test(text)) {
     let href = record.href;
@@ -331,8 +366,10 @@ function asQueryResult(question, resolution) {
       href: handoffHref(resolution.href, resolution.label, `/ask?q=${encodeURIComponent(String(question).trim())}`),
       label: resolution.label,
     } : null,
-    plan: { intent: resolution.kind === 'navigation' ? 'website_navigation' : 'capability_status',
+    plan: { intent: resolution.kind === 'navigation' ? 'website_navigation' : resolution.kind === 'clarify' ? 'unsupported' : 'capability_status',
       entityQuery: '', locationQuery: '', windowDays: 30, limit: 1 },
+    needsClarification: resolution.needsClarification === true,
+    choices: resolution.choices || null,
     navigation: resolution,
   };
 }

@@ -229,10 +229,13 @@ async function classify(db, ctx, message, options = {}) {
    */
   const agreeing = {
     INVENTORY_ACTION: ['change', 'report'], PHYSICAL_EVENT: ['report', 'change'], PURCHASING_REQUEST: ['change', 'lookup'], STOP: ['instruction', 'change', 'unclear'],
+    // A past-tense payment with money in it is a closed form too; a planner
+    // read "I paid Acme $500 against their invoice" as a purchase-cost change.
+    PAYMENT_REPORT: ['report', 'change', 'unclear', 'communication'],
   };
   const goalKind = options.goalKind || null;
   const understoodOtherwise = goalKind && agreeing[deterministic.intentClass] && !agreeing[deterministic.intentClass].includes(goalKind);
-  const safeFastPath = (['INVENTORY_ACTION', 'PHYSICAL_EVENT', 'PURCHASING_REQUEST', 'STOP'].includes(deterministic.intentClass) && !understoodOtherwise)
+  const safeFastPath = (['INVENTORY_ACTION', 'PHYSICAL_EVENT', 'PURCHASING_REQUEST', 'STOP', 'PAYMENT_REPORT'].includes(deterministic.intentClass) && !understoodOtherwise)
     || wholeSalesOrderCompletion;
   if (safeFastPath) data = deterministic;
   else if (options.provider || config.ai.configured) {

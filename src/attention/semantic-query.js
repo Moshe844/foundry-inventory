@@ -196,7 +196,9 @@ function executePart(db,workspaceId,part,options){
  if(part.entityQuery&&['stock_level','kit_definition','last_cost','selling_price','suppliers_for_item','why_low'].includes(part.intent)){
   const candidates=service.resolveSkus(db,workspaceId,part.entityQuery,100);
   const products=new Map(candidates.map(r=>[r.item_id,r.item_name||r.name||r.code]));
-  if(products.size>1) return empty(part.question,`Which product do you mean? I found ${[...products.values()].join(', ')}. Use its full name or SKU.`);
+  // The candidates travel as choices, so the page can offer them as one
+  // click each instead of asking the person to retype a product name.
+  if(products.size>1) return {...empty(part.question,`Which product do you mean? I found ${[...products.values()].join(', ')}.`),choices:[...products.values()].slice(0,6)};
  }
  const result=safeColumns(service.execute(db,workspaceId,part,{question:part.question,membership:options.membership}));
  if(options.membership&&result.handoff&&!destinations.contract(result.handoff.href,options.membership).allowed)result.handoff=null;
