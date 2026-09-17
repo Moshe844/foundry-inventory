@@ -42,7 +42,7 @@ const SCHEMA = {
 
 const SYSTEM = `You split one message to a small-business inventory assistant into the separate things the person wants, and nothing else.
 Each goal's text is copied verbatim from the message (a contiguous span, trimmed), in the order written, and together the goals cover everything the person asked for. One thing asked once is one goal, however long. Do not split a single change that names several products or places. Do not add goals that are not in the message, and do not rephrase.
-kind: lookup (a question, or a request to show or find records), change (record or change stock, orders, prices, products, suppliers), send (draft, write or send a message or email), instruction (a standing rule for how StockChief should behave), report (something that already happened being reported), navigate (asking to be taken to a page), unsupported (something an inventory assistant plainly does not do, such as payroll), unclear (you cannot tell).
+kind: lookup (a question, or a request to show or find records), change (record or change stock, orders, prices, products, suppliers), send (draft, write or send a message or email), communication (a message, call or email that was received or needs handling), instruction (a standing rule for how StockChief should behave), report (something that already happened being reported), navigate (asking to be taken to a page), unsupported (something an inventory assistant plainly does not do, such as payroll), unclear (you cannot tell).
 continuesPrevious is true only when the message answers or refines the previous question shown; otherwise false.`;
 
 const CONJUNCTION = /\b(?:and then|then|and also|also|after that|as well as|plus)\b|,\s*and\b|\band\s+(?:draft|write|send|email|move|transfer|receive|issue|order|buy|create|add|set|change|update|show|list|find|tell|archive|delete|remove|how|what|which|where|when)\b/i;
@@ -57,9 +57,24 @@ const REFERENT_WORDS = [
   [/\b(?:that|the|this)\s+supplier\b/i, ['supplier']],
 ];
 
+/*
+ * The nouns that make a sentence about a communication rather than stock.
+ * "I received an email from Acme" is not a receipt of goods, and "send 5
+ * cases to the store" is not a message; the object decides.
+ */
+const COMMUNICATION = /\b(?:e-?mails?|messages?|texts?|calls?|voicemails?|letters?|quotes?|quotations?|replies|reply|invoice\s+from|statement\s+from)\b/i;
+const STOCK_OBJECT = /\b\d+\s*(?:x\s*)?(?:units?|cases?|boxes?|pallets?|pcs|pieces|bags?|rolls?|kg|g|lbs?)\b|\b(?:units?|stock|inventory|skus?|cases?|boxes?|pallets?)\b/i;
+
 function guessKind(text) {
   const t = String(text || '').trim();
   if (/^(?:go to|open|take me to|show me the page|where is the)\b/i.test(t)) return 'navigate';
+  if (COMMUNICATION.test(t) && !STOCK_OBJECT.test(t)) {
+    if (/^(?:draft|write|compose|email|e-mail|send|message|reply|text|forward)\b/i.test(t)) return 'send';
+    if (/^(?:how|what|which|who|where|when|why|is|are|do|does|did|can|could|should|show|list|find|any)\b/i.test(t) || /\?\s*$/.test(t)) return 'lookup';
+    // "I received an email about pricing": a communication, not stock.
+    return 'communication';
+  }
+  if (/^send\b/i.test(t) && STOCK_OBJECT.test(t)) return 'change';
   if (/^(?:draft|write|compose|email|e-mail|send|message|reply|text)\b/i.test(t)) return 'send';
   if (/^(?:always|never|from now on|whenever|every time|only ever|do not ever|don't ever)\b/i.test(t) || /\b(?:policy|standing rule)\b/i.test(t)) return 'instruction';
   if (/^(?:we|i|they|the customer|a customer|the supplier)\s+(?:sold|received|got|counted|found|paid|returned|shipped|delivered)\b/i.test(t)

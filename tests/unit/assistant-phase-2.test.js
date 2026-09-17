@@ -142,3 +142,37 @@ async function conversationIdOf(agent) {
   const m = /data-conversation="([^"]+)"/.exec(res.text);
   return m ? m[1] : 'default';
 }
+
+test('the keyword fast path stands down when the understanding says the sentence is not about stock', async () => {
+  const intentRouter = require('../../src/manager/intent-router');
+  const { db } = makeDatabase();
+  const w = seedWorkspace(db);
+  let planned = 0;
+  const planner = { async complete() { planned += 1; return { data: { intentClass: 'UNKNOWN', confidence: 'low', reason: 'a communication, not a receipt', resolvedReference: '', clarifyingQuestion: 'What would you like StockChief to do about that email?' } }; } };
+  const sentence = 'I received an email from Acme about pricing';
+  assert.equal(intentRouter.fallbackClassify(sentence).intentClass, 'INVENTORY_ACTION', 'the keywords alone read it as a receipt of goods');
+  const withoutKind = await intentRouter.classify(db, w.ctx, sentence, { provider: planner });
+  assert.equal(withoutKind.intentClass, 'INVENTORY_ACTION');
+  assert.equal(planned, 0, 'before: the fast path never let a model see it');
+  const withKind = await intentRouter.classify(db, w.ctx, sentence, { provider: planner, goalKind: understand.guessKind(sentence) });
+  assert.equal(understand.guessKind(sentence), 'communication');
+  assert.equal(planned, 1, 'now the planner reads it');
+  assert.notEqual(withKind.intentClass, 'INVENTORY_ACTION');
+  const stock = 'We received 12 cases of Copper Elbow';
+  await intentRouter.classify(db, w.ctx, stock, { provider: planner, goalKind: understand.guessKind(stock) });
+  assert.equal(planned, 1, 'a genuine stock report still takes the closed fast path');
+});
+
+test('the actions page shows the ledger row its question belongs to', async () => {
+  const { db, w, app } = setup();
+  const agent = request.agent(app);
+  await signIn(agent, w.account.email, w.account.password);
+  const form = await agent.get('/ask');
+  const posted = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(form.text), queryConversation: '1',
+    message: '1) How many entries do we have? 2) move 2 Copper Elbow from Main Warehouse to Downtown Store' });
+  const page = await agent.get(posted.headers.location);
+  const goals = ledger.conversation(db, { workspaceId: w.workspaceId, actorId: w.ownerId }, await conversationIdOf(agent))[0].goals;
+  const continued = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(page.text), queryConversation: '1', assistantGoal: goals[1].id, message: goals[1].text });
+  const detail = plain((await agent.get(continued.headers.location)).text);
+  assert.match(detail, /Needs your approval From your message — part 2 of 2: “move 2 Copper Elbow from Main Warehouse to Downtown Store” See the conversation/);
+});

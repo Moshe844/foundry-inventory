@@ -453,14 +453,32 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     else delete req.session.askConversation;
   }
   const tabular = attached && /\.(csv|tsv|xlsx|xls|txt)$/i.test(attached.filename || '');
-  const operationalDocument = attached && /\.(pdf|docx|xlsx|xls|csv|tsv|txt)$/i.test(attached.filename || '');
+  // A photo or screenshot is a document too; it is read by OCR on the same
+  // path as a PDF, instead of being filed unread as "evidence".
+  const operationalDocument = attached && /\.(pdf|docx|xlsx|xls|csv|tsv|txt|png|jpe?g|webp|bmp|tiff?)$/i.test(attached.filename || '');
   const receivingHint = /arriv|deliver|shipment|packing|receive|received|supplier invoice/i.test(message);
   const pricingUpdateHint = /\b(?:price|prices|pricing|selling\s+price|retail\s+price)\b/i.test(message)
     && /\b(?:apply|change|set|update|use)\b/i.test(message);
+  const photo = attached && /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(attached.filename || '');
+  let understood = null;
   if (operationalDocument && (!tabular || receivingHint)) {
-    const understood = await documentEvents.understand(req.db, req.ctx, attached, {
-      provider: req.app.locals.aiProvider || undefined,
-    });
+    try {
+      understood = await documentEvents.understand(req.db, req.ctx, attached, {
+        provider: req.app.locals.aiProvider || undefined,
+      });
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      // A photo with no readable text is not a document: a picture of the
+      // damage, of the shelf. It is kept as evidence of what the person
+      // said, below, exactly as before. A document that cannot be read is
+      // said so.
+      if (!photo) {
+        req.flash('warn', err.message);
+        return res.redirect(303, req.body.queryConversation === '1' ? '/ask' : '/#tell-foundry');
+      }
+    }
+  }
+  if (understood) {
     const matched = understood.match.matched ? {
       purchaseOrderId: understood.match.purchaseOrderId,
       poNumber: understood.match.poNumber,
@@ -621,6 +639,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   const intent = await intentRouter.classify(req.db, req.ctx, message, {
     provider: req.app.locals.aiProvider || undefined,
     referentNote: req.assistantReferentNote || '',
+    goalKind: req.assistantGoal ? req.assistantGoal.kind : null,
   });
   if (asksAboutRestrictions(message)) {
     req.session.pendingRestrictionFlow = { startedAt: Date.now(), instruction: message };

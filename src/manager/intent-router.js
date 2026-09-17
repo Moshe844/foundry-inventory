@@ -216,7 +216,23 @@ async function classify(db, ctx, message, options = {}) {
   const wholeSalesOrderCompletion = deterministic.intentClass === 'SALES_ORDER'
     && (/\b(?:complete|finish|fulfill|ship)\b[^.?!]*\b(?:(?:sales|customer)\s+)?order\b/i.test(clean)
       || /\b(?:(?:sales|customer)\s+)?order\b[^.?!]*\b(?:complete|finished|fulfilled|shipped)\b/i.test(clean));
-  const safeFastPath = ['INVENTORY_ACTION', 'PHYSICAL_EVENT', 'PURCHASING_REQUEST', 'STOP'].includes(deterministic.intentClass)
+  /*
+   * The keyword fast path runs only when the understanding step agrees.
+   *
+   * "I received an email from Acme about pricing" matched "I received" and
+   * went straight to the stock-action reader as a receipt, without a model
+   * ever seeing it. The understanding step reads the same sentence for what
+   * it is about; when it says this is not a stock change, a report of one,
+   * a purchase or a stop, the fast path stands down and the planner reads
+   * the sentence. A closed, safety-sensitive form still bypasses the planner
+   * when both readers agree it is one.
+   */
+  const agreeing = {
+    INVENTORY_ACTION: ['change', 'report'], PHYSICAL_EVENT: ['report', 'change'], PURCHASING_REQUEST: ['change', 'lookup'], STOP: ['instruction', 'change', 'unclear'],
+  };
+  const goalKind = options.goalKind || null;
+  const understoodOtherwise = goalKind && agreeing[deterministic.intentClass] && !agreeing[deterministic.intentClass].includes(goalKind);
+  const safeFastPath = (['INVENTORY_ACTION', 'PHYSICAL_EVENT', 'PURCHASING_REQUEST', 'STOP'].includes(deterministic.intentClass) && !understoodOtherwise)
     || wholeSalesOrderCompletion;
   if (safeFastPath) data = deterministic;
   else if (options.provider || config.ai.configured) {

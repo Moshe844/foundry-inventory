@@ -1259,3 +1259,20 @@ dialog.rm-ask::backdrop { background: rgba(20, 18, 31, .38); backdrop-filter: bl
   .rm-next-card--primary { position:static; }
   .rm-source-actions .rm-btn { width:100%; }
 }
+
+/* The ledger row a page is the answer to: which part of which message. */
+.rm-goal-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.rm-goal-strip__t { min-width: 0; overflow-wrap: anywhere; }
+.rm-goal-strip a { margin-left: auto; color: var(--brand-2); font-weight: 650; white-space: nowrap; }

@@ -582,9 +582,16 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
         if (line.actionType === 'create_item'
             && result.clarification
             && result.clarification.dimension === 'destination_location') {
+          // Two new products with no place named get one question, not one
+          // each: they are being added together and the answer is for both.
+          const unplaced = usable.filter((other) => other.actionType === 'create_item' && Number(other.quantity) > 0
+            && !String(other.destinationLocation || other.sourceLocation || '').trim());
+          const together = unplaced.length > 1
+            ? `Where should the stock for these ${unplaced.length} new products be received? ${unplaced.map((other) => `${other.quantity} ${other.productName || other.item}${other.variantAxes ? ` (${other.variantAxes})` : ''}`).join(', ')}.`
+            : result.question;
           return {
             kind: 'question',
-            question: result.question,
+            question: together,
             clarification: result.clarification,
             choices: result.choices || result.clarification.choices || null,
             continuation: {
@@ -768,10 +775,14 @@ async function continueInterpretation(db, ctx, membership, continuation, answer,
         continuation,
       };
     }
+    // The answer places every new product that had no place, not only the
+    // one whose question was shown; the person answered for the list.
     const parsedIntent = {
       ...continuation.parsedIntent,
       lines: continuation.parsedIntent.lines.map((line, index) =>
-        index === continuation.lineIndex ? { ...line, destinationLocation: locationName } : { ...line }
+        (index === continuation.lineIndex
+          || (line.actionType === 'create_item' && Number(line.quantity) > 0 && !String(line.destinationLocation || line.sourceLocation || '').trim()))
+          ? { ...line, destinationLocation: locationName } : { ...line }
       ),
     };
     return interpret(db, ctx, membership, continuation.originalInstruction, {

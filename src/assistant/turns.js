@@ -109,6 +109,9 @@ function settleFromRedirect(req, goalId, url) {
   if (/^\/actions\/(?:plan\/)?[A-Za-z0-9_-]+$/.test(path) && !/\/(?:location-required)$/.test(path)) {
     outcome = { status: 'needs_approval', resultHref: url, resultLabel: 'Review and approve', said: 'Prepared for your approval. Nothing has changed yet.' };
   } else if (path === '/actions' && handed) {
+    // The actions page reads this goal back from the ledger and shows it
+    // above the question, so the two pages never disagree about what was asked.
+    handed.goalId = goalId;
     outcome = handed.unsupported
       ? { status: 'refused', said: handed.unsupported, resultHref: handed.where ? handed.where.href : null, resultLabel: handed.where ? handed.where.label : null }
       : { status: 'clarify', said: handed.question || '', resultHref: '/actions', resultLabel: 'Answer the question' };
@@ -157,6 +160,27 @@ function settleAsk(req, question, outcome) {
   return ledger.settle(req.db, req.ctx, open.goalId, outcome);
 }
 
+/**
+ * An answer to a question continues the goal the question belonged to.
+ * The actions page's reply forms post here rather than to the dispatcher,
+ * so the goal would otherwise stay 'needs an answer' after the answer made
+ * a plan. The same settlement hook is installed for the same goal.
+ */
+function resume(req, res) {
+  const handed = req.session && req.session.pendingActionQuestion;
+  const goalId = handed && handed.goalId;
+  if (!goalId || !req.ctx) return;
+  req.assistantGoal = ledger.getGoal(req.db, req.ctx.workspaceId, goalId) || null;
+  if (!req.assistantGoal) return;
+  req.assistantTurn = ledger.getTurn(req.db, req.ctx.workspaceId, req.assistantGoal.turnId);
+  const redirect = res.redirect.bind(res);
+  res.redirect = (...args) => {
+    const url = String(args[args.length - 1] || '');
+    try { settleFromRedirect(req, goalId, url); } catch (err) { console.error('[foundry] could not settle the assistant goal', err); }
+    return redirect(...args);
+  };
+}
+
 /** The queue for the page chrome: what is still to do from the last message. */
 function queued(req) {
   const queue = req.session && req.session.assistantQueue;
@@ -177,4 +201,4 @@ function skipQueue(req) {
   return n;
 }
 
-module.exports = { conversationId, newConversation, begin, settleFromRedirect, settleAsk, remember, queued, skipQueue };
+module.exports = { conversationId, newConversation, begin, resume, settleFromRedirect, settleAsk, remember, queued, skipQueue };

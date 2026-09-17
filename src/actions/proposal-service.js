@@ -207,6 +207,23 @@ function buildConfiguration(db, ctx, intent, draft, options = {}) {
     draft.assumptions.push(...planned.plan.assumptions);
     // A resemblance is shown, never acted on.
     for (const conflict of planned.plan.conflicts) draft.assumptions.push(conflict.message);
+    /*
+     * The prices the person stated travel with the product. "cost price
+     * $20.00, selling price $100.00" used to be read, dropped, and the
+     * product added at no price with nothing to say so. They are kept on
+     * the proposal, shown in the preview, and recorded when it runs.
+     */
+    const pricing = {
+      sellingPriceMinor: Number.isInteger(intent.sellingPriceMinor) && intent.sellingPriceMinor >= 0 ? intent.sellingPriceMinor : null,
+      unitCostMinor: Number.isInteger(intent.unitCostMinor) && intent.unitCostMinor >= 0 ? intent.unitCostMinor : null,
+    };
+    if (pricing.sellingPriceMinor !== null || pricing.unitCostMinor !== null) {
+      draft.settings.pricing = pricing;
+      const parts = [];
+      if (pricing.sellingPriceMinor !== null) parts.push(`selling price $${(pricing.sellingPriceMinor / 100).toFixed(2)}`);
+      if (pricing.unitCostMinor !== null) parts.push(`cost $${(pricing.unitCostMinor / 100).toFixed(2)}`);
+      draft.assumptions.push(`Recorded with ${parts.join(' and ')}, as you stated.`);
+    }
     const catalogueTotal = (draft.settings.catalogueRecords || []).reduce((total, record) => total
       + (record.locations || []).reduce((sum, location) => sum + Number(location.quantity || 0), 0), 0);
     draft.expectedBeforeState = { variants: 0, total: 0 };

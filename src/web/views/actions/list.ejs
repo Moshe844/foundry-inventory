@@ -60,6 +60,7 @@
       <% } %>
     <% } %>
 
+    <%- include('../partials/assistant-goal') %>
     <% if (question) { %>
       <div class="act-question <%= locals.questionTone === 'warning' ? 'act-question--warning' : '' %>">
         <span class="att-rec-icon"><%- helpers.icon('foundry', { size: 15 }) %></span>

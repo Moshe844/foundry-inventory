@@ -16,7 +16,7 @@
 
 const { newId, nowIso } = require('../lib/util');
 
-const GOAL_KINDS = ['lookup', 'change', 'send', 'instruction', 'report', 'navigate', 'unsupported', 'unclear'];
+const GOAL_KINDS = ['lookup', 'change', 'send', 'communication', 'instruction', 'report', 'navigate', 'unsupported', 'unclear'];
 const GOAL_STATUSES = ['pending', 'answered', 'needs_approval', 'drafted', 'clarify', 'handed', 'refused', 'failed', 'done', 'skipped'];
 
 /** What each status means to the person reading it, and its tone. */
@@ -138,6 +138,22 @@ function recentReferents(db, ctx, conversationId, { turns = 6 } = {}) {
     .map((r) => ({ id: r.id, kind: r.kind, refId: r.ref_id, label: r.label, href: r.href || null, turnId: r.turn_id }));
 }
 
+/** A goal with how many siblings its turn had, for a page that shows one goal. */
+function goalWithTurn(db, workspaceId, goalId) {
+  const goal = getGoal(db, workspaceId, goalId);
+  if (!goal) return null;
+  const n = db.prepare('SELECT COUNT(*) n FROM assistant_goals WHERE turn_id = ?').get(goal.turnId).n;
+  return { ...goal, turnGoals: n };
+}
+
+/** The most recent goal of a conversation that ended at this address. */
+function goalByResult(db, ctx, conversationId, href) {
+  const row = db.prepare(`SELECT g.id FROM assistant_goals g JOIN assistant_turns t ON t.id = g.turn_id
+    WHERE t.workspace_id = ? AND t.user_id = ? AND t.conversation_id = ? AND g.result_href = ?
+    ORDER BY g.updated_at DESC LIMIT 1`).get(ctx.workspaceId, ctx.actorId, String(conversationId || 'default'), href);
+  return row ? goalWithTurn(db, ctx.workspaceId, row.id) : null;
+}
+
 /** The goals of a conversation that are still waiting, oldest first. */
 function pendingGoals(db, ctx, conversationId) {
   return db.prepare(`SELECT g.* FROM assistant_goals g JOIN assistant_turns t ON t.id = g.turn_id
@@ -148,5 +164,5 @@ function pendingGoals(db, ctx, conversationId) {
 
 module.exports = {
   GOAL_KINDS, GOAL_STATUSES, STATUS_LABEL,
-  openTurn, getTurn, getGoal, settle, noteReferent, conversation, recentReferents, pendingGoals,
+  openTurn, getTurn, getGoal, goalWithTurn, goalByResult, settle, noteReferent, conversation, recentReferents, pendingGoals,
 };

@@ -10,6 +10,8 @@
  */
 
 const express = require('express');
+const ledger = require('../../assistant/ledger');
+const assistantTurns = require('../../assistant/turns');
 const crypto = require('node:crypto');
 const config = require('../../config');
 const actionService = require('../../actions/action-service');
@@ -113,6 +115,8 @@ router.get(
       examples: exampleInstructions(req.db, req.ctx.workspaceId),
       question: (handed && handed.question) || null,
       unsupported: (handed && handed.unsupported) || null,
+      // The ledger row this question belongs to: which part of which message.
+      assistantGoal: handed && handed.goalId ? ledger.goalWithTurn(req.db, req.ctx.workspaceId, handed.goalId) : null,
       where: (handed && handed.where) || null,
       // A refusal an inventory rule produced carries its numbers, so the page
       // can name the rule and offer the ways out rather than restate the prose.
@@ -151,6 +155,7 @@ router.post(
       return res.redirect(303, `/imports/${plan.id}`);
     }
 
+    assistantTurns.resume(req, res);
     // An answer to a question carries the original instruction with it, so the
     // person replies with "3" rather than retyping the whole sentence.
     const original = trimOrNull(req.body.original) || '';
@@ -454,6 +459,7 @@ router.get(
     return res.page('actions/detail', {
       title: presenter.oneLine(req.db, req.ctx.workspaceId, proposal),
       nav: 'actions',
+      assistantGoal: ledger.goalByResult(req.db, req.ctx, assistantTurns.conversationId(req), `/actions/${proposal.proposalId}`),
       action: presenter.present(req.db, req.ctx.workspaceId, proposal, {
         current: check.current && Object.keys(check.current).length ? check.current : null,
       }),

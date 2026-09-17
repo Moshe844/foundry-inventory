@@ -484,6 +484,20 @@ function perform(db, ctx, membership, proposal) {
       }
       return { movementIds, groupIds, itemId: created.itemId, skuIds: created.skuIds };
     }
+    // The prices stated with the product, recorded on every SKU it created.
+    const pricing = proposal.settings && proposal.settings.pricing;
+    if (pricing) {
+      for (const skuId of created.skuIds || []) {
+        if (pricing.sellingPriceMinor !== null && pricing.sellingPriceMinor !== undefined) {
+          priceService.setPrice(db, ctx, { skuId, amountMinor: pricing.sellingPriceMinor, currency: 'USD',
+            source: 'owner', sourceDetail: { proposalId: proposal.proposalId } });
+        }
+        if (pricing.unitCostMinor !== null && pricing.unitCostMinor !== undefined) {
+          priceService.setPurchaseCost(db, ctx, { skuId, amountMinor: pricing.unitCostMinor, currency: 'USD',
+            source: 'owner', sourceDetail: { proposalId: proposal.proposalId } });
+        }
+      }
+    }
     const initial = proposal.settings && proposal.settings.initialStock;
     if (!initial) {
       return { movementIds: [], groupIds: [], itemId: created.itemId, skuIds: created.skuIds };

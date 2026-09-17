@@ -114,6 +114,7 @@ const LINE_SCHEMA = {
     'sourceLocation', 'destinationLocation', 'quantity', 'adjustmentTarget', 'reasonCode',
     'terminologyKey', 'terminologyValue',
     'productName', 'productCode', 'variantAxes', 'unitLabel', 'kitComponents',
+    'sellingPrice', 'unitCost',
     'supplier', 'purchaseUnit',
     'amount', 'reference',
     'recipient', 'messageBody',
@@ -200,6 +201,12 @@ const LINE_SCHEMA = {
     // "boxes", "pallets". '' when they just said a number of items.
     purchaseUnit: { type: 'string' },
     unitLabel: { type: 'string' },
+    // create_item only: the selling price and the cost price they stated, in
+    // the currency they typed ("$100.00" is 100). -1 when they gave none.
+    // A price the person stated and the reader dropped would be a product
+    // added at no price, presented as done.
+    sellingPrice: { type: 'number' },
+    unitCost: { type: 'number' },
   },
 };
 
@@ -219,7 +226,7 @@ const OPTIONAL_ON_READ = ['amount', 'reference', 'recipient', 'messageBody',
   // fills them in, forgiven on the way back so every reply written before
   // they existed is still a perfectly good answer about something else.
   'recordKind', 'recordName', 'kitComponents', 'purchaseExpectedDate', 'purchaseDateSource',
-  'deliveryInstructions', 'trackingMode', 'trackingSource'];
+  'deliveryInstructions', 'trackingMode', 'trackingSource', 'sellingPrice', 'unitCost'];
 const ACCEPTED_LINE_SCHEMA = {
   ...LINE_SCHEMA,
   required: LINE_SCHEMA.required.filter((key) => !OPTIONAL_ON_READ.includes(key)),
@@ -267,6 +274,10 @@ Operations you may choose:
   arrived, has opening stock, or gives a starting quantity, preserve that
   number in quantity and any stated receiving place in destinationLocation.
   Never reduce a combined add-and-receive request to catalogue creation alone.
+  A stated selling price goes in sellingPrice and a stated cost, cost price or
+  purchase price in unitCost, as plain numbers in the currency typed; -1 when
+  not stated. Every product listed is its own create_item line, with its own
+  quantity and prices — a list of two products is two lines, never one.
 - configure_kit: define or replace a kit/BOM for an existing customer-facing
   SKU. Put the kit SKU or product in item and any variant in variant. Put every
   explicitly named component SKU/product, variant and required whole-number
@@ -469,6 +480,8 @@ function normaliseLine(raw) {
     messageBody: String(raw.messageBody || '').trim(),
     variantAxes: String(raw.variantAxes || '').trim(),
     unitLabel: String(raw.unitLabel || '').trim(),
+    sellingPriceMinor: Number.isFinite(Number(raw.sellingPrice)) && Number(raw.sellingPrice) >= 0 ? Math.round(Number(raw.sellingPrice) * 100) : -1,
+    unitCostMinor: Number.isFinite(Number(raw.unitCost)) && Number(raw.unitCost) >= 0 ? Math.round(Number(raw.unitCost) * 100) : -1,
     kitComponents: Array.isArray(raw.kitComponents)
       ? raw.kitComponents.slice(0, 100).map((component) => ({
           item: String(component && component.item || '').trim(),
@@ -673,9 +686,23 @@ function deterministicOutboundMessage(instruction) {
 function enumeratedClauses(instruction) {
   const clean = String(instruction || '').replace(/\r/g, '').trim();
   const body = clean.replace(/^\s*(?:please\s+)?(?:do|make|handle|process)\s+(?:all\s+(?:of\s+)?)?(?:the\s+)?following\s*[:\-–—]?\s*/i, '');
-  const numbered = body.split(/(?:^|\s|;)\s*(?:\(?\d{1,2}[).:\]]|\d{1,2}\s*[-–—])\s+(?=[A-Za-z])/).map((s) => s.trim()).filter(Boolean);
-  if (numbered.length > 1) return numbered.map((s) => s.replace(/[;.,]\s*$/, '').trim());
+  const numbered = body.split(/(?:^|\s|;)\s*(?:\(?\d{1,2}[).:\]]|\d{1,2}\s*[-–—])\s+(?=[A-Za-z$£€])/).map((s) => s.trim()).filter(Boolean);
+  if (numbered.length > 1) {
+    // "Can you add two items 1: … 2: …" — the words before the first marker
+    // introduce the list; they are not a third change. An introduction is
+    // short, ends in a colon, or names the list ("two items", "these",
+    // "the following"); a real first clause carries its own quantity or
+    // place.
+    const lead = numbered[0];
+    const introduces = !/^\s*(?:\(?\d{1,2}[).:\]]|\d{1,2}\s*[-–—])/.test(body)
+      && (/[:\-–—]\s*$/.test(lead) || /\b(?:following|these|items?|products?|things|changes|list|both|two|three|four|five|several)\b/i.test(lead) || lead.split(/\s+/).length <= 6)
+      && !/\b\d+\s+\S/.test(lead.replace(/\b(?:two|three|four|five)\b/gi, ''));
+    const clauses = introduces ? numbered.slice(1) : numbered;
+    if (clauses.length > 1) return clauses.map((s) => s.replace(/[;.,]\s*$/, '').trim());
+  }
   const separated = body.split(/\s*(?:;|\n)+\s*/).map((s) => s.trim()).filter(Boolean);
+  // A heading line ending in a colon introduces the lines under it.
+  if (separated.length > 2 && /[:\-–—]\s*$/.test(separated[0])) separated.shift();
   return separated.length ? separated.map((s) => s.replace(/[;.,]\s*$/, '').trim()) : [clean];
 }
 
@@ -864,6 +891,20 @@ function plainReadingError(err, clock) {
   return err;
 }
 
+/** One clause through the model, normalised, with no coverage check. */
+async function readOne(text, provider, options = {}) {
+  const clock = new AbortController();
+  const timer = setTimeout(() => clock.abort(new Error('read_timeout')), options.readTimeoutMs || READ_TIMEOUT_MS);
+  try {
+    const response = await provider.complete({
+      system: SYSTEM, prompt: intentPrompt(text, options.context || {}), schema: INTENT_SCHEMA,
+      schemaName: 'inventory_action_intent', signal: options.signal || clock.signal,
+    });
+    const result = validate(toWireSchema(ACCEPTED_INTENT_SCHEMA), response.data, { key: 'action-intent-wire' });
+    return result.ok ? normalise(result.data) : null;
+  } finally { clearTimeout(timer); }
+}
+
 /** Turns an instruction into a validated intent. Never returns free-form SQL. */
 async function readInstruction(instruction, options = {}) {
   // The ordinary command surface accepts a complete business instruction,
@@ -929,14 +970,38 @@ async function readInstruction(instruction, options = {}) {
   const clauses = enumeratedClauses(clean);
   const readsAsChanges = intent.lines.length > 0 && !intent.lines.some((line) => ['clarify', 'unsupported'].includes(line.actionType));
   if (readsAsChanges && clauses.length > 1 && intent.lines.length < clauses.length) {
-    const read = intent.lines.map((line) => line.sourceText).filter(Boolean);
-    const unread = clauses.filter((clause) => !read.some((text) => clause.toLowerCase().includes(text.toLowerCase()) || text.toLowerCase().includes(clause.toLowerCase())));
-    const missing = unread.length && unread.length < clauses.length ? ` It did not read: ${unread.slice(0, 5).map((c) => `“${c.slice(0, 80)}”`).join(', ')}${unread.length > 5 ? ` and ${unread.length - 5} more` : ''}.` : '';
+    /*
+     * The list is read again, one clause at a time.
+     *
+     * A reader given two products returned one; given one at a time it
+     * returns one each. Each clause is read with the list's introduction in
+     * front of it ("add two items" + "sol shoes size 32 …"), and the lines
+     * are joined only when every clause came back as exactly one change of
+     * the kind the whole list was read as. Otherwise the person is told
+     * which clauses were not read — in their own words, not in a template.
+     */
+    const intro = clean.slice(0, clean.indexOf(clauses[0])).replace(/\s*(?:\(?\d{1,2}[).:\]]|\d{1,2}\s*[-–—])\s*$/, '').trim();
+    const each = await Promise.all(clauses.map(async (clause) => {
+      try {
+        const one = await readOne(`${intro ? `${intro.replace(/[:\-–—]\s*$/, '')}: ` : ''}${clause}`, provider, options);
+        if (!one || one.lines.length !== 1 || ['clarify', 'unsupported'].includes(one.lines[0].actionType)) return null;
+        // The line must be about this clause: a name from it, or its number.
+        const got = one.lines[0];
+        const named = [got.item, got.productName, got.recordName, got.supplier, got.recipient].map((v) => String(v || '').trim().toLowerCase()).filter(Boolean);
+        const about = named.some((name) => clause.toLowerCase().includes(name))
+          || (got.quantity > 0 && new RegExp(`\\b${got.quantity}\\b`).test(clause))
+          || (got.adjustmentTarget >= 0 && new RegExp(`\\b${got.adjustmentTarget}\\b`).test(clause));
+        return about ? got : null;
+      } catch { return null; }
+    }));
+    if (each.every(Boolean)) return { lines: each.map((line, i) => ({ ...line, sourceText: clauses[i] })), clarifyingQuestion: '', unsupportedReason: '' };
+    const unread = clauses.filter((clause, i) => !each[i]);
     return {
       lines: [],
       clarifyingQuestion:
-        `That lists ${clauses.length} changes and StockChief could only read ${intent.lines.length} of them, so it prepared none — it will not carry out part of a list.${missing} `
-        + 'Write each one as “move 2 <product> from <place> to <place>” on its own line, or send them a few at a time.',
+        `That lists ${clauses.length} things and StockChief could read ${clauses.length - unread.length} of them, so it prepared none — it will not do part of a list.`
+        + ` It could not read: ${unread.slice(0, 5).map((c) => `“${c.slice(0, 90)}”`).join('; ')}${unread.length > 5 ? ` and ${unread.length - 5} more` : ''}.`
+        + ' Say that part another way, or send it on its own.',
       unsupportedReason: '',
     };
   }
