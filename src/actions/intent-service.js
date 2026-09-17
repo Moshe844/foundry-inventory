@@ -410,6 +410,8 @@ function intentPrompt(instruction, context) {
     );
   }
   if (context.stockNoun) lines.push(`They call their stock "${context.stockNoun}".`);
+  // From the conversation ledger: what “that PO” or “the draft” means here.
+  if (context.referentNote) lines.push(`Earlier things on the table: ${context.referentNote}.`);
   if (context.pendingAction) {
     lines.push(
       `StockChief has already proposed: ${context.pendingAction}. ` +

@@ -24,10 +24,27 @@
   var pending = locals.pendingRules || [];
   var about = locals.about || '';
   var transcript = locals.transcript || [];
-  var currentToken = locals.currentToken || '';
-  var earlier = transcript.filter(function (turn) { return turn.token !== currentToken; });
+  var currentGoalId = locals.currentGoalId || '';
   var showingCurrent = !!(result || error);
-  var started = earlier.length > 0 || showingCurrent;
+  var started = transcript.length > 0 || showingCurrent;
+  /*
+   * Where an answer came from, in one line a person can check: which
+   * lookup, which records, which filters, how many rows, as of when.
+   */
+  function provenanceLine(goal) {
+    var p = goal.provenance || {};
+    var bits = [];
+    (p.reads || []).slice(0, 3).forEach(function (r) {
+      var what = r.dataset ? r.dataset.replace(/_/g, ' ') : (r.intent ? r.intent.replace(/_/g, ' ') : '');
+      var scope = [].concat(r.filters || []).slice(0, 3).join(', ');
+      if (!scope && (r.entity || r.location)) scope = [r.entity, r.location].filter(Boolean).join(' at ');
+      if (what) bits.push(what + (scope ? ' (' + scope + ')' : ''));
+    });
+    var out = bits.length ? 'Read ' + bits.join('; ') : '';
+    if (p.rowCount !== undefined && p.rowCount !== null && (out || p.rowCount)) out += (out ? ' · ' : '') + helpers.qty(p.rowCount) + ' ' + helpers.plural(p.rowCount, 'row');
+    if (p.asOf) out += (out ? ' · ' : '') + 'as of ' + helpers.dateTime(p.asOf);
+    return out;
+  }
   var askReturnHref = question ? '/ask?q=' + encodeURIComponent(question) : '/ask';
   /*
    * A cell, as a person would read it. Numbers get their thousands separators;
@@ -52,7 +69,7 @@
   }
 %>
 
-<div class="rm-chat">
+<div class="rm-chat" data-conversation="<%= locals.conversationId || '' %>">
   <% if (started) { %>
   <div class="rm-chat__bar">
     <p class="rm-stamp">This conversation</p>
@@ -81,56 +98,29 @@
   <% } %>
 
   <%#
-    Earlier turns, as they were said. The sentence StockChief gave and where it
-    pointed are kept; the records it read are not re-fetched — an old answer is
-    a record of what was said, not a live figure.
+    Every turn of this conversation, from the ledger. A turn is what you said;
+    under it, one card per thing you asked for, each with what StockChief
+    said, what became of it, and where the answer came from. The latest
+    answer is shown in full with its records; earlier ones are as they were
+    said — a record of what was said, not a live figure.
   %>
-  <% earlier.forEach(function (turn) { %>
-    <div class="rm-turn rm-turn--you rm-turn--past">
+  <% transcript.forEach(function (turn) { %>
+    <div class="rm-turn rm-turn--you<%= turn.goals.some(function (g) { return g.id === currentGoalId; }) ? '' : ' rm-turn--past' %>">
       <p class="rm-turn__who">You</p>
-      <% if (turn.question.length > 400) { %>
-        <details class="rm-turn__said"><summary><%= turn.question.slice(0, 160) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= turn.question %></p></details>
-      <% } else { %><p class="rm-turn__said"><%= turn.question %></p><% } %>
+      <% if (turn.message.length > 400) { %>
+        <details class="rm-turn__said"><summary><%= turn.message.slice(0, 160) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= turn.message %></p></details>
+      <% } else { %><p class="rm-turn__said"><%= turn.message %></p><% } %>
     </div>
-    <div class="rm-turn rm-turn--foundry rm-turn--past">
-      <p class="rm-turn__who">StockChief</p>
-      <div class="rm-said">
-        <% if (turn.said.length > 600) { %>
-          <details class="rm-said__text"><summary><%= turn.said.slice(0, 220) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= helpers.figures(turn.said) %></p></details>
-        <% } else { %><p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(turn.said) %></p><% } %>
-        <% if (turn.rowCount || turn.handoff || turn.isAction) { %>
-          <p class="rm-said__meta">
-            <% if (turn.rowCount) { %><span><%= helpers.qty(turn.rowCount) %> <%= helpers.plural(turn.rowCount, 'record') %> read</span><% } %>
-            <% if (turn.isAction) { %><span>Handed to the actions page</span><% } %>
-            <% if (turn.handoff) { %><a href="<%= turn.handoff.href %>"><%= turn.handoff.label %> →</a><% } %>
-          </p>
-        <% } %>
-      </div>
-    </div>
-  <% }) %>
-
-  <% if (error) { %>
-    <div class="rm-turn rm-turn--you">
-      <p class="rm-turn__who">You</p>
-      <p class="rm-turn__said"><%= question %></p>
-    </div>
+    <% turn.goals.forEach(function (goal) { %>
+      <% if (goal.id === currentGoalId && error) { %>
     <div class="rm-turn rm-turn--foundry">
       <p class="rm-turn__who">StockChief</p>
-      <div class="rm-answer rm-said--problem">
+      <div class="rm-said rm-said--problem">
         <p class="rm-said__text"><%= error %></p>
-        <p class="rm-said__meta"><span>Nothing changed. Your message is still in the box below.</span></p>
+        <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><span>Nothing changed. Your message is still in the box below.</span></p>
       </div>
     </div>
-  <% } %>
-
-  <% if (result) { %>
-    <div class="rm-turn rm-turn--you">
-      <p class="rm-turn__who">You</p>
-      <% if (result.question.length > 400) { %>
-        <details class="rm-turn__said"><summary><%= result.question.slice(0, 160) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= result.question %></p></details>
-      <% } else { %><p class="rm-turn__said"><%= result.question %></p><% } %>
-    </div>
-
+      <% } else if (goal.id === currentGoalId && result) { %>
     <div class="rm-turn rm-turn--foundry">
       <p class="rm-turn__who">StockChief</p>
       <%
@@ -152,7 +142,7 @@
       %>
       <div class="rm-said">
         <p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(said) %></p>
-        <% if (result.needsClarification) { %><p class="rm-said__meta"><span>Reply below to continue this question. Nothing has changed.</span></p><% } %>
+        <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% if (result.needsClarification) { %><span>Reply below to continue this question. Nothing has changed.</span><% } %></p>
 
         <% if (result.handoff) { %>
           <p class="rm-chat-actions"><a class="rm-btn" href="<%= result.handoff.href %>"><%= result.handoff.label %> <span aria-hidden="true">→</span></a></p>
@@ -242,12 +232,32 @@
                 <%= helpers.qty(result.rowCount) %> <%= helpers.plural(result.rowCount, 'row') %> read from your records.
                 Nothing changed — asking is not doing, and changes are approved on the actions page.
               </p>
+              <% var currentGoal = null; transcript.forEach(function (t) { t.goals.forEach(function (g) { if (g.id === currentGoalId) currentGoal = g; }); }); %>
+              <% if (currentGoal && provenanceLine(currentGoal)) { %><p><%= provenanceLine(currentGoal) %></p><% } %>
             </div>
           </details>
         <% } %>
       </div>
     </div>
-  <% } %>
+      <% } else { %>
+    <div class="rm-turn rm-turn--foundry rm-turn--past">
+      <p class="rm-turn__who">StockChief<% if (turn.goals.length > 1) { %> · part <%= goal.position + 1 %> of <%= turn.goals.length %><% } %></p>
+      <div class="rm-said<%= goal.status === 'refused' || goal.status === 'failed' ? ' rm-said--problem' : '' %>">
+        <% var saidText = goal.said || (goal.status === 'pending' ? 'Not started yet — it is waiting behind the part before it.' : ''); %>
+        <% if (turn.goals.length > 1) { %><p class="rm-said__goal">“<%= goal.text.length > 160 ? goal.text.slice(0, 160) + '…' : goal.text %>”</p><% } %>
+        <% if (saidText.length > 600) { %>
+          <details class="rm-said__text"><summary><%= saidText.slice(0, 220) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= helpers.figures(saidText) %></p></details>
+        <% } else if (saidText) { %><p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(saidText) %></p><% } %>
+        <p class="rm-said__meta">
+          <span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span>
+          <% if (goal.resultHref) { %><a href="<%= goal.resultHref %>"><%= goal.resultLabel || 'Open' %> →</a><% } %>
+          <% var prov = provenanceLine(goal); %><% if (prov) { %><span><%= prov %></span><% } %>
+        </p>
+      </div>
+    </div>
+      <% } %>
+    <% }) %>
+  <% }) %>
 
   <%
     /*
