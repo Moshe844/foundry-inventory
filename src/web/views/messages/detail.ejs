@@ -57,7 +57,10 @@
             <span class="field-label">Message</span>
             <textarea class="input textarea message-edit" name="body" rows="10"><%= message.body %></textarea>
             <span class="field-hint">
-              <% if (message.messageKind === 'owner_message') { %>
+              <% if (message.messageKind === 'assistant_draft') { %>
+                StockChief wrote this from your records for what you asked<%= locals.draftFacts && draftFacts.instruction ? ' (“' + draftFacts.instruction + '”)' : '' %>. Every order number, date and figure in it
+                comes from the facts listed below; nothing else was used. Read it and change whatever you like before it goes.
+              <% } else if (message.messageKind === 'owner_message') { %>
                 These are your words as you typed them. StockChief has not added, expanded or
                 reworded anything. Change whatever you like before it goes.
               <% } else if (message.messageKind === 'payment_request') { %>
@@ -69,6 +72,16 @@
               <% } %>
             </span>
           </label>
+          <% if (locals.draftFacts && draftFacts.facts && draftFacts.facts.length) { %>
+            <details class="field" open>
+              <summary class="field-label">What this draft is based on</summary>
+              <ul class="plain-list t-sm">
+                <% draftFacts.facts.forEach(function (fact) { var used = (draftFacts.used || []).some(function (u) { return u.n === fact.n; }); %>
+                  <li><%= used ? '●' : '○' %> <%= fact.text %><%= used ? '' : ' (available, not used)' %></li>
+                <% }) %>
+              </ul>
+            </details>
+          <% } %>
           <% if (mailboxes && mailboxes.length) { %>
             <label class="field">
               <span class="field-label">Send from</span>

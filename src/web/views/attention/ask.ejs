@@ -43,6 +43,7 @@
     var out = bits.length ? 'Read ' + bits.join('; ') : '';
     if (p.rowCount !== undefined && p.rowCount !== null && (out || p.rowCount)) out += (out ? ' · ' : '') + helpers.qty(p.rowCount) + ' ' + helpers.plural(p.rowCount, 'row');
     if (p.asOf) out += (out ? ' · ' : '') + 'as of ' + helpers.dateTime(p.asOf);
+    if (p.general) out = 'General knowledge — not read from your records';
     if (p.modelCalls) out += (out ? ' · ' : '') + p.modelCalls + ' model call' + (p.modelCalls === 1 ? '' : 's') + ', ' + (p.modelMs >= 1000 ? (p.modelMs / 1000).toFixed(1) + ' s' : p.modelMs + ' ms');
     return out;
   }
@@ -143,7 +144,7 @@
       %>
       <div class="rm-said">
         <p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(said) %></p>
-        <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% if (result.needsClarification && goal.status === 'clarify') { %><span><%= result.choices && result.choices.length ? 'Pick one, or reply below.' : 'Reply below to continue this question.' %> Nothing has changed.</span><% } %></p>
+        <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% if (result.general) { %><span class="rm-pill rm-pill--muted">General knowledge — not read from your records</span><% } %><% if (result.needsClarification && goal.status === 'clarify') { %><span><%= result.choices && result.choices.length ? 'Pick one, or reply below.' : 'Reply below to continue this question.' %> Nothing has changed.</span><% } %></p>
         <%# A "which one?" is answered with a click: each candidate is the reply, sent as the answer to this question. %>
         <% if (result.needsClarification && result.choices && result.choices.length) { %>
           <div class="rm-suggest rm-suggest--answers">
@@ -229,7 +230,7 @@
           </details>
         <% } %>
 
-        <% const conversational = result.plan && ['small_talk', 'conversation_recap'].includes(result.plan.intent); %>
+        <% const conversational = result.plan && ['small_talk', 'conversation_recap', 'general_knowledge'].includes(result.plan.intent); %>
         <% if ((result.supported || result.isAction) && !conversational) { %>
           <%#
             The working, folded. A native disclosure says what it is, opens

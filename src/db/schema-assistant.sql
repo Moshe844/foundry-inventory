@@ -92,3 +92,15 @@ CREATE TABLE IF NOT EXISTS ai_calls (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_calls_workspace ON ai_calls(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_calls_goal ON ai_calls(goal_id);
+
+-- The facts a message StockChief wrote was written from, kept beside the
+-- message so its page can show them: what was relied on, and everything
+-- that was available. Dictated messages have no row here.
+CREATE TABLE IF NOT EXISTS assistant_draft_facts (
+  message_id    TEXT PRIMARY KEY,
+  workspace_id  TEXT NOT NULL,
+  facts         TEXT NOT NULL DEFAULT '[]',
+  facts_used    TEXT NOT NULL DEFAULT '[]',
+  instruction   TEXT,
+  created_at    TEXT NOT NULL
+);

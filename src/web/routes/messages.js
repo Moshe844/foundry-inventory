@@ -31,10 +31,17 @@ router.get('/messages/:id', requirePermission(permissions.VIEW, 'read messages')
     req.flash('error', 'That message is not in this inventory.');
     return res.redirect(303, '/#tell-foundry');
   }
+  // A draft StockChief wrote carries the facts it was written from.
+  let draftFacts = null;
+  try {
+    const row = req.db.prepare('SELECT facts, facts_used, instruction FROM assistant_draft_facts WHERE message_id = ? AND workspace_id = ?').get(message.id, req.ctx.workspaceId);
+    if (row) draftFacts = { facts: JSON.parse(row.facts || '[]'), used: JSON.parse(row.facts_used || '[]'), instruction: row.instruction };
+  } catch { draftFacts = null; }
   res.page('messages/detail', {
     title: message.status === 'SENT' ? `Sent to ${message.recipient}` : `Message to ${message.recipient}`,
     nav: 'home',
     message,
+    draftFacts,
     mailboxes: mailboxes(req),
     canSend: permissions.can(req.user, permissions.OPERATE),
   });
