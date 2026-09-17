@@ -19,6 +19,9 @@ function findTarget(db, ctx, conversationId) {
   const turns = ledger.conversation(db, ctx, conversationId, { limit: 12 });
   const goals = turns.flatMap((t) => t.goals).reverse();
   for (const goal of goals) {
+    // A goal already withdrawn, replaced, refused or merely answered is not
+    // 'that'; the next older one may be.
+    if (['withdrawn', 'skipped', 'replaced', 'refused', 'failed', 'answered', 'clarify', 'handed', 'pending'].includes(goal.status)) continue;
     const href = String(goal.resultHref || '').split('?')[0];
     if (!href) continue;
     let m;
@@ -29,7 +32,6 @@ function findTarget(db, ctx, conversationId) {
     if ((m = /^\/pricing\/proposals\/([A-Za-z0-9_-]+)$/.exec(href)) && m[1] !== 'batch') return { goal, kind: 'price', id: m[1] };
     if (/^\/pricing\/proposals\/batch$/.test(href)) return { goal, kind: 'price_batch', id: null };
     if ((m = /^\/operating-instructions\/([A-Za-z0-9_-]+)$/.exec(href))) return { goal, kind: 'instruction', id: m[1] };
-    if (goal.status === 'answered' || goal.status === 'clarify' || goal.status === 'handed' || goal.status === 'refused' || goal.status === 'failed') continue;
   }
   return null;
 }

@@ -149,3 +149,16 @@ test('a receipt is undone by issuing it back out, an issue by receiving it back,
   assert.equal(reversal.proposal.status, 'AWAITING_APPROVAL');
   assert.equal(repo.getBalance(db, w.workspaceId, elbow.skuId, w.store.id), 7);
 });
+
+test('a goal already withdrawn is not "that" again; the next older undoable thing is', () => {
+  const { db, w } = setup();
+  const t1 = ledger.openTurn(db, w.ctx, { conversationId: 'c', channel: 'ask', message: 'older', understanding: {}, goals: [{ kind: 'change', text: 'older' }] });
+  ledger.settle(db, w.ctx, t1.goals[0].id, { status: 'needs_approval', resultHref: '/actions/act_older' });
+  const t2 = ledger.openTurn(db, w.ctx, { conversationId: 'c', channel: 'ask', message: 'newer', understanding: {}, goals: [{ kind: 'change', text: 'newer' }] });
+  ledger.settle(db, w.ctx, t2.goals[0].id, { status: 'withdrawn', resultHref: '/purchasing/orders/po_x' });
+  const t3 = ledger.openTurn(db, w.ctx, { conversationId: 'c', channel: 'ask', message: 'how many', understanding: {}, goals: [{ kind: 'lookup', text: 'how many' }] });
+  ledger.settle(db, w.ctx, t3.goals[0].id, { status: 'answered', said: '3' });
+  const target = undoService.findTarget(db, w.ctx, 'c');
+  assert.equal(target.kind, 'proposal');
+  assert.equal(target.id, 'act_older');
+});
