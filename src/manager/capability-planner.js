@@ -121,7 +121,7 @@ async function plan(db, ctx, message, options = {}) {
   const provider = options.provider || createProviderForTier('fast');
   const response = await provider.complete({
     system: SYSTEM,
-    prompt: `Current workspace and conversation:\n${JSON.stringify(workspaceSnapshot(db, ctx))}\n\nOwner request:\n${message}`,
+    prompt: `Current workspace and conversation:\n${JSON.stringify(workspaceSnapshot(db, ctx))}${options.referentNote ? `\n\nWhat short phrases in the request refer to (from the conversation ledger): ${options.referentNote}` : ''}\n\nOwner request:\n${message}`,
     schema: PLAN_SCHEMA,
     // Keep the established boundary name. Consumers that only know the older
     // intent wire still return a valid answer; capable providers return the

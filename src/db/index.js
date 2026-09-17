@@ -34,6 +34,7 @@ const LEARNING_SCHEMA_PATH = path.join(__dirname, 'schema-learning.sql');
 const MIGRATION_SCALE_SCHEMA_PATH = path.join(__dirname, 'schema-migration-scale.sql');
 const KITS_SCHEMA_PATH = path.join(__dirname, 'schema-kits.sql');
 const CATALOGUE_FACTS_SCHEMA_PATH = path.join(__dirname, 'schema-catalogue-facts.sql');
+const ASSISTANT_SCHEMA_PATH = path.join(__dirname, 'schema-assistant.sql');
 const SCHEMA_PATHS = [SCHEMA_PATH, FOUNDRY_SCHEMA_PATH, ATTENTION_SCHEMA_PATH,
   ACTIONS_SCHEMA_PATH, IMPORTS_SCHEMA_PATH, PURCHASING_SCHEMA_PATH,
   ONBOARDING_SCHEMA_PATH, AUTOPILOT_SCHEMA_PATH, MANAGER_SCHEMA_PATH,
@@ -45,6 +46,7 @@ const SCHEMA_PATHS = [SCHEMA_PATH, FOUNDRY_SCHEMA_PATH, ATTENTION_SCHEMA_PATH,
   LEARNING_SCHEMA_PATH, MIGRATION_SCALE_SCHEMA_PATH];
 SCHEMA_PATHS.push(KITS_SCHEMA_PATH);
 SCHEMA_PATHS.push(CATALOGUE_FACTS_SCHEMA_PATH);
+SCHEMA_PATHS.push(ASSISTANT_SCHEMA_PATH);
 
 /**
  * Opens (and initialises) a SQLite database.
@@ -961,6 +963,9 @@ function migrate(db) {
   db.exec(fs.readFileSync(MIGRATION_SCALE_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(KITS_SCHEMA_PATH, 'utf8'));
   db.exec(fs.readFileSync(CATALOGUE_FACTS_SCHEMA_PATH, 'utf8'));
+  // The assistant's ledger of turns, goals and referents. It records what
+  // was asked and what became of it; it owns no business record.
+  db.exec(fs.readFileSync(ASSISTANT_SCHEMA_PATH, 'utf8'));
   migrateMailboxDocumentPurpose(db);
   migrateLandedCostPermission(db);
   dropLegacyUserLogin(db);

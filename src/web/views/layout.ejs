@@ -129,6 +129,34 @@
         var live = message.type === 'error' || message.type === 'warn' ? 'alert' : 'status';
       %><div class="flash flash--<%= message.type %>" role="<%= live %>"><span><%= message.message %></span></div><% }) %></div>
     <% } %>
+    <%#
+      The rest of what was said. A message with several parts runs one at a
+      time; the next part is offered here, on whatever page the first one led
+      to, until it is done or the person chooses to leave it — either way it
+      is written in the ledger.
+    %>
+    <% if (typeof assistantQueue !== 'undefined' && assistantQueue) { %>
+      <div class="rm-queue" role="status">
+        <div class="rm-queue__t">
+          <strong><%= assistantQueue.remaining === 1 ? 'One more thing' : assistantQueue.remaining + ' more things' %> from your message</strong>
+          <span>Next: “<%= assistantQueue.next.text.length > 140 ? assistantQueue.next.text.slice(0, 140) + '…' : assistantQueue.next.text %>”</span>
+        </div>
+        <div class="rm-queue__a">
+          <form method="post" action="/foundry/tell" data-busy>
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="assistantGoal" value="<%= assistantQueue.next.id %>">
+            <input type="hidden" name="message" value="<%= assistantQueue.next.text %>">
+            <% if (assistantQueue.queryConversation) { %><input type="hidden" name="queryConversation" value="1"><% } %>
+            <button class="rm-btn rm-btn--sm" type="submit">Continue with it</button>
+          </form>
+          <form method="post" action="/ask/leave-the-rest">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="back" value="<%= typeof currentHref !== 'undefined' ? currentHref : '/' %>">
+            <button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">Leave the rest</button>
+          </form>
+        </div>
+      </div>
+    <% } %>
     <% if (typeof navigationArrival !== 'undefined' && navigationArrival) { %>
       <div class="flash flash--success" role="status" data-navigation-arrival>
         <span><%= navigationArrival.message %></span>

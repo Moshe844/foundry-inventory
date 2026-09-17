@@ -183,7 +183,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   // asking the model to reconstruct every line from the original prose.
   const intent = options.parsedIntent || await intentService.readInstruction(text, {
     provider: options.provider,
-    context: options.context || instructionContext(db, ctx.workspaceId),
+    context: { ...(options.context || instructionContext(db, ctx.workspaceId)), referentNote: options.referentNote || '' },
     maxInstruction: options.maxInstruction,
     signal: options.signal,
   });

@@ -468,6 +468,10 @@ function pageRenderer(req, res, next) {
         backTo: resolvedBackTo,
         navigationArrival,
         workspaceGuidance,
+        // The rest of a message with several parts in it, offered on every
+        // page until the person continues or leaves it undone on the record.
+        assistantQueue: (() => { try { return require('../assistant/turns').queued(req); } catch { return null; } })(),
+        currentHref: (() => { try { return `${req.path}${req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : ''}`; } catch { return '/'; } })(),
         screenGuide,
         // Absolute base for anything that cannot be a relative path — social
         // preview images are fetched by other people's servers, which have no

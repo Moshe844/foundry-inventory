@@ -16,6 +16,7 @@ const managerReadiness = require('../../manager/readiness');
 const actionService = require('../../actions/action-service');
 const proposals = require('../../actions/proposal-service');
 const actionPresenter = require('../../actions/presenter');
+const assistantTurns = require('../../assistant/turns');
 const importPlans = require('../../imports/plan-service');
 const workItems = require('../../autopilot/work-items');
 const operatingInstructions = require('../../manager/operating-instructions');
@@ -390,6 +391,25 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   // reads; instructions continue directly into the registered manager handler
   // in this POST, rather than displaying a second 'work out' button.
   let chatAction = req.body.prepareOnly === '1';
+  /*
+   * One understanding, one ledger row per goal, before anything runs.
+   *
+   * A message with several things in it used to be whichever of them the
+   * first reader noticed. Now it is split once, every goal is recorded as
+   * pending, the first is carried through the dispatcher below, and the rest
+   * wait in the session for the person to continue or leave undone — either
+   * way, on the record.
+   */
+  if (!attached && message) {
+    const earlier = req.session.askConversation?.workspaceId === req.ctx.workspaceId
+      ? req.session.askConversation : null;
+    message = await assistantTurns.begin(req, res, message, {
+      channel: req.body.queryConversation === '1' ? 'ask' : 'tell',
+      provider: req.app.locals.aiProvider || undefined,
+      previousQuestion: earlier ? earlier.question : null,
+      noSplit: Boolean(answer),
+    });
+  }
   if (!attached && req.body.queryConversation === '1' && message) {
     const token = crypto.randomUUID();
     const previous = req.session.askConversation?.workspaceId === req.ctx.workspaceId
@@ -402,6 +422,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         provider:req.app.locals.aiProvider || undefined,membership:req.user,
         productBrain:req.app.locals.productBrain,actorId:req.ctx.actorId,
         conversation:previous,timezone:'America/New_York',
+        referentNote:req.assistantReferentNote || '',
       });
     } catch (err) {
       if (!err.status || err.status >= 500) throw err;
@@ -599,6 +620,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
 
   const intent = await intentRouter.classify(req.db, req.ctx, message, {
     provider: req.app.locals.aiProvider || undefined,
+    referentNote: req.assistantReferentNote || '',
   });
   if (asksAboutRestrictions(message)) {
     req.session.pendingRestrictionFlow = { startedAt: Date.now(), instruction: message };
@@ -820,6 +842,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     if (specific.kind === 'purchase_order' && specific.order) {
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'purchase_order', specific.order.id);
       managerContext.remember(req.db, req.ctx, { purchaseOrderId: specific.order.id });
+      assistantTurns.remember(req, { kind: 'purchase_order', refId: specific.order.id, label: specific.order.poNumber, href: `/purchasing/orders/${specific.order.id}` });
       req.flash('success', `StockChief drafted ${specific.order.poNumber}. Nothing is ordered until you approve it.`);
       return res.redirect(303, `/purchasing/orders/${specific.order.id}`);
     }
@@ -887,12 +910,15 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       || ['INVENTORY_ACTION', 'CATALOG_CHANGE', 'CONFIGURATION_CHANGE'].includes(intent.intentClass)) {
     const result = await actionService.interpret(req.db, req.ctx, req.user, message, {
       provider: req.app.locals.aiProvider || undefined,
+      referentNote: req.assistantReferentNote || '',
     });
     const target = actionRedirect(result);
     if (target) {
       const related = result.proposal ? result.proposal.proposalId : result.plan.planId;
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'action', related);
       managerContext.remember(req.db, req.ctx, { entities: { actionId: related } });
+      assistantTurns.remember(req, { kind: result.proposal ? 'proposal' : 'plan', refId: related,
+        label: result.proposal ? actionPresenter.oneLine(req.db, req.ctx.workspaceId, result.proposal) : `the ${result.plan.lines ? result.plan.lines.length : ''} changes you asked for`, href: target });
       return res.redirect(303, target);
     }
     // A message to send, a supplier payment to confirm: understood, and

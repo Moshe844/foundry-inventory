@@ -1,6 +1,5 @@
 'use strict';
 
-const crypto = require('crypto');
 const express = require('express');
 const config = require('../../config');
 const attention = require('../../attention/attention-engine');
@@ -19,7 +18,9 @@ const proposalService = require('../../actions/proposal-service');
 const replenishmentPlan = require('../../purchasing/replenishment-plan');
 const signalEngine = require('../../signals/signal-engine');
 const { requireAuth, asyncRoute } = require('../middleware');
-const { trimOrNull } = require('../../lib/util');
+const { trimOrNull, nowIso } = require('../../lib/util');
+const ledger = require('../../assistant/ledger');
+const assistantTurns = require('../../assistant/turns');
 
 const router = express.Router();
 router.use('/attention', requireAuth);
@@ -319,36 +320,65 @@ function askExamples(db, workspaceId) {
  * workspace, twelve turns deep. It is a record of what was said, not a cache:
  * an old turn is never re-read and never re-run.
  */
-const TRANSCRIPT_TURNS = 12;
-function transcriptFor(req) {
-  const state = req.session.askTranscript;
-  return state && state.workspaceId === req.ctx.workspaceId ? state : { workspaceId: req.ctx.workspaceId, turns: [] };
+/*
+ * What the page says about a goal, in the ledger's terms: the sentence, the
+ * status a person can read, and where the answer came from — which lookup,
+ * which records, which filters, how many rows, as of when.
+ */
+function askOutcome(question, result, error) {
+  if (error) return { status: 'failed', said: error, provenance: {} };
+  const said = result.spoken && !result.progressiveDisclosure ? result.spoken : result.answer;
+  const parts = (result.semanticPlan && result.semanticPlan.parts) || [];
+  const reads = parts.map((part) => ({
+    intent: part.intent,
+    dataset: part.recordQuery ? part.recordQuery.dataset : null,
+    filters: part.recordQuery ? (part.recordQuery.filters || []).map((f) => `${f.field} ${f.operator}${f.value === null || f.value === undefined ? '' : ` ${f.value}`}`) : [],
+    entity: part.entityQuery || null, location: part.locationQuery || null,
+  }));
+  const status = result.isAction ? 'clarify' : result.needsClarification ? 'clarify' : result.supported === false ? 'refused' : 'answered';
+  return {
+    status, said: String(said || ''),
+    resultHref: result.handoff ? result.handoff.href : null, resultLabel: result.handoff ? result.handoff.label : null,
+    provenance: {
+      intent: result.plan ? result.plan.intent : null, interpretation: result.interpretation || null,
+      // A clarification or refusal read nothing; only an answer has reads.
+      reads: status !== 'answered' ? [] : reads.length ? reads : (result.plan && result.plan.intent && result.plan.intent !== 'unsupported' ? [{ intent: result.plan.intent, entity: result.plan.entityQuery || null, location: result.plan.locationQuery || null }] : []),
+      rowCount: status === 'answered' ? Number(result.totalMatches ?? result.rowCount ?? 0) : null, asOf: status === 'answered' ? nowIso() : null,
+    },
+  };
 }
-function rememberTurn(req, token, question, result, error) {
-  const state = transcriptFor(req);
-  if (state.turns.some((turn) => turn.token === token)) return;
-  const last = state.turns[state.turns.length - 1];
-  // A refresh of /ask?q=… arrives without a token; the same question straight
-  // after itself is the same turn, not a new one.
-  if (!req.query.turn && last && last.question === question) return;
-  const said = error ? error : (result.spoken && !result.progressiveDisclosure ? result.spoken : result.answer);
-  state.turns = [...state.turns.slice(-(TRANSCRIPT_TURNS - 1)), {
-    token, at: Date.now(), question, said: String(said || ''),
-    error: !!error,
-    rowCount: result ? result.rowCount || 0 : 0,
-    handoff: result && result.handoff ? { href: result.handoff.href, label: result.handoff.label } : null,
-    needsClarification: !!(result && result.needsClarification),
-    isAction: !!(result && result.isAction),
-  }];
-  req.session.askTranscript = state;
+
+/*
+ * The goal this page answers. A question that came through the composer has
+ * an open goal in the session; one reached by a link (an example chip, a
+ * hand-off back to Ask) opens its own turn here, unless it is the same
+ * question as the last turn — a refresh — in which case it re-settles that.
+ */
+function goalFor(req, question) {
+  const open = req.session.assistantOpenGoal;
+  if (open && open.message === question) return open.goalId;
+  const convo = assistantTurns.conversationId(req);
+  const turns = ledger.conversation(req.db, req.ctx, convo, { limit: 1 });
+  const last = turns[turns.length - 1];
+  if (last && last.message === question && last.goals.length === 1) return last.goals[0].id;
+  const turn = ledger.openTurn(req.db, req.ctx, { conversationId: convo, channel: 'ask', message: question,
+    understanding: { how: 'link' }, goals: [{ kind: 'lookup', text: question }] });
+  return turn.goals[0].id;
 }
 
 router.post('/ask/new', asyncRoute(async (req, res) => {
+  assistantTurns.newConversation(req);
   delete req.session.askTranscript;
   delete req.session.askConversation;
   delete req.session.askTurns;
   delete req.session.pendingAskResult;
   res.redirect(303, '/ask');
+}));
+
+router.post('/ask/leave-the-rest', asyncRoute(async (req, res) => {
+  const n = assistantTurns.skipQueue(req);
+  if (n) req.flash('info', `Left ${n === 1 ? 'the last part' : `${n} parts`} of your message undone. That is on the record.`);
+  res.redirect(303, trimOrNull(req.body.back) || '/ask');
 }));
 
 router.get(
@@ -357,7 +387,6 @@ router.get(
     const question = trimOrNull(req.query.q);
     let result = null;
     let error = null;
-    const currentToken = trimOrNull(req.query.turn) || crypto.randomUUID();
     const submittedTurn = (req.session.askTurns || []).find(turn => turn.token === req.query.turn
       && turn.workspaceId === req.ctx.workspaceId && turn.question === question);
     const conversation = req.query.followup === '1' && submittedTurn
@@ -415,9 +444,14 @@ router.get(
         if (err.status && err.status < 500) error = err.message;
         else throw err;
       }
-      if (result || error) rememberTurn(req, currentToken, question, result, error);
+      if (result || error) {
+        const goalId = goalFor(req, question);
+        delete req.session.assistantOpenGoal;
+        ledger.settle(req.db, req.ctx, goalId, askOutcome(question, result, error));
+        req.currentGoalId = goalId;
+      }
     }
-    const transcript = transcriptFor(req).turns;
+    const transcript = ledger.conversation(req.db, req.ctx, assistantTurns.conversationId(req), { limit: 12 });
 
     /*
      * The rules already said, beside the box they were said into. A standing
@@ -446,7 +480,8 @@ router.get(
       error,
       conversation,
       transcript,
-      currentToken,
+      currentGoalId: req.currentGoalId || null,
+      conversationId: assistantTurns.conversationId(req),
       aiConfigured: config.ai.configured,
       // Written with this inventory's own product and place where there is one.
       // "How many navy oxfords do we have?" in a business that sells t-shirts

@@ -223,6 +223,7 @@ async function classify(db, ctx, message, options = {}) {
     try {
       data = await capabilityPlanner.plan(db, ctx, clean, {
         provider: options.provider || createProviderForTier('fast'),
+        referentNote: options.referentNote || '',
       });
     } catch {
       data = deterministic;
