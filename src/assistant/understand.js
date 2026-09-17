@@ -126,7 +126,8 @@ function resolvePronouns(message, subjects = {}) {
 /** The referents as a sentence a reader prompt can carry: “that PO” = PO-1024. */
 function referentNote(resolved = []) {
   if (!resolved.length) return '';
-  return resolved.map((r) => `“${r.phrase}” means ${r.label}${r.href ? ` (${r.href})` : ''}`).join('; ');
+  const guard = require('../ai/guard');
+  return resolved.map((r) => `“${r.phrase}” means ${guard.recordValue(r.label)}${r.href ? ` (${r.href})` : ''}`).join('; ');
 }
 
 /**

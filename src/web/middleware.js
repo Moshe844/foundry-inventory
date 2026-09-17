@@ -143,6 +143,15 @@ function loadUser(db) {
  * vocabulary available to every view. Terminology is presentation only — the
  * domain layer never sees it.
  */
+/** The session keys that carry unfinished assistant work; all scoped to one inventory. */
+const PENDING_KEYS = ['askConversation', 'askTurns', 'assistantConversationId', 'assistantOpenGoal', 'assistantQueue', 'assistantTranscript',
+  'pendingActionContinuation', 'pendingActionQuestion', 'pendingAskResult', 'pendingLocationTransfer', 'pendingPriceBatch',
+  'pendingPriceContinuation', 'pendingPurchaseCostBatch', 'pendingRestrictionFlow', 'pendingSalesContinuation', 'pendingSupplierPayment', 'askTranscript'];
+
+function clearPendingWork(session) {
+  for (const key of PENDING_KEYS) delete session[key];
+}
+
 function foundryContext(db) {
   const planApplier = require('../foundry/plan-applier');
   const { createVocabulary } = require('../foundry/terminology');
@@ -152,6 +161,17 @@ function foundryContext(db) {
       res.locals.foundry = { configured: false, vocabulary: createVocabulary({}) };
       res.locals.attentionCount = 0;
       return next();
+    }
+    /*
+     * A question half-answered in one inventory must not be finished in
+     * another. Everything the assistant keeps in the session between two
+     * requests — a question waiting on the actions page, a continuation, a
+     * price batch, the conversation itself — belongs to the inventory it
+     * was made in, and is cleared the moment the person switches.
+     */
+    if (req.session) {
+      if (req.session.assistantWorkspaceId && req.session.assistantWorkspaceId !== req.ctx.workspaceId) clearPendingWork(req.session);
+      req.session.assistantWorkspaceId = req.ctx.workspaceId;
     }
     const configuration = planApplier.getConfiguration(db, req.ctx.workspaceId);
     const vocabulary = createVocabulary(configuration ? configuration.terminology : {});
@@ -544,7 +564,7 @@ function errorHandler(isProduction) {
   };
 }
 
-module.exports = {
+module.exports = { clearPendingWork, PENDING_KEYS,
   rateLimit,
   flash,
   csrf,

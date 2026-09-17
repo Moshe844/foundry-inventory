@@ -240,9 +240,9 @@ async function interpret(db, ctx, message, options = {}) {
   try {
     const response = await (options.provider || createProviderForTier('fast')).complete({
       system: SYSTEM,
-      prompt: `Inventory products:\n${JSON.stringify(db.prepare(`SELECT i.name, s.code, s.variant_label
+      prompt: `Inventory products:\n${JSON.stringify(require('../ai/guard').deep(db.prepare(`SELECT i.name, s.code, s.variant_label
         FROM skus s JOIN items i ON i.id = s.item_id WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1
-        ORDER BY i.name, s.position LIMIT 300`).all(ctx.workspaceId))}\n\nOwner request:\n${statedAs}`,
+        ORDER BY i.name, s.position LIMIT 300`).all(ctx.workspaceId)))}\n\nOwner request:\n${statedAs}`,
       schema: SCHEMA, schemaName: 'selling_price_change',
     });
     const checked = validate(toWireSchema(SCHEMA), response.data, { key: 'selling-price-change-wire' });
@@ -392,7 +392,7 @@ async function interpretMany(db, ctx, message, options = {}) {
   try {
     const response = await (options.provider || createProviderForTier('fast')).complete({
       system: BULK_SYSTEM,
-      prompt: `Inventory products:\n${JSON.stringify(catalogue(db, ctx.workspaceId))}\n\nOwner request:\n${statedAs}`,
+      prompt: `Inventory products:\n${JSON.stringify(require('../ai/guard').deep(catalogue(db, ctx.workspaceId)))}\n\nOwner request:\n${statedAs}`,
       schema: BULK_SCHEMA, schemaName: 'selling_price_changes',
     });
     const checked = validate(toWireSchema(BULK_SCHEMA), response.data, { key: 'selling-price-changes-wire' });

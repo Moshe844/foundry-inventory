@@ -39,12 +39,15 @@ function instructionContext(db, workspaceId) {
     .all(workspaceId)
     .map((row) => row.name);
 
+  // Record values reach the reader as data (src/ai/guard.js): a name that
+  // reads as an instruction is neutralised before it is in a prompt.
+  const guard = require('../ai/guard');
   return {
-    locationNames: repo.listLocations(db, workspaceId).map((l) => l.name),
-    itemNames: items,
+    locationNames: repo.listLocations(db, workspaceId).map((l) => guard.recordValue(l.name)),
+    itemNames: items.map((name) => guard.recordValue(name)),
     itemCount: db.prepare('SELECT COUNT(*) AS n FROM items WHERE workspace_id = ? AND is_active = 1').get(workspaceId).n,
-    stockNoun: terminology.item || null,
-    pendingAction: pending.length === 1 ? presenter.oneLine(db, workspaceId, pending[0]) : null,
+    stockNoun: terminology.item ? guard.recordValue(terminology.item, { max: 40 }) : null,
+    pendingAction: pending.length === 1 ? guard.recordValue(presenter.oneLine(db, workspaceId, pending[0]), { max: 240 }) : null,
     pendingCount: pending.length,
   };
 }

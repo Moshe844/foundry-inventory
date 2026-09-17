@@ -482,7 +482,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   const supplierRows = suppliers.listSuppliers(db, ctx.workspaceId).map((s) => ({ name: s.name }));
   const response = reorderRule ? { data: reorderRule } : offlineFallback ? { data: offlineFallback } : await provider.complete({
     system: SYSTEM,
-    prompt: `Instruction:\n${clean}\n\nReal variants:\n${JSON.stringify(catalogue)}\n\nReal locations:\n${JSON.stringify(locationRows)}\n\nReal suppliers:\n${JSON.stringify(supplierRows)}`,
+    prompt: `Instruction:\n${clean}\n\nReal variants:\n${JSON.stringify(require('../ai/guard').deep(catalogue))}\n\nReal locations:\n${JSON.stringify(require('../ai/guard').deep(locationRows))}\n\nReal suppliers:\n${JSON.stringify(require('../ai/guard').deep(supplierRows))}`,
     schema: SCHEMA, schemaName: 'operating_instruction',
   });
   const checked = validate(toWireSchema(SCHEMA), response.data, { key: 'operating-instruction-wire' });

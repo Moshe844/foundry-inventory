@@ -106,6 +106,61 @@ function recent(db, workspaceId, { limit = 50 } = {}) {
   return db.prepare('SELECT * FROM ai_calls WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?').all(workspaceId, limit);
 }
 
+/*
+ * How much model time one inventory may use.
+ *
+ * A runaway page, a pasted novel or a stuck retry loop used to be able to
+ * spend without limit. Three ceilings, each with a plain sentence when it is
+ * reached: how many model reads may run at once for one inventory, how
+ * many may start in a minute, and how many tokens a day. Reads in code —
+ * most of what the assistant does now — are not counted; they cost nothing.
+ * Background work (the autopilot runner) has no inventory in its context and
+ * is not limited here.
+ */
+const LIMITS = {
+  get concurrent() { return Number(process.env.FOUNDRY_AI_CONCURRENT_PER_WORKSPACE || 4); },
+  get perMinute() { return Number(process.env.FOUNDRY_AI_CALLS_PER_MINUTE || 60); },
+  get tokensPerDay() { return Number(process.env.FOUNDRY_AI_TOKENS_PER_DAY || 3000000); },
+};
+const inFlight = new Map();
+const recentStarts = new Map();
+
+class CeilingError extends Error {
+  constructor(message, code) { super(message); this.code = code; this.status = 429; this.retryable = false; }
+}
+
+function ceilingFor(context) {
+  const ws = context && context.workspaceId;
+  if (!ws) return null;
+  const running = inFlight.get(ws) || 0;
+  if (running >= LIMITS.concurrent) {
+    return new CeilingError(`StockChief is already reading ${running} things for this inventory. Wait a moment and try again; nothing was changed.`, 'ai_busy');
+  }
+  const now = Date.now();
+  const starts = (recentStarts.get(ws) || []).filter((t) => now - t < 60000);
+  recentStarts.set(ws, starts);
+  if (starts.length >= LIMITS.perMinute) {
+    return new CeilingError(`This inventory has asked StockChief to read ${starts.length} things in the last minute, which is its limit. Wait a minute and try again; nothing was changed.`, 'ai_rate_limited');
+  }
+  if (context.db) {
+    try {
+      const since = new Date(now - 86400000).toISOString();
+      const used = context.db.prepare(`SELECT COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)), 0) n FROM ai_calls WHERE workspace_id = ? AND kind = 'model' AND created_at >= ?`).get(ws, since).n;
+      if (used >= LIMITS.tokensPerDay) {
+        return new CeilingError(`This inventory has used today's allowance for model reads (${Math.round(used / 1000)}k of ${Math.round(LIMITS.tokensPerDay / 1000)}k tokens). Lookups StockChief does in code still work; model reads resume as the day rolls over. Nothing was changed.`, 'ai_daily_ceiling');
+      }
+    } catch { /* no table yet: no ceiling */ }
+  }
+  return null;
+}
+
+/** What one inventory has used, for a settings page or a test. */
+function usage(db, workspaceId) {
+  const since = new Date(Date.now() - 86400000).toISOString();
+  const row = db.prepare(`SELECT COUNT(*) calls, COALESCE(SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)), 0) tokens FROM ai_calls WHERE workspace_id = ? AND kind = 'model' AND created_at >= ?`).get(workspaceId, since);
+  return { calls: Number(row.calls), tokens: Number(row.tokens), tokensPerDay: LIMITS.tokensPerDay, inFlight: inFlight.get(workspaceId) || 0 };
+}
+
 /**
  * A provider whose every call is on the record. Same shape as the provider
  * it wraps; the request passes through untouched.
@@ -119,6 +174,18 @@ function observed(provider) {
     __observed: true,
     async complete(request) {
       const started = Date.now();
+      const context = current();
+      const ceiling = ceilingFor(context);
+      if (ceiling) {
+        record({ kind: 'model', purpose: request && request.schemaName, provider: provider.name || null, model: provider.model || null,
+          prompt: request && request.prompt, latencyMs: 0, outcome: 'refused', error: ceiling.code });
+        throw ceiling;
+      }
+      const ws = context && context.workspaceId;
+      if (ws) {
+        inFlight.set(ws, (inFlight.get(ws) || 0) + 1);
+        recentStarts.set(ws, [...(recentStarts.get(ws) || []), started]);
+      }
       try {
         const out = await provider.complete(request);
         record({ kind: 'model', purpose: request && request.schemaName, provider: provider.name || (out && out.usage && out.usage.provider) || null,
@@ -132,10 +199,12 @@ function observed(provider) {
         record({ kind: 'model', purpose: request && request.schemaName, provider: provider.name || null, model: provider.model || null,
           prompt: request && request.prompt, latencyMs: Date.now() - started, outcome, error: err && err.message });
         throw err;
+      } finally {
+        if (ws) inFlight.set(ws, Math.max(0, (inFlight.get(ws) || 1) - 1));
       }
     },
   };
   return wrapped;
 }
 
-module.exports = { run, current, extend, record, forGoal, recent, observed, redact, KEEP_DAYS };
+module.exports = { run, current, extend, record, forGoal, recent, observed, redact, usage, ceilingFor, CeilingError, LIMITS, KEEP_DAYS };

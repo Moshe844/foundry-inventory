@@ -309,8 +309,10 @@ async function ask(db,workspaceId,question,options){
  // referents: what short phrases in the question mean, from the ledger —
  // “that PO” is PO-1024. Given to the planner as data, never inferred from
  // naming conventions.
- try {response=await boundedComplete(options.provider,{system,prompt:JSON.stringify({question:clean,context:options.context||{},referents:options.referentNote||null,previous:context?{question:context.question,plan:context.semanticPlan,clarification:context.clarification}:null}),schema:SCHEMA,schemaName:'stockchief_semantic_query',maxTokens:2200},options.timeoutMs||20000);}
- catch(err){if(err instanceof ValidationError)throw err;throw new ValidationError('StockChief could not reach its question interpreter. Your message is preserved; no figures were guessed and nothing changed. Please try again.');}
+ // Context, referents and the previous turn carry record values; they go in as data (src/ai/guard.js).
+ const guard=require('../ai/guard');
+ try {response=await boundedComplete(options.provider,{system,prompt:JSON.stringify({question:clean,context:guard.deep(options.context||{}),referents:options.referentNote?guard.recordValue(options.referentNote,{max:600}):null,previous:context?{question:context.question,plan:guard.deep(context.semanticPlan),clarification:guard.recordValue(context.clarification,{max:600})||null}:null}),schema:SCHEMA,schemaName:'stockchief_semantic_query',maxTokens:2200},options.timeoutMs||20000);}
+ catch(err){if(err instanceof ValidationError)throw err;if(err&&err.status===429)throw new ValidationError(err.message);throw new ValidationError('StockChief could not reach its question interpreter. Your message is preserved; no figures were guessed and nothing changed. Please try again.');}
  // Existing integrations may provide the older single-lookup contract. It is
  // validated, never inferred from an incomplete or malformed new response.
  let data=response.data;
