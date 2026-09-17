@@ -482,3 +482,38 @@ test('a refusal that quotes the reader\'s own instructions is replaced by a plai
   assert.match(result.message, /cannot do that from a sentence yet/);
   assert.deepEqual(result.where, { href: '/sales/customers/new', label: 'Add a customer' });
 });
+
+// 89. "Once done I should be back at the chat."
+test('saving the form StockChief handed you to brings you back to the chat, with the goal done', async () => {
+  const { app, w, db } = setup();
+  const agent = request.agent(app);
+  await signIn(agent, w.account.email, w.account.password);
+  const ask = await agent.get('/ask');
+  const csrf = csrfFrom(ask.text);
+  const handed = await agent.post('/foundry/tell').type('form').send({ _csrf: csrf, queryConversation: '1', message: 'add a customer called Dana Brook, email dana@brook.test' });
+  assert.equal(handed.headers.location, '/sales/customers/new?name=Dana+Brook&email=dana%40brook.test');
+  const form = await agent.get(handed.headers.location);
+  assert.equal(form.status, 200);
+  // Pressing Save lands on the chat, not on the customer's record.
+  const saved = await agent.post('/sales/customers').type('form').send({ _csrf: csrfFrom(form.text), name: 'Dana Brook', email: 'dana@brook.test' });
+  assert.equal(saved.status, 303);
+  assert.equal(saved.headers.location, '/ask');
+  const customer = db.prepare("SELECT id FROM customers WHERE name = 'Dana Brook'").get();
+  assert.ok(customer, 'the customer was saved');
+  const goal = db.prepare('SELECT status, said, result_href FROM assistant_goals ORDER BY rowid DESC LIMIT 1').get();
+  assert.equal(goal.status, 'done');
+  assert.match(goal.said, /Dana Brook is ready/);
+  assert.equal(goal.result_href, `/sales/customers/${customer.id}`);
+  const back = await agent.get('/ask');
+  assert.match(back.text, /Dana Brook is ready/);
+  assert.match(back.text, /rm-turn--latest/);
+  // A validation error keeps you on the form; walking off to another page forgets the handoff.
+  const again = await agent.post('/foundry/tell').type('form').send({ _csrf: csrf, queryConversation: '1', message: 'add a customer called Lee' });
+  const form2 = await agent.get(again.headers.location);
+  const bad = await agent.post('/sales/customers').type('form').send({ _csrf: csrfFrom(form2.text), name: '' });
+  assert.notEqual(bad.headers.location, '/ask');
+  await agent.get('/inventory');
+  const form3 = await agent.get('/sales/customers/new');
+  const later = await agent.post('/sales/customers').type('form').send({ _csrf: csrfFrom(form3.text), name: 'Lee' });
+  assert.match(later.headers.location, /^\/sales\/customers\/[A-Za-z0-9_-]+$/, 'no handoff in flight: the form goes to the record as usual');
+});

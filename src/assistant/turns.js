@@ -151,6 +151,61 @@ function settleFromRedirect(req, goalId, url) {
   }
   ledger.settle(req.db, req.ctx, goalId, outcome);
   if (req.session) delete req.session.assistantOpenGoal;
+  noteHandoff(req, goalId, outcome);
+}
+
+/*
+ * Handed to a page, and back to the chat when the page is done.
+ *
+ * "Create a customer" opens the customer form filled in. Pressing Save used
+ * to leave the person on the customer's record, three clicks from the
+ * conversation they were having. Now the handoff is remembered for the
+ * form's lifetime: the first thing the page saves brings the person back to
+ * the chat, where the goal reads as done with a link to the record. Walking
+ * off to any other page forgets it — a form abandoned is not a form saved.
+ */
+const HANDOFF_TTL_MS = 30 * 60_000;
+function noteHandoff(req, goalId, outcome) {
+  if (!req.session || !outcome || outcome.status !== 'handed' || !outcome.resultHref) return;
+  const path = String(outcome.resultHref).split('?')[0].split('#')[0];
+  if (!path.startsWith('/') || path === '/' || path.startsWith('/needs-you') || path === '/actions') return;
+  const turn = req.assistantTurn || (req.assistantGoal && ledger.getTurn(req.db, req.ctx.workspaceId, req.assistantGoal.turnId));
+  req.session.assistantHandoff = { goalId, path, at: Date.now(), home: turn && turn.channel === 'ask' ? '/ask' : '/#tell-foundry' };
+}
+
+/** Middleware: the return leg of a handoff. */
+function returnFromHandoff(req, res, next) {
+  const handoff = req.session && req.session.assistantHandoff;
+  if (!handoff || !req.ctx) return next();
+  if (Date.now() - handoff.at > HANDOFF_TTL_MS) { delete req.session.assistantHandoff; return next(); }
+  const wantsPage = req.method === 'GET' && !req.path.startsWith('/api/') && !req.xhr && req.accepts(['html', 'json']) === 'html';
+  if (wantsPage) {
+    if (req.path !== handoff.path && req.path !== handoff.home.split('#')[0]) delete req.session.assistantHandoff;
+    return next();
+  }
+  if (req.method !== 'POST') return next();
+  // A new message to StockChief supersedes the handoff; it is not the form being saved.
+  if (req.path === '/foundry/tell') { delete req.session.assistantHandoff; return next(); }
+  const redirect = res.redirect.bind(res);
+  res.redirect = (...args) => {
+    const url = String(args[args.length - 1] || '');
+    const target = url.split('?')[0].split('#')[0];
+    const flash = pendingFlash(req);
+    const last = flash[flash.length - 1] || null;
+    const failed = last && ['error', 'warn', 'warning'].includes(last.type);
+    // An error, or back to the same page with nothing to show for it: not done yet.
+    const succeeded = last && last.type === 'success';
+    if (failed || !target.startsWith('/') || ((target === handoff.path || target === req.path) && !succeeded)) return redirect(...args);
+    delete req.session.assistantHandoff;
+    try {
+      const goal = ledger.getGoal(req.db, req.ctx.workspaceId, handoff.goalId);
+      if (goal && goal.status === 'handed') {
+        ledger.settle(req.db, req.ctx, goal.id, { status: 'done', said: last ? last.message : 'Done.', resultHref: url, resultLabel: 'Open the record' });
+      }
+    } catch (err) { console.error('[foundry] could not settle the handed goal', err); }
+    return redirect(303, handoff.home);
+  };
+  return next();
 }
 
 /**
@@ -187,7 +242,9 @@ function settleNow(req, outcome) {
   if (!goal) return null;
   req.assistantSettled = goal.id;
   if (req.session) delete req.session.assistantOpenGoal;
-  return ledger.settle(req.db, req.ctx, goal.id, outcome);
+  const settled = ledger.settle(req.db, req.ctx, goal.id, outcome);
+  noteHandoff(req, goal.id, outcome);
+  return settled;
 }
 
 /** Called by a route that knows the record it made, so "that PO" resolves. */
@@ -257,4 +314,4 @@ function skipQueue(req) {
   return n;
 }
 
-module.exports = { conversationId, newConversation, begin, resume, settleFromRedirect, settleAsk, settleNow, remember, queued, skipQueue };
+module.exports = { conversationId, newConversation, begin, resume, settleFromRedirect, settleAsk, settleNow, remember, queued, skipQueue, returnFromHandoff };

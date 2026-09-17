@@ -178,7 +178,7 @@ function lastSubjects(db, ctx, conversationId) {
 function lastSettled(db, ctx, conversationId) {
   const row = db.prepare(`SELECT g.* FROM assistant_goals g JOIN assistant_turns t ON t.id = g.turn_id
     WHERE t.workspace_id = ? AND t.user_id = ? AND t.conversation_id = ? AND g.status <> 'pending'
-    ORDER BY g.updated_at DESC LIMIT 1`).get(ctx.workspaceId, ctx.actorId, String(conversationId || 'default'));
+    ORDER BY g.updated_at DESC, g.rowid DESC LIMIT 1`).get(ctx.workspaceId, ctx.actorId, String(conversationId || 'default'));
   return row ? hydrateGoal(row) : null;
 }
 

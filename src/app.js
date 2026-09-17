@@ -209,6 +209,8 @@ function createApp(options = {}) {
     calls.run({ db, workspaceId: req.ctx ? req.ctx.workspaceId : null, actorId: req.ctx ? req.ctx.actorId : null, goalId: null }, () => next());
   });
   app.use(middleware.pageRenderer);
+  // A page StockChief handed the person to brings them back to the chat once it is done.
+  app.use(require('./assistant/turns').returnFromHandoff);
 
   app.use(registered('auth', authRoutes));
   app.use(registered('manager', managerRoutes));

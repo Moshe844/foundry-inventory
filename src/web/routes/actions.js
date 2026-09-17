@@ -514,12 +514,18 @@ router.get(
         req.flash('error', err.message);
         return res.redirect(303, `/actions/${proposal.proposalId}`);
       }
-      // The conversation that asked for this now knows it ran.
+      // The conversation that asked for this now knows it ran — and the
+      // person goes back to it, with what ran one link away, instead of
+      // being left on the proposal page three clicks from the chat.
       try {
         const after = proposals.get(req.db, req.ctx.workspaceId, proposal.proposalId);
         const goal = ledger.goalByResult(req.db, req.ctx, assistantTurns.conversationId(req), `/actions/${proposal.proposalId}`);
         if (goal && after && after.status === 'SUCCEEDED') {
-          ledger.settle(req.db, req.ctx, goal.id, { status: 'done', said: `Done: ${presenter.oneLine(req.db, req.ctx.workspaceId, after)}.`, resultHref: `/actions/${proposal.proposalId}`, resultLabel: 'See what ran' });
+          const said = `Done: ${presenter.oneLine(req.db, req.ctx.workspaceId, after)}.`;
+          ledger.settle(req.db, req.ctx, goal.id, { status: 'done', said, resultHref: `/actions/${proposal.proposalId}`, resultLabel: 'See what ran' });
+          const turn = ledger.getTurn(req.db, req.ctx.workspaceId, goal.turnId);
+          req.flash('success', said);
+          return res.redirect(303, turn && turn.channel === 'ask' ? '/ask' : '/#tell-foundry');
         }
       } catch (err) { console.error('[foundry] could not settle the goal as done', err); }
     }

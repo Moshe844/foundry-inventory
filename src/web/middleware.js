@@ -144,7 +144,7 @@ function loadUser(db) {
  * domain layer never sees it.
  */
 /** The session keys that carry unfinished assistant work; all scoped to one inventory. */
-const PENDING_KEYS = ['askConversation', 'askTurns', 'assistantConversationId', 'assistantOpenGoal', 'assistantQueue', 'assistantTranscript',
+const PENDING_KEYS = ['askConversation', 'askTurns', 'assistantConversationId', 'assistantHandoff', 'assistantOpenGoal', 'assistantQueue', 'assistantTranscript',
   'pendingActionContinuation', 'pendingActionQuestion', 'pendingAskResult', 'pendingLocationTransfer', 'pendingPriceBatch',
   'pendingPriceContinuation', 'pendingPurchaseCostBatch', 'pendingRestrictionFlow', 'pendingSalesContinuation', 'pendingSupplierPayment', 'askTranscript'];
 
