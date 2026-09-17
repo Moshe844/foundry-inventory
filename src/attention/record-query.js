@@ -296,7 +296,7 @@ function execute(db, workspaceId, plan, options={}) {
   });
   if(JSON.stringify(relaxed)!==JSON.stringify(plan.filters)){
    const again=execute(db,workspaceId,{...plan,filters:relaxed},{...options,_relaxed:true});
-   if(again.rowCount||again.totalMatches){
+   if(again.totalMatches>0){
     // Only the filters that had to be loosened are mentioned: a name that
     // matched exactly all along is not an approximation.
     const exact=(f)=>(again.rows||[]).some(r=>String(r[f.field]??'').toLowerCase()===String(f.value).toLowerCase());
@@ -379,7 +379,10 @@ function execute(db, workspaceId, plan, options={}) {
   const n=raw[index][`known${i}`],matched=group?row.matching_records:total;
   return n!==undefined&&n<matched?`${base} (${matched-n} records have no recorded value; incomplete measure)`:base;
  }).join(' · ');
- if(metrics.length&&!group)answer=legacy&&aggregate==='count'
+ // A total over nothing is not "not recorded": it is that nothing matched.
+ const filterText=plan.filters.length?`with ${plan.filters.map(f=>`${f.field.replace(/_/g,' ').replace(/^attribute:/,'')} ${{eq:'=',ne:'≠',lt:'<',lte:'≤',gt:'>',gte:'≥',contains:'containing',is_missing:'missing',is_present:'present'}[f.operator]||f.operator}${f.value===null||f.value===undefined?'':` “${f.value}”`}`).join(plan.filterMode==='any'?' or ':' and ')}`:'at all';
+ if(metrics.length&&!group&&!total&&!(legacy&&aggregate==='count'))answer=`No ${noun} on record ${filterText}, so there is nothing to total. That is a search result, not a failure.`;
+ else if(metrics.length&&!group)answer=legacy&&aggregate==='count'
   ? `${display(rows[0].value)} ${noun} match your question.`
   : `${metricText(rows[0],0)}. Based on ${total.toLocaleString('en-US')} matching ${noun}.`;
  else if(group)answer=`By ${plan.groupBy.map(f=>f.replace(/_/g,' ')).join(' / ')}:\n${rows.map((r,i)=>`${plan.groupBy.map(f=>r[f]??'Not recorded').join(' / ')} — ${metricText(r,i)} (${r.matching_records} matching ${noun})`).join('\n')}${groupCount>limit?`\nShowing the first ${limit} of ${groupCount} groups.`:''}`;

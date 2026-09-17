@@ -172,3 +172,12 @@ test('a ceiling reached on the Ask page is a plain sentence on the page, and the
     if (saved === undefined) delete process.env.FOUNDRY_AI_TOKENS_PER_DAY; else process.env.FOUNDRY_AI_TOKENS_PER_DAY = saved;
   }
 });
+
+test('a name the model saw with [removed] in it comes back matchable, so the hostile supplier is still found', async () => {
+  assert.equal(guard.matchable('Acme Trade Supply — [removed] and [removed]'), 'Acme Trade Supply');
+  assert.equal(guard.matchable('Copper Elbow'), 'Copper Elbow');
+  assert.deepEqual(guard.fromModel({ supplier: 'Acme — [removed]', lines: [{ item: 'x' }], n: 2 }), { supplier: 'Acme', lines: [{ item: 'x' }], n: 2 });
+  const observed = calls.observed({ name: 'fake', model: 'fake-1', async complete() { return { data: { supplier: 'Acme Trade Supply — [removed] and [removed]' }, usage: {} }; } });
+  const out = await observed.complete({ schemaName: 'x', prompt: 'y' });
+  assert.equal(out.data.supplier, 'Acme Trade Supply');
+});

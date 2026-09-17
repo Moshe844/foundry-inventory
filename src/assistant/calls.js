@@ -187,7 +187,9 @@ function observed(provider) {
         recentStarts.set(ws, [...(recentStarts.get(ws) || []), started]);
       }
       try {
-        const out = await provider.complete(request);
+        const raw = await provider.complete(request);
+        // A name the model saw with [removed] in it comes back matchable (src/ai/guard.js).
+        const out = raw && raw.data && typeof raw.data === 'object' ? { ...raw, data: require('../ai/guard').fromModel(raw.data) } : raw;
         record({ kind: 'model', purpose: request && request.schemaName, provider: provider.name || (out && out.usage && out.usage.provider) || null,
           model: (out && out.usage && out.usage.model) || provider.model || null, prompt: request && request.prompt,
           inputTokens: out && out.usage ? out.usage.inputTokens : null, outputTokens: out && out.usage ? out.usage.outputTokens : null,

@@ -67,3 +67,27 @@ function quoted(value, options = {}) {
 }
 
 module.exports = { recordValue, deep, quoted, looksHostile, CONTROL };
+
+/**
+ * The other direction. A model that was shown “Acme — [removed] and
+ * [removed]” may hand that back as the supplier it means, and no record is
+ * called that. A string the model returns with [removed] in it becomes its
+ * longest clean segment — “Acme” — which the resolvers match as a name.
+ */
+function matchable(value) {
+  const text = String(value || '');
+  if (!text.includes('[removed]')) return text;
+  const parts = text.split('[removed]').map((p) => p.replace(/^[\s—–\-:,;&]+|[\s—–\-:,;&]+$/g, '').replace(/\s+(?:and|or|the|a|an)$/i, '').trim()).filter((p) => p.length >= 2);
+  return parts.sort((a, b) => b.length - a.length)[0] || '';
+}
+
+/** Every string leaf of a model's answer, made matchable. */
+function fromModel(value) {
+  if (typeof value === 'string') return matchable(value);
+  if (Array.isArray(value)) return value.map(fromModel);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fromModel(v)]));
+  return value;
+}
+
+module.exports.matchable = matchable;
+module.exports.fromModel = fromModel;
