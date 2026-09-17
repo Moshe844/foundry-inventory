@@ -487,8 +487,24 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
    * asked what "15" was meant to be.
    */
   if (!attached && req.body.queryConversation === '1' && message && (req.assistantCorrection || chatAction)) {
-    const handedQuestion = req.session.pendingActionQuestion;
-    const earlier = req.assistantCorrection ? ((handedQuestion && handedQuestion.instruction) || req.assistantCorrection.text || '') : '';
+    // What is being corrected, in full: the proposal on the table when there
+    // is one (with the place and batch it settled on), otherwise the question
+    // still open, otherwise the sentence as the ledger holds it.
+    let earlier = '';
+    if (req.assistantCorrection) {
+      const of = req.assistantCorrection.of;
+      const proposalId = of.status === 'needs_approval' && /^\/actions\/([A-Za-z0-9_-]+)$/.exec(String(of.resultHref || '').split('?')[0]);
+      const prepared = proposalId ? proposals.get(req.db, req.ctx.workspaceId, proposalId[1]) : null;
+      if (prepared) {
+        earlier = actionPresenter.oneLine(req.db, req.ctx.workspaceId, prepared);
+        // The question that led to this proposal was answered; it is not what
+        // "actually" refers to.
+        delete req.session.pendingActionQuestion;
+      } else {
+        const handedQuestion = req.session.pendingActionQuestion;
+        earlier = (handedQuestion && handedQuestion.instruction) || req.assistantCorrection.text || '';
+      }
+    }
     if (earlier && !/ — Clarification: /.test(earlier)) message = `${earlier} — Clarification: ${message}`;
     chatAction = true;
   } else if (!attached && req.body.queryConversation === '1' && message) {
