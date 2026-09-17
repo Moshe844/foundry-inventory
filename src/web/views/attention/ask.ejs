@@ -207,7 +207,9 @@
             <summary>
               <span><%- helpers.icon('layers', { size: 15 }) %> <%= answerIsSummary ? 'Answer details' : 'The records behind this' %></span>
               <small>
-                <% if (result.rowCount > 60) { %>first <%= helpers.qty(60) %> of <%= helpers.qty(result.rowCount) %><% } else { %><%= helpers.qty(result.rows.length) %> <%= helpers.plural(result.rows.length, 'record') %><% } %>
+                <%# The count under an answer must never contradict the sentence above it: a page says it is a page ("first 25 of 70"), a summary counts its lines, and a full list counts its records. %>
+                <% var shown = Math.min(result.rows.length, 60); var known = Number(result.rowCount || result.rows.length); %>
+                <% if (known > shown) { %>first <%= helpers.qty(shown) %> of <%= helpers.qty(known) %><% } else if (answerIsSummary) { %><%= helpers.qty(shown) %> <%= helpers.plural(shown, 'line') %><% } else { %><%= helpers.qty(shown) %> <%= helpers.plural(shown, 'record') %><% } %>
               </small>
             </summary>
             <div class="rm-chat-evidence__rows">

@@ -125,6 +125,8 @@ const EXECUTORS = {
     }
     return {
       rows: rows.slice(0, 25),
+      // A page of the products the sentence counts, said as such.
+      totalMatches: rows.length,
       columns: ['product', 'expectedUnits', 'days', 'dailyRate', 'confidence', 'evidence'],
       handoff: { href: '/planning', label: 'Open Planning and forecasts' },
       answer: !rows.length

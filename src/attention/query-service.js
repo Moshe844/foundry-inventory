@@ -292,6 +292,7 @@ const PURCHASING_EXECUTORS = {
       // hides the only line the question was about.
       if (stuck.length) {
         return {
+          totalMatches: stuck.length,
           rows: stuck.slice(0, plan.limit).map((line) => ({
             label: line.displayName,
             onHand: line.onHand,
@@ -311,6 +312,7 @@ const PURCHASING_EXECUTORS = {
 
       if (unknown.length) {
         return {
+          totalMatches: unknown.length,
           rows: unknown.slice(0, plan.limit).map((line) => ({
             label: line.displayName,
             onHand: line.onHand,
@@ -319,7 +321,7 @@ const PURCHASING_EXECUTORS = {
           })),
           columns: ['label', 'onHand', 'onOrder', 'why'],
           answer:
-            `StockChief cannot tell yet. ${unknown.length} line(s) have no outbound history, so it has no ` +
+            `StockChief cannot tell yet. ${unknown.length} ${unknown.length === 1 ? 'product has' : 'products have'} no outbound history, so it has no ` +
             'basis for saying whether they need ordering, and it will not guess one. Record sales or ' +
             'usage, or set a reorder point yourself.',
         };
@@ -329,7 +331,7 @@ const PURCHASING_EXECUTORS = {
         rows: [],
         answer:
           covered
-            ? `Nothing needs ordering right now. ${covered} line(s) are above their reorder point or already covered by stock on order.`
+            ? `Nothing needs ordering right now. ${covered} ${covered === 1 ? 'product is' : 'products are'} above their reorder point or already covered by stock on order.`
             : 'Nothing needs ordering right now.',
       };
     }
@@ -1891,7 +1893,8 @@ const EXECUTORS = {
       ? `${answerRows[0].label}: ${totalLabel} on hand.`
       : `${totalLabel} on hand across ${answerRows.length} stock positions. ` +
         `Lowest is ${least.label} at ${least.onHand} ${least.unitLabel}${least.onHand === 1 ? '' : 's'}.`;
-    return { rows, answer, columns: ['label', 'code', 'onHand'] };
+    // The list is a page of the positions the sentence counts; say so.
+    return { rows, answer, columns: ['label', 'code', 'onHand'], totalMatches: answerRows.length };
   },
 
   stock_by_location(db, workspaceId, plan) {
