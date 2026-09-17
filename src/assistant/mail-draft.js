@@ -110,8 +110,11 @@ function tokens(text) {
 /** A figure the facts do not contain is one StockChief made up. */
 function unsupported(body, facts) {
   const haystack = facts.map((f) => f.text.toLowerCase()).join('\n');
-  const monthDay = /\b(\d{1,2})\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\b/gi;
-  const rewrittenDays = new Set([...String(body || '').matchAll(monthDay)].map((m) => String(Number(m[1]))));
+  // "18 September", "September 18th": the day survives either rewrite.
+  const months = 'january|february|march|april|may|june|july|august|september|october|november|december';
+  const dayFirst = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:${months})\\b`, 'gi');
+  const monthFirst = new RegExp(`\\b(?:${months})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, 'gi');
+  const rewrittenDays = new Set([...String(body || '').matchAll(dayFirst), ...String(body || '').matchAll(monthFirst)].map((m) => String(Number(m[1]))));
   // Whole tokens only: "40" is not in "8-40c0ff", and "2026-09-20" is not "20".
   const present = (t) => new RegExp(`(?<![\\w.-])${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`, 'i').test(haystack);
   return [...new Set(tokens(body))].filter((t) => {
