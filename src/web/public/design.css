@@ -3420,3 +3420,37 @@ details.bill-pay > summary.btn::before, details.bill-pay[open] > summary.btn::be
   .rm-pulse, .stat-grid, .stats-row, .stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rm-stat__n, .stat-value, .stats-row .stat strong, .stat > strong { font-size: clamp(22px, 7vw, 30px); }
 }
+
+/* ------------------------------------------------------------------ Browse
+   Four doors under the three tabs: Inventory, Purchasing, Orders, Money.
+   Smaller and quieter than the tabs on purpose — the tabs are how you work,
+   these are where the records are. Four is the whole list; see layout.ejs. */
+.rm-rooms { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.rm-rooms__k { display: none; }
+.rm-room {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 8px; border-radius: 8px;
+  color: var(--muted); font-size: var(--t-sm); font-weight: 500;
+  text-decoration: none; white-space: nowrap;
+  transition: color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+}
+.rm-room:hover { color: var(--ink); background: var(--surface-3); text-decoration: none; }
+.rm-room.is-on { color: var(--accent); font-weight: 600; }
+.rm-room__icon { display: grid; place-items: center; color: inherit; opacity: .8; }
+@media (min-width: 901px) {
+  .rm-rooms { display: grid; gap: 1px; margin-top: 14px; }
+  .rm-rooms__k {
+    display: block; margin: 0 4px 6px;
+    color: #4E5670; font-size: 9px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; opacity: .85;
+  }
+  .rm-room { width: 100%; min-height: 34px; padding: 7px 12px; color: #8F97B2; font-size: 13px; }
+  .rm-room:hover { color: #FFF; background: rgba(255,255,255,.06); }
+  .rm-room.is-on { color: #FFF; background: rgba(117,106,255,.16); box-shadow: inset 3px 0 0 #8E86FF; }
+  .rm-room__icon { color: #7F88A5; opacity: 1; }
+  .rm-room.is-on .rm-room__icon, .rm-room:hover .rm-room__icon { color: #AFAAFF; }
+}
+@media (max-width: 720px) {
+  .rm-rooms { order: 8; flex: 1 1 100%; gap: 0; }
+  .rm-room { padding: 4px 7px; font-size: 12px; }
+  .rm-room__icon { display: none; }
+}

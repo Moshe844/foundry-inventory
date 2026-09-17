@@ -43,6 +43,22 @@
   var railTab = nav === 'home' || nav === 'overview' || nav === 'brief'
     ? 'brief'
     : nav === 'attention' ? 'needs' : nav === 'ask' ? 'ask' : null;
+  /*
+   * Browse. Brief, Needs you and Ask are the three ways of working and stay
+   * the dominant three; the four doors under them — Inventory, Purchasing,
+   * Orders, Money — are quieter, permanent ways to inspect the records
+   * without the Brief, search or a typed URL.
+   *
+   * These four are the whole list, on purpose. Products, locations,
+   * receiving, transfers, suppliers, fulfilment, mail, books and the rest
+   * stay contextual — reached from the page they belong to, or from
+   * "Everything else" — and are not to be added here. A sidebar that grows a
+   * department list is the thing this shell replaced.
+   */
+  var roomTab = ['inventory', 'transfers', 'locations', 'warehouse', 'imports', 'history'].indexOf(nav) >= 0 ? 'inventory'
+    : nav === 'purchasing' ? 'purchasing'
+    : ['sales', 'fulfilment'].indexOf(nav) >= 0 ? 'orders'
+    : nav === 'accounting' ? 'money' : null;
   var allWorkspaces = typeof workspaces !== 'undefined' && workspaces ? workspaces : [];
   var others = allWorkspaces.filter(function (w) { return !workspace || w.workspaceId !== workspace.id; });
 %>
@@ -67,6 +83,16 @@
         <a class="rm-tab" href="/inventories/new"><span class="rm-tab__icon"><%- helpers.icon('plus', { size: 18 }) %></span><span>New inventory</span></a>
       <% } %>
     </nav>
+
+    <% if (workspace) { %>
+      <nav class="rm-rooms" aria-label="Browse">
+        <span class="rm-rooms__k" aria-hidden="true">Browse</span>
+        <a class="rm-room <%= roomTab === 'inventory' ? 'is-on' : '' %>" href="/inventory"<%- roomTab === 'inventory' ? ' aria-current="page"' : '' %>><span class="rm-room__icon"><%- helpers.icon('inventory', { size: 16 }) %></span><span>Inventory</span></a>
+        <a class="rm-room <%= roomTab === 'purchasing' ? 'is-on' : '' %>" href="/purchasing"<%- roomTab === 'purchasing' ? ' aria-current="page"' : '' %>><span class="rm-room__icon"><%- helpers.icon('purchasing', { size: 16 }) %></span><span>Purchasing</span></a>
+        <a class="rm-room <%= roomTab === 'orders' ? 'is-on' : '' %>" href="/orders"<%- roomTab === 'orders' ? ' aria-current="page"' : '' %>><span class="rm-room__icon"><%- helpers.icon('sales', { size: 16 }) %></span><span>Orders</span></a>
+        <a class="rm-room <%= roomTab === 'money' ? 'is-on' : '' %>" href="/money"<%- roomTab === 'money' ? ' aria-current="page"' : '' %>><span class="rm-room__icon"><%- helpers.icon('accounting', { size: 16 }) %></span><span>Money</span></a>
+      </nav>
+    <% } %>
 
     <span class="rm-rail__spacer"></span>
 
