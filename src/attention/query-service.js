@@ -154,13 +154,17 @@ const since = (days) => new Date(Date.now() - days * 86400000).toISOString();
  */
 const NAMES_NOTHING = new Set([
   'the', 'our', 'my', 'its', 'their', 'this', 'that', 'these', 'those', 'some', 'any', 'all',
+  // Words that describe a product rather than name it: "navy sweaters in
+  // size 5" names Navy / 5, and "size" matches no record.
+  'size', 'sizes', 'colour', 'color', 'colours', 'colors', 'unit', 'units', 'pcs', 'pieces', 'qty', 'each', 'item', 'items', 'product', 'products',
 ]);
 
 function searchTerms(query) {
   const words = String(query)
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((word) => word.length >= 3)
+    // A number is a term: "navy sweaters size 5" means Navy / 5, not every navy sweater.
+    .filter((word) => word.length >= 3 || /^\d+$/.test(word))
     .map((word) => (word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word));
 
   // Only drop them when something identifying is left. A query of nothing but
@@ -196,13 +200,22 @@ function resolveSkus(db, workspaceId, query, limit) {
     if (exact.length) return exact;
   }
 
-  const terms = searchTerms(query);
+  const allTerms = searchTerms(query);
+  // A number names a variant ("size 5" is Navy / 5), never a digit inside a
+  // code: matched as a whole word of the name or the variant label.
+  const numbers = allTerms.filter((term) => /^\d+$/.test(term));
+  const terms = allTerms.filter((term) => !/^\d+$/.test(term));
   if (terms.length) {
     const clauses = terms.map(() => MATCHES_TERM).join(' AND ');
     const params = terms.flatMap((term) => [like(term), like(term), like(term), like(term)]);
     const rows = db
       .prepare(`${SKU_SELECT} AND ${clauses} ORDER BY i.name, s.position LIMIT ?`)
       .all(workspaceId, ...params, limit);
+    if (rows.length && numbers.length) {
+      const tokens = (row) => `${row.name} ${row.variant_label || ''}`.toLowerCase().split(/[^a-z0-9]+/);
+      const narrowed = rows.filter((row) => numbers.every((n) => tokens(row).includes(n)));
+      if (narrowed.length) return narrowed;
+    }
     if (rows.length) return rows;
   }
 
@@ -439,7 +452,15 @@ const PURCHASING_EXECUTORS = {
               ? `${first.onOrder} of ${first.label} are on order${first.orders ? ` on ${first.orders}` : ''}` +
                 `${first.expected ? `, expected ${first.expected}` : ''}. ${first.onHand} on hand.`
               : `Nothing is on order for ${first.label}. ${first.onHand} on hand.`
-            : `${rows.filter((r) => r.onOrder > 0).length} of ${rows.length} lines have stock on order.`,
+            : (() => {
+              // Each variant with something on order, named — "2 of 2 lines
+              // have stock on order" told nobody how many or which.
+              const coming = rows.filter((r) => r.onOrder > 0);
+              const total = coming.reduce((n, r) => n + Number(r.onOrder), 0);
+              return coming.length
+                ? `${total} on order across ${coming.length} of ${rows.length} variants: ${coming.slice(0, 6).map((r) => `${r.onOrder} ${r.label}${r.orders ? ` (${r.orders})` : ''}`).join('; ')}${coming.length > 6 ? '; and more' : ''}.`
+                : `Nothing is on order for any of the ${rows.length} variants.`;
+            })(),
       };
     }
 
@@ -967,7 +988,7 @@ const EXECUTORS = {
             summary: `${money(Math.abs(pnl.netIncomeMinor))} ${pnl.netIncomeMinor > 0 ? 'so far' : pnl.netIncomeMinor < 0 ? 'lost so far' : 'exactly break-even'}, on ${money(pnl.revenueMinor)} of sales.` },
       answer: noActivity
         ? quiet.answer
-        : `This is ${money(pnl.netIncomeMinor)} net ${pnl.netIncomeMinor >= 0 ? 'profit' : 'loss'} based on the expenses recorded in StockChief for ${from} through ${to}: ${money(pnl.revenueMinor)} revenue minus ${money(pnl.cogsMinor)} cost of goods and ${money(pnl.operatingExpenseMinor)} operating expenses recorded in StockChief. Gross profit is ${money(pnl.grossProfitMinor)}; it is not the same as net profit. This net result is incomplete if business costs such as rent or payroll have not been recorded in StockChief.` };
+        : `${from} to ${to}: ${money(pnl.revenueMinor)} revenue, ${money(pnl.cogsMinor)} cost of goods sold, ${money(pnl.operatingExpenseMinor)} operating expenses — ${money(Math.abs(pnl.netIncomeMinor))} net ${pnl.netIncomeMinor >= 0 ? 'profit' : 'loss'}. Gross profit (sales minus the cost of what was sold) is ${money(pnl.grossProfitMinor)}; it is not the same as net profit.${pnl.operatingExpenseMinor === 0 ? ' No rent, wages or other running costs are recorded in StockChief yet, so the real net figure is lower.' : ''}` };
   },
 
   /**
@@ -1554,40 +1575,66 @@ const EXECUTORS = {
   },
   selling_price(db, workspaceId, plan) {
     const prices = require('../pricing/price-service');
-    const skus = resolveSkus(db, workspaceId, plan.entityQuery, plan.limit);
+    // "All products with their prices" is all of them, and says how many
+    // have no price yet — a list cut at ten that called itself the prices
+    // answered nothing about the other ten.
+    const wantsAll = !plan.entityQuery;
+    const skus = resolveSkus(db, workspaceId, plan.entityQuery, wantsAll ? 2000 : plan.limit);
     if (!skus.length) return { rows: [], answer: notFound(plan) };
     const rows = skus.map((sku) => {
       const current = prices.currentForSku(db, workspaceId, sku.id);
       return { label: label(sku), code: sku.code, price: current.formatted };
     });
+    const unpriced = rows.filter((row) => /not set/i.test(String(row.price))).length;
     return {
       rows,
       answer: rows.length === 1
         ? `${rows[0].label} is priced at ${rows[0].price}.`
-        : `Current selling prices for ${rows.length} stock lines.`,
+        : (() => {
+          const priced = rows.filter((row) => !/not set/i.test(String(row.price)));
+          const head = `${rows.length} stock lines${unpriced ? `; ${unpriced} ${unpriced === 1 ? 'has' : 'have'} no selling price set yet` : ', all priced'}.`;
+          if (!priced.length) return `${head} None has a price to show — set them on each product, or say “set the price of <product> to <amount>”.`;
+          return `${head} ${priced.slice(0, 8).map((row) => `${row.label} ${row.price}`).join('; ')}${priced.length > 8 ? ' — the full list is below' : ''}.`;
+        })(),
       columns: ['label', 'code', 'price'],
     };
   },
-  sales_summary(db, workspaceId) {
+  sales_summary(db, workspaceId, plan = {}) {
+    /*
+     * "What did we sell last week?" is a window and, as often as not, a
+     * sum of money. This used to count every order ever recorded and say
+     * nothing about value, so "how much did we sell last week in dollars"
+     * was answered from all time, in units.
+     */
+    const windowDays = Number(plan.windowDays) > 0 ? Number(plan.windowDays) : null;
+    const since = windowDays ? new Date(Date.now() - windowDays * 86400000).toISOString().slice(0, 10) : null;
+    const scope = since ? ' AND so.order_date >= ?' : '';
+    const params = since ? [workspaceId, since] : [workspaceId];
     const orderCounts = db.prepare(
       `SELECT
-         SUM(CASE WHEN status NOT IN ('FULFILLED','CANCELLED') THEN 1 ELSE 0 END) AS openOrders,
-         SUM(CASE WHEN status = 'FULFILLED' THEN 1 ELSE 0 END) AS completedOrders
-       FROM sales_orders
-       WHERE workspace_id = ?`
-    ).get(workspaceId);
+         SUM(CASE WHEN so.status NOT IN ('FULFILLED','CANCELLED') THEN 1 ELSE 0 END) AS openOrders,
+         SUM(CASE WHEN so.status = 'FULFILLED' THEN 1 ELSE 0 END) AS completedOrders,
+         COUNT(*) AS allOrders
+       FROM sales_orders so
+       WHERE so.workspace_id = ? AND so.status <> 'CANCELLED'${scope}`
+    ).get(...params);
     const openOrders = Number(orderCounts.openOrders || 0);
     const completedOrders = Number(orderCounts.completedOrders || 0);
     const totals = db.prepare(
       `SELECT COALESCE(SUM(sol.quantity_ordered), 0) AS ordered,
               COALESCE(SUM(sol.quantity_fulfilled), 0) AS fulfilled,
               COALESCE(SUM((SELECT COALESCE(SUM(a.quantity), 0) FROM sales_order_allocations a
-                             WHERE a.sales_order_line_id = sol.id)), 0) AS committed
+                             WHERE a.sales_order_line_id = sol.id)), 0) AS committed,
+              COALESCE(SUM(sol.quantity_ordered * COALESCE(sol.unit_price_minor, 0)), 0) AS orderedMinor,
+              SUM(CASE WHEN sol.unit_price_minor IS NULL THEN 1 ELSE 0 END) AS unpriced
          FROM sales_order_lines sol JOIN sales_orders so ON so.id = sol.sales_order_id
-        WHERE sol.workspace_id = ? AND so.status NOT IN ('CANCELLED')`
-    ).get(workspaceId);
+        WHERE sol.workspace_id = ? AND so.status NOT IN ('CANCELLED')${scope}`
+    ).get(...params);
     const waiting = Math.max(0, Number(totals.ordered) - Number(totals.fulfilled) - Number(totals.committed));
+    const money = (Number(totals.orderedMinor) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
     const rows = [
+      { measure: 'Ordered value', value: Number(totals.orderedMinor) / 100 },
+      { measure: 'Orders', value: Number(orderCounts.allOrders || 0) },
       { measure: 'Completed orders', value: completedOrders },
       { measure: 'Open orders', value: openOrders },
       { measure: 'Ordered units', value: totals.ordered },
@@ -1595,10 +1642,15 @@ const EXECUTORS = {
       { measure: 'Waiting for stock', value: waiting },
       { measure: 'Fulfilled units', value: totals.fulfilled },
     ];
+    const when = windowDays ? (windowDays === 7 ? 'In the last 7 days' : windowDays === 30 ? 'In the last 30 days' : `In the last ${windowDays} days`) : 'All time';
+    const orders = Number(orderCounts.allOrders || 0);
     return {
       rows,
-      answer: `${completedOrders} completed sales order${completedOrders === 1 ? '' : 's'}; `
-        + `${openOrders} open; ${totals.committed} units committed and ${waiting} waiting for stock.`,
+      answer: orders === 0
+        ? `${when}, no customer orders were recorded.`
+        : `${when}, customers ordered ${money} across ${orders} order${orders === 1 ? '' : 's'} (${totals.ordered} units)`
+          + `${Number(totals.unpriced) ? ` — ${totals.unpriced} line${Number(totals.unpriced) === 1 ? ' has' : 's have'} no price recorded, so the money figure is low` : ''}. `
+          + `${completedOrders} completed, ${openOrders} still open; ${totals.committed} units committed and ${waiting} waiting for stock.`,
       columns: ['measure', 'value'],
     };
   },
@@ -1896,9 +1948,15 @@ const EXECUTORS = {
       .all(workspaceId, new Date(Date.now() + plan.windowDays * 86400000).toISOString(), plan.limit)
       .map((r) => ({ ...r, label: label(r) }));
 
-    const answer = rows.length
-      ? `${rows.length} lot${rows.length === 1 ? '' : 's'} expire within ${plan.windowDays} days.`
-      : `No lots expire within the next ${plan.windowDays} days.`;
+    // A lot past its date has expired, not "expiring soon": said separately.
+    const today = new Date().toISOString().slice(0, 10);
+    const expired = rows.filter((r) => String(r.expiresAt).slice(0, 10) < today);
+    const coming = rows.filter((r) => String(r.expiresAt).slice(0, 10) >= today);
+    const say = (list) => list.slice(0, 4).map((r) => `${r.quantity} of ${r.label} (${r.lot}, ${String(r.expiresAt).slice(0, 10)})`).join('; ');
+    const parts = [];
+    if (expired.length) parts.push(`${expired.length} lot${expired.length === 1 ? ' has' : 's have'} already expired and still ${expired.length === 1 ? 'has' : 'have'} stock: ${say(expired)}.`);
+    if (coming.length) parts.push(`${coming.length} lot${coming.length === 1 ? '' : 's'} expire${coming.length === 1 ? 's' : ''} within ${plan.windowDays} days: ${say(coming)}.`);
+    const answer = parts.length ? parts.join(' ') : `No lots expire within the next ${plan.windowDays} days, and none has expired with stock left.`;
     return { rows, answer, columns: ['lot', 'label', 'quantity', 'expiresAt'] };
   },
 
@@ -2473,7 +2531,7 @@ const LIST_VERDICTS = {
   expiring_soon: {
     asserts: ['expir', 'use by', 'best before', 'going off', 'out of date'],
     opposite: ['in date', 'still good'],
-    some: (n) => `${n} lot${n === 1 ? '' : 's'} ${n === 1 ? 'is' : 'are'} expiring soon.`,
+    some: (n) => `${n} lot${n === 1 ? '' : 's'} ${n === 1 ? 'is' : 'are'} expired or expiring.`,
     none: 'nothing is expiring soon.',
   },
   idle_stock: {
@@ -2632,8 +2690,10 @@ function leadWithTheMeasure(question, result) {
   if (value === null || value === undefined) return result;
 
   const lead = `${label}: ${value}.`;
-  // Do not repeat a figure the sentence already leads with.
-  if (String(result.answer).startsWith(lead)) {
+  // Do not repeat a figure the sentence already leads with, or one it
+  // already states: "Gross profit: $75.46. … $75.46 net profit …" said the
+  // same number twice under two names.
+  if (String(result.answer).startsWith(lead) || (String(value).length >= 5 && String(result.answer).includes(String(value)))) {
     return { ...result, primaryMeasure: { label, value } };
   }
   return {

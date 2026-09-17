@@ -943,6 +943,19 @@ function shapeOperation(db, workspaceId, intent, draft) {
     }
     draft.quantity = quantity;
     draft.reasonCode = null;
+    /*
+     * "At $4.20 each from Acme" is two facts the person stated with the
+     * receipt. The cost is recorded as the product's purchase cost when the
+     * receipt runs; the supplier is named on the record. Neither is dropped
+     * without a word: what will and will not be kept is said in the preview.
+     */
+    const statedCost = Number.isInteger(intent.unitCostMinor) && intent.unitCostMinor >= 0 ? intent.unitCostMinor : null;
+    const statedSupplier = String(intent.supplier || '').trim();
+    if (statedCost !== null || statedSupplier) {
+      draft.settings = { ...(draft.settings || {}), receipt: { unitCostMinor: statedCost, supplier: statedSupplier || null } };
+      if (statedCost !== null) draft.assumptions.push(`The purchase cost you stated, $${(statedCost / 100).toFixed(2)} each, will be recorded on the product.`);
+      if (statedSupplier) draft.assumptions.push(`Noted as coming from ${statedSupplier}. This is a plain receipt, not a booking against a purchase order or a supplier bill; if there is an order for it, book it in from the order instead.`);
+    }
     draft.availableAtSource = resolver.balanceAt(db, workspaceId, draft.skuId, into.value.id);
     draft.expectedBeforeState = beforeState(db, workspaceId, draft, { destination: into.value });
     draft.expectedAfterState = {

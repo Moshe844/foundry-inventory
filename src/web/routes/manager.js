@@ -670,6 +670,43 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     }
   }
 
+  /*
+   * "Rename Downtown Store to City Store." A location is renamed on the
+   * locations page; the sentence opens that location's edit form with the
+   * new name typed in, and the person presses Save. It used to be refused
+   * with "not one of the operations listed".
+   */
+  const renameLocation = /^\s*(?:please\s+)?(?:rename|call|change\s+the\s+name\s+of)\s+(?:the\s+)?(?:location\s+|store\s+|warehouse\s+)?["“']?(.+?)["”']?\s+(?:to|as)\s+["“']?(.+?)["”']?\s*\.?$/i.exec(message);
+  if (renameLocation && !attached) {
+    const places = req.db.prepare('SELECT id, name FROM locations WHERE workspace_id = ? AND is_active = 1').all(req.ctx.workspaceId);
+    const wanted = renameLocation[1].trim().toLowerCase();
+    const place = places.find((p) => p.name.toLowerCase() === wanted) || (places.filter((p) => p.name.toLowerCase().includes(wanted)).length === 1 ? places.find((p) => p.name.toLowerCase().includes(wanted)) : null);
+    if (place) {
+      const newName = renameLocation[2].trim();
+      req.flash('info', `To rename ${place.name} to “${newName}”, check the form and press Save — nothing is renamed yet.`);
+      return res.redirect(303, `/locations?edit=${encodeURIComponent(place.id)}&name=${encodeURIComponent(newName)}#modal-location-${place.id}`);
+    }
+  }
+
+  /*
+   * "Cancel PO-1009, we don't need it." A cancellation is done on the
+   * order's own page, where the confirmation and the reason live; the
+   * sentence takes the person there and says so, and nothing is cancelled
+   * from here. It used to be met with "read that as being about
+   * purchasing, but not what to do".
+   */
+  const cancelling = /\b(?:cancel|void|scrap|kill|drop)\b/i.test(message) && /\b(PO-\d+)\b/i.exec(message);
+  if (cancelling) {
+    const order = req.db.prepare(`SELECT id, po_number, status FROM purchase_orders WHERE workspace_id = ? AND UPPER(po_number) = ?`)
+      .get(req.ctx.workspaceId, cancelling[1].toUpperCase());
+    if (order) {
+      req.flash('info', ['CANCELLED', 'RECEIVED', 'CLOSED'].includes(order.status)
+        ? `${order.po_number} is already ${order.status.toLowerCase()}; there is nothing to cancel.`
+        : `To cancel ${order.po_number}, press Cancel on its page and say why — nothing is cancelled until you do.`);
+      return res.redirect(303, `/purchasing/orders/${order.id}#cancel`);
+    }
+  }
+
   // "Newly added products" is a provenance request, not an ambiguous product
   // name. Resolve it from the most recent completed import before asking the
   // general language router, whose catalogue candidates cannot know which
@@ -991,25 +1028,6 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
      * the whole planner and report the work it had prepared, as if that were
      * an answer to what was said.
      */
-    /*
-     * "Cancel PO-1009, we don't need it." A cancellation is done on the
-     * order's own page, where the confirmation and the reason live; the
-     * sentence takes the person there and says so, and nothing is cancelled
-     * from here. It used to be met with "read that as being about
-     * purchasing, but not what to do".
-     */
-    const cancelling = /\b(?:cancel|void|scrap|kill|drop)\b/i.test(message) && /\b(PO-\d+)\b/i.exec(message);
-    if (cancelling) {
-      const order = req.db.prepare(`SELECT id, po_number, status FROM purchase_orders WHERE workspace_id = ? AND UPPER(po_number) = ?`)
-        .get(req.ctx.workspaceId, cancelling[1].toUpperCase());
-      if (order) {
-        intentRouter.markRouted(req.db, req.ctx, intent.id, 'purchase_order', order.id);
-        req.flash('info', ['CANCELLED', 'RECEIVED', 'CLOSED'].includes(order.status)
-          ? `${order.po_number} is already ${order.status.toLowerCase()}; there is nothing to cancel.`
-          : `To cancel ${order.po_number}, press Cancel on its page and say why — nothing is cancelled until you do.`);
-        return res.redirect(303, `/purchasing/orders/${order.id}#cancel`);
-      }
-    }
     const asksForThePlan = /\b(?:what|which|anything)\s+(?:should|do|to)\s+(?:i|we)\s+(?:order|buy|reorder|restock)|\b(?:order|buy|restock|replenish)\s+(?:what|whatever|everything)\s+(?:we|is|i)\s+(?:need|needed|are\s+low|am\s+low|running\s+low)|\b(?:run|do|make|prepare|plan)\s+(?:the\s+)?(?:replenishment|restock|reorder|purchasing)\b|\bwhat(?:'s|\s+is)\s+(?:running\s+)?low\b/i.test(message);
     if (!asksForThePlan) {
       req.session.pendingActionQuestion = {

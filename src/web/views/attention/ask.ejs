@@ -205,11 +205,12 @@
             <summary>
               <span><%- helpers.icon('layers', { size: 15 }) %> <%= answerIsSummary ? 'Answer details' : 'The records behind this' %></span>
               <small>
-                <% if (result.rowCount > 12) { %>first <%= helpers.qty(12) %> of <%= helpers.qty(result.rowCount) %><% } else { %><%= helpers.qty(result.rows.length) %> <%= helpers.plural(result.rows.length, 'record') %><% } %>
+                <% if (result.rowCount > 60) { %>first <%= helpers.qty(60) %> of <%= helpers.qty(result.rowCount) %><% } else { %><%= helpers.qty(result.rows.length) %> <%= helpers.plural(result.rows.length, 'record') %><% } %>
               </small>
             </summary>
             <div class="rm-chat-evidence__rows">
-              <% result.rows.slice(0, 12).forEach(function (row) { %>
+              <%# Sixty, not twelve: "all products with their prices" is a list a person scrolls, not a sample. %>
+              <% result.rows.slice(0, 60).forEach(function (row) { %>
                 <%
                   var first = result.columns[0];
                   var label = row[first] === null || row[first] === undefined ? '—' : row[first];

@@ -803,12 +803,20 @@ function deterministicInstruction(instruction, context = {}) {
 
   const received = /^receive\s+(\d+)\s+(?:more\s+)?(.+?)\s+(?:into|at)\s+(.+?)\s*$/i.exec(clean);
   if (received) {
-    const destinationLocation = namedMatch(received[3].trim(), context.locationNames);
+    // "… into main warehouse at $4.20 each from acme": the cost and the
+    // supplier ride along with the place; they were read past and dropped.
+    let placeWords = received[3].trim();
+    const cost = /\b(?:at|@|for)\s*\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:each|ea\.?|per unit|a piece|apiece)?\b/i.exec(placeWords);
+    const from = /\bfrom\s+([A-Za-z][A-Za-z0-9&'. -]{1,60})$/i.exec(placeWords.replace(/\s*[.]\s*$/, ''));
+    const supplier = from ? from[1].trim() : '';
+    placeWords = placeWords.replace(/\bfrom\s+[A-Za-z][A-Za-z0-9&'. -]{1,60}$/i, '').replace(/\b(?:at|@|for)\s*\$?\s*\d+(?:\.\d{1,2})?\s*(?:each|ea\.?|per unit|a piece|apiece)?\b/i, '').trim();
+    const destinationLocation = namedMatch(placeWords, context.locationNames);
     const item = namedMatch(received[2].trim(), context.itemNames);
     if (destinationLocation && item) return { lines: [normaliseLine({
       actionType: 'receive', item, variant: removeNamed(received[2], item),
       sourceText: clean, destinationLocation, quantity: Number(received[1]),
-      adjustmentTarget: -1, reasonCode: '',
+      adjustmentTarget: -1, reasonCode: '', supplier,
+      unitCost: cost ? Number(cost[1]) : -1,
     })], clarifyingQuestion: '', unsupportedReason: '' };
   }
 
@@ -967,8 +975,20 @@ async function readInstruction(instruction, options = {}) {
    * perfectly correct-looking proposal for the first change, approved as if
    * it were all of them.
    */
-  const clauses = enumeratedClauses(clean);
+  let clauses = enumeratedClauses(clean);
   const readsAsChanges = intent.lines.length > 0 && !intent.lines.some((line) => ['clarify', 'unsupported'].includes(line.actionType));
+  /*
+   * "We sold 3 sweater navy 4 at the store and 2 copper elbow from the van"
+   * is two changes in one sentence, joined by "and" before a number. When
+   * the reader returned one line for it, the sentence is split there and
+   * each half is read with the sentence's own verb in front — "we sold 2
+   * copper elbow from the van" — exactly as a numbered list is.
+   */
+  if (readsAsChanges && clauses.length === 1 && needsNumberedClauseRetry(clean, intent)) {
+    const halves = clean.split(/\s*[,;]?\s+(?:and|then|plus|also)\s+(?=\d)/i).map((s) => s.trim()).filter(Boolean);
+    const lead = (/^(.*?)\s*\b\d/.exec(halves[0]) || [])[1] || '';
+    if (halves.length > 1 && lead) clauses = [halves[0], ...halves.slice(1).map((half) => `${lead} ${half}`)];
+  }
   if (readsAsChanges && clauses.length > 1 && intent.lines.length < clauses.length) {
     /*
      * The list is read again, one clause at a time.

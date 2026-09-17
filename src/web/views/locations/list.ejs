@@ -138,7 +138,7 @@
         <div class="modal-body">
           <div class="field">
             <label class="label" for="edit-name-<%= location.id %>">Name</label>
-            <input class="input" id="edit-name-<%= location.id %>" name="name" value="<%= location.name %>" required>
+            <input class="input" id="edit-name-<%= location.id %>" name="name" value="<%= locals.renameTo && locals.editId === location.id ? locals.renameTo : location.name %>" required>
           </div>
           <div class="field">
             <label class="label" for="edit-kind-<%= location.id %>">Type</label>

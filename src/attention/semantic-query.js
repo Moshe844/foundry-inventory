@@ -50,13 +50,19 @@ const OPTIONAL_ON_READ = ['continuesPrevious', 'unsupportedReason', 'nearest'];
 // it. That is not a wrong plan; the window is simply unused. Zero is accepted
 // on the way back and lifted to the minimum before anything runs.
 const PART_SCHEMA = SCHEMA.properties.parts.items;
+// "All products" comes back with a limit of 100 against a ceiling of 25; a
+// figure past the ceiling is clamped, not a reason to refuse the question.
+const ACCEPTED_RECORD_SCHEMA = {...RECORD_SCHEMA, properties: {...RECORD_SCHEMA.properties, limit: {type: 'integer', minimum: 0}}};
 const ACCEPTED_PART_SCHEMA = {...PART_SCHEMA, properties: {...PART_SCHEMA.properties,
- windowDays: {...PART_SCHEMA.properties.windowDays, minimum: 0}, limit: {...PART_SCHEMA.properties.limit, minimum: 0}}};
+ windowDays: {type: 'integer', minimum: 0}, limit: {type: 'integer', minimum: 0},
+ recordQuery: {anyOf: [ACCEPTED_RECORD_SCHEMA, {type: 'null'}]}}};
 const ACCEPTED_SCHEMA = {...SCHEMA, required: SCHEMA.required.filter((key) => !OPTIONAL_ON_READ.includes(key)),
  properties: {...SCHEMA.properties, parts: {...SCHEMA.properties.parts, items: ACCEPTED_PART_SCHEMA}}};
 function liftMinimums(data) {
  if (!data || !Array.isArray(data.parts)) return data;
- return {...data, parts: data.parts.map((p) => ({...p, windowDays: Math.max(1, Number(p.windowDays) || 0), limit: Math.max(1, Number(p.limit) || 0)}))};
+ return {...data, parts: data.parts.map((p) => ({...p,
+  windowDays: Math.min(365, Math.max(1, Number(p.windowDays) || 0)), limit: Math.min(25, Math.max(1, Number(p.limit) || 0)),
+  recordQuery: p.recordQuery ? {...p.recordQuery, limit: Math.min(50, Math.max(1, Number(p.recordQuery.limit) || 0))} : p.recordQuery}))};
 }
 
 const FINANCIAL = new Set(['financial_summary','business_health','cash_pressure','profit_and_loss','balance_sheet','cash_position',
@@ -121,6 +127,20 @@ function namedProducts(db, workspaceId, question) {
   if(last.length>3&&new RegExp(`\\b${last.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}s?\\b`).test(said))hits.add(name);
  }
  return [...hits];
+}
+
+/** The one location a phrase like "at the store" or "in the van" can mean here. */
+function namedLocation(db, workspaceId, question) {
+ const said=String(question||'').toLowerCase();
+ const places=db.prepare('SELECT name FROM locations WHERE workspace_id = ? AND is_active = 1').all(workspaceId).map((r)=>String(r.name||''));
+ const exact=places.filter((name)=>name&&said.includes(name.toLowerCase()));
+ if(exact.length===1)return exact[0];
+ if(exact.length>1)return null;
+ const m=/\b(?:at|in|from|to)\s+(?:the|our|my)\s+([a-z][a-z0-9-]{2,})\b/i.exec(said);
+ if(!m)return null;
+ const word=m[1].replace(/s$/,'');
+ const hits=places.filter((name)=>name.toLowerCase().split(/[^a-z0-9]+/).some((w)=>w.replace(/s$/,'')===word));
+ return hits.length===1?hits[0]:null;
 }
 
 function scopeProblems(db, workspaceId, question, part) {
@@ -202,6 +222,12 @@ function executePart(db,workspaceId,part,options){
   const named=namedProducts(db,workspaceId,part.question||'');
   if(named.length===1)part={...part,entityQuery:named[0]};
  }
+ // "At the store" names Downtown Store when it is the only store. A place the
+ // question names must reach a lookup that can take one.
+ if(!part.locationQuery&&part.intent!=='record_query'&&!globalReportsList.includes(part.intent)){
+  const place=namedLocation(db,workspaceId,part.question||'');
+  if(place)part={...part,locationQuery:place};
+ }
  if(mismatchedIntent(part.question||'',part.intent)===null&&part.entityQuery){
   const lost=scopeProblems(db,workspaceId,part.question,part).filter((p)=>p.startsWith('the location'));
   if(lost.length&&!part.locationQuery)return empty(part.question,`I could not keep ${lost.join(' and ')} in that lookup. Restate it with the place spelled out and I will read only that.`);
@@ -243,6 +269,7 @@ async function ask(db,workspaceId,question,options){
  General read models (fields are reviewed server-side; use ONLY fields actually listed for that dataset):
  ${records.promptCatalogue(catalog)}
 
+ How long a named supplier takes to deliver, or how reliable it is, is most_reliable_supplier with entityQuery set to that supplier — do not ask which measure.
  Products below their reorder point, needing reordering or short of stock are what_to_order (it lists every product under its reorder point and how much to buy); the reorder points themselves are reorder_settings_review. In unsupportedReason and nearest write plain sentences for the person; never mention a capability id, lookup id or contract name.
  Prefer record_query for combinations of filters, counts, missing attributes, grouped totals, lists, comparisons and rankings. Reuse specialized intents for financial, forecasting, replenishment, kit definitions, shipping and other domain reasoning. All registered specialized lookup IDs: ${service.INTENTS.join(', ')}.
  Set entityScope=single when the person refers to one particular product/customer/supplier/order; entityScope=set for a class, plural/list, count, ranking or grouping. Use exact equality for a supplied full name or SKU, contains for a partial name. The server will ask about ambiguous singular references instead of summing unrelated products.

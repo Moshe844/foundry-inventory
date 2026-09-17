@@ -76,7 +76,8 @@ test('a word the catalogue has never heard of does not veto the whole search', (
   assert.equal(vague.ok, false);
   assert.equal(vague.reason, 'ambiguous', 'StockChief knows which products come in a 36');
   assert.equal(vague.candidates.length, 2);
-  assert.deepEqual(vague.ignored, ['size'], 'and says which word it could not place');
+  // "size" is a describing word, not a search word: it is set aside before the search rather than reported as unplaceable.
+  assert.deepEqual(vague.ignored || [], [], 'the axis word is not searched for at all');
 
   const exact = resolver.resolveSku(env.db, env.workspace.workspaceId, 'moc toe lace', 'size 36');
   assert.equal(exact.ok, true, 'naming the style still resolves to one product');

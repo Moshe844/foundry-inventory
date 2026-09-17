@@ -16,6 +16,8 @@ router.get(
       nav: 'locations',
       locations,
       editId: req.query.edit || null,
+      // A rename said in the Ask box arrives with the new name typed in.
+      renameTo: req.query.edit && req.query.name ? String(req.query.name).slice(0, 120) : null,
     });
   })
 );

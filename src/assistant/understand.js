@@ -159,7 +159,10 @@ async function understand(message, options = {}) {
       });
       const checked = validate(toWireSchema(SCHEMA), response.data, { key: 'assistant-understanding' });
       const goals = checked.ok ? verbatim(clean, checked.data.goals) : null;
-      if (goals && goals.length > 1) {
+      // Two questions in one sentence are one multi-part question: the
+      // planner answers every part together, and "how many are on order"
+      // split off on its own has lost what it was asking about.
+      if (goals && goals.length > 1 && !goals.every((goal) => goal.kind === 'lookup')) {
         return { continuesPrevious: checked.data.continuesPrevious === true, goals, referents, how: 'model' };
       }
     } catch {
