@@ -1261,7 +1261,8 @@ const EXECUTORS = {
     const total = rows.reduce((sum, row) => sum + Number(row.balance_minor), 0);
     const money = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: accounting.currency }).format(n / 100);
     return { rows, handoff: { href: '/accounting/payables', label: 'Open bills' },
-      answer: rows.length ? `${rows.length} bill${rows.length === 1 ? '' : 's'} totaling ${money(total)} are due by ${through}; overdue bills are included.`
+      answer: rows.length
+        ? `${rows.length === 1 ? 'One bill is' : `${rows.length} bills are`} due by ${through}, ${money(total)} in all${rows.some((r) => r.due_date < today) ? ', including overdue ones' : ''}: ${rows.slice(0, 6).map((r) => `${r.bill_number} from ${r.supplier}, ${money(Number(r.balance_minor))} due ${r.due_date}`).join('; ')}${rows.length > 6 ? '; the rest are below' : ''}.`
         : `No recorded supplier bills are due by ${through}.`,
       columns: ['supplier', 'supplier_invoice_number', 'due_date', 'balance_minor'] };
   },

@@ -64,3 +64,31 @@ CREATE TABLE IF NOT EXISTS assistant_referents (
   created_at       TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_assistant_referents_turn ON assistant_referents(turn_id, created_at DESC);
+
+-- Every model call and every tool call, on the record: what it was for, how
+-- long it took, what it cost, and how it ended. The prompt is kept redacted —
+-- quoted text and figures masked — for thirty days, so a wrong answer can be
+-- traced to the call that produced it without keeping record values around.
+CREATE TABLE IF NOT EXISTS ai_calls (
+  id               TEXT PRIMARY KEY,
+  workspace_id     TEXT,
+  actor_id         TEXT,
+  goal_id          TEXT,
+  -- 'model' for a provider call, 'tool' for a registered tool call.
+  kind             TEXT NOT NULL,
+  -- The schema name of a model call, or the tool id.
+  purpose          TEXT NOT NULL,
+  provider         TEXT,
+  model            TEXT,
+  prompt_hash      TEXT,
+  prompt_redacted  TEXT,
+  input_tokens     INTEGER,
+  output_tokens    INTEGER,
+  latency_ms       INTEGER NOT NULL,
+  -- ok, failed, refused, timeout, invalid_output
+  outcome          TEXT NOT NULL,
+  error            TEXT,
+  created_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_calls_workspace ON ai_calls(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_calls_goal ON ai_calls(goal_id);

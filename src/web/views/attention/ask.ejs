@@ -43,6 +43,7 @@
     var out = bits.length ? 'Read ' + bits.join('; ') : '';
     if (p.rowCount !== undefined && p.rowCount !== null && (out || p.rowCount)) out += (out ? ' · ' : '') + helpers.qty(p.rowCount) + ' ' + helpers.plural(p.rowCount, 'row');
     if (p.asOf) out += (out ? ' · ' : '') + 'as of ' + helpers.dateTime(p.asOf);
+    if (p.modelCalls) out += (out ? ' · ' : '') + p.modelCalls + ' model call' + (p.modelCalls === 1 ? '' : 's') + ', ' + (p.modelMs >= 1000 ? (p.modelMs / 1000).toFixed(1) + ' s' : p.modelMs + ' ms');
     return out;
   }
   var askReturnHref = question ? '/ask?q=' + encodeURIComponent(question) : '/ask';

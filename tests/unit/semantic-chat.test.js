@@ -98,7 +98,8 @@ test('every registered read model compiles and displays only documented fields',
  const {db,w}=setup();
  for(const dataset of Object.keys(records.REGISTRY)){
   const result=records.execute(db,w.workspaceId,query({dataset,aggregate:'',filters:[]}));
-  assert.deepEqual(result.columns,records.REGISTRY[dataset].defaults,dataset);
+  // Money columns are shown without their minor-unit suffix, as money.
+  assert.deepEqual(result.columns,records.REGISTRY[dataset].defaults.map((c)=>c.replace(/_minor$/,'')),dataset);
  }
 });
 test('financial permissions are enforced before querying even when the model requests figures',()=>{

@@ -21,6 +21,8 @@ function isBusinessDataQuestion(text) {
   // "List the open purchase orders with their totals": "open" is what the
   // orders are, not a request to open a page; a list of records is a lookup.
   if (/\bopen\s+(?:purchase\s+|sales\s+|customer\s+)?(?:orders?|bills?|invoices?|proposals?|returns?)\b/i.test(value)) return true;
+  // "Has SO-1006 shipped?" asks about the order's state, not for its page.
+  if (/\b(?:has|have|is|was|did|when)\b[^.?!]{0,40}\b(?:shipped|delivered|arrived|paid|received|invoiced|dispatched|sent out|due|late|overdue)\b/i.test(value)) return true;
   if (/\b(?:list|show|give me|get me|pull up)\b[^.?!]{0,40}\b(?:orders?|customers?|suppliers?|products?|variants?|bills?|invoices?|movements?|payments?|sales|purchases)\b[^.?!]{0,40}\b(?:with|and|their|totals?|amounts?|values?|due|overdue|late|outstanding)\b/i.test(value)) return true;
   return /\b(?:how many|how much|which|what)\b.*\b(?:stock|inventory|product|sku|order|customer|supplier|sale|payment)\b/i.test(value)
     || /\bwhere\s+(?:is|are)\s+(?:my|our|the)\b/i.test(value)
@@ -309,7 +311,9 @@ function resolve(db, workspaceId, membership, input, options = {}) {
   }
 
   const record = recordMatch(db, workspaceId, text, options);
-  if (record && NAVIGATION_WORDS.test(text)) {
+  // "Has SO-1006 shipped and where is it?" asks about the order, not for
+  // its page; only "open" / "take me to" wording overrides that.
+  if (record && NAVIGATION_WORDS.test(text) && (ACTION_WORDS.test(text) || !isBusinessDataQuestion(text))) {
     let href = record.href;
     let label = `Open ${record.title}`;
     const context = recordContextMatch(db, workspaceId, record, text, brain);

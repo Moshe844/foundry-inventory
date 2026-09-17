@@ -68,7 +68,7 @@ function createApp(options = {}) {
     productBrain.registerRouter(name, router, { mountPath });
   // Explicit provider override. Undefined means the configured provider is
   // built per request, so there is no accidental production fallback.
-  app.locals.aiProvider = options.aiProvider || null;
+  app.locals.aiProvider = options.aiProvider ? require('./assistant/calls').observed(options.aiProvider) : null;
   app.set('view engine', 'ejs');
   app.set('views', path.join(__dirname, 'web', 'views'));
   app.set('trust proxy', 1);
@@ -203,6 +203,11 @@ function createApp(options = {}) {
   app.use(middleware.csrf);
   app.use(middleware.loadUser(db));
   app.use(middleware.foundryContext(db));
+  // Who is asking, for the record of model and tool calls made on their behalf.
+  app.use((req, res, next) => {
+    const calls = require('./assistant/calls');
+    calls.run({ db, workspaceId: req.ctx ? req.ctx.workspaceId : null, actorId: req.ctx ? req.ctx.actorId : null, goalId: null }, () => next());
+  });
   app.use(middleware.pageRenderer);
 
   app.use(registered('auth', authRoutes));

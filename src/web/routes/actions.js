@@ -12,6 +12,7 @@
 const express = require('express');
 const ledger = require('../../assistant/ledger');
 const assistantTurns = require('../../assistant/turns');
+const tools = require('../../assistant/tools');
 const crypto = require('node:crypto');
 const config = require('../../config');
 const actionService = require('../../actions/action-service');
@@ -193,7 +194,7 @@ router.post(
         // sentinel back into the language reader. Re-ground the original
         // request, require it to produce the same structured location
         // continuation, and only then apply the all-locations answer.
-        const grounded = await actionService.interpret(req.db, req.ctx, membershipOf(req), original, {
+        const grounded = await tools.use(req.db, req.ctx, membershipOf(req), 'action.prepare', { instruction: original }, {
           provider: req.app.locals.aiProvider || undefined,
         });
         if (grounded.kind === 'question' && grounded.continuation) {
@@ -212,7 +213,7 @@ router.post(
           };
         }
       } else {
-        result = await actionService.interpret(req.db, req.ctx, membershipOf(req), instruction, {
+        result = await tools.use(req.db, req.ctx, membershipOf(req), 'action.prepare', { instruction }, {
           provider: req.app.locals.aiProvider || undefined,
         });
       }
@@ -268,7 +269,7 @@ router.post(
             : `${order.poNumber} was approved. Its supplier message is prepared but has not been sent.`);
         return res.redirect(303, `/purchasing/orders/${order.id}`);
       }
-      req.flash('success', `StockChief drafted ${result.order.poNumber}. Nothing is ordered and nobody is contacted until you approve it.`);
+      req.flash('success', `StockChief drafted ${result.order.poNumber}${(result.order.lines || []).length > 1 ? ` with ${result.order.lines.length} lines` : ""}. Nothing is ordered and nobody is contacted until you approve it.`);
       return res.redirect(303, `/purchasing/orders/${result.order.id}`);
     }
     const handedOn = actionHandoff.handOff(req, result);

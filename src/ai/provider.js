@@ -44,7 +44,8 @@ function createProvider(name, options = {}) {
   if (!factory) {
     throw new ProviderError(`No AI provider named "${name}" is registered.`, { code: 'ai_provider_unknown' });
   }
-  return factory(options);
+  // Every call on the record (src/assistant/calls.js), whoever made it.
+  return require('../assistant/calls').observed(factory(options));
 }
 
 function availableProviders() {
