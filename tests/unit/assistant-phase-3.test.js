@@ -85,3 +85,47 @@ test('a cost said once in the sentence is not copied onto every line of a list; 
   assert.equal(Number(lines[0].unit_cost), 2.5);
   assert.notEqual(Number(lines[1].unit_cost), 2.5, 'the pack keeps its own supplier cost, not the elbow price');
 });
+
+// G1. Before: order lines, bills, invoices, payments, shipments, returns, reorder settings and supplier items were not queryable at all.
+test('the other half of the business is queryable: nine new datasets, each compiling with its defaults', () => {
+  const records = require('../../src/attention/record-query');
+  const { db, w, membership, elbow, lakeside } = setup();
+  const base = { entityScope: 'set', fields: [], filters: [], filterMode: 'all', aggregate: '', measure: '', metrics: [], groupBy: [], sortField: '', sortDirection: 'asc', limit: 5 };
+  for (const dataset of ['purchase_order_lines', 'sales_order_lines', 'bills', 'invoices', 'payments', 'shipments', 'returns', 'reorder_settings', 'supplier_items']) {
+    assert.ok(records.REGISTRY[dataset], `${dataset} is registered`);
+    const result = records.execute(db, w.workspaceId, { ...base, dataset }, {});
+    assert.equal(result.supported !== false, true, dataset);
+  }
+  supplierService.linkItem(db, w.ctx, membership, { supplierId: lakeside.id, skuId: elbow.skuId, purchaseUnit: 'unit', unitsPerPurchaseUnit: 1, lastUnitCost: 3 });
+  const items = records.execute(db, w.workspaceId, { ...base, dataset: 'supplier_items', filters: [{ field: 'product', operator: 'contains', value: 'Copper Elbow' }], sortField: 'last_unit_cost', sortDirection: 'asc' }, {});
+  assert.equal(items.rows.length, 2);
+  assert.equal(items.rows[0].supplier, 'Acme Trade Supply', 'the cheapest supplier sorts first');
+  assert.equal(items.rows[0].last_unit_cost, 2);
+});
+
+test('a name that matches nothing exactly is tried as part of a name, and money is shown as money', () => {
+  const records = require('../../src/attention/record-query');
+  const poService = require('../../src/purchasing/po-service');
+  const { db, w, membership, elbow, acme } = setup();
+  const po = poService.createOrder(db, w.ctx, membership, { supplierId: acme.id, lines: [{ skuId: elbow.skuId, quantityPurchaseUnits: 10, unitCost: 2 }], source: 'test' });
+  const base = { entityScope: 'set', fields: [], filters: [], filterMode: 'all', aggregate: '', measure: '', metrics: [], groupBy: [], sortField: '', sortDirection: 'asc', limit: 5 };
+  const lines = records.execute(db, w.workspaceId, { ...base, dataset: 'purchase_order_lines', filters: [{ field: 'supplier', operator: 'eq', value: 'Acme' }] }, {});
+  assert.equal(lines.rows.length, 1);
+  assert.equal(lines.rows[0].order_number, po.poNumber);
+  assert.match(lines.answer, /\(Matched “Acme” as part of the supplier\.\)$/);
+  const plural = records.execute(db, w.workspaceId, { ...base, dataset: 'purchase_order_lines', filters: [{ field: 'product', operator: 'contains', value: 'elbows' }] }, {});
+  assert.equal(plural.rows.length, 1);
+  assert.match(plural.answer, /Matched “elbows” as part of the product/);
+  const none = records.execute(db, w.workspaceId, { ...base, dataset: 'bills', filters: [{ field: 'issue_date', operator: 'gte', value: '2030-01-01' }] }, {});
+  assert.match(none.answer, /That is a search result, not a failure\.$/, 'a date filter gets no spelling advice');
+  const single = records.execute(db, w.workspaceId, { ...base, dataset: 'purchase_order_lines', entityScope: 'single', filters: [{ field: 'supplier', operator: 'contains', value: 'Acme' }] }, {});
+  assert.equal(single.needsClarification, undefined, 'a party with many lines is not an ambiguity');
+  const money = records.execute(db, w.workspaceId, { ...base, dataset: 'sales_order_lines', fields: ['order_number', 'unit_price_minor'] }, {});
+  assert.deepEqual(money.columns, ['order_number', 'unit_price'], 'minor-unit columns are shown as money');
+});
+
+test('"has SO-… shipped and where is it?" is a question about the order, not a request for its page', () => {
+  const navigation = require('../../src/product-brain/navigation');
+  assert.equal(navigation.isBusinessDataQuestion('has SO-1006 shipped and where is it?'), true);
+  assert.equal(navigation.isBusinessDataQuestion('open SO-1006'), false);
+});

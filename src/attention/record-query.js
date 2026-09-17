@@ -116,6 +116,110 @@ const REGISTRY = {
   text: ['order_number','customer','status','order_date','needed_by','currency','created_at'], number: [],
   defaults: ['order_number','customer','status','needed_by'],
  },
+ /*
+  * The other half of the business. Order lines, bills, invoices, payments,
+  * shipments, returns, reorder settings and supplier items were not
+  * queryable at all: "show this customer's recent purchases" could only
+  * count orders, and "below reorder point" had nothing to read. Same
+  * allow-list, same @w discipline, money in minor units named as such.
+  */
+ purchase_order_lines: {
+  description: 'One row per line of a purchase order: product, quantities ordered and received in inventory units, unit_cost per inventory unit. Join by order_number; outstanding = quantity_units - quantity_received.', href: '/purchasing/orders',
+  sql: `SELECT l.id,po.po_number order_number,s2.name supplier,po.status order_status,po.expected_date,i.name product,sk.code sku,sk.variant_label variant,
+    l.purchase_unit,l.units_per_purchase_unit,l.quantity_purchase_units,l.quantity_units,l.quantity_received_units quantity_received,
+    (l.quantity_units-l.quantity_received_units) outstanding,l.unit_cost,l.line_total,l.created_at
+   FROM purchase_order_lines l JOIN purchase_orders po ON po.id=l.purchase_order_id AND po.workspace_id=@w
+   JOIN suppliers s2 ON s2.id=po.supplier_id AND s2.workspace_id=@w
+   JOIN skus sk ON sk.id=l.sku_id AND sk.workspace_id=@w JOIN items i ON i.id=sk.item_id AND i.workspace_id=@w WHERE l.workspace_id=@w`,
+  text: ['order_number','supplier','order_status','expected_date','product','sku','variant','purchase_unit','created_at'],
+  number: ['units_per_purchase_unit','quantity_purchase_units','quantity_units','quantity_received','outstanding','unit_cost','line_total'],
+  defaults: ['order_number','supplier','product','quantity_units','quantity_received','unit_cost'],
+ },
+ sales_order_lines: {
+  description: 'One row per line of a customer sales order: product, quantity ordered and fulfilled, unit_price_minor in minor units (cents). line_value_minor = quantity_ordered × unit_price_minor. Join by order_number; "what a customer bought" is this dataset filtered by customer.', href: '/sales/orders',
+  sql: `SELECT l.id,so.order_number,c.name customer,so.status order_status,so.order_date,i.name product,sk.code sku,sk.variant_label variant,
+    l.quantity_ordered,l.quantity_fulfilled,(l.quantity_ordered-l.quantity_fulfilled) unfulfilled,l.unit_price_minor,
+    (l.quantity_ordered*COALESCE(l.unit_price_minor,0)) line_value_minor,l.created_at
+   FROM sales_order_lines l JOIN sales_orders so ON so.id=l.sales_order_id AND so.workspace_id=@w
+   JOIN customers c ON c.id=so.customer_id AND c.workspace_id=@w
+   JOIN skus sk ON sk.id=l.sku_id AND sk.workspace_id=@w JOIN items i ON i.id=sk.item_id AND i.workspace_id=@w WHERE l.workspace_id=@w`,
+  text: ['order_number','customer','order_status','order_date','product','sku','variant','created_at'],
+  number: ['quantity_ordered','quantity_fulfilled','unfulfilled','unit_price_minor','line_value_minor'],
+  defaults: ['order_number','customer','order_date','product','quantity_ordered','unit_price_minor'],
+ },
+ bills: {
+  description: 'One row per supplier bill (accounts payable). Amounts are minor units (cents); balance_minor is what is still owed; status OPEN/PAID/VOID; overdue when due_date is past and balance_minor > 0.', href: '/accounting/payables',
+  sql: `SELECT b.id,b.bill_number,s.name supplier,po.po_number order_number,b.supplier_invoice_number,b.issue_date,b.due_date,b.status,b.match_status,b.currency,
+    b.subtotal_minor,b.tax_minor,b.total_minor,b.balance_minor,b.paid_at,b.created_at
+   FROM accounting_supplier_bills b JOIN suppliers s ON s.id=b.supplier_id AND s.workspace_id=@w
+   LEFT JOIN purchase_orders po ON po.id=b.purchase_order_id AND po.workspace_id=@w WHERE b.workspace_id=@w`,
+  text: ['bill_number','supplier','order_number','supplier_invoice_number','issue_date','due_date','status','match_status','currency','paid_at','created_at'],
+  number: ['subtotal_minor','tax_minor','total_minor','balance_minor'],
+  defaults: ['bill_number','supplier','due_date','status','total_minor','balance_minor'],
+ },
+ invoices: {
+  description: 'One row per customer invoice (accounts receivable). Amounts are minor units (cents); balance_minor is what the customer still owes; status OPEN/PAID/VOID.', href: '/accounting/receivables',
+  sql: `SELECT v.id,v.invoice_number,c.name customer,so.order_number,v.issue_date,v.due_date,v.status,v.currency,
+    v.subtotal_minor,v.discount_minor,v.tax_minor,v.total_minor,v.balance_minor,v.paid_at,v.created_at
+   FROM accounting_customer_invoices v JOIN customers c ON c.id=v.customer_id AND c.workspace_id=@w
+   LEFT JOIN sales_orders so ON so.id=v.sales_order_id AND so.workspace_id=@w WHERE v.workspace_id=@w`,
+  text: ['invoice_number','customer','order_number','issue_date','due_date','status','currency','paid_at','created_at'],
+  number: ['subtotal_minor','discount_minor','tax_minor','total_minor','balance_minor'],
+  defaults: ['invoice_number','customer','due_date','status','total_minor','balance_minor'],
+ },
+ payments: {
+  description: 'One row per recorded payment, in or out. direction CUSTOMER_PAYMENT (money in) or SUPPLIER_PAYMENT (money out); amount_minor in minor units (cents); status POSTED or VOID. party is the customer or supplier.', href: '/accounting',
+  sql: `SELECT p.id,p.payment_number,p.direction,COALESCE(c.name,s.name) party,p.payment_date,p.amount_minor,p.currency,p.method,p.reference,p.status,p.created_at
+   FROM accounting_payments p LEFT JOIN customers c ON c.id=p.customer_id AND c.workspace_id=@w
+   LEFT JOIN suppliers s ON s.id=p.supplier_id AND s.workspace_id=@w WHERE p.workspace_id=@w`,
+  text: ['payment_number','direction','party','payment_date','currency','method','reference','status','created_at'],
+  number: ['amount_minor'],
+  defaults: ['payment_number','direction','party','payment_date','amount_minor','status'],
+ },
+ shipments: {
+  description: 'One row per outbound customer shipment: order, carrier, tracking, status, dates. delivered_at is set only when delivery was recorded.', href: '/sales/shipments',
+  sql: `SELECT sh.id,sh.shipment_number,so.order_number,c.name customer,sh.status,l.name ship_from,sh.carrier,sh.service,sh.tracking_number,sh.tracking_status,
+    sh.package_count,sh.shipping_cost_minor,sh.shipped_at,sh.expected_delivery_date,sh.promised_date,sh.delivered_at,sh.created_at
+   FROM sales_shipments sh JOIN sales_orders so ON so.id=sh.sales_order_id AND so.workspace_id=@w
+   JOIN customers c ON c.id=so.customer_id AND c.workspace_id=@w
+   LEFT JOIN locations l ON l.id=sh.ship_from_location_id AND l.workspace_id=@w WHERE sh.workspace_id=@w`,
+  text: ['shipment_number','order_number','customer','status','ship_from','carrier','service','tracking_number','tracking_status','shipped_at','expected_delivery_date','promised_date','delivered_at','created_at'],
+  number: ['package_count','shipping_cost_minor'],
+  defaults: ['shipment_number','order_number','customer','status','carrier','shipped_at','delivered_at'],
+ },
+ returns: {
+  description: 'One row per customer return line: order, customer, product, quantities authorized, received, restocked and scrapped, the return status and reason.', href: '/sales/returns',
+  sql: `SELECT rl.id,r.return_number,so.order_number,c.name customer,r.status,r.resolution,r.reason,i.name product,sk.code sku,sk.variant_label variant,
+    rl.quantity_authorized,rl.quantity_received,rl.quantity_restocked,rl.quantity_scrapped,rl.condition_note,r.created_at,r.received_at,r.completed_at
+   FROM customer_return_lines rl JOIN customer_returns r ON r.id=rl.customer_return_id AND r.workspace_id=@w
+   JOIN sales_orders so ON so.id=r.sales_order_id AND so.workspace_id=@w JOIN customers c ON c.id=so.customer_id AND c.workspace_id=@w
+   JOIN skus sk ON sk.id=rl.sku_id AND sk.workspace_id=@w JOIN items i ON i.id=sk.item_id AND i.workspace_id=@w WHERE rl.workspace_id=@w`,
+  text: ['return_number','order_number','customer','status','resolution','reason','product','sku','variant','condition_note','created_at','received_at','completed_at'],
+  number: ['quantity_authorized','quantity_received','quantity_restocked','quantity_scrapped'],
+  defaults: ['return_number','customer','product','quantity_received','status','reason'],
+ },
+ reorder_settings: {
+  description: 'One row per reorder rule: product (and location when the rule is per place), reorder_point, target_stock, safety_stock, lead_time_days, preferred supplier. below_reorder_point is 1 when current available stock is at or under the reorder point.', href: '/purchasing/replenishment',
+  sql: `SELECT rp.id,i.name product,sk.code sku,sk.variant_label variant,l.name location,rp.reorder_point,rp.target_stock,rp.safety_stock,rp.default_order_quantity,rp.lead_time_days,
+    s.name preferred_supplier,rp.source,COALESCE(st.on_hand,0) on_hand,MAX(0,COALESCE(st.on_hand,0)-COALESCE(st.committed,0)) available,
+    CASE WHEN rp.reorder_point IS NOT NULL AND MAX(0,COALESCE(st.on_hand,0)-COALESCE(st.committed,0))<=rp.reorder_point THEN 1 ELSE 0 END below_reorder_point,rp.updated_at
+   FROM reorder_policies rp JOIN skus sk ON sk.id=rp.sku_id AND sk.workspace_id=@w JOIN items i ON i.id=sk.item_id AND i.workspace_id=@w
+   LEFT JOIN locations l ON l.id=rp.location_id AND l.workspace_id=@w LEFT JOIN suppliers s ON s.id=rp.preferred_supplier_id AND s.workspace_id=@w
+   LEFT JOIN stock st ON st.sku_id=sk.id WHERE rp.workspace_id=@w`,
+  text: ['product','sku','variant','location','preferred_supplier','source','updated_at'],
+  number: ['reorder_point','target_stock','safety_stock','default_order_quantity','lead_time_days','on_hand','available','below_reorder_point'],
+  defaults: ['product','location','reorder_point','target_stock','available','below_reorder_point'],
+ },
+ supplier_items: {
+  description: 'One row per supplier-product link: what a supplier sells, in which pack (purchase_unit of units_per_purchase_unit), last_unit_cost per inventory unit, lead time, minimum order, preferred (1/0). "Which supplier is cheapest for X" is this dataset filtered by product, sorted by last_unit_cost.', href: '/purchasing/suppliers',
+  sql: `SELECT si.id,s.name supplier,i.name product,sk.code sku,sk.variant_label variant,si.supplier_sku,si.purchase_unit,si.units_per_purchase_unit,si.last_unit_cost,si.last_cost_at,
+    si.lead_time_days,si.minimum_order_quantity,si.order_multiple,si.is_preferred preferred,si.is_active active,si.updated_at
+   FROM supplier_items si JOIN suppliers s ON s.id=si.supplier_id AND s.workspace_id=@w
+   JOIN skus sk ON sk.id=si.sku_id AND sk.workspace_id=@w JOIN items i ON i.id=sk.item_id AND i.workspace_id=@w WHERE si.workspace_id=@w`,
+  text: ['supplier','product','sku','variant','supplier_sku','purchase_unit','last_cost_at','updated_at'],
+  number: ['units_per_purchase_unit','last_unit_cost','lead_time_days','minimum_order_quantity','order_multiple','preferred','active'],
+  defaults: ['supplier','product','purchase_unit','units_per_purchase_unit','last_unit_cost','lead_time_days'],
+ },
 };
 
 function catalogue(db, workspaceId, membership) {
@@ -175,7 +279,36 @@ function execute(db, workspaceId, plan, options={}) {
  const where=predicates.length?predicates.join(plan.filterMode==='any'?' OR ':' AND '):'1=1';
  const source=`${CTE}, records AS (${d.sql})`;
  const total=db.prepare(`${source} SELECT COUNT(*) n FROM records r WHERE ${where}`).get(params).n;
- if (plan.entityScope === 'single') {
+ /*
+  * "Supplier = Acme" finding nothing when the supplier is Acme Trade Supply,
+  * or "product containing sweaters" when the product is Children's Sweater,
+  * is the reader's exactness, not the person's. Before saying "no match",
+  * the same lookup is tried once with those filters loosened — equality
+  * becomes contains, a plural becomes its singular — and if that finds the
+  * records, the answer says how they were matched.
+  */
+ if(!total&&!options._relaxed){
+  const relaxed=plan.filters.map(f=>{
+   if(!d.text.includes(f.field)||typeof f.value!=='string')return f;
+   if(f.operator==='eq')return {...f,operator:'contains'};
+   if(f.operator==='contains'&&/(?:es|s)$/i.test(f.value)&&f.value.length>3)return {...f,value:f.value.replace(/(?:es|s)$/i,'')};
+   return f;
+  });
+  if(JSON.stringify(relaxed)!==JSON.stringify(plan.filters)){
+   const again=execute(db,workspaceId,{...plan,filters:relaxed},{...options,_relaxed:true});
+   if(again.rowCount||again.totalMatches){
+    // Only the filters that had to be loosened are mentioned: a name that
+    // matched exactly all along is not an approximation.
+    const exact=(f)=>(again.rows||[]).some(r=>String(r[f.field]??'').toLowerCase()===String(f.value).toLowerCase());
+    const how=relaxed.map((f,i)=>[f,plan.filters[i]]).filter(([f,o])=>f!==o&&!exact(o)).map(([f,o])=>`“${o.value}” as part of the ${f.field.replace(/_/g,' ')}`).join(' and ');
+    return {...again,answer:how?`${again.answer} (Matched ${how}.)`:again.answer};
+   }
+  }
+ }
+ // A bill, a line, a payment or a shipment is one of many for the same
+ // party; a named customer with three orders is not an ambiguity to resolve.
+ const transactional=['purchase_order_lines','sales_order_lines','bills','invoices','payments','shipments','returns','movements'].includes(plan.dataset);
+ if (plan.entityScope === 'single' && !transactional) {
   const identity = ['variants','positions'].includes(plan.dataset) ? 'item_id' : 'id';
   const candidates=db.prepare(`${source} SELECT DISTINCT r.${identity} FROM records r WHERE ${where} LIMIT 2`).all(params);
   if(candidates.length>1){
@@ -230,12 +363,19 @@ function execute(db, workspaceId, plan, options={}) {
  const sql=`${source} SELECT ${select} FROM records r WHERE ${where}${group}${order}`;
  const groupCount=group?db.prepare(`SELECT COUNT(*) n FROM (${sql})`).get(params).n:null;
  const raw=db.prepare(`${sql} LIMIT ${limit}`).all(params);
- const rows=raw.map(r=>Object.fromEntries(columns.map((c,i)=>[c,r[`c${i}`]])));
+ // Money is money on the page: balance_minor 11250 is $112.50.
+ const money=(n,c)=>{try{return new Intl.NumberFormat('en-US',{style:'currency',currency:c||'USD'}).format(Number(n)/100);}catch{return `${(Number(n)/100).toFixed(2)} ${c}`;}};
+ const plainRows=raw.map(r=>Object.fromEntries(columns.map((c,i)=>[c,r[`c${i}`]])));
+ const rows=metrics.length?plainRows:plainRows.map(r=>Object.fromEntries(Object.entries(r).map(([c,v])=>/_minor$/.test(c)?[c.replace(/_minor$/,''),typeof v==='number'?money(v,r.currency):v]:[c,v])));
+ if(!metrics.length)columns=columns.map(c=>c.replace(/_minor$/,''));
  const noun=plan.dataset.replace(/_/g,' ');
+ // "No bills with issue date ≥ 2026-09-01" is a date, not a misspelling.
+ const textSearch=plan.filters.some(f=>d.text.includes(f.field)&&['eq','contains'].includes(f.operator)&&typeof f.value==='string'&&!/^\d{4}-\d{2}-\d{2}/.test(f.value));
  const display=value=>value===null||value===undefined?'not recorded':typeof value==='number'?value.toLocaleString('en-US'):String(value);
  const metricText=(row,index)=>metricInfo.map((m,i)=>{
-  const label=m.operation==='count'?noun:`${{sum:'Total',average:'Average',minimum:'Minimum',maximum:'Maximum',count_distinct:'Distinct count'}[m.operation]} ${m.field.replace(/_/g,' ').replace(/^attribute:/,'')}`;
-  const base=`${label}: ${display(row[m.key])}`;
+  const label=m.operation==='count'?noun:`${{sum:'Total',average:'Average',minimum:'Minimum',maximum:'Maximum',count_distinct:'Distinct count'}[m.operation]} ${m.field.replace(/_minor$/,'').replace(/_/g,' ').replace(/^attribute:/,'')}`;
+  const inMoney=/_minor$/.test(String(m.field))&&['sum','average','minimum','maximum'].includes(m.operation)&&typeof row[m.key]==='number';
+  const base=`${label}: ${inMoney?money(row[m.key],row.currency):display(row[m.key])}`;
   const n=raw[index][`known${i}`],matched=group?row.matching_records:total;
   return n!==undefined&&n<matched?`${base} (${matched-n} records have no recorded value; incomplete measure)`:base;
  }).join(' · ');
@@ -245,7 +385,7 @@ function execute(db, workspaceId, plan, options={}) {
  else if(group)answer=`By ${plan.groupBy.map(f=>f.replace(/_/g,' ')).join(' / ')}:\n${rows.map((r,i)=>`${plan.groupBy.map(f=>r[f]??'Not recorded').join(' / ')} — ${metricText(r,i)} (${r.matching_records} matching ${noun})`).join('\n')}${groupCount>limit?`\nShowing the first ${limit} of ${groupCount} groups.`:''}`;
  // No match is said as a no-match, with what was looked for: "0 matching
  // customers" tells nobody whether John Smith is absent or misspelt.
- else if(!total)answer=`No ${noun} on record ${plan.filters.length?`with ${plan.filters.map(f=>`${f.field.replace(/_/g,' ').replace(/^attribute:/,'')} ${{eq:'=',ne:'≠',lt:'<',lte:'≤',gt:'>',gte:'≥',contains:'containing',is_missing:'missing',is_present:'present'}[f.operator]||f.operator}${f.value===null||f.value===undefined?'':` “${f.value}”`}`).join(plan.filterMode==='any'?' or ':' and ')}`:'at all'}. That is a search result, not a failure — check the spelling, or try part of the name.`;
+ else if(!total)answer=`No ${noun} on record ${plan.filters.length?`with ${plan.filters.map(f=>`${f.field.replace(/_/g,' ').replace(/^attribute:/,'')} ${{eq:'=',ne:'≠',lt:'<',lte:'≤',gt:'>',gte:'≥',contains:'containing',is_missing:'missing',is_present:'present'}[f.operator]||f.operator}${f.value===null||f.value===undefined?'':` “${f.value}”`}`).join(plan.filterMode==='any'?' or ':' and ')}`:'at all'}. That is a search result, not a failure${textSearch?' — check the spelling, or try part of the name':''}.`;
  else answer=`${total} matching ${noun}.${total?` ${rows.map(r=>`${r[columns[0]]??'Not recorded'}${columns.length>1?` (${columns.slice(1).map(c=>`${c.replace(/_/g,' ')}: ${r[c]??'not recorded'}`).join(', ')})`:''}`).join('; ')}.`:''}${total>limit?` Showing the first ${limit}; the total includes all matches.`:''}`;
  return {plan:{intent:'record_query',...plan},answer,rows,columns,rowCount:rows.length,totalMatches:total,supported:true,isAction:false,answerMode:'verified',handoff:null};
 }
