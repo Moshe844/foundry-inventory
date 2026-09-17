@@ -241,3 +241,17 @@ test('"how many X do we have" and "what did we pay for X" are the two plainest q
   assert.notEqual((plan('how many products do we have') || {}).intent, 'stock_level');
   assert.notEqual((plan('what did we pay in total last month') || {}).intent, 'last_cost');
 });
+
+// Live flake: "What has been selling most this month?" → action, once.
+test('what sells most is the busiest lines, read in code', () => {
+  const { db } = makeDatabase();
+  const w = seedWorkspace(db);
+  const plan = (q) => queryPlanner.__directPlan(db, w.workspaceId, q);
+  for (const q of ['What has been selling most this month?', 'which products are our best sellers', 'what sells best this week', 'Show me the top movers this quarter', 'what is the most popular product']) {
+    const p = plan(q);
+    assert.ok(p, q);
+    assert.equal(p.intent, 'top_moving', q);
+  }
+  assert.equal(plan('Show me the top movers this quarter').windowDays, 90);
+  assert.notEqual((plan('which customers buy the most') || {}).intent, 'top_moving');
+});

@@ -525,6 +525,14 @@ function directPlan(db, workspaceId, question) {
     const subject = paid[1].replace(/\b(?:these|those|them|it|this|that)\b/gi, '').replace(/^(?:the|our|my)\s+/i, '').trim();
     return queryService.normalisePlan({ intent: 'last_cost', entityQuery: subject });
   }
+  // "What has been selling most this month?" is the busiest lines; a model
+  // read it as work to do once, which is once too many for a question.
+  const topMoving = /\b(?:sell(?:ing|s)?\s+(?:the\s+)?(?:most|best|fastest)|(?:best|top)[-\s]?sell(?:ers?|ing)|most\s+sold|most\s+popular|fastest[-\s]?moving|top[-\s]?(?:moving|movers?)|busiest|moves?\s+(?:the\s+)?most)\b/i.test(clean)
+    && /^\s*(?:so\s+)?(?:what|which|who|show|list|tell)\b/i.test(clean);
+  if (topMoving && !/\b(?:price|cost|charge|margin|profit|customers?)\b/i.test(clean)) {
+    const windowDays = /quarter|90/i.test(clean) ? 90 : /year|12\s+months/i.test(clean) ? 365 : /week|7\s+days/i.test(clean) ? 7 : 30;
+    return queryService.normalisePlan({ intent: 'top_moving', windowDays, limit: 10 });
+  }
   const forecast = /\b(?:forecast|demand|projected|projection|expected\s+sales|how\s+many\s+will\s+we\s+(?:sell|need)|how\s+much\s+will\s+we\s+(?:sell|need)|what\s+will\s+we\s+(?:sell|need))\b/i.test(clean)
     && /\b(?:next|coming|upcoming|this|the\s+next)\s+(?:week|month|quarter|year|season|\d+\s+(?:days|weeks|months))\b|\bforecast\b|\bdemand\b/i.test(clean);
   if (forecast && !scoped && !/\b(?:order|buy|purchase|reorder|price|charge)\b/i.test(clean)) {
