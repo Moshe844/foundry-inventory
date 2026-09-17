@@ -650,15 +650,20 @@ const EXECUTORS = {
         WHERE i.workspace_id = ? AND i.is_active = 1
         GROUP BY i.id, i.name, i.base_code
         ORDER BY i.name COLLATE NOCASE, i.id
-        LIMIT 12`
+        LIMIT 200`
     ).all(workspaceId).map((row) => ({
       ...row,
       href: `/inventory/${row.id}`,
     }));
+    // "19 products" above and "12 records" below read as a contradiction. The
+    // records are every product, and when there are more than the page shows
+    // the label says "first 60 of 19", never a smaller number on its own.
     // "4986628 units" is a number nobody can read at a glance; "4,986,628" is.
     const n = (value) => new Intl.NumberFormat('en-US').format(Number(value || 0));
     return {
       rows,
+      rowCount: products,
+      totalMatches: products,
       handoff: { href: '/inventory/table', label: products === 1 ? 'Open the product' : `Browse all ${n(products)} products` },
       answer:
         `This inventory has ${n(products)} active product${products === 1 ? '' : 's'}, `
@@ -2860,7 +2865,11 @@ function execute(db, workspaceId, rawPlan, options = {}) {
     answer: result.answer,
     rows: result.rows,
     columns: result.columns || [],
-    rowCount: result.rows.length,
+    // An executor that read more records than it returns says how many there
+    // were, so the page can say "first 60 of 19" rather than a smaller count
+    // beside a bigger figure in the answer.
+    rowCount: Number.isFinite(Number(result.totalMatches)) ? Math.max(result.rows.length, Number(result.totalMatches)) : result.rows.length,
+    totalMatches: Number.isFinite(Number(result.totalMatches)) ? Number(result.totalMatches) : undefined,
     durationMs: round(Date.now() - started, 0),
     answerMode: result.answerMode || 'phraseable',
     progressiveDisclosure: result.progressiveDisclosure === true,
