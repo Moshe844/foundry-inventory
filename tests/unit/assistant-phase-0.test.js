@@ -82,8 +82,8 @@ test('fewer lines back than changes listed becomes a question, not a partial pla
     { context: CONTEXT, provider }
   );
   assert.equal(intent.lines.length, 0, 'nothing is prepared from a list that was only partly read');
-  assert.match(intent.clarifyingQuestion, /lists 3 changes and StockChief could only read 1/);
-  assert.match(intent.clarifyingQuestion, /did not read: “move 1 Gadget/);
+  assert.match(intent.clarifyingQuestion, /lists 3 things and StockChief could read 1 of them/);
+  assert.match(intent.clarifyingQuestion, /could not read: “move 1 Gadget/);
 });
 
 test('the reader fails in plain words and never in provider vocabulary', async () => {

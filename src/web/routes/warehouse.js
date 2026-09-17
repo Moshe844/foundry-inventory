@@ -97,6 +97,11 @@ router.get('/warehouse/operations', asyncRoute(async (req,res)=>{
     readyOrders:waves.readyOrders(req.db,req.ctx.workspaceId),orders:orders.filter((order)=>Number(order.totals.fulfilled)>0),
     suppliers:supplierService.listSuppliers(req.db,req.ctx.workspaceId),locations:locationService.listHierarchy(req.db,req.ctx.workspaceId),
     skus:catalogue(req.db,req.ctx.workspaceId),...returnEvidence,
+    // A return described in the Ask box arrives with the form filled in:
+    // the customer's order preselected, the quantity and the reason typed.
+    returnPrefill:req.query.returnCustomer||req.query.returnQuantity||req.query.returnReason?{
+      customer:String(req.query.returnCustomer||'').toLowerCase(),quantity:Number(req.query.returnQuantity)>0?Number(req.query.returnQuantity):1,
+      reason:String(req.query.returnReason||'').slice(0,160),product:String(req.query.returnProduct||'').toLowerCase()}:null,
   });
 }));
 

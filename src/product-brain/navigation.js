@@ -14,9 +14,29 @@ const NAVIGATION_TIMEOUT_MS = 8_000;
 function isBusinessDataQuestion(text) {
   const value = String(text || '');
   if (WEBSITE_LOCATION_WORDS.test(value)) return false;
+  // "Do we have enough gloves for the winter?" is about gloves, not about
+  // whether StockChief has a feature; it was answered with the status of
+  // the selling-prices capability because "sell" appeared in the sentence.
+  if (/\b(?:do|does|did)\s+we\s+have\b|\benough\b|\bhow\s+(?:many|much)\b|\bin\s+stock\b|\bon\s+hand\b|\bleft\b/i.test(value)) return true;
   return /\b(?:how many|how much|which|what)\b.*\b(?:stock|inventory|product|sku|order|customer|supplier|sale|payment)\b/i.test(value)
     || /\bwhere\s+(?:is|are)\s+(?:my|our|the)\b/i.test(value)
     || /\bwhere\b.*\b(?:stock|inventory|units?|products?|skus?)\b.*\b(?:held|stored|located|left)\b/i.test(value);
+}
+
+/** Whether the sentence names one of this inventory's own products. */
+function mentionsProduct(db, workspaceId, text) {
+  if (!db || !workspaceId) return false;
+  const said = String(text || '').toLowerCase();
+  try {
+    const names = db.prepare('SELECT name FROM items WHERE workspace_id = ? AND is_active = 1 LIMIT 500').all(workspaceId).map((r) => String(r.name || '').toLowerCase());
+    return names.some((name) => {
+      if (!name) return false;
+      if (said.includes(name)) return true;
+      // "gloves" names Harbour Work Glove: the product's last word, plural or not.
+      const last = name.split(/\s+/).pop().replace(/s$/, '');
+      return last.length > 3 && new RegExp(`\\b${last.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}s?\\b`).test(said);
+    });
+  } catch { return false; }
 }
 
 function navigationTokens(value) {
@@ -209,7 +229,10 @@ function resolve(db, workspaceId, membership, input, options = {}) {
   const text = String(input || '').trim();
   if (!text) return null;
 
-  const unavailable = unavailableMatch(text, brain);
+  // A question about the business's own stock, orders or money is never a
+  // question about StockChief's features, whatever words it shares with one.
+  const aboutTheBusiness = isBusinessDataQuestion(text) || mentionsProduct(db, workspaceId, text);
+  const unavailable = aboutTheBusiness ? null : unavailableMatch(text, brain);
   if (unavailable && /\b(?:can|where|how|support|available|have|do)\b/i.test(text)) {
     const access = brain.accessForCapability(unavailable.id, membership);
     return { kind: 'capability', supported: true, available: false, canNavigate: false, capabilityId: unavailable.id,
@@ -218,7 +241,7 @@ function resolve(db, workspaceId, membership, input, options = {}) {
   }
 
 
-  if (/\b(?:can (?:i|we|foundry|stockchief)|do (?:you|we) (?:have|support)|is .*available)\b/i.test(text)) {
+  if (!aboutTheBusiness && /\b(?:can (?:i|we|foundry|stockchief)|do (?:you|we) (?:have|support)|is .*available)\b/i.test(text)) {
     const capability = capabilityMatch(text, brain);
     if (capability) {
       const evaluation = brain.evaluateCapability(db, workspaceId, capability.id, membership);
@@ -239,6 +262,41 @@ function resolve(db, workspaceId, membership, input, options = {}) {
         answer: `${capability.label} is available. You can use it with your current role. ${autonomy}`
           + (destination ? ` It is in ${destination.label}.` : '')
           + (evaluation.prerequisites.length ? ` Required first: ${evaluation.prerequisites.join(' ')}` : '') };
+    }
+  }
+
+  /*
+   * "Show me everything about copper elbow" wants the product's page: stock
+   * by place, on order, price, supplier, recent movement — all of it. It
+   * used to be met with "what would you like to know?", which is the one
+   * answer that page never needs. One product named in full goes straight
+   * there; a name that fits several products is left to the planner, which
+   * asks which.
+   */
+  const about = /^\s*(?:can\s+you\s+)?(?:show\s+me\s+|tell\s+me\s+|give\s+me\s+)?(?:everything|all|all\s+the\s+details|the\s+full\s+picture|a\s+summary|an\s+overview)\s+(?:about|on|of|for)\s+(.+?)\s*[?.!]*\s*$/i.exec(text)
+    || /^\s*(?:tell\s+me\s+about|what\s+do\s+we\s+know\s+about|open\s+the\s+product|show\s+me\s+the\s+product)\s+(.+?)\s*[?.!]*\s*$/i.exec(text);
+  if (about) {
+    const named = about[1].replace(/^(?:the|our|my)\s+/i, '').replace(/\s+(?:product|item|sku)$/i, '').trim();
+    let items = [];
+    try {
+      const skus = require('../attention/query-service').resolveSkus(db, workspaceId, named, 50);
+      items = [...new Map(skus.map((s) => [s.item_id, { id: s.item_id, name: s.item_name || s.name }])).values()];
+    } catch { items = []; }
+    if (items.length === 1) {
+      const href = `/inventory/${items[0].id}`;
+      const access = brain.accessForHref(href, membership);
+      if (access.allowed) {
+        return { kind: 'navigation', supported: true, canNavigate: true, href, label: `Open ${items[0].name}`,
+          capabilityId: access.capability.id, navigateNow: true,
+          answer: `Everything about ${items[0].name} is on its page: stock by place, what is on order, price, supplier and recent movement.` };
+      }
+    }
+    // Several products fit the name: the answer is which, as one click each,
+    // not an open question about what the person would like to know.
+    if (items.length > 1 && items.length <= 6) {
+      return { kind: 'clarify', supported: false, canNavigate: false, needsClarification: true,
+        choices: items.map((item) => `everything about ${item.name}`),
+        answer: `Which product do you mean? ${items.map((item) => item.name).join(' or ')}.` };
     }
   }
 
@@ -331,8 +389,10 @@ function asQueryResult(question, resolution) {
       href: handoffHref(resolution.href, resolution.label, `/ask?q=${encodeURIComponent(String(question).trim())}`),
       label: resolution.label,
     } : null,
-    plan: { intent: resolution.kind === 'navigation' ? 'website_navigation' : 'capability_status',
+    plan: { intent: resolution.kind === 'navigation' ? 'website_navigation' : resolution.kind === 'clarify' ? 'unsupported' : 'capability_status',
       entityQuery: '', locationQuery: '', windowDays: 30, limit: 1 },
+    needsClarification: resolution.needsClarification === true,
+    choices: resolution.choices || null,
     navigation: resolution,
   };
 }

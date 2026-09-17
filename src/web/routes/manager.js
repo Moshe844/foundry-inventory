@@ -337,9 +337,16 @@ function productResolution(db, workspaceId, proposal) {
     const query = trimOrNull(raw.itemText) || trimOrNull(raw.variantText)
       || (proposal.questions.join(' ').match(/[“"]([^”"]+)[”"]/) || [])[1]
       || 'that product';
+    // Six candidates that are one product's variants are not six guesses:
+    // the product was found, and the question is which variants the rule
+    // covers. The page can then offer all of them as one answer.
+    const itemIds = new Set((result?.candidates || []).map((candidate) => candidate.item_id).filter(Boolean));
+    const oneProduct = result?.reason === 'ambiguous' && itemIds.size === 1 && (result.candidates || []).length > 1
+      ? { itemId: [...itemIds][0], name: result.candidates[0].item_name || result.candidates[0].name, count: result.candidates.length } : null;
     return {
       query,
       reason: result?.reason || 'not_found',
+      oneProduct,
       candidates: (result?.candidates || []).map((candidate) => ({
         skuId: candidate.item_id ? candidate.id : null,
         label: [candidate.item_name || candidate.name, candidate.variant_label].filter(Boolean).join(' — '),
@@ -453,14 +460,32 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     else delete req.session.askConversation;
   }
   const tabular = attached && /\.(csv|tsv|xlsx|xls|txt)$/i.test(attached.filename || '');
-  const operationalDocument = attached && /\.(pdf|docx|xlsx|xls|csv|tsv|txt)$/i.test(attached.filename || '');
+  // A photo or screenshot is a document too; it is read by OCR on the same
+  // path as a PDF, instead of being filed unread as "evidence".
+  const operationalDocument = attached && /\.(pdf|docx|xlsx|xls|csv|tsv|txt|png|jpe?g|webp|bmp|tiff?)$/i.test(attached.filename || '');
   const receivingHint = /arriv|deliver|shipment|packing|receive|received|supplier invoice/i.test(message);
   const pricingUpdateHint = /\b(?:price|prices|pricing|selling\s+price|retail\s+price)\b/i.test(message)
     && /\b(?:apply|change|set|update|use)\b/i.test(message);
+  const photo = attached && /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(attached.filename || '');
+  let understood = null;
   if (operationalDocument && (!tabular || receivingHint)) {
-    const understood = await documentEvents.understand(req.db, req.ctx, attached, {
-      provider: req.app.locals.aiProvider || undefined,
-    });
+    try {
+      understood = await documentEvents.understand(req.db, req.ctx, attached, {
+        provider: req.app.locals.aiProvider || undefined,
+      });
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      // A photo with no readable text is not a document: a picture of the
+      // damage, of the shelf. It is kept as evidence of what the person
+      // said, below, exactly as before. A document that cannot be read is
+      // said so.
+      if (!photo) {
+        req.flash('warn', err.message);
+        return res.redirect(303, req.body.queryConversation === '1' ? '/ask' : '/#tell-foundry');
+      }
+    }
+  }
+  if (understood) {
     const matched = understood.match.matched ? {
       purchaseOrderId: understood.match.purchaseOrderId,
       poNumber: understood.match.poNumber,
@@ -588,6 +613,63 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     }
   }
 
+  /*
+   * "Add a new supplier called Bright Tools, email sales@brighttools.com".
+   *
+   * The word "supplier" sent this to purchasing, purchasing found no product
+   * to buy, and the fallback ran the whole replenishment planner — eight
+   * pieces of unrelated work prepared from a sentence about a new supplier.
+   * A supplier is added on the suppliers page; the sentence fills the form
+   * in and the person presses Add. Nothing is saved from here.
+   */
+  const newSupplier = /^\s*(?:please\s+|can\s+you\s+|could\s+you\s+)?(?:add|create|set\s+up|register)\s+(?:a\s+)?(?:new\s+)?(?:supplier|vendor)\b(.*)$/i.exec(message);
+  if (newSupplier && !/\b(?:order|po|purchase order|for|reorder)\b/i.test(newSupplier[1].replace(/\S+@\S+/g, ''))) {
+    const rest = newSupplier[1];
+    const email = (/\b([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b/i.exec(rest) || [])[1] || '';
+    const phone = (/\b(?:phone|tel|call)\s*:?\s*(\+?[\d\s().-]{7,})/i.exec(rest) || [])[1] || '';
+    let name = (/^\s*(?:called|named|name[d]?\s*:?)?\s*["“']?([^,;"”']+?)["”']?\s*(?:,|;|\s+(?:with|whose|their|email|e-mail|phone|tel|contact)\b|$)/i.exec(rest.replace(/\S+@\S+/g, '').trim()) || [])[1] || '';
+    name = name.replace(/^(?:called|named)\s+/i, '').replace(/\s+(?:with|and)$/i, '').trim();
+    const contact = (/\b(?:contact|rep|representative)\s+(?:is\s+|named\s+|called\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/.exec(rest) || [])[1] || '';
+    const query = new URLSearchParams({ ...(name ? { name } : {}), ...(email ? { email } : {}), ...(phone ? { phone: phone.trim() } : {}), ...(contact ? { contactName: contact } : {}) });
+    req.flash('info', name
+      ? `StockChief filled in the new supplier “${name}”${email ? ` (${email})` : ''}. Check it and press Add — nothing is saved yet.`
+      : 'Add the supplier here. Nothing is saved until you press Add.');
+    return res.redirect(303, `/suppliers?${query.toString()}#add-supplier`);
+  }
+
+  /*
+   * "We got a return today, 2 children's sweater navy 4 from Marlow, one is
+   * damaged." A customer return is authorised, quarantined, inspected and
+   * refunded on the warehouse page; the sentence fills that form in —
+   * customer's order, product, quantity, reason — and the person presses
+   * Request. It used to be read as a stock change and refused.
+   */
+  const customerReturn = /\b(?:got|received|had|have)\s+(?:a\s+)?returns?\b|\b(?:returned|sent\s+back|brought\s+back)\b|\bwants?\s+to\s+return\b/i.test(message)
+    && !/\b(?:supplier|vendor|send\s+(?:it\s+)?back\s+to)\b/i.test(message);
+  if (customerReturn && !attached) {
+    const customers = req.db.prepare(`SELECT id, name FROM customers WHERE workspace_id = ? AND (record_state IS NULL OR record_state <> 'ARCHIVED')`).all(req.ctx.workspaceId);
+    const said = message.toLowerCase();
+    const named = customers.filter((c) => {
+      const words = String(c.name || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+      return words.length && words.some((w) => new RegExp(`\\b${w}\\b`).test(said));
+    });
+    // No customer by that name is still a return: the form opens with the
+    // name shown, and the person picks the order.
+    const spoken = (/\bfrom\s+([A-Z][A-Za-z0-9'&. -]{1,40}?)(?=\s*(?:,|\.|;|$|\s+(?:one|two|and|who|which|the|they|it)\b))/.exec(message) || [])[1] || '';
+    if (named.length === 1 || (named.length === 0 && spoken)) {
+      const quantity = (/\b(\d+)\s+(?:x\s+)?[a-z]/i.exec(message.replace(/\b(?:one|two|three|four|five)\b/gi, (w) => ({ one: 1, two: 2, three: 3, four: 4, five: 5 })[w.toLowerCase()])) || [])[1] || '1';
+      const reason = /\bdamaged\b/i.test(message) ? 'Damaged' : /\bwrong\s+size\b/i.test(message) ? 'Wrong size' : /\bfaulty|broken|defective\b/i.test(message) ? 'Faulty' : /\bunwanted|changed\s+(?:their|his|her)\s+mind\b/i.test(message) ? 'Unwanted' : '';
+      const product = mentionsKnownProduct(req.db, req.ctx.workspaceId, message) ? (req.db.prepare('SELECT name FROM items WHERE workspace_id = ? AND is_active = 1').all(req.ctx.workspaceId)
+        .map((r) => r.name).find((name) => said.includes(String(name).toLowerCase().replace(/'/g, ''))) || '') : '';
+      const who = named[0] ? named[0].name : spoken.trim();
+      const query = new URLSearchParams({ returnCustomer: who, returnQuantity: quantity, ...(reason ? { returnReason: reason } : {}), ...(product ? { returnProduct: product } : {}) });
+      req.flash('info', named[0]
+        ? `StockChief filled in a return from ${who}${quantity !== '1' ? ` for ${quantity}` : ''}${reason ? ` (${reason.toLowerCase()})` : ''}. Check the order and the line, then press Request — nothing is recorded yet.`
+        : `StockChief has no customer called “${who}”. Pick the order the return is against, then press Request — nothing is recorded yet.`);
+      return res.redirect(303, `/warehouse/operations?${query.toString()}#customer-returns`);
+    }
+  }
+
   // "Newly added products" is a provenance request, not an ambiguous product
   // name. Resolve it from the most recent completed import before asking the
   // general language router, whose catalogue candidates cannot know which
@@ -604,7 +686,11 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     }
   }
 
-  const navigation = await productNavigation.resolveNatural(req.db, req.ctx.workspaceId, req.user, message, {
+  // A sentence the planner already read as work to do is not a request to
+  // be taken somewhere. "Send Acme an email about PO-1013" was caught by the
+  // navigation resolver on the words "send" and "email", bounced back to
+  // Ask, and shown a second "Prepare for review" button.
+  const navigation = chatAction ? null : await productNavigation.resolveNatural(req.db, req.ctx.workspaceId, req.user, message, {
     brain: req.app.locals.productBrain,
     provider: req.app.locals.aiProvider || undefined,
     actorId: req.ctx.actorId,
@@ -621,6 +707,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   const intent = await intentRouter.classify(req.db, req.ctx, message, {
     provider: req.app.locals.aiProvider || undefined,
     referentNote: req.assistantReferentNote || '',
+    goalKind: req.assistantGoal ? req.assistantGoal.kind : null,
   });
   if (asksAboutRestrictions(message)) {
     req.session.pendingRestrictionFlow = { startedAt: Date.now(), instruction: message };
@@ -721,6 +808,28 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       intentRouter.markRouted(req.db, req.ctx, intent.id, 'payment_report', null, 'NEEDS_CLARIFICATION');
       return res.redirect(303, '/accounting');
     }
+    /*
+     * One page for a supplier payment, however the sentence was read.
+     *
+     * A model that read "I paid ABC Apparel $100 toward invoice 9281" as a
+     * pay_supplier action landed on the supplier-payment confirmation with
+     * the bill and the amount; the closed keyword form landed somewhere
+     * else. The same sentence now reaches the same page: the bill is matched
+     * here, and only a payment that cannot be placed on one bill goes to
+     * the general reported-payment page.
+     */
+    if (fields.direction === 'SUPPLIER_PAYMENT' && fields.counterpartyName) {
+      const supplierPayments = require('../../actions/supplier-payment');
+      const planned = supplierPayments.plan(req.db, req.ctx, {
+        supplierText: fields.counterpartyName, amountMinor: paymentIntent.amountFrom(fields.amountText),
+        reference: fields.reference || '', instruction: message,
+      });
+      const handedOn = planned && actionHandoff.handOff(req, planned);
+      if (handedOn) {
+        intentRouter.markRouted(req.db, req.ctx, intent.id, handedOn.routedTo, handedOn.related);
+        return res.redirect(303, handedOn.target);
+      }
+    }
     req.session.reportedPayment = { fields, said: message };
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'payment_report', null, 'ROUTED');
     return res.redirect(303, '/accounting/payments/reported');
@@ -770,7 +879,16 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       return res.redirect(303, '/#tell-foundry');
     }
   }
-  if (intent.handler === 'ask' || ['QUESTION', 'EXPLANATION'].includes(intent.intentClass)) {
+  /*
+   * Two readers, one sentence. The semantic planner read "send Acme an email
+   * asking when PO-1013 will ship" as work to do; the classifier called it
+   * a question and sent it back to Ask, where it was shown a "Prepare for
+   * review" button for the work the person had already asked for. When the
+   * planner has said it is work, a classifier's "question" does not send
+   * it back: it goes to the action reader, which asks its own questions.
+   */
+  const readAsWork = chatAction || (req.assistantGoal && ['send', 'change'].includes(req.assistantGoal.kind));
+  if ((intent.handler === 'ask' || ['QUESTION', 'EXPLANATION'].includes(intent.intentClass)) && !readAsWork) {
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'ask');
     return res.redirect(303, `/ask?q=${encodeURIComponent(message)}`);
   }
@@ -866,6 +984,41 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
       return res.redirect(303, '/actions');
     }
 
+    /*
+     * The general replenishment planner runs only for a sentence that asks
+     * for it — "what should I order", "order what we need", "plan the
+     * restock". Anything else that merely mentions purchasing used to run
+     * the whole planner and report the work it had prepared, as if that were
+     * an answer to what was said.
+     */
+    /*
+     * "Cancel PO-1009, we don't need it." A cancellation is done on the
+     * order's own page, where the confirmation and the reason live; the
+     * sentence takes the person there and says so, and nothing is cancelled
+     * from here. It used to be met with "read that as being about
+     * purchasing, but not what to do".
+     */
+    const cancelling = /\b(?:cancel|void|scrap|kill|drop)\b/i.test(message) && /\b(PO-\d+)\b/i.exec(message);
+    if (cancelling) {
+      const order = req.db.prepare(`SELECT id, po_number, status FROM purchase_orders WHERE workspace_id = ? AND UPPER(po_number) = ?`)
+        .get(req.ctx.workspaceId, cancelling[1].toUpperCase());
+      if (order) {
+        intentRouter.markRouted(req.db, req.ctx, intent.id, 'purchase_order', order.id);
+        req.flash('info', ['CANCELLED', 'RECEIVED', 'CLOSED'].includes(order.status)
+          ? `${order.po_number} is already ${order.status.toLowerCase()}; there is nothing to cancel.`
+          : `To cancel ${order.po_number}, press Cancel on its page and say why — nothing is cancelled until you do.`);
+        return res.redirect(303, `/purchasing/orders/${order.id}#cancel`);
+      }
+    }
+    const asksForThePlan = /\b(?:what|which|anything)\s+(?:should|do|to)\s+(?:i|we)\s+(?:order|buy|reorder|restock)|\b(?:order|buy|restock|replenish)\s+(?:what|whatever|everything)\s+(?:we|is|i)\s+(?:need|needed|are\s+low|am\s+low|running\s+low)|\b(?:run|do|make|prepare|plan)\s+(?:the\s+)?(?:replenishment|restock|reorder|purchasing)\b|\bwhat(?:'s|\s+is)\s+(?:running\s+)?low\b/i.test(message);
+    if (!asksForThePlan) {
+      req.session.pendingActionQuestion = {
+        question: 'StockChief read that as being about purchasing, but not what to do. Do you want a purchase order for a product (say which and how many), the reorder plan (“what should I order?”), or something about a supplier?',
+        instruction: message,
+      };
+      intentRouter.markRouted(req.db, req.ctx, intent.id, 'actions', null, 'NEEDS_CLARIFICATION');
+      return res.redirect(303, '/actions');
+    }
     const result = managerRunner.run(req.db, req.ctx, req.user, { trigger: 'tell-foundry-purchasing' });
     intentRouter.markRouted(req.db, req.ctx, intent.id, 'manager_purchasing');
     req.flash('success', result.nothingToDo
@@ -907,7 +1060,8 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     }
   }
   if (intent.handler === 'inventory_action'
-      || ['INVENTORY_ACTION', 'CATALOG_CHANGE', 'CONFIGURATION_CHANGE'].includes(intent.intentClass)) {
+      || ['INVENTORY_ACTION', 'CATALOG_CHANGE', 'CONFIGURATION_CHANGE'].includes(intent.intentClass)
+      || (readAsWork && ['QUESTION', 'EXPLANATION', 'UNKNOWN'].includes(intent.intentClass))) {
     const result = await actionService.interpret(req.db, req.ctx, req.user, message, {
       provider: req.app.locals.aiProvider || undefined,
       referentNote: req.assistantReferentNote || '',
@@ -960,6 +1114,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
         question: result.question,
         instruction: message,
         choices: result.choices || null,
+        where: result.where || null,
         continuationId,
         // Kept server-side with the handed question. The actions GET restores
         // it into the one-use continuation slot immediately before rendering,

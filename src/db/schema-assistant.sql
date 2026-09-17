@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS assistant_goals (
   workspace_id     TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   turn_id          TEXT NOT NULL REFERENCES assistant_turns(id) ON DELETE CASCADE,
   position         INTEGER NOT NULL,
-  -- lookup | change | send | instruction | report | navigate | unsupported | unclear
+  -- lookup | change | send | communication | instruction | report | navigate | unsupported | unclear
   kind             TEXT NOT NULL DEFAULT 'unclear',
   text             TEXT NOT NULL,
   -- pending | answered | needs_approval | drafted | clarify | handed | refused | failed | done | skipped

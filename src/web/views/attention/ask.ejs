@@ -142,7 +142,20 @@
       %>
       <div class="rm-said">
         <p class="rm-said__text" style="white-space:pre-line"><%= helpers.figures(said) %></p>
-        <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% if (result.needsClarification) { %><span>Reply below to continue this question. Nothing has changed.</span><% } %></p>
+        <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><% if (result.needsClarification && goal.status === 'clarify') { %><span><%= result.choices && result.choices.length ? 'Pick one, or reply below.' : 'Reply below to continue this question.' %> Nothing has changed.</span><% } %></p>
+        <%# A "which one?" is answered with a click: each candidate is the reply, sent as the answer to this question. %>
+        <% if (result.needsClarification && result.choices && result.choices.length) { %>
+          <div class="rm-suggest rm-suggest--answers">
+            <% result.choices.forEach(function (choice) { %>
+              <form method="post" action="/foundry/tell" data-busy>
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="queryConversation" value="1">
+                <input type="hidden" name="message" value="<%= choice %>">
+                <button type="submit"><%= choice %></button>
+              </form>
+            <% }) %>
+          </div>
+        <% } %>
 
         <% if (result.handoff) { %>
           <p class="rm-chat-actions"><a class="rm-btn" href="<%= result.handoff.href %>"><%= result.handoff.label %> <span aria-hidden="true">→</span></a></p>

@@ -86,22 +86,31 @@ function amountFrom(text) {
  * Nothing it produces is trusted on its own — propose() checks every field
  * against real records and refuses what it cannot place.
  */
+/** The fields a sentence states outright, read in code before any model. */
+function deterministicFields(said) {
+  const receipt = /\b(?:paid|pays|sent|wired|transferred|remitted)\s+(?:us|me)\b/i.test(said)
+    || /\bwe\s+(?:received|got)\b/i.test(said)
+    || /\breceived\s+(?:a\s+)?payment\b/i.test(said);
+  return { receipt, fields: {
+    direction: receipt ? 'CUSTOMER_RECEIPT' : 'SUPPLIER_PAYMENT',
+    counterpartyName: '',
+    amountText: (/(\$\s?\d[\d,]*(?:\.\d{1,2})?|\b\d[\d,]*\.\d{2}\b)/.exec(said) || [])[1] || '',
+    reference: (/\b((?:PO|SO|INV|BILL)-\d[A-Za-z0-9-]*)\b/i.exec(said) || [])[1]
+      || (/\b(?:invoice|inv|bill|po|order)\b\s*(?:no\.?|number|#)?\s*:?\s*([A-Za-z]{0,6}-?\d[A-Za-z0-9-]*)/i.exec(said) || [])[1] || '',
+    method: (/\b(ach|cheque|check|card|cash|wire|transfer|bank transfer|paypal)\b/i.exec(said) || [])[1] || '',
+    dateText: /\btoday\b/i.test(said) ? new Date().toISOString().slice(0, 10) : '',
+  } };
+}
+
 async function read(text, options = {}) {
   const said = String(text || '').trim();
   if (!said) return null;
 
-  const receipt = /\b(?:paid|pays|sent|wired|transferred|remitted)\s+(?:us|me)\b/i.test(said)
-    || /\bwe\s+(?:received|got)\b/i.test(said)
-    || /\breceived\s+(?:a\s+)?payment\b/i.test(said);
+  const receipt = deterministicFields(said).receipt;
 
-  const deterministic = {
-    direction: receipt ? 'CUSTOMER_RECEIPT' : 'SUPPLIER_PAYMENT',
-    counterpartyName: '',
-    amountText: (/(\$\s?\d[\d,]*(?:\.\d{1,2})?|\b\d[\d,]*\.\d{2}\b)/.exec(said) || [])[1] || '',
-    reference: (/\b(?:invoice|inv|bill|po|order)\s*#?\s*([A-Za-z0-9-]{2,})/i.exec(said) || [])[1] || '',
-    method: (/\b(ach|cheque|check|card|cash|wire|transfer|bank transfer|paypal)\b/i.exec(said) || [])[1] || '',
-    dateText: /\btoday\b/i.test(said) ? new Date().toISOString().slice(0, 10) : '',
-  };
+  // The keyword must end at a word boundary and the reference must carry a
+  // digit: "their invoice" used to yield the reference "oice".
+  const deterministic = deterministicFields(said).fields;
 
   // "I paid ABC Apparel $400 …" / "ABC School paid us $500 …"
   // The terminators need word boundaries: without them the "on" inside
@@ -322,4 +331,4 @@ function apply(db, ctx, membership, proposal, options = {}) {
   });
 }
 
-module.exports = { EXTRACTION_SCHEMA, SYSTEM, read, propose, apply, amountFrom, resolveCounterparty };
+module.exports = { EXTRACTION_SCHEMA, SYSTEM, read, propose, apply, amountFrom, resolveCounterparty, __deterministic: (said) => deterministicFields(said).fields };

@@ -31,6 +31,13 @@ function scoreOrder(interpretation, order) {
     score += 100;
     reasons.push(`document number matches ${order.poNumber}`);
   }
+  // "Your order: PO-1001" on a delivery note names the order outright. The
+  // reader extracted it and the scorer never looked, so a note that said
+  // which order it was for still came back "could not safely match".
+  if (interpretation.referencedOrderNumber && key(interpretation.referencedOrderNumber) === key(order.poNumber)) {
+    score += 100;
+    reasons.push(`the document names ${order.poNumber}`);
+  }
   if (interpretation.supplierName && key(interpretation.supplierName) === key(order.supplierName)) {
     score += 35;
     reasons.push(`supplier matches ${order.supplierName}`);

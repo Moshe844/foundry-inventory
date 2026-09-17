@@ -39,7 +39,8 @@
 </div>
 
 <% if (permissions.suppliers) { %>
-  <details class="card section advanced-settings" id="add-supplier"<%= suppliers.length ? '' : ' open' %>>
+  <% var prefill = locals.prefill || {}; %>
+  <details class="card section advanced-settings" id="add-supplier"<%= suppliers.length && !locals.prefill ? '' : ' open' %>>
     <summary class="card-head"><div><h2>Add a supplier</h2><p class="muted">Start with what you know. After this, StockChief walks you through products, email, permissions, and the first order.</p></div></summary>
     <form method="post" action="/suppliers">
     <div class="card-body">
@@ -47,19 +48,19 @@
       <div class="grid grid--2">
         <label class="field">
           <span class="field-label">Name</span>
-          <input class="input" type="text" name="name" required maxlength="160" placeholder="ABC Footwear">
+          <input class="input" type="text" name="name" required maxlength="160" placeholder="ABC Footwear" value="<%= prefill.name || '' %>">
         </label>
         <label class="field">
           <span class="field-label">Contact</span>
-          <input class="input" type="text" name="contactName" maxlength="120">
+          <input class="input" type="text" name="contactName" maxlength="120" value="<%= prefill.contactName || '' %>">
         </label>
         <label class="field">
           <span class="field-label">Email</span>
-          <input class="input" type="email" name="email" maxlength="160">
+          <input class="input" type="email" name="email" maxlength="160" value="<%= prefill.email || '' %>">
         </label>
         <label class="field">
           <span class="field-label">Phone</span>
-          <input class="input" type="text" name="phone" maxlength="60">
+          <input class="input" type="text" name="phone" maxlength="60" value="<%= prefill.phone || '' %>">
         </label>
         <label class="field">
           <span class="field-label">Usual lead time (days)</span>

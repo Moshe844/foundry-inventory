@@ -41,6 +41,23 @@ function findRecipient(db, workspaceId, text) {
     WHERE workspace_id = ? AND name = ? COLLATE NOCASE`).get(workspaceId, text.trim());
   if (supplier) return { kind: 'supplier', id: supplier.id, name: supplier.name, email: supplier.email };
 
+  /*
+   * "Acme" is Acme Trade Supply when nobody else is called Acme. A short
+   * name is taken only when it fits exactly one customer or supplier — a
+   * message to the wrong one cannot be recalled, so two fits is a question.
+   */
+  const like = `%${text.trim().replace(/[%_]/g, (c) => `\\${c}`)}%`;
+  const customers = db.prepare(`SELECT id, name, email FROM customers WHERE workspace_id = ? AND name LIKE ? ESCAPE '\\'
+    AND (record_state IS NULL OR record_state <> 'ARCHIVED')`).all(workspaceId, like);
+  const suppliers = db.prepare(`SELECT id, name, email FROM suppliers WHERE workspace_id = ? AND name LIKE ? ESCAPE '\\'
+    AND status = 'active'`).all(workspaceId, like);
+  if (customers.length + suppliers.length === 1) {
+    const one = customers[0] || suppliers[0];
+    return { kind: customers[0] ? 'customer' : 'supplier', id: one.id, name: one.name, email: one.email };
+  }
+  if (customers.length + suppliers.length > 1) {
+    return { kind: 'several', candidates: [...customers.map((c) => c.name), ...suppliers.map((s) => s.name)] };
+  }
   return null;
 }
 
@@ -61,9 +78,16 @@ function prepare(db, ctx, { recipientText, body, instruction }) {
       question: `StockChief has no customer or supplier called “${recipientText}”, `
         + 'and that is not an email address. Who should this go to?' };
   }
-  if (!recipient.email) {
+  if (recipient.kind === 'several') {
     return { kind: 'question',
-      question: `There is no email address on file for ${recipient.name}, so there is nowhere to send this.` };
+      question: `“${recipientText}” could be ${recipient.candidates.join(' or ')}. Which one?`,
+      choices: recipient.candidates.map((name) => ({ label: name, value: name })) };
+  }
+  if (!recipient.email) {
+    // A dead end with the way out attached: the record that needs the address.
+    return { kind: 'question',
+      question: `There is no email address on file for ${recipient.name}, so there is nowhere to send this. Add one on their record and send this again.`,
+      where: recipient.id ? { label: `Add an email for ${recipient.name}`, href: recipient.kind === 'supplier' ? `/suppliers/${recipient.id}` : `/sales/customers/${recipient.id}` } : null };
   }
   if (!String(body || '').trim()) {
     return { kind: 'question', question: `What should StockChief say to ${recipient.name}?` };

@@ -33,16 +33,31 @@
         </div>
         <a class="btn btn--block" href="/settings#learned-instructions">Inspect or remove it</a>
       <% } else if (productResolution) { %>
+        <% if (productResolution.oneProduct) { %>
+          <div class="notice notice--info">
+            <div>
+              <strong>“<%= productResolution.query %>” is <%= productResolution.oneProduct.name %>, which comes in <%= productResolution.oneProduct.count %> variants.</strong>
+              <p style="margin:6px 0 0;">Nothing is set yet. Apply this rule to all of them, or pick one.</p>
+            </div>
+          </div>
+        <% } else { %>
         <div class="notice notice--warn">
           <div>
             <strong>I can’t find “<%= productResolution.query %>” in this inventory.</strong>
             <p style="margin:6px 0 0;">No restriction has been created. Choose an existing product, create it, or try another name.</p>
           </div>
         </div>
+        <% } %>
         <% if (productResolution.candidates.length) { %>
           <div>
-            <div class="label">Did you mean one of these?</div>
+            <div class="label"><%= productResolution.oneProduct ? 'Which variants?' : 'Did you mean one of these?' %></div>
             <div class="act-choice-grid">
+              <% if (productResolution.oneProduct) { %>
+                <form method="post" action="/operating-instructions/<%= proposal.id %>/select-product" data-loading-text="Applying to every variant…">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                  <button class="btn btn--primary" type="submit" name="skuId" value="all:<%= productResolution.oneProduct.itemId %>">All <%= productResolution.oneProduct.count %> variants</button>
+                </form>
+              <% } %>
               <% productResolution.candidates.forEach(function(candidate) { %>
                 <% if (candidate.skuId) { %>
                   <form method="post" action="/operating-instructions/<%= proposal.id %>/select-product" data-loading-text="Selecting product…">

@@ -181,8 +181,10 @@ function oneLine(db, workspaceId, proposal) {
       return `Correct ${name} at ${before.sourceLocationName || 'a location'} to ${proposal.adjustmentTarget}`;
     case 'create_item': {
       const count = (proposal.expectedAfterState && proposal.expectedAfterState.variants) || 1;
+      const priced = proposal.settings.pricing && proposal.settings.pricing.sellingPriceMinor !== null && proposal.settings.pricing.sellingPriceMinor !== undefined
+        ? ` at $${(proposal.settings.pricing.sellingPriceMinor / 100).toFixed(2)}` : '';
       if (proposal.settings.initialStock) {
-        return `Add ${name} and receive ${proposal.quantity} at ${before.destinationLocationName}`;
+        return `Add ${name}${priced} and receive ${proposal.quantity} at ${before.destinationLocationName}`;
       }
       return count > 1
         ? `Add ${proposal.settings.name} with ${count} variants`

@@ -91,6 +91,7 @@ const SYSTEM = `You translate one business owner's lasting inventory operating i
 Return only the schema. Extract what was explicitly said; do not invent values, records, authority, or defaults.
 
 Use replenishment for reorder point, order-up-to target, network safety stock, and product lead time.
+"Reorder/restock/order more X when(ever) it drops below N" is a replenishment reorder point of N on X — never stock_protection, which is only for blocking or warning about outgoing stock.
 Use location_stock for a location minimum/keep-back and a desired location target.
 Use supplier_assignment to make a named supplier preferred for a product.
 Use supplier_terms for supplier contact, ordering method, lead time, purchase unit, units per purchase unit, MOQ, and order multiple.
@@ -207,6 +208,28 @@ function compileStockProtection(instruction) {
       guardThreshold, guardReleaseCondition: releaseCondition,
       guardReleaseThreshold: releaseCondition === 'stock_recovered' ? guardThreshold : -1,
     }],
+  };
+}
+
+/*
+ * "Reorder gloves whenever we drop below 20" is a reorder point of 20 on
+ * gloves. The model read it as stock protection — the sentence has "below"
+ * and a number — and asked what to block. The plain form of a reorder rule
+ * is closed enough to read in code: a reorder verb, a product, a threshold.
+ * Which variants "gloves" means is still settled by the ordinary resolver.
+ */
+function compileReorderRule(instruction) {
+  const text = String(instruction || '').trim();
+  const m = /^(?:from\s+now\s+on,?\s+|always\s+|please\s+)?(?:re-?order|order\s+more|restock|replenish|buy\s+more)\s+(?:of\s+)?(.+?)\s+(?:whenever|when|if|once|as\s+soon\s+as)\s+(?:we|it|they|stock|the\s+stock|we're|we\s+are|levels?)?\s*(?:drop|drops|fall|falls|get|gets|go|goes|is|are|dip|dips)?\s*(?:to\s+)?(?:below|under|less\s+than|fewer\s+than|at\s+or\s+below)\s+(\d+)\b(?:\s*(?:units?|pcs|pieces|left|in\s+stock|on\s+hand))?\s*\.?$/i.exec(text);
+  if (!m) return null;
+  const itemText = m[1].replace(/^(?:the|our|my|all)\s+/i, '').trim();
+  const reorderPoint = Number(m[2]);
+  if (!itemText || !Number.isInteger(reorderPoint)) return null;
+  return {
+    understood: true,
+    summary: `Reorder ${itemText} at ${reorderPoint}`,
+    clarifyingQuestion: '', unsupportedReason: '',
+    changes: [{ ...emptyChange(), domain: 'replenishment', operation: 'set', itemText, reorderPoint }],
   };
 }
 
@@ -449,14 +472,15 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   const offlineFallback = !options.provider && !config.ai.configured
     ? compileSupplierCommunication(clean) : null;
   if (!offlineFallback && !options.provider && !config.ai.configured) throw new ValidationError('StockChief needs its model connection to read that instruction.');
-  const provider = offlineFallback ? null : options.provider || createProviderForTier('standard');
+  const reorderRule = compileReorderRule(clean);
+  const provider = offlineFallback || reorderRule ? null : options.provider || createProviderForTier('standard');
   const catalogue = db.prepare(
     `SELECT i.name, s.code, s.variant_label FROM skus s JOIN items i ON i.id = s.item_id
       WHERE s.workspace_id = ? AND s.is_active = 1 AND i.is_active = 1 ORDER BY i.name, s.position`
   ).all(ctx.workspaceId);
   const locationRows = db.prepare("SELECT name FROM locations WHERE workspace_id = ? AND is_active = 1 ORDER BY name").all(ctx.workspaceId);
   const supplierRows = suppliers.listSuppliers(db, ctx.workspaceId).map((s) => ({ name: s.name }));
-  const response = offlineFallback ? { data: offlineFallback } : await provider.complete({
+  const response = reorderRule ? { data: reorderRule } : offlineFallback ? { data: offlineFallback } : await provider.complete({
     system: SYSTEM,
     prompt: `Instruction:\n${clean}\n\nReal variants:\n${JSON.stringify(catalogue)}\n\nReal locations:\n${JSON.stringify(locationRows)}\n\nReal suppliers:\n${JSON.stringify(supplierRows)}`,
     schema: SCHEMA, schemaName: 'operating_instruction',
@@ -828,22 +852,33 @@ function selectProduct(db, ctx, membership, id, skuId) {
   if (proposal.status !== 'PENDING' || !proposal.questions.length) {
     throw new ValidationError('That instruction is not waiting for a product.');
   }
-  const sku = db.prepare(
-    `SELECT s.id, s.code, s.variant_label, i.name AS item_name
-       FROM skus s JOIN items i ON i.id = s.item_id AND i.workspace_id = s.workspace_id
-      WHERE s.workspace_id = ? AND s.id = ? AND s.is_active = 1 AND i.is_active = 1`
-  ).get(ctx.workspaceId, skuId);
-  if (!sku) throw new ValidationError('Choose a product from this inventory.');
+  /*
+   * "Gloves" is one product in six variants. A rule about gloves is a rule
+   * about all six unless the person picks one, so the page offers "all
+   * variants" and this expands the one change into one per variant.
+   */
+  const allOf = /^all:(.+)$/.exec(String(skuId || ''));
+  const skus = allOf
+    ? db.prepare(`SELECT s.id, s.code, s.variant_label, i.name AS item_name
+         FROM skus s JOIN items i ON i.id = s.item_id AND i.workspace_id = s.workspace_id
+        WHERE s.workspace_id = ? AND i.id = ? AND s.is_active = 1 AND i.is_active = 1 ORDER BY s.position`).all(ctx.workspaceId, allOf[1])
+    : [db.prepare(
+      `SELECT s.id, s.code, s.variant_label, i.name AS item_name
+         FROM skus s JOIN items i ON i.id = s.item_id AND i.workspace_id = s.workspace_id
+        WHERE s.workspace_id = ? AND s.id = ? AND s.is_active = 1 AND i.is_active = 1`
+    ).get(ctx.workspaceId, skuId)].filter(Boolean);
+  if (!skus.length) throw new ValidationError('Choose a product from this inventory.');
+  const sku = skus[0];
 
   let replaced = false;
-  const changes = proposal.changes.map((change, index) => {
-    if (replaced || !needsSku(change.domain) || proposal.resolvedChanges[index]?.skuId) return change;
+  const changes = proposal.changes.flatMap((change, index) => {
+    if (replaced || !needsSku(change.domain) || proposal.resolvedChanges[index]?.skuId) return [change];
     replaced = true;
-    return { ...change, itemText: sku.item_name, variantText: sku.variant_label || '' };
+    return skus.map((each) => ({ ...change, itemText: each.item_name, variantText: each.variant_label || '' }));
   });
   if (!replaced) throw new ValidationError('That instruction is not waiting for a product.');
 
-  const statedAs = `${proposal.statedAs}\nProduct selected: ${sku.item_name}${sku.variant_label ? ` — ${sku.variant_label}` : ''}`;
+  const statedAs = `${proposal.statedAs}\nProduct selected: ${sku.item_name}${skus.length > 1 ? ` — all ${skus.length} variants` : sku.variant_label ? ` — ${sku.variant_label}` : ''}`;
   const resolved = changes.map((change) => resolveChange(db, ctx.workspaceId, change, statedAs));
   const questions = [...new Set(resolved.flatMap((entry) => entry.questions).filter(Boolean))];
   const resolvedChanges = resolved.map((entry) => entry.change);
@@ -947,4 +982,4 @@ function suggestFromRepeatedApproval(db, ctx, item) {
   return get(db, ctx.workspaceId, id);
 }
 
-module.exports = { DOMAINS, CHANGE_SCHEMA, SCHEMA, SYSTEM, interpret, proposeStockProtectionAnswer, proposeStockProtectionProduct, resolveChange, describe, clarificationFor, get, list, approve, cancel, answer, selectProduct, remove, suggestFromRepeatedApproval };
+module.exports = { DOMAINS, CHANGE_SCHEMA, SCHEMA, SYSTEM, interpret, __compileReorderRule: compileReorderRule, proposeStockProtectionAnswer, proposeStockProtectionProduct, resolveChange, describe, clarificationFor, get, list, approve, cancel, answer, selectProduct, remove, suggestFromRepeatedApproval };

@@ -31,7 +31,38 @@ function record(db, ctx, input) {
     matched = investigated.affectedEntities;
     status = investigated.status === 'RESOLVED' ? 'COMPLETED' : 'NEEDS_HUMAN';
   } else if (type === 'shipment_arrived') {
-    const requestedOrderId = input.purchaseOrderId || (matched && matched.purchaseOrderId);
+    /*
+     * "The Acme delivery for PO-1001 arrived" names the order. That used to
+     * count for nothing: with more than one open order the report was filed
+     * as "could not place it". An order number in the sentence that is one
+     * of the open orders is the match; failing that, a supplier named in
+     * the sentence with exactly one open order is.
+     */
+    let requestedOrderId = input.purchaseOrderId || (matched && matched.purchaseOrderId);
+    if (!requestedOrderId) {
+      const numbers = [...String(statedAs || '').matchAll(/\b(PO-\d+)\b/gi)].map((m) => m[1].toUpperCase());
+      for (const number of numbers) {
+        const row = db.prepare(`SELECT id FROM purchase_orders WHERE workspace_id = ? AND UPPER(po_number) = ?
+          AND status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')`).get(ctx.workspaceId, number);
+        if (row) { requestedOrderId = row.id; break; }
+      }
+    }
+    if (!requestedOrderId) {
+      const suppliers = db.prepare(`SELECT DISTINCT s.id, s.name FROM suppliers s JOIN purchase_orders po ON po.supplier_id = s.id
+        WHERE po.workspace_id = ? AND po.status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')`).all(ctx.workspaceId);
+      const said = String(statedAs || '').toLowerCase();
+      // "The Lakeside delivery" names Lakeside Textiles by its distinctive word;
+      // a word that also names another supplier decides nothing.
+      const generic = new Set(['the', 'and', 'ltd', 'inc', 'llc', 'co', 'supply', 'supplies', 'trade', 'trading', 'group', 'company', 'limited']);
+      const distinctive = (name) => name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !generic.has(w));
+      const named = suppliers.filter((s) => distinctive(s.name).some((w) => new RegExp(`\\b${w}\\b`).test(said)
+        && !suppliers.some((o) => o.id !== s.id && distinctive(o.name).includes(w))));
+      if (named.length === 1) {
+        const theirs = db.prepare(`SELECT id FROM purchase_orders WHERE workspace_id = ? AND supplier_id = ?
+          AND status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')`).all(ctx.workspaceId, named[0].id);
+        if (theirs.length === 1) requestedOrderId = theirs[0].id;
+      }
+    }
     const candidates = requestedOrderId
       ? db.prepare(`SELECT id, po_number FROM purchase_orders WHERE workspace_id = ? AND id = ?
           AND status IN ('APPROVED','ORDERED','PARTIALLY_RECEIVED')`).all(ctx.workspaceId, requestedOrderId)
@@ -84,8 +115,10 @@ function describeOutcome(db, workspaceId, event) {
 
   if (event.status === 'ROUTED' && entities.purchaseOrderId) {
     return {
-      message: 'StockChief matched that event. Check the receiving details before stock changes.',
-      redirectTo: `/purchasing/orders/${entities.purchaseOrderId}`,
+      message: `StockChief matched that to ${entities.poNumber || 'the open order'}. Check what physically arrived before stock changes.`,
+      // Straight to booking it in, not to the order page with the booking a
+      // click further on.
+      redirectTo: `/purchasing/orders/${entities.purchaseOrderId}/receive?event=${event.id}`,
     };
   }
 

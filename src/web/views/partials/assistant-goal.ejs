@@ -1,0 +1,19 @@
+<%
+  /*
+   * The ledger row this page is the answer to.
+   *
+   * A question on the actions page, or a proposal to approve, used to arrive
+   * with no thread back to what was asked: which part of which message, and
+   * what became of the rest. This strip is that thread, read from the
+   * ledger — the same row the conversation page shows — so the two never
+   * disagree about what was said.
+   */
+  var g = locals.assistantGoal;
+%>
+<% if (g) { %>
+  <div class="rm-goal-strip" role="note">
+    <span class="rm-pill rm-pill--<%= g.statusTone %>"><%= g.statusLabel %></span>
+    <span class="rm-goal-strip__t">From your message<% if (g.turnGoals > 1) { %> — part <%= g.position + 1 %> of <%= g.turnGoals %><% } %>: “<%= g.text.length > 160 ? g.text.slice(0, 160) + '…' : g.text %>”</span>
+    <a href="/ask">See the conversation</a>
+  </div>
+<% } %>
