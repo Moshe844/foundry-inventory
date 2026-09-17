@@ -422,7 +422,7 @@ function intentPrompt(instruction, context) {
   }
   if (context.stockNoun) lines.push(`They call their stock "${context.stockNoun}".`);
   // From the conversation ledger: what “that PO” or “the draft” means here.
-  if (context.referentNote) lines.push(`Earlier things on the table: ${context.referentNote}.`);
+  if (context.referentNote) lines.push(`Earlier things on the table: ${require('../ai/guard').recordValue(context.referentNote, { max: 600 })}.`);
   if (context.pendingAction) {
     lines.push(
       `StockChief has already proposed: ${context.pendingAction}. ` +
@@ -933,6 +933,8 @@ function plainReadingError(err, clock) {
   }
   if (err && err.code === 'ai_refusal') return err;
   if (err && err.code === 'ai_not_configured') return err;
+  // A ceiling reached says so in its own words; it is not a service failure.
+  if (err && err.status === 429) return new ValidationError(err.message);
   if (err instanceof ProviderOutputError) {
     return new ValidationError('StockChief could not read that instruction all the way through. Nothing changed. Try a shorter sentence, or put each change on its own line.');
   }
