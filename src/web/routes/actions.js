@@ -514,6 +514,14 @@ router.get(
         req.flash('error', err.message);
         return res.redirect(303, `/actions/${proposal.proposalId}`);
       }
+      // The conversation that asked for this now knows it ran.
+      try {
+        const after = proposals.get(req.db, req.ctx.workspaceId, proposal.proposalId);
+        const goal = ledger.goalByResult(req.db, req.ctx, assistantTurns.conversationId(req), `/actions/${proposal.proposalId}`);
+        if (goal && after && after.status === 'SUCCEEDED') {
+          ledger.settle(req.db, req.ctx, goal.id, { status: 'done', said: `Done: ${presenter.oneLine(req.db, req.ctx.workspaceId, after)}.`, resultHref: `/actions/${proposal.proposalId}`, resultLabel: 'See what ran' });
+        }
+      } catch (err) { console.error('[foundry] could not settle the goal as done', err); }
     }
     return res.redirect(303, `/actions/${proposal.proposalId}`);
   })

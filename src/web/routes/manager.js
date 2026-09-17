@@ -19,6 +19,7 @@ const actionPresenter = require('../../actions/presenter');
 const assistantTurns = require('../../assistant/turns');
 const ledger = require('../../assistant/ledger');
 const tools = require('../../assistant/tools');
+const undoService = require('../../assistant/undo');
 const importPlans = require('../../imports/plan-service');
 const workItems = require('../../autopilot/work-items');
 const operatingInstructions = require('../../manager/operating-instructions');
@@ -63,12 +64,12 @@ router.get('/foundry/navigate', (req, res) => {
  * An answer StockChief gives in its own words, shown on the Ask page as any
  * other answer and settled in the ledger as answered.
  */
-function plainAnswer(req, res, question, answer) {
+function plainAnswer(req, res, question, answer, handoff = null, settledAs = null) {
   const token = crypto.randomUUID();
   req.session.askTurns = [...(req.session.askTurns || []).slice(-7), { token, workspaceId: req.ctx.workspaceId, question, conversation: null }];
   req.session.pendingAskResult = { token, workspaceId: req.ctx.workspaceId, question, result: {
-    question, answer, rows: [], columns: [], rowCount: 0, supported: true, isAction: false, needsClarification: false, handoff: null,
-    plan: { intent: 'small_talk', entityQuery: '', locationQuery: '' }, interpretation: 'a reply, not a lookup', spoken: null,
+    question, answer, rows: [], columns: [], rowCount: 0, supported: true, isAction: false, needsClarification: false, handoff,
+    plan: { intent: settledAs ? 'undo' : 'small_talk', entityQuery: '', locationQuery: '' }, interpretation: 'a reply, not a lookup', spoken: null, settledAs,
   } };
   return res.redirect(303, `/ask?q=${encodeURIComponent(question)}&followup=1&turn=${token}`);
 }
@@ -459,6 +460,24 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     return plainAnswer(req, res, message, thanks
       ? 'You’re welcome.'
       : 'Hello. Ask about stock, orders, suppliers or money — or tell StockChief what happened.');
+  }
+  /*
+   * "Undo that" is the last thing this conversation did, from the ledger:
+   * withdrawn if it had not run, cancelled if it was a draft, reversed as a
+   * new change for approval if it ran, and said plainly when it cannot be.
+   */
+  if (!attached && message && undoService.ASKS_UNDO.test(message)) {
+    const target = undoService.findTarget(req.db, req.ctx, assistantTurns.conversationId(req));
+    let outcome;
+    try {
+      outcome = undoService.undo(req.db, req.ctx, req.user, target, { session: req.session });
+    } catch (err) {
+      if (!err.status || err.status >= 500) throw err;
+      outcome = { done: false, said: err.message };
+    }
+    assistantTurns.settleNow(req, { status: outcome.done ? (outcome.status || 'done') : 'refused', said: outcome.said, resultHref: outcome.href || null, resultLabel: outcome.label || null });
+    if (outcome.href && outcome.status === 'needs_approval') { req.flash('info', outcome.said); return res.redirect(303, outcome.href); }
+    return plainAnswer(req, res, message, outcome.said, outcome.href ? { href: outcome.href, label: outcome.label } : null, outcome.done ? 'done' : 'refused');
   }
   /*
    * "Do it" typed into the chat means the thing waiting for approval. It is

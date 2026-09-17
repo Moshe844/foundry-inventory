@@ -341,9 +341,11 @@ function askOutcome(question, result, error) {
   const smallTalk = /^\s*(?:thanks|thank you|thx|cheers|hi|hello|hey|ok|okay|great|cool|nice|good morning|good afternoon|bye)\b/i.test(question);
   const status = result.isAction ? 'clarify' : result.needsClarification && !smallTalk ? 'clarify' : result.supported === false && !smallTalk ? 'refused' : 'answered';
   // A reply in StockChief's own words read no records; it carries no "read … · 0 rows" line.
-  const conversational = result.plan && ['small_talk', 'conversation_recap'].includes(result.plan.intent);
+  const conversational = result.plan && ['small_talk', 'conversation_recap', 'undo'].includes(result.plan.intent);
   if (conversational) {
-    return { status, said: String(said || ''), resultHref: null, resultLabel: null, provenance: { intent: result.plan.intent, interpretation: result.interpretation || null, reads: [], rowCount: null, asOf: null } };
+    // An undo settles as what it did — done, or refused — not as an answer.
+    const settled = result.settledAs && ledger.GOAL_STATUSES.includes(result.settledAs) ? result.settledAs : status;
+    return { status: settled, said: String(said || ''), resultHref: result.handoff ? result.handoff.href : null, resultLabel: result.handoff ? result.handoff.label : null, provenance: { intent: result.plan.intent, interpretation: result.interpretation || null, reads: [], rowCount: null, asOf: null } };
   }
   // General knowledge read nothing; the page says so, in those words.
   if (result.general) {

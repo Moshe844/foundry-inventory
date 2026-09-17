@@ -1318,26 +1318,34 @@ function proposeCompensation(db, ctx, membership, proposalId) {
   if (!original) throw new NotFoundError('That action could not be found.');
   if (original.status !== 'SUCCEEDED') throw new ValidationError('That action did not run, so there is nothing to undo.');
 
-  if (original.actionType !== 'transfer') {
+  if (!['transfer', 'receive', 'issue', 'adjust'].includes(original.actionType)) {
     return {
       kind: 'unsupported',
-      message:
-        original.actionType === 'adjust'
-          ? 'A correction is undone by recording another correction, with its own reason.'
-          : 'StockChief can only reverse a transfer automatically. Anything else needs a new action.',
+      message: 'StockChief can reverse a transfer, a receipt, an issue or a count correction automatically. Anything else needs a new action.',
     };
   }
 
-  permissions.assertCanPerform(membership, 'transfer');
+  const undoType = { transfer: 'transfer', receive: 'issue', issue: 'receive', adjust: 'adjust' }[original.actionType];
+  permissions.assertCanPerform(membership, undoType);
 
   return inTransaction(db, () => {
     const intent = intentFromProposal(db, ctx.workspaceId, original);
-    // The same move, the other way round.
-    const reversed = {
-      ...intent,
-      sourceLocation: intent.destinationLocation,
-      destinationLocation: intent.sourceLocation,
-    };
+    // The same change, the other way round: a transfer goes back; a receipt
+    // is issued out again; an issue is received back; a correction is
+    // corrected back to the count it replaced. Each is a new movement with
+    // its own reason, never a deletion from the ledger.
+    let reversed;
+    if (original.actionType === 'transfer') {
+      reversed = { ...intent, sourceLocation: intent.destinationLocation, destinationLocation: intent.sourceLocation };
+    } else if (original.actionType === 'receive') {
+      reversed = { ...intent, actionType: 'issue', sourceLocation: intent.destinationLocation, destinationLocation: '', reasonCode: 'other', adjustmentTarget: -1 };
+    } else if (original.actionType === 'issue') {
+      reversed = { ...intent, actionType: 'receive', destinationLocation: intent.sourceLocation, sourceLocation: '', reasonCode: '', adjustmentTarget: -1 };
+    } else {
+      const before = original.expectedBeforeState && Number.isFinite(Number(original.expectedBeforeState.sourceOnHand)) ? Number(original.expectedBeforeState.sourceOnHand) : null;
+      if (before === null) return { kind: 'unsupported', message: 'StockChief does not know what the count was before that correction, so it cannot put it back automatically. Record the right count as a new correction.' };
+      reversed = { ...intent, actionType: 'adjust', adjustmentTarget: before, quantity: null, reasonCode: 'correction' };
+    }
     const built = proposals.build(db, ctx, reversed);
     if (!built.ok) {
       return { kind: 'question', question: built.question || built.unsupported };

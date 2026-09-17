@@ -1144,17 +1144,22 @@ test('a prepared transfer is cancelled rather than reversed as fictional movemen
   assert.equal(transferService.get(env.db, env.workspace.workspaceId, transfer.id).status, 'CANCELLED');
 });
 
-test('a correction cannot be silently undone', () => {
+test('a correction is undone by another correction, back to the count it replaced, with its own reason and its own approval', () => {
   const env = clothing();
   const proposal = propose(env, {
     actionType: 'adjust', sourceLocation: 'Main Warehouse', destinationLocation: '',
     quantity: null, adjustmentTarget: 37, reasonCode: 'physical_count',
   });
   run(env, proposal);
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 37);
 
   const result = actionService.proposeCompensation(env.db, env.ctx, env.membership, proposal.proposalId);
-  assert.equal(result.kind, 'unsupported');
-  assert.match(result.message, /another correction, with its own reason/);
+  assert.equal(result.kind, 'proposal', JSON.stringify(result));
+  assert.equal(result.proposal.actionType, 'adjust');
+  assert.equal(result.proposal.adjustmentTarget, 48, 'back to what the records said before');
+  assert.equal(result.proposal.reasonCode, 'correction');
+  assert.equal(result.proposal.status, 'AWAITING_APPROVAL', 'nothing is undone until approved');
+  assert.equal(repo.getBalance(env.db, env.workspace.workspaceId, env.navy4.id, env.workspace.main.id), 37);
 });
 
 // --- workspace isolation -----------------------------------------------------
