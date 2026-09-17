@@ -994,6 +994,11 @@
           form.parentElement.insertBefore(you, form);
           form.parentElement.insertBefore(foundry, form);
           if (pending) pending.hidden = true;
+          // What was just said is what is on screen while the answer is computed.
+          const history = form.parentElement.querySelector('.rm-history');
+          if (history) history.open = false;
+          you.classList.add('rm-turn--latest');
+          you.scrollIntoView({ block: 'start', behavior: 'smooth' });
 
           // The phrasing moves so a long wait reads as progress, not a hang.
           const text = foundry.querySelector('[data-thinking-text]');
@@ -1669,9 +1674,12 @@
    */
   function initAskScroll() {
     const chat = document.querySelector('.rm-chat');
-    if (!chat || !chat.querySelector('.rm-turn--past')) return;
-    const current = chat.querySelector('.rm-turn--you:not(.rm-turn--past)') || chat.querySelector('.rm-composer');
+    if (!chat || !chat.querySelector('.rm-history, .rm-turn--past')) return;
+    // The latest exchange — the question just asked, its answer beneath it —
+    // is what the page opens on, never the folded history above it.
+    const current = chat.querySelector('.rm-turn--latest') || chat.querySelector('.rm-turn--you:not(.rm-turn--past)') || chat.querySelector('.rm-composer');
     if (!current) return;
+    if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
     current.scrollIntoView({ block: 'start' });
   }
 

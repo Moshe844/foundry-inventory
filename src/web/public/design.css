@@ -3449,8 +3449,19 @@ details.bill-pay > summary.btn::before, details.bill-pay[open] > summary.btn::be
   .rm-room__icon { color: #7F88A5; opacity: 1; }
   .rm-room.is-on .rm-room__icon, .rm-room:hover .rm-room__icon { color: #AFAAFF; }
 }
-@media (max-width: 720px) {
-  .rm-rooms { order: 8; flex: 1 1 100%; gap: 0; }
-  .rm-room { padding: 4px 7px; font-size: 12px; }
+/* One rail row between 721 and 900px: the doors stay on the line, without
+   their icons, instead of wrapping under the rail and over the page. */
+@media (max-width: 900px) {
+  .rm-rail__nav, .rm-rooms { flex: 0 0 auto; flex-wrap: nowrap; }
+  .rm-rail a.rm-tab, .rm-rail button.rm-tab { padding: 6px 7px; font-size: var(--t-sm); }
+  .rm-rooms { gap: 0; margin-left: 2px; }
+  .rm-room { padding: 4px 5px; font-size: 12px; }
   .rm-room__icon { display: none; }
+  .rail-search { flex: 0 1 170px; min-width: 44px; }
+  .rm-switch__btn { max-width: 104px; }
+  .rm-rail__who { margin-left: 4px; padding-left: 4px; }
+}
+@media (max-width: 720px) {
+  .rm-rooms { order: 8; flex: 1 1 100%; gap: 0; margin-left: 0; }
+  .rm-room { padding: 4px 7px; font-size: 12px; }
 }

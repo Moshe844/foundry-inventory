@@ -106,8 +106,28 @@
     answer is shown in full with its records; earlier ones are as they were
     said — a record of what was said, not a live figure.
   %>
-  <% transcript.forEach(function (turn) { %>
-    <div class="rm-turn rm-turn--you<%= turn.goals.some(function (g) { return g.id === currentGoalId; }) ? '' : ' rm-turn--past' %>">
+  <%
+    /*
+     * Only the latest exchange is open: the turn that holds the answer just
+     * computed, or failing that the last one said. Everything before it is
+     * folded under one line, so what was just asked is what is on screen
+     * and the page does not have to be scrolled back up to find it.
+     */
+    var latestIndex = transcript.length - 1;
+    transcript.forEach(function (t, i) { if (t.goals.some(function (g) { return g.id === currentGoalId; })) latestIndex = i; });
+    var earlier = latestIndex;
+  %>
+  <% transcript.forEach(function (turn, turnIndex) { %>
+    <% if (earlier > 0 && turnIndex === 0) { %>
+    <details class="rm-history">
+      <summary>Earlier in this conversation · <%= earlier %> <%= helpers.plural(earlier, 'message') %></summary>
+      <div class="rm-history__body">
+    <% } %>
+    <% if (earlier > 0 && turnIndex === earlier) { %>
+      </div>
+    </details>
+    <% } %>
+    <div class="rm-turn rm-turn--you<%= turn.goals.some(function (g) { return g.id === currentGoalId; }) ? '' : ' rm-turn--past' %><%= turnIndex === latestIndex ? ' rm-turn--latest' : '' %>">
       <p class="rm-turn__who">You</p>
       <% if (turn.message.length > 400) { %>
         <details class="rm-turn__said"><summary><%= turn.message.slice(0, 160) %>…</summary><p style="white-space:pre-line;margin:8px 0 0"><%= turn.message %></p></details>

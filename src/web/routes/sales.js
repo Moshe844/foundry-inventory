@@ -156,8 +156,10 @@ router.get(['/orders/new', '/sales/new'], requirePermission(permissions.OPERATE,
 }));
 
 router.get('/sales/customers/new', requirePermission(permissions.OPERATE, 'create customers'), asyncRoute(async (req, res) => {
+  // A sentence to StockChief can fill the form in; the person still presses Save.
+  const prefill = { name: trimOrNull(req.query.name) || '', email: trimOrNull(req.query.email) || '', phone: trimOrNull(req.query.phone) || '' };
   res.page('sales/customer-new', {
-    title: 'New customer', nav: 'sales', form: {}, formError: null, screenGuide: null,
+    title: 'New customer', nav: 'sales', form: prefill, formError: null, screenGuide: null,
   });
 }));
 

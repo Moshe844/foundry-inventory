@@ -192,7 +192,7 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
   });
 
   if (intent.unsupportedReason && intent.lines.length === 0) {
-    return { kind: 'unsupported', message: intent.unsupportedReason };
+    return { kind: 'unsupported', ...plainRefusal(db, ctx, text, intent.unsupportedReason) };
   }
   if (intent.clarifyingQuestion && intent.lines.length === 0) {
     if (Array.isArray(intent.structuredRecords) && intent.structuredRecords.length) {
@@ -1305,6 +1305,42 @@ function intentFromProposal(db, workspaceId, proposal, overrides = {}) {
     resolvedSkuId: proposal.skuId,
     settings: proposal.settings,
     assumptions: [],
+  };
+}
+
+/*
+ * A refusal in the reader's words is not a refusal in a person's words.
+ *
+ * "Creating a new customer record is not one of the operations listed above"
+ * is the model describing its own instructions, shown to the owner as if
+ * StockChief could not add customers — which it can, on the customer form.
+ * Any reason that talks about its list of operations is replaced here with
+ * a plain sentence and, when the product brain knows the page, the door.
+ */
+const READER_ASIDE = /\b(?:not\s+(?:one\s+of\s+)?(?:the\s+)?(?:operations?|actions?|options?)\s+(?:listed|available|supported|above|here)|(?:listed|operations?)\s+above|outside\s+(?:the\s+)?(?:listed|supported)|not\s+(?:a\s+)?(?:supported|listed)\s+(?:operation|action))\b/i;
+function plainRefusal(db, ctx, instruction, reason) {
+  const text = String(reason || '');
+  if (!READER_ASIDE.test(text)) return { message: text };
+  // Where each kind of record is added or changed by hand.
+  const DOORS = [
+    [/\bcustomers?\b|\bclients?\b/i, { href: '/sales/customers/new', label: 'Add a customer' }],
+    [/\bsuppliers?\b|\bvendors?\b/i, { href: '/suppliers#add-supplier', label: 'Add a supplier' }],
+    [/\blocations?\b|\bwarehouses?\b|\bstores?\b/i, { href: '/locations', label: 'Locations' }],
+    [/\bproducts?\b|\bitems?\b|\bskus?\b/i, { href: '/inventory/new', label: 'Add a product' }],
+    [/\b(?:users?|people|person|staff|team|members?|accountant)\b/i, { href: '/settings', label: 'Settings and people' }],
+    [/\b(?:connections?|integrations?|shopify|square|quickbooks|xero|mailbox|email)\b/i, { href: '/settings/connections', label: 'Connections' }],
+    [/\bbills?\b/i, { href: '/accounting/payables', label: 'Bills' }],
+    [/\binvoices?\b/i, { href: '/accounting/receivables', label: 'Invoices' }],
+    [/\b(?:sales?\s+)?orders?\b/i, { href: '/orders/new', label: 'Write an order' }],
+  ];
+  const said = `${instruction || ''} ${text}`;
+  const door = DOORS.find(([re]) => re.test(said));
+  const where = door ? door[1] : null;
+  return {
+    message: where
+      ? `StockChief cannot do that from a sentence yet; it is done on the “${where.label}” page, which the button below opens. Nothing has changed.`
+      : 'StockChief cannot do that from a sentence yet. It has a page of its own — ask “how do I …” and StockChief will say where. Nothing has changed.',
+    where,
   };
 }
 

@@ -446,3 +446,39 @@ test('answering "which place should it come out of?" settles the goal as prepare
   assert.equal(settled.status, 'needs_approval');
   assert.equal(settled.resultHref, '/actions/act_prepared');
 });
+
+// 88. Before: "Creating a new customer record is not one of the operations
+// listed above" — the reader's aside about its own instructions, shown as a
+// refusal.
+test('"Can you create a customer? Name: Moshe, email: …" fills the customer form in and saves nothing', async () => {
+  const { app, w, db } = setup();
+  const agent = request.agent(app);
+  await signIn(agent, w.account.email, w.account.password);
+  const home = await agent.get('/');
+  const posted = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'Can you create a customer? Name: Moshe, email: arye6700@gmail.com' });
+  assert.equal(posted.status, 303);
+  assert.equal(posted.headers.location, '/sales/customers/new?name=Moshe&email=arye6700%40gmail.com');
+  const page = await agent.get(posted.headers.location);
+  assert.match(page.text, /name="name" value="Moshe"/);
+  assert.match(page.text, /name="email" value="arye6700@gmail.com"/);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM customers WHERE name = 'Moshe'").get().n, 0, 'nothing is saved until Save is pressed');
+  const goal = db.prepare("SELECT status, said FROM assistant_goals ORDER BY rowid DESC LIMIT 1").get();
+  assert.equal(goal.status, 'handed');
+  assert.match(goal.said, /Opened the new-customer form with “Moshe” \(arye6700@gmail.com\) filled in/);
+  // Other phrasings land on the same door; an order for a customer does not.
+  const again = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'add a new client called Bright Homes Ltd, phone 555-0100' });
+  assert.equal(again.headers.location, '/sales/customers/new?name=Bright+Homes+Ltd&phone=555-0100');
+  const order = await agent.post('/foundry/tell').type('form').send({ _csrf: csrfFrom(home.text), message: 'create a customer order for Moshe, 3 copper elbow' });
+  assert.notEqual((order.headers.location || '').split('?')[0], '/sales/customers/new');
+});
+
+test('a refusal that quotes the reader\'s own instructions is replaced by a plain sentence and the door', async () => {
+  const { db, w } = setup();
+  const membership = authService.getMembership(db, w.workspaceId, w.accountId);
+  const provider = { async complete() { return { data: { lines: [], clarifyingQuestion: '', unsupportedReason: 'Creating a new customer record is not one of the operations listed above.' } }; } };
+  const result = await actionService.interpret(db, w.ctx, membership, 'please make me a customer file for Dana', { provider });
+  assert.equal(result.kind, 'unsupported');
+  assert.doesNotMatch(result.message, /listed above|operations/i);
+  assert.match(result.message, /cannot do that from a sentence yet/);
+  assert.deepEqual(result.where, { href: '/sales/customers/new', label: 'Add a customer' });
+});

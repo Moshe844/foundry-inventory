@@ -766,6 +766,32 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
   }
 
   /*
+   * "Can you create a customer? Name: Moshe, email: …" — a customer is added
+   * on the customer form, and the sentence fills it in. Nothing is saved from
+   * here. It used to reach the reader, which said "creating a new customer
+   * record is not one of the operations listed above" — a model's aside,
+   * shown to the owner as a refusal.
+   */
+  const newCustomer = /^\s*(?:please\s+|can\s+you\s+|could\s+you\s+|i\s+want\s+to\s+|i'?d\s+like\s+to\s+)?(?:add|create|set\s+up|register|make|new)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:customer|client)\b\s*\??(.*)$/is.exec(message);
+  if (newCustomer && !/\b(?:order|invoice|return|payment)\b/i.test(newCustomer[1].replace(/\S+@\S+/g, ''))) {
+    const rest = newCustomer[1];
+    const email = (/\b([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b/i.exec(rest) || [])[1] || '';
+    const phone = (/\b(?:phone|tel|mobile|cell)\s*:?\s*(\+?[\d\s().-]{7,})/i.exec(rest) || [])[1] || '';
+    const stripped = rest.replace(/\S+@\S+/g, '').replace(/\b(?:e-?mail|phone|tel|mobile|cell)\s*:?\s*[\d\s().+-]*/gi, ' ').replace(/\s{2,}/g, ' ').trim();
+    let name = (/\b(?:name[d]?|called)\s*:?\s*["“']?([^,;"”'\n]+?)["”']?\s*(?:,|;|$|\s+(?:with|and|whose|their)\b)/i.exec(stripped) || [])[1] || '';
+    if (!name) name = (/^[\s,;:—-]*["“']?([^,;"”'\n]+?)["”']?\s*(?:,|;|$)/.exec(stripped) || [])[1] || '';
+    name = name.replace(/^(?:called|named|name[d]?\s*:?)\s*/i, '').replace(/\s+(?:with|and)$/i, '').trim();
+    const query = new URLSearchParams({ ...(name ? { name } : {}), ...(email ? { email } : {}), ...(phone ? { phone: phone.trim() } : {}) });
+    assistantTurns.settleNow(req, { status: 'handed', said: name
+      ? `Opened the new-customer form with “${name}”${email ? ` (${email})` : ''} filled in. Check it and press Save — nothing is saved until you do.`
+      : 'Opened the new-customer form. Nothing is saved until you press Save.', resultHref: `/sales/customers/new?${query.toString()}`, resultLabel: 'Open the form' });
+    req.flash('info', name
+      ? `StockChief filled in the new customer “${name}”${email ? ` (${email})` : ''}. Check it and press Save — nothing is saved yet.`
+      : 'Add the customer here. Nothing is saved until you press Save.');
+    return res.redirect(303, `/sales/customers/new?${query.toString()}`);
+  }
+
+  /*
    * "We got a return today, 2 children's sweater navy 4 from Marlow, one is
    * damaged." A customer return is authorised, quarantined, inspected and
    * refunded on the warehouse page; the sentence fills that form in —
