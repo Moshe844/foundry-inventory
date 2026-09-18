@@ -1331,3 +1331,5 @@ dialog.rm-ask::backdrop { background: rgba(20, 18, 31, .38); backdrop-filter: bl
   color: var(--brand-3); background: var(--brand-wash);
 }
 .rm-suggest--answers button:hover { background: var(--brand); color: #fff; border-color: var(--brand); }
+/* A last check older than a day: the stamp says so in the warning colour. */
+.rm-stale { color: var(--copper, #9A5B00); font-weight: 600; }

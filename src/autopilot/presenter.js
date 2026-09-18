@@ -996,6 +996,15 @@ function operatorHome(db, workspaceId, { now = Date.now(), preparedInbox = null 
     status: {
       ...state,
       lastEvaluatedText: timeAgo(lastLooked, now),
+      // "Everything is under control" is only as good as the last look. A
+      // check older than a day, or none at all, is said with the verdict —
+      // not left to a small grey stamp beside it.
+      lastLookedAt: lastLooked,
+      checkStale: lastLooked
+        ? (now - Date.parse(lastLooked)) > 24 * 60 * 60 * 1000
+        // Never checked is stale once the inventory is a day old; a workspace
+        // set up this morning has its first check still ahead of it.
+        : (() => { try { const ws = db.prepare('SELECT created_at FROM workspaces WHERE id = ?').get(workspaceId); return Boolean(ws && ws.created_at && (now - Date.parse(ws.created_at)) > 24 * 60 * 60 * 1000); } catch { return false; } })(),
       activePolicies: policies.length,
       policySummary: policies.map((policy) => policy.name),
       headline: state.paused

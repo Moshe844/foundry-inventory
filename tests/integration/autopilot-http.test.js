@@ -432,3 +432,27 @@ test('with two locations the balancing policy is offered as normal', async () =>
   assert.match(page, /Write this policy/);
   assert.doesNotMatch(page, /nothing to balance yet/);
 });
+
+test('"Everything is under control" is only claimed after a recent check; a stale one is said with the verdict', async () => {
+  const env = setup();
+  env.db.prepare(
+    `INSERT INTO workspace_configuration
+       (workspace_id, configured_at, configuration_version, terminology, operational_defaults, inventory_model, updated_at)
+     VALUES (?, datetime('now'), 1, '{}', '{}', '{"primaryArchetype":"quantity"}', datetime('now'))`
+  ).run(env.workspace.workspaceId);
+  const item = makeQuantityItem(env.db, env.ctx);
+  engine.receive(env.db, env.ctx, { skuId: item.skuId, locationId: env.workspace.main.id, quantity: 20 });
+  runner.planWork(env.db, env.ctx, env.membership, { trigger: 'receive' });
+  const agent = await ownerAgent(env);
+  assert.match(plain((await agent.get('/')).text), /Everything is under control/);
+
+  // Two days pass with no check.
+  const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  env.db.prepare('UPDATE attention_runs SET created_at = ? WHERE workspace_id = ?').run(old, env.workspace.workspaceId);
+  env.db.prepare('UPDATE workspace_autopilot SET last_evaluated_at = ? WHERE workspace_id = ?').run(old, env.workspace.workspaceId);
+  env.db.prepare('UPDATE work_plans SET finished_at = ?, started_at = ? WHERE workspace_id = ?').run(old, old, env.workspace.workspaceId);
+  const stale = plain((await agent.get('/')).text);
+  assert.doesNotMatch(stale, /Everything is under control/);
+  assert.match(stale, /Nothing needs you — as of the last check/);
+  assert.match(stale, /last checked this inventory 2 days ago; the automatic check has not run since/);
+});

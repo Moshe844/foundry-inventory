@@ -29,13 +29,16 @@
   // telling somebody on their first morning that everything is fine — when
   // StockChief does not yet know what they hold — is the friendliest possible way
   // to be wrong. Setup gets its own verdict until it is finished.
+  var checkStale = !paused && !isSettingUp && home.status.checkStale;
   var verdict = paused
     ? 'StockChief is paused'
     : needsCount > 0
       ? needsCount + (needsCount === 1 ? ' thing needs you' : ' things need you')
       : isSettingUp
         ? 'Getting StockChief ready'
-        : 'Everything is under control';
+        : checkStale
+          ? 'Nothing needs you — as of the last check'
+          : 'Everything is under control';
 
   var subVerdict = paused
     ? (home.status.suspendedReason || home.status.pausedReason || 'Nothing happens automatically until you resume.')
@@ -43,7 +46,9 @@
       ? (isSettingUp ? 'Finish the setup step below, then settle the decisions StockChief has already found.' : 'Everything else, StockChief is getting on with.')
       : isSettingUp
         ? 'Give StockChief your inventory once. After that, tell it what happens and it manages the routine work.'
-        : (handlingCount
+        : checkStale
+          ? 'StockChief last checked this inventory ' + home.status.lastEvaluatedText + ', so everything below is as of then. The automatic check has not run since.'
+          : (handlingCount
             ? 'StockChief is handling ' + handlingCount + ' thing' + (handlingCount === 1 ? '' : 's') + ' and needs nothing from you.'
             : 'Nothing is waiting on you.');
 

@@ -49,10 +49,19 @@
           ? needsCount + ' things need your attention.'
           : isSettingUp
             ? 'Getting StockChief ready.'
-            : 'Everything is under control.';
+            : home.status.checkStale
+              /* "Under control" is only as good as the last look. A check
+                 older than a day is said with the verdict, not left to the
+                 small stamp beside the greeting. */
+              ? 'Nothing needs you — as of the last check.'
+              : 'Everything is under control.';
   var verdictAside = paused || isEmpty
     ? null
-    : null;
+    : (!isSettingUp && needsCount === 0 && home.status.checkStale)
+      ? (home.status.lastLookedAt
+          ? 'StockChief last checked this inventory ' + home.status.lastEvaluatedText + '; the automatic check has not run since.'
+          : 'StockChief has not checked this inventory yet; the automatic check has not run.')
+      : null;
 
   /* A line's icon comes from what it is about, so the feed can be read down
      the left edge without reading a word of it. */
@@ -170,7 +179,7 @@
     <%= paused ? 'StockChief is paused' : 'StockChief is working' %>
   </span>
   <span><%= greeting %><%= firstName ? ', ' + firstName : '' %> · <%= today %></span>
-  <span>· checked <%= home.status.lastEvaluatedText %></span>
+  <span<%= home.status.checkStale ? ' class="rm-stale"' : '' %>>· checked <%= home.status.lastEvaluatedText %></span>
   <% if (!paused && canOperate) { %>
     <form method="post" action="/autopilot/pause" data-confirm="Pause StockChief? Nothing will happen automatically until you resume it." style="margin:0">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
