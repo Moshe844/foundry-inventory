@@ -9,6 +9,7 @@
  */
 
 const { ValidationError, AuthenticationError } = require('../../domain/errors');
+const { providerFetch } = require('../../lib/provider-http');
 const shipengine = require('./shipengine');
 
 const BASE = 'https://api.shipstation.com/v2';
@@ -23,7 +24,7 @@ function apiKey(ctx = {}) {
 function isConfigured() { return Boolean(process.env.SHIPSTATION_API_KEY); }
 
 async function call(ctx, path, options = {}) {
-  const response = await fetch(`${BASE}${path}`, {
+  const response = await providerFetch(`${BASE}${path}`, {
     method: options.method || 'GET',
     headers: {
       'API-Key': apiKey(ctx),
@@ -32,7 +33,7 @@ async function call(ctx, path, options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  }, { provider: 'ShipStation' });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }

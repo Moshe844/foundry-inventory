@@ -33,6 +33,7 @@
  */
 
 const { ValidationError, AuthenticationError } = require('../../domain/errors');
+const { providerFetch } = require('../../lib/provider-http');
 
 const BASE = 'https://api.easypost.com/v2';
 const BETA = 'https://api.easypost.com/beta';
@@ -52,7 +53,7 @@ function isPartnerConfigured() { return Boolean(process.env.EASYPOST_PARTNER_KEY
 
 async function call(key, path, options = {}) {
   const base = options.beta ? BETA : BASE;
-  const response = await fetch(`${base}${path}`, {
+  const response = await providerFetch(`${base}${path}`, {
     method: options.method || 'GET',
     headers: {
       authorization: `Basic ${Buffer.from(`${key}:`).toString('base64')}`,
@@ -60,7 +61,7 @@ async function call(key, path, options = {}) {
       accept: 'application/json',
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  }, { provider: 'EasyPost' });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }

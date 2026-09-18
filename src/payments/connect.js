@@ -32,6 +32,7 @@
  */
 
 const { ValidationError, NotFoundError, AuthenticationError } = require('../domain/errors');
+const { providerFetch } = require('../lib/provider-http');
 const { newId, nowIso, trimOrNull } = require('../lib/util');
 const permissions = require('../actions/permissions');
 
@@ -60,7 +61,7 @@ const V2_VERSION = '2025-08-27.preview';
 
 /** v2 speaks JSON, where v1 takes form encoding. */
 async function callV2(url, key, { method = 'POST', body = null } = {}) {
-  const response = await fetch(url, {
+  const response = await providerFetch(url, {
     method,
     headers: {
       authorization: `Bearer ${key}`,
@@ -68,7 +69,7 @@ async function callV2(url, key, { method = 'POST', body = null } = {}) {
       'Stripe-Version': V2_VERSION,
     },
     body: body ? JSON.stringify(body) : undefined,
-  });
+  }, { provider: 'Stripe' });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const said = payload?.error?.message;
@@ -190,14 +191,14 @@ async function post(url, values, key = null) {
     if (value === undefined || value === null || value === '') continue;
     body.append(name, String(value));
   }
-  const response = await fetch(url, {
+  const response = await providerFetch(url, {
     method: 'POST',
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
       ...(key ? { authorization: `Bearer ${key}` } : {}),
     },
     body,
-  });
+  }, { provider: 'Stripe' });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const said = payload?.error_description || payload?.error?.message || payload?.error;
@@ -208,7 +209,7 @@ async function post(url, values, key = null) {
 }
 
 async function get(url, key) {
-  const response = await fetch(url, { headers: { authorization: `Bearer ${key}` } });
+  const response = await providerFetch(url, { headers: { authorization: `Bearer ${key}` } }, { provider: 'Stripe' });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const said = payload?.error?.message;

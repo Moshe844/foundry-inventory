@@ -64,10 +64,15 @@
       && connection.itemsNeedingMapping;
     live.push({
       name: connection.display_name,
+      /* What has actually been proven with the provider, in one honest
+         clause: a real exchange with a time on it, or none yet. Being set up
+         is not the same as having worked. */
       meta: (connection.provider_account_name || connection.provider_type.replaceAll('_', ' '))
         + ' · ' + (connection.last_activity_at
           ? 'last event ' + helpers.timeAgo(connection.last_activity_at)
-          : 'no events yet'),
+          : connection.last_synced_at
+            ? 'last successful check ' + helpers.timeAgo(connection.last_synced_at) + ' · no events yet'
+            : 'set up, not yet proven — no successful exchange with ' + (connection.provider_type.replaceAll('_', ' ')) + ' so far'),
       href: '/settings/connections/' + connection.id,
       status: connection.publicStatus,
       tone: connection.publicStatus === 'Connected' ? 'is-ok'
@@ -82,10 +87,11 @@
   if (pay && pay.connected && !unfinishedStripe) {
     live.push({
       name: pay.source === 'connect' ? (pay.displayName || 'Stripe') : 'Stripe',
-      meta: pay.source === 'server'
+      meta: (pay.source === 'server'
         ? 'Taking payment · using the key set on the server'
         : 'Taking payment · money arrives in this account'
-          + (pay.liveMode ? '' : ' · test mode'),
+          + (pay.liveMode ? '' : ' · test mode'))
+        + (pay.checkedAt ? ' · account checked with Stripe ' + helpers.timeAgo(pay.checkedAt) : ' · not yet checked with Stripe'),
       href: '#payments',
       status: pay.chargesEnabled ? 'Live' : 'Not taking charges',
       tone: pay.chargesEnabled ? 'is-ok' : 'is-warn',
@@ -96,7 +102,8 @@
     live.push({
       name: 'Shipping',
       meta: 'UPS, FedEx, USPS and DHL · rates, labels and tracking on the order'
-        + (shipping.testMode ? ' · test labels only' : ''),
+        + (shipping.testMode ? ' · test labels only' : '')
+        + (shipping.lastLabelAt ? ' · last label bought ' + helpers.timeAgo(shipping.lastLabelAt) : ' · no label bought yet, so not yet proven against the carrier'),
       href: '/settings/shipping',
       status: shipping.source === 'platform' && !shipping.billingReady ? 'Finish setup' : 'Ready',
       tone: shipping.source === 'platform' && !shipping.billingReady ? 'is-warn' : 'is-ok',

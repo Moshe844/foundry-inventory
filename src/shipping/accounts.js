@@ -267,6 +267,9 @@ function describe(db, workspaceId) {
     hasWebhookSecret: Boolean(account.webhookSecret),
     referralCustomerId: account.referralCustomerId || null,
     billingReady: account.billingReady,
+    // Proof: the last label the carrier actually sold this inventory. Set up
+    // and never used is said as such on the connections page.
+    lastLabelAt: (() => { try { return db.prepare("SELECT MAX(completed_at) AS at FROM shipping_label_transactions WHERE workspace_id = ? AND status = 'SUCCEEDED'").get(workspaceId).at || null; } catch { return null; } })(),
     because: account.source === 'server'
       ? 'This inventory is using the key set on the server, which every inventory on it shares. '
         + 'Connect this inventory\'s own account and its parcels will be billed to it instead.'

@@ -1,6 +1,20 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { providerFetch } = require('../../lib/provider-http');
+
+/** Which service a URL belongs to, for the record of calls. */
+function providerNameFor(url) {
+  const host = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
+  if (/shopify/.test(host)) return 'Shopify';
+  if (/squareup/.test(host)) return 'Square';
+  if (/clover/.test(host)) return 'Clover';
+  if (/intuit|quickbooks/.test(host)) return 'QuickBooks';
+  if (/xero/.test(host)) return 'Xero';
+  if (/googleapis|google/.test(host)) return 'Gmail';
+  if (/microsoft|graph\.microsoft/.test(host)) return 'Microsoft 365';
+  return host || 'provider';
+}
 const { ValidationError, AuthenticationError } = require('../../domain/errors');
 
 function safeEqual(a, b) {
@@ -29,12 +43,14 @@ function normalizeStoreUrl(value) {
 async function jsonRequest(url, options = {}) {
   let response;
   try {
-    response = await fetch(url, { ...options, signal: options.signal || AbortSignal.timeout(20_000) });
+    response = await providerFetch(url, options, { provider: options.provider || providerNameFor(url), timeoutMs: 20_000 });
   } catch (cause) {
+    // Kept as the code the sync runners already understand as transient.
     const error = new Error('StockChief could not reach the external service from this computer. Check its internet or security-software access; StockChief will retry safely.');
     error.code = 'PROVIDER_UNREACHABLE';
     error.transient = true;
     error.cause = cause;
+    error.status = 503;
     throw error;
   }
   const text = await response.text();

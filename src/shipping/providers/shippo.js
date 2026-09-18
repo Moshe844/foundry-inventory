@@ -17,6 +17,7 @@
  */
 
 const { ValidationError, AuthenticationError } = require('../../domain/errors');
+const { providerFetch } = require('../../lib/provider-http');
 const { safeEqual } = require('../../connections/providers/common');
 
 const BASE = 'https://api.goshippo.com';
@@ -33,7 +34,7 @@ function apiKey(ctx = {}) {
 function isConfigured() { return Boolean(process.env.SHIPPO_API_KEY); }
 
 async function call(ctx, path, options = {}) {
-  const response = await fetch(`${BASE}${path}`, {
+  const response = await providerFetch(`${BASE}${path}`, {
     method: options.method || 'GET',
     headers: {
       authorization: `ShippoToken ${apiKey(ctx)}`,
@@ -42,7 +43,7 @@ async function call(ctx, path, options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  }, { provider: 'Shippo' });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }

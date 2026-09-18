@@ -11,6 +11,7 @@
 
 const crypto = require('node:crypto');
 const { ValidationError, AuthenticationError } = require('../../domain/errors');
+const { providerFetch } = require('../../lib/provider-http');
 
 const BASE = 'https://api.shipengine.com/v1';
 const JWKS_URL = 'https://api.shipengine.com/jwks';
@@ -27,7 +28,7 @@ function apiKey(ctx = {}) {
 function isConfigured() { return Boolean(process.env.SHIPENGINE_API_KEY); }
 
 async function call(ctx, path, options = {}) {
-  const response = await fetch(`${BASE}${path}`, {
+  const response = await providerFetch(`${BASE}${path}`, {
     method: options.method || 'GET',
     headers: {
       'api-key': apiKey(ctx),
@@ -36,7 +37,7 @@ async function call(ctx, path, options = {}) {
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  }, { provider: 'ShipEngine' });
   const text = await response.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
