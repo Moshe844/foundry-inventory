@@ -125,7 +125,7 @@ test('a follow-up with a pronoun means what the conversation was about', { skip:
 
 test('the same movement in six wordings becomes one correct, unexecuted proposal', { skip: !LIVE, timeout: TIMEOUT }, async () => {
   const env = business();
-  for (const s of ['move 5 copper elbow from Main Warehouse to Downtown Store', 'send 5 copper elbows over to the downtown store from the main warehouse', 'Transfer five Copper Elbow: Main Warehouse → Downtown Store', 'pls shift 5 coper elbow main warehouse to downtown store', 'I need 5 copper elbows moved to Downtown Store from Main Warehouse', 'can you move 5 of the copper elbows from the warehouse to the store']) {
+  for (const s of ['move 5 copper elbow from Main Warehouse to Downtown Store', 'send 5 copper elbows over to the downtown store from the main warehouse', 'Transfer five Copper Elbow: Main Warehouse → Downtown Store', 'pls shift 5 copper elbow main warehouse to downtown store', 'I need 5 copper elbows moved to Downtown Store from Main Warehouse', 'can you move 5 of the copper elbows from the warehouse to the store']) {
     const r = await actionService.interpret(env.db, env.w.ctx, env.membership, s);
     assert.equal(r.kind, 'proposal', `"${s}" → ${JSON.stringify(r).slice(0, 240)}`);
     assert.equal(r.proposal.actionType, 'transfer');
@@ -136,6 +136,9 @@ test('the same movement in six wordings becomes one correct, unexecuted proposal
     assert.equal(r.proposal.status, 'AWAITING_APPROVAL');
   }
   assert.equal(require('../../src/domain/repository').getBalance(env.db, env.w.workspaceId, env.elbow.skuId, env.w.main.id), 40, 'nothing moved');
+  // A misspelt product is offered, never assumed: "coper" is not a product, "elbow" is Copper Elbow — did you mean that?
+  const typo = await actionService.interpret(env.db, env.w.ctx, env.membership, 'shift 5 coper elbow from main warehouse to downtown store');
+  assert.ok(typo.kind === 'question' && /Copper Elbow/.test(typo.question) || (typo.kind === 'proposal' && typo.proposal.skuId === env.elbow.skuId && typo.proposal.assumptions.some((a) => /coper/i.test(a))), JSON.stringify(typo).slice(0, 240));
 });
 
 test('a correction after a proposal replaces it; a contradiction in one sentence is asked about', { skip: !LIVE, timeout: TIMEOUT }, async () => {

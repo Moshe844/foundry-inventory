@@ -603,6 +603,24 @@ function namedMatch(text, names = []) {
     .find((name) => new RegExp(`(?:^|\\s)${escapeRegExp(name)}(?:$|\\s)`, 'i').test(text)) || '';
 }
 
+/** The one name within a letter or two of the words, when exactly one is. */
+function nearName(text, names = []) {
+  const query = String(text || '').trim().toLowerCase();
+  const limit = query.length <= 3 ? 0 : query.length <= 5 ? 1 : 2;
+  if (!limit) return '';
+  const distance = (a, b) => {
+    const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i += 1) {
+      let previous = row[0]; row[0] = i;
+      for (let j = 1; j <= b.length; j += 1) { const old = row[j]; row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1)); previous = old; }
+    }
+    return row[b.length];
+  };
+  const scored = [...names].map((name) => ({ name, d: distance(query, String(name).toLowerCase()) })).filter((r) => r.d <= limit).sort((a, b) => a.d - b.d);
+  if (!scored.length || (scored.length > 1 && scored[0].d === scored[1].d)) return '';
+  return scored[0].name;
+}
+
 function removeNamed(text, name) {
   return name ? String(text).replace(new RegExp(escapeRegExp(name), 'i'), ' ').replace(/\s+/g, ' ').trim()
     : String(text).trim();
@@ -786,11 +804,23 @@ function movementClause(clause, context = {}) {
   const cleaned = text.replace(/\b(?:over|across|round|down|up)\s+(?=to\b|into\b)/i, '').replace(/^(?:please\s+|pls\s+|can\s+you\s+|could\s+you\s+)+/i, '');
   const transfer = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+from\s+(?:the\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s*$/i.exec(cleaned)
     || (() => { const m = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s+from\s+(?:the\s+)?(.+?)\s*$/i.exec(cleaned); return m ? [m[0], m[1], m[2], m[4], m[3]] : null; })();
+  // "move 3 bannana to monroe": no source named. The builder finds where
+  // the stock is and asks only when it is in more than one place.
+  const toOnly = !transfer && (() => { const m = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s*$/i.exec(cleaned); return m && !/\bfrom\b/i.test(m[2]) ? [m[0], m[1], m[2], '', m[3]] : null; })();
   const issue = /^(?:please\s+)?(?:issue|take|remove|book\s+out)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:from|out\s+of|at)\s+(?:the\s+)?(.+?)(?:\s+as\s+(.+?))?\s*$/i.exec(text);
-  const match = transfer || issue;
+  const match = transfer || toOnly || issue;
   if (!match) return null;
-  const sourceLocation = namedMatch(match[3].trim(), context.locationNames);
-  if (!sourceLocation || sourceLocation.toLowerCase() !== match[3].trim().toLowerCase().replace(/^the\s+/, '')) return null;
+  // A place is the inventory's own by its name, or by a name one or two
+  // letters off it ("monroe" for Mornoe) when only one is that close.
+  const placeNamed = (words) => {
+    const clean = String(words || '').trim().replace(/^the\s+/i, '');
+    if (!clean) return '';
+    const exact = namedMatch(clean, context.locationNames);
+    if (exact && exact.toLowerCase() === clean.toLowerCase()) return exact;
+    return nearName(clean, context.locationNames);
+  };
+  const sourceLocation = toOnly ? '' : placeNamed(match[3]);
+  if (!toOnly && !sourceLocation) return null;
   /*
    * "Move 15 Navy 4 from Main Warehouse to Downtown Store" names the variant
    * and not the product. When both places are the inventory's own, the words
@@ -809,9 +839,9 @@ function movementClause(clause, context = {}) {
   if (!named && !plainWords) return null;
   const item = named || said;
   const variant = named ? removeNamed(said, named) : '';
-  if (transfer) {
-    const destinationLocation = namedMatch(match[4].trim(), context.locationNames);
-    if (!destinationLocation || destinationLocation.toLowerCase() !== match[4].trim().toLowerCase().replace(/^the\s+/, '')) return null;
+  if (transfer || toOnly) {
+    const destinationLocation = placeNamed(match[4]);
+    if (!destinationLocation) return null;
     if (destinationLocation === sourceLocation) return null;
     return normaliseLine({ actionType: 'transfer', item, variant, sourceText: text, sourceLocation, destinationLocation,
       quantity: Number(match[1]), adjustmentTarget: -1, reasonCode: '' });

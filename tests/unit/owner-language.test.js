@@ -255,3 +255,28 @@ test('what sells most is the busiest lines, read in code', () => {
   assert.equal(plan('Show me the top movers this quarter').windowDays, 90);
   assert.notEqual((plan('which customers buy the most') || {}).intent, 'top_moving');
 });
+
+// Live flake: "move 3 bannana to monroe" — the model dropped the misspelt place once.
+test('a movement with a misspelt place, or no source named, is read in code and the assumptions are on the card', async () => {
+  const actionService = require('../../src/actions/action-service');
+  const locationService = require('../../src/domain/location-service');
+  const itemService = require('../../src/domain/item-service');
+  const repo = require('../../src/domain/repository');
+  const { db } = makeDatabase();
+  const w = seedWorkspace(db);
+  locationService.createLocation(db, w.ctx, { name: 'Mornoe', kind: 'store' });
+  const created = itemService.createItem(db, w.ctx, { name: 'banana', baseCode: 'BAN-1', trackingMode: 'quantity' });
+  const sku = repo.listSkusForItem(db, w.workspaceId, created.itemId)[0];
+  engine.receive(db, w.ctx, { skuId: sku.id, locationId: w.main.id, quantity: 10 });
+  const membership = authService.getMembership(db, w.workspaceId, w.accountId);
+  const r = await actionService.interpret(db, w.ctx, membership, 'move 3 bannana to monroe', { provider: { async complete() { throw new Error('no model needed'); } } });
+  assert.equal(r.kind, 'proposal', JSON.stringify(r).slice(0, 200));
+  assert.equal(r.proposal.skuId, sku.id);
+  assert.equal(r.proposal.quantity, 3);
+  assert.ok(r.proposal.assumptions.some((a) => /bannana/.test(a) && /banana/.test(a)), 'the typo is said');
+  assert.ok(r.proposal.assumptions.some((a) => /Main Warehouse/.test(a)), 'the inferred source is said');
+  // Two places one letter off each other are not guessed between.
+  locationService.createLocation(db, w.ctx, { name: 'Monroe', kind: 'store' });
+  const two = await actionService.interpret(db, w.ctx, membership, 'move 3 banana to monroe', { provider: { async complete() { throw new Error('no model needed'); } } });
+  assert.ok(two.kind === 'proposal' ? two.proposal.destinationLocationId === db.prepare("SELECT id FROM locations WHERE name = 'Monroe'").get().id : two.kind === 'question', JSON.stringify(two).slice(0, 200));
+});
