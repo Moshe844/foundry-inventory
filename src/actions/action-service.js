@@ -156,7 +156,27 @@ function instructionSlices(instruction, lines) {
  *
  * @returns {{ kind: 'proposal'|'plan'|'question'|'unsupported'|'existing', ... }}
  */
+/*
+ * Every question StockChief asks back says which kind it is: something was
+ * not said (missing), more than one thing fits (ambiguous), or nothing on
+ * file matches the words (no_match). A question that carries choices is an
+ * ambiguity; one that names a thing it could not find is a no-match; the
+ * rest are missing information. The states are never interchangeable.
+ */
+function withReason(result) {
+  if (!result || result.kind !== 'question' || result.reason) return result;
+  const choices = result.choices || (result.clarification && result.clarification.choices) || null;
+  const reason = choices && choices.length >= 2 ? 'ambiguous'
+    : result.notFound || /\bnothing (?:here )?(?:is )?called\b|\bnothing here is\b|\bno (?:product|supplier|customer|location)\b|\bcould not find\b|\bnot (?:a|an) (?:product|supplier|customer|location) (?:on file|here)\b|\bis not in any product name\b/i.test(String(result.question || '')) ? 'no_match'
+    : 'missing';
+  return { ...result, reason };
+}
+
 async function interpret(db, ctx, membership, instruction, options = {}) {
+  return withReason(await interpretInner(db, ctx, membership, instruction, options));
+}
+
+async function interpretInner(db, ctx, membership, instruction, options = {}) {
   const text = String(instruction || '').trim();
   if (!text) return { kind: 'question', question: 'What would you like StockChief to do?' };
 
@@ -235,23 +255,24 @@ async function interpret(db, ctx, membership, instruction, options = {}) {
        * screen offering to create a product called "please remove entire".
        */
       if (grounded && !grounded.ok && grounded.reason === 'not_understood') {
-        return { kind: 'question', question: intent.clarifyingQuestion };
+        return { kind: 'question', reason: 'missing', question: intent.clarifyingQuestion };
       }
       if (grounded && !grounded.ok && grounded.reason === 'not_found') {
         // The name it could not place comes with the question, so the screen
         // can offer to create that product instead of stopping dead.
-        return { kind: 'question', question: grounded.message, notFound: grounded.subject || null };
+        return { kind: 'question', reason: 'no_match', question: grounded.message, notFound: grounded.subject || null };
       }
       if (grounded && !grounded.ok && grounded.reason === 'ambiguous') {
         return {
           kind: 'question',
+          reason: 'ambiguous',
           question: grounded.message,
           clarification: grounded.clarification || null,
           choices: grounded.clarification ? grounded.clarification.choices : null,
         };
       }
     }
-    return { kind: 'question', question: intent.clarifyingQuestion };
+    return { kind: 'question', reason: 'missing', question: intent.clarifyingQuestion };
   }
 
   let usable = intent.lines.filter((line) => !['clarify', 'unsupported'].includes(line.actionType));

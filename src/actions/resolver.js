@@ -111,6 +111,15 @@ function ambiguous(message, candidates, clarification = null) {
   return { ok: false, reason: 'ambiguous', message, candidates, clarification };
 }
 
+/** "A, B or C", with the tail counted when there are many. */
+function listed(names, max = 4) {
+  const unique = [...new Set(names.filter(Boolean))];
+  const shown = unique.slice(0, max);
+  const rest = unique.length - shown.length;
+  const joined = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} or ${shown[shown.length - 1]}` : shown[0] || '';
+  return rest > 0 ? `${joined}, or ${rest} other${rest === 1 ? '' : 's'}` : joined;
+}
+
 const words = (text) => String(text || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 const comparableWord = (word) => (word.length > 3 && word.endsWith('s') ? word.slice(0, -1) : word);
 
@@ -333,8 +342,10 @@ function skuAmbiguity(db, rows) {
 
   const itemNames = [...new Set(rows.map((row) => row.item_name))];
   if (itemNames.length > 1) {
+    // The candidates are in the question itself, so "copper" is answered
+    // with "Copper Elbow or Copper Tee?" and not a bare "which product?".
     return ambiguous(
-      'Which product do you mean?',
+      `Which product do you mean — ${listed(itemNames)}?`,
       rows,
       choiceClarification('product', rows,
         (row) => `${row.item_name}${row.variant_label ? ` — ${row.variant_label}` : ''}`,
@@ -604,7 +615,7 @@ function resolveSkuWith(db, workspaceId, itemText, variantText, options = {}, tr
     }
     if (products.length > 1) {
       return ambiguous(
-        'Which product do you mean?',
+        `Which product do you mean — ${listed(products.map((p) => p.name))}?`,
         products,
         choiceClarification('product', products, (product) => product.name)
       );

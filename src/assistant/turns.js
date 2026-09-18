@@ -198,7 +198,10 @@ function settleFromRedirect(req, goalId, url) {
     handed.goalId = goalId;
     outcome = handed.unsupported
       ? { status: 'refused', said: handed.unsupported, resultHref: handed.where ? handed.where.href : null, resultLabel: handed.where ? handed.where.label : null }
-      : { status: 'clarify', said: handed.question || '', resultHref: '/actions', resultLabel: 'Answer the question' };
+      : { status: 'clarify', said: handed.question || '', resultHref: '/actions', resultLabel: 'Answer the question',
+        // Missing, ambiguous or nothing on file: the reader said which, or the
+        // shape of the question does (choices mean more than one fits).
+        provenance: { reason: handed.reason || (Array.isArray(handed.choices) && handed.choices.length >= 2 ? 'ambiguous' : 'missing') } };
   } else if (/^\/purchasing\/orders\/[A-Za-z0-9_-]+$/.test(path)) {
     outcome = { status: 'drafted', resultHref: url, resultLabel: 'Open the draft order', said: lastFlash ? lastFlash.message : 'Drafted. Nothing is ordered until you approve it.' };
     noteFromUrl(req, 'purchase_order', path, lastFlash);

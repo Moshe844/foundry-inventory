@@ -19,7 +19,7 @@ test('Ask composer continues a clarification with workspace-scoped context and n
  const before=db.prepare('SELECT COUNT(*) n FROM movements').get().n;
  const posted=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(first.text),queryConversation:'1',message:'Products.'});
  assert.equal(posted.status,303);assert.equal(calls,2,'one semantic interpretation at submission; no operational classifier');
- const result=await agent.get(posted.headers.location);assert.equal(result.status,200);assert.match(plain(result.text),/1 products match your question/);assert.match(plain(result.text),/You How many entries\? StockChief Do you mean products or individual SKUs\? Needs an answer from you You Products\./,'the earlier turn stays on the page as it was said');
+ const result=await agent.get(posted.headers.location);assert.equal(result.status,200);assert.match(plain(result.text),/1 products match your question/);assert.match(plain(result.text),/You How many entries\? StockChief Do you mean products or individual SKUs\? Needs an answer from you(?: — [a-z ]+)? You Products\./,'the earlier turn stays on the page as it was said');
   assert.equal(calls,2);assert.equal(db.prepare('SELECT COUNT(*) n FROM movements').get().n,before);
  const refreshed=await agent.get(posted.headers.location);assert.equal(refreshed.status,200);
  assert.equal(calls,3,'refresh uses the same prior question, not its own answer');

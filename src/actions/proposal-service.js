@@ -473,6 +473,11 @@ function unresolved(result, fallback = null) {
     question: result && result.message ? result.message : null,
     clarification: clarification || null,
     choices: clarification && Array.isArray(clarification.choices) ? clarification.choices : null,
+    // Which of the three states this is: nothing matched the words, more
+    // than one thing did, or something was never said. Never the same word.
+    reason: result && result.reason === 'ambiguous' ? 'ambiguous'
+      : result && ['not_found', 'none_exist'].includes(result.reason) ? 'no_match'
+      : 'missing',
   };
 }
 

@@ -327,8 +327,14 @@ function askExamples(db, workspaceId) {
  * status a person can read, and where the answer came from — which lookup,
  * which records, which filters, how many rows, as of when.
  */
-function askOutcome(question, result, error) {
-  if (error) return { status: 'failed', said: error, provenance: {} };
+function askOutcome(question, result, error, { unavailable = false } = {}) {
+  // The model or a provider could not be reached: nothing was read, nothing
+  // guessed. A different state from a lookup that failed.
+  if (error && unavailable) return { status: 'unavailable', said: error, provenance: { reason: 'provider_unavailable' } };
+  // StockChief's own ceiling (calls per minute, tokens for the day) is a
+  // refusal by limit, not a lookup that broke; it keeps the plain label.
+  if (error && /\b(?:ceiling|which is its limit|allowance for model reads|already reading \d+ things)\b/i.test(String(error))) return { status: 'failed', said: error, provenance: { reason: 'ceiling' } };
+  if (error) return { status: 'failed', said: error, provenance: { reason: 'lookup_failed' } };
   const said = result.spoken && !result.progressiveDisclosure ? result.spoken : result.answer;
   const parts = (result.semanticPlan && result.semanticPlan.parts) || [];
   const reads = parts.map((part) => ({
@@ -359,6 +365,12 @@ function askOutcome(question, result, error) {
       // A clarification or refusal read nothing; only an answer has reads.
       reads: status !== 'answered' ? [] : reads.length ? reads : (result.plan && result.plan.intent && result.plan.intent !== 'unsupported' ? [{ intent: result.plan.intent, entity: result.plan.entityQuery || null, location: result.plan.locationQuery || null }] : []),
       rowCount: status === 'answered' ? Number(result.totalMatches ?? result.rowCount ?? 0) : null, asOf: status === 'answered' ? nowIso() : null,
+      // Which state, beyond the status: nothing on file is an answer that
+      // read to the end and found nothing; a clarification says whether
+      // something was not said or more than one thing fits.
+      reason: status === 'answered' && Number(result.totalMatches ?? result.rowCount ?? 0) === 0 && (result.plan && result.plan.entityQuery || /could not find|nothing (?:on file|matching)|no (?:product|record|order|customer|supplier)s? /i.test(String(said || ''))) ? 'no_match'
+        : status === 'clarify' ? ((result.clarification && Array.isArray(result.clarification.choices) && result.clarification.choices.length >= 2) || /\bwhich (?:one|of th)|\bcould be\b|\bmore than one\b|\bseveral\b|\bor\b.*\?$/i.test(String(said || '')) ? 'ambiguous' : 'missing')
+        : undefined,
     },
   };
 }
@@ -440,7 +452,7 @@ router.get(
         const pending = req.session.pendingAskResult;
         const reusable = pending && pending.token === req.query.turn && pending.workspaceId === req.ctx.workspaceId && pending.question === question;
         if (reusable) delete req.session.pendingAskResult;
-        if (reusable && pending.error) error=pending.error;
+        if (reusable && pending.error) { error = pending.error; req.askUnavailable = Boolean(pending.unavailable); }
         result = reusable ? pending.result : await tools.use(req.db, req.ctx, req.user, 'question.ask', { question }, {
           provider: req.app.locals.aiProvider || undefined,
           context: briefingContext(req.db, req.ctx.workspaceId),
@@ -489,7 +501,7 @@ router.get(
     if (question && (result || error)) {
       const goalId = req.currentGoalId || goalFor(req, question);
       delete req.session.assistantOpenGoal;
-      const outcome = askOutcome(question, result, error);
+      const outcome = askOutcome(question, result, error, { unavailable: Boolean(req.askUnavailable) || calls.unavailableNow() });
       // What the answer cost, said on the page: model calls and their time.
       const cost = calls.forGoal(req.db, goalId);
       if (cost.modelCalls && outcome.status === 'answered') outcome.provenance = { ...outcome.provenance, modelCalls: cost.modelCalls, modelMs: cost.modelMs };
@@ -537,5 +549,20 @@ router.get(
     });
   })
 );
+
+/*
+ * A question asked from the chat is settled the moment it is answered — on
+ * the post, not on the page that shows it. A person who sends a question
+ * and walks off before the page loads used to leave the goal pending, and
+ * the recap then called it waiting.
+ */
+function settleAsked(req, goalId, question, result, error, { unavailable = false } = {}) {
+  if (!goalId || !(result || error)) return null;
+  const outcome = askOutcome(question, result, error, { unavailable });
+  const cost = calls.forGoal(req.db, goalId);
+  if (cost.modelCalls && outcome.status === 'answered') outcome.provenance = { ...outcome.provenance, modelCalls: cost.modelCalls, modelMs: cost.modelMs };
+  return ledger.settle(req.db, req.ctx, goalId, outcome);
+}
+router.settleAsked = settleAsked;
 
 module.exports = router;

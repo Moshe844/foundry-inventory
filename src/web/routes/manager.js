@@ -432,7 +432,7 @@ router.post('/foundry/tell', asyncRoute(async (req, res) => {
     try { assistantTurns.settleNow(req, { status: 'unavailable', said, provenance: { reason: 'provider_unavailable' } }); } catch (settleErr) { console.error('[foundry] could not settle the goal as unavailable', settleErr); }
     if (req.body.queryConversation === '1') {
       const token = crypto.randomUUID();
-      req.session.pendingAskResult = { token, workspaceId: req.ctx.workspaceId, question: message, error: said, result: null };
+      req.session.pendingAskResult = { token, workspaceId: req.ctx.workspaceId, question: message, error: said, result: null, unavailable: true };
       return res.redirect(303, `/ask?q=${encodeURIComponent(message)}&followup=1&turn=${token}`);
     }
     req.flash('warn', said);
@@ -604,6 +604,8 @@ async function tellStockChief(req, res) {
       // One interpretation, not a second paid call after the redirect. Consume
       // once; later refreshes perform fresh reads against the immutable turn.
       req.session.pendingAskResult={token,workspaceId:req.ctx.workspaceId,question:message,result};
+      // Settled now, with the answer; the page settles it again the same way.
+      if (req.assistantGoal) { try { require('./attention').settleAsked(req, req.assistantGoal.id, message, result, null); } catch (err) { console.error('[foundry] could not settle the asked goal', err); } }
       return res.redirect(303, `/ask?q=${encodeURIComponent(message)}&followup=1&turn=${token}`);
     }
     chatAction = true;
@@ -1347,6 +1349,7 @@ async function tellStockChief(req, res) {
       req.session.pendingActionQuestion = {
         question: result.question,
         instruction: message,
+        reason: result.reason || null,
         choices: result.choices || null,
         where: result.where || null,
         continuationId,

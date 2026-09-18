@@ -17,7 +17,7 @@
 const { newId, nowIso } = require('../lib/util');
 
 const GOAL_KINDS = ['lookup', 'change', 'send', 'communication', 'instruction', 'report', 'navigate', 'unsupported', 'unclear'];
-const GOAL_STATUSES = ['pending', 'answered', 'needs_approval', 'drafted', 'clarify', 'handed', 'refused', 'failed', 'done', 'skipped', 'replaced', 'withdrawn'];
+const GOAL_STATUSES = ['pending', 'answered', 'needs_approval', 'drafted', 'clarify', 'handed', 'refused', 'failed', 'unavailable', 'done', 'skipped', 'replaced', 'withdrawn'];
 
 /** What each status means to the person reading it, and its tone. */
 const STATUS_LABEL = {
@@ -29,6 +29,9 @@ const STATUS_LABEL = {
   handed: { label: 'Taken to its page', tone: 'muted' },
   refused: { label: 'Not done — refused', tone: 'danger' },
   failed: { label: 'Not done — failed', tone: 'danger' },
+  // The model or an outside service could not be reached. Not a failure of
+  // the request, not "no records": nothing was read, nothing was guessed.
+  unavailable: { label: 'Not done — could not be reached, try again', tone: 'warn' },
   done: { label: 'Done', tone: 'ok' },
   skipped: { label: 'Left undone — you skipped it', tone: 'muted' },
   replaced: { label: 'Replaced by your correction', tone: 'muted' },
@@ -37,13 +40,38 @@ const STATUS_LABEL = {
 
 const json = (value, fallback) => { try { return JSON.parse(value) ?? fallback; } catch { return fallback; } };
 
+/*
+ * Seven states a request can end in, and each one says which it is:
+ * understood and done; understood with something missing; ambiguous, with
+ * the candidates; unsupported; the lookup itself failed; nothing on file;
+ * an outside service unreachable. The status carries the first split; the
+ * reason in provenance carries the rest, and the label a person reads is
+ * built from both so two different states never wear the same words.
+ */
+const REASON_LABEL = {
+  'clarify:missing': 'Needs an answer from you — something was not said',
+  'clarify:ambiguous': 'Needs an answer from you — more than one fits',
+  'clarify:no_match': 'Needs an answer from you — nothing on file by that name',
+  'answered:no_match': 'Answered — nothing on file',
+  'failed:lookup_failed': 'Not done — the lookup itself failed',
+  'failed:execution_failed': 'Not done — the change failed',
+};
+function statusLabelFor(status, provenance) {
+  const reason = provenance && provenance.reason;
+  const base = STATUS_LABEL[status] || STATUS_LABEL.pending;
+  const label = reason && REASON_LABEL[`${status}:${reason}`];
+  return { label: label || base.label, tone: base.tone };
+}
+
 function hydrateGoal(row) {
+  const provenance = json(row.provenance, {});
+  const label = statusLabelFor(row.status, provenance);
   return {
     id: row.id, turnId: row.turn_id, position: row.position, kind: row.kind, text: row.text, status: row.status,
     said: row.said || '', resultHref: row.result_href || null, resultLabel: row.result_label || null,
-    provenance: json(row.provenance, {}), createdAt: row.created_at, updatedAt: row.updated_at,
-    statusLabel: (STATUS_LABEL[row.status] || STATUS_LABEL.pending).label,
-    statusTone: (STATUS_LABEL[row.status] || STATUS_LABEL.pending).tone,
+    provenance, createdAt: row.created_at, updatedAt: row.updated_at,
+    statusLabel: label.label,
+    statusTone: label.tone,
   };
 }
 
@@ -204,6 +232,6 @@ function pendingGoals(db, ctx, conversationId) {
 }
 
 module.exports = {
-  GOAL_KINDS, GOAL_STATUSES, STATUS_LABEL,
+  GOAL_KINDS, GOAL_STATUSES, STATUS_LABEL, REASON_LABEL, statusLabelFor,
   openTurn, getTurn, getGoal, goalWithTurn, goalByResult, settle, noteReferent, conversation, recentReferents, pendingGoals, lastSubjects, lastSettled, turnComplete, turnCoverage,
 };

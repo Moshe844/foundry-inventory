@@ -489,6 +489,12 @@ function directPlan(db, workspaceId, question) {
    * control, not a stock action; what we charge is the selling price on
    * file; what demand will be is the forecasting engine. Read here first.
    */
+  // "What do we owe Acme?" is the supplier balance. The rule lived only in
+  // the offline planner; the live path sent it to a model, which built a
+  // record lookup that then could not be verified.
+  if (/^\s*(?:so\s+)?(?:what|how\s+much)\b[^.?!]{0,30}\b(?:do\s+we|do\s+i|we|i)\s+(?:still\s+)?owe\b/i.test(clean) && !/\bcustomers?\b|\bowed\s+to\s+us\b|\bowe\s+us\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'payables_aging', entityQuery: clean });
+  }
   const control = /\b(?:stop|pause|halt|quit|cease|no\s+more|don'?t|do\s+not|never)\b[^.?!]{0,60}\b(?:by\s+yourself|on\s+your\s+own|yourself|automatically|autonomously|without\s+(?:asking|approval|me|my\s+ok(?:ay)?)|autopilot|automation|auto-?pilot)\b/i.test(clean)
     || /\b(?:turn|switch)\s+(?:off|down)\s+(?:the\s+)?(?:autopilot|automation|auto-?pilot|automatic\s+\w+)\b/i.test(clean)
     || /\b(?:stop|pause)\s+(?:the\s+)?(?:autopilot|automation|automatic\s+(?:ordering|transfers?|purchasing|moves?|actions?))\b/i.test(clean);
@@ -532,6 +538,16 @@ function directPlan(db, workspaceId, question) {
   if (topMoving && !/\b(?:price|cost|charge|margin|profit|customers?)\b/i.test(clean)) {
     const windowDays = /quarter|90/i.test(clean) ? 90 : /year|12\s+months/i.test(clean) ? 365 : /week|7\s+days/i.test(clean) ? 7 : 30;
     return queryService.normalisePlan({ intent: 'top_moving', windowDays, limit: 10 });
+  }
+  // Connections: what came in last, and which need attention. A model asked
+  // "which POS connection?" of an inventory with one; the records say.
+  const lastEvent = /^\s*(?:so\s+)?(?:what|when)\s+(?:was|is|were)\s+(?:the\s+)?(?:last|latest|most\s+recent)\s+(?:event|sync|activity|message|order|sale|webhook)s?\b[^.?!]{0,40}?\b(?:from|on|via|through|for)\s+(?:the\s+|our\s+|my\s+)?(.+?)\s*\??\s*$/i.exec(clean)
+    || /^\s*(?:so\s+)?(?:when|what)\s+did\s+(?:we|i)\s+last\s+(?:hear|get|receive)\s+(?:anything\s+|something\s+)?(?:from|via)\s+(?:the\s+|our\s+|my\s+)?(.+?)\s*\??\s*$/i.exec(clean);
+  if (lastEvent && !/\b(?:supplier|customer|carrier|acme|deliver)\b/i.test(lastEvent[1])) {
+    return queryService.normalisePlan({ intent: 'connection_last_event', entityQuery: lastEvent[1].trim() });
+  }
+  if (/\b(?:which|what|any|do\s+any)\b[^.?!]{0,20}\bconnections?\b[^.?!]{0,30}\b(?:need|needs|needing|require)\b[^.?!]{0,20}\battention\b|\bconnections?\s+(?:status|health)\b|\b(?:are|is)\s+(?:my|our|the)\s+connections?\s+(?:ok|okay|healthy|working|fine)\b/i.test(clean)) {
+    return queryService.normalisePlan({ intent: 'connection_summary' });
   }
   const forecast = /\b(?:forecast|demand|projected|projection|expected\s+sales|how\s+many\s+will\s+we\s+(?:sell|need)|how\s+much\s+will\s+we\s+(?:sell|need)|what\s+will\s+we\s+(?:sell|need))\b/i.test(clean)
     && /\b(?:next|coming|upcoming|this|the\s+next)\s+(?:week|month|quarter|year|season|\d+\s+(?:days|weeks|months))\b|\bforecast\b|\bdemand\b/i.test(clean);

@@ -781,7 +781,11 @@ const ISSUE_REASONS = { sold: 'sold', sale: 'sold', delivered: 'sold', damaged: 
   used: 'used', consumed: 'used', 'used in work': 'used', returned: 'returned', 'returned to supplier': 'returned' };
 function movementClause(clause, context = {}) {
   const text = String(clause || '').trim().replace(/[.]+$/, '');
-  const transfer = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+from\s+(?:the\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s*$/i.exec(text);
+  // "move 5 X from A to B" and "send 5 X over to B from A": both orders, and
+  // the filler words people put around them.
+  const cleaned = text.replace(/\b(?:over|across|round|down|up)\s+(?=to\b|into\b)/i, '').replace(/^(?:please\s+|pls\s+|can\s+you\s+|could\s+you\s+)+/i, '');
+  const transfer = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+from\s+(?:the\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s*$/i.exec(cleaned)
+    || (() => { const m = /^(?:please\s+)?(?:move|transfer|send|shift)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:to|into)\s+(?:the\s+)?(.+?)\s+from\s+(?:the\s+)?(.+?)\s*$/i.exec(cleaned); return m ? [m[0], m[1], m[2], m[4], m[3]] : null; })();
   const issue = /^(?:please\s+)?(?:issue|take|remove|book\s+out)\s+(\d+)\s+(?:units?\s+of\s+|x\s+)?(.+?)\s+(?:from|out\s+of|at)\s+(?:the\s+)?(.+?)(?:\s+as\s+(.+?))?\s*$/i.exec(text);
   const match = transfer || issue;
   if (!match) return null;
