@@ -87,13 +87,18 @@ function recoverExpired(database, options = {}) {
 async function claim(database, options = {}) {
   if (!options.owner) throw new TypeError('A PostgreSQL worker needs an explicit owner identity.');
   const leaseMs = lease(options);
+  const kinds = Array.isArray(options.kinds)
+    ? [...new Set(options.kinds.map((kind) => String(kind || '').trim()).filter(Boolean))]
+    : null;
+  if (Array.isArray(kinds) && !kinds.length) return null;
   return database.transaction(async (client) => {
     const now = await databaseTime(client, options);
     const expires = now + leaseMs;
     await recover(client, now);
     const candidate = await client.query(`SELECT id FROM stockchief_runtime.jobs
-      WHERE status IN ('PENDING','RETRY') AND available_at <= $1 ORDER BY priority, created_at, id
-      LIMIT 1 FOR UPDATE SKIP LOCKED`, [now]);
+      WHERE status IN ('PENDING','RETRY') AND available_at <= $1
+      AND ($2::text[] IS NULL OR kind = ANY($2::text[])) ORDER BY priority, created_at, id
+      LIMIT 1 FOR UPDATE SKIP LOCKED`, [now, kinds]);
     if (!candidate.rows.length) return null;
     const token = newId('lease');
     const result = await client.query(`UPDATE stockchief_runtime.jobs SET status = 'RUNNING',
@@ -169,7 +174,8 @@ async function listDead(database, workspaceId) {
 }
 
 async function processOne(database, handlers, options = {}) {
-  const job = await claim(database, options);
+  const kinds = Object.keys(handlers || {}).filter((kind) => typeof handlers[kind] === 'function');
+  const job = await claim(database, { ...options, kinds });
   if (!job) return null;
   const handler = handlers?.[job.kind];
   if (typeof handler !== 'function') {

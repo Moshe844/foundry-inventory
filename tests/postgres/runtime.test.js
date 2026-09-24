@@ -111,6 +111,18 @@ test('native PostgreSQL transactions and queue fencing', { timeout: 120000 }, as
       await Promise.all([firstStore.close(), secondStore.close()]);
     }
   });
+  await context.test('specialized workers only claim job kinds they can execute', async () => {
+    const foreign = await jobs.enqueue(database, { workspaceId: 'workspace-one', kind: 'qualification.foreign',
+      priority: 1, idempotencyKey: 'foreign-worker-kind' });
+    const supported = await jobs.enqueue(database, { workspaceId: 'workspace-one', kind: 'qualification.supported',
+      priority: 2, idempotencyKey: 'supported-worker-kind' });
+    const completed = await jobs.processOne(database, {
+      'qualification.supported': async () => ({ handled: true }),
+    }, { owner: 'specialized-worker' });
+    assert.equal(completed.id, supported.job.id);
+    assert.equal(completed.status, 'COMPLETED');
+    assert.equal((await jobs.get(database, foreign.job.id, 'workspace-one')).status, 'PENDING');
+  });
   await context.test('independent worker processes commit one fenced effect with its job result', async () => {
     await database.query('CREATE TABLE qualification_effects(job_id TEXT PRIMARY KEY REFERENCES stockchief_runtime.jobs(id))');
     const queued = await jobs.enqueue(database, { workspaceId: 'workspace-one', kind: 'qualification.effect', priority: 1, idempotencyKey: 'processes' });
