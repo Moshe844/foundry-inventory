@@ -22,6 +22,7 @@ function fields(overrides={}){
 const provider={name:'fixture',model:'fixture',async complete(request){
   const message=JSON.parse(request.prompt).message;
   if(message.includes('Trail Shoes received'))throw new Error('Exercise deterministic fallback');
+  if(message.includes('available, and in which warehouse'))return {data:fields({view:'locations'}),usage:{}};
   if(message.includes('how many'))return {data:fields({search:'Trail Shoe'}),usage:{}};
   if(message.includes('Receive seven'))return {data:fields({intent:'action',view:null,action:'receive',sku:'SHOE-BLACK-8',
     location:'Main Warehouse',quantity:7,reference:'ASK-RECEIPT'}),usage:{}};
@@ -111,6 +112,12 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const groundedAfterTransfer=(await agent.get('/ask')).text;
     assert.match(groundedAfterTransfer,/1 SKU matched with 7 units on hand/);
     assert.match(groundedAfterTransfer,/3 incoming/);
+    const warehouseQuestion=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
+      message:'How many Trail Shoes are available, and in which warehouse?'});
+    assert.equal(warehouseQuestion.status,303);
+    const warehouseAnswer=(await agent.get('/ask')).text;
+    assert.match(warehouseAnswer,/1 SKU matched with 7 units on hand, 0 committed, 7 available and 3 incoming/);
+    assert.match(warehouseAnswer,/Stock is in Main Warehouse/);
     const left=await agent.post('/ask/leave-the-rest').type('form').send({_csrf:csrfFrom((await agent.get('/ask')).text),back:'/'});
     assert.equal(left.status,303);assert.equal(left.headers.location,'/');
 

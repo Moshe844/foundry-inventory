@@ -72,9 +72,23 @@ function cleanReference(value) {
   return reference ? trimOrNull(reference.replace(/[.,;:!?]+$/,'')) : null;
 }
 
+function inventoryLookupSearch(message){
+  const text=String(message||'').trim();
+  const patterns=[
+    /\b(?:how many|how much)\s+(.+?)\s+(?:are|is)\s+(?:currently\s+)?(?:on hand|available|in stock|left)\b/i,
+    /\b(?:on hand|available|in stock)\s+(?:for|of)\s+(.+?)(?=\s+(?:at|in|across|and|where)\b|[?.!,]|$)/i,
+    /\bwhere\s+(?:is|are)\s+(.+?)\s+(?:held|stocked|stored|located)\b/i,
+  ];
+  const value=trimOrNull(patterns.map((pattern)=>pattern.exec(text)?.[1]).find(Boolean));
+  if(!value)return null;
+  const cleaned=trimOrNull(value.replace(/^(?:the|our|my)\s+/i,''));
+  return /^(?:inventory|items?|products?|skus?|stock|units?)$/i.test(cleaned||'')?null:cleaned;
+}
+
 function fallbackPlan(message) {
   const text=String(message || '').trim();
   const lower=text.toLowerCase();
+  const inventorySearch=inventoryLookupSearch(text);
   const email=/^(?:please\s+)?(?:send\s+(?:an?\s+)?email\s+to|email|e-mail|message|write\s+to|contact)\s+(.+?)(?:\s+(?:that|saying|to\s+say|and\s+(?:say|tell|ask)|about|regarding)\s+|\s*[—:]\s*)([\s\S]+)$/i.exec(text);
   const emailOnly=/^(?:please\s+)?(?:send\s+(?:an?\s+)?email\s+to|email|e-mail|message|write\s+to|contact)\s+(.+?)\s*[.!]?$/i.exec(text);
   if(email||emailOnly){const recipient=String((email||emailOnly)[1]||'').trim();const role=/^(?:the\s+)?(supplier|vendor|customer|client)\s+(?:named\s+|called\s+)?(.+)$/i.exec(recipient);
@@ -107,8 +121,8 @@ function fallbackPlan(message) {
   else if(/\b(payment|paid|owing|outstanding|receivable|payable)\b/.test(lower))view='payments';
   else if(/\b(account|journal|profit|revenue|expense|books|balance)\b/.test(lower))view='accounting';
   else if(/\b(connection|connected|sync|connector)\b/.test(lower))view='connections';
-  else if(/\b(location|warehouse|store|bin|shelf)\b/.test(lower))view='locations';
-  if(!action)return {intent:'lookup',view,action:null,search:null,sku:null,location:null,fromLocation:null,
+  else if(!inventorySearch&&/\b(location|warehouse|store|bin|shelf)\b/.test(lower))view='locations';
+  if(!action)return {intent:'lookup',view,action:null,search:inventorySearch,sku:null,location:null,fromLocation:null,
     toLocation:null,quantity:null,countedQuantity:null,amount:null,currency:null,reason:null,reference:null};
   const verb=/\b(receive|received|came in)\b/.test(lower)?'receive':/\b(issue|issued|sold|used)\b/.test(lower)?'issue':
     /\b(move|transfer)\b/.test(lower)?'transfer':/\b(count|adjust|correct)\b/.test(lower)?'adjust':
@@ -140,8 +154,11 @@ function fallbackPlan(message) {
 function cleanPlan(raw,message) {
   const fallback=fallbackPlan(message);
   if(!raw || !['lookup','action','instruction','clarify'].includes(raw.intent))return fallback;
-  return {intent:raw.intent,view:VIEWS.includes(raw.view)?raw.view:fallback.view,
-    action:ACTIONS.includes(raw.action)?raw.action:null,search:trimOrNull(raw.search),sku:trimOrNull(raw.sku),
+  const groundedInventoryLookup=raw.intent==='lookup'&&fallback.intent==='lookup'
+    &&fallback.view==='inventory'&&fallback.search;
+  return {intent:raw.intent,view:groundedInventoryLookup?'inventory':VIEWS.includes(raw.view)?raw.view:fallback.view,
+    action:ACTIONS.includes(raw.action)?raw.action:null,
+    search:groundedInventoryLookup?fallback.search:trimOrNull(raw.search),sku:trimOrNull(raw.sku),
     location:trimOrNull(raw.location),fromLocation:trimOrNull(raw.fromLocation),toLocation:trimOrNull(raw.toLocation),
     quantity:Number.isSafeInteger(raw.quantity)?raw.quantity:null,
     countedQuantity:Number.isSafeInteger(raw.countedQuantity)?raw.countedQuantity:null,
