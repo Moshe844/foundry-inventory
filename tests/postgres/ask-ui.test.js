@@ -115,9 +115,10 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const warehouseQuestion=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
       message:'How many Trail Shoes are available, and in which warehouse?'});
     assert.equal(warehouseQuestion.status,303);
-    const warehouseAnswer=(await agent.get('/ask')).text;
-    assert.match(warehouseAnswer,/1 SKU matched with 7 units on hand, 0 committed, 7 available and 3 incoming/);
-    assert.match(warehouseAnswer,/Stock is in Main Warehouse/);
+    const latestWarehouseAnswer=(await database.query(`SELECT answer FROM stockchief_runtime.assistant_interactions
+      ORDER BY created_at DESC,id DESC LIMIT 1`)).rows[0].answer;
+    assert.match(latestWarehouseAnswer,/1 SKU matched with 7 units on hand, 0 committed, 7 available and 3 incoming/);
+    assert.match(latestWarehouseAnswer,/Stock is in Main Warehouse/);
     const left=await agent.post('/ask/leave-the-rest').type('form').send({_csrf:csrfFrom((await agent.get('/ask')).text),back:'/'});
     assert.equal(left.status,303);assert.equal(left.headers.location,'/');
 

@@ -85,6 +85,19 @@ function inventoryLookupSearch(message){
   return /^(?:inventory|items?|products?|skus?|stock|units?)$/i.test(cleaned||'')?null:cleaned;
 }
 
+function lookupSearchPatterns(value){
+  const original=trimOrNull(value);
+  if(!original)return [];
+  const parts=original.split(/\s+/);const last=parts.at(-1);
+  let singular=last;
+  if(/ies$/i.test(last)&&last.length>3)singular=`${last.slice(0,-3)}y`;
+  else if(/(?:sses|xes|zes|ches|shes)$/i.test(last)&&last.length>3)singular=last.slice(0,-2);
+  else if(/s$/i.test(last)&&!/ss$/i.test(last)&&last.length>3)singular=last.slice(0,-1);
+  const values=[original];
+  if(singular!==last)values.push([...parts.slice(0,-1),singular].join(' '));
+  return [...new Set(values)].map((entry)=>`%${entry}%`);
+}
+
 function fallbackPlan(message) {
   const text=String(message || '').trim();
   const lower=text.toLowerCase();
@@ -301,9 +314,10 @@ async function lookup(database,ctx,request) {
     FROM items i JOIN skus s ON s.item_id=i.id LEFT JOIN balances b ON b.sku_id=s.id
     LEFT JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
     LEFT JOIN committed c ON c.sku_id=s.id LEFT JOIN incoming inc ON inc.sku_id=s.id
-    WHERE i.workspace_id=$1 AND i.is_active=1 AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%'
-      OR s.code ILIKE '%'||$2||'%' OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%')
-    GROUP BY i.id,s.id,c.quantity,inc.quantity ORDER BY i.name,s.position LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>{
+    WHERE i.workspace_id=$1 AND i.is_active=1 AND ($2::text IS NULL OR i.name ILIKE ANY($3::text[])
+      OR s.code ILIKE ANY($3::text[]) OR COALESCE(s.variant_label,'') ILIKE ANY($3::text[]))
+    GROUP BY i.id,s.id,c.quantity,inc.quantity ORDER BY i.name,s.position LIMIT 100`,
+  [ctx.workspaceId,search,lookupSearchPatterns(search)])).rows.map((row)=>{
       const onHand=Number(row.on_hand),committed=Number(row.committed),incoming=Number(row.incoming);
       return evidenceRow({product:row.variant_label?`${row.name} · ${row.variant_label}`:row.name,sku:row.code,
         onHand,committed,available:Math.max(0,onHand-committed),incoming,locations:row.locations||'No stock location'},`/inventory/${row.id}`);
