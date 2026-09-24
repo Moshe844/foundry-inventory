@@ -29,7 +29,7 @@ function money(amountMinor, currency = 'USD') {
 const { unitCount, unitLabel } = require('../lib/units');
 
 function plural(count, one, many) {
-  return Number(count) === 1 ? one : many || `${one}s`;
+  return Number(count) === 1 ? one : many || unitLabel(count, one);
 }
 
 /**

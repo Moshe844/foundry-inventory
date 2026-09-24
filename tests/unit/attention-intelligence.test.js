@@ -446,4 +446,7 @@ test('a unit label is counted in English, not by bolting on an s', () => {
   assert.equal(unitCount(7, 'pair'), '7 pairs');
   assert.equal(unitCount(7, 'units'), '7 units', 'an already-plural customer label is preserved');
   assert.equal(unitCount(2, 'pcs'), '2 pcs');
+
+  const viewHelpers = require('../../src/web/view-helpers');
+  assert.equal(viewHelpers.plural(43, 'units'), 'units', 'inventory pages preserve an already-plural label');
 });
