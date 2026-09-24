@@ -7,10 +7,18 @@ const { requireAuth,asyncRoute }=require('../middleware');
 function createPostgresAskRouter(database,options={}){
   const router=express.Router();
   router.use(['/ask','/actions'],requireAuth);
-  router.get('/ask',asyncRoute(async(req,res)=>res.page('attention/postgres-ask',{
-    title:'Ask StockChief',nav:'ask',room:true,interactions:await assistant.listInteractions(database,req.ctx.workspaceId),
-    prefill:String(req.query.q || '').slice(0,2000),
-  })));
+  router.get('/ask',asyncRoute(async(req,res)=>{
+    const startedAt=req.session.postgresAskStartedAt||null;
+    const interactions=(await assistant.listInteractions(database,req.ctx.workspaceId,100))
+      .filter((turn)=>!startedAt||String(turn.created_at)>=startedAt);
+    return res.page('attention/postgres-ask',{title:'Ask StockChief',nav:'ask',room:true,interactions,
+      prefill:String(req.query.q || req.query.about || '').slice(0,2000)});
+  }));
+  router.post('/ask/new',(req,res)=>{
+    req.session.postgresAskStartedAt=new Date().toISOString();
+    req.flash('success','New conversation started. Earlier conversations remain in the audit history.');
+    return res.redirect(303,'/ask');
+  });
   router.post('/ask',asyncRoute(async(req,res)=>{
     await assistant.ask(database,req.ctx,req.body.message,{provider:options.provider});
     return res.redirect(303,'/ask#latest');

@@ -1,31 +1,42 @@
-<section class="rm-head"><div><p class="rm-eyebrow">Settings</p><h1>Shipping</h1>
-  <p class="rm-lede">Every inventory uses its own postage account. StockChief never shares one business’s carrier billing with another.</p></div></section>
+<header class="rm-head">
+  <p class="rm-head__eyebrow"><%- helpers.icon('ship',{size:15}) %> Shipping</p>
+  <h1>Use this business’s own postage account</h1>
+  <p>StockChief compares rates, buys an approved label, records carrier handoff, follows tracking and brings delivery exceptions back to Needs You. Postage and carrier billing always stay with this inventory’s business account.</p>
+</header>
 
-<section class="rm-card">
-  <h2>Postage account</h2>
-  <% if (account.connected) { %>
-    <div class="rm-row"><span><strong><%= account.providerName %></strong><small><%= account.because %></small></span>
-      <span class="rm-badge"><%= account.testMode ? 'Sandbox' : 'Live' %></span></div>
-    <p>Credential ending <code>…<%= account.keyEnding %></code>. The usable key is encrypted and never rendered.</p>
-    <p>Register this inventory-specific tracking callback with <%= account.providerName %>:</p>
-    <p><code><%= webhookUrl %></code></p>
-    <form method="post" action="/settings/shipping/account/disconnect"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <button class="rm-btn rm-btn--quiet" type="submit">Disconnect and remove credential</button></form>
+<section class="rm-panel">
+  <div class="rm-panel__head"><h2>The account StockChief will use</h2><span class="right"><%= account.connected?(account.testMode?'Sandbox':'Live'):'Not connected' %></span></div>
+  <div class="rm-panel__body">
+  <% if(account.connected){ %>
+    <p class="sr-only"><%= account.providerName %><%= account.because %></p>
+    <div class="rm-told"><div class="rm-told__row"><span class="rm-told__t"><%= account.providerName %><small><%= account.because %></small></span><span class="rm-told__m is-ok"><%= account.testMode?'Test labels only':'Ready for live postage' %></span></div></div>
+    <p>Credential ending <code>…<%= account.keyEnding %></code>. The usable credential is encrypted and is never rendered back into the browser.</p>
+    <p><strong>Tracking callback for this inventory</strong><br><code><%= webhookUrl %></code></p>
+    <form method="post" action="/settings/shipping/account/disconnect" data-confirm="Disconnect this postage account? Existing shipment history remains."><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost" type="submit">Disconnect and remove credential</button></form>
   <% } else { %>
     <p><%= account.because %></p>
-    <form method="post" action="/settings/shipping/account" class="rm-form-grid">
+    <div class="rm-note"><%- helpers.icon('info',{size:16}) %><div><strong>If the business already uses ShipEngine, Shippo, ShipStation, or EasyPost</strong><br>Choose that platform below and connect the business account. StockChief does not replace its carrier contracts; it operates through them.</div></div>
+    <form method="post" action="/settings/shipping/account" class="grid" id="existing-carrier-connection">
       <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-      <label>Shipping platform<select name="provider" required><% providers.forEach(function(provider){ %><option value="<%= provider %>"><%= provider %></option><% }) %></select></label>
-      <label>API key<input type="password" name="apiKey" required autocomplete="off" placeholder="Paste the business account key"></label>
-      <label>Webhook secret <span>(when the provider gives one)</span><input type="password" name="webhookSecret" autocomplete="off"></label>
-      <div><button class="rm-btn" type="submit">Verify and connect</button></div>
+      <label class="field"><span class="field-label">Shipping platform</span><select class="select" name="provider" required><% providers.forEach(function(provider){ %><option value="<%= provider %>"><%= provider %></option><% }) %></select><span class="field-help">This is the platform account, not an individual carrier.</span></label>
+      <label class="field"><span class="field-label">API key</span><input class="input" type="password" name="apiKey" required autocomplete="off" placeholder="Paste the business account key"><span class="field-help">Stored encrypted and scoped to this inventory.</span></label>
+      <label class="field"><span class="field-label">Webhook secret <small>when the platform gives one</small></span><input class="input" type="password" name="webhookSecret" autocomplete="off"></label>
+      <button class="rm-btn rm-btn--wash" type="submit">Verify and connect</button>
     </form>
   <% } %>
+  </div>
 </section>
 
-<section class="rm-card"><h2>What happens next</h2>
-  <ol><li>StockChief checks destination, origin, phone numbers, and measured weight.</li>
-    <li>It requests live rates without spending money.</li><li>An authorized owner buys the selected label.</li>
-    <li>Inventory changes only when someone records the carrier handoff.</li>
-    <li>Signed carrier events update tracking; duplicate scans apply once.</li></ol>
+<div class="rm-sect"><h2>What the carrier choices mean</h2><p>UPS, FedEx, USPS and DHL are not setup buttons here. They appear as live rate choices only when the connected platform account exposes them for a real parcel.</p></div>
+<div class="rm-choices-grid"><% ['UPS','FedEx','USPS','DHL'].forEach(function(carrier){ %><article class="rm-provider"><div class="rm-provider__h"><span class="rm-provider__mark" aria-hidden="true"><%- helpers.icon('ship',{size:16}) %></span><span class="rm-provider__n"><%= carrier %></span></div><p>Rates, labels and tracking when enabled in the connected business account.</p></article><% }) %></div>
+
+<section class="rm-panel">
+  <div class="rm-panel__head"><h2>What StockChief takes over after setup</h2></div>
+  <div class="rm-feed">
+    <div class="rm-feed__row"><span class="rm-feed__ic">1</span><span class="rm-feed__t">Validate the order, destination, origin and measured parcel<small>No destination means no carrier shipment.</small></span></div>
+    <div class="rm-feed__row"><span class="rm-feed__ic">2</span><span class="rm-feed__t">Compare live rates and show each service once<small>Looking at rates never buys postage.</small></span></div>
+    <div class="rm-feed__row"><span class="rm-feed__ic">3</span><span class="rm-feed__t">Buy only the approved label<small>The shipping platform charges the business’s own billing method.</small></span></div>
+    <div class="rm-feed__row"><span class="rm-feed__ic">4</span><span class="rm-feed__t">Change inventory only at physical handoff<small>Printing a label does not pretend the goods left.</small></span></div>
+    <div class="rm-feed__row"><span class="rm-feed__ic">5</span><span class="rm-feed__t">Track delivery, exceptions and returns<small>Signed duplicate scans apply once; customer messages require a connected mailbox and approved communication policy.</small></span></div>
+  </div>
 </section>

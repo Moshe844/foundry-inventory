@@ -1,0 +1,7 @@
+<header class="rm-head"><p class="rm-head__eyebrow"><%- helpers.icon('alert',{size:15}) %> Ask StockChief</p><h1>Report an answer that was wrong or incomplete</h1><p>The exact question and answer are preserved for investigation. Reporting a miss never creates authority or silently teaches StockChief a business rule.</p></header>
+<% if(!interactions.length){ %><div class="rm-empty"><strong>No recent conversation to report.</strong><p><a href="/ask">Ask StockChief first</a>.</p></div><% } else { %>
+<form method="post" action="/autopilot/misses" class="rm-form"><input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <label class="rm-field"><span>Which response?</span><select name="interactionId" required><option value="">Choose a recent response</option><% interactions.slice().reverse().forEach(function(turn){ %><option value="<%= turn.id %>"><%= turn.message.slice(0,120) %> — <%= turn.status %></option><% }) %></select></label>
+  <label class="rm-field"><span>What was wrong or missing?</span><textarea name="note" rows="5" required placeholder="Describe the expected business behavior, not a preferred wording."></textarea></label>
+  <button class="rm-btn" type="submit">Record this problem</button>
+</form><% } %>

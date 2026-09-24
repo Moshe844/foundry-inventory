@@ -142,8 +142,9 @@ async function listItems(database, workspaceId, input = {}) {
   const locationId = trimOrNull(input.locationId);
   const archivedOnly = input.archivedOnly === true;
   const includeArchived = archivedOnly || input.includeArchived === true;
+  const group = ['shortage','empty','incoming','healthy'].includes(input.group) ? input.group : null;
   const values = [workspaceId, q || null, trackingMode, locationId, includeArchived, archivedOnly, pageSize + 1,
-    (page - 1) * pageSize];
+    (page - 1) * pageSize,group];
   const result = await database.query(`WITH stock AS (
       SELECT s.item_id,COALESCE(SUM(b.on_hand) FILTER (WHERE $4::text IS NULL OR b.location_id=$4),0) AS on_hand
       FROM skus s LEFT JOIN balances b ON b.sku_id=s.id AND b.workspace_id=s.workspace_id
@@ -182,6 +183,11 @@ async function listItems(database, workspaceId, input = {}) {
     LEFT JOIN incoming ON incoming.item_id=i.id LEFT JOIN history ON history.item_id=i.id
     WHERE i.workspace_id=$1 AND ($5 OR i.is_active=1) AND (NOT $6 OR i.is_active=0)
       AND ($3::text IS NULL OR i.tracking_mode=$3)
+      AND ($9::text IS NULL OR ($9='shortage' AND COALESCE(committed_item.quantity,0)>COALESCE(stock.on_hand,0))
+        OR ($9='empty' AND COALESCE(stock.on_hand,0)<=0)
+        OR ($9='incoming' AND COALESCE(incoming.quantity,0)>0)
+        OR ($9='healthy' AND COALESCE(stock.on_hand,0)>0
+          AND COALESCE(committed_item.quantity,0)<=COALESCE(stock.on_hand,0)))
       AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%' OR COALESCE(i.base_code,'') ILIKE '%'||$2||'%'
         OR EXISTS(SELECT 1 FROM skus search_sku WHERE search_sku.item_id=i.id AND search_sku.code ILIKE '%'||$2||'%'))
     ORDER BY ${listOrder(input.sort)} LIMIT $7 OFFSET $8`, values);

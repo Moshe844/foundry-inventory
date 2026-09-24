@@ -3,6 +3,8 @@
 const express=require('express');
 const projections=require('../../projections/postgres-service');
 const reports=require('../../accounting/postgres-reports');
+const presenters=require('../postgres-presenters');
+const permissions=require('../../actions/permissions');
 const { requireAuth,asyncRoute }=require('../middleware');
 
 function period(query){
@@ -13,12 +15,13 @@ function period(query){
 function createPostgresProjectionsRouter(database){
   const router=express.Router();
   router.get(['/', '/overview'],requireAuth,asyncRoute(async(req,res)=>{
-    const result=await projections.brief(database,req.ctx.workspaceId);
-    res.locals.attentionCount=result.needs.length;
-    return res.page('foundry/postgres-brief',{title:'StockChief',nav:'home',room:true,...result,
-      isEmpty:result.stats.itemCount===0});
+    const result=await presenters.home(database,req.ctx.workspaceId);
+    res.locals.attentionCount=result.brief.needs.length;
+    return res.page('foundry/brief',{title:'StockChief',nav:'home',room:true,...result,
+      stats:result.brief.stats,brief:{body:'',source:'deterministic',createdAt:null},activeMigration:null,
+      routineProposal:null,financialPulse:null,observedBrief:'',canOperate:permissions.can(req.user,permissions.OPERATE)});
   }));
-  router.get('/needs-you',requireAuth,asyncRoute(async(req,res)=>{
+  router.get(['/needs-you','/needs-you/all'],requireAuth,asyncRoute(async(req,res)=>{
     const items=await projections.needs(database,req.ctx.workspaceId);res.locals.attentionCount=items.length;
     return res.page('manager/postgres-needs-you',{title:'Needs you',nav:'attention',room:true,items});
   }));
@@ -27,17 +30,13 @@ function createPostgresProjectionsRouter(database){
     return res.page('inventory/postgres-activity',{title:'Activity',nav:'history',activity});
   }));
   router.get(['/money','/accounting'],requireAuth,asyncRoute(async(req,res)=>{
-    const dates=period(req.query);const [pnl,balance,receivables,payables]=await Promise.all([
-      reports.profitAndLoss(database,req.ctx.workspaceId,dates),
-      reports.balanceSheet(database,req.ctx.workspaceId,{asOf:dates.to}),
-      database.query(`SELECT COALESCE(SUM(balance_minor),0) AS amount FROM accounting_customer_invoices
-        WHERE workspace_id=$1 AND status IN ('OPEN','PARTIALLY_PAID')`,[req.ctx.workspaceId]),
-      database.query(`SELECT COALESCE(SUM(balance_minor),0) AS amount FROM accounting_supplier_bills
-        WHERE workspace_id=$1 AND status IN ('OPEN','PARTIALLY_PAID','DISPUTED')`,[req.ctx.workspaceId]),
-    ]);
-    return res.page('accounting/postgres-money',{title:'Money',nav:'accounting',pnl,balance,from:dates.from,to:dates.to,
-      receivableMinor:Number(receivables.rows[0].amount),payableMinor:Number(payables.rows[0].amount)});
+    const result=await presenters.money(database,req.ctx.workspaceId,period(req.query));
+    return res.page('accounting/money',{title:'Money',nav:'accounting',room:true,...result,
+      configured:{enabled:true,currency:result.story.currency},period:{key:'custom',from:result.from,to:result.to,label:'Current period'}});
   }));
+  router.get(['/accounting/books','/money/books','/accounting/transactions','/accounting/banking',
+    '/accounting/payables','/accounting/receivables'],requireAuth,(req,res)=>res.redirect(302,'/money'));
+  router.get('/foundry/briefing',requireAuth,(req,res)=>res.redirect(302,'/'));
   router.get('/accounting/reports/:kind',requireAuth,asyncRoute(async(req,res)=>{
     const dates=period(req.query);let report;let title;
     if(req.params.kind==='profit-and-loss'){report=await reports.profitAndLoss(database,req.ctx.workspaceId,dates);title='Profit and loss';}

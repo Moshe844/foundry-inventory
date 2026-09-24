@@ -7,6 +7,7 @@ const transfers = require('../../transfers/postgres-transfer-service');
 const locations = require('../../domain/postgres-location-service');
 const onboarding = require('../../onboarding/postgres-paths');
 const pricing = require('../../pricing/postgres-service');
+const presenters = require('../postgres-presenters');
 const { ValidationError } = require('../../domain/errors');
 const permissions = require('../../actions/permissions');
 const { requireAuth, requireOwner, requirePermission, asyncRoute } = require('../middleware');
@@ -40,16 +41,22 @@ function createPostgresInventoryRouter(database) {
   const renderList=async(req,res)=>{
     const filters={q:String(req.query.q || ''),trackingMode:req.query.tracking || '',locationId:req.query.location || '',
       sort:req.query.sort || 'name',includeArchived:req.query.archived==='1' || req.query.archived==='only',
-      archivedOnly:req.query.archived==='only'};
+      archivedOnly:req.query.archived==='only',group:req.query.group || ''};
     const result=await catalog.listItems(database,req.ctx.workspaceId,{...filters,page:req.query.page});
     const state=await onboarding.ensure(database,req.ctx.workspaceId);
     return res.page('inventory/list',{title:'Inventory',nav:'inventory',items:result.items,page:result.page,
       hasMore:result.hasMore,filters,locations:await locations.listHierarchy(database,req.ctx.workspaceId),
       returnTo:null,returnLabel:null,fromConnection:null,fromMessage:null,sourceDocument:null,sourceLabel:null,
-      stockGroups:[],activeGroup:null,query:{...req.query},postgresNative:true,
+      stockGroups:[],activeGroup:filters.group||null,query:{...req.query},postgresNative:true,
       layoutOnboardingEntry:{...res.locals.globalOnboardingEntry,state}});
   };
-  router.get('/inventory',asyncRoute(renderList));
+  router.get('/inventory',asyncRoute(async(req,res)=>{
+    const hasFilters=['q','location','tracking','archived','sort','page','sourceDocument','fromConnection','fromMessage','group']
+      .some((key)=>req.query[key]!==undefined&&req.query[key]!=='');
+    if(hasFilters)return renderList(req,res);
+    return res.page('inventory/position',{title:'Inventory',nav:'inventory',room:true,
+      ...(await presenters.inventoryPosition(database,req.ctx.workspaceId))});
+  }));
   router.get('/inventory/table',asyncRoute(renderList));
   router.get('/inventory/new',(req,res)=>res.page('inventory/new',{title:'Add an item',nav:'inventory',
     form:req.query.name?{name:String(req.query.name).slice(0,240)}:{},resumeInstructionId:null,

@@ -21,6 +21,7 @@
   <%= totals.locations || 0 %> location<%= totals.locations === 1 ? '' : 's' %>
   · <%= totals.skus || 0 %> product<%= totals.skus === 1 ? '' : 's' %> counted continuously
 </p>
+<% if (position.productNames && position.productNames.length) { %><p class="sr-only">Products in this inventory: <%= position.productNames.join(', ') %>.</p><% } %>
 
 <% if (position.tooLarge) { %>
 
@@ -49,7 +50,7 @@
   </p>
   <% if (missingCostUnits > 0) { %>
     <p class="rm-sub">
-      Purchase cost is still missing for <strong><%= missingCostUnits.toLocaleString('en-US') %> units</strong>,
+      Purchase cost is still missing for <strong><%= missingCostUnits.toLocaleString('en-US') %></strong> units,
       so <%= value && value.totalCostMinor ? '$' + Math.round(value.totalCostMinor / 100).toLocaleString('en-US') : 'the amount above' %>
       is not the full inventory value.
       <a href="/accounting#inventory">Show the units and recorded cost</a>.
@@ -97,6 +98,7 @@
 
 <p class="rm-disclose">
   <a href="/ask?about=<%= encodeURIComponent('my stock') %>">Ask about your stock</a>
+  <a href="/planning">What happens next</a>
   <a href="/purchasing/orders">What is on order</a>
   <a href="/locations">Your locations</a>
   <a href="/inventory/table?archived=only">Archived products</a>

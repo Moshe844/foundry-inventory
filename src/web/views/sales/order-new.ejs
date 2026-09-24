@@ -39,13 +39,14 @@
       <label class="rm-field">
         <span>Customer</span>
         <select name="customerId" id="order-customer">
-          <option value="">+ Create a new customer with this order</option>
+          <% if (locals.allowNewCustomer !== false) { %><option value="">+ Create a new customer with this order</option>
+          <% } else { %><option value="">Choose a customer</option><% } %>
           <% customers.forEach(function (c) { %>
             <option value="<%= c.id %>" data-email="<%= c.email || '' %>" data-address="<%= c.shipping_address || '' %>" <%= form.customerId === c.id ? 'selected' : '' %>><%= c.name %><%= c.email ? ' · ' + c.email : '' %></option>
           <% }) %>
         </select>
       </label>
-      <div id="order-new-customer">
+      <% if (locals.allowNewCustomer !== false) { %><div id="order-new-customer">
         <label class="rm-field">
           <span>New customer's name</span>
           <input name="customerName" value="<%= form.customerName || '' %>" placeholder="Person or business name">
@@ -133,7 +134,7 @@
             <button class="btn btn--ghost btn--sm" type="button" data-remove-order-line <%= formLineCount === 1 ? 'hidden' : '' %>>Remove</button>
           </div>
         <% } %>
-      </div>
+      </div><% } %>
       <button class="btn btn--ghost btn--sm" id="add-order-line" type="button">+ Add another product</button>
       <p class="hint">Available stock excludes units already reserved for other customers.</p>
 

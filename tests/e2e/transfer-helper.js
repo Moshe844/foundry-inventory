@@ -22,7 +22,7 @@ async function completeTransfer(page) {
   const approve = page.getByRole('button', { name: /Approve (?:and reserve|this move)/i });
   if (await approve.count()) await submit(page, approve);
   assert.match(await page.locator('main').innerText(), /Ready to move/i);
-  await submit(page, page.getByRole('button', { name: /^(?:It left|Confirm .* units left|Confirm units left)/i }));
+  await submit(page, page.getByRole('button', { name: /^(?:It left|Confirm .* units? left|Confirm units left)/i }));
   assert.match(await page.locator('main').innerText(), /On the way|in transit/i);
 
   const serial = page.getByRole('button', { name: 'Record serial outcomes' });

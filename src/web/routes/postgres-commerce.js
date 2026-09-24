@@ -6,6 +6,7 @@ const workflows=require('../../operations/postgres-business-workflows');
 const returns=require('../../operations/postgres-returns');
 const shipping=require('../../shipping/postgres-service');
 const payments=require('../../payments/postgres-collection');
+const presenters=require('../postgres-presenters');
 const permissions=require('../../actions/permissions');
 const {requireAuth,requirePermission,asyncRoute}=require('../middleware');
 const {newId,nowIso,trimOrNull}=require('../../lib/util');
@@ -28,12 +29,26 @@ function createPostgresCommerceRouter(database,options={}){
   router.use(['/purchasing','/orders','/sales'],requireAuth);
 
   router.get('/purchasing',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
-    const [orders,suppliers,catalogue,locations]=await Promise.all([
-      commerce.purchaseOrders(database,req.ctx.workspaceId),commerce.suppliers(database,req.ctx.workspaceId),
-      commerce.catalogue(database,req.ctx.workspaceId),commerce.locations(database,req.ctx.workspaceId),
-    ]);
-    return res.page('purchasing/postgres-plan',{title:'Purchasing',nav:'purchasing',orders,suppliers,catalogue,locations,
-      today:dateToday()});
+    const result=await presenters.purchasing(database,req.ctx.workspaceId);
+    return res.page('purchasing/plan',{title:'Purchasing',nav:'purchasing',room:true,...result,postgresQuickEntry:true,
+      permissions:{create:permissions.can(req.user,permissions.CREATE_PO),
+        receive:permissions.can(req.user,permissions.RECEIVE_PO)}});
+  }));
+
+  router.get('/purchasing/orders',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),(req,res)=>res.redirect(302,'/purchasing'));
+  router.get('/purchasing/receive',requirePermission(permissions.RECEIVE_PO,'book in deliveries'),(req,res)=>res.redirect(302,'/purchasing'));
+  router.get('/purchasing/orders/:id/receive',requirePermission(permissions.RECEIVE_PO,'book in deliveries'),
+    (req,res)=>res.redirect(302,`/purchasing/orders/${req.params.id}#receive`));
+  router.get('/purchasing/orders/new',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute(async(req,res)=>{
+    const [supplierRows,catalogue,locationRows]=await Promise.all([commerce.suppliers(database,req.ctx.workspaceId),
+      commerce.catalogue(database,req.ctx.workspaceId),commerce.locations(database,req.ctx.workspaceId)]);
+    const supplierId=trimOrNull(req.query.supplier);
+    const suppliers=supplierRows.map((supplier)=>({...supplier,contactName:supplier.contact_name,
+      defaultLeadTimeDays:supplier.default_lead_time_days,paymentTerms:supplier.payment_terms}));
+    const supplierItems=supplierId?catalogue.map((item)=>({skuId:item.id,displayName:item.display_name,
+      supplierSku:null,unitsPerPurchaseUnit:1,purchaseUnit:'unit',lastUnitCost:null})):[];
+    return res.page('purchasing/order-new',{title:'New purchase order',nav:'purchasing',suppliers,supplierId,
+      supplierItems,locations:locationRows,orderErrors:[],submitted:null});
   }));
 
   router.post('/purchasing/suppliers',requirePermission(permissions.MANAGE_SUPPLIERS,'add suppliers'),asyncRoute(async(req,res)=>{
@@ -43,11 +58,16 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   router.post('/purchasing/orders',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute(async(req,res)=>{
+    const quantities=req.body.quantity&&typeof req.body.quantity==='object'?req.body.quantity:null;
+    const costs=req.body.unitCost&&typeof req.body.unitCost==='object'?req.body.unitCost:{};
+    const lines=quantities?Object.entries(quantities).filter(([,quantity])=>Number(quantity)>0).map(([skuId,quantity])=>({
+      skuId,quantityUnits:quantity,unitCost:costs[skuId],destinationLocationId:req.body.destinationLocationId})):
+      [{skuId:req.body.skuId,quantityUnits:req.body.quantity,unitCost:req.body.unitCost,
+        destinationLocationId:req.body.destinationLocationId}];
     const result=await workflows.createPurchaseOrder(database,req.ctx,{supplierId:req.body.supplierId,
       orderDate:req.body.orderDate||dateToday(),expectedDate:trimOrNull(req.body.expectedDate),
       destinationLocationId:req.body.destinationLocationId,currency:trimOrNull(req.body.currency)||'USD',
-      notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'purchase-order'),lines:[{skuId:req.body.skuId,
-        quantityUnits:req.body.quantity,unitCost:req.body.unitCost,destinationLocationId:req.body.destinationLocationId}]});
+      notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'purchase-order'),lines});
     req.flash('success',`${result.poNumber} was prepared. Nothing was sent to the supplier.`);
     return res.redirect(303,`/purchasing/orders/${result.purchaseOrderId}`);
   }));
@@ -158,13 +178,26 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   const renderOrders=async(req,res)=>{
-    const [orders,customers,catalogue,locations]=await Promise.all([
-      commerce.salesOrders(database,req.ctx.workspaceId),commerce.customers(database,req.ctx.workspaceId),
-      commerce.catalogue(database,req.ctx.workspaceId),commerce.locations(database,req.ctx.workspaceId),
-    ]);
-    return res.page('sales/postgres-orders',{title:'Orders',nav:'sales',orders,customers,catalogue,locations,today:dateToday()});
+    const result=await presenters.sales(database,req.ctx.workspaceId);
+    result.view=['stuck','ready','moving','unpaid','done'].includes(req.query.view)?req.query.view:'all';
+    return res.page('sales/orders',{title:'Orders',nav:'sales',room:true,...result,postgresQuickEntry:true});
   };
   router.get(['/orders','/sales'],requirePermission(permissions.VIEW_SALES,'see customer orders'),asyncRoute(renderOrders));
+
+  router.get(['/orders/new','/sales/new'],requirePermission(permissions.OPERATE,'create sales orders'),asyncRoute(async(req,res)=>{
+    const [customers,catalogue,locations]=await Promise.all([commerce.customers(database,req.ctx.workspaceId),
+      commerce.catalogue(database,req.ctx.workspaceId),commerce.locations(database,req.ctx.workspaceId)]);
+    const skus=catalogue.map((sku)=>({...sku,price:{isSet:sku.amount_minor!==null,
+      formatted:sku.amount_minor===null?'':`${sku.currency||'USD'} ${(Number(sku.amount_minor)/100).toFixed(2)}`},
+      stock:{onHand:sku.on_hand,committed:sku.committed,available:sku.available}}));
+    return res.page('sales/order-new',{title:'New sales order',nav:'sales',customers,skus,locations,
+      form:{customerId:trimOrNull(req.query.customer)||'',deliveryMethod:'SHIP'},formError:null,
+      unpricedCount:skus.filter((sku)=>!sku.price.isSet).length,allowNewCustomer:false,screenGuide:null,suppressBack:true});
+  }));
+
+  router.get('/sales/customers/new',requirePermission(permissions.OPERATE,'add customers'),(req,res)=>res.page('sales/customer-new',{
+    title:'New customer',nav:'sales',form:{name:trimOrNull(req.query.name)||'',email:trimOrNull(req.query.email)||'',
+      phone:trimOrNull(req.query.phone)||''},formError:null,screenGuide:null}));
 
   router.post('/sales/customers',requirePermission(permissions.OPERATE,'add customers'),asyncRoute(async(req,res)=>{
     const customer=await commerce.createCustomer(database,req.ctx,req.body);
@@ -173,12 +206,18 @@ function createPostgresCommerceRouter(database,options={}){
   }));
 
   router.post(['/orders','/sales/orders'],requirePermission(permissions.OPERATE,'create sales orders'),asyncRoute(async(req,res)=>{
+    const skuIds=Array.isArray(req.body.skuId)?req.body.skuId:[req.body.skuId];
+    const quantities=Array.isArray(req.body.quantity)?req.body.quantity:[req.body.quantity];
+    const submittedPrices=Array.isArray(req.body.unitPrice)?req.body.unitPrice:[req.body.unitPrice];
+    const catalogue=await commerce.catalogue(database,req.ctx.workspaceId);
+    const prices=new Map(catalogue.map((sku)=>[sku.id,sku.amount_minor]));
+    const lines=skuIds.map((skuId,index)=>({skuId,quantity:quantities[index],unitPriceMinor:
+      String(submittedPrices[index]||'').trim()?minor(submittedPrices[index],'Selling price'):prices.get(skuId)}));
     const result=await workflows.createSalesOrder(database,req.ctx,{customerId:req.body.customerId,
       orderDate:req.body.orderDate||dateToday(),neededBy:trimOrNull(req.body.neededBy),
       fulfillmentLocationId:trimOrNull(req.body.fulfillmentLocationId),deliveryMethod:req.body.deliveryMethod||'SHIP',
-      shipToAddress:trimOrNull(req.body.shipToAddress),currency:trimOrNull(req.body.currency)||'USD',
-      notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'sales-order'),lines:[{skuId:req.body.skuId,
-        quantity:req.body.quantity,unitPriceMinor:minor(req.body.unitPrice,'Selling price')}]});
+      shipToAddress:trimOrNull(req.body.shipToAddress||req.body.customerShippingAddress),currency:trimOrNull(req.body.currency)||'USD',
+      notes:trimOrNull(req.body.notes),idempotencyKey:key(req,'sales-order'),lines});
     req.flash('success',`${result.orderNumber} was drafted. Stock is not committed until confirmation.`);
     return res.redirect(303,`/orders/${result.salesOrderId}`);
   }));

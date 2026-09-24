@@ -83,7 +83,7 @@
 <div class="rm-choices" style="margin:4px 0 18px">
   <a class="rm-btn" href="/orders/new"><%- helpers.icon('plus', { size: 15 }) %> Write an order</a>
   <a class="rm-btn rm-btn--ghost" href="/fulfilment">Picking and packing</a>
-  <a class="rm-btn rm-btn--ghost" href="/sales/customers/new">Add a customer</a>
+  <% if (!locals.postgresQuickEntry) { %><a class="rm-btn rm-btn--ghost" href="/sales/customers/new">Add a customer</a><% } %>
 </div>
 
 <% if (orders.length) { %>
@@ -149,6 +149,8 @@
     <p><a href="/orders">Show every order</a></p>
   </div>
 <% } %>
+
+<% if (locals.postgresQuickEntry) { %><%- include('postgres-quick-entry', { customers: customers, catalogue: catalogue, locations: locations }) %><% } %>
 
 <%
   /*

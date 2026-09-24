@@ -1,4 +1,5 @@
 <div class="rm-chat">
+  <div class="rm-chat__actions"><form method="post" action="/ask/new"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="rm-btn rm-btn--ghost rm-btn--sm" type="submit">New conversation</button></form><a class="rm-btn rm-btn--ghost rm-btn--sm" href="/autopilot/misses">Report a problem</a></div>
   <% if (!interactions.length) { %>
     <header class="rm-chat__intro">
       <span class="rm-chat__mark" aria-hidden="true"><%- helpers.icon('spark', { size: 18 }) %></span>

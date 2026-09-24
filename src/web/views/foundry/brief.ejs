@@ -154,6 +154,7 @@
 <h1 class="rm-verdict">
   <%= verdict %><% if (verdictAside) { %> <span class="q"><%= verdictAside %></span><% } %>
 </h1>
+<% if (locals.operationSummary) { %><p class="rm-prose"><%= operationSummary %></p><% } %>
 <% if (currentUser.role === 'owner') { %><p class="rm-prose"><a href="/autopilot">Review suggested routine-work limits</a> · <a href="/autopilot/daily">Daily digest and batch approvals</a> · <a href="/autopilot/misses">Report an Ask miss</a></p><% } %>
 <% if (!paused && canOperate && (neverChecked || home.status.checkStale)) { %>
   <form method="post" action="/autopilot/run" class="rm-prose">

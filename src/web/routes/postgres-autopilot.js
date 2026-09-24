@@ -2,6 +2,8 @@
 
 const express=require('express');
 const autonomy=require('../../autopilot/postgres-service');
+const assistant=require('../../assistant/postgres-service');
+const monitoring=require('../../operations/postgres-monitoring');
 const { requireAuth,asyncRoute }=require('../middleware');
 
 function createPostgresAutopilotRouter(database){
@@ -9,6 +11,19 @@ function createPostgresAutopilotRouter(database){
   router.get('/autopilot',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/postgres-settings',{
     title:'What StockChief does',nav:'autopilot',backTo:{href:'/settings',label:'Settings'},
     ...(await autonomy.dashboard(database,req.ctx.workspaceId))})));
+  router.get('/autopilot/daily',requireAuth,(req,res)=>res.redirect(302,'/needs-you'));
+  router.get('/autopilot/misses',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/postgres-misses',{
+    title:'Report an Ask problem',nav:'ask',room:true,interactions:await assistant.listInteractions(database,req.ctx.workspaceId,30)})));
+  router.post('/autopilot/misses',requireAuth,asyncRoute(async(req,res)=>{
+    const interactions=await assistant.listInteractions(database,req.ctx.workspaceId,100);
+    const turn=interactions.find((entry)=>entry.id===req.body.interactionId);
+    if(!turn)throw new Error('Choose a recent Ask StockChief response from this inventory.');
+    await monitoring.raise(database,{workspaceId:req.ctx.workspaceId,severity:'WARNING',kind:'assistant.reported_miss',
+      title:'Ask StockChief response reported by owner',detail:`Question: ${turn.message}\nAnswer: ${turn.answer}\nOwner note: ${String(req.body.note||'').trim()||'No note supplied.'}`,
+      fingerprint:`assistant.reported_miss:${turn.id}`});
+    req.flash('success','Problem recorded with the exact question and answer. StockChief did not learn a new rule silently.');
+    return res.redirect(303,'/autopilot/misses');
+  }));
   router.post('/autopilot/mode',requireAuth,asyncRoute(async(req,res)=>{
     await autonomy.setMode(database,req.ctx,req.user,req.body.mode);req.flash('success','StockChief authority was updated.');
     return res.redirect(303,'/autopilot');

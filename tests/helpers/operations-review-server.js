@@ -9,9 +9,9 @@ const { createApp } = require('../../src/app');
 const { seedWorkspace, makeQuantityItem } = require('../helpers');
 const { openPostgres } = require('../../src/db/postgres');
 const { PostgresSessionStore } = require('../../src/web/postgres-session-store');
-const { startCluster, copyFixtureTables } = require('./postgres-cluster');
-const operationalReview = require('../../src/manager/operational-review');
+const { startCluster } = require('./postgres-cluster');
 const { migratePostgres } = require('../../src/db/migrate-postgres');
+const { migrateSqliteToPostgres } = require('../../src/db/sqlite-to-postgres');
 const postgresJobs = require('../../src/operations/postgres-job-queue');
 const ledger = require('../../src/accounting/ledger');
 const payments = require('../../src/accounting/payments');
@@ -66,13 +66,9 @@ async function start() {
   const otherItem = makeQuantityItem(db, other.ctx, { name: 'Private stock', baseCode: 'PRIVATE' });
   inventory.receive(db, other.ctx, { skuId: otherItem.skuId, locationId: other.main.id, quantity: 987 });
   postgres = openPostgres(cluster.connectionString, { applicationName: 'stockchief-ui-fixture' });
-  await copyFixtureTables(db, postgres, [...new Set(operationalReview.SOURCES.map((source) => source.table)), 'workspaces']);
-  for (const source of operationalReview.SOURCES) {
-    await postgres.query(`ALTER TABLE ${source.table} ALTER COLUMN ${source.time}
-      TYPE ${source.dateOnly ? 'DATE' : 'TIMESTAMPTZ'} USING NULLIF(${source.time}, '')::${source.dateOnly ? 'DATE' : 'TIMESTAMPTZ'}`);
-  }
   await migratePostgres(postgres);
-  await migratePostgres(postgres);
+  await migrateSqliteToPostgres({ sqlitePath: databasePath, postgres,
+    migrationId: 'operations-review-browser-fixture' });
   const queued = await postgresJobs.enqueue(postgres, { workspaceId: workspace.workspaceId,
     kind: 'migration.acceptance-probe', idempotencyKey: 'review:probe', maxAttempts: 1 });
   const claimed = await postgresJobs.claim(postgres, { owner: 'fixture-setup' });
