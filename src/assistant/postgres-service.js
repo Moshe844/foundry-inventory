@@ -67,6 +67,11 @@ Use an empty string for missing recipient, recipientKind, subject, body, mailbox
 shipToAddress, neededBy, purchaseOrder, supplierBill, receiptReference, paymentMethod or paymentDate values; other missing values are null.
 quantity is the movement quantity; countedQuantity is the physical count after an adjustment.`;
 
+function cleanReference(value) {
+  const reference=trimOrNull(value);
+  return reference ? trimOrNull(reference.replace(/[.,;:!?]+$/,'')) : null;
+}
+
 function fallbackPlan(message) {
   const text=String(message || '').trim();
   const lower=text.toLowerCase();
@@ -110,7 +115,7 @@ function fallbackPlan(message) {
       /\b(location|warehouse|store|bin|shelf)\b/.test(lower)?'create_location':'create_item';
   const number=Number(/\b(\d+)\b/.exec(text)?.[1]);
   const quantity=Number.isSafeInteger(number)?number:null;
-  const reference=trimOrNull(/\b(?:reference|ref)\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]*)/i.exec(text)?.[1]);
+  const reference=cleanReference(/\b(?:reference|ref)\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]*)/i.exec(text)?.[1]);
   let sku=null;let location=null;let fromLocation=null;let toLocation=null;
   const tail='(?=\\s+(?:with\\s+)?(?:reference|ref)\\b|[,.;]|$)';
   if(verb==='transfer'){
@@ -142,7 +147,7 @@ function cleanPlan(raw,message) {
     countedQuantity:Number.isSafeInteger(raw.countedQuantity)?raw.countedQuantity:null,
     amount:Number.isFinite(raw.amount)&&raw.amount>=0?raw.amount:null,
     currency:/^[A-Z]{3}$/.test(String(raw.currency||'').toUpperCase())?String(raw.currency).toUpperCase():null,
-    reason:trimOrNull(raw.reason),reference:trimOrNull(raw.reference),recipient:trimOrNull(raw.recipient),
+    reason:trimOrNull(raw.reason),reference:cleanReference(raw.reference),recipient:trimOrNull(raw.recipient),
     recipientKind:['customer','supplier'].includes(raw.recipientKind)?raw.recipientKind:null,
     subject:trimOrNull(raw.subject),body:trimOrNull(raw.body),mailbox:trimOrNull(raw.mailbox),
     customer:trimOrNull(raw.customer),supplier:trimOrNull(raw.supplier),

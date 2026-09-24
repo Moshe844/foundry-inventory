@@ -115,10 +115,13 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     assert.equal(left.status,303);assert.equal(left.headers.location,'/');
 
     const fallback=await agent.post('/ask').type('form').send({_csrf:csrfFrom((await agent.get('/ask')).text),
-      message:'Record 5 Trail Shoes received into Main Warehouse with reference FALLBACK-RECEIPT'});
+      message:'Record 5 Trail Shoes received into Main Warehouse with reference FALLBACK-RECEIPT.'});
     assert.equal(fallback.status,303);
     const fallbackAnswer=await agent.get('/ask');
     assert.match(fallbackAnswer.text,/Receive 5 × Trail Shoe.*into Main Warehouse/);
     assert.match(fallbackAnswer.text,/Nothing has changed yet/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM movements`)).rows[0].count,'1');
+    const fallbackProposal=(await database.query(`SELECT payload FROM stockchief_runtime.assistant_action_proposals
+      WHERE action_type='inventory.receive' ORDER BY created_at DESC LIMIT 1`)).rows[0];
+    assert.equal(fallbackProposal.payload.reference,'FALLBACK-RECEIPT');
   });
