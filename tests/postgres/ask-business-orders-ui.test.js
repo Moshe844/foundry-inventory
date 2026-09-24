@@ -24,6 +24,9 @@ const provider={name:'fixture',model:'fixture',async complete(request){
     action:'create_sales_order',customer:'Builder Co',sku:'SHOE-9',quantity:2}),usage:{}};
   if(message==='Deliver this order without an address')return {data:fields({intent:'action',view:null,
     action:'create_sales_order',customer:'No Address Buyer',sku:'SHOE-9',quantity:1,deliveryMethod:'OWN_DELIVERY'}),usage:{}};
+  if(message==='Prepare an order for a new customer')return {data:fields({intent:'action',view:null,
+    action:'create_sales_order',customer:'Future Buyer',sku:'SHOE-9',quantity:1,deliveryMethod:'SHIP',
+    shipToAddress:'20 Future Road'}),usage:{}};
   if(message==='Buy seventeen pairs from our supplier')return {data:fields({intent:'action',view:null,
     action:'create_purchase_order',supplier:'Safe Supply',sku:'SHOE-9',quantity:17,location:'Main Warehouse',
     amount:8,currency:'USD',neededBy:'2026-10-05'}),usage:{}};
@@ -95,6 +98,18 @@ test('real Chromium Ask StockChief safely prepares and executes grounded custome
     assert.match(text,/What is the delivery address for No Address Buyer/);
     assert.equal((await database.query(`SELECT COUNT(*) AS count FROM sales_orders WHERE workspace_id=$1`,
       [one.workspace_id])).rows[0].count,'0');
+
+    text=await ask(page,base,'Prepare an order for a new customer');
+    assert.match(text,/I could not find customer “Future Buyer”/);
+    const addCustomer=page.getByRole('link',{name:'Add Future Buyer as a customer'});
+    assert.equal(await addCustomer.count(),1);
+    assert.match(await addCustomer.getAttribute('href'),/^\/sales\/customers\/new\?name=Future\+Buyer&shippingAddress=20\+Future\+Road$/);
+    await addCustomer.click();
+    assert.equal(await page.getByLabel('Name').inputValue(),'Future Buyer');
+    assert.equal(await page.getByLabel(/Default shipping address/).inputValue(),'20 Future Road');
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM sales_orders WHERE workspace_id=$1`,
+      [one.workspace_id])).rows[0].count,'0');
+    await page.goto(`${base}/ask`);
 
     text=await ask(page,base,'Record the complete customer order');
     assert.match(text,/Prepare a draft customer order for Builder Co/);assert.match(text,/10 Jobsite Road/);

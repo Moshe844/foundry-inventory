@@ -89,6 +89,13 @@ function cleanReference(value) {
   return reference ? trimOrNull(reference.replace(/[.,;:!?]+$/,'')) : null;
 }
 
+function recordHandoff(kind,name,extras={}) {
+  const params=new URLSearchParams({name:String(name||'').trim()});
+  if(kind==='customer'&&trimOrNull(extras.shippingAddress))params.set('shippingAddress',trimOrNull(extras.shippingAddress));
+  const label=kind==='customer'?`Add ${name} as a customer`:`Add ${name} as a supplier`;
+  return {href:kind==='customer'?`/sales/customers/new?${params}`:`/suppliers?${params}#add-supplier`,label};
+}
+
 function inventoryLookupSearch(message){
   const text=String(message||'').trim();
   const patterns=[
@@ -441,7 +448,13 @@ async function prepareAction(database,ctx,message,request) {
   if(request.action==='send_email'){
     const recipient=await outboundMail.resolveRecipient(database,ctx.workspaceId,request.recipient,request.recipientKind);
     if(recipient.missing)return {status:'CLARIFY',answer:'Who should StockChief email? Name an existing customer or supplier, or give the exact email address.'};
-    if(recipient.notFound)return {status:'CLARIFY',answer:`I could not find a customer or supplier matching “${request.recipient}”. Nothing was prepared.`};
+    if(recipient.notFound){
+      const kind=request.recipientKind||null;
+      return {status:'CLARIFY',answer:kind
+        ?`I could not find ${kind} “${request.recipient}”. Add the ${kind} record first, then return here to prepare the email. Nothing was prepared.`
+        :`I could not find a customer or supplier matching “${request.recipient}”. Say whether this is a customer or supplier, or give the exact email address. Nothing was prepared.`,
+      handoff:kind?recordHandoff(kind,request.recipient):null};
+    }
     if(recipient.ambiguous)return {status:'CLARIFY',answer:`“${request.recipient}” matches more than one business contact. Say whether this is the customer or supplier.`,
       choices:recipient.ambiguous.map((row)=>({label:`${row.name} · ${row.kind}`,value:`the ${row.kind} named ${row.name}`}))};
     if(!recipient.row.email)return {status:'CLARIFY',answer:`${recipient.row.name} has no email address. Add it to the ${recipient.row.kind} record before preparing this message.`};
@@ -531,7 +544,11 @@ async function prepareAction(database,ctx,message,request) {
     const sales=request.action==='create_sales_order';
     const party=await resolveParty(database,sales?'customer':'supplier',ctx.workspaceId,sales?request.customer:request.supplier);
     if(party.missing)return {status:'CLARIFY',answer:`Which ${sales?'customer':'supplier'} is this for?`};
-    if(party.notFound)return {status:'CLARIFY',answer:`I could not find a ${sales?'customer':'supplier'} matching “${sales?request.customer:request.supplier}”. Nothing was prepared.`};
+    if(party.notFound){
+      const kind=sales?'customer':'supplier';const name=sales?request.customer:request.supplier;
+      return {status:'CLARIFY',answer:`I could not find ${kind} “${name}”. Add the ${kind} record first, then return here to prepare the order. Nothing was prepared.`,
+        handoff:recordHandoff(kind,name,{shippingAddress:request.shipToAddress})};
+    }
     if(party.ambiguous)return {status:'CLARIFY',answer:`More than one ${sales?'customer':'supplier'} matches that name. Which one?`,
       choices:party.ambiguous.map((row)=>({label:`${row.name}${row.email?` · ${row.email}`:''}`,value:row.name}))};
     const sku=await resolveOne(database,'skus',ctx.workspaceId,request.sku,'i.name,s.position');
@@ -642,7 +659,7 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
 
 async function storeInteraction(database,ctx,message,intent,result) {
   const id=newId('pgask');
-  const storedIntent={...intent,presentation:{columns:result.columns || [],choices:result.choices || []}};
+  const storedIntent={...intent,presentation:{columns:result.columns || [],choices:result.choices || [],handoff:result.handoff || null}};
   await database.query(`INSERT INTO stockchief_runtime.assistant_interactions
     (id,workspace_id,actor_user_id,message,intent,answer,evidence,status)
     VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8)`,[id,ctx.workspaceId,ctx.actorId,message,JSON.stringify(storedIntent),

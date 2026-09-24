@@ -49,11 +49,11 @@ function transcriptFor(interactions){
 
 function resultFor(turn){
   if(!turn)return null;const columns=columnsFor(turn);const rows=turn.evidence||[];
-  const proposalHref=turn.intent?.proposalHref||null;
+  const proposalHref=turn.intent?.proposalHref||null;const storedHandoff=turn.intent?.presentation?.handoff||null;
   return {question:turn.message,answer:turn.answer,spoken:null,progressiveDisclosure:false,rows,columns,
     rowCount:rows.length,totalMatches:rows.length,sections:[],supported:true,general:false,isAction:false,
     needsClarification:turn.status==='CLARIFY',choices:turn.intent?.presentation?.choices||[],
-    handoff:proposalHref?{href:proposalHref,label:'Review prepared change'}:null,
+    handoff:proposalHref?{href:proposalHref,label:'Review prepared change'}:storedHandoff,
     plan:{intent:turn.intent?.intent||'lookup',entityQuery:turn.intent?.search||turn.intent?.sku||'',
       locationQuery:turn.intent?.location||''},interpretation:turn.intent?.view||turn.intent?.action||turn.intent?.intent||'business request',
     semanticPlan:null};

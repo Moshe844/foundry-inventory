@@ -232,7 +232,10 @@ function createPostgresCommerceRouter(database,options={}){
     const suppliers=rows.map((supplier)=>({id:supplier.id,name:supplier.name,email:supplier.email,status:supplier.status,
       contactName:supplier.contact_name,defaultLeadTimeDays:supplier.default_lead_time_days,
       itemCount:Number(supplier.item_count),openOrders:Number(supplier.open_orders),isActive:supplier.status==='active'}));
-    return res.page('purchasing/suppliers',{title:'Suppliers',nav:'purchasing',suppliers,prefill:null,
+    const prefill=['name','email','phone','contactName'].some((field)=>trimOrNull(req.query[field]))
+      ?{name:trimOrNull(req.query.name)||'',email:trimOrNull(req.query.email)||'',phone:trimOrNull(req.query.phone)||'',
+        contactName:trimOrNull(req.query.contactName)||''}:null;
+    return res.page('purchasing/suppliers',{title:'Suppliers',nav:'purchasing',suppliers,prefill,
       permissions:purchasingPermissions(req)});
   }));
   router.post('/suppliers',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'add suppliers'),asyncRoute(async(req,res)=>{
@@ -715,7 +718,7 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.get('/sales/customers/new',requirePermission(permissions.OPERATE,'add customers'),(req,res)=>res.page('sales/customer-new',{
     title:'New customer',nav:'sales',form:{name:trimOrNull(req.query.name)||'',email:trimOrNull(req.query.email)||'',
-      phone:trimOrNull(req.query.phone)||''},formError:null,screenGuide:null}));
+      phone:trimOrNull(req.query.phone)||'',shippingAddress:trimOrNull(req.query.shippingAddress)||''},formError:null,screenGuide:null}));
 
   router.post('/sales/customers',requirePermission(permissions.OPERATE,'add customers'),asyncRoute(async(req,res)=>{
     const customer=await commerce.createCustomer(database,req.ctx,req.body);
