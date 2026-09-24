@@ -10,20 +10,29 @@ function connectionOptions(connectionString, options = {}) {
   }
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(address.hostname);
   const sslMode = address.searchParams.get('sslmode');
-  if (!local && ['disable', 'allow', 'prefer', 'no-verify'].includes(sslMode)) {
+  const privateNetwork = options.privateNetwork === true;
+  if (!local && !privateNetwork && ['disable', 'allow', 'prefer', 'no-verify'].includes(sslMode)) {
     throw new Error('Remote PostgreSQL requires certificate-verified TLS.');
   }
+  let ssl;
+  if ((local || privateNetwork) && (!sslMode || sslMode === 'disable')) ssl = false;
+  else if (sslMode === 'require') ssl = { rejectUnauthorized: false };
+  else ssl = { rejectUnauthorized: true, ...(options.ca ? { ca: options.ca } : {}) };
   return { host: address.hostname.replace(/^\[|\]$/g, ''), port: Number(address.port || 5432),
     database: decodeURIComponent(address.pathname.slice(1)), user: decodeURIComponent(address.username),
     password: decodeURIComponent(address.password), max: options.max || 10,
     connectionTimeoutMillis: options.connectionTimeoutMillis || 10000,
     idleTimeoutMillis: options.idleTimeoutMillis || 30000,
     application_name: options.applicationName || 'stockchief',
-    ssl: local && sslMode === 'disable' ? false : { rejectUnauthorized: true, ...(options.ca ? { ca: options.ca } : {}) } };
+    ssl };
 }
 
 function openPostgres(connectionString, options = {}) {
-  const pool = new Pool(connectionOptions(connectionString, options));
+  const resolvedOptions = {
+    ...options,
+    privateNetwork: options.privateNetwork ?? process.env.FOUNDRY_DATABASE_PRIVATE_NETWORK === 'true',
+  };
+  const pool = new Pool(connectionOptions(connectionString, resolvedOptions));
   const errors = [];
   pool.on('error', (error) => {
     errors.push({ code: error.code || 'connection_error', at: new Date().toISOString() });

@@ -17,6 +17,7 @@ This is the deployment contract for the native PostgreSQL StockChief process. It
 - `stockchief-staging-web`: `npm run start:postgres-web`, HTTP readiness at `/readyz`
 - `stockchief-staging-worker`: `npm run start:postgres-worker`, no public endpoint
 - Both run `npm run db:apply:postgres` before deployment and retain the startup migration check. Migrations are serialized by a PostgreSQL advisory transaction lock.
+- Both explicitly declare `FOUNDRY_DATABASE_PRIVATE_NETWORK=true`, so Render's injected internal URL uses the private network without forcing certificate verification against the database's optional self-signed TLS endpoint. External database URLs still require TLS and reject insecure fallback modes.
 - Both use the same generated connection-encryption key. The web process additionally uses the same stable session secret across every instance.
 - Render's `RENDER_GIT_COMMIT` is the immutable release identity recorded by readiness and certification.
 
