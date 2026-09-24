@@ -61,6 +61,23 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const answer=await agent.get('/ask');
     assert.match(answer.text,/1 SKU matched with 0 units on hand/);
     assert.match(answer.text,/SHOE-BLACK-8/);
+    assert.match(answer.text,/This conversation/);
+    assert.match(answer.text,/Tell me what happened, ask me anything/);
+    assert.doesNotMatch(answer.text,/Back to StockChief/);
+
+    const wholeInventory=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(answer.text),
+      message:'How many items are in my inventory currently?'});
+    assert.equal(wholeInventory.status,303);
+    const wholeInventoryAnswer=await agent.get('/ask');
+    assert.match(wholeInventoryAnswer.text,/1 SKU matched with 0 units on hand/);
+    assert.doesNotMatch(wholeInventoryAnswer.text,/No product or SKU matched/);
+
+    const financial=await agent.post('/foundry/tell').type('form').send({_csrf:csrfFrom(wholeInventoryAnswer.text),
+      message:'Did I lose any money yet?'});
+    assert.equal(financial.status,303);
+    const financialAnswer=await agent.get('/ask');
+    assert.match(financialAnswer.text,/broken even so far this month/i);
+    assert.match(financialAnswer.text,/Revenue is/);
 
     const prepared=await agent.post('/ask').type('form').send({_csrf:csrfFrom(answer.text),
       message:'Receive seven SHOE-BLACK-8 into Main Warehouse, reference ASK-RECEIPT'});

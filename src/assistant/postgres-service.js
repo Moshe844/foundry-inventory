@@ -10,6 +10,7 @@ const operatingInstructions = require('../manager/postgres-operating-instruction
 const pricing = require('../pricing/postgres-service');
 const outboundMail = require('../connections/postgres-outbound-mail');
 const workflows = require('../operations/postgres-business-workflows');
+const accountingReports = require('../accounting/postgres-reports');
 const { ValidationError, NotFoundError, InvariantError } = require('../domain/errors');
 const { newId, trimOrNull } = require('../lib/util');
 
@@ -85,6 +86,19 @@ function inventoryLookupSearch(message){
   return /^(?:inventory|items?|products?|skus?|stock|units?)$/i.test(cleaned||'')?null:cleaned;
 }
 
+function wholeInventoryLookup(message){
+  const text=String(message||'').toLowerCase();
+  return /\bhow many\s+(?:items?|products?|skus?|units?)\b/.test(text)
+    || /\b(?:total|overall)\s+(?:items?|products?|skus?|units?|inventory|stock)\b/.test(text)
+    || /\bhow much\s+(?:inventory|stock)\b/.test(text);
+}
+
+function financialSummaryLookup(message){
+  const text=String(message||'').toLowerCase();
+  return /\b(?:did|have|are|were|am)\s+(?:i|we|the business|my business|our business)\s+(?:make|made|earn|earned|lose|lost|losing)\b/.test(text)
+    || /\b(?:profit|profitable|loss|net income|gross profit|money made|money lost|earnings)\b/.test(text);
+}
+
 function lookupSearchPatterns(value){
   const original=trimOrNull(value);
   if(!original)return [];
@@ -102,6 +116,8 @@ function fallbackPlan(message) {
   const text=String(message || '').trim();
   const lower=text.toLowerCase();
   const inventorySearch=inventoryLookupSearch(text);
+  const wholeInventory=wholeInventoryLookup(text);
+  const financialSummary=financialSummaryLookup(text);
   const email=/^(?:please\s+)?(?:send\s+(?:an?\s+)?email\s+to|email|e-mail|message|write\s+to|contact)\s+(.+?)(?:\s+(?:that|saying|to\s+say|and\s+(?:say|tell|ask)|about|regarding)\s+|\s*[—:]\s*)([\s\S]+)$/i.exec(text);
   const emailOnly=/^(?:please\s+)?(?:send\s+(?:an?\s+)?email\s+to|email|e-mail|message|write\s+to|contact)\s+(.+?)\s*[.!]?$/i.exec(text);
   if(email||emailOnly){const recipient=String((email||emailOnly)[1]||'').trim();const role=/^(?:the\s+)?(supplier|vendor|customer|client)\s+(?:named\s+|called\s+)?(.+)$/i.exec(recipient);
@@ -132,10 +148,11 @@ function fallbackPlan(message) {
   else if(/\bcustomers?\b/.test(lower))view='customers';
   else if(/\b(ship|shipment|tracking|carrier|delivery)\b/.test(lower))view='shipping';
   else if(/\b(payment|paid|owing|outstanding|receivable|payable)\b/.test(lower))view='payments';
-  else if(/\b(account|journal|profit|revenue|expense|books|balance)\b/.test(lower))view='accounting';
+  else if(financialSummary||/\b(account|journal|profit|revenue|expense|books|balance)\b/.test(lower))view='accounting';
   else if(/\b(connection|connected|sync|connector)\b/.test(lower))view='connections';
   else if(!inventorySearch&&/\b(location|warehouse|store|bin|shelf)\b/.test(lower))view='locations';
-  if(!action)return {intent:'lookup',view,action:null,search:inventorySearch,sku:null,location:null,fromLocation:null,
+  if(!action)return {intent:'lookup',view,action:null,
+    search:financialSummary?'profit_and_loss':wholeInventory?null:inventorySearch,sku:null,location:null,fromLocation:null,
     toLocation:null,quantity:null,countedQuantity:null,amount:null,currency:null,reason:null,reference:null};
   const verb=/\b(receive|received|came in)\b/.test(lower)?'receive':/\b(issue|issued|sold|used)\b/.test(lower)?'issue':
     /\b(move|transfer)\b/.test(lower)?'transfer':/\b(count|adjust|correct)\b/.test(lower)?'adjust':
@@ -167,11 +184,14 @@ function fallbackPlan(message) {
 function cleanPlan(raw,message) {
   const fallback=fallbackPlan(message);
   if(!raw || !['lookup','action','instruction','clarify'].includes(raw.intent))return fallback;
+  const wholeInventory=fallback.intent==='lookup'&&wholeInventoryLookup(message);
+  const financialSummary=fallback.intent==='lookup'&&financialSummaryLookup(message);
   const groundedInventoryLookup=raw.intent==='lookup'&&fallback.intent==='lookup'
     &&fallback.view==='inventory'&&fallback.search;
-  return {intent:raw.intent,view:groundedInventoryLookup?'inventory':VIEWS.includes(raw.view)?raw.view:fallback.view,
+  return {intent:raw.intent,view:wholeInventory?'inventory':financialSummary?'accounting':
+    groundedInventoryLookup?'inventory':VIEWS.includes(raw.view)?raw.view:fallback.view,
     action:ACTIONS.includes(raw.action)?raw.action:null,
-    search:groundedInventoryLookup?fallback.search:trimOrNull(raw.search),sku:trimOrNull(raw.sku),
+    search:wholeInventory?null:financialSummary?'profit_and_loss':groundedInventoryLookup?fallback.search:trimOrNull(raw.search),sku:trimOrNull(raw.sku),
     location:trimOrNull(raw.location),fromLocation:trimOrNull(raw.fromLocation),toLocation:trimOrNull(raw.toLocation),
     quantity:Number.isSafeInteger(raw.quantity)?raw.quantity:null,
     countedQuantity:Number.isSafeInteger(raw.countedQuantity)?raw.countedQuantity:null,
@@ -270,6 +290,21 @@ async function lookup(database,ctx,request) {
       'No connections are configured.',rows,columns:['name','status','lastSynced','error']};
   }
   if(request.view==='accounting'){
+    if(search==='profit_and_loss'){
+      const report=await accountingReports.profitAndLoss(database,ctx.workspaceId);
+      const money=(minor)=>pricing.formatMinor(Number(minor||0),report.currency);
+      const result=Number(report.netIncomeMinor);
+      const outcome=result<0?`The business has lost ${money(Math.abs(result))} this month.`:
+        result>0?`The business has earned ${money(result)} this month.`:'The business has broken even so far this month.';
+      const rows=[
+        {measure:'Revenue',value:money(report.revenueMinor)},
+        {measure:'Cost of goods sold',value:money(report.cogsMinor)},
+        {measure:'Operating expenses',value:money(report.operatingExpenseMinor)},
+        {measure:'Net income',value:money(report.netIncomeMinor)},
+      ];
+      return {answer:`${outcome} Revenue is ${money(report.revenueMinor)}, cost of goods sold is ${money(report.cogsMinor)}, and operating expenses are ${money(report.operatingExpenseMinor)} for ${report.from} through ${report.to}.`,
+        rows,columns:['measure','value']};
+    }
     const result=(await database.query(`SELECT COUNT(DISTINCT e.id) FILTER (WHERE e.status='POSTED') AS posted,
       COALESCE(SUM(debit_minor),0) AS debits,COALESCE(SUM(credit_minor),0) AS credits
       FROM accounting_journal_entries e LEFT JOIN accounting_journal_lines l ON l.entry_id=e.id
@@ -583,9 +618,10 @@ async function createProposal(database,ctx,message,actionType,payload,summary) {
 
 async function storeInteraction(database,ctx,message,intent,result) {
   const id=newId('pgask');
+  const storedIntent={...intent,presentation:{columns:result.columns || [],choices:result.choices || []}};
   await database.query(`INSERT INTO stockchief_runtime.assistant_interactions
     (id,workspace_id,actor_user_id,message,intent,answer,evidence,status)
-    VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8)`,[id,ctx.workspaceId,ctx.actorId,message,JSON.stringify(intent),
+    VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8)`,[id,ctx.workspaceId,ctx.actorId,message,JSON.stringify(storedIntent),
     result.answer,JSON.stringify(result.rows || []),result.status]);
   return id;
 }
