@@ -44,7 +44,8 @@ const postgresProjections = require('./projections/postgres-service');
 const postgresExploration = require('./onboarding/postgres-exploration');
 
 function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
-  connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null}={}) {
+  connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,
+  probeCacheMs={health:5000,readiness:1000}}={}) {
   if(!database?.query)throw new TypeError('A PostgreSQL database is required.');
   const app=express();
   const store=sessionStore || new PostgresSessionStore(database);
@@ -67,20 +68,32 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
   app.use('/api/v1',createPostgresConnectionsApi(database,{providers:connectionProviders || undefined}));
   app.use('/api/v1/operations',createPostgresOperationsApi(database));
   app.use('/api/v1/public',createPostgresPublicApi(database));
+  const probes=new Map();
+  const probe=(key,ttl,run)=>{
+    const prior=probes.get(key);const now=Date.now();
+    if(prior&&prior.expiresAt>now)return prior.promise;
+    const promise=Promise.resolve().then(run).catch((error)=>{
+      if(probes.get(key)?.promise===promise)probes.delete(key);
+      throw error;
+    });
+    probes.set(key,{expiresAt:now+Math.max(0,Number(ttl)||0),promise});
+    return promise;
+  };
   app.get('/healthz',async(req,res)=>{
     try {
-      const result=await database.query('SELECT COUNT(*) AS count FROM stockchief_postgres_migrations');
+      const result=await probe('health',probeCacheMs.health,()=>database.query(
+        'SELECT COUNT(*) AS count FROM stockchief_postgres_migrations'));
       return res.json({ok:true,database:'postgresql',migrations:Number(result.rows[0].count),
         releaseRef:config.operations.releaseRef});
     } catch { return res.status(503).json({ok:false,database:'unavailable'}); }
   });
   app.get('/readyz',async(req,res)=>{
     try{
-      const result=await database.query(`SELECT
+      const result=await probe('readiness',probeCacheMs.readiness,()=>database.query(`SELECT
         (SELECT COUNT(*) FROM stockchief_postgres_migrations) AS migrations,
         (SELECT COUNT(*) FROM stockchief_runtime.jobs WHERE status='DEAD') AS dead_jobs,
         (SELECT COUNT(*) FROM stockchief_runtime.jobs WHERE status IN ('PENDING','RETRY')
-          AND available_at<floor(extract(epoch FROM now()-interval '5 minutes')*1000)) AS stale_jobs`);
+          AND available_at<floor(extract(epoch FROM now()-interval '5 minutes')*1000)) AS stale_jobs`));
       const state=result.rows[0];
       return res.status(Number(state.stale_jobs)>0?503:200).json({ok:Number(state.stale_jobs)===0,
         database:'postgresql',shared:true,multiWriter:true,migrations:Number(state.migrations),
