@@ -444,5 +444,6 @@ test('a unit label is counted in English, not by bolting on an s', () => {
   assert.equal(unitCount(3, 'case'), '3 cases');
   assert.equal(unitCount(1, 'case'), '1 case');
   assert.equal(unitCount(7, 'pair'), '7 pairs');
+  assert.equal(unitCount(7, 'units'), '7 units', 'an already-plural customer label is preserved');
   assert.equal(unitCount(2, 'pcs'), '2 pcs');
 });

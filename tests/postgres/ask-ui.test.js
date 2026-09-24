@@ -21,6 +21,7 @@ function fields(overrides={}){
 
 const provider={name:'fixture',model:'fixture',async complete(request){
   const message=JSON.parse(request.prompt).message;
+  if(message.includes('Trail Shoes received'))throw new Error('Exercise deterministic fallback');
   if(message.includes('how many'))return {data:fields({search:'Trail Shoe'}),usage:{}};
   if(message.includes('Receive seven'))return {data:fields({intent:'action',view:null,action:'receive',sku:'SHOE-BLACK-8',
     location:'Main Warehouse',quantity:7,reference:'ASK-RECEIPT'}),usage:{}};
@@ -112,4 +113,12 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     assert.match(groundedAfterTransfer,/3 incoming/);
     const left=await agent.post('/ask/leave-the-rest').type('form').send({_csrf:csrfFrom((await agent.get('/ask')).text),back:'/'});
     assert.equal(left.status,303);assert.equal(left.headers.location,'/');
+
+    const fallback=await agent.post('/ask').type('form').send({_csrf:csrfFrom((await agent.get('/ask')).text),
+      message:'Record 5 Trail Shoes received into Main Warehouse with reference FALLBACK-RECEIPT'});
+    assert.equal(fallback.status,303);
+    const fallbackAnswer=await agent.get('/ask');
+    assert.match(fallbackAnswer.text,/Receive 5 × Trail Shoe.*into Main Warehouse/);
+    assert.match(fallbackAnswer.text,/Nothing has changed yet/);
+    assert.equal((await database.query(`SELECT COUNT(*) AS count FROM movements`)).rows[0].count,'1');
   });

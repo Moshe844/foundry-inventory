@@ -18,6 +18,7 @@
 
 /** Unit words that read the same however many there are. */
 const INVARIANT = new Set(['each', 'ea', 'pcs', 'pc', 'per', 'dozen', 'gross', 'stock']);
+const ALREADY_PLURAL = /(?:ies|ses|xes|zes|ches|shes|units|pieces|pairs|packs|rolls|pallets|cartons|bottles)$/i;
 
 function unitCount(quantity, label) {
   return `${quantity} ${unitLabel(quantity, label)}`;
@@ -27,10 +28,11 @@ function unitLabel(quantity, label) {
   const word = String(label || 'unit').trim() || 'unit';
   if (Number(quantity) === 1) return word;
   if (INVARIANT.has(word.toLowerCase())) return word;
+  if (ALREADY_PLURAL.test(word)) return word;
   // Abbreviations and anything with punctuation or digits are left exactly as
   // the customer wrote them.
   if (word.length <= 2 || !/^[a-z]+$/i.test(word)) return word;
   return /(s|x|z|ch|sh)$/i.test(word) ? `${word}es` : `${word}s`;
 }
 
-module.exports = { unitCount, unitLabel, INVARIANT };
+module.exports = { unitCount, unitLabel, INVARIANT, ALREADY_PLURAL };

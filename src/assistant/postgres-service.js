@@ -109,9 +109,27 @@ function fallbackPlan(message) {
     /\b(move|transfer)\b/.test(lower)?'transfer':/\b(count|adjust|correct)\b/.test(lower)?'adjust':
       /\b(location|warehouse|store|bin|shelf)\b/.test(lower)?'create_location':'create_item';
   const number=Number(/\b(\d+)\b/.exec(text)?.[1]);
-  return {intent:'action',view:null,action:verb,search:null,sku:null,location:null,fromLocation:null,
-    toLocation:null,quantity:Number.isSafeInteger(number)?number:null,countedQuantity:verb==='adjust'&&Number.isSafeInteger(number)?number:null,
-    amount:null,currency:null,reason:null,reference:null};
+  const quantity=Number.isSafeInteger(number)?number:null;
+  const reference=trimOrNull(/\b(?:reference|ref)\s*[:#-]?\s*([a-z0-9][a-z0-9._/-]*)/i.exec(text)?.[1]);
+  let sku=null;let location=null;let fromLocation=null;let toLocation=null;
+  const tail='(?=\\s+(?:with\\s+)?(?:reference|ref)\\b|[,.;]|$)';
+  if(verb==='transfer'){
+    const move=new RegExp('\\b(?:move|transfer)\\s+\\d+\\s+(?:x\\s+)?(.+?)\\s+from\\s+(.+?)\\s+to\\s+(.+?)'+tail,'i').exec(text);
+    if(move){sku=trimOrNull(move[1]);fromLocation=trimOrNull(move[2]);toLocation=trimOrNull(move[3]);}
+  }else if(['receive','issue'].includes(verb)){
+    const receive=verb==='receive';
+    const productPattern=receive
+      ? /\b(?:receive(?:d)?|record(?:ed)?|book(?:ed)?\s+in)\s+\d+\s+(?:x\s+)?(.+?)(?=\s+(?:received\s+)?(?:into|at|in|with|reference|ref)\b|[,.;]|$)/i
+      : /\b(?:issue(?:d)?|sell|sold|use|used|record(?:ed)?)\s+\d+\s+(?:x\s+)?(.+?)(?=\s+(?:from|at|in|with|reference|ref)\b|[,.;]|$)/i;
+    sku=trimOrNull(productPattern.exec(text)?.[1]);
+    const placePattern=receive
+      ? /\b(?:received\s+)?(?:into|at|in)\s+(.+?)(?=\s+(?:with\s+)?(?:reference|ref)\b|[,.;]|$)/i
+      : /\b(?:from|at|in)\s+(.+?)(?=\s+(?:with\s+)?(?:reference|ref)\b|[,.;]|$)/i;
+    location=trimOrNull(placePattern.exec(text)?.[1]);
+  }
+  return {intent:'action',view:null,action:verb,search:null,sku,location,fromLocation,toLocation,
+    quantity,countedQuantity:verb==='adjust'?quantity:null,
+    amount:null,currency:null,reason:null,reference};
 }
 
 function cleanPlan(raw,message) {
@@ -256,34 +274,55 @@ async function lookup(database,ctx,request) {
         SELECT * FROM purchase_incoming UNION ALL SELECT * FROM transfer_incoming
       ) sources GROUP BY sku_id)
     SELECT i.id,i.name,s.code,s.variant_label,COALESCE(SUM(b.on_hand),0) AS on_hand,
-      COALESCE(c.quantity,0) AS committed,COALESCE(inc.quantity,0) AS incoming
+      COALESCE(c.quantity,0) AS committed,COALESCE(inc.quantity,0) AS incoming,
+      COALESCE(STRING_AGG(DISTINCT l.name, ', ') FILTER (WHERE b.on_hand<>0),'') AS locations
     FROM items i JOIN skus s ON s.item_id=i.id LEFT JOIN balances b ON b.sku_id=s.id
+    LEFT JOIN locations l ON l.id=b.location_id AND l.workspace_id=b.workspace_id
     LEFT JOIN committed c ON c.sku_id=s.id LEFT JOIN incoming inc ON inc.sku_id=s.id
     WHERE i.workspace_id=$1 AND i.is_active=1 AND ($2::text IS NULL OR i.name ILIKE '%'||$2||'%'
       OR s.code ILIKE '%'||$2||'%' OR COALESCE(s.variant_label,'') ILIKE '%'||$2||'%')
     GROUP BY i.id,s.id,c.quantity,inc.quantity ORDER BY i.name,s.position LIMIT 100`,[ctx.workspaceId,search])).rows.map((row)=>{
       const onHand=Number(row.on_hand),committed=Number(row.committed),incoming=Number(row.incoming);
       return evidenceRow({product:row.variant_label?`${row.name} · ${row.variant_label}`:row.name,sku:row.code,
-        onHand,committed,available:Math.max(0,onHand-committed),incoming},`/inventory/${row.id}`);
+        onHand,committed,available:Math.max(0,onHand-committed),incoming,locations:row.locations||'No stock location'},`/inventory/${row.id}`);
     });
-  return {answer:rows.length?`${rows.length} SKU${rows.length===1?'':'s'} matched with ${rows.reduce((sum,row)=>sum+row.onHand,0).toLocaleString('en-US')} units on hand, ${rows.reduce((sum,row)=>sum+row.committed,0).toLocaleString('en-US')} committed and ${rows.reduce((sum,row)=>sum+row.incoming,0).toLocaleString('en-US')} incoming.`:
-    'No product or SKU matched that request.',rows,columns:['product','sku','onHand','committed','available','incoming']};
+  const totals=rows.reduce((sum,row)=>({onHand:sum.onHand+row.onHand,committed:sum.committed+row.committed,
+    available:sum.available+row.available,incoming:sum.incoming+row.incoming}),{onHand:0,committed:0,available:0,incoming:0});
+  const places=[...new Set(rows.flatMap((row)=>row.locations==='No stock location'?[]:row.locations.split(', ')))];
+  const where=places.length?` Stock is in ${places.join(', ')}.`:'';
+  return {answer:rows.length?`${rows.length} SKU${rows.length===1?'':'s'} matched with ${totals.onHand.toLocaleString('en-US')} units on hand, ${totals.committed.toLocaleString('en-US')} committed, ${totals.available.toLocaleString('en-US')} available and ${totals.incoming.toLocaleString('en-US')} incoming.${where}`:
+    'No product or SKU matched that request.',rows,columns:['product','sku','onHand','committed','available','incoming','locations']};
+}
+
+const MATCH_NOTHING=new Set(['the','our','my','this','that','some','item','items','product','products','unit','units']);
+function matchTerms(value){
+  const words=String(value||'').toLowerCase().split(/[^a-z0-9]+/).filter((word)=>word.length>=2)
+    .map((word)=>word.length>3&&word.endsWith('s')&&!word.endsWith('ss')?word.slice(0,-1):word);
+  const meaningful=words.filter((word)=>!MATCH_NOTHING.has(word));
+  return (meaningful.length?meaningful:words).slice(0,8);
 }
 
 async function resolveOne(database,table,workspaceId,search,columns) {
   if(!search)return {missing:true};
   const allowed={skus:{select:`s.id,s.code,i.name,s.variant_label,i.tracking_mode`,from:'skus s JOIN items i ON i.id=s.item_id',
-    where:`s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1 AND (s.code ILIKE $2 OR i.name ILIKE $2 OR (i.name||' '||COALESCE(s.variant_label,'')) ILIKE $2)`},
-  locations:{select:'id,name,kind',from:'locations',where:`workspace_id=$1 AND is_active=1 AND name ILIKE $2`}};
+    scope:`s.workspace_id=$1 AND s.is_active=1 AND i.is_active=1`,search:`CONCAT_WS(' ',s.code,i.name,COALESCE(s.variant_label,''))`},
+  locations:{select:'id,name,kind',from:'locations',scope:`workspace_id=$1 AND is_active=1`,search:'name'}};
   const target=allowed[table];
   if(!target)throw new TypeError('Unsupported resolution target.');
-  const exact=await database.query(`SELECT ${target.select} FROM ${target.from} WHERE ${target.where} ORDER BY ${columns} LIMIT 12`,
-    [workspaceId,search]);
+  const exact=await database.query(`SELECT ${target.select} FROM ${target.from} WHERE ${target.scope}
+    AND lower(${target.search})=lower($2) ORDER BY ${columns} LIMIT 12`,[workspaceId,search]);
   if(exact.rows.length===1)return {row:exact.rows[0]};
   const broad=exact.rows.length?exact:await database.query(`SELECT ${target.select} FROM ${target.from}
-    WHERE ${target.where} ORDER BY ${columns} LIMIT 12`,[workspaceId,`%${search}%`]);
+    WHERE ${target.scope} AND ${target.search} ILIKE $2 ORDER BY ${columns} LIMIT 12`,[workspaceId,`%${search}%`]);
   if(broad.rows.length===1)return {row:broad.rows[0]};
-  return broad.rows.length?{ambiguous:broad.rows}:{notFound:true};
+  if(broad.rows.length)return {ambiguous:broad.rows};
+  const terms=matchTerms(search);
+  if(!terms.length)return {notFound:true};
+  const tokenMatches=await database.query(`SELECT ${target.select} FROM ${target.from} WHERE ${target.scope}
+    AND ${terms.map((_,index)=>`${target.search} ILIKE $${index+2}`).join(' AND ')} ORDER BY ${columns} LIMIT 12`,
+  [workspaceId,...terms.map((term)=>`%${term}%`)]);
+  if(tokenMatches.rows.length===1)return {row:tokenMatches.rows[0]};
+  return tokenMatches.rows.length?{ambiguous:tokenMatches.rows}:{notFound:true};
 }
 
 async function resolveParty(database,kind,workspaceId,search){
