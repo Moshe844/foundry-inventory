@@ -12,6 +12,17 @@ function createPostgresAutopilotRouter(database){
     title:'What StockChief does',nav:'autopilot',backTo:{href:'/settings',label:'Settings'},
     ...(await autonomy.dashboard(database,req.ctx.workspaceId))})));
   router.get('/autopilot/daily',requireAuth,(req,res)=>res.redirect(302,'/needs-you'));
+  router.get('/autopilot/history',requireAuth,asyncRoute(async(req,res)=>{const recent=(await autonomy.dashboard(database,req.ctx.workspaceId)).recent;
+    const groups={automatic:[],prepared:[],needsYou:[],blocked:[]};
+    for(const item of recent){item.executionStatus=item.execution_status;item.approvalRequirement=item.approval_requirement;
+      item.errorMessage=item.error_message;item.createdAt=item.created_at;item.completedAt=item.completed_at;
+      if(item.executionStatus==='COMPLETED')groups[item.approvalRequirement==='NONE'?'automatic':'prepared'].push(item);
+      else if(['FAILED','CANCELLED','REFUSED'].includes(item.executionStatus))groups.blocked.push(item);else groups.needsYou.push(item);}
+    const describe=(item)=>{const action=item.recommendedAction||{};const subject=action.displayName||action.itemName||item.category||'business work';
+      return {headline:item.executionStatus==='COMPLETED'?`Completed ${subject}`:`Review ${subject}`,
+        detail:item.policyEvaluation?.reason||item.errorMessage||'The evidence and exact limits are recorded on this work item.'};};
+    return res.page('autopilot/history',{title:"StockChief's work",nav:'autopilot',groups,operations:[],evaluations:[],describe});
+  }));
   router.get('/autopilot/misses',requireAuth,asyncRoute(async(req,res)=>res.page('autopilot/postgres-misses',{
     title:'Report an Ask problem',nav:'ask',room:true,interactions:await assistant.listInteractions(database,req.ctx.workspaceId,30)})));
   router.post('/autopilot/misses',requireAuth,asyncRoute(async(req,res)=>{

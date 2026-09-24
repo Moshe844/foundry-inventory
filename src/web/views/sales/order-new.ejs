@@ -51,7 +51,7 @@
           <span>New customer's name</span>
           <input name="customerName" value="<%= form.customerName || '' %>" placeholder="Person or business name">
         </label>
-      </div>
+      </div><% } %>
       <%#
         The two things StockChief cannot work without, asked for once.
 
@@ -134,7 +134,7 @@
             <button class="btn btn--ghost btn--sm" type="button" data-remove-order-line <%= formLineCount === 1 ? 'hidden' : '' %>>Remove</button>
           </div>
         <% } %>
-      </div><% } %>
+      </div>
       <button class="btn btn--ghost btn--sm" id="add-order-line" type="button">+ Add another product</button>
       <p class="hint">Available stock excludes units already reserved for other customers.</p>
 

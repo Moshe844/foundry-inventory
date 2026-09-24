@@ -16,14 +16,29 @@ test('PostgreSQL account menu pages render truthful native settings and rename t
     const browser=await chromium.launch();context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
       await app.locals.sessionStore.close();await database.close();cluster.stop();});
     const page=await browser.newPage({viewport:{width:1440,height:900}});const errors=[];
-    page.on('pageerror',(error)=>errors.push(error.message));const base=`http://127.0.0.1:${server.address().port}`;
+    page.on('pageerror',(error)=>errors.push(`${page.url()}: ${error.message}`));const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);await page.getByLabel('Business name').fill('Settings Operation');
     await page.getByLabel('Your name').fill('Settings Owner');await page.getByLabel('Work email').fill('settings@example.test');
     await page.getByLabel('Password').fill('settings-password');
     await Promise.all([page.waitForURL(`${base}/onboarding`),page.getByRole('button',{name:'Create account'}).click()]);
     await page.goto(`${base}/what-you-told-me`);assert.match(await page.locator('main').innerText(),/haven't told me any standing rules yet/i);
     await page.goto(`${base}/everything`);const directory=await page.locator('main').innerText();
-    assert.match(directory,/Inventory catalogue/);assert.match(directory,/Business connections/);
+    assert.match(directory,/Full stock table/);assert.match(directory,/All connections/);
+    assert.match(directory,/Picking and packing queue/);assert.match(directory,/Chart of accounts/);
+    const downloadPromise=page.waitForEvent('download');await page.getByRole('link',{name:'Export everything'}).click();
+    const download=await downloadPromise;assert.match(download.suggestedFilename(),/^settings-operation-\d{4}-\d{2}-\d{2}\.json$/);
+    const chunks=[];for await(const chunk of await download.createReadStream())chunks.push(chunk);
+    const exported=JSON.parse(Buffer.concat(chunks).toString('utf8'));assert.equal(exported.tables.workspaces[0].name,'Settings Operation');
+    assert.equal(exported.tables.users.length,1);await page.goto(`${base}/everything`);
+    const establishedRoutes=['/orders','/orders/new','/fulfilment','/sales/customers/new','/purchasing',
+      '/purchasing/orders/new','/suppliers','/purchasing/setup','/inventory/table','/inventory/new','/locations',
+      '/warehouse','/transfers','/planning','/pricing/new','/imports/start','/accounting/books',
+      '/accounting/transactions','/accounting/chart','/accounting/receivables','/accounting/payables',
+      '/accounting/banking','/accounting/periods','/accounting/tax','/accounting/reports/profit-and-loss',
+      '/accounting/reports/balance-sheet','/mail','/activity','/autopilot','/autopilot/history','/actions',
+      '/settings/connections','/settings/shipping','/search','/settings','/foundry','/inventories','/guide','/support'];
+    for(const route of establishedRoutes){await page.goto(`${base}${route}`);const main=await page.locator('main').innerText();
+      assert.doesNotMatch(main,/We could not find that|Internal Server Error/i,route);assert.notEqual(await page.title(),'Error',route);}
     await page.goto(`${base}/settings`);assert.match(await page.locator('main').innerText(),/shared PostgreSQL storage/i);
     await page.getByLabel('Inventory name').fill('Renamed Operation');
     await Promise.all([page.waitForURL(`${base}/settings`),page.getByRole('button',{name:'Save name'}).click()]);

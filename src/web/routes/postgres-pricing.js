@@ -8,6 +8,8 @@ const {requireAuth,requireOwner,asyncRoute}=require('../middleware');
 function createPostgresPricingRouter(database){
   const router=express.Router();router.use('/pricing',requireAuth);
   router.get('/pricing/new',asyncRoute(async(req,res)=>{
+    if(!req.query.skuId){req.flash('info','Open a product and choose the exact SKU whose selling price should change.');
+      return res.redirect(302,'/inventory');}
     const sku=await pricing.requireSku(database,req.ctx.workspaceId,req.query.skuId);
     return res.page('pricing/new',{title:'Set selling price',nav:'inventory',sku,screenGuide:null,
       current:await pricing.currentPrice(database,req.ctx.workspaceId,sku.id),

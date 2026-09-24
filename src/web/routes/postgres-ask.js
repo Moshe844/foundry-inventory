@@ -100,6 +100,7 @@ function createPostgresAskRouter(database,options={}){
       ?req.body.back:'/ask';
     return res.redirect(303,back);
   }));
+  router.get('/actions',requireAuth,(req,res)=>res.redirect(302,'/ask'));
   router.get('/actions/:id',asyncRoute(async(req,res)=>res.page('attention/postgres-proposal',{
     title:'Review prepared change',nav:'ask',proposal:await assistant.getProposal(database,req.ctx.workspaceId,req.params.id),
   })));

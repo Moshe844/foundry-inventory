@@ -17,6 +17,7 @@ async function locations(database,workspaceId){
 function createPostgresImportsRouter(database,{provider=null}={}){
   const router=express.Router();
   router.use('/imports',requireAuth);
+  router.get('/imports/start',(req,res)=>res.redirect(302,'/imports'));
   router.get('/imports',asyncRoute(async(req,res)=>res.page('imports/postgres-start',{
     title:'Bring your data in',nav:'imports',recent:await imports.list(database,req.ctx.workspaceId,10),
     locations:await locations(database,req.ctx.workspaceId),aiConfigured:Boolean(provider),canOperate:true,

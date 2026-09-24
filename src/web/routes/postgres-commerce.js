@@ -28,6 +28,71 @@ function createPostgresCommerceRouter(database,options={}){
   const router=express.Router();
   router.use(['/purchasing','/orders','/sales'],requireAuth);
 
+  router.get('/suppliers',requireAuth,requirePermission(permissions.VIEW_PURCHASING,'see suppliers'),asyncRoute(async(req,res)=>{
+    const rows=(await database.query(`SELECT s.*,
+      COALESCE((SELECT COUNT(*) FROM supplier_items si WHERE si.workspace_id=s.workspace_id AND si.supplier_id=s.id AND si.is_active=1),0)::integer AS item_count,
+      COALESCE((SELECT COUNT(*) FROM purchase_orders po WHERE po.workspace_id=s.workspace_id AND po.supplier_id=s.id
+        AND po.status IN ('DRAFT','APPROVED','ORDERED','PARTIALLY_RECEIVED')),0)::integer AS open_orders
+      FROM suppliers s WHERE s.workspace_id=$1 ORDER BY lower(s.name),s.id`,[req.ctx.workspaceId])).rows;
+    const suppliers=rows.map((supplier)=>({id:supplier.id,name:supplier.name,email:supplier.email,
+      contactName:supplier.contact_name,defaultLeadTimeDays:supplier.default_lead_time_days,
+      itemCount:Number(supplier.item_count),openOrders:Number(supplier.open_orders),isActive:supplier.status==='active'}));
+    return res.page('purchasing/suppliers',{title:'Suppliers',nav:'purchasing',suppliers,prefill:null,
+      permissions:{suppliers:permissions.can(req.user,permissions.MANAGE_SUPPLIERS),
+        create:permissions.can(req.user,permissions.CREATE_PO)}});
+  }));
+  router.post('/suppliers',requireAuth,requirePermission(permissions.MANAGE_SUPPLIERS,'add suppliers'),asyncRoute(async(req,res)=>{
+    const supplier=await commerce.createSupplier(database,req.ctx,req.body);req.flash('success',`${supplier.name} was added.`);
+    return res.redirect(303,'/suppliers');
+  }));
+
+  router.get('/fulfilment',requireAuth,requirePermission(permissions.VIEW_SALES,'view fulfilment'),asyncRoute(async(req,res)=>{
+    const [openRows,readyRows,noticeRows,policyRows,mailboxRows]=await Promise.all([
+      database.query(`SELECT sh.id,sh.shipment_number,sh.sales_order_id,sh.status,so.order_number,c.name AS customer_name,
+        l.name AS ship_from_location_name,COALESCE(SUM(sl.quantity),0)::integer AS units
+        FROM sales_shipments sh JOIN sales_orders so ON so.id=sh.sales_order_id AND so.workspace_id=sh.workspace_id
+        JOIN customers c ON c.id=so.customer_id LEFT JOIN locations l ON l.id=sh.ship_from_location_id
+        LEFT JOIN sales_shipment_lines sl ON sl.shipment_id=sh.id AND sl.workspace_id=sh.workspace_id
+        WHERE sh.workspace_id=$1 AND sh.status IN ('PICKING','PACKED')
+        GROUP BY sh.id,so.order_number,c.name,l.name ORDER BY sh.created_at`,[req.ctx.workspaceId]),
+      database.query(`SELECT so.id,so.order_number,so.needed_by,c.name AS customer_name,
+        COALESCE(SUM(a.quantity),0)::integer AS units FROM sales_orders so JOIN customers c ON c.id=so.customer_id
+        JOIN sales_order_lines sol ON sol.sales_order_id=so.id AND sol.workspace_id=so.workspace_id
+        JOIN sales_order_allocations a ON a.sales_order_line_id=sol.id AND a.workspace_id=so.workspace_id
+        WHERE so.workspace_id=$1 AND so.status IN ('CONFIRMED','PARTIALLY_FULFILLED')
+          AND NOT EXISTS(SELECT 1 FROM sales_shipments sh WHERE sh.workspace_id=so.workspace_id AND sh.sales_order_id=so.id
+            AND sh.status IN ('PICKING','PACKED'))
+        GROUP BY so.id,c.name HAVING SUM(a.quantity)>0 ORDER BY COALESCE(so.needed_by,'9999-12-31'),so.created_at`,[req.ctx.workspaceId]),
+      database.query(`SELECT cc.*,c.name AS customer_name,so.order_number,sh.shipment_number FROM customer_communications cc
+        LEFT JOIN customers c ON c.id=cc.customer_id LEFT JOIN sales_orders so ON so.id=cc.sales_order_id
+        LEFT JOIN sales_shipments sh ON sh.id=cc.shipment_id WHERE cc.workspace_id=$1 AND cc.status IN ('PREPARED','FAILED')
+        ORDER BY cc.created_at`,[req.ctx.workspaceId]),
+      database.query('SELECT * FROM customer_communication_policy WHERE workspace_id=$1',[req.ctx.workspaceId]),
+      database.query(`SELECT id,display_name FROM workspace_connectors WHERE workspace_id=$1
+        AND provider_type IN ('gmail','microsoft365') AND status='connected' ORDER BY display_name`,[req.ctx.workspaceId]),
+    ]);
+    const policy=policyRows.rows[0]||{};
+    return res.page('sales/fulfilment',{title:'Fulfilment',nav:'sales',queue:{open:openRows.rows,ready:readyRows.rows},
+      waitingNotices:noticeRows.rows.map((row)=>({shipmentId:row.shipment_id,customerName:row.customer_name,
+        recipient:row.recipient,orderNumber:row.order_number,shipmentNumber:row.shipment_number,status:row.status,errorMessage:row.error_message})),
+      noticePolicy:{shippingNotice:policy.shipping_notice||'prepare',outForDeliveryNotice:policy.out_for_delivery_notice||'prepare',
+        deliveredNotice:policy.delivered_notice||'prepare',exceptionNotice:policy.exception_notice||'prepare',
+        connectorId:policy.connector_id||'',businessName:policy.business_name||'',signature:policy.signature||''},
+      mailboxes:mailboxRows.rows,canManageSettings:permissions.can(req.user,permissions.ADMIN)});
+  }));
+  router.post('/fulfilment/settings/notices',requireAuth,requirePermission(permissions.ADMIN,'change customer notices'),asyncRoute(async(req,res)=>{
+    const allowed=new Set(['off','prepare','send']);const pick=(value)=>allowed.has(value)?value:'prepare';const at=nowIso();
+    await database.query(`INSERT INTO customer_communication_policy(workspace_id,shipping_notice,out_for_delivery_notice,
+      delivered_notice,exception_notice,connector_id,business_name,signature,created_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) ON CONFLICT(workspace_id) DO UPDATE SET shipping_notice=excluded.shipping_notice,
+      out_for_delivery_notice=excluded.out_for_delivery_notice,delivered_notice=excluded.delivered_notice,
+      exception_notice=excluded.exception_notice,connector_id=excluded.connector_id,business_name=excluded.business_name,
+      signature=excluded.signature,updated_at=excluded.updated_at`,[req.ctx.workspaceId,pick(req.body.shippingNotice),
+      pick(req.body.outForDeliveryNotice),pick(req.body.deliveredNotice),pick(req.body.exceptionNotice),
+      trimOrNull(req.body.connectorId),trimOrNull(req.body.businessName),trimOrNull(req.body.signature),at]);
+    req.flash('success','Customer shipment-message policy saved.');return res.redirect(303,'/fulfilment#customer-notices');
+  }));
+
   router.get('/purchasing',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),asyncRoute(async(req,res)=>{
     const result=await presenters.purchasing(database,req.ctx.workspaceId);
     return res.page('purchasing/plan',{title:'Purchasing',nav:'purchasing',room:true,...result,postgresQuickEntry:true,
@@ -37,6 +102,7 @@ function createPostgresCommerceRouter(database,options={}){
 
   router.get('/purchasing/orders',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),(req,res)=>res.redirect(302,'/purchasing'));
   router.get('/purchasing/receive',requirePermission(permissions.RECEIVE_PO,'book in deliveries'),(req,res)=>res.redirect(302,'/purchasing'));
+  router.get('/purchasing/setup',requirePermission(permissions.VIEW_PURCHASING,'see purchasing'),(req,res)=>res.redirect(302,'/planning'));
   router.get('/purchasing/orders/:id/receive',requirePermission(permissions.RECEIVE_PO,'book in deliveries'),
     (req,res)=>res.redirect(302,`/purchasing/orders/${req.params.id}#receive`));
   router.get('/purchasing/orders/new',requirePermission(permissions.CREATE_PO,'prepare purchase orders'),asyncRoute(async(req,res)=>{
