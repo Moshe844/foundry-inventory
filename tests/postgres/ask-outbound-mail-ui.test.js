@@ -29,7 +29,7 @@ test('real Chromium Ask StockChief prepares, approves, sends and verifies one gr
     const providers={get(type){return type==='gmail'?adapter:null;},catalog(){return [adapter.metadata()];}};
     const cluster=await startCluster();const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-ask-mail-ui'});
     await migratePostgres(database);const app=createPostgresApp({database,env:'test',sessionSecret:'ask-mail-secret',
-      aiProvider:{async complete(){throw new Error('Use deterministic fallback for this browser certification.');}},
+      aiProvider:{async complete(){return {data:{intent:'clarify'}};}},
       connectionProviders:providers});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();const first=await browser.newContext();const second=await browser.newContext();

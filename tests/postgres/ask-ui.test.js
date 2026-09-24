@@ -22,6 +22,7 @@ function fields(overrides={}){
 const provider={name:'fixture',model:'fixture',async complete(request){
   const message=JSON.parse(request.prompt).message;
   if(message.includes('Trail Shoes received'))throw new Error('Exercise deterministic fallback');
+  if(message.includes('and move 2'))throw new Error('Exercise deterministic multi-request fallback');
   if(message.includes('available, and in which warehouse'))return {data:fields({view:'locations'}),usage:{}};
   if(message.includes('how many'))return {data:fields({search:'Trail Shoe'}),usage:{}};
   if(message.includes('Receive seven'))return {data:fields({intent:'action',view:null,action:'receive',sku:'SHOE-BLACK-8',
@@ -129,6 +130,17 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const groundedAfterTransfer=(await agent.get('/ask')).text;
     assert.match(groundedAfterTransfer,/1 SKU matched with 7 units on hand/);
     assert.match(groundedAfterTransfer,/3 incoming/);
+    const multi=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
+      message:'How many Trail Shoe do we have and move 2 SHOE-BLACK-8 from Main Warehouse to Overflow Store'});
+    assert.equal(multi.status,303);
+    const multiAnswer=(await agent.get('/ask')).text;
+    assert.match(multiAnswer,/1 SKU matched with 7 units on hand/);
+    assert.match(multiAnswer,/Move 2 × Trail Shoe[\s\S]*from Main Warehouse to Overflow Store/);
+    const multiTurns=(await database.query(`SELECT message,intent,status FROM stockchief_runtime.assistant_interactions
+      WHERE intent->>'sourceMessage'=$1 ORDER BY created_at,id`,
+    ['How many Trail Shoe do we have and move 2 SHOE-BLACK-8 from Main Warehouse to Overflow Store'])).rows;
+    assert.equal(multiTurns.length,2);assert.deepEqual(multiTurns.map((turn)=>turn.status),['ANSWERED','PREPARED']);
+    assert.deepEqual(multiTurns.map((turn)=>Number(turn.intent.requestIndex)),[1,2]);
     const warehouseQuestion=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
       message:'How many Trail Shoes are available, and in which warehouse?'});
     assert.equal(warehouseQuestion.status,303);

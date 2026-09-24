@@ -1015,7 +1015,7 @@ h1 a:hover, h2 a:hover, h3 a:hover,
 .rm-field input, .rm-field textarea, .rm-field select,
 input[type="text"], input[type="email"], input[type="password"], input[type="search"],
 input[type="number"], input[type="date"], input[type="url"], input[type="tel"],
-input[type="datetime-local"], input[type="month"], select, textarea {
+input[type="datetime-local"], input[type="month"], input:not([type]), select, textarea {
   width: 100%;
   min-height: 34px;
   padding: 6px 10px;
@@ -1093,6 +1093,22 @@ input:focus, select:focus, textarea:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--s3) var(--s4);
 }
+.form-grid > label, .rm-form-grid > label {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+.stacked-form, .stack-form {
+  display: grid;
+  gap: var(--s4);
+  min-width: 0;
+}
+.stacked-form > .form-grid, .stack-form > .form-grid { width: 100%; }
+details > .stacked-form, details > .stack-form { margin-top: var(--s3); }
 .form-grid > .field--full, .form-grid > .field--wide,
 .rm-form-grid > .field--full, .form-grid > .full { grid-column: 1 / -1; }
 .field--wide { grid-column: 1 / -1; }
@@ -3263,7 +3279,7 @@ a.rm-stat:hover, a.stat:hover, .card--link.stat:hover {
   .btn--sm, .rm-btn--sm { --btn-h: 38px; }
   .input, .select, .textarea, .field input, .field select, .rm-field input,
   input[type="text"], input[type="email"], input[type="password"], input[type="search"],
-  input[type="number"], input[type="date"], select { min-height: 44px; }
+  input[type="number"], input[type="date"], input:not([type]), select { min-height: 44px; }
   .segmented__item, .tab { min-height: 40px; }
   .rm-rail a.rm-tab, .rm-rail button.rm-tab { min-height: 38px; }
 }

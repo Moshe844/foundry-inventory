@@ -48,6 +48,13 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     await Promise.all([page.waitForNavigation(),page.getByRole('button',{name:'Link product'}).click()]);
     assert.match(await page.locator('main').innerText(),/SUP-BOOT-1/);
     await page.goto(`${base}/purchasing`);
+    await page.getByText('Add a supplier',{exact:true}).click();
+    const quickSupplier=page.locator('#suppliers details').filter({hasText:'Add a supplier'});
+    const supplierInputWidths=await quickSupplier.locator('input[name="name"], input[name="email"]').evaluateAll(
+      (inputs)=>inputs.map((input)=>Math.round(input.getBoundingClientRect().width)));
+    assert.equal(supplierInputWidths.length,2);
+    assert.ok(supplierInputWidths.every((width)=>width>300),`Supplier form controls were ${supplierInputWidths.join(', ')}px wide.`);
+    assert.ok(Math.abs(supplierInputWidths[0]-supplierInputWidths[1])<=2,'Supplier form columns must align.');
     await page.getByLabel('Supplier').selectOption({label:'Boot Supply'});
     await page.getByLabel('Product / SKU').selectOption(item.skuIds[0]);
     await page.getByLabel('Destination').selectOption(location.id);await page.getByLabel('Units').fill('10');
@@ -93,6 +100,11 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
 
     await page.goto(`${base}/orders`);await page.getByText('Add a customer',{exact:true}).click();
     const customerForm=page.locator('details').filter({hasText:'Add a customer'});
+    const customerInputWidths=await customerForm.locator('input[name="name"], input[name="email"]').evaluateAll(
+      (inputs)=>inputs.map((input)=>Math.round(input.getBoundingClientRect().width)));
+    assert.equal(customerInputWidths.length,2);
+    assert.ok(customerInputWidths.every((width)=>width>300),`Customer form controls were ${customerInputWidths.join(', ')}px wide.`);
+    assert.ok(Math.abs(customerInputWidths[0]-customerInputWidths[1])<=2,'Customer form columns must align.');
     await customerForm.getByLabel('Name').fill('Pickup Customer');await customerForm.getByLabel('Email').fill('pickup@example.test');
     await Promise.all([page.waitForNavigation(),customerForm.getByRole('button',{name:'Add customer'}).click()]);
     await page.getByLabel('Customer',{exact:true}).selectOption({label:'Pickup Customer'});

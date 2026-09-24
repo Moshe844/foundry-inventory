@@ -17,12 +17,13 @@ const { newId, trimOrNull } = require('../lib/util');
 const VIEWS = ['inventory','locations','purchase_orders','sales_orders','suppliers','customers','shipping','payments','accounting','connections'];
 const ACTIONS = ['receive','issue','transfer','adjust','create_item','create_location','set_price','set_purchase_cost',
   'send_email','create_sales_order','create_purchase_order','receive_purchase_order','record_supplier_payment'];
-const PLAN_SCHEMA = {
+const PLAN_PART_SCHEMA = {
   type:'object',additionalProperties:false,
-  required:['intent','view','action','search','sku','location','fromLocation','toLocation','quantity','countedQuantity',
+  required:['requestText','intent','view','action','search','sku','location','fromLocation','toLocation','quantity','countedQuantity',
     'amount','currency','reason','reference','recipient','recipientKind','subject','body','mailbox','customer','supplier',
     'deliveryMethod','shipToAddress','neededBy','purchaseOrder','supplierBill','receiptReference','paymentMethod','paymentDate'],
   properties:{
+    requestText:{type:'string',maxLength:2000},
     intent:{type:'string',enum:['lookup','action','instruction','clarify']},
     view:{anyOf:[{type:'string',enum:VIEWS},{type:'null'}]},
     action:{anyOf:[{type:'string',enum:ACTIONS},{type:'null'}]},
@@ -42,7 +43,13 @@ const PLAN_SCHEMA = {
     paymentDate:{type:'string',maxLength:10},
   },
 };
-const SYSTEM=`Classify and extract one request to an inventory operations system. Return only the schema.
+const PLAN_SCHEMA={type:'object',additionalProperties:false,required:['parts'],properties:{
+  parts:{type:'array',minItems:1,maxItems:8,items:PLAN_PART_SCHEMA},
+}};
+const SYSTEM=`Decompose and extract the person's complete message into one or more requests to an inventory operations system. Return only the schema.
+Preserve every distinct question, instruction and requested action. Never silently omit a requirement. Each parts entry must contain
+one request and requestText must be the exact portion of the person's message represented by that entry. Keep dependent wording with
+the request it qualifies. Use one part when the message contains only one request and no more than eight parts total.
 Use lookup when the person asks what is true. Use action only when they want StockChief to create or change a record.
 Use instruction for a lasting rule, preference, threshold, supplier term, stock protection rule, or bounded authority
 that should continue applying in the future. One-time work is action, not instruction.
@@ -67,6 +74,15 @@ amount, currency, paymentMethod, paymentDate and reference only when stated. An 
 Use an empty string for missing recipient, recipientKind, subject, body, mailbox, customer, supplier, deliveryMethod,
 shipToAddress, neededBy, purchaseOrder, supplierBill, receiptReference, paymentMethod or paymentDate values; other missing values are null.
 quantity is the movement quantity; countedQuantity is the physical count after an adjustment.`;
+
+const REQUEST_START='(?:move|transfer|receive|received|issue|issued|sell|sold|email|e-mail|message|write|contact|create|add|set|change|update|record|buy|prepare|what|how|where|which|did|do|show|list|tell)';
+
+function splitRequestTexts(message){
+  const text=String(message||'').trim();
+  const marked=text.replace(new RegExp(`\\s*(?:;|\\n+|,?\\s+and\\s+|,?\\s+then\\s+|,?\\s+also\\s+)(?=(?:please\\s+)?${REQUEST_START}\\b)`,'gi'),'\n');
+  const parts=marked.split(/\n+/).map((part)=>part.trim()).filter(Boolean);
+  return parts.length>1?parts:[text];
+}
 
 function cleanReference(value) {
   const reference=trimOrNull(value);
@@ -184,40 +200,48 @@ function fallbackPlan(message) {
 function cleanPlan(raw,message) {
   const fallback=fallbackPlan(message);
   if(!raw || !['lookup','action','instruction','clarify'].includes(raw.intent))return fallback;
+  const deterministicAction=fallback.intent==='action'&&fallback.action&&raw.intent!=='action';
+  const source=deterministicAction?{...raw,...fallback}:raw;
   const wholeInventory=fallback.intent==='lookup'&&wholeInventoryLookup(message);
   const financialSummary=fallback.intent==='lookup'&&financialSummaryLookup(message);
-  const groundedInventoryLookup=raw.intent==='lookup'&&fallback.intent==='lookup'
+  const groundedInventoryLookup=source.intent==='lookup'&&fallback.intent==='lookup'
     &&fallback.view==='inventory'&&fallback.search;
-  return {intent:raw.intent,view:wholeInventory?'inventory':financialSummary?'accounting':
-    groundedInventoryLookup?'inventory':VIEWS.includes(raw.view)?raw.view:fallback.view,
-    action:ACTIONS.includes(raw.action)?raw.action:null,
-    search:wholeInventory?null:financialSummary?'profit_and_loss':groundedInventoryLookup?fallback.search:trimOrNull(raw.search),sku:trimOrNull(raw.sku),
-    location:trimOrNull(raw.location),fromLocation:trimOrNull(raw.fromLocation),toLocation:trimOrNull(raw.toLocation),
-    quantity:Number.isSafeInteger(raw.quantity)?raw.quantity:null,
-    countedQuantity:Number.isSafeInteger(raw.countedQuantity)?raw.countedQuantity:null,
-    amount:Number.isFinite(raw.amount)&&raw.amount>=0?raw.amount:null,
-    currency:/^[A-Z]{3}$/.test(String(raw.currency||'').toUpperCase())?String(raw.currency).toUpperCase():null,
-    reason:trimOrNull(raw.reason),reference:cleanReference(raw.reference),recipient:trimOrNull(raw.recipient),
-    recipientKind:['customer','supplier'].includes(raw.recipientKind)?raw.recipientKind:null,
-    subject:trimOrNull(raw.subject),body:trimOrNull(raw.body),mailbox:trimOrNull(raw.mailbox),
-    customer:trimOrNull(raw.customer),supplier:trimOrNull(raw.supplier),
-    deliveryMethod:['SHIP','PICKUP','OWN_DELIVERY'].includes(raw.deliveryMethod)?raw.deliveryMethod:null,
-    shipToAddress:trimOrNull(raw.shipToAddress),neededBy:trimOrNull(raw.neededBy),
-    purchaseOrder:trimOrNull(raw.purchaseOrder),supplierBill:trimOrNull(raw.supplierBill),
-    receiptReference:trimOrNull(raw.receiptReference),paymentMethod:trimOrNull(raw.paymentMethod),
-    paymentDate:trimOrNull(raw.paymentDate)};
+  return {intent:source.intent,view:wholeInventory?'inventory':financialSummary?'accounting':
+    groundedInventoryLookup?'inventory':VIEWS.includes(source.view)?source.view:fallback.view,
+    action:ACTIONS.includes(source.action)?source.action:null,
+    search:wholeInventory?null:financialSummary?'profit_and_loss':groundedInventoryLookup?fallback.search:trimOrNull(source.search),sku:trimOrNull(source.sku),
+    location:trimOrNull(source.location),fromLocation:trimOrNull(source.fromLocation),toLocation:trimOrNull(source.toLocation),
+    quantity:Number.isSafeInteger(source.quantity)?source.quantity:null,
+    countedQuantity:Number.isSafeInteger(source.countedQuantity)?source.countedQuantity:null,
+    amount:Number.isFinite(source.amount)&&source.amount>=0?source.amount:null,
+    currency:/^[A-Z]{3}$/.test(String(source.currency||'').toUpperCase())?String(source.currency).toUpperCase():null,
+    reason:trimOrNull(source.reason),reference:cleanReference(source.reference),recipient:trimOrNull(source.recipient),
+    recipientKind:['customer','supplier'].includes(source.recipientKind)?source.recipientKind:null,
+    subject:trimOrNull(source.subject),body:trimOrNull(source.body),mailbox:trimOrNull(source.mailbox),
+    customer:trimOrNull(source.customer),supplier:trimOrNull(source.supplier),
+    deliveryMethod:['SHIP','PICKUP','OWN_DELIVERY'].includes(source.deliveryMethod)?source.deliveryMethod:null,
+    shipToAddress:trimOrNull(source.shipToAddress),neededBy:trimOrNull(source.neededBy),
+    purchaseOrder:trimOrNull(source.purchaseOrder),supplierBill:trimOrNull(source.supplierBill),
+    receiptReference:trimOrNull(source.receiptReference),paymentMethod:trimOrNull(source.paymentMethod),
+    paymentDate:trimOrNull(source.paymentDate)};
 }
 
-async function plan(message,options={}) {
+async function planMany(message,options={}) {
   const provider=options.provider || (config.ai.configured?createProviderUnobserved(config.ai.provider,config.ai.tier('fast')):null);
-  if(!provider)return fallbackPlan(message);
+  if(!provider)return splitRequestTexts(message).map((requestText)=>({requestText,intent:cleanPlan(null,requestText)}));
   try {
     const response=await provider.complete({system:SYSTEM,prompt:JSON.stringify({message}),schema:PLAN_SCHEMA,
       schemaName:'stockchief_postgres_request'});
-    return cleanPlan(response.data,message);
+    const rawParts=Array.isArray(response.data?.parts)&&response.data.parts.length?response.data.parts:[response.data];
+    return rawParts.slice(0,8).map((raw)=>{const requestText=trimOrNull(raw?.requestText)||message;
+      return {requestText,intent:cleanPlan(raw,requestText)};});
   } catch {
-    return fallbackPlan(message);
+    return splitRequestTexts(message).map((requestText)=>({requestText,intent:cleanPlan(null,requestText)}));
   }
+}
+
+async function plan(message,options={}) {
+  return (await planMany(message,options))[0].intent;
 }
 
 function evidenceRow(row,href) {
@@ -629,15 +653,21 @@ async function storeInteraction(database,ctx,message,intent,result) {
 async function ask(database,ctx,message,options={}) {
   const clean=String(message || '').trim();
   if(!clean)throw new ValidationError('Ask a question or describe what should happen.');
-  const intent=await plan(clean,options);
-  const result=intent.intent==='action'?await prepareAction(database,ctx,clean,intent):
-    intent.intent==='instruction'?await prepareInstruction(database,ctx,clean,options):
-    intent.intent==='lookup'?{status:'ANSWERED',...(await lookup(database,ctx,intent))}:
-      {status:'CLARIFY',answer:'What would you like StockChief to find or change?',rows:[],columns:[]};
-  const storedIntent=result.proposal?{...intent,proposalId:result.proposal.id,proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:intent;
-  result.interactionId=await storeInteraction(database,ctx,clean,storedIntent,result);
-  result.intent=intent;
-  return result;
+  const requests=await planMany(clean,options);const results=[];const batchId=requests.length>1?newId('pgaskbatch'):null;
+  for(let index=0;index<requests.length;index+=1){
+    const request=requests[index];const intent=request.intent;
+    const result=intent.intent==='action'?await prepareAction(database,ctx,clean,intent):
+      intent.intent==='instruction'?await prepareInstruction(database,ctx,request.requestText,options):
+      intent.intent==='lookup'?{status:'ANSWERED',...(await lookup(database,ctx,intent))}:
+        {status:'CLARIFY',answer:'What would you like StockChief to find or change?',rows:[],columns:[]};
+    const requestContext=requests.length>1?{batchId,sourceMessage:clean,requestIndex:index+1,requestCount:requests.length}:{};
+    const storedIntent=result.proposal?{...intent,...requestContext,proposalId:result.proposal.id,
+      proposalHref:result.proposal.href||`/actions/${result.proposal.id}`}:{...intent,...requestContext};
+    result.interactionId=await storeInteraction(database,ctx,request.requestText,storedIntent,result);
+    result.intent=intent;results.push(result);
+  }
+  return results.length===1?results[0]:{status:results.some((result)=>result.status==='CLARIFY')?'CLARIFY':'ANSWERED',
+    answer:`StockChief handled all ${results.length} parts separately.`,results};
 }
 
 async function prepareInstruction(database,ctx,message,options={}){
@@ -651,7 +681,11 @@ async function prepareInstruction(database,ctx,message,options={}){
 async function listInteractions(database,workspaceId,limit=20) {
   const result=await database.query(`SELECT * FROM stockchief_runtime.assistant_interactions
     WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2`,[workspaceId,Math.min(100,Math.max(1,limit))]);
-  return result.rows.reverse().map((row)=>({...row,intent:row.intent || {},evidence:row.evidence || []}));
+  return result.rows.map((row)=>({...row,intent:row.intent || {},evidence:row.evidence || []})).sort((left,right)=>{
+    const byTime=new Date(left.created_at)-new Date(right.created_at);if(byTime)return byTime;
+    if(left.intent.batchId&&left.intent.batchId===right.intent.batchId)return Number(left.intent.requestIndex)-Number(right.intent.requestIndex);
+    return String(left.id).localeCompare(String(right.id));
+  });
 }
 
 async function getProposal(database,workspaceId,id,lock=false,client=database) {
@@ -707,4 +741,4 @@ async function cancelProposal(database,ctx,id) {
   return result.rows[0];
 }
 
-module.exports={PLAN_SCHEMA,SYSTEM,plan,lookup,ask,listInteractions,getProposal,executeProposal,cancelProposal};
+module.exports={PLAN_SCHEMA,SYSTEM,plan,planMany,lookup,ask,listInteractions,getProposal,executeProposal,cancelProposal};

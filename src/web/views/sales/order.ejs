@@ -451,7 +451,7 @@
 
 <% if (order.status === 'FULFILLED' || order.status === 'PARTIALLY_FULFILLED') { %>
   <% if (accounting.status === 'POSTED') { %>
-    <details class="card fold">
+    <details class="card fold" open>
       <summary class="card-head">
         <h2>
           Sale <%= helpers.money(accounting.outcome.revenueMinor || 0, order.currency) %>

@@ -24,17 +24,27 @@ function provenanceFor(turn){
   reason:status==='clarify'?(choices.length>1?'ambiguous':'missing'):undefined};
 }
 
-function goalFor(turn,index){
+function goalFor(turn,index,position=0){
   const status=STATUS[turn.status]||'answered';
   const provenance=provenanceFor(turn);const label=ledger.statusLabelFor(status,provenance);
-  return {id:turn.id,position:0,kind:turn.intent?.intent||'lookup',text:turn.message,status,said:turn.answer,
+  return {id:turn.id,position,kind:turn.intent?.intent||'lookup',text:turn.message,status,said:turn.answer,
     resultHref:turn.intent?.proposalHref||null,resultLabel:turn.intent?.proposalHref?'Review prepared change':null,
     provenance,statusLabel:label.label,statusTone:label.tone,createdAt:turn.created_at,updatedAt:turn.created_at,index};
 }
 
 function transcriptFor(interactions){
-  return interactions.map((turn,index)=>({id:`turn-${turn.id}`,conversationId:'postgres',channel:'ask',message:turn.message,
-    understanding:turn.intent||{},createdAt:turn.created_at,goals:[goalFor(turn,index)],referents:[]}));
+  const transcript=[];const batches=new Map();
+  interactions.forEach((turn,index)=>{
+    const batchId=turn.intent?.batchId;
+    if(!batchId){transcript.push({id:`turn-${turn.id}`,conversationId:'postgres',channel:'ask',message:turn.message,
+      understanding:turn.intent||{},createdAt:turn.created_at,goals:[goalFor(turn,index)],referents:[]});return;}
+    let batch=batches.get(batchId);
+    if(!batch){batch={id:`turn-${batchId}`,conversationId:'postgres',channel:'ask',message:turn.intent.sourceMessage||turn.message,
+      understanding:{intent:'multi_request'},createdAt:turn.created_at,goals:[],referents:[]};batches.set(batchId,batch);transcript.push(batch);}
+    batch.goals.push(goalFor(turn,index,Math.max(0,Number(turn.intent.requestIndex||1)-1)));
+    batch.goals.sort((left,right)=>left.position-right.position);
+  });
+  return transcript;
 }
 
 function resultFor(turn){

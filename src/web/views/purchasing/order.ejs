@@ -62,6 +62,11 @@
     This purchase is approved, but it has not been sent yet. Record the supplier placement only after it was actually sent to or accepted by the supplier.
   </div>
 <% } %>
+<% if (locals.postgresPlacement && ['ORDERED','PARTIALLY_RECEIVED'].includes(order.status)) { %>
+  <div class="notice notice--info section">
+    Supplier placement is recorded as incoming; on-hand stock did not change. Only a physical receipt changes the inventory balance.
+  </div>
+<% } %>
 
 <% var moneyStatus = !supplierBills.length ? 'Waiting for supplier invoice'
      : billSummary.needsReview ? 'Invoice needs review'
