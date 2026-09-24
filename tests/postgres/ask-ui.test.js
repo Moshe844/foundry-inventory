@@ -23,6 +23,7 @@ const provider={name:'fixture',model:'fixture',async complete(request){
   const message=JSON.parse(request.prompt).message;
   if(message.includes('Trail Shoes received'))throw new Error('Exercise deterministic fallback');
   if(message.includes('and move 2'))throw new Error('Exercise deterministic multi-request fallback');
+  if(message.includes('show me locations'))throw new Error('Exercise deterministic multi-lookup fallback');
   if(message.includes('available, and in which warehouse'))return {data:fields({view:'locations'}),usage:{}};
   if(message.includes('how many'))return {data:fields({search:'Trail Shoe'}),usage:{}};
   if(message.includes('Receive seven'))return {data:fields({intent:'action',view:null,action:'receive',sku:'SHOE-BLACK-8',
@@ -130,6 +131,14 @@ test('Ask StockChief grounds answers and executes only an approved PostgreSQL pr
     const groundedAfterTransfer=(await agent.get('/ask')).text;
     assert.match(groundedAfterTransfer,/1 SKU matched with 7 units on hand/);
     assert.match(groundedAfterTransfer,/3 incoming/);
+    const multiLookup=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
+      message:'How many items are in my inventory and show me locations'});
+    assert.equal(multiLookup.status,303);
+    const multiLookupAnswer=(await agent.get('/ask')).text;
+    assert.match(multiLookupAnswer,/StockChief · part 1 of 2/);
+    assert.match(multiLookupAnswer,/StockChief · part 2 of 2/);
+    assert.match(multiLookupAnswer,/1 SKU matched with 7 units on hand/);
+    assert.match(multiLookupAnswer,/2 active locations hold 7 units/);
     const multi=await agent.post('/ask').type('form').send({_csrf:csrfFrom(groundedAfterTransfer),
       message:'How many Trail Shoe do we have and move 2 SHOE-BLACK-8 from Main Warehouse to Overflow Store'});
     assert.equal(multi.status,303);

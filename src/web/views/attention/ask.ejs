@@ -138,7 +138,7 @@
     <% turn.goals.forEach(function (goal) { %>
       <% if (goal.id === currentGoalId && error) { %>
     <div class="rm-turn rm-turn--foundry">
-      <p class="rm-turn__who">StockChief</p>
+      <p class="rm-turn__who">StockChief<% if (turn.goals.length > 1) { %> · part <%= goal.position + 1 %> of <%= turn.goals.length %><% } %></p>
       <div class="rm-said rm-said--problem">
         <p class="rm-said__text"><%= error %></p>
         <p class="rm-said__meta"><span class="rm-pill rm-pill--<%= goal.statusTone %>"><%= goal.statusLabel %></span><span>Nothing changed. Your message is still in the box below.</span></p>
@@ -146,7 +146,7 @@
     </div>
       <% } else if (goal.id === currentGoalId && result) { %>
     <div class="rm-turn rm-turn--foundry">
-      <p class="rm-turn__who">StockChief</p>
+      <p class="rm-turn__who">StockChief<% if (turn.goals.length > 1) { %> · part <%= goal.position + 1 %> of <%= turn.goals.length %><% } %></p>
       <%
         /*
          * One sentence. `spoken` is the model's phrasing of the computed

@@ -166,7 +166,7 @@ function fallbackPlan(message) {
   else if(/\b(payment|paid|owing|outstanding|receivable|payable)\b/.test(lower))view='payments';
   else if(financialSummary||/\b(account|journal|profit|revenue|expense|books|balance)\b/.test(lower))view='accounting';
   else if(/\b(connection|connected|sync|connector)\b/.test(lower))view='connections';
-  else if(!inventorySearch&&/\b(location|warehouse|store|bin|shelf)\b/.test(lower))view='locations';
+  else if(!inventorySearch&&/\b(locations?|warehouses?|stores?|bins?|shelves?)\b/.test(lower))view='locations';
   if(!action)return {intent:'lookup',view,action:null,
     search:financialSummary?'profit_and_loss':wholeInventory?null:inventorySearch,sku:null,location:null,fromLocation:null,
     toLocation:null,quantity:null,countedQuantity:null,amount:null,currency:null,reason:null,reference:null};
