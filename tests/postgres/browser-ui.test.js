@@ -17,7 +17,8 @@ test('Chromium operates PostgreSQL onboarding, catalog, inventory movement and A
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-browser-ui'});
     await migratePostgres(database);
-    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-browser-secret',aiProvider:provider});
+    const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-browser-secret',aiProvider:provider,
+      assetVersion:'postgres-browser-cert'});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();
     context.after(async()=>{
@@ -33,6 +34,7 @@ test('Chromium operates PostgreSQL onboarding, catalog, inventory movement and A
     page.setDefaultTimeout(15000);
     const base=`http://127.0.0.1:${server.address().port}`;
     await page.goto(`${base}/register`);
+    assert.match(await page.locator('link[href*="/design.css"]').getAttribute('href'),/v=postgres-browser-cert$/);
     await page.getByLabel('Business name').fill('Browser Business');
     await page.getByLabel('Your name').fill('Browser Owner');
     await page.getByLabel('Work email').fill('browser-pg@example.test');

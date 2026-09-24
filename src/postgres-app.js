@@ -45,13 +45,14 @@ const postgresExploration = require('./onboarding/postgres-exploration');
 
 function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSecret,env=config.env,aiProvider=null,
   connectionProviders=null,connectionPublicOrigin=null,shippingOptions=null,paymentOptions=null,
-  probeCacheMs={health:5000,readiness:1000}}={}) {
+  probeCacheMs={health:5000,readiness:1000},assetVersion=process.env.FOUNDRY_ASSET_VERSION||config.operations.releaseRef}={}) {
   if(!database?.query)throw new TypeError('A PostgreSQL database is required.');
   const app=express();
   const store=sessionStore || new PostgresSessionStore(database);
   app.locals.database=database;
   app.locals.sessionStore=store;
   app.locals.aiProvider=aiProvider;
+  app.locals.assetVersion=assetVersion;
   app.set('view engine','ejs');
   app.set('views',path.join(__dirname,'web','views'));
   app.set('trust proxy',1);
@@ -108,7 +109,7 @@ function createPostgresApp({database,sessionStore,sessionSecret=config.sessionSe
     res.locals.origin=`${req.protocol}://${req.get('host')}`;
     res.locals.currentPath=req.path;
     res.locals.query=req.query || {};
-    res.locals.assetVersion=process.env.FOUNDRY_ASSET_VERSION || 'postgres';
+    res.locals.assetVersion=app.locals.assetVersion;
     res.locals.helpers=viewHelpers;
     res.locals.attentionCount=0;
     next();

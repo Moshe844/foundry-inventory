@@ -175,7 +175,8 @@ function createPostgresSettingsRouter(database,options={}){const router=express.
   router.post('/settings/event-feed/enable',requireOwner,asyncRoute(async(req,res)=>{const existing=(await database.query(`SELECT id FROM workspace_connectors
       WHERE workspace_id=$1 AND provider_type='reference_webhook' ORDER BY updated_at DESC LIMIT 1`,[req.ctx.workspaceId])).rows[0];
     if(existing)await connections.disconnect(database,req.ctx.workspaceId,existing.id);const created=await connections.createFeed(database,req.ctx,{displayName:'Live operating feed'});
-    req.session.newFeedToken=created.token;req.flash('success','The live operating feed is connected. Copy its token now.');return res.redirect(303,'/settings#live-event-feed');
+    req.session.newFeedToken=created.token;req.flash('success','The live operating feed is connected. Copy its token now.');
+    return req.session.save(()=>res.redirect(303,'/settings#live-event-feed'));
   }));
   router.post('/settings/event-feed/disconnect',requireOwner,asyncRoute(async(req,res)=>{const existing=(await database.query(`SELECT id FROM workspace_connectors
       WHERE workspace_id=$1 AND provider_type='reference_webhook' AND status<>'disconnected' ORDER BY updated_at DESC LIMIT 1`,[req.ctx.workspaceId])).rows[0];

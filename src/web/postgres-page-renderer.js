@@ -16,6 +16,7 @@ function postgresPageRenderer(req,res,next){
         if(href!==currentHref)arrivedFrom={href,label:req.session?.renderedPageLabels?.[href]||'previous page'};}}
     catch{arrivedFrom=null;}}
     return res.render('layout',{...data,body,title:data.title || 'StockChief',nav:data.nav || null,
+      assetVersion:res.locals.assetVersion,
       backTo:data.suppressBack?null:(data.backTo || arrivedFrom || data.backToFallback || null),
       onboardingEntry:data.layoutOnboardingEntry || res.locals.globalOnboardingEntry || null,
       navigationArrival:null,workspaceGuidance:null,assistantQueue:req.session?.assistantQueue||null,

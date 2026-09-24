@@ -55,6 +55,11 @@ test('real Chromium runs PostgreSQL purchasing, receiving, supplier money, custo
     assert.equal(supplierInputWidths.length,2);
     assert.ok(supplierInputWidths.every((width)=>width>300),`Supplier form controls were ${supplierInputWidths.join(', ')}px wide.`);
     assert.ok(Math.abs(supplierInputWidths[0]-supplierInputWidths[1])<=2,'Supplier form columns must align.');
+    await page.setViewportSize({width:753,height:900});
+    const compactSupplierWidths=await quickSupplier.locator('input[name="name"], input[name="email"], input[name="currency"]').evaluateAll(
+      (inputs)=>inputs.map((input)=>Math.round(input.getBoundingClientRect().width)));
+    assert.ok(compactSupplierWidths.every((width)=>width>600),`Compact supplier controls were ${compactSupplierWidths.join(', ')}px wide.`);
+    await page.setViewportSize({width:1440,height:1000});
     await page.getByLabel('Supplier').selectOption({label:'Boot Supply'});
     await page.getByLabel('Product / SKU').selectOption(item.skuIds[0]);
     await page.getByLabel('Destination').selectOption(location.id);await page.getByLabel('Units').fill('10');

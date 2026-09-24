@@ -254,9 +254,9 @@
     <% if (['DRAFT', 'AWAITING_APPROVAL'].includes(order.status)) { %>
       <p class="muted" style="margin-top:8px;">
         <% if (order.isEditable && !order.hasCosts) { %>
-          Nothing has been sent to <%= order.supplierName %>. Add the missing price above before this order can be approved.
+          Nothing was sent to the supplier. Add the missing price above before this order can be approved.
         <% } else { %>
-          Nothing has been sent to <%= order.supplierName %> yet. Approving records the order and then follows
+          Nothing was sent to the supplier. Approving records the order and then follows
           this supplier's communication rule: send within approved authority, or wait for you to approve the message.
         <% } %>
       </p>
@@ -317,7 +317,7 @@
 
 <% if (locals.postgresPlacement && order.lines.some(function (line) { return line.quantityReceivedUnits > 0; })) { %>
   <div class="card section">
-    <div class="card-head"><div><h2>Record supplier invoice</h2><p class="muted">This records what is owed. It does not receive the products again.</p></div></div>
+    <div class="card-head"><div><h2>Record supplier invoice</h2><p class="muted">This records what is owed without receiving stock again.</p></div></div>
     <div class="card-body">
       <% var invoiceLine = order.lines.find(function (line) { return line.quantityReceivedUnits > 0; }); %>
       <details class="advanced-settings">
