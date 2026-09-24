@@ -10,13 +10,17 @@ const {createPostgresApp}=require('../../src/postgres-app');
 
 test('real Chromium opens every Everything else destination without migration substitute redirects',
   {timeout:240000},async(context)=>{
+    const anthropicApiKey=process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
     const cluster=await startCluster();
     const database=openPostgres(cluster.connectionString,{applicationName:'stockchief-postgres-everything-ui'});
     await migratePostgres(database);
     const app=createPostgresApp({database,env:'test',sessionSecret:'postgres-everything-secret'});
     const server=await new Promise((resolve)=>{const started=app.listen(0,'127.0.0.1',()=>resolve(started));});
     const browser=await chromium.launch();
-    context.after(async()=>{await browser.close();await new Promise((resolve)=>server.close(resolve));
+    context.after(async()=>{if(anthropicApiKey===undefined)delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY=anthropicApiKey;
+      await browser.close();await new Promise((resolve)=>server.close(resolve));
       await app.locals.sessionStore.close();await database.close();cluster.stop();});
     const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(15000);
     const errors=[];page.on('pageerror',(error)=>errors.push(error.message));
@@ -44,5 +48,9 @@ test('real Chromium opens every Everything else destination without migration su
       if(destination.label==='Changes prepared for approval')assert.match(page.url(),/\/actions(?:\?|$)/);
       if(destination.label==='How this inventory is configured')assert.match(page.url(),/\/what-you-told-me(?:\?|$)/);
     }
+    await page.goto(`${base}/ask`);
+    const askText=await page.locator('#main').innerText();
+    assert.match(askText,/Grounded questions and deterministic workflows still work without one/);
+    assert.doesNotMatch(askText,/needs its model connection before it can read a sentence/);
     assert.deepEqual(errors,[]);
   });

@@ -59,7 +59,7 @@
 
 <% if (locals.postgresPlacement && order.status === 'APPROVED') { %>
   <div class="notice notice--info section">
-    This purchase is approved, but it has not been sent to the supplier yet. Record the supplier placement only after it was actually sent or accepted.
+    This purchase is approved, but it has not been sent yet. Record the supplier placement only after it was actually sent to or accepted by the supplier.
   </div>
 <% } %>
 
@@ -348,6 +348,7 @@
   <div class="card section" id="receipts">
     <div class="card-head"><h2>Deliveries</h2></div>
     <div class="card-body">
+      <div class="notice notice--success"><div><strong>Physical receipt recorded through the inventory ledger.</strong><br>These quantities changed on-hand stock once and remain traceable to this purchase order.</div></div>
       <% receipts.forEach(function (receipt) { %>
         <div class="act-ledger">
           <div class="act-row act-row--total">
